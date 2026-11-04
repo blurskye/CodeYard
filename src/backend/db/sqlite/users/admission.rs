@@ -1,6 +1,9 @@
 //! Durable failed-login budgets per client address and per account under SQLite writer ownership.
-use crate::backend::db::sqlite::time;
-use crate::backend::db::users::admission::{Receipt, ACCOUNT_LIMIT, CLIENT_LIMIT, WINDOW_SECONDS};
+
+use crate::backend::db::users::admission::Receipt;
+use crate::backend::db::users::admission::ACCOUNT_LIMIT;
+use crate::backend::db::users::admission::CLIENT_LIMIT;
+use crate::backend::db::users::admission::WINDOW_SECONDS;
 use anyhow::Result;
 use chrono::Duration;
 use sqlx::{SqliteConnection, SqlitePool};
@@ -26,7 +29,10 @@ async fn charge(
     let window: Option<String> = sqlx::query_scalar("UPDATE auth_login_limits SET attempts=CASE WHEN window_ends_at<=?2 THEN 1 ELSE attempts+1 END,window_ends_at=CASE WHEN window_ends_at<=?2 THEN ?3 ELSE window_ends_at END WHERE account_key=?1 AND (window_ends_at<=?2 OR attempts<?4) RETURNING window_ends_at")
         .bind(key).bind(now).bind(window_ends_at).bind(limit)
         .fetch_optional(&mut *tx).await?;
-    Ok(window.as_deref().map(time::decode).transpose()?)
+    Ok(window
+        .as_deref()
+        .map(crate::backend::db::sqlite::time::decode)
+        .transpose()?)
 }
 
 /// Counts an attempt against the client address, when there is one, and the account. The client
@@ -40,9 +46,10 @@ pub async fn admit_password_attempt(
     // BEGIN IMMEDIATE plus bounded busy_timeout fails closed across connections
     // and processes. No row-lock imitation or per-process attempt authority.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let now = time::now();
-    let encoded = time::encode(now);
-    let window_ends_at = time::encode(now + Duration::seconds(WINDOW_SECONDS));
+    let now = crate::backend::db::sqlite::time::now();
+    let encoded = crate::backend::db::sqlite::time::encode(now);
+    let window_ends_at =
+        crate::backend::db::sqlite::time::encode(now + Duration::seconds(WINDOW_SECONDS));
     let client_window = if let Some(key) = client_key {
         charge(&mut tx, key, &encoded, &window_ends_at, CLIENT_LIMIT).await?
     } else {
@@ -82,7 +89,7 @@ pub async fn forgive_password_attempt(pool: &SqlitePool, receipt: &Receipt) -> R
         .chain(std::iter::once(&receipt.account))
     {
         sqlx::query("UPDATE auth_login_limits SET attempts=attempts-1 WHERE account_key=?1 AND attempts>0 AND window_ends_at=?2 AND window_ends_at>?3")
-            .bind(key).bind(time::encode(*window)).bind(time::encode(time::now()))
+            .bind(key).bind(crate::backend::db::sqlite::time::encode(*window)).bind(crate::backend::db::sqlite::time::encode(crate::backend::db::sqlite::time::now()))
             .execute(pool).await?;
     }
     Ok(())

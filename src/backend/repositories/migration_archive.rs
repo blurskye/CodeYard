@@ -1,7 +1,9 @@
 //! Migration records and bare repositories share one bounded tar.gz archive.
-use crate::backend::repositories::imports::archive::{
-    safe_path, MAX_ENTRIES, MAX_METADATA_BYTES, MAX_RECORDS, MAX_UNPACKED_BYTES,
-};
+use crate::backend::repositories::imports::archive::safe_path;
+use crate::backend::repositories::imports::archive::MAX_ENTRIES;
+use crate::backend::repositories::imports::archive::MAX_METADATA_BYTES;
+use crate::backend::repositories::imports::archive::MAX_RECORDS;
+use crate::backend::repositories::imports::archive::MAX_UNPACKED_BYTES;
 use anyhow::{ensure, Result};
 use flate2::{write::GzEncoder, Compression};
 use serde_json::Value;
@@ -14,7 +16,7 @@ use std::{
 struct ArchiveBytes(Vec<u8>);
 impl Write for ArchiveBytes {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if bytes.len() > crate::backend::storage::MAX_OBJECT_BYTES as usize - self.0.len() {
+        if bytes.len() > codeyard_support::object_limits::MAX_OBJECT_BYTES as usize - self.0.len() {
             return Err(io::Error::other("Migration archive exceeds its size limit"));
         }
         self.0.extend_from_slice(bytes);

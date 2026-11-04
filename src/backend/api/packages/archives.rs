@@ -1,5 +1,6 @@
 //! Read bounded package metadata without extracting publisher-controlled paths.
-use super::{Error, Result};
+use crate::backend::api::packages::Error;
+use crate::backend::api::packages::Result;
 use quick_xml::{events::Event, Reader};
 use std::{
     collections::BTreeMap,
@@ -311,8 +312,10 @@ pub(super) fn gem_metadata(bytes: &[u8]) -> Result<serde_yaml::Value> {
 mod tests {
     #[test]
     fn yaml_bounds_expanded_aliases_and_treats_ruby_tags_as_data() {
-        let doc = super::yaml(b"a: &copy !ruby/object:Gem::Version {version: '1.2'}\nb: *copy\n")
-            .unwrap();
+        let doc = crate::backend::api::packages::archives::yaml(
+            b"a: &copy !ruby/object:Gem::Version {version: '1.2'}\nb: *copy\n",
+        )
+        .unwrap();
         assert_eq!(doc["a"]["version"].as_str(), Some("1.2"));
         assert_eq!(doc["a"], doc["b"]);
         let bomb = format!(
@@ -320,18 +323,22 @@ mod tests {
             "x".repeat(64_000),
             ["*copy"; 32].join(",")
         );
-        assert!(super::yaml(bomb.as_bytes()).is_err());
-        assert!(super::yaml(b"a: &copy [*copy]\n").is_err());
-        assert!(super::yaml(b"a: 1\n---\nb: 2\n").is_err());
+        assert!(crate::backend::api::packages::archives::yaml(bomb.as_bytes()).is_err());
+        assert!(crate::backend::api::packages::archives::yaml(b"a: &copy [*copy]\n").is_err());
+        assert!(crate::backend::api::packages::archives::yaml(b"a: 1\n---\nb: 2\n").is_err());
     }
     #[test]
     fn xml_is_bounded_and_never_resolves_external_entities() {
-        let xml =
-            super::xml(b"<package><metadata><id>A&amp;B</id><dependencies /></metadata></package>")
-                .unwrap();
+        let xml = crate::backend::api::packages::archives::xml(
+            b"<package><metadata><id>A&amp;B</id><dependencies /></metadata></package>",
+        )
+        .unwrap();
         assert_eq!(xml.child("metadata").unwrap().value("id"), "A&B");
-        assert!(super::xml(b"<!DOCTYPE x SYSTEM 'file:///etc/passwd'><x/>").is_err());
-        assert!(super::xml(b"<a><b></a>").is_err());
-        assert!(super::xml(b"<a/><b/>").is_err());
+        assert!(crate::backend::api::packages::archives::xml(
+            b"<!DOCTYPE x SYSTEM 'file:///etc/passwd'><x/>"
+        )
+        .is_err());
+        assert!(crate::backend::api::packages::archives::xml(b"<a><b></a>").is_err());
+        assert!(crate::backend::api::packages::archives::xml(b"<a/><b/>").is_err());
     }
 }

@@ -1,5 +1,5 @@
 //! Current repository read, write and administration decisions.
-use crate::backend::db;
+
 use crate::backend::db::repositories::access::CollaboratorChange;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
@@ -8,18 +8,18 @@ use codeyard_db_core::models::User;
 /// Retained account identity, without substituting Git permissions for a metadata operation.
 pub(crate) async fn credential_user(
     pool: &codeyard_db_core::DbPool,
-    actor: &db::credentials::Actor,
+    actor: &crate::backend::db::credentials::Actor,
     write: bool,
 ) -> Result<User> {
+    use crate::backend::db::users::accounts::OwnedAccountCredential;
     use codeyard_support::credentials::AccountRestricted;
-    use db::users::accounts::OwnedAccountCredential;
     let user = match &actor.credential {
-        None => db::users::accounts::get_user_by_id(pool, actor.user_id).await?,
+        None => crate::backend::db::users::accounts::get_user_by_id(pool, actor.user_id).await?,
         Some(OwnedAccountCredential::Session(session)) => {
-            db::users::sessions::get_session_user(pool, session).await?
+            crate::backend::db::users::sessions::get_session_user(pool, session).await?
         }
         Some(OwnedAccountCredential::Token(token_id, _)) => {
-            db::users::tokens::token_user(pool, *token_id, write).await?
+            crate::backend::db::users::tokens::token_user(pool, *token_id, write).await?
         }
     }
     .ok_or(AccountRestricted)?;
@@ -33,20 +33,21 @@ pub(crate) async fn credential_user(
 /// Recheck the credential retained by a native publication, after preparation and lock waits.
 pub(crate) async fn check_publication_actor(
     pool: &codeyard_db_core::DbPool,
-    actor: &db::credentials::Actor,
+    actor: &crate::backend::db::credentials::Actor,
     repository: &Repository,
 ) -> Result<()> {
-    use db::users::accounts::OwnedAccountCredential;
-    let repository = db::repositories::records::get_repository_by_id(pool, repository.id)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!(codeyard_support::credentials::AccountRestricted))?;
+    use crate::backend::db::users::accounts::OwnedAccountCredential;
+    let repository =
+        crate::backend::db::repositories::records::get_repository_by_id(pool, repository.id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!(codeyard_support::credentials::AccountRestricted))?;
     let user = match &actor.credential {
-        None => db::users::accounts::get_user_by_id(pool, actor.user_id).await?,
+        None => crate::backend::db::users::accounts::get_user_by_id(pool, actor.user_id).await?,
         Some(OwnedAccountCredential::Session(session)) => {
-            db::users::sessions::get_session_user(pool, session).await?
+            crate::backend::db::users::sessions::get_session_user(pool, session).await?
         }
         Some(OwnedAccountCredential::Token(token_id, _)) => Some(
-            super::git_sessions::ReceiveCredential::Token(*token_id)
+            crate::backend::repositories::git_sessions::ReceiveCredential::Token(*token_id)
                 .authorize(pool, &repository, true)
                 .await?
                 .0,
@@ -72,7 +73,8 @@ pub async fn user_access(
     if repository.owner_kind == "user" && user.is_admin {
         return Ok(codeyard_db_core::models::AccessLevel::Owner);
     }
-    db::repositories::access::get_user_repo_access(pool, user.id, repository.id).await
+    crate::backend::db::repositories::access::get_user_repo_access(pool, user.id, repository.id)
+        .await
 }
 
 /// Gists use a distinct clone namespace and never grant ordinary repository access.
@@ -87,7 +89,7 @@ pub async fn user_git_access(
     if user.is_banned || user.must_change_password {
         return Ok(codeyard_db_core::models::AccessLevel::None);
     }
-    let gist = db::gists::by_repository(pool, repository.id)
+    let gist = crate::backend::db::gists::by_repository(pool, repository.id)
         .await?
         .filter(|gist| gist.ready && Some(gist.owner_id) == repository.owner_user_id);
     Ok(match gist {
@@ -106,9 +108,11 @@ pub async fn can_read_git(
     }
     match user {
         Some(user) => Ok(user_git_access(pool, user, repository).await?.can_read()),
-        None => Ok(db::gists::by_repository(pool, repository.id)
-            .await?
-            .is_some_and(|gist| gist.ready)),
+        None => Ok(
+            crate::backend::db::gists::by_repository(pool, repository.id)
+                .await?
+                .is_some_and(|gist| gist.ready),
+        ),
     }
 }
 
@@ -133,9 +137,13 @@ pub async fn can_read(
         return Ok(true);
     }
     Ok(
-        db::repositories::access::get_user_repo_access(pool, user.id, repository.id)
-            .await?
-            .can_read(),
+        crate::backend::db::repositories::access::get_user_repo_access(
+            pool,
+            user.id,
+            repository.id,
+        )
+        .await?
+        .can_read(),
     )
 }
 
@@ -160,7 +168,7 @@ pub async fn author_associations(
     users: &[i64],
 ) -> Result<std::collections::HashMap<i64, String>> {
     Ok(
-        db::repositories::access::author_associations(pool, repository.id, users)
+        crate::backend::db::repositories::access::author_associations(pool, repository.id, users)
             .await?
             .into_iter()
             .collect(),
@@ -179,9 +187,13 @@ pub async fn can_admin(
         return Ok(true);
     }
     Ok(
-        db::repositories::access::get_user_repo_access(pool, user.id, repository.id)
-            .await?
-            .can_admin(),
+        crate::backend::db::repositories::access::get_user_repo_access(
+            pool,
+            user.id,
+            repository.id,
+        )
+        .await?
+        .can_admin(),
     )
 }
 
@@ -196,7 +208,7 @@ pub async fn can_write(
         || repository.is_archived
         || user.is_banned
         || user.must_change_password
-        || db::repository_exports::locked(pool, repository.id).await?
+        || crate::backend::db::repository_exports::locked(pool, repository.id).await?
     {
         return Ok(false);
     }
@@ -204,9 +216,13 @@ pub async fn can_write(
         return Ok(true);
     }
     Ok(
-        db::repositories::access::get_user_repo_access(pool, user.id, repository.id)
-            .await?
-            .can_write(),
+        crate::backend::db::repositories::access::get_user_repo_access(
+            pool,
+            user.id,
+            repository.id,
+        )
+        .await?
+        .can_write(),
     )
 }
 
@@ -220,7 +236,7 @@ pub async fn can_triage(
         || repository.is_archived
         || user.is_banned
         || user.must_change_password
-        || db::repository_exports::locked(pool, repository.id).await?
+        || crate::backend::db::repository_exports::locked(pool, repository.id).await?
     {
         return Ok(false);
     }
@@ -228,9 +244,13 @@ pub async fn can_triage(
         return Ok(true);
     }
     Ok(
-        db::repositories::access::get_user_repo_access(pool, user.id, repository.id)
-            .await?
-            .can_triage(),
+        crate::backend::db::repositories::access::get_user_repo_access(
+            pool,
+            user.id,
+            repository.id,
+        )
+        .await?
+        .can_triage(),
     )
 }
 
@@ -245,7 +265,7 @@ pub async fn can_maintain(
         || repository.is_archived
         || user.is_banned
         || user.must_change_password
-        || db::repository_exports::locked(pool, repository.id).await?
+        || crate::backend::db::repository_exports::locked(pool, repository.id).await?
     {
         return Ok(false);
     }
@@ -253,9 +273,13 @@ pub async fn can_maintain(
         return Ok(true);
     }
     Ok(
-        db::repositories::access::get_user_repo_access(pool, user.id, repository.id)
-            .await?
-            .can_maintain(),
+        crate::backend::db::repositories::access::get_user_repo_access(
+            pool,
+            user.id,
+            repository.id,
+        )
+        .await?
+        .can_maintain(),
     )
 }
 
@@ -272,7 +296,7 @@ pub async fn current_repository(
     pool: &codeyard_db_core::DbPool,
     id: i64,
 ) -> std::result::Result<Repository, AccessError> {
-    db::repositories::records::get_repository_by_id(pool, id)
+    crate::backend::db::repositories::records::get_repository_by_id(pool, id)
         .await
         .map_err(|_| AccessError::Unavailable)?
         .ok_or(AccessError::NotFound)
@@ -285,7 +309,7 @@ pub async fn current_repository_with_owner(
     id: i64,
 ) -> std::result::Result<(Repository, String), AccessError> {
     let repository = current_repository(pool, id).await?;
-    let owner = db::repositories::records::repository_owner_name(pool, id)
+    let owner = crate::backend::db::repositories::records::repository_owner_name(pool, id)
         .await
         .map_err(|_| AccessError::Unavailable)?
         .ok_or(AccessError::NotFound)?;
@@ -305,7 +329,7 @@ pub async fn check_read(
         return Ok(repository);
     }
     let id = actor.ok_or(AccessError::NotFound)?;
-    let user = db::users::accounts::get_user_by_id(pool, id)
+    let user = crate::backend::db::users::accounts::get_user_by_id(pool, id)
         .await
         .map_err(|_| AccessError::Unavailable)?
         .ok_or(AccessError::NotFound)?;
@@ -325,7 +349,7 @@ pub async fn check_admin(
     actor: i64,
 ) -> std::result::Result<Repository, AccessError> {
     let repository = current_repository(pool, repo_id).await?;
-    let user = db::users::accounts::get_user_by_id(pool, actor)
+    let user = crate::backend::db::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| AccessError::Unavailable)?
         .ok_or(AccessError::NotFound)?;
@@ -348,7 +372,7 @@ pub async fn check_write(
     actor: i64,
 ) -> std::result::Result<(Repository, User), AccessError> {
     let repository = current_repository(pool, repo_id).await?;
-    let user = db::users::accounts::get_user_by_id(pool, actor)
+    let user = crate::backend::db::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| AccessError::Unavailable)?
         .ok_or(AccessError::NotFound)?;
@@ -373,12 +397,12 @@ pub async fn check_write(
 /// Personal repository owners retain the existing collaborator policy.
 pub async fn change_collaborator(
     pool: &codeyard_db_core::DbPool,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     username: &str,
     permission: Option<codeyard_db_core::models::AccessLevel>,
 ) -> std::result::Result<User, AccessError> {
-    let change = db::repositories::access::change_personal_repository_collaborator(
+    let change = crate::backend::db::repositories::access::change_personal_repository_collaborator(
         pool, actor, repo_id, username, permission,
     )
     .await

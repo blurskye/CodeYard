@@ -1,12 +1,12 @@
-use super::{auth, events, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        events::{EventScope, EventViewer},
-    },
-    identity::tokens,
-};
+use crate::backend::api::github::activity::auth;
+
+use crate::backend::api::github::activity::Error;
+use crate::backend::api::github::activity::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::events::EventScope;
+use crate::backend::db::events::EventViewer;
+
 use axum::{
     extract::{Path, Query, State},
     http::{header, HeaderMap},
@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, fmt::Write, sync::Arc};
 
 fn origin() -> String {
-    crate::backend::api::http::config::link_origin()
+    codeyard_model::http_config::link_origin()
 }
 async fn discovery(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Result<Response> {
     let viewer = auth::authenticate(&state, &headers, false).await?;
@@ -28,12 +28,13 @@ async fn discovery(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Re
     let user = format!("{}/api/activity-feeds/users/{{user}}", origin());
     let mut value = json!({"timeline_url":timeline,"user_url":user,"_links":{"timeline":{"href":timeline,"type":"application/atom+xml"},"user":{"href":user,"type":"application/atom+xml"}}});
     if let Some(viewer) = viewer {
-        let token = tokens::activity_feed_token(&state.pool, viewer.token.id)
-            .await
-            .map_err(|e| match e {
-                tokens::TokenError::Denied => auth::required(),
-                _ => Error::unavailable(()),
-            })?;
+        let token =
+            crate::backend::identity::tokens::activity_feed_token(&state.pool, viewer.token.id)
+                .await
+                .map_err(|e| match e {
+                    crate::backend::identity::tokens::TokenError::Denied => auth::required(),
+                    _ => Error::unavailable(()),
+                })?;
         let username = encode_component(&viewer.user.username);
         for (key, url) in [
             (
@@ -68,11 +69,11 @@ async fn discovery(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Re
         let mut organizations = Vec::new();
         let mut after = 0;
         loop {
-            let rows = super::super::orgs::outcome(
-                db::organizations::profiles::list_actor_organizations(
+            let rows = crate::backend::api::github::orgs::outcome(
+                crate::backend::db::organizations::profiles::list_actor_organizations(
                     &state.pool,
                     viewer.user.id,
-                    db::organizations::OrganizationPage::new(after, 100)
+                    crate::backend::db::organizations::OrganizationPage::new(after, 100)
                         .map_err(Error::unavailable)?,
                 )
                 .await
@@ -162,106 +163,114 @@ async fn feed(
     Query(query): Query<FeedQuery>,
 ) -> Result<Response> {
     let params = params.map(|Path(p)| p).unwrap_or_default();
-    let config = db::node_config::get_node_configuration(&state.pool)
+    let config = crate::backend::db::node_config::get_node_configuration(&state.pool)
         .await
         .map_err(Error::unavailable)?
         .filter(|c| c.setup_completed)
         .ok_or_else(Error::missing)?;
-    let (viewer, scope, public, title, id) =
-        if let Some(kind) = params.get("kind").or_else(|| params.get("org")) {
-            let token = query.token.as_deref().ok_or_else(Error::missing)?;
-            let feed = tokens::activity_feed_user(&state.pool, token)
+    let (viewer, scope, public, title, id) = if let Some(kind) =
+        params.get("kind").or_else(|| params.get("org"))
+    {
+        let token = query.token.as_deref().ok_or_else(Error::missing)?;
+        let feed = crate::backend::identity::tokens::activity_feed_user(&state.pool, token)
+            .await
+            .map_err(|e| {
+                if e == crate::backend::identity::tokens::TokenError::Unavailable {
+                    Error::unavailable(())
+                } else {
+                    Error::missing()
+                }
+            })?;
+        let user = &feed.user;
+        if params.get("username") != Some(&user.username) {
+            return Err(Error::missing());
+        }
+        let scope = if let Some(org) = params.get("org") {
+            let org = crate::backend::db::organizations::profiles::get_public_organization(
+                &state.pool,
+                org,
+            )
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+            if !matches!(
+                crate::backend::db::organizations::profiles::get_organization_metadata(
+                    &state.pool,
+                    user.id,
+                    org.id
+                )
                 .await
-                .map_err(|e| {
-                    if e == tokens::TokenError::Unavailable {
-                        Error::unavailable(())
-                    } else {
-                        Error::missing()
-                    }
-                })?;
-            let user = &feed.user;
-            if params.get("username") != Some(&user.username) {
+                .map_err(Error::unavailable)?,
+                crate::backend::db::organizations::OrganizationOutcome::Applied(_)
+            ) {
                 return Err(Error::missing());
             }
-            let scope = if let Some(org) = params.get("org") {
-                let org = db::organizations::profiles::get_public_organization(&state.pool, org)
-                    .await
-                    .map_err(Error::unavailable)?
-                    .ok_or_else(Error::missing)?;
-                if !matches!(
-                    db::organizations::profiles::get_organization_metadata(
-                        &state.pool,
-                        user.id,
-                        org.id
-                    )
-                    .await
-                    .map_err(Error::unavailable)?,
-                    db::organizations::OrganizationOutcome::Applied(_)
-                ) {
-                    return Err(Error::missing());
-                }
-                EventScope::Organization(org.id)
-            } else {
-                match kind.as_str() {
-                    "actor" => EventScope::Actor(user.id),
-                    "received" => EventScope::Received(user.id),
-                    _ => return Err(Error::missing()),
-                }
-            };
-            let username = encode_component(&user.username);
-            // Never copy the secret query parameter into the feed document or links.
-            let path = if params.contains_key("org") {
-                format!("orgs/{}", encode_component(kind))
-            } else {
-                encode_component(kind)
-            };
-            (
-                Some(EventViewer::Feed {
-                    user: user.id,
-                    token: feed.token,
-                    value: token,
-                }),
-                scope,
-                false,
-                format!("{} activity", user.username),
-                format!("{}/api/activity-feeds/private/{username}/{path}", origin()),
-            )
+            EventScope::Organization(org.id)
         } else {
-            let viewer =
-                auth::authenticate(&state, &headers, false)
-                    .await?
-                    .map(|v| EventViewer::Token {
-                        user: v.user.id,
-                        token: v.token.id,
-                    });
-            if let Some(username) = params.get("username") {
-                let user = db::users::accounts::get_user_by_username(&state.pool, username)
+            match kind.as_str() {
+                "actor" => EventScope::Actor(user.id),
+                "received" => EventScope::Received(user.id),
+                _ => return Err(Error::missing()),
+            }
+        };
+        let username = encode_component(&user.username);
+        // Never copy the secret query parameter into the feed document or links.
+        let path = if params.contains_key("org") {
+            format!("orgs/{}", encode_component(kind))
+        } else {
+            encode_component(kind)
+        };
+        (
+            Some(EventViewer::Feed {
+                user: user.id,
+                token: feed.token,
+                value: token,
+            }),
+            scope,
+            false,
+            format!("{} activity", user.username),
+            format!("{}/api/activity-feeds/private/{username}/{path}", origin()),
+        )
+    } else {
+        let viewer =
+            auth::authenticate(&state, &headers, false)
+                .await?
+                .map(|v| EventViewer::Token {
+                    user: v.user.id,
+                    token: v.token.id,
+                });
+        if let Some(username) = params.get("username") {
+            let user =
+                crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
                     .await
                     .map_err(Error::unavailable)?
                     .filter(|u| !u.is_banned)
                     .ok_or_else(Error::missing)?;
-                (
-                    viewer,
-                    EventScope::Actor(user.id),
-                    true,
-                    format!("{} public activity", user.username),
-                    format!(
-                        "{}/api/activity-feeds/users/{}",
-                        origin(),
-                        encode_component(username)
-                    ),
-                )
-            } else {
-                (
-                    viewer,
-                    EventScope::All,
-                    true,
-                    "Public activity".into(),
-                    format!("{}/api/activity-feeds/public.atom", origin()),
-                )
-            }
-        };
-    let (values, _) = events::documents(&state, viewer, None, scope, public, 0, 100).await?;
+            (
+                viewer,
+                EventScope::Actor(user.id),
+                true,
+                format!("{} public activity", user.username),
+                format!(
+                    "{}/api/activity-feeds/users/{}",
+                    origin(),
+                    encode_component(username)
+                ),
+            )
+        } else {
+            (
+                viewer,
+                EventScope::All,
+                true,
+                "Public activity".into(),
+                format!("{}/api/activity-feeds/public.atom", origin()),
+            )
+        }
+    };
+    let (values, _) = crate::backend::api::github::activity::events::documents(
+        &state, viewer, None, scope, public, 0, 100,
+    )
+    .await?;
     let body = atom(&title, &id, &config.updated_at.to_rfc3339(), &values);
     let mut response = body.into_response();
     response.headers_mut().insert(

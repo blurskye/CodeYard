@@ -1,5 +1,8 @@
-use super::{auth, repository, Error, Result};
-use crate::backend::{app::AppState, db, repositories::releases::immutable};
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -9,7 +12,7 @@ use axum::{
 use serde_json::{json, Value};
 use std::sync::Arc;
 fn error(error: anyhow::Error) -> Error {
-    use db::repositories::immutable_releases::Refusal;
+    use crate::backend::db::repositories::immutable_releases::Refusal;
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Repository administration required")
@@ -27,16 +30,21 @@ async fn check(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = actor.ok_or_else(auth::required)?;
-    if !immutable::enabled(&state.pool, Some(&actor.user), &repo)
-        .await
-        .map_err(error)?
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
+    if !crate::backend::repositories::releases::immutable::enabled(
+        &state.pool,
+        Some(&actor.user),
+        &repo,
+    )
+    .await
+    .map_err(error)?
     {
         return Err(Error::missing());
     }
-    let (_, enforced_by_owner) = db::repositories::immutable_releases::policy(&state.pool, repo.id)
-        .await
-        .map_err(error)?;
+    let (_, enforced_by_owner) =
+        crate::backend::db::repositories::immutable_releases::policy(&state.pool, repo.id)
+            .await
+            .map_err(error)?;
     Ok(Json(
         json!({"enabled":true,"enforced_by_owner":enforced_by_owner}),
     ))
@@ -49,10 +57,15 @@ async fn change(
     enabled: bool,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(state, headers, owner, name, true).await?;
-    let actor = actor.ok_or_else(auth::required)?;
-    immutable::set_enabled(&state.pool, actor.database_actor(), repo.id, enabled)
-        .await
-        .map_err(error)?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
+    crate::backend::repositories::releases::immutable::set_enabled(
+        &state.pool,
+        actor.database_actor(),
+        repo.id,
+        enabled,
+    )
+    .await
+    .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 async fn enable(

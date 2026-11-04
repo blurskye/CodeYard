@@ -1,9 +1,10 @@
-use super::{repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    repositories::activity::{self, InvalidQuery},
-    webhooks::payloads,
-};
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::activity::InvalidQuery;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap},
@@ -16,11 +17,11 @@ async fn list(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
-    Query(input): Query<activity::Query>,
+    Query(input): Query<crate::backend::repositories::activity::Query>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let page = activity::page(
+    let page = crate::backend::repositories::activity::page(
         &state.pool,
         repo.id,
         &input,
@@ -37,14 +38,14 @@ async fn list(
         ("after", "next", page.next.as_deref()),
     ] {
         if let Some(cursor) = cursor {
-            let query = activity::query_string(
+            let query = crate::backend::repositories::activity::query_string(
                 &input,
                 (key == "before").then_some(cursor),
                 (key == "after").then_some(cursor),
             );
             links.push(format!(
                 "<{}{}?{query}>; rel=\"{relation}\"",
-                crate::backend::api::http::config::link_origin(),
+                codeyard_model::http_config::link_origin(),
                 uri.path()
             ));
         }
@@ -61,7 +62,7 @@ async fn list(
         Json(
             page.rows
                 .iter()
-                .map(payloads::repository_activity)
+                .map(crate::backend::webhooks::payloads::repository_activity)
                 .collect::<Vec<_>>(),
         ),
     )

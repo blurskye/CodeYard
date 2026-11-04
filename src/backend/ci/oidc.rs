@@ -1,6 +1,5 @@
 //! OIDC identities come from admitted workflows and live job credentials, never request claims.
-use crate::backend::db;
-use crate::backend::identity::github_apps;
+
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use codeyard_db_core::DbPool;
@@ -13,7 +12,7 @@ use rsa::{
 use serde_json::{json, Value};
 
 pub fn issuer() -> String {
-    crate::backend::api::http::config::link_origin()
+    codeyard_model::http_config::link_origin()
         .trim_end_matches('/')
         .to_owned()
 }
@@ -39,11 +38,11 @@ impl SigningKeys {
 
     async fn key(&self) -> Result<std::sync::Arc<SigningKey>> {
         self.key.get_or_try_init(|| async {
-            let pem = match db::oidc::key(&self.pool).await? {
+            let pem = match crate::backend::db::oidc::key(&self.pool).await? {
                 Some(pem) => pem,
                 None => {
-                    let (pem, _) = github_apps::generate_key().await?;
-                    db::oidc::store_key(&self.pool, &pem).await?
+                    let (pem, _) = crate::backend::identity::github_apps::generate_key().await?;
+                    crate::backend::db::oidc::store_key(&self.pool, &pem).await?
                 }
             };
             tokio::task::spawn_blocking(move || -> Result<_> {
@@ -58,7 +57,7 @@ impl SigningKeys {
 }
 
 fn kid(key: &RsaPrivateKey) -> String {
-    super::runtime::token_hash(&URL_SAFE_NO_PAD.encode(key.n().to_bytes_be()))
+    crate::backend::ci::runtime::token_hash(&URL_SAFE_NO_PAD.encode(key.n().to_bytes_be()))
 }
 
 pub async fn jwks(keys: &SigningKeys) -> Result<Value> {
@@ -80,23 +79,23 @@ pub async fn issue(
     audience: Option<&str>,
 ) -> Result<Option<String>> {
     let pool = &keys.pool;
-    let hash = super::runtime::token_hash(credential);
-    let Some(job) = db::oidc::job(pool, &hash).await? else {
+    let hash = crate::backend::ci::runtime::token_hash(credential);
+    let Some(job) = crate::backend::db::oidc::job(pool, &hash).await? else {
         return Ok(None);
     };
-    let run = db::ci::get_ci_run_by_run_id(pool, job.run_id)
+    let run = crate::backend::db::ci::get_ci_run_by_run_id(pool, job.run_id)
         .await?
         .context("OIDC run missing")?;
-    let repo = db::repositories::records::get_repository_by_id(pool, run.repo_id)
+    let repo = crate::backend::db::repositories::records::get_repository_by_id(pool, run.repo_id)
         .await?
         .context("OIDC repository missing")?;
-    let owner = db::repositories::records::repository_owner_name(pool, repo.id)
+    let owner = crate::backend::db::repositories::records::repository_owner_name(pool, repo.id)
         .await?
         .context("OIDC owner missing")?;
     // A rerun keeps the original actor, as github.actor shows it to the workflow's jobs.
     let actor_id = match run.workflow_run_id.filter(|root| *root != run.id) {
         Some(root) => {
-            db::ci::get_ci_run_by_id(pool, run.repo_id, root)
+            crate::backend::db::ci::get_ci_run_by_id(pool, run.repo_id, root)
                 .await?
                 .context("OIDC root run missing")?
                 .triggered_by_id
@@ -104,13 +103,13 @@ pub async fn issue(
         None => run.triggered_by_id,
     };
     let actor = match actor_id {
-        Some(id) => db::users::accounts::get_user_by_id(pool, id).await?,
+        Some(id) => crate::backend::db::users::accounts::get_user_by_id(pool, id).await?,
         None => None,
     }
     .context("OIDC actor missing")?;
     let repository = format!("{owner}/{}", repo.name);
     let reference = if run.event == "pull_request" {
-        let pull = db::pull_requests::records::get_pull_request_by_id(
+        let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
             pool,
             run.pull_request_id.context("OIDC pull request missing")?,
         )
@@ -153,12 +152,14 @@ pub async fn issue(
             let source_id = snapshot["repository_id"]
                 .as_i64()
                 .context("OIDC called repository missing")?;
-            let source = db::repositories::records::get_repository_by_id(pool, source_id)
-                .await?
-                .context("OIDC called repository missing")?;
-            let source_owner = db::repositories::records::repository_owner_name(pool, source.id)
-                .await?
-                .context("OIDC called owner missing")?;
+            let source =
+                crate::backend::db::repositories::records::get_repository_by_id(pool, source_id)
+                    .await?
+                    .context("OIDC called repository missing")?;
+            let source_owner =
+                crate::backend::db::repositories::records::repository_owner_name(pool, source.id)
+                    .await?
+                    .context("OIDC called owner missing")?;
             let path = snapshot["source_path"]
                 .as_str()
                 .context("OIDC called workflow path missing")?;
@@ -191,7 +192,7 @@ pub async fn issue(
     if let Some(environment) = job.environment {
         claims["environment"] = json!(environment);
     }
-    let settings = db::oidc::token_settings(pool, repo.id).await?;
+    let settings = crate::backend::db::oidc::token_settings(pool, repo.id).await?;
     for (name, value) in settings.properties {
         claims[&name] = json!(value);
     }
@@ -213,7 +214,7 @@ pub async fn issue(
     }
     let key = keys.key().await?;
     // Key generation can take time. Recheck without the REST credential's completion grace period.
-    if db::oidc::job(pool, &hash).await?.is_none() {
+    if crate::backend::db::oidc::job(pool, &hash).await?.is_none() {
         return Ok(None);
     }
     let header = URL_SAFE_NO_PAD.encode(serde_json::to_vec(

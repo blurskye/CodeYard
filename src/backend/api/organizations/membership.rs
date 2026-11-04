@@ -1,10 +1,10 @@
 //! Native membership commands; last-owner policy belongs to the DAO.
 
-use super::organization;
-use super::organization::{unavailable, unit, Fields};
 use crate::backend::api::http::context::PageContext;
-use crate::backend::db;
-use crate::backend::db::organizations;
+use crate::backend::api::organizations::organization::unavailable;
+use crate::backend::api::organizations::organization::unit;
+use crate::backend::api::organizations::organization::Fields;
+
 use crate::backend::db::organizations::OrganizationOutcome;
 use crate::backend::notifications::create::organization_invitation;
 use axum::response::Response;
@@ -18,12 +18,13 @@ pub(super) async fn project(
 ) -> Result<Vec<view::Member>, Response> {
     // IDs come only from the authorized, paginated organization/team reads.
     let ids = members.iter().map(|(id, _)| *id).collect::<Vec<_>>();
-    let users: HashMap<_, _> = db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .into_iter()
-        .map(|user| (user.id, user.username))
-        .collect();
+    let users: HashMap<_, _> =
+        crate::backend::db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .into_iter()
+            .map(|user| (user.id, user.username))
+            .collect();
     members
         .into_iter()
         .map(|(user_id, role)| {
@@ -113,82 +114,105 @@ pub(super) enum Command {
 }
 impl Command {
     pub(super) fn parse(form: &Fields) -> Result<Self, ()> {
-        Ok(match organization::field(form, "action") {
-            "membership-visibility" => Self::Visibility {
-                public: match organization::field(form, "visibility") {
-                    "public" => true,
-                    "private" => false,
-                    _ => return Err(()),
+        Ok(
+            match crate::backend::api::organizations::organization::field(form, "action") {
+                "membership-visibility" => Self::Visibility {
+                    public: match crate::backend::api::organizations::organization::field(
+                        form,
+                        "visibility",
+                    ) {
+                        "public" => true,
+                        "private" => false,
+                        _ => return Err(()),
+                    },
                 },
-            },
-            "add-member" => {
-                let recipient = organization::field(form, "username");
-                let username = if recipient.contains('@') {
-                    recipient.trim().to_ascii_lowercase()
-                } else {
-                    organization::username(form)?
-                };
-                let team_slugs = organization::field(form, "team_slugs")
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|name| !name.is_empty())
-                    .map(str::to_owned)
-                    .collect();
-                let reinstate = match organization::field(form, "reinstate") {
-                    "" => false,
-                    "yes" => true,
-                    _ => return Err(()),
-                };
-                Self::Invite {
-                    username,
-                    role: organizations::parse_organization_role(organization::field(form, "role"))
+                "add-member" => {
+                    let recipient =
+                        crate::backend::api::organizations::organization::field(form, "username");
+                    let username = if recipient.contains('@') {
+                        recipient.trim().to_ascii_lowercase()
+                    } else {
+                        crate::backend::api::organizations::organization::username(form)?
+                    };
+                    let team_slugs =
+                        crate::backend::api::organizations::organization::field(form, "team_slugs")
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|name| !name.is_empty())
+                            .map(str::to_owned)
+                            .collect();
+                    let reinstate = match crate::backend::api::organizations::organization::field(
+                        form,
+                        "reinstate",
+                    ) {
+                        "" => false,
+                        "yes" => true,
+                        _ => return Err(()),
+                    };
+                    Self::Invite {
+                        username,
+                        role: crate::backend::db::organizations::parse_organization_role(
+                            crate::backend::api::organizations::organization::field(form, "role"),
+                        )
                         .map_err(|_| ())?,
-                    team_slugs,
-                    reinstate,
+                        team_slugs,
+                        reinstate,
+                    }
                 }
-            }
-            "member-role" => Self::ChangeRole {
-                user: organization::id(form, "user_id")?,
-                role: organizations::parse_organization_role(organization::field(form, "role"))
+                "member-role" => Self::ChangeRole {
+                    user: crate::backend::api::organizations::organization::id(form, "user_id")?,
+                    role: crate::backend::db::organizations::parse_organization_role(
+                        crate::backend::api::organizations::organization::field(form, "role"),
+                    )
                     .map_err(|_| ())?,
-            },
-            "remove-member" => Self::Remove {
-                user: organization::id(form, "user_id")?,
-            },
-            "block-user" => {
-                let username = organization::field(form, "username").trim();
-                if username.is_empty() {
-                    return Err(());
+                },
+                "remove-member" => Self::Remove {
+                    user: crate::backend::api::organizations::organization::id(form, "user_id")?,
+                },
+                "block-user" => {
+                    let username =
+                        crate::backend::api::organizations::organization::field(form, "username")
+                            .trim();
+                    if username.is_empty() {
+                        return Err(());
+                    }
+                    Self::Block {
+                        username: username.to_owned(),
+                    }
                 }
-                Self::Block {
-                    username: username.to_owned(),
+                "unblock-user" => Self::Unblock {
+                    user: crate::backend::api::organizations::organization::id(form, "user_id")?,
+                },
+                "convert-outside" => Self::ConvertOutside {
+                    user: crate::backend::api::organizations::organization::id(form, "user_id")?,
+                },
+                "remove-outside" => Self::RemoveOutside {
+                    user: crate::backend::api::organizations::organization::id(form, "user_id")?,
+                },
+                "cancel-invitation"
+                    if form.contains_key("invitation_id") && !form.contains_key("user_id") =>
+                {
+                    Self::CancelInvitationId {
+                        invitation: crate::backend::api::organizations::organization::id(
+                            form,
+                            "invitation_id",
+                        )?,
+                    }
                 }
-            }
-            "unblock-user" => Self::Unblock {
-                user: organization::id(form, "user_id")?,
-            },
-            "convert-outside" => Self::ConvertOutside {
-                user: organization::id(form, "user_id")?,
-            },
-            "remove-outside" => Self::RemoveOutside {
-                user: organization::id(form, "user_id")?,
-            },
-            "cancel-invitation"
-                if form.contains_key("invitation_id") && !form.contains_key("user_id") =>
-            {
-                Self::CancelInvitationId {
-                    invitation: organization::id(form, "invitation_id")?,
+                "cancel-invitation" if !form.contains_key("invitation_id") => {
+                    Self::CancelInvitation {
+                        user: crate::backend::api::organizations::organization::id(
+                            form, "user_id",
+                        )?,
+                    }
                 }
-            }
-            "cancel-invitation" if !form.contains_key("invitation_id") => Self::CancelInvitation {
-                user: organization::id(form, "user_id")?,
+                _ => return Err(()),
             },
-            _ => return Err(()),
-        })
+        )
     }
 }
 pub(super) async fn target(ctx: &PageContext, username: &str) -> Result<Option<i64>, Response> {
-    db::users::accounts::get_user_by_username(&ctx.state.pool, username)
+    crate::backend::db::users::accounts::get_user_by_username(&ctx.state.pool, username)
         .await
         .map(|user| user.map(|user| user.id))
         .map_err(|_| unavailable(ctx))
@@ -202,7 +226,7 @@ pub(super) async fn apply(
     let pool = &ctx.state.pool;
     let result = match command {
         Command::Visibility { public } => {
-            organizations::discovery::set_membership_public(
+            crate::backend::db::organizations::discovery::set_membership_public(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -224,22 +248,30 @@ pub(super) async fn apply(
             };
             if user.is_none() && email.is_none() {
                 // Only an owner or admin may learn that the name is unknown; anyone else is refused.
-                return match organizations::get_organization_role(pool, actor, org).await {
-                    Ok(OrganizationOutcome::Applied(role)) if organizations::administers(role) => {
+                return match crate::backend::db::organizations::get_organization_role(
+                    pool, actor, org,
+                )
+                .await
+                {
+                    Ok(OrganizationOutcome::Applied(role))
+                        if crate::backend::db::organizations::administers(role) =>
+                    {
                         Ok(OrganizationOutcome::Missing)
                     }
                     Ok(_) => Ok(OrganizationOutcome::Denied),
                     Err(_) => Err(unavailable(ctx)),
                 };
             }
-            let input = organizations::NewInvitation {
+            let input = crate::backend::db::organizations::NewInvitation {
                 user_id: user,
                 email,
                 role,
                 reinstate,
-                teams: Some(organizations::InvitationTeams::Slugs(team_slugs)),
+                teams: Some(crate::backend::db::organizations::InvitationTeams::Slugs(
+                    team_slugs,
+                )),
             };
-            let outcome = organizations::create_organization_invitation(
+            let outcome = crate::backend::db::organizations::create_organization_invitation(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -260,7 +292,7 @@ pub(super) async fn apply(
             return Ok(unit(outcome));
         }
         Command::CancelInvitation { user } => {
-            organizations::cancel_organization_invitation(
+            crate::backend::db::organizations::cancel_organization_invitation(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -269,7 +301,7 @@ pub(super) async fn apply(
             .await
         }
         Command::CancelInvitationId { invitation } => {
-            organizations::cancel_invitation_id(
+            crate::backend::db::organizations::cancel_invitation_id(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -278,30 +310,51 @@ pub(super) async fn apply(
             )
             .await
         }
-        Command::ChangeRole { user, role } => organizations::update_organization_member_role(
-            pool,
-            ctx.database_actor(actor),
-            org,
-            user,
-            role,
-        )
-        .await
-        .map(unit),
+        Command::ChangeRole { user, role } => {
+            crate::backend::db::organizations::update_organization_member_role(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                user,
+                role,
+            )
+            .await
+            .map(unit)
+        }
         Command::Remove { user } => {
-            organizations::remove_organization_member(pool, ctx.database_actor(actor), org, user)
-                .await
+            crate::backend::db::organizations::remove_organization_member(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                user,
+            )
+            .await
         }
         Command::Block { username } => {
             let Some(user) = target(ctx, &username).await? else {
                 return Ok(OrganizationOutcome::Missing);
             };
-            organizations::blocks::change(pool, ctx.database_actor(actor), org, user, true).await
+            crate::backend::db::organizations::blocks::change(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                user,
+                true,
+            )
+            .await
         }
         Command::Unblock { user } => {
-            organizations::blocks::change(pool, ctx.database_actor(actor), org, user, false).await
+            crate::backend::db::organizations::blocks::change(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                user,
+                false,
+            )
+            .await
         }
         Command::ConvertOutside { user } => {
-            organizations::convert_to_outside_collaborator(
+            crate::backend::db::organizations::convert_to_outside_collaborator(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -310,7 +363,13 @@ pub(super) async fn apply(
             .await
         }
         Command::RemoveOutside { user } => {
-            organizations::outside::remove(pool, ctx.database_actor(actor), org, user).await
+            crate::backend::db::organizations::outside::remove(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                user,
+            )
+            .await
         }
     };
     result.map_err(|_| unavailable(ctx))

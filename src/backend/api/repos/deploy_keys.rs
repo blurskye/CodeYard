@@ -2,13 +2,16 @@
 //! `repositories::deploy_keys`, and both need repository admin access.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::http::session::{extract_session_id, get_current_user};
+use crate::backend::api::http::session::extract_session_id;
+use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::chrome::Loaded;
-use crate::backend::api::repos::forms::{checkbox, field};
-use crate::backend::api::repos::repository::{settings_model, settings_response};
+use crate::backend::api::repos::forms::checkbox;
+use crate::backend::api::repos::forms::field;
+use crate::backend::api::repos::repository::settings_model;
+use crate::backend::api::repos::repository::settings_response;
 use crate::backend::app::AppState;
-use crate::backend::repositories::deploy_keys as keys;
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -99,7 +102,7 @@ pub async fn list_keys(
 ) -> Result<Json<Vec<DeployKeyResponse>>, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = repository_for(&state, &owner, &repo, &headers).await?;
-    let keys = keys::list_keys(
+    let keys = crate::backend::repositories::deploy_keys::list_keys(
         &state.pool,
         &actor,
         &repository,
@@ -120,7 +123,7 @@ pub async fn create_key(
 ) -> Result<(StatusCode, Json<DeployKeyResponse>), (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = repository_for(&state, &owner, &repo, &headers).await?;
-    let key = keys::add_key(
+    let key = crate::backend::repositories::deploy_keys::add_key(
         &state.pool,
         &actor,
         &extract_session_id(&headers).unwrap_or_default(),
@@ -141,7 +144,7 @@ pub async fn delete_key(
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = repository_for(&state, &owner, &repo, &headers).await?;
-    keys::remove_key(
+    crate::backend::repositories::deploy_keys::remove_key(
         &state.pool,
         &actor,
         &extract_session_id(&headers).unwrap_or_default(),
@@ -170,7 +173,7 @@ pub(super) async fn settings_section(
 ) -> Result<Box<codeyard_webui::components::deploy_keys::DeployKeyPanel>, Response> {
     let base = format!("{}/settings?tab=deploy-keys", loaded.chrome.base());
     let action = format!("{}/_forms", loaded.chrome.base());
-    let place = keys::Place {
+    let place = crate::backend::repositories::deploy_keys::Place {
         base: &base,
         action: &action,
         csrf_token: &loaded.chrome.csrf_token,
@@ -178,7 +181,7 @@ pub(super) async fn settings_section(
             extract_session_id(&ctx.headers).unwrap_or_default(),
         ),
     };
-    keys::settings_panel(
+    crate::backend::repositories::deploy_keys::settings_panel(
         &ctx.state.pool,
         viewer,
         &loaded.repository,
@@ -219,7 +222,7 @@ pub(super) async fn form(
     let repository = &loaded.repository;
     let base = format!("{}/settings?tab=deploy-keys", loaded.chrome.base());
     let outcome = if action == "deploy-key-add" {
-        keys::add_key(
+        crate::backend::repositories::deploy_keys::add_key(
             pool,
             actor,
             &extract_session_id(&ctx.headers).unwrap_or_default(),
@@ -232,7 +235,7 @@ pub(super) async fn form(
         .map(|_| "added")
     } else {
         match field(form, "key_id").parse::<i64>() {
-            Ok(key_id) => keys::remove_key(
+            Ok(key_id) => crate::backend::repositories::deploy_keys::remove_key(
                 pool,
                 actor,
                 &extract_session_id(&ctx.headers).unwrap_or_default(),

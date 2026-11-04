@@ -110,7 +110,7 @@ pub struct OrganizationAlert {
 }
 
 pub struct NewUpload<'a> {
-    pub actor: super::credentials::Actor,
+    pub actor: crate::backend::db::credentials::Actor,
     pub repo: i64,
     pub ref_name: &'a str,
     pub commit_sha: &'a str,
@@ -230,10 +230,10 @@ pub struct AlertSnapshot {
     pub instances: std::collections::HashMap<i64, Instance>,
 }
 
-native_operation!(super::postgres::code_scanning::security_read_allowed, super::sqlite::code_scanning::security_read_allowed,
+native_operation!(crate::backend::db::postgres::code_scanning::security_read_allowed, crate::backend::db::sqlite::code_scanning::security_read_allowed,
     fn security_read_allowed(pool: &DbPool, actor: i64, session: &str, repo: i64) -> Result<bool>);
 
-native_operation!(super::postgres::code_scanning::read_alert_snapshot, super::sqlite::code_scanning::read_alert_snapshot,
+native_operation!(crate::backend::db::postgres::code_scanning::read_alert_snapshot, crate::backend::db::sqlite::code_scanning::read_alert_snapshot,
     fn read_alert_snapshot(pool: &DbPool, actor: i64, session: &str, selection: &AlertSelection<'_>) -> Result<AlertSnapshot>);
 
 pub struct PullSelection<'a> {
@@ -261,9 +261,9 @@ pub struct PullSnapshot {
     pub processing: Vec<(String, String, Option<String>)>,
 }
 
-native_operation!(super::postgres::code_scanning::pull_snapshot, super::sqlite::code_scanning::pull_snapshot,
+native_operation!(crate::backend::db::postgres::code_scanning::pull_snapshot, crate::backend::db::sqlite::code_scanning::pull_snapshot,
     fn pull_snapshot(pool: &DbPool, actor: i64, session: &str, selection: &PullSelection<'_>) -> Result<PullSnapshot>);
-native_operation!(super::postgres::code_scanning::pull_merge_candidates, super::sqlite::code_scanning::pull_merge_candidates,
+native_operation!(crate::backend::db::postgres::code_scanning::pull_merge_candidates, crate::backend::db::sqlite::code_scanning::pull_merge_candidates,
     fn pull_merge_candidates(pool: &DbPool, actor: i64, session: &str, repo: i64, number: i32) -> Result<Vec<String>>);
 
 pub struct Change {
@@ -335,45 +335,45 @@ impl Dismissal<'_> {
     }
 }
 
-native_operation!(super::postgres::code_scanning::pull_analyses, super::sqlite::code_scanning::pull_analyses,
+native_operation!(crate::backend::db::postgres::code_scanning::pull_analyses, crate::backend::db::sqlite::code_scanning::pull_analyses,
     fn pull_analyses(pool: &DbPool, repo: i64, head: &str, number: i32, branch: Option<&str>) -> Result<Vec<Analysis>>);
-native_operation!(super::postgres::code_scanning::pull_processing, super::sqlite::code_scanning::pull_processing,
+native_operation!(crate::backend::db::postgres::code_scanning::pull_processing, crate::backend::db::sqlite::code_scanning::pull_processing,
     fn pull_processing(pool: &DbPool, repo: i64, head: &str, number: i32, branch: Option<&str>) -> Result<Option<(String,Option<String>)>>);
-native_operation!(super::postgres::code_scanning::baseline_analysis, super::sqlite::code_scanning::baseline_analysis,
+native_operation!(crate::backend::db::postgres::code_scanning::baseline_analysis, crate::backend::db::sqlite::code_scanning::baseline_analysis,
     fn baseline_analysis(pool: &DbPool, repo: i64, tool: &str, category: &str, reference: &str, commit: &str) -> Result<Option<i64>>);
-native_operation!(super::postgres::code_scanning::new_findings, super::sqlite::code_scanning::new_findings,
+native_operation!(crate::backend::db::postgres::code_scanning::new_findings, crate::backend::db::sqlite::code_scanning::new_findings,
     fn new_findings(pool: &DbPool, analysis: i64, baseline: Option<i64>) -> Result<Vec<NewFinding>>);
-native_operation!(super::postgres::code_scanning::enqueue, super::sqlite::code_scanning::enqueue,
+native_operation!(crate::backend::db::postgres::code_scanning::enqueue, crate::backend::db::sqlite::code_scanning::enqueue,
     fn enqueue(pool: &DbPool, input: &NewUpload<'_>) -> Result<Upload>);
-native_operation!(super::postgres::code_scanning::upload_status, super::sqlite::code_scanning::upload_status,
+native_operation!(crate::backend::db::postgres::code_scanning::upload_status, crate::backend::db::sqlite::code_scanning::upload_status,
     fn upload_status(pool: &DbPool, repo: i64, id: &str) -> Result<Option<UploadStatus>>);
-native_operation!(super::postgres::code_scanning::pending, super::sqlite::code_scanning::pending,
+native_operation!(crate::backend::db::postgres::code_scanning::pending, crate::backend::db::sqlite::code_scanning::pending,
     fn pending(pool: &DbPool) -> Result<Option<Upload>>);
-native_operation!(super::postgres::code_scanning::finish, super::sqlite::code_scanning::finish,
+native_operation!(crate::backend::db::postgres::code_scanning::finish, crate::backend::db::sqlite::code_scanning::finish,
     fn finish(pool: &DbPool, upload: &Upload, runs: &[Run], error: Option<&str>) -> Result<Vec<Change>>);
-native_operation!(super::postgres::code_scanning::analysis_alerts, super::sqlite::code_scanning::analysis_alerts,
+native_operation!(crate::backend::db::postgres::code_scanning::analysis_alerts, crate::backend::db::sqlite::code_scanning::analysis_alerts,
     fn analysis_alerts(pool: &DbPool, analysis: i64) -> Result<Vec<(i64,i64)>>);
-native_operation!(super::postgres::code_scanning::analyses, super::sqlite::code_scanning::analyses,
+native_operation!(crate::backend::db::postgres::code_scanning::analyses, crate::backend::db::sqlite::code_scanning::analyses,
     fn analyses(pool: &DbPool, repo: i64, filters: &AnalysisFilters<'_>, offset: i64, limit: i64) -> Result<Vec<AnalysisEntry>>);
-native_operation!(super::postgres::code_scanning::analysis, super::sqlite::code_scanning::analysis,
+native_operation!(crate::backend::db::postgres::code_scanning::analysis, crate::backend::db::sqlite::code_scanning::analysis,
     fn analysis(pool: &DbPool, repo: i64, id: i64) -> Result<Option<AnalysisEntry>>);
-native_operation!(super::postgres::code_scanning::analysis_sarif, super::sqlite::code_scanning::analysis_sarif,
+native_operation!(crate::backend::db::postgres::code_scanning::analysis_sarif, crate::backend::db::sqlite::code_scanning::analysis_sarif,
     fn analysis_sarif(pool: &DbPool, repo: i64, id: i64) -> Result<Option<String>>);
-native_operation!(super::postgres::code_scanning::alert_page, super::sqlite::code_scanning::alert_page,
+native_operation!(crate::backend::db::postgres::code_scanning::alert_page, crate::backend::db::sqlite::code_scanning::alert_page,
     fn alert_page(pool: &DbPool, scope: AlertScope, filters: &AlertFilters<'_>, offset: i64, limit: i64) -> Result<Vec<Alert>>);
-native_operation!(super::postgres::code_scanning::organization_alert_page, super::sqlite::code_scanning::organization_alert_page,
+native_operation!(crate::backend::db::postgres::code_scanning::organization_alert_page, crate::backend::db::sqlite::code_scanning::organization_alert_page,
     fn organization_alert_page(pool: &DbPool, actor: i64, org: i64, filters: &AlertFilters<'_>, offset: i64, limit: i64) -> Result<Vec<OrganizationAlert>>);
-native_operation!(super::postgres::code_scanning::alert, super::sqlite::code_scanning::alert,
+native_operation!(crate::backend::db::postgres::code_scanning::alert, crate::backend::db::sqlite::code_scanning::alert,
     fn alert(pool: &DbPool, repo: i64, number: i64) -> Result<Option<Alert>>);
-native_operation!(super::postgres::code_scanning::instance_filtered, super::sqlite::code_scanning::instance_filtered,
+native_operation!(crate::backend::db::postgres::code_scanning::instance_filtered, crate::backend::db::sqlite::code_scanning::instance_filtered,
     fn instance_filtered(pool: &DbPool, alert: i64, reference: Option<&str>, pull_request: Option<i32>) -> Result<Option<Instance>>);
-native_operation!(super::postgres::code_scanning::instances_filtered, super::sqlite::code_scanning::instances_filtered,
+native_operation!(crate::backend::db::postgres::code_scanning::instances_filtered, crate::backend::db::sqlite::code_scanning::instances_filtered,
     fn instances_filtered(pool: &DbPool, alert: i64, reference: Option<&str>, pull_request: Option<i32>, offset: i64, limit: i64) -> Result<Vec<Instance>>);
-native_operation!(super::postgres::code_scanning::instance, super::sqlite::code_scanning::instance,
+native_operation!(crate::backend::db::postgres::code_scanning::instance, crate::backend::db::sqlite::code_scanning::instance,
     fn instance(pool: &DbPool, alert: i64, reference: Option<&str>) -> Result<Option<Instance>>);
-native_operation!(super::postgres::code_scanning::instances, super::sqlite::code_scanning::instances,
+native_operation!(crate::backend::db::postgres::code_scanning::instances, crate::backend::db::sqlite::code_scanning::instances,
     fn instances(pool: &DbPool, alert: i64, reference: Option<&str>, offset: i64, limit: i64) -> Result<Vec<Instance>>);
-native_operation!(super::postgres::code_scanning::dismiss, super::sqlite::code_scanning::dismiss,
-    fn dismiss(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, number: i64, input: &Dismissal<'_>) -> Result<Alert>);
-native_operation!(super::postgres::code_scanning::delete_analysis, super::sqlite::code_scanning::delete_analysis,
-    fn delete_analysis(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, id: i64, confirm: bool) -> Result<Option<i64>>);
+native_operation!(crate::backend::db::postgres::code_scanning::dismiss, crate::backend::db::sqlite::code_scanning::dismiss,
+    fn dismiss(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, number: i64, input: &Dismissal<'_>) -> Result<Alert>);
+native_operation!(crate::backend::db::postgres::code_scanning::delete_analysis, crate::backend::db::sqlite::code_scanning::delete_analysis,
+    fn delete_analysis(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, id: i64, confirm: bool) -> Result<Option<i64>>);

@@ -95,10 +95,16 @@ async fn fork_source(
         .await?
         .ok_or(RepositoryStorageRefusal::Denied)?;
     anyhow::ensure!(
-        !super::super::users::blocks::repository_interaction_blocked(connection, actor, id).await?,
+        !crate::backend::db::sqlite::users::blocks::repository_interaction_blocked(
+            connection, actor, id
+        )
+        .await?,
         RepositoryStorageRefusal::Denied
     );
-    let access = super::access::user_repo_access_in_transaction(connection, actor, id).await?;
+    let access = crate::backend::db::sqlite::repositories::access::user_repo_access_in_transaction(
+        connection, actor, id,
+    )
+    .await?;
     // Site admins may fork any personal repository, not organization ones.
     let personal_admin = admin
         && source.owner_kind == "user"
@@ -171,7 +177,7 @@ async fn insert_kind(
         RepositoryTarget::Organization(id) => ("org", None, Some(id)),
     };
     let property_values = if let Some(org) = org {
-        super::super::organizations::properties::creation_values_on(
+        crate::backend::db::sqlite::organizations::properties::creation_values_on(
             &mut tx, creator, org, properties,
         )
         .await?
@@ -186,7 +192,10 @@ async fn insert_kind(
         Vec::new()
     };
     if !gist
-        && !super::super::gists::ordinary_name_available(&mut tx, user, org, input.name).await?
+        && !crate::backend::db::sqlite::gists::ordinary_name_available(
+            &mut tx, user, org, input.name,
+        )
+        .await?
     {
         return Ok(None);
     }
@@ -212,10 +221,11 @@ async fn insert_kind(
         );
         let source = input.source_id.ok_or(RepositoryStorageRefusal::Denied)?;
         let advisory =
-            super::super::advisories::administration(&mut tx, creator, source, ghsa).await?;
+            crate::backend::db::sqlite::advisories::administration(&mut tx, creator, source, ghsa)
+                .await?;
         anyhow::ensure!(
             advisory.state == "draft" && advisory.private_fork_id.is_none(),
-            crate::backend::db::advisories::Refusal::Conflict
+            codeyard_model::advisories::Refusal::Conflict
         );
     }
     if let Some(source_id) = input.source_id.filter(|_| admission.advisory.is_none()) {
@@ -232,7 +242,12 @@ async fn insert_kind(
     validate_creation_visibility(&mut tx, input.owner, private).await?;
     // Retain the original credential after resource locks, checking expiry after admission waits.
     if let Some(credential) = admission.authority.and_then(|actor| actor.credential()) {
-        super::super::users::transitions::require_account(&mut tx, creator, &credential).await?;
+        crate::backend::db::sqlite::users::transitions::require_account(
+            &mut tx,
+            creator,
+            &credential,
+        )
+        .await?;
     }
     let repository = sqlx::query_as::<_, Repository>(
         "INSERT INTO repositories (owner_kind,owner_user_id,owner_org_id,name,description,is_private,disk_path,is_fork,forked_from_id,default_branch,storage_node_id,created_by_id,is_gist,visibility_locked)
@@ -255,7 +270,7 @@ async fn insert_kind(
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(repository) = &repository {
-        super::super::code_security::apply_default(&mut tx, repository).await?;
+        crate::backend::db::sqlite::code_security::apply_default(&mut tx, repository).await?;
         if source.is_some() {
             sqlx::query("INSERT INTO repo_actions_settings(repo_id,enabled) VALUES(?1,false)")
                 .bind(repository.id)
@@ -264,7 +279,7 @@ async fn insert_kind(
         }
     }
     if let (Some(org), Some(repository)) = (org, repository.as_ref()) {
-        super::super::organizations::properties::apply_on(
+        crate::backend::db::sqlite::organizations::properties::apply_on(
             &mut tx,
             org,
             repository.id,

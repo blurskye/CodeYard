@@ -3,7 +3,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use OrganizationOutcome::{Applied, Conflict, Denied};
 
-use super::authority::*;
+use crate::backend::db::sqlite::organizations::authority::*;
 
 pub async fn create_organization(
     pool: &SqlitePool,

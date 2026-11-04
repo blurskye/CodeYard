@@ -57,7 +57,7 @@ impl NodeKey {
     }
 
     /// Domain-separated application statements share the node's established signing identity.
-    pub(crate) fn sign(&self, message: &[u8]) -> [u8; 64] {
+    pub fn sign(&self, message: &[u8]) -> [u8; 64] {
         self.secret.sign(message).to_bytes()
     }
 
@@ -100,7 +100,7 @@ pub fn load_existing(state_dir: &Path) -> Result<Option<NodeKey>> {
     load(state_dir, &|name| std::env::var(name).ok(), false)
 }
 
-fn load(
+pub fn load(
     state_dir: &Path,
     lookup: &dyn Fn(&str) -> Option<String>,
     create: bool,
@@ -120,7 +120,7 @@ fn load(
 
 /// Backed-up standalone release identity. Preserve the old repository-root signer without
 /// replacing a different node identity, and never remove the legacy file during migration.
-pub(crate) fn release_key(state_dir: &Path, repository_root: &Path) -> Result<NodeKey> {
+pub fn release_key(state_dir: &Path, repository_root: &Path) -> Result<NodeKey> {
     let lookup = |name: &str| std::env::var(name).ok();
     if !matches!(source(&lookup)?, Source::Saved) {
         return load_or_create(state_dir);
@@ -170,7 +170,7 @@ fn saved_key_with(path: &Path, create: bool, initial: Option<&NodeKey>) -> Resul
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    crate::backend::fs::durable_dir(directory)?;
+    crate::fs::durable_dir(directory)?;
     let temporary = write_private(
         directory.join(format!("{KEY_FILE}.{}.tmp", Uuid::new_v4().simple())),
         &format!("{}\n", key.secret_hex()),
@@ -225,7 +225,7 @@ fn write_private(path: PathBuf, contents: &str) -> io::Result<TemporaryFile> {
 pub fn parse_public_key(text: &str) -> Result<PublicKey> {
     let text = text.trim();
     ensure!(
-        codeyard_support::crypto::is_hex_token(text, 64),
+        crate::crypto::is_hex_token(text, 64),
         "a public key is 64 hex characters"
     );
     PublicKey::from_str(&text.to_ascii_lowercase())

@@ -1,14 +1,12 @@
 //! Maven repository-layout requests share a host with repository pages and Git.
-use super::{authenticate, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        packages::{MavenFile, Permission},
-    },
-    packages,
-    storage::MAX_OBJECT_BYTES,
-};
+use crate::backend::api::packages::authenticate;
+use crate::backend::api::packages::Error;
+use crate::backend::api::packages::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::packages::MavenFile;
+use crate::backend::db::packages::Permission;
+
 use axum::{
     body::to_bytes,
     extract::{Request, State},
@@ -16,6 +14,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use codeyard_support::object_limits::MAX_OBJECT_BYTES;
 use sha2::Digest;
 use std::{sync::Arc, time::Duration};
 
@@ -102,7 +101,7 @@ fn artifact(path: &str) -> Option<Artifact> {
     } else {
         format!("{group}:{}", parts[artifact_index])
     };
-    if (!name.is_empty() && !packages::valid_package_name("maven", &name))
+    if (!name.is_empty() && !crate::backend::packages::valid_package_name("maven", &name))
         || version.as_ref().is_some_and(|v| !valid_version(v))
     {
         return None;
@@ -160,14 +159,14 @@ pub(crate) fn route(
             return next.run(request).await;
         }
         let anonymous = !request.headers().contains_key(header::AUTHORIZATION);
-        super::finish(
+        crate::backend::api::packages::finish(
             tokio::time::timeout(
                 Duration::from_secs(120),
                 dispatch(&state, artifact, request),
             )
             .await,
             anonymous,
-            super::RegistryFormat::Standard,
+            crate::backend::api::packages::RegistryFormat::Standard,
         )
     })
 }
@@ -189,17 +188,25 @@ fn dispatch(
     Box::pin(async move {
         let write = request.method() == Method::PUT;
         let auth = authenticate(state, request.headers(), write).await?;
-        let owner = super::owner(state, &artifact.owner).await?;
-        let repo =
-            db::repositories::records::get_repository(&state.pool, &artifact.owner, &artifact.repo)
-                .await
-                .map_err(Error::db)?
-                .ok_or_else(Error::missing)?;
+        let owner = crate::backend::api::packages::owner(state, &artifact.owner).await?;
+        let repo = crate::backend::db::repositories::records::get_repository(
+            &state.pool,
+            &artifact.owner,
+            &artifact.repo,
+        )
+        .await
+        .map_err(Error::db)?
+        .ok_or_else(Error::missing)?;
         let token = auth.as_ref().map(|a| a.token.id.into());
         if !write {
-            let (_, blob) = db::packages::maven_file(&state.pool, repo.id, token, &artifact.path)
-                .await
-                .map_err(Error::db)?;
+            let (_, blob) = crate::backend::db::packages::maven_file(
+                &state.pool,
+                repo.id,
+                token,
+                &artifact.path,
+            )
+            .await
+            .map_err(Error::db)?;
             if let Some(algorithm) = &artifact.checksum {
                 let length = match algorithm.as_str() {
                     "sha1" => 40,
@@ -221,7 +228,7 @@ fn dispatch(
                     .storage
                     .try_acquire_download()
                     .ok_or_else(Error::unavailable)?;
-                let bytes = packages::read(&state.storage, &blob)
+                let bytes = crate::backend::packages::read(&state.storage, &blob)
                     .await
                     .map_err(Error::db)?;
                 let digest = checksum(algorithm, &bytes);
@@ -239,8 +246,13 @@ fn dispatch(
                 )
                     .into_response());
             }
-            let mut response =
-                super::oci::download(state, &blob, request.method(), request.headers()).await?;
+            let mut response = crate::backend::api::packages::oci::download(
+                state,
+                &blob,
+                request.method(),
+                request.headers(),
+            )
+            .await?;
             if artifact.path.ends_with(".pom") || artifact.metadata {
                 response
                     .headers_mut()
@@ -252,8 +264,8 @@ fn dispatch(
             }
             return Ok(response);
         }
-        let auth = super::writer(auth.as_ref())?;
-        let _slot = super::upload_slot(state)?;
+        let auth = crate::backend::api::packages::writer(auth.as_ref())?;
+        let _slot = crate::backend::api::packages::upload_slot(state)?;
         let bytes = to_bytes(
             request.into_body(),
             if artifact.checksum.is_some() {
@@ -271,7 +283,7 @@ fn dispatch(
             )
         })?;
         if let Some(algorithm) = artifact.checksum {
-            let (package, blob) = db::packages::maven_file(
+            let (package, blob) = crate::backend::db::packages::maven_file(
                 &state.pool,
                 repo.id,
                 Some(auth.token.id.into()),
@@ -279,7 +291,7 @@ fn dispatch(
             )
             .await
             .map_err(Error::db)?;
-            db::packages::find(
+            crate::backend::db::packages::find(
                 &state.pool,
                 &owner,
                 "maven",
@@ -290,7 +302,7 @@ fn dispatch(
             )
             .await
             .map_err(Error::db)?;
-            let content = packages::read(&state.storage, &blob)
+            let content = crate::backend::packages::read(&state.storage, &blob)
                 .await
                 .map_err(Error::db)?;
             if !std::str::from_utf8(&bytes)
@@ -304,7 +316,7 @@ fn dispatch(
         }
         let mut plugin_metadata = false;
         if artifact.metadata || artifact.path.ends_with(".pom") {
-            let xml = super::archives::xml(&bytes)?;
+            let xml = crate::backend::api::packages::archives::xml(&bytes)?;
             if xml.name
                 != if artifact.metadata {
                     "metadata"
@@ -358,13 +370,13 @@ fn dispatch(
                 }
             }
         }
-        if !packages::valid_package_name("maven", &artifact.name)
+        if !crate::backend::packages::valid_package_name("maven", &artifact.name)
             || artifact.version.as_ref().is_some_and(|v| !valid_version(v))
         {
             return Err(Error::invalid());
         }
         let package = if plugin_metadata {
-            db::packages::find(
+            crate::backend::db::packages::find(
                 &state.pool,
                 &owner,
                 "maven",
@@ -376,7 +388,7 @@ fn dispatch(
             .await
             .map_err(Error::db)?
         } else {
-            db::packages::create(
+            crate::backend::db::packages::create(
                 &state.pool,
                 &owner,
                 "maven",
@@ -390,19 +402,19 @@ fn dispatch(
         if package.repo_id != Some(repo.id) {
             return Err(Error::missing());
         }
-        let blob = packages::store(
+        let blob = crate::backend::packages::store(
             &state.pool,
             &state.storage,
             package.id,
             auth.token.id,
             bytes.to_vec(),
-            db::packages::Charge::Upload,
+            crate::backend::db::packages::Charge::Upload,
         )
         .await
         .map_err(Error::db)?;
         let (group, name) = artifact.name.split_once(':').ok_or_else(Error::invalid)?;
         let metadata = serde_json::json!({"groupId":group,"artifactId":name}).to_string();
-        db::packages::put_maven_file(
+        crate::backend::db::packages::put_maven_file(
             &state.pool,
             auth.token.id,
             MavenFile {
@@ -438,13 +450,22 @@ mod tests {
         ) -> usize {
             std::mem::size_of::<F>()
         }
-        assert_eq!(size(super::route), 2 * std::mem::size_of::<usize>());
+        assert_eq!(
+            size(crate::backend::api::packages::maven::route),
+            2 * std::mem::size_of::<usize>()
+        );
     }
     #[test]
     fn repository_pages_are_not_maven_artifacts() {
-        assert!(super::artifact("/alice/repo/tree/main/readme.md").is_none());
-        assert!(super::artifact("/alice/repo/raw/main/file.jar").is_none());
-        let a = super::artifact(
+        assert!(
+            crate::backend::api::packages::maven::artifact("/alice/repo/tree/main/readme.md")
+                .is_none()
+        );
+        assert!(
+            crate::backend::api::packages::maven::artifact("/alice/repo/raw/main/file.jar")
+                .is_none()
+        );
+        let a = crate::backend::api::packages::maven::artifact(
             "/alice/repo/com/example/demo/1.0-SNAPSHOT/demo-1.0-20261001.010203-1.jar.sha1",
         )
         .unwrap();

@@ -1,6 +1,6 @@
-use super::authority::*;
 use crate::backend::db::organizations::properties::*;
 use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::postgres::organizations::authority::*;
 use anyhow::{ensure, Result};
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
@@ -281,8 +281,10 @@ pub async fn repository(
     let mut tx = begin_read(pool).await?;
     let Some(repository)=sqlx::query_as::<_,Repository>("SELECT * FROM repositories WHERE id=$1 AND owner_kind='org' AND owner_org_id IS NOT NULL AND owner_user_id IS NULL").bind(repo).fetch_optional(&mut *tx).await? else {return Ok(None);};
     let access = if let Some(viewer) = viewer {
-        super::super::repositories::access::user_repo_access_in_transaction(&mut tx, viewer, repo)
-            .await?
+        crate::backend::db::postgres::repositories::access::user_repo_access_in_transaction(
+            &mut tx, viewer, repo,
+        )
+        .await?
     } else {
         AccessLevel::None
     };
@@ -350,7 +352,8 @@ async fn change_repository_values(
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     ensure!(
-        super::super::discussions::lock_archive_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::postgres::discussions::lock_archive_authority(&mut tx, actor, repo)
+            .await?,
         Refusal::Denied
     );
     let org:i64=sqlx::query_scalar("SELECT owner_org_id FROM repositories WHERE id=$1 AND owner_kind='org' AND owner_org_id IS NOT NULL AND owner_user_id IS NULL").bind(repo).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
@@ -360,13 +363,19 @@ async fn change_repository_values(
         Applied(OrgRole::Owner)
     );
     ensure!(
-        super::super::credentials::writes(&mut tx, &grant, Some(repo), None, "administration")
-            .await?,
+        crate::backend::db::postgres::credentials::writes(
+            &mut tx,
+            &grant,
+            Some(repo),
+            None,
+            "administration"
+        )
+        .await?,
         Refusal::Denied
     );
     // Account ownership cannot lend an organization-only capability to a repository token.
     if owner && grant.token_id().is_some() {
-        owner = super::super::credentials::writes(
+        owner = crate::backend::db::postgres::credentials::writes(
             &mut tx,
             &grant,
             None,
@@ -524,7 +533,7 @@ pub async fn list_values(
         .push_bind(org)
         .push(format!(
             " AND (NOT r.is_private OR ({})>=1)",
-            super::super::repositories::access::USER_REPO_ACCESS_SQL
+            crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL
         ));
     query_predicates(&mut builder, query);
     builder

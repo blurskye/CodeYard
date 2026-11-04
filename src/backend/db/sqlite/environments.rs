@@ -1,5 +1,9 @@
 use crate::backend::db::credentials::Actor;
-use crate::backend::db::environments::{validate_branch, Branch, Environment, Refusal, Update};
+use crate::backend::db::environments::validate_branch;
+use crate::backend::db::environments::Branch;
+use crate::backend::db::environments::Environment;
+use crate::backend::db::environments::Refusal;
+use crate::backend::db::environments::Update;
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
@@ -11,9 +15,16 @@ async fn write(
     let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor.user_id, repo).await?
-            && super::credentials::repository(&mut tx, &actor, repo, "administration", true)
-                .await?,
+        crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor.user_id, repo)
+            .await?
+            && crate::backend::db::sqlite::credentials::repository(
+                &mut tx,
+                &actor,
+                repo,
+                "administration",
+                true
+            )
+            .await?,
         Refusal::Denied
     );
     Ok(tx)
@@ -60,7 +71,7 @@ pub async fn upsert(
     if let Some(reviewers) = &input.reviewers {
         for reviewer in reviewers {
             let valid: bool = if reviewer.kind == "User" {
-                sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM users u JOIN repositories r ON r.id=?2 WHERE u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({})>=1))", super::repositories::access::USER_REPO_ACCESS_SQL))
+                sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM users u JOIN repositories r ON r.id=?2 WHERE u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({})>=1))", crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL))
                     .bind(reviewer.id).bind(repo).fetch_one(&mut *tx).await?
             } else {
                 sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' WHERE r.id=?2 AND t.id=?1 AND t.privacy IN ('visible','secret') AND (NOT r.is_private OR EXISTS(SELECT 1 FROM team_ancestors inheritance JOIN team_repo_access a ON a.team_id=inheritance.ancestor_id WHERE inheritance.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 1 AND 5)))")
@@ -105,7 +116,7 @@ pub async fn delete(
             .bind(id)
             .fetch_one(&mut *tx)
             .await?;
-        super::ci::finish_in_tx(
+        crate::backend::db::sqlite::ci::finish_in_tx(
             &mut tx,
             &run,
             "failed",

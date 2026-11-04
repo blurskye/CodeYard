@@ -1,4 +1,6 @@
-use crate::backend::db::{code_scanning::Refusal, codeql::*, credentials::Actor};
+use crate::backend::db::code_scanning::Refusal;
+use crate::backend::db::codeql::*;
+use crate::backend::db::credentials::Actor;
 use anyhow::{ensure, Result};
 use sqlx::SqlitePool;
 
@@ -9,9 +11,10 @@ async fn authorized(
     write: bool,
 ) -> Result<()> {
     let allowed = if write {
-        super::discussions::lock_write_authority(tx, actor.user_id, repo).await?
+        crate::backend::db::sqlite::discussions::lock_write_authority(tx, actor.user_id, repo)
+            .await?
     } else {
-        super::repositories::access::lock_readable_repository_in_transaction(
+        crate::backend::db::sqlite::repositories::access::lock_readable_repository_in_transaction(
             tx,
             actor.user_id,
             repo,
@@ -20,7 +23,14 @@ async fn authorized(
     };
     ensure!(
         allowed
-            && super::credentials::repository(tx, actor, repo, "security_events", write).await?,
+            && crate::backend::db::sqlite::credentials::repository(
+                tx,
+                actor,
+                repo,
+                "security_events",
+                write
+            )
+            .await?,
         Refusal::Denied
     );
     Ok(())

@@ -1,14 +1,20 @@
 use super::*;
-use crate::backend::db::{
-    discussion_search::{Search, Sort},
-    relationships::{Kind, Order},
-};
+use crate::backend::db::discussion_search::Search;
+use crate::backend::db::discussion_search::Sort;
+use crate::backend::db::relationships::Kind;
+use crate::backend::db::relationships::Order;
 
-pub(in super::super) fn issue_type(item: &db::issue_attributes::Attribute, repo: i64) -> Value {
+pub(in crate::backend::api::graphql::issue::super) fn issue_type(
+    item: &db::issue_attributes::Attribute,
+    repo: i64,
+) -> Value {
     json!({"__typename":"IssueType","_repo":repo,"_scope":"issues","id":node_id::encode("IT",item.id),"name":item.name,"description":item.description,"color":item.color.as_deref().unwrap_or("gray").to_uppercase()})
 }
 
-pub(in super::super) async fn type_node(id: i64, request: &RequestContext) -> Result<Value> {
+pub(in crate::backend::api::graphql::issue::super) async fn type_node(
+    id: i64,
+    request: &RequestContext,
+) -> Result<Value> {
     let mut after = 0;
     loop {
         let repositories = db::graphql::issue_type_repositories(
@@ -157,11 +163,16 @@ pub(super) async fn resolve(
                 Some(page) => Ok(page.finish(nodes)),
             }
         }
-        _ => super::super::collaboration::resolve(ty, field, ctx, request, parent, repo).await,
+        _ => {
+            crate::backend::api::graphql::collaboration::resolve(
+                ty, field, ctx, request, parent, repo,
+            )
+            .await
+        }
     }
 }
 
-pub(in super::super) async fn repository(
+pub(in crate::backend::api::graphql::issue::super) async fn repository(
     ctx: &Arguments,
     request: &RequestContext,
     repo: &codeyard_db_core::models::Repository,
@@ -217,7 +228,7 @@ pub(super) async fn list(
     }
     if let Some(labels) = args.args.get("labels").filter(|v| !v.is_null()) {
         let labels: Value = labels.deserialize()?;
-        for value in super::super::metadata_mutations::list(&labels) {
+        for value in crate::backend::api::graphql::metadata_mutations::list(&labels) {
             add("exact-label", value.as_str().ok_or_else(missing)?)?;
         }
     }
@@ -287,7 +298,7 @@ pub(super) async fn list(
     }
     if let Some(states) = args.args.get("states").filter(|v| !v.is_null()) {
         let values: Value = states.deserialize()?;
-        let values = super::super::metadata_mutations::list(&values)
+        let values = crate::backend::api::graphql::metadata_mutations::list(&values)
             .iter()
             .map(|value| value.as_str().ok_or_else(missing))
             .collect::<Result<Vec<_>>>()?;
@@ -321,7 +332,10 @@ fn add_states<'a>(query: &mut String, states: impl Iterator<Item = &'a str>) {
     }
 }
 
-pub(in super::super) async fn search(args: &Arguments, request: &RequestContext) -> Result<Value> {
+pub(in crate::backend::api::graphql::issue::super) async fn search(
+    args: &Arguments,
+    request: &RequestContext,
+) -> Result<Value> {
     match args.args.try_get("type")?.enum_name()? {
         "ISSUE_HYBRID" | "ISSUE_SEMANTIC" => {
             return Err(Error::new("Codeyard has no semantic search index"))
@@ -330,7 +344,8 @@ pub(in super::super) async fn search(args: &Arguments, request: &RequestContext)
         _ => return Err(Error::new("Only issue search is supported")),
     }
     let (query, sort, ascending) =
-        Search::parse_ordered(&super::super::arg(args, "query")?).map_err(Error::new)?;
+        Search::parse_ordered(&crate::backend::api::graphql::arg(args, "query")?)
+            .map_err(Error::new)?;
     results(&query, sort, ascending, args, request, Some(1000)).await
 }
 

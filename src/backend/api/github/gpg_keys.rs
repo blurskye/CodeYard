@@ -1,11 +1,14 @@
-use super::{auth, pagination::Pagination, users, Error, Result};
+use crate::backend::api::github::pagination::Pagination;
+
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 use crate::backend::db::users::accounts::AccountCredential;
-use crate::backend::db::users::gpg_keys;
+
 use crate::backend::db::users::gpg_keys::GpgKey;
-use crate::backend::identity::gpg;
+
 use crate::backend::identity::gpg::GpgError;
-use crate::backend::webhooks::payloads;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -37,7 +40,7 @@ async fn documents(state: &AppState, user: &User, keys: &[GpgKey]) -> Result<Vec
         .into_iter()
         .filter_map(|(email, verified)| verified.then_some(email))
         .collect();
-    let subkeys = gpg_keys::list_subkeys(
+    let subkeys = crate::backend::db::users::gpg_keys::list_subkeys(
         &state.pool,
         user.id,
         &keys.iter().map(|key| key.id).collect::<Vec<_>>(),
@@ -46,7 +49,7 @@ async fn documents(state: &AppState, user: &User, keys: &[GpgKey]) -> Result<Vec
     .map_err(Error::unavailable)?;
     Ok(keys
         .iter()
-        .map(|key| payloads::gpg_key(key, &subkeys, &verified))
+        .map(|key| crate::backend::webhooks::payloads::gpg_key(key, &subkeys, &verified))
         .collect())
 }
 async fn page(
@@ -56,9 +59,14 @@ async fn page(
     uri: axum::http::Uri,
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
-    let mut keys = gpg_keys::list_gpg_keys(&state.pool, user.id, (limit + 1) as i64, offset as i64)
-        .await
-        .map_err(Error::unavailable)?;
+    let mut keys = crate::backend::db::users::gpg_keys::list_gpg_keys(
+        &state.pool,
+        user.id,
+        (limit + 1) as i64,
+        offset as i64,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     let more = keys.len() > limit;
     keys.truncate(limit);
     page.response(&uri, documents(state, user, &keys).await?, more)
@@ -69,9 +77,9 @@ async fn list(
     Query(pagination): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     page(&state, &actor.user, pagination, uri).await
 }
 async fn public(
@@ -81,10 +89,10 @@ async fn public(
     Query(pagination): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    auth::authenticate(&state, &headers, false).await?;
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     page(
         &state,
-        &users::target(&state, &username).await?,
+        &crate::backend::api::github::users::target(&state, &username).await?,
         pagination,
         uri,
     )
@@ -116,13 +124,13 @@ async fn create(
     headers: HeaderMap,
     input: std::result::Result<Json<CreateKey>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>)> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
     let Json(input) =
         input.map_err(|_| Error::validation("GpgKey", "armored_public_key", "invalid"))?;
-    let key = gpg::enroll(
+    let key = crate::backend::identity::gpg::enroll(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
@@ -141,10 +149,10 @@ async fn detail(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
-    let key = gpg_keys::get_gpg_key(&state.pool, actor.user.id, id)
+        .ok_or_else(crate::backend::api::github::auth::required)?;
+    let key = crate::backend::db::users::gpg_keys::get_gpg_key(&state.pool, actor.user.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -157,11 +165,11 @@ async fn remove(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
-    gpg::delete(
+    crate::backend::identity::gpg::delete(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),

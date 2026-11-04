@@ -23,7 +23,9 @@ pub async fn create(
     token: &NewToken<'_>,
 ) -> Result<Option<(i64, String)>> {
     let mut tx = pool.begin().await?;
-    if !super::users::transitions::active_session(&mut tx, user, session).await? {
+    if !crate::backend::db::postgres::users::transitions::active_session(&mut tx, user, session)
+        .await?
+    {
         return Ok(None);
     }
     // A token for an organization that is being deleted is refused.
@@ -82,7 +84,9 @@ pub async fn regenerate(
     expires_at: Option<DateTime<Utc>>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    if !super::users::transitions::active_session(&mut tx, user, session).await? {
+    if !crate::backend::db::postgres::users::transitions::active_session(&mut tx, user, session)
+        .await?
+    {
         return Ok(false);
     }
     let changed = sqlx::query("UPDATE personal_access_tokens SET token_hash=$3,expires_at=$4,last_used_at=NULL,last_used_ip=NULL WHERE id=$1 AND user_id=$2 AND EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id=$1)")
@@ -112,8 +116,9 @@ pub async fn repository_choices(
         "Repository selection exceeds its limit"
     );
     let mut tx = pool.begin().await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
-    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
+    let access = crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     let projection = format!("SELECT r.id,r.name FROM repositories r JOIN users u ON u.id=$1 WHERE NOT r.is_gist AND (($2::BIGINT IS NULL AND r.owner_kind='user' AND r.owner_user_id=u.id) OR ($2::BIGINT IS NOT NULL AND r.owner_kind='org' AND r.owner_org_id=$2)) AND ({access})>=1");
     let kept = sqlx::query_as(&format!("{projection} AND r.id=ANY($3) ORDER BY r.id"))
         .bind(actor)
@@ -167,7 +172,7 @@ pub async fn repositories(
         AccountCredential::Token(id, hash) => (None, Some((*id, *hash))),
     };
     let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "$6");
-    let readable = super::repositories::access::readable_condition();
+    let readable = crate::backend::db::postgres::repositories::access::readable_condition();
     Ok(sqlx::query_as(&format!("SELECT r.id,r.name FROM fine_grained_token_repositories selected
         JOIN fine_grained_tokens g ON g.token_id=selected.token_id JOIN personal_access_tokens p ON p.id=g.token_id
         JOIN repositories r ON r.id=selected.repo_id JOIN users u ON u.id=$2
@@ -204,7 +209,8 @@ pub async fn policy(pool: &PgPool, org: i64) -> Result<Policy> {
 /// checked by the shared organization guard inside the writing transaction.
 async fn active_owner(connection: &mut PgConnection, actor: i64, org: i64) -> Result<bool> {
     Ok(matches!(
-        super::organizations::authority::authority(connection, actor, org).await?,
+        crate::backend::db::postgres::organizations::authority::authority(connection, actor, org)
+            .await?,
         OrganizationOutcome::Applied(OrgRole::Owner)
     ))
 }
@@ -219,7 +225,7 @@ pub async fn set_policy(
     let actor = owner.user_id;
     let mut tx = pool.begin().await?;
     if !active_owner(&mut tx, actor, org).await?
-        || !super::credentials::organization(
+        || !crate::backend::db::postgres::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -297,7 +303,7 @@ pub async fn owner_tokens(
         .filter(|token| token.repository_access == "selected")
         .map(|token| token.token_id)
         .collect();
-    let readable = super::repositories::access::readable_condition();
+    let readable = crate::backend::db::postgres::repositories::access::readable_condition();
     let repositories: Vec<(i64, String)> = sqlx::query_as(&format!("SELECT token_id,name FROM (SELECT selected.token_id,r.name,ROW_NUMBER() OVER (PARTITION BY selected.token_id ORDER BY r.name,r.id) AS row_position
         FROM fine_grained_token_repositories selected JOIN fine_grained_tokens g ON g.token_id=selected.token_id
         JOIN repositories r ON r.id=selected.repo_id JOIN users u ON u.id=$2
@@ -326,7 +332,7 @@ pub async fn review(
     let reviewer = owner.user_id;
     let mut tx = pool.begin().await?;
     if !active_owner(&mut tx, reviewer, org).await?
-        || !super::credentials::organization(
+        || !crate::backend::db::postgres::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -385,7 +391,7 @@ pub(crate) async fn repository_permission(
     Ok(bounds.user_id == actor
         && bounds.active()
         && scoped
-        && crate::backend::identity::fine_grained::allows(&permissions, permission, write))
+        && codeyard_model::fine_grained::allows(&permissions, permission, write))
 }
 
 pub async fn review_all(
@@ -400,7 +406,7 @@ pub async fn review_all(
     let reviewer = owner.user_id;
     let mut tx = pool.begin().await?;
     if !active_owner(&mut tx, reviewer, org).await?
-        || !super::credentials::organization(
+        || !crate::backend::db::postgres::credentials::organization(
             &mut tx,
             &owner,
             org,

@@ -1,14 +1,17 @@
 //! Settings and policy documents are stored with the native organization and repository policy.
-use crate::backend::{
-    api::github::{
-        api_url, auth, node_id, pagination::Pagination, repo_url, repository, Error, Result,
-    },
-    app::AppState,
-    db::{
-        self,
-        action_settings::{Policy, Refusal, Scope, Setting},
-    },
-};
+use codeyard_model::urls::api_url;
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use codeyard_model::urls::repo_url;
+
+use crate::backend::db::action_settings::Policy;
+use crate::backend::db::action_settings::Refusal;
+use crate::backend::db::action_settings::Scope;
+use crate::backend::db::action_settings::Setting;
 use axum::{
     extract::{OriginalUri, Path, Query, Request, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -40,11 +43,11 @@ async fn scope(
     headers: &HeaderMap,
     params: &Params,
     write: bool,
-) -> Result<(Scope, auth::Authentication)> {
+) -> Result<(Scope, crate::backend::api::github::auth::Authentication)> {
     if let Some(org) = params.get("org") {
-        let auth = auth::authenticate(state, headers, write)
+        let auth = crate::backend::api::github::auth::authenticate(state, headers, write)
             .await?
-            .ok_or_else(auth::required)?;
+            .ok_or_else(crate::backend::api::github::auth::required)?;
         if write {
             auth.require_write()?;
         }
@@ -52,7 +55,10 @@ async fn scope(
     } else {
         let (repo, auth) =
             repository(state, headers, &params["owner"], &params["repo"], write).await?;
-        Ok((Scope::Repository(repo.id), auth.ok_or_else(auth::required)?))
+        Ok((
+            Scope::Repository(repo.id),
+            auth.ok_or_else(crate::backend::api::github::auth::required)?,
+        ))
     }
 }
 
@@ -74,7 +80,7 @@ async fn settings(
     OriginalUri(uri): OriginalUri,
     request: Request,
 ) -> Result<Response> {
-    let write = !auth::read_method(request.method());
+    let write = !crate::backend::api::github::auth::read_method(request.method());
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
     let actor = auth.database_actor();
     let setting = match uri.path().rsplit('/').next() {
@@ -91,9 +97,15 @@ async fn settings(
     } else {
         None
     };
-    let stored = db::action_settings::settings(&state.pool, actor, &scope, setting, body.as_ref())
-        .await
-        .map_err(failure)?;
+    let stored = crate::backend::db::action_settings::settings(
+        &state.pool,
+        actor,
+        &scope,
+        setting,
+        body.as_ref(),
+    )
+    .await
+    .map_err(failure)?;
     if write {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
@@ -134,7 +146,7 @@ async fn organization_switch(
     OriginalUri(uri): OriginalUri,
     request: Request,
 ) -> Result<Response> {
-    let write = !auth::read_method(request.method());
+    let write = !crate::backend::api::github::auth::read_method(request.method());
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
     let actor = auth.database_actor();
     let setting = switch(&uri);
@@ -150,14 +162,21 @@ async fn organization_switch(
                 "invalid",
             ));
         }
-        db::action_settings::settings(&state.pool, actor, &scope, setting, Some(&body))
-            .await
-            .map_err(failure)?;
-        return Ok(StatusCode::NO_CONTENT.into_response());
-    }
-    let stored = db::action_settings::settings(&state.pool, actor, &scope, setting, None)
+        crate::backend::db::action_settings::settings(
+            &state.pool,
+            actor,
+            &scope,
+            setting,
+            Some(&body),
+        )
         .await
         .map_err(failure)?;
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
+    let stored =
+        crate::backend::db::action_settings::settings(&state.pool, actor, &scope, setting, None)
+            .await
+            .map_err(failure)?;
     let mut value = setting.defaults();
     if let (Some(value), Some(stored)) = (value.as_object_mut(), stored[setting.key()].as_object())
     {
@@ -186,15 +205,15 @@ async fn organization_repositories(
     request: Request,
 ) -> Result<Response> {
     let method = request.method().clone();
-    let write = !auth::read_method(&method);
+    let write = !crate::backend::api::github::auth::read_method(&method);
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
     let actor = auth.database_actor();
     let setting = switch(&uri);
-    use db::action_settings::SelectionChange;
+    use crate::backend::db::action_settings::SelectionChange;
     let change = if !write {
         None
     } else if params.contains_key("repository_id") {
-        let id = super::id(&params, "repository_id")?;
+        let id = crate::backend::api::github::actions::id(&params, "repository_id")?;
         Some(if method == axum::http::Method::DELETE {
             SelectionChange::Remove(id)
         } else {
@@ -215,7 +234,7 @@ async fn organization_repositories(
         Some(SelectionChange::Set(ids))
     };
     let (offset, limit) = page.window()?;
-    let (total, rows) = db::action_settings::repositories(
+    let (total, rows) = crate::backend::db::action_settings::repositories(
         &state.pool,
         actor,
         &scope,
@@ -264,7 +283,9 @@ fn document(policy: &Policy, params: &Params, organization: Option<&str>) -> Res
             )
         };
     value["id"] = json!(policy.id);
-    value["node_id"] = json!(node_id::encode("AP", policy.id));
+    value["node_id"] = json!(crate::backend::api::github::node_id::encode(
+        "AP", policy.id
+    ));
     value["target"] = json!("actions");
     value["source_type"] = json!(source_type);
     value["source"] = json!(source);
@@ -289,16 +310,16 @@ async fn policies(
     request: Request,
 ) -> Result<Response> {
     let method = request.method().clone();
-    let write = !auth::read_method(&method);
+    let write = !crate::backend::api::github::auth::read_method(&method);
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
     let actor = auth.database_actor();
     let id = params
         .get("policy_id")
-        .map(|_| super::id(&params, "policy_id"))
+        .map(|_| crate::backend::api::github::actions::id(&params, "policy_id"))
         .transpose()?;
     if !write && id.is_none() {
         let (offset, limit) = page.window()?;
-        let (total, rows) = db::action_settings::policies_page(
+        let (total, rows) = crate::backend::db::action_settings::policies_page(
             &state.pool,
             actor,
             &scope,
@@ -324,9 +345,10 @@ async fn policies(
         None
     };
     let change = if write { Some(body.as_ref()) } else { None };
-    let rows = db::action_settings::policies(&state.pool, actor, &scope, id, change)
-        .await
-        .map_err(failure)?;
+    let rows =
+        crate::backend::db::action_settings::policies(&state.pool, actor, &scope, id, change)
+            .await
+            .map_err(failure)?;
     if method == axum::http::Method::DELETE {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }

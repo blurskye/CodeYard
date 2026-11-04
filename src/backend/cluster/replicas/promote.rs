@@ -5,7 +5,7 @@
 //! A fork is stored on the same node as its source, because pull requests between them need
 //! both there. So a promotion moves the whole fork family that shares the repository's
 //! primary, or nothing at all.
-use crate::backend::db;
+
 use crate::backend::db::cluster::FamilyOutcome;
 use crate::backend::db::cluster::PromoteOutcome;
 use anyhow::{bail, ensure, Context, Result};
@@ -54,7 +54,7 @@ pub async fn promote(
     to: Option<i64>,
     force: bool,
 ) -> Result<Vec<Promotion>> {
-    if db::cluster::writes::write_settings(pool)
+    if crate::backend::db::cluster::writes::write_settings(pool)
         .await?
         .write_quorum
         .is_some()
@@ -67,20 +67,21 @@ pub async fn promote(
         .await?;
     }
     // The family is read once, so the repository's primary and its members agree.
-    let family = db::cluster::list_fork_family(pool, repository).await?;
+    let family = crate::backend::db::cluster::list_fork_family(pool, repository).await?;
     let &(_, primary, _) = family
         .iter()
         .find(|(id, _, _)| *id == repository)
         .context("the repository does not exist")?;
     let from = primary.context("the repository has no primary node")?;
-    let nodes = db::cluster::list_nodes(pool).await?;
+    let nodes = crate::backend::db::cluster::list_nodes(pool).await?;
     let mut members = members_on(&family, from);
     let to = match to {
         Some(node) => node,
         // Only a node that is reporting in can take the repository, so the default skips the
         // others. The transaction checks again, in case a node stops in between.
         None => {
-            let mut candidates = db::cluster::list_replicas(pool, repository).await?;
+            let mut candidates =
+                crate::backend::db::cluster::list_replicas(pool, repository).await?;
             candidates.sort_by_key(|(id, applied)| (Reverse(*applied), *id));
             let mut selected = None;
             for (node, _) in candidates {
@@ -113,7 +114,9 @@ pub async fn promote(
         bail!("{problem}; nothing changed");
     }
     if !force {
-        return match db::cluster::promote_manual_family(pool, repository, from, to).await? {
+        return match crate::backend::db::cluster::promote_manual_family(pool, repository, from, to)
+            .await?
+        {
             FamilyOutcome::Promoted(members) => Ok(members
                 .into_iter()
                 .map(|repository| Promotion {
@@ -131,7 +134,8 @@ pub async fn promote(
     // Forced promotion explicitly accepts a split family and reports partial progress.
     let mut promoted = Vec::new();
     for (member, _) in members {
-        let outcome = db::cluster::promote_repository(pool, member, from, to, !force).await?;
+        let outcome =
+            crate::backend::db::cluster::promote_repository(pool, member, from, to, !force).await?;
         let problem = match outcome {
             PromoteOutcome::Promoted {
                 applied_version,
@@ -174,7 +178,7 @@ async fn promote_quorum(
     repository: i64,
     target: Option<i64>,
 ) -> Result<Vec<Promotion>> {
-    use db::cluster::writes as journal;
+    use crate::backend::db::cluster::writes as journal;
     let family = journal::write_family(pool, repository).await?;
     let first = journal::recovery_view(pool, repository).await?;
     let from = first.primary_id;
@@ -187,7 +191,7 @@ async fn promote_quorum(
     let mut nodes = Vec::with_capacity(2);
     for voter in &voters {
         nodes.push(
-            db::cluster::get_node_by_id(pool, *voter)
+            crate::backend::db::cluster::get_node_by_id(pool, *voter)
                 .await?
                 .context("voting node is missing")?,
         );
@@ -273,7 +277,7 @@ pub async fn recover_family(
     node: i64,
     repos: &Path,
 ) -> Result<bool> {
-    use db::cluster::writes as journal;
+    use crate::backend::db::cluster::writes as journal;
     let family = journal::write_family(pool, repository).await?;
     let mut terms = Vec::with_capacity(family.len());
     for (member, _, _) in family {
@@ -301,14 +305,14 @@ pub async fn take_over(
     silent: &mut Silent,
     after: Duration,
 ) -> Result<Vec<i64>> {
-    let quorum = db::cluster::writes::write_settings(pool)
+    let quorum = crate::backend::db::cluster::writes::write_settings(pool)
         .await?
         .write_quorum
         .is_some();
     if !quorum {
-        super::reconcile(pool, node, repos).await?;
+        crate::backend::cluster::replicas::reconcile(pool, node, repos).await?;
     }
-    let nodes = db::cluster::list_nodes(pool).await?;
+    let nodes = crate::backend::db::cluster::list_nodes(pool).await?;
     let now = Instant::now();
     let offline: Vec<i64> = nodes
         .iter()
@@ -329,14 +333,15 @@ pub async fn take_over(
     let mut taken = Vec::new();
     // The families already decided in this pass, so each one is tried once, from its first row.
     let mut decided = HashSet::new();
-    let held = db::cluster::list_held_replicas(pool, node).await?;
+    let held = crate::backend::db::cluster::list_held_replicas(pool, node).await?;
     let versions: HashMap<_, _> = held
         .iter()
         .map(|row| (row.repository_id, row.applied_version))
         .collect();
     for row in held {
         if quorum {
-            let view = db::cluster::writes::recovery_view(pool, row.repository_id).await?;
+            let view =
+                crate::backend::db::cluster::writes::recovery_view(pool, row.repository_id).await?;
             if !view.serving {
                 if let Err(error) = recover_family(pool, row.repository_id, node, repos).await {
                     warn!(repository = row.repository_id, %error, "canonical recovery remains fenced");
@@ -355,9 +360,9 @@ pub async fn take_over(
             continue;
         }
         let family = if quorum {
-            db::cluster::writes::write_family(pool, row.repository_id).await?
+            crate::backend::db::cluster::writes::write_family(pool, row.repository_id).await?
         } else {
-            db::cluster::list_fork_family(pool, row.repository_id).await?
+            crate::backend::db::cluster::list_fork_family(pool, row.repository_id).await?
         };
         let members = members_on(&family, from);
         decided.extend(members.iter().map(|(member, _)| *member));
@@ -420,7 +425,8 @@ pub async fn take_over(
         // A refusal means the family changed after it was read. Nothing moves, and the next
         // pass looks at it again.
         if let FamilyOutcome::Promoted(moved) =
-            db::cluster::promote_fork_family(pool, row.repository_id, from, node).await?
+            crate::backend::db::cluster::promote_fork_family(pool, row.repository_id, from, node)
+                .await?
         {
             for member in moved {
                 silent.skipped.remove(&member);
@@ -437,10 +443,10 @@ pub async fn take_over(
 
 /// `owner/name` of a repository, for messages.
 pub async fn repository_name(pool: &DbPool, repository: i64) -> Result<String> {
-    let row = db::repositories::records::get_repository_by_id(pool, repository)
+    let row = crate::backend::db::repositories::records::get_repository_by_id(pool, repository)
         .await?
         .context("the repository does not exist")?;
-    let owner = db::repositories::records::repository_owner_name(pool, repository)
+    let owner = crate::backend::db::repositories::records::repository_owner_name(pool, repository)
         .await?
         .context("the repository has no owner")?;
     Ok(format!("{owner}/{}", row.name))
@@ -466,7 +472,7 @@ async fn members_with_a_copy(
 ) -> Result<Vec<(i64, i64)>> {
     let mut kept = Vec::new();
     for member in members {
-        let copied = db::cluster::list_replicas(pool, member.0)
+        let copied = crate::backend::db::cluster::list_replicas(pool, member.0)
             .await?
             .into_iter()
             .any(|(node, applied)| node == to && applied >= 0);
@@ -486,7 +492,7 @@ async fn blocking_member(
     force: bool,
 ) -> Result<Option<String>> {
     for &(member, write_version) in members {
-        let applied = db::cluster::list_replicas(pool, member)
+        let applied = crate::backend::db::cluster::list_replicas(pool, member)
             .await?
             .into_iter()
             .find(|(node, _)| *node == to)

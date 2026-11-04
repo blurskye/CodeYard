@@ -1,9 +1,12 @@
 //! Auto-merge: a writer asks for a pull request to merge once its requirements pass. A
 //! background check then merges it through the ordinary merge path, as that writer, so
 //! reviews, checks and branch protection apply exactly as they do to a merge button.
-use super::{actor, merge, require_write, OperationError};
+use crate::backend::repositories::pull_requests::actor;
+
 use crate::backend::app::AppState;
-use crate::backend::db;
+use crate::backend::repositories::pull_requests::require_write;
+use crate::backend::repositories::pull_requests::OperationError;
+
 use crate::backend::db::pull_requests::auto_merge::AutoMerge;
 use crate::backend::db::pull_requests::auto_merge::AutoMergeRequest;
 use crate::backend::repositories::store::MergeMethod;
@@ -38,13 +41,14 @@ async fn writable(
     pull: &PullRequest,
 ) -> Result<(), OperationError> {
     let user = actor(pool, actor_id).await?;
-    let repository = db::repositories::records::get_repository_by_id(pool, pull.repo_id)
-        .await
-        .map_err(storage_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Repository not found".into(),
-        })?;
+    let repository =
+        crate::backend::db::repositories::records::get_repository_by_id(pool, pull.repo_id)
+            .await
+            .map_err(storage_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Repository not found".into(),
+            })?;
     require_write(pool, &user, &repository).await?;
     if pull.state != "open" {
         return Err(OperationError::Invalid {
@@ -63,14 +67,14 @@ pub async fn enable(
     request: EnableRequest,
 ) -> Result<(), OperationError> {
     writable(pool, actor_id, pull).await?;
-    merge::merge_message(
+    crate::backend::repositories::pull_requests::merge::merge_message(
         pull,
         request.merge_method,
         request.commit_title.as_deref(),
         request.commit_message.as_deref(),
         request.author_email.as_deref(),
     )?;
-    db::pull_requests::auto_merge::enable_auto_merge_at_head(
+    crate::backend::db::pull_requests::auto_merge::enable_auto_merge_at_head(
         pool,
         &AutoMergeRequest {
             pull_request_id: pull.id,
@@ -85,7 +89,7 @@ pub async fn enable(
         request.expected_head.as_deref(),
     )
     .await
-    .map_err(super::write_error)
+    .map_err(crate::backend::repositories::pull_requests::write_error)
 }
 
 /// Turns auto-merge off for `pull`. Turning it off twice is not an error.
@@ -95,7 +99,7 @@ pub async fn disable(
     pull: &PullRequest,
 ) -> Result<(), OperationError> {
     writable(pool, actor_id, pull).await?;
-    db::pull_requests::auto_merge::disable_auto_merge(pool, pull.id)
+    crate::backend::db::pull_requests::auto_merge::disable_auto_merge(pool, pull.id)
         .await
         .map_err(storage_error)?;
     Ok(())
@@ -114,8 +118,12 @@ async fn run_due_until_stop(
     let pool = &state.pool;
     let mut after = 0;
     loop {
-        let page =
-            db::pull_requests::auto_merge::pending_auto_merges(pool, after, CHECK_BATCH).await?;
+        let page = crate::backend::db::pull_requests::auto_merge::pending_auto_merges(
+            pool,
+            after,
+            CHECK_BATCH,
+        )
+        .await?;
         let (Some(last), short) = (
             page.last().map(|entry| entry.request.pull_request_id),
             (page.len() as i64) < CHECK_BATCH,
@@ -130,23 +138,33 @@ async fn run_due_until_stop(
                 request: entry,
                 generation,
             } = entry;
-            let pull =
-                db::pull_requests::records::get_pull_request_by_id(pool, entry.pull_request_id)
-                    .await?;
+            let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+                pool,
+                entry.pull_request_id,
+            )
+            .await?;
             let repository = match &pull {
                 Some(pull) if pull.state == "open" => {
-                    db::repositories::records::get_repository_by_id(pool, pull.repo_id).await?
+                    crate::backend::db::repositories::records::get_repository_by_id(
+                        pool,
+                        pull.repo_id,
+                    )
+                    .await?
                 }
                 _ => None,
             };
             let owner = match &repository {
                 Some(repository) => {
-                    db::repositories::records::repository_owner_name(pool, repository.id).await?
+                    crate::backend::db::repositories::records::repository_owner_name(
+                        pool,
+                        repository.id,
+                    )
+                    .await?
                 }
                 None => None,
             };
             let (Some(pull), Some(repository), Some(owner)) = (pull, repository, owner) else {
-                db::pull_requests::auto_merge::retire_auto_merge(
+                crate::backend::db::pull_requests::auto_merge::retire_auto_merge(
                     pool,
                     entry.pull_request_id,
                     &generation,
@@ -156,45 +174,57 @@ async fn run_due_until_stop(
             };
             // The page was read before earlier merges ran, so this request may have been
             // disabled or replaced since. Only the request as it stands now may merge.
-            let current =
-                db::pull_requests::auto_merge::get_auto_merge(pool, entry.pull_request_id).await?;
+            let current = crate::backend::db::pull_requests::auto_merge::get_auto_merge(
+                pool,
+                entry.pull_request_id,
+            )
+            .await?;
             if current.is_none_or(|current| current.generation != generation) {
                 continue;
             }
             // A request made with a token merges under that token's live grants, as its merge button would.
             let authority = match entry.token_id {
-                None => db::credentials::Actor::from(entry.enabled_by),
+                None => crate::backend::db::credentials::Actor::from(entry.enabled_by),
                 Some(token) => {
-                    match db::users::tokens::token_hash(pool, token, entry.enabled_by).await? {
-                        Some(hash) => db::credentials::Actor::from((
+                    match crate::backend::db::users::tokens::token_hash(
+                        pool,
+                        token,
+                        entry.enabled_by,
+                    )
+                    .await?
+                    {
+                        Some(hash) => crate::backend::db::credentials::Actor::from((
                             entry.enabled_by,
-                            db::users::accounts::OwnedAccountCredential::Token(token, hash),
+                            crate::backend::db::users::accounts::OwnedAccountCredential::Token(
+                                token, hash,
+                            ),
                         )),
                         None => continue,
                     }
                 }
             };
-            let prepared = merge::prepare_pull_request_merge(
-                pool,
-                &state.ci_runs,
-                authority,
-                (owner, repository.name, pull.number),
-                merge::MergeRequest {
-                    expected_head: pull.head_sha,
-                    expected_base: pull.base_sha,
-                    expected_base_branch: Some(pull.base_branch),
-                    expected_target: None,
-                    merge_method: MergeMethod::parse(&entry.merge_method).unwrap_or_default(),
-                    commit_title: entry.commit_title,
-                    commit_message: entry.commit_message,
-                    author_email: entry.author_email,
-                },
-            )
-            .await;
+            let prepared =
+                crate::backend::repositories::pull_requests::merge::prepare_pull_request_merge(
+                    pool,
+                    &state.ci_runs,
+                    authority,
+                    (owner, repository.name, pull.number),
+                    crate::backend::repositories::pull_requests::merge::MergeRequest {
+                        expected_head: pull.head_sha,
+                        expected_base: pull.base_sha,
+                        expected_base_branch: Some(pull.base_branch),
+                        expected_target: None,
+                        merge_method: MergeMethod::parse(&entry.merge_method).unwrap_or_default(),
+                        commit_title: entry.commit_title,
+                        commit_message: entry.commit_message,
+                        author_email: entry.author_email,
+                    },
+                )
+                .await;
             let merged = match prepared {
                 Ok(mut prepared) => {
                     prepared.bind_auto_merge(entry.pull_request_id, &generation);
-                    merge::publish_prepared_merge(
+                    crate::backend::repositories::pull_requests::merge::publish_prepared_merge(
                         pool,
                         &state.ci_runs,
                         &state.notification_broadcaster,
@@ -206,8 +236,12 @@ async fn run_due_until_stop(
             };
             match merged {
                 Ok(_) | Err(OperationError::BranchMerged { .. }) => {
-                    db::pull_requests::auto_merge::retire_auto_merge(pool, pull.id, &generation)
-                        .await?;
+                    crate::backend::db::pull_requests::auto_merge::retire_auto_merge(
+                        pool,
+                        pull.id,
+                        &generation,
+                    )
+                    .await?;
                 }
                 Err(error) => {
                     tracing::debug!(pull_request = pull.id, %error, "auto-merge is still waiting");

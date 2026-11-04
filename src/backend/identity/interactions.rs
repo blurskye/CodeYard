@@ -1,8 +1,7 @@
 //! Git-derived proof preparation happens outside database transactions. Only the database
 //! decides whether a contribution may commit, using the live policy and the proof's source version.
 use crate::backend::app::AppState;
-use crate::backend::db::interactions;
-use crate::backend::repositories::access;
+
 use crate::backend::repositories::store::repo_store;
 use crate::backend::repositories::store::CommitFilter;
 use anyhow::Result;
@@ -15,25 +14,27 @@ pub async fn prepare(
     actor: &codeyard_db_core::models::User,
     repository: &codeyard_db_core::models::Repository,
 ) -> Result<()> {
-    if !interactions::proof_required(&state.pool, actor.id, repository.id).await? {
+    if !crate::backend::db::interactions::proof_required(&state.pool, actor.id, repository.id)
+        .await?
+    {
         return Ok(());
     }
-    if !access::can_read(&state.pool, Some(actor), repository).await?
-        || access::user_access(&state.pool, actor, repository)
+    if !crate::backend::repositories::access::can_read(&state.pool, Some(actor), repository).await?
+        || crate::backend::repositories::access::user_access(&state.pool, actor, repository)
             .await?
             .can_write()
     {
         return Ok(());
     }
-    let source = interactions::source(&state.pool, repository.id)
+    let source = crate::backend::db::interactions::source(&state.pool, repository.id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("Repository changed"))?;
     anyhow::ensure!(
         repository.storage_node_id == source.storage_node_id,
         "Repository placement changed"
     );
-    let emails = interactions::verified_emails(&state.pool, actor.id).await?;
-    if interactions::proof_current(&state.pool, actor.id, &source, &emails)
+    let emails = crate::backend::db::interactions::verified_emails(&state.pool, actor.id).await?;
+    if crate::backend::db::interactions::proof_current(&state.pool, actor.id, &source, &emails)
         .await?
         .is_some()
     {
@@ -60,7 +61,14 @@ pub async fn prepare(
         false
     };
     anyhow::ensure!(
-        interactions::save_proof(&state.pool, actor.id, &source, &emails, contributed).await?,
+        crate::backend::db::interactions::save_proof(
+            &state.pool,
+            actor.id,
+            &source,
+            &emails,
+            contributed
+        )
+        .await?,
         "Contributor proof source changed"
     );
     Ok(())

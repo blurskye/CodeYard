@@ -1,13 +1,17 @@
 //! Dependabot alerts use the same live database authority as native security forms.
-use super::{advisories::failure, auth, orgs, repo_url, repos, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        dependabot_alerts::{self as store, Alert, Update},
-    },
-    webhooks::payloads,
-};
+use crate::backend::api::github::advisories::failure;
+
+use codeyard_model::urls::repo_url;
+
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::dependabot_alerts as store;
+use crate::backend::db::dependabot_alerts::Alert;
+use crate::backend::db::dependabot_alerts::Update;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode, Uri},
@@ -38,9 +42,9 @@ pub(super) async fn import(
     headers: HeaderMap,
     Json(value): Json<Value>,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
     let value = store::import(&state.pool, actor.database_actor(), &value)
         .await
@@ -53,7 +57,7 @@ async fn global(
     Query(query): Query<Params>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    auth::authenticate(&state, &headers, false).await?;
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     validate(&query, true)?;
     let sort = query.get("sort").map_or("published", String::as_str);
     let ascending = query.get("direction").is_some_and(|v| v == "asc");
@@ -122,7 +126,7 @@ async fn global_detail(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>> {
-    auth::authenticate(&state, &headers, false).await?;
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     let value = store::global_one(&state.pool, &id)
         .await
         .map_err(failure)?
@@ -240,7 +244,7 @@ fn page(mut rows: Vec<Value>, q: &Params, uri: &Uri, global: bool) -> Result<Res
         .get("sort")
         .map_or(if global { "published" } else { "created" }, String::as_str);
     let ascending = q.get("direction").is_some_and(|s| s == "asc");
-    let limit = super::pagination::page_size(
+    let limit = crate::backend::api::github::pagination::page_size(
         q.get("per_page")
             .map(|s| s.parse::<usize>())
             .transpose()
@@ -342,7 +346,7 @@ fn page_response(
                 .finish();
             links.push(format!(
                 "<{}{}?{}>; rel=\"{rel}\"",
-                crate::backend::api::http::config::link_origin(),
+                codeyard_model::http_config::link_origin(),
                 uri.path(),
                 query
             ));
@@ -380,16 +384,16 @@ pub(crate) async fn document(
         .unwrap_or(json!({"score":0.0,"vector_string":null}));
     let advisory = json!({"ghsa_id":global["ghsa_id"],"cve_id":global["cve_id"],"summary":global["summary"],"description":global["description"].as_str().unwrap_or(""),"severity":global["severity"],"classification":if global["type"]=="malware" {"malware"} else {"general"},"cvss":cvss,"cwes":global["cwes"].as_array().cloned().unwrap_or_default(),"identifiers":global["identifiers"],"references":global["references"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|s|json!({"url":s})).collect::<Vec<_>>(),"vulnerabilities":vulnerabilities,"published_at":global["published_at"],"updated_at":global["updated_at"],"withdrawn_at":global["withdrawn_at"]});
     let dismissed_by = if let Some(id) = row.dismissed_by {
-        db::users::accounts::get_user_by_id(&state.pool, id)
+        crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .as_ref()
-            .map(payloads::user)
+            .map(crate::backend::webhooks::payloads::user)
     } else {
         None
     };
     Ok(
-        json!({"number":row.number,"state":row.state,"dependency":{"package":{"ecosystem":row.ecosystem,"name":row.package},"manifest_path":row.manifest,"version_requirement":row.version,"scope":if row.scope=="unknown" {None} else {Some(&row.scope)},"relationship":"unknown"},"security_advisory":advisory,"security_vulnerability":vulnerability(&v),"url":format!("{}/dependabot/alerts/{}",repo_url(owner,name),row.number),"html_url":format!("{}/{}/{}/security/dependabot",crate::backend::api::http::config::link_origin(),codeyard_webui::encode_component(owner),codeyard_webui::encode_component(name)),"created_at":row.created_at,"updated_at":row.updated_at,"fixed_at":row.fixed_at,"dismissed_at":row.dismissed_at,"dismissed_by":dismissed_by,"dismissed_reason":row.dismissed_reason,"dismissed_comment":row.dismissed_comment,"auto_dismissed_at":null,"assignees":[]}),
+        json!({"number":row.number,"state":row.state,"dependency":{"package":{"ecosystem":row.ecosystem,"name":row.package},"manifest_path":row.manifest,"version_requirement":row.version,"scope":if row.scope=="unknown" {None} else {Some(&row.scope)},"relationship":"unknown"},"security_advisory":advisory,"security_vulnerability":vulnerability(&v),"url":format!("{}/dependabot/alerts/{}",repo_url(owner,name),row.number),"html_url":format!("{}/{}/{}/security/dependabot",codeyard_model::http_config::link_origin(),codeyard_webui::encode_component(owner),codeyard_webui::encode_component(name)),"created_at":row.created_at,"updated_at":row.updated_at,"fixed_at":row.fixed_at,"dismissed_at":row.dismissed_at,"dismissed_by":dismissed_by,"dismissed_reason":row.dismissed_reason,"dismissed_comment":row.dismissed_comment,"auto_dismissed_at":null,"assignees":[]}),
     )
 }
 fn alert_matches(v: &Value, q: &Params) -> bool {
@@ -424,10 +428,10 @@ async fn list(
     validate(&query, false)?;
     let org = params.get("org");
     let (ids, actor) = if let Some(org) = org {
-        let actor = auth::authenticate(&state, &headers, false)
+        let actor = crate::backend::api::github::auth::authenticate(&state, &headers, false)
             .await?
-            .ok_or_else(auth::required)?;
-        let org = orgs::target(&state, org).await?;
+            .ok_or_else(crate::backend::api::github::auth::required)?;
+        let org = crate::backend::api::github::orgs::target(&state, org).await?;
         let ids = store::organization_repositories(&state.pool, actor.user.id, org.id)
             .await
             .map_err(failure)?;
@@ -435,7 +439,10 @@ async fn list(
     } else {
         let (repo, actor) =
             repository(&state, &headers, &params["owner"], &params["repo"], false).await?;
-        (vec![repo.id], actor.ok_or_else(auth::required)?)
+        (
+            vec![repo.id],
+            actor.ok_or_else(crate::backend::api::github::auth::required)?,
+        )
     };
     let database_actor = actor.database_actor();
     let mut documents = Vec::new();
@@ -446,22 +453,23 @@ async fn list(
             Err(error)
                 if org.is_some()
                     && matches!(
-                        error.downcast_ref::<db::advisories::Refusal>(),
-                        Some(db::advisories::Refusal::Missing)
+                        error.downcast_ref::<codeyard_model::advisories::Refusal>(),
+                        Some(codeyard_model::advisories::Refusal::Missing)
                     ) =>
             {
                 continue
             }
             Err(error) => return Err(failure(error)),
         };
-        let repo = db::repositories::records::get_repository_by_id(&state.pool, id)
+        let repo = crate::backend::db::repositories::records::get_repository_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        let owner = db::repositories::records::repository_owner_name(&state.pool, id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let owner =
+            crate::backend::db::repositories::records::repository_owner_name(&state.pool, id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
         let mut repository_document = None;
         for row in rows {
             let mut doc = document(&state, &row, &owner, &repo.name).await?;
@@ -470,7 +478,10 @@ async fn list(
             }
             if org.is_some() {
                 if repository_document.is_none() {
-                    repository_document = Some(repos::document(&state, &repo, Some(&actor)).await?);
+                    repository_document = Some(
+                        crate::backend::api::github::repos::document(&state, &repo, Some(&actor))
+                            .await?,
+                    );
                 }
                 doc["repository"] = repository_document.as_ref().unwrap().clone();
             }
@@ -485,7 +496,7 @@ async fn detail(
     Path((owner, name, number)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = actor.ok_or_else(auth::required)?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     let row = store::alerts(&state.pool, actor.database_actor(), repo.id)
         .await
         .map_err(failure)?
@@ -501,7 +512,7 @@ async fn update(
     Json(input): Json<Update>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(auth::required)?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     let row = store::update(&state.pool, actor.database_actor(), repo.id, number, &input)
         .await
         .map_err(failure)?;

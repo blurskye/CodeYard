@@ -1,10 +1,15 @@
 //! Source-import status and retry use the same durable attempt as the background Git transfer.
-use super::{auth, contents::store_error, repo_url, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{self, source_imports::SourceImport},
-    repositories::{access, imports, store::repo_store},
-};
+
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use codeyard_model::urls::repo_url;
+
+use crate::backend::db::source_imports::SourceImport;
+
+use crate::backend::repositories::store::repo_store;
 use axum::{
     body::to_bytes,
     extract::{Path, Request, State},
@@ -43,10 +48,13 @@ async fn administrator(
     owner: &str,
     name: &str,
     write: bool,
-) -> Result<(codeyard_db_core::models::Repository, auth::Authentication)> {
+) -> Result<(
+    codeyard_db_core::models::Repository,
+    crate::backend::api::github::auth::Authentication,
+)> {
     let (repo, actor) = repository(state, headers, owner, name, write).await?;
-    let actor = actor.ok_or_else(auth::required)?;
-    if !access::can_admin(&state.pool, &actor.user, &repo)
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
+    if !crate::backend::repositories::access::can_admin(&state.pool, &actor.user, &repo)
         .await
         .map_err(Error::unavailable)?
     {
@@ -66,7 +74,7 @@ fn document(import: &SourceImport, owner: &str, name: &str) -> Value {
         "status_text": match status { "complete" => "Import complete", "error" => "Import failed; retry with updated credentials", _ => "Importing Git data" },
         "error_message": if status == "error" { Some("Import failed or timed out. Git data already published is retained.") } else { None },
         "url": format!("{base}/import"), "repository_url": base,
-        "html_url": format!("{}/{}/{}", crate::backend::api::http::config::link_origin(), codeyard_webui::encode_component(owner), codeyard_webui::encode_component(name)),
+        "html_url": format!("{}/{}/{}", codeyard_model::http_config::link_origin(), codeyard_webui::encode_component(owner), codeyard_webui::encode_component(name)),
         "authors_url": format!("{base}/import/authors"),
     })
 }
@@ -77,7 +85,7 @@ async fn status(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = administrator(&state, &headers, &owner, &name, false).await?;
-    let import = db::source_imports::get(&state.pool, repo.id)
+    let import = crate::backend::db::source_imports::get(&state.pool, repo.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -92,7 +100,9 @@ struct Input {
     vcs_password: Option<String>,
 }
 
-fn credentials(input: &Input) -> Result<Option<imports::Credentials>> {
+fn credentials(
+    input: &Input,
+) -> Result<Option<crate::backend::repositories::imports::Credentials>> {
     if input.vcs.as_deref().is_some_and(|vcs| vcs != "git") {
         return Err(Error::validation("Import", "vcs", "invalid"));
     }
@@ -100,7 +110,7 @@ fn credentials(input: &Input) -> Result<Option<imports::Credentials>> {
     let password = input.vcs_password.clone().unwrap_or_default();
     Ok(
         if input.vcs_password.is_some() || input.vcs_username.is_some() {
-            Some(imports::Credentials { username, password })
+            Some(crate::backend::repositories::imports::Credentials { username, password })
         } else {
             None
         },
@@ -110,26 +120,35 @@ fn credentials(input: &Input) -> Result<Option<imports::Credentials>> {
 async fn begin(
     state: Arc<AppState>,
     repo: codeyard_db_core::models::Repository,
-    actor: auth::Authentication,
+    actor: crate::backend::api::github::auth::Authentication,
     input: Input,
     url: &str,
 ) -> Result<SourceImport> {
-    imports::start(
+    crate::backend::repositories::imports::start(
         state,
         repo,
-        imports::ImportCredential::Token(actor.token.id),
+        crate::backend::repositories::imports::ImportCredential::Token(actor.token.id),
         url,
         credentials(&input)?,
     )
     .await
     .map_err(|error| match error {
-        imports::ImportError::Source => Error::validation("Import", "vcs_url", "invalid"),
-        imports::ImportError::Credentials => Error::validation("Import", "vcs_password", "invalid"),
-        imports::ImportError::Denied => Error::new(StatusCode::FORBIDDEN, error.to_string()),
-        imports::ImportError::NotEmpty | imports::ImportError::Running => {
+        crate::backend::repositories::imports::ImportError::Source => {
+            Error::validation("Import", "vcs_url", "invalid")
+        }
+        crate::backend::repositories::imports::ImportError::Credentials => {
+            Error::validation("Import", "vcs_password", "invalid")
+        }
+        crate::backend::repositories::imports::ImportError::Denied => {
+            Error::new(StatusCode::FORBIDDEN, error.to_string())
+        }
+        crate::backend::repositories::imports::ImportError::NotEmpty
+        | crate::backend::repositories::imports::ImportError::Running => {
             Error::new(StatusCode::CONFLICT, error.to_string())
         }
-        imports::ImportError::Unavailable => Error::unavailable(error),
+        crate::backend::repositories::imports::ImportError::Unavailable => {
+            Error::unavailable(error)
+        }
     })
 }
 
@@ -163,18 +182,18 @@ async fn retry(
     request: Request,
 ) -> Result<Json<Value>> {
     let (repo, actor) = administrator(&state, &headers, &owner, &name, true).await?;
-    let previous = db::source_imports::get(&state.pool, repo.id)
+    let previous = crate::backend::db::source_imports::get(&state.pool, repo.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let bytes = to_bytes(request.into_body(), 16 * 1024)
         .await
-        .map_err(super::json_bytes_error)?;
+        .map_err(crate::backend::api::github::json_bytes_error)?;
     let input = if bytes.is_empty() {
         Input::default()
     } else {
         serde_json::from_slice::<Option<Input>>(&bytes)
-            .map_err(super::json_parse_error)?
+            .map_err(crate::backend::api::github::json_parse_error)?
             .unwrap_or_default()
     };
     let import = begin(state, repo, actor, input, &previous.vcs_url).await?;

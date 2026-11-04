@@ -1,7 +1,9 @@
 //! GraphQL project operations, with authority checked in the same transaction.
-use super::items::{writable_item, ITEM};
 use super::*;
-use crate::backend::db::projects::{valid_name, Item};
+use crate::backend::db::postgres::projects::items::writable_item;
+use crate::backend::db::postgres::projects::items::ITEM;
+use crate::backend::db::projects::valid_name;
+use crate::backend::db::projects::Item;
 use std::collections::HashMap;
 
 pub async fn link_team(
@@ -60,7 +62,10 @@ pub async fn by_id_at(
     id: i64,
     include_deleted: bool,
 ) -> Result<Project> {
-    super::super::retry_on_conflict(|| by_id_at_once(pool, viewer, id, include_deleted)).await
+    crate::backend::db::postgres::retry_on_conflict(|| {
+        by_id_at_once(pool, viewer, id, include_deleted)
+    })
+    .await
 }
 
 async fn by_id_at_once(
@@ -79,7 +84,7 @@ async fn by_id_at_once(
     Ok(project)
 }
 pub async fn field_by_id(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<Field> {
-    super::super::retry_on_conflict(|| field_by_id_once(pool, viewer, id)).await
+    crate::backend::db::postgres::retry_on_conflict(|| field_by_id_once(pool, viewer, id)).await
 }
 
 async fn field_by_id_once(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<Field> {
@@ -103,7 +108,10 @@ pub async fn item_by_id_at(
     id: i64,
     include_deleted: bool,
 ) -> Result<Item> {
-    super::super::retry_on_conflict(|| item_by_id_at_once(pool, viewer, id, include_deleted)).await
+    crate::backend::db::postgres::retry_on_conflict(|| {
+        item_by_id_at_once(pool, viewer, id, include_deleted)
+    })
+    .await
 }
 
 async fn item_by_id_at_once(
@@ -120,7 +128,12 @@ async fn item_by_id_at_once(
         .ok_or(Refusal::Missing)?;
     readable_at(&mut tx, viewer, item.project_id, include_deleted).await?;
     if let Some(repo) = item.repo_id {
-        super::items::repository_read(&mut tx, viewer.unwrap_or(0), repo).await?;
+        crate::backend::db::postgres::projects::items::repository_read(
+            &mut tx,
+            viewer.unwrap_or(0),
+            repo,
+        )
+        .await?;
     }
     tx.commit().await?;
     Ok(item)
@@ -134,7 +147,7 @@ pub async fn metadata(
     template: Option<bool>,
 ) -> Result<Project> {
     anyhow::ensure!(
-        readme.is_none_or(|text| crate::backend::issues::validate_body(text, false).is_ok()),
+        readme.is_none_or(|text| codeyard_model::issue_input::validate_body(text, false).is_ok()),
         Refusal::Invalid
     );
     let mut tx = pool.begin().await?;
@@ -252,7 +265,10 @@ pub async fn copy(
     owner_authority(&mut tx, actor, owner, true).await?;
     let (kind, id) = owner.parts();
     anyhow::ensure!(
-        super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        crate::backend::db::postgres::users::transitions::credential_live(
+            &mut tx, actor, credential, true
+        )
+        .await?,
         Refusal::Denied
     );
     readable(&mut tx, Some(actor), source).await?;

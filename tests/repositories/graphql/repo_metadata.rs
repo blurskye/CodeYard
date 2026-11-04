@@ -1,7 +1,6 @@
 //! The remaining RepositoryGraphQL selections emitted by gh repo list --json.
 use super::*;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard::backend::repositories::lifecycle;
 
 const FIELDS: &str = "openGraphImageUrl,usesCustomOpenGraphImage,mirrorUrl,securityPolicyUrl,archivedAt,isBlankIssuesEnabled,isSecurityPolicyEnabled,hasDiscussionsEnabled,diskUsage,isEmpty,isMirror,isUserConfigurationRepository,viewerDefaultCommitEmail,viewerDefaultMergeMethod,viewerHasStarred,viewerPossibleCommitEmails,viewerSubscription,templateRepository{id,name,owner{id,login}},codeOfConduct{key,name,url},contactLinks{about,name,url},fundingLinks{platform,url},licenseInfo{key,name,nickname},languages(first:100){edges{size,node{name}}},primaryLanguage{name},issueTemplates{name,title,body,about},pullRequestTemplates{body,filename},milestones(first:100,states:OPEN){nodes{number,title,description,dueOn}},assignableUsers(first:100){nodes{id,login,name}},mentionableUsers(first:100){nodes{id,login,name}},projects(first:100,states:OPEN){nodes{id,name,number,body,resourcePath}},projectsV2(first:100,query:\"is:open\"){nodes{id,number,title,resourcePath,closed,url}},issues(states:OPEN){totalCount},pullRequests(states:OPEN){totalCount}";
 
@@ -10,7 +9,7 @@ async fn contract(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("metadata-alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = lifecycle::provision(
+    let repo = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),

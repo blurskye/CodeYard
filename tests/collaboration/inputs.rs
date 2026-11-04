@@ -8,7 +8,7 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
 use base64::Engine;
-use codeyard::backend::db;
+
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};
@@ -25,7 +25,7 @@ async fn contract(pg: bool) {
     codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -186,11 +186,12 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(review["state"], "commented");
-    let repo = db::repositories::records::get_repository(f.pool(), "alice", "proj")
-        .await
-        .unwrap()
-        .unwrap();
-    db::repositories::access::grant_repo_access(
+    let repo =
+        codeyard::backend::db::repositories::records::get_repository(f.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
+    codeyard::backend::db::repositories::access::grant_repo_access(
         f.pool(),
         bob_id,
         repo.id,
@@ -335,12 +336,16 @@ async fn contract(pg: bool) {
                 &[
                     (
                         "repository_id",
-                        &db::repositories::records::get_repository(f.pool(), "alice", "proj")
-                            .await
-                            .unwrap()
-                            .unwrap()
-                            .id
-                            .to_string(),
+                        &codeyard::backend::db::repositories::records::get_repository(
+                            f.pool(),
+                            "alice",
+                            "proj",
+                        )
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .id
+                        .to_string(),
                     ),
                     ("name", name),
                     ("color", "d73a4a"),
@@ -563,9 +568,13 @@ async fn contract(pg: bool) {
     assert_native_list_omits_bodies(&alice).await;
     assert_native_list_search(&alice).await;
     assert_notification_actor_batch(&f, &alice, alice_id).await;
-    db::repositories::access::revoke_repo_access(f.pool(), bob_id, proj_id.parse().unwrap())
-        .await
-        .unwrap();
+    codeyard::backend::db::repositories::access::revoke_repo_access(
+        f.pool(),
+        bob_id,
+        proj_id.parse().unwrap(),
+    )
+    .await
+    .unwrap();
     assert_comment_paths_are_bounded(&f, &bob_client, bob_id, &pull).await;
     let (status, forked) = bob_client
         .api("POST", "/api/repos/alice/proj/forks", json!({}))
@@ -863,9 +872,10 @@ async fn assert_comment_paths_are_bounded(
 ) {
     let path = format!("/api/repos/alice/proj/pulls/{}/comments", pull["number"]);
     let pr_id = pull["id"].as_i64().unwrap();
-    let before = db::pull_requests::reviews::count_pull_request_comments(f.pool(), pr_id)
-        .await
-        .unwrap();
+    let before =
+        codeyard::backend::db::pull_requests::reviews::count_pull_request_comments(f.pool(), pr_id)
+            .await
+            .unwrap();
     for oversized in ["x".repeat(4097), "é".repeat(2049), "x".repeat(1024 * 1024)] {
         let rejected = reader
             .expect(
@@ -878,7 +888,7 @@ async fn assert_comment_paths_are_bounded(
         assert_eq!(rejected["error"], "validation_error");
     }
     assert_eq!(
-        db::pull_requests::reviews::count_pull_request_comments(f.pool(), pr_id)
+        codeyard::backend::db::pull_requests::reviews::count_pull_request_comments(f.pool(), pr_id)
             .await
             .unwrap(),
         before
@@ -902,9 +912,9 @@ async fn assert_comment_paths_are_bounded(
                 .contains("this pull request changes"),
             "{refused}"
         );
-        let parent = db::pull_requests::reviews::add_pull_request_comment(
+        let parent = codeyard::backend::db::pull_requests::reviews::add_pull_request_comment(
             f.pool(),
-            db::pull_requests::reviews::NewPullRequestComment {
+            codeyard::backend::db::pull_requests::reviews::NewPullRequestComment {
                 pr_id,
                 author_id: reader_id,
                 body: "At limit",
@@ -946,9 +956,9 @@ async fn assert_comment_paths_are_bounded(
     // Paths over the budget are stored as given. Reads leave them out,
     // and a reply to one is refused.
     for oversized_path in ["x".repeat(1024 * 1024), "é".repeat(2049)] {
-        let oversized = db::pull_requests::reviews::add_pull_request_comment(
+        let oversized = codeyard::backend::db::pull_requests::reviews::add_pull_request_comment(
             f.pool(),
-            db::pull_requests::reviews::NewPullRequestComment {
+            codeyard::backend::db::pull_requests::reviews::NewPullRequestComment {
                 pr_id,
                 author_id: reader_id,
                 body: "Oversized path",
@@ -964,9 +974,12 @@ async fn assert_comment_paths_are_bounded(
         )
         .await
         .unwrap();
-        let count = db::pull_requests::reviews::count_pull_request_comments(f.pool(), pr_id)
-            .await
-            .unwrap();
+        let count = codeyard::backend::db::pull_requests::reviews::count_pull_request_comments(
+            f.pool(),
+            pr_id,
+        )
+        .await
+        .unwrap();
         let rejected = reader
             .expect(
                 "POST",
@@ -977,9 +990,12 @@ async fn assert_comment_paths_are_bounded(
             .await;
         assert_eq!(rejected["error"], "validation_error");
         assert_eq!(
-            db::pull_requests::reviews::count_pull_request_comments(f.pool(), pr_id)
-                .await
-                .unwrap(),
+            codeyard::backend::db::pull_requests::reviews::count_pull_request_comments(
+                f.pool(),
+                pr_id
+            )
+            .await
+            .unwrap(),
             count
         );
         let listed = reader
@@ -999,11 +1015,13 @@ async fn assert_comment_paths_are_bounded(
         assert_eq!(status, StatusCode::OK);
         assert!(page.contains("Oversized path"));
         assert!(!page.contains(&oversized_path));
-        let stored =
-            db::pull_requests::reviews::get_pull_request_comment_by_id(f.pool(), oversized.id)
-                .await
-                .unwrap()
-                .unwrap();
+        let stored = codeyard::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
+            f.pool(),
+            oversized.id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(stored.path.as_deref(), Some(oversized_path.as_str()));
     }
 }
@@ -1446,9 +1464,14 @@ async fn assert_issue_notification_links(f: &Database, alice: &Client, bob: &Cli
         .unwrap()
         .parse()
         .unwrap();
-    let second_id = db::issues::list_issue_comments(f.pool(), issue["id"].as_i64().unwrap(), 2, 0)
-        .await
-        .unwrap()[1]
+    let second_id = codeyard::backend::db::issues::list_issue_comments(
+        f.pool(),
+        issue["id"].as_i64().unwrap(),
+        2,
+        0,
+    )
+    .await
+    .unwrap()[1]
         .comment
         .id;
     for id in [first_id, second_id] {
@@ -1483,12 +1506,17 @@ async fn assert_issue_notification_links(f: &Database, alice: &Client, bob: &Cli
         &[issue["id"].as_i64().unwrap()],
     )
     .await;
-    let ordered = db::issues::list_issue_comments(f.pool(), issue["id"].as_i64().unwrap(), 100, 0)
-        .await
-        .unwrap();
+    let ordered = codeyard::backend::db::issues::list_issue_comments(
+        f.pool(),
+        issue["id"].as_i64().unwrap(),
+        100,
+        0,
+    )
+    .await
+    .unwrap();
     for (index, row) in ordered.iter().enumerate() {
         assert_eq!(
-            db::issues::issue_comment_position(f.pool(), row.comment.id)
+            codeyard::backend::db::issues::issue_comment_position(f.pool(), row.comment.id)
                 .await
                 .unwrap(),
             (index + 1) as i64
@@ -1501,7 +1529,7 @@ async fn assert_issue_notification_links(f: &Database, alice: &Client, bob: &Cli
     )
     .await;
     assert_eq!(
-        db::issues::issue_comment_position(f.pool(), id)
+        codeyard::backend::db::issues::issue_comment_position(f.pool(), id)
             .await
             .unwrap(),
         1
@@ -1661,9 +1689,9 @@ async fn assert_notification_actor_batch(f: &Database, alice: &Client, recipient
     for index in 0..100 {
         let name = format!("notification_actor_{index}");
         let actor = f.actor(&name).await;
-        let notification = db::notifications::records::create_notification(
+        let notification = codeyard::backend::db::notifications::records::create_notification(
             f.pool(),
-            db::notifications::records::NewNotification {
+            codeyard::backend::db::notifications::records::NewNotification {
                 user_id: recipient,
                 actor_id: Some(actor),
                 repo_id: None,

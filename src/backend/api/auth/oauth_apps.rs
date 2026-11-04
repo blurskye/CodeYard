@@ -1,16 +1,13 @@
 //! GitHub's OAuth device and authorization-code flows, including the public CLI client.
-use crate::backend::{
-    api::{
-        http::{config::link_origin, context::PageContext, session},
-        user::responses::field,
-    },
-    app::AppState,
-    db::{
-        self,
-        oauth_apps::{Exchange, Grant},
-    },
-    identity::{admission, oauth_apps as oauth, tokens::token_hash},
-};
+use crate::backend::api::http::context::PageContext;
+use codeyard_model::http_config::link_origin;
+
+use crate::backend::api::user::responses::field;
+use crate::backend::app::AppState;
+
+use crate::backend::db::oauth_apps::Exchange;
+use crate::backend::db::oauth_apps::Grant;
+
 use axum::{
     body::Bytes,
     extract::{Form, Query, State},
@@ -19,6 +16,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use codeyard_support::token_hash::token_hash;
 use codeyard_webui::{app::Page, pages::account};
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -41,7 +39,7 @@ pub(super) fn router() -> Router<Arc<AppState>> {
         )
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
         .layer(axum::middleware::from_fn(
-            super::super::http::middleware::private_sensitive_response,
+            crate::backend::api::http::middleware::private_sensitive_response,
         ))
 }
 
@@ -102,7 +100,7 @@ fn failure(headers: &HeaderMap, code: &str) -> Response {
 }
 
 async fn admit(state: &AppState, headers: &HeaderMap, key: &str) -> Result<(), Response> {
-    if db::node_config::get_node_configuration(&state.pool)
+    if crate::backend::db::node_config::get_node_configuration(&state.pool)
         .await
         .ok()
         .flatten()
@@ -110,20 +108,24 @@ async fn admit(state: &AppState, headers: &HeaderMap, key: &str) -> Result<(), R
     {
         return Err(StatusCode::SERVICE_UNAVAILABLE.into_response());
     }
-    admission::admit_operation(
+    crate::backend::identity::admission::admit_operation(
         &state.pool,
-        session::client_address(headers),
+        crate::backend::api::http::session::client_address(headers),
         "device",
         &format!(
             "{key}:{}",
-            session::client_address(headers).unwrap_or("local")
+            crate::backend::api::http::session::client_address(headers).unwrap_or("local")
         ),
     )
     .await
     .map(|_| ())
     .map_err(|error| match error {
-        admission::AdmissionError::Limited => StatusCode::TOO_MANY_REQUESTS.into_response(),
-        admission::AdmissionError::Unavailable => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        crate::backend::identity::admission::AdmissionError::Limited => {
+            StatusCode::TOO_MANY_REQUESTS.into_response()
+        }
+        crate::backend::identity::admission::AdmissionError::Unavailable => {
+            StatusCode::SERVICE_UNAVAILABLE.into_response()
+        }
     })
 }
 
@@ -139,21 +141,22 @@ async fn device_code(
         return failure(&headers, "invalid_request");
     };
     let id = field(&form, "client_id");
-    match oauth::client(&state.pool, id).await {
+    match crate::backend::identity::oauth_apps::client(&state.pool, id).await {
         Ok(Some(_)) => (),
         Ok(None) => return failure(&headers, "incorrect_client_credentials"),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
-    let Some(mut scopes) = oauth::scopes(field(&form, "scope")) else {
+    let Some(mut scopes) = crate::backend::identity::oauth_apps::scopes(field(&form, "scope"))
+    else {
         return failure(&headers, "invalid_scope");
     };
-    match db::github_apps::app(&state.pool, id).await {
+    match crate::backend::db::github_apps::app(&state.pool, id).await {
         Ok(Some(_)) => scopes.clear(),
         Ok(None) => {}
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
     let value = codeyard_support::crypto::random_hex();
-    let user_code = oauth::user_code();
+    let user_code = crate::backend::identity::oauth_apps::user_code();
     let grant = Grant {
         hash: token_hash(&value),
         client_id: id.to_owned(),
@@ -170,7 +173,7 @@ async fn device_code(
         state: String::new(),
         challenge: String::new(),
     };
-    if db::oauth_apps::save_grant(&state.pool, &grant)
+    if crate::backend::db::oauth_apps::save_grant(&state.pool, &grant)
         .await
         .is_err()
     {
@@ -191,7 +194,7 @@ async fn access_token(
         return failure(&headers, "invalid_request");
     };
     let id = field(&form, "client_id");
-    let app = match oauth::client(&state.pool, id).await {
+    let app = match crate::backend::identity::oauth_apps::client(&state.pool, id).await {
         Ok(Some(app)) => app,
         Ok(None) => return failure(&headers, "incorrect_client_credentials"),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
@@ -200,7 +203,9 @@ async fn access_token(
     if !device && !matches!(field(&form, "grant_type"), "" | "authorization_code") {
         return failure(&headers, "unsupported_grant_type");
     }
-    if !device && !oauth::valid_secret(&app, field(&form, "client_secret")) {
+    if !device
+        && !crate::backend::identity::oauth_apps::valid_secret(&app, field(&form, "client_secret"))
+    {
         return failure(&headers, "incorrect_client_credentials");
     }
     let code = field(&form, if device { "device_code" } else { "code" });
@@ -214,13 +219,13 @@ async fn access_token(
             },
         );
     }
-    let value = match db::github_apps::app(&state.pool, id).await {
+    let value = match crate::backend::db::github_apps::app(&state.pool, id).await {
         Ok(Some(_)) => format!("ghu_{}", codeyard_support::crypto::random_hex()),
         Ok(None) => codeyard_support::crypto::random_hex(),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
     // Device polling has its own durable interval; it must not consume the password-login budget.
-    match db::oauth_apps::exchange(
+    match crate::backend::db::oauth_apps::exchange(
         &state.pool,
         &token_hash(code),
         id,
@@ -308,11 +313,11 @@ async fn device_post(
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
-    let code = oauth::normalize_code(field(&form, "user_code"));
+    let code = crate::backend::identity::oauth_apps::normalize_code(field(&form, "user_code"));
     if let Err(response) = admit(&ctx.state, &ctx.headers, "oauth-user-code").await {
         return response;
     }
-    let grant = match db::oauth_apps::device_grant(&ctx.state.pool, &code).await {
+    let grant = match crate::backend::db::oauth_apps::device_grant(&ctx.state.pool, &code).await {
         Ok(Some(grant)) => grant,
         Ok(None) => {
             return device_page(
@@ -324,21 +329,25 @@ async fn device_post(
         }
         Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Authorization unavailable"),
     };
-    let app = match oauth::client(&ctx.state.pool, &grant.client_id).await {
+    let app = match crate::backend::identity::oauth_apps::client(&ctx.state.pool, &grant.client_id)
+        .await
+    {
         Ok(Some(app)) => app,
         _ => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"),
     };
-    let display_scopes = match db::github_apps::app(&ctx.state.pool, &grant.client_id).await {
-        Ok(Some(app)) => app.permissions,
-        Ok(None) => grant.scopes.clone(),
-        Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"),
-    };
+    let display_scopes =
+        match crate::backend::db::github_apps::app(&ctx.state.pool, &grant.client_id).await {
+            Ok(Some(app)) => app.permissions,
+            Ok(None) => grant.scopes.clone(),
+            Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"),
+        };
     if matches!(field(&form, "decision"), "approve" | "deny") {
         let actor = ctx.user.as_ref().unwrap().id;
-        let Some(session) = session::extract_session_id(&ctx.headers) else {
+        let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers)
+        else {
             return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
         };
-        match db::oauth_apps::approve(
+        match crate::backend::db::oauth_apps::approve(
             &ctx.state.pool,
             &code,
             actor,
@@ -376,22 +385,26 @@ async fn device_post(
 async fn authorization(
     ctx: &PageContext,
     form: &Fields,
-) -> Result<(db::oauth_apps::Application, String, String), Response> {
-    let mut app = oauth::client(&ctx.state.pool, field(form, "client_id"))
-        .await
-        .map_err(|_| ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"))?
-        .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Application not found"))?;
+) -> Result<(crate::backend::db::oauth_apps::Application, String, String), Response> {
+    let mut app =
+        crate::backend::identity::oauth_apps::client(&ctx.state.pool, field(form, "client_id"))
+            .await
+            .map_err(|_| ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"))?
+            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Application not found"))?;
     if let Some(uri) = form.get("redirect_uri") {
-        if db::github_app_manifests::callback(&ctx.state.pool, &app.client_id, uri)
+        if crate::backend::db::github_app_manifests::callback(&ctx.state.pool, &app.client_id, uri)
             .await
             .map_err(|_| ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"))?
         {
             app.redirect_uri = uri.clone();
         }
     }
-    let redirect = oauth::redirect(&app, form.get("redirect_uri").map(String::as_str))
-        .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid redirect URI"))?;
-    let scopes = oauth::scopes(field(form, "scope"))
+    let redirect = crate::backend::identity::oauth_apps::redirect(
+        &app,
+        form.get("redirect_uri").map(String::as_str),
+    )
+    .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid redirect URI"))?;
+    let scopes = crate::backend::identity::oauth_apps::scopes(field(form, "scope"))
         .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Unsupported OAuth scope"))?;
     if field(form, "state").len() > 1024
         || (!field(form, "code_challenge").is_empty()
@@ -401,7 +414,7 @@ async fn authorization(
         return Err(ctx.error(StatusCode::BAD_REQUEST, "Invalid authorization request"));
     }
     let mut scopes = scopes;
-    if let Some(github_app) = db::github_apps::app(&ctx.state.pool, &app.client_id)
+    if let Some(github_app) = crate::backend::db::github_apps::app(&ctx.state.pool, &app.client_id)
         .await
         .map_err(|_| ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"))?
     {
@@ -475,7 +488,7 @@ async fn authorize_post(
             .append_pair("state", field(&form, "state"));
         return Redirect::to(target.as_str()).into_response();
     }
-    let Some(session) = session::extract_session_id(&ctx.headers) else {
+    let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
     let value = codeyard_support::crypto::random_hex();
@@ -495,7 +508,7 @@ async fn authorize_post(
         state: field(&form, "state").to_owned(),
         challenge: field(&form, "code_challenge").to_owned(),
     };
-    if db::oauth_apps::save_grant(&ctx.state.pool, &grant)
+    if crate::backend::db::oauth_apps::save_grant(&ctx.state.pool, &grant)
         .await
         .is_err()
     {
@@ -526,9 +539,9 @@ async fn applications(
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(1)
         .max(1);
-    let size = db::oauth_apps::APPLICATION_PAGE_SIZE;
+    let size = crate::backend::db::oauth_apps::APPLICATION_PAGE_SIZE;
     let actor = ctx.database_actor(ctx.user.as_ref().unwrap().id);
-    match db::oauth_apps::applications(
+    match crate::backend::db::oauth_apps::applications(
         &ctx.state.pool,
         actor,
         page.saturating_sub(1).saturating_mul(size),
@@ -599,20 +612,20 @@ async fn register_post(
     if name.is_empty()
         || name.len() > 100
         || name.contains('\0')
-        || !oauth::valid_url(field(&form, "homepage"))
-        || !oauth::valid_url(field(&form, "redirect_uri"))
+        || !crate::backend::identity::oauth_apps::valid_url(field(&form, "homepage"))
+        || !crate::backend::identity::oauth_apps::valid_url(field(&form, "redirect_uri"))
     {
         return ctx.error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "Supply a name, homepage URL and callback URL",
         );
     }
-    let Some(session) = session::extract_session_id(&ctx.headers) else {
+    let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
     let id = codeyard_support::crypto::random_hex();
     let secret = codeyard_support::crypto::random_hex();
-    match db::oauth_apps::register(
+    match crate::backend::db::oauth_apps::register(
         &ctx.state.pool,
         ctx.user.as_ref().unwrap().id,
         &session,

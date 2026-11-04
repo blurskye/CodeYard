@@ -1,7 +1,8 @@
 //! Shared named operation surface; native transactions stay inside db.
 use codeyard_db_core::native_operation;
 pub mod management;
-use crate::backend::db::discussions::{ListFilter, StateCounts};
+use crate::backend::db::discussions::ListFilter;
+use crate::backend::db::discussions::StateCounts;
 use anyhow::Result;
 use codeyard_db_core::models::Issue;
 use codeyard_db_core::models::IssueComment;
@@ -133,7 +134,7 @@ pub struct RepositoryItemOptions<'a> {
     pub since: Option<chrono::DateTime<chrono::Utc>>,
     pub any_assignee: bool,
     pub any_milestone: bool,
-    pub issue_type: super::discussions::Pick,
+    pub issue_type: crate::backend::db::discussions::Pick,
     pub any_type: bool,
     pub mentioned: Option<&'a str>,
 }
@@ -142,8 +143,10 @@ native_operation!(crate::backend::db::postgres::issues::list_repository_items,
     crate::backend::db::sqlite::issues::list_repository_items,
     fn list_repository_items(pool: &DbPool, repo_id: i64, filter: &ListFilter<'_>, options: &RepositoryItemOptions<'_>, limit: i64) -> Result<Vec<(i64, bool)>>);
 
-pub(crate) fn repository_item_order(sort: super::discussions::ListSort) -> &'static str {
-    use super::discussions::ListSort;
+pub(crate) fn repository_item_order(
+    sort: crate::backend::db::discussions::ListSort,
+) -> &'static str {
+    use crate::backend::db::discussions::ListSort;
     match sort {
         ListSort::Newest => "i.created_at DESC",
         ListSort::Oldest => "i.created_at",
@@ -163,12 +166,12 @@ native_operation!(crate::backend::db::postgres::issues::update_issue,
     fn update_issue(
     pool: &DbPool,
     issue_id: i64,
-    edit: super::discussions::DiscussionEdit<'_>,
+    edit: crate::backend::db::discussions::DiscussionEdit<'_>,
 ) -> Result<Option<Issue>>);
 
 native_operation!(crate::backend::db::postgres::issues::update_issue_with_reason,
     crate::backend::db::sqlite::issues::update_issue_with_reason,
-    fn update_issue_with_reason(pool: &DbPool, issue_id: i64, edit: super::discussions::DiscussionEdit<'_>, state_reason: Option<&str>) -> Result<Option<Issue>>);
+    fn update_issue_with_reason(pool: &DbPool, issue_id: i64, edit: crate::backend::db::discussions::DiscussionEdit<'_>, state_reason: Option<&str>) -> Result<Option<Issue>>);
 
 native_operation!(crate::backend::db::postgres::issues::add_issue_comment,
     crate::backend::db::sqlite::issues::add_issue_comment,
@@ -208,7 +211,7 @@ pub struct ConversationComment {
 pub struct CommentFilter {
     pub number: Option<i32>,
     pub since: Option<chrono::DateTime<chrono::Utc>>,
-    pub sort: super::discussions::ListSort,
+    pub sort: crate::backend::db::discussions::ListSort,
     pub limit: i64,
     pub offset: i64,
 }

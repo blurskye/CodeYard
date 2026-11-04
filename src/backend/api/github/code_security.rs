@@ -1,8 +1,12 @@
 //! Organization security configurations share the repository security settings store.
-use super::{api_url, auth, orgs, pagination::Cursor, repository, Error, Result};
-use crate::backend::{
-    app::AppState, db::code_security as records, repositories::access, webhooks::payloads,
-};
+use codeyard_model::urls::api_url;
+
+use crate::backend::api::github::pagination::Cursor;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -39,16 +43,16 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 fn failure(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<records::Refusal>() {
-        Some(records::Refusal::Missing) => Error::missing(),
-        Some(records::Refusal::Denied) => Error::new(
+    match error.downcast_ref::<crate::backend::db::code_security::Refusal>() {
+        Some(crate::backend::db::code_security::Refusal::Missing) => Error::missing(),
+        Some(crate::backend::db::code_security::Refusal::Denied) => Error::new(
             StatusCode::FORBIDDEN,
             "Must have organization security access",
         ),
-        Some(records::Refusal::Duplicate) => {
+        Some(crate::backend::db::code_security::Refusal::Duplicate) => {
             Error::invalid_simple("A security configuration with this name already exists")
         }
-        Some(records::Refusal::Invalid) => Error::invalid_simple(
+        Some(crate::backend::db::code_security::Refusal::Invalid) => Error::invalid_simple(
             "Invalid security configuration; CodeQL default setup cannot be enabled on Codeyard",
         ),
         None => Error::unavailable(error),
@@ -59,17 +63,17 @@ async fn scope(
     headers: &HeaderMap,
     org: &str,
     write: bool,
-) -> Result<(auth::Authentication, i64)> {
-    let auth = auth::authenticate(state, headers, true)
+) -> Result<(crate::backend::api::github::auth::Authentication, i64)> {
+    let auth = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     if write {
         auth.require_write()?;
     }
-    let org = orgs::target(state, org).await?;
+    let org = crate::backend::api::github::orgs::target(state, org).await?;
     Ok((auth, org.id))
 }
-fn document(row: &records::Configuration, org: &str) -> Result<Value> {
+fn document(row: &crate::backend::db::code_security::Configuration, org: &str) -> Result<Value> {
     let mut value: Value = serde_json::from_str(&row.settings).map_err(Error::unavailable)?;
     value["id"] = json!(row.id);
     value["target_type"] = json!("organization");
@@ -80,7 +84,7 @@ fn document(row: &records::Configuration, org: &str) -> Result<Value> {
     )));
     value["html_url"] = json!(format!(
         "{}/settings/organizations/{}/security#code-security-{}",
-        crate::backend::api::http::config::link_origin(),
+        codeyard_model::http_config::link_origin(),
         row.org_id,
         row.id
     ));
@@ -110,7 +114,7 @@ async fn list(
 ) -> Result<Response> {
     let (actor, id) = scope(&state, &headers, &org, false).await?;
     let (after, before, limit) = query.window()?;
-    let rows = records::list_window(
+    let rows = crate::backend::db::code_security::list_window(
         &state.pool,
         actor.user.id,
         id,
@@ -128,7 +132,7 @@ async fn get_configuration(
     Path((org, id)): Path<(String, i64)>,
 ) -> Result<Json<Value>> {
     let (actor, owner) = scope(&state, &headers, &org, false).await?;
-    let row = records::list(&state.pool, actor.user.id, owner)
+    let row = crate::backend::db::code_security::list(&state.pool, actor.user.id, owner)
         .await
         .map_err(failure)?
         .into_iter()
@@ -150,9 +154,15 @@ async fn save(
         .transpose()?;
     let Json(input) =
         input.map_err(|_| Error::invalid_simple("Invalid security configuration request"))?;
-    let row = records::save(&state.pool, actor.database_actor(), owner, id, &input)
-        .await
-        .map_err(failure)?;
+    let row = crate::backend::db::code_security::save(
+        &state.pool,
+        actor.database_actor(),
+        owner,
+        id,
+        &input,
+    )
+    .await
+    .map_err(failure)?;
     Ok((
         if id.is_some() {
             StatusCode::OK
@@ -169,7 +179,7 @@ async fn remove(
     Path((org, id)): Path<(String, i64)>,
 ) -> Result<StatusCode> {
     let (actor, owner) = scope(&state, &headers, &org, true).await?;
-    records::delete(&state.pool, actor.database_actor(), owner, id)
+    crate::backend::db::code_security::delete(&state.pool, actor.database_actor(), owner, id)
         .await
         .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)
@@ -190,7 +200,7 @@ async fn attach(
     let (actor, owner) = scope(&state, &headers, &org, true).await?;
     let Json(input) =
         input.map_err(|_| Error::invalid_simple("Invalid security configuration attachment"))?;
-    records::attach(
+    crate::backend::db::code_security::attach(
         &state.pool,
         actor.database_actor(),
         owner,
@@ -214,7 +224,7 @@ async fn detach(
     Json(input): Json<Selected>,
 ) -> Result<StatusCode> {
     let (actor, owner) = scope(&state, &headers, &org, true).await?;
-    records::attach(
+    crate::backend::db::code_security::attach(
         &state.pool,
         actor.database_actor(),
         owner,
@@ -240,7 +250,7 @@ async fn set_default(
     let (actor, owner) = scope(&state, &headers, &org, true).await?;
     let Json(input) =
         input.map_err(|_| Error::invalid_simple("Invalid security configuration default"))?;
-    let row = records::set_default(
+    let row = crate::backend::db::code_security::set_default(
         &state.pool,
         actor.database_actor(),
         owner,
@@ -259,7 +269,7 @@ async fn defaults(
     Path(org): Path<String>,
 ) -> Result<Json<Value>> {
     let (actor, owner) = scope(&state, &headers, &org, false).await?;
-    let rows = records::list(&state.pool, actor.user.id, owner)
+    let rows = crate::backend::db::code_security::list(&state.pool, actor.user.id, owner)
         .await
         .map_err(failure)?;
     let values=rows.iter().filter(|row|row.default_for_new_repos!="none").map(|row|Ok(json!({"default_for_new_repos":row.default_for_new_repos,"configuration":document(row,&org)?}))).collect::<Result<Vec<_>>>()?;
@@ -274,7 +284,7 @@ async fn repositories(
 ) -> Result<Response> {
     let (actor, owner) = scope(&state, &headers, &org, false).await?;
     let (after, before, limit) = query.window()?;
-    let rows = records::repositories(
+    let rows = crate::backend::db::code_security::repositories(
         &state.pool,
         actor.user.id,
         owner,
@@ -299,8 +309,8 @@ async fn repository_configuration(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let auth = auth.ok_or_else(auth::required)?;
-    if !access::can_admin(&state.pool, &auth.user, &repo)
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
+    if !crate::backend::repositories::access::can_admin(&state.pool, &auth.user, &repo)
         .await
         .map_err(Error::unavailable)?
     {
@@ -309,7 +319,7 @@ async fn repository_configuration(
             "Repository administration required",
         ));
     }
-    let row = records::repository_configuration(&state.pool, repo.id)
+    let row = crate::backend::db::code_security::repository_configuration(&state.pool, repo.id)
         .await
         .map_err(failure)?;
     Ok(match row {

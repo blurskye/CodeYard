@@ -3,8 +3,6 @@
 use crate::support::database;
 use crate::support::organizations::applied;
 
-use codeyard::backend::db;
-use codeyard::backend::db::organizations as orgs;
 use codeyard::backend::repositories::lifecycle::provision;
 use codeyard::backend::repositories::store::repo_store;
 use codeyard::backend::repositories::store::FileWrite;
@@ -30,7 +28,7 @@ async fn contract(pg: bool) {
     let repository = provision(
         (fixture.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(owner),
         "publication",
         None,
         true,
@@ -55,7 +53,7 @@ async fn contract(pg: bool) {
     let other = provision(
         (fixture.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(owner),
         "publication-other",
         None,
         true,
@@ -84,7 +82,7 @@ async fn contract(pg: bool) {
         .unwrap()
         .contains_key("refs/heads/main"));
 
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         fixture.pool(),
         writer,
         repository.id,
@@ -103,9 +101,13 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
     assert!(
-        db::repositories::access::revoke_repo_access(fixture.pool(), writer, repository.id)
-            .await
-            .unwrap()
+        codeyard::backend::db::repositories::access::revoke_repo_access(
+            fixture.pool(),
+            writer,
+            repository.id
+        )
+        .await
+        .unwrap()
     );
     assert!(store
         .publish_file_as(fixture.pool(), repository.id, writer, &direct)
@@ -114,7 +116,7 @@ async fn contract(pg: bool) {
         .is_write_denied());
     assert_eq!(store.commit("main").await.unwrap().sha, initial);
 
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         fixture.pool(),
         writer,
         repository.id,
@@ -172,9 +174,9 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap();
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard::backend::db::repositories::protection::upsert_branch_protection_rule(
         fixture.pool(),
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard::backend::db::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: owner,
             repo_id: repository.id,
             pattern: "main",
@@ -201,9 +203,13 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
     assert!(
-        db::repositories::access::revoke_repo_access(fixture.pool(), writer, repository.id)
-            .await
-            .unwrap()
+        codeyard::backend::db::repositories::access::revoke_repo_access(
+            fixture.pool(),
+            writer,
+            repository.id
+        )
+        .await
+        .unwrap()
     );
     assert!(store
         .delete_branch_as(fixture.pool(), repository.id, writer, "feature")
@@ -262,12 +268,12 @@ async fn contract(pg: bool) {
         .unwrap();
 
     let org = applied(
-        orgs::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             fixture.pool(),
             owner,
-            &orgs::NewOrganization::new(
+            &codeyard::backend::db::organizations::NewOrganization::new(
                 "publication_org",
-                orgs::OrganizationProfile::new(None, None).unwrap(),
+                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
             )
             .unwrap(),
         )
@@ -275,7 +281,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        orgs::add_organization_member(
+        codeyard::backend::db::organizations::add_organization_member(
             fixture.pool(),
             owner,
             org.id,
@@ -286,13 +292,18 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let team = applied(
-        orgs::create_organization_team(
+        codeyard::backend::db::organizations::create_organization_team(
             fixture.pool(),
             owner,
             org.id,
-            &orgs::NewTeam::new(
+            &codeyard::backend::db::organizations::NewTeam::new(
                 "writers",
-                orgs::TeamProfile::new("Writers", None, orgs::TeamPrivacy::Secret).unwrap(),
+                codeyard::backend::db::organizations::TeamProfile::new(
+                    "Writers",
+                    None,
+                    codeyard::backend::db::organizations::TeamPrivacy::Secret,
+                )
+                .unwrap(),
             )
             .unwrap(),
         )
@@ -300,13 +311,13 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        orgs::add_organization_team_member(
+        codeyard::backend::db::organizations::add_organization_team_member(
             fixture.pool(),
             owner,
             org.id,
             team.id,
             writer,
-            orgs::TeamRole::Member,
+            codeyard::backend::db::organizations::TeamRole::Member,
         )
         .await
         .unwrap(),
@@ -314,9 +325,11 @@ async fn contract(pg: bool) {
     let org_repo = provision(
         (fixture.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner {
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner {
             actor_id: owner,
-            target: db::repositories::creation::RepositoryTarget::Organization(org.id),
+            target: codeyard::backend::db::repositories::creation::RepositoryTarget::Organization(
+                org.id,
+            ),
         },
         "team-publication",
         None,
@@ -326,13 +339,13 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     applied(
-        orgs::grant_organization_team_repository(
+        codeyard::backend::db::organizations::grant_organization_team_repository(
             fixture.pool(),
             owner,
             org.id,
             team.id,
             org_repo.id,
-            orgs::TeamRepositoryPermission::new(3).unwrap(),
+            codeyard::backend::db::organizations::TeamRepositoryPermission::new(3).unwrap(),
         )
         .await
         .unwrap(),
@@ -361,9 +374,15 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
     applied(
-        orgs::remove_organization_team_member(fixture.pool(), owner, org.id, team.id, writer)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::remove_organization_team_member(
+            fixture.pool(),
+            owner,
+            org.id,
+            team.id,
+            writer,
+        )
+        .await
+        .unwrap(),
     );
     assert!(org_store
         .publish_file_as(fixture.pool(), org_repo.id, writer, &team_prepared)
@@ -371,21 +390,27 @@ async fn contract(pg: bool) {
         .unwrap_err()
         .is_write_denied());
     assert_eq!(org_store.commit("main").await.unwrap().sha, org_initial);
-    assert!(db::pull_requests::records::list_repo_pull_requests(
+    assert!(
+        codeyard::backend::db::pull_requests::records::list_repo_pull_requests(
+            fixture.pool(),
+            repository.id,
+            &Default::default(),
+            10,
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    assert!(codeyard::backend::db::ci::latest_ci_runs_for_commit(
         fixture.pool(),
         repository.id,
-        &Default::default(),
-        10,
+        &initial,
+        0,
+        "main"
     )
     .await
     .unwrap()
     .is_empty());
-    assert!(
-        db::ci::latest_ci_runs_for_commit(fixture.pool(), repository.id, &initial, 0, "main")
-            .await
-            .unwrap()
-            .is_empty()
-    );
     fixture.finish().await;
 }
 

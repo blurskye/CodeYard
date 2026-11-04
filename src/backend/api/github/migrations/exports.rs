@@ -1,12 +1,13 @@
-use super::super::{auth, pagination::Pagination, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        repository_exports::{self as exports, ExportOptions, ExportRefusal, RepositoryExport},
-    },
-    storage::Download,
-};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::repository_exports as exports;
+use crate::backend::db::repository_exports::ExportOptions;
+use crate::backend::db::repository_exports::ExportRefusal;
+use crate::backend::db::repository_exports::RepositoryExport;
+use crate::backend::storage::Download;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -71,16 +72,19 @@ async fn scope(
     headers: &HeaderMap,
     params: &Params,
     write: bool,
-) -> Result<(auth::Authentication, Option<i64>)> {
-    let actor = auth::authenticate(state, headers, true)
+) -> Result<(
+    crate::backend::api::github::auth::Authentication,
+    Option<i64>,
+)> {
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     if write {
         actor.require_write()?;
     }
     let org = match params.get("org") {
         Some(name) => Some(
-            db::organizations::get_public_organization(&state.pool, name)
+            crate::backend::db::organizations::get_public_organization(&state.pool, name)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?
@@ -101,14 +105,15 @@ fn id(params: &Params) -> Result<i64> {
 
 async fn selected(
     state: &AppState,
-    actor: &auth::Authentication,
+    actor: &crate::backend::api::github::auth::Authentication,
     row: &RepositoryExport,
 ) -> Result<Vec<Value>> {
     let mut values = Vec::new();
     for id in row.repository_ids().map_err(Error::unavailable)? {
-        let Some(repo) = db::repositories::records::get_repository_by_id(&state.pool, id)
-            .await
-            .map_err(Error::unavailable)?
+        let Some(repo) =
+            crate::backend::db::repositories::records::get_repository_by_id(&state.pool, id)
+                .await
+                .map_err(Error::unavailable)?
         else {
             continue;
         };
@@ -118,7 +123,7 @@ async fn selected(
         {
             continue;
         }
-        values.push(super::super::repos::document(state, &repo, Some(actor)).await?);
+        values.push(crate::backend::api::github::repos::document(state, &repo, Some(actor)).await?);
     }
     Ok(values)
 }
@@ -138,7 +143,7 @@ fn exclude_repositories(uri: &axum::http::Uri) -> Result<bool> {
 
 async fn document(
     state: &AppState,
-    actor: &auth::Authentication,
+    actor: &crate::backend::api::github::auth::Authentication,
     row: &RepositoryExport,
     org_name: Option<&str>,
     exclude: bool,
@@ -165,7 +170,7 @@ async fn document(
             .map(|time| time.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
     };
     let owner = if let Some(id) = row.owner_org_id {
-        let org = db::organizations::get_public_organization_by_id(&state.pool, id)
+        let org = crate::backend::db::organizations::get_public_organization_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -177,23 +182,25 @@ async fn document(
             },
         );
         owner["type"] = json!("Organization");
-        owner["node_id"] = json!(super::super::node_id::encode("O", id));
+        owner["node_id"] = json!(crate::backend::api::github::node_id::encode("O", id));
         owner
     } else {
         crate::backend::webhooks::payloads::user(&actor.user)
     };
     let mut value = json!({
-        "id": row.id, "node_id": super::super::node_id::encode("MIG", row.id), "owner": owner, "guid": row.guid, "state": if expired { "failed" } else { &row.state },
+        "id": row.id, "node_id": crate::backend::api::github::node_id::encode("MIG", row.id), "owner": owner, "guid": row.guid, "state": if expired { "failed" } else { &row.state },
         "lock_repositories": options.lock_repositories, "exclude_metadata": options.exclude_metadata,
         "exclude_git_data": options.exclude_git_data, "exclude_attachments": options.exclude_attachments,
         "exclude_releases": options.exclude_releases, "exclude_owner_projects": options.exclude_owner_projects,
         "org_metadata_only": options.org_metadata_only,
-        "url": super::super::api_url(&path), "created_at": time(row.created_at), "updated_at": time(row.updated_at),
+        "url": crate::backend::api::github::api_url(&path), "created_at": time(row.created_at), "updated_at": time(row.updated_at),
         "repositories": if exclude { Vec::new() } else { selected(state, actor, row).await? },
         "exclude": if exclude { vec!["repositories"] } else { Vec::<&str>::new() }
     });
     if row.state == "exported" && !row.archive_deleted {
-        value["archive_url"] = json!(super::super::api_url(&format!("{path}/archive")));
+        value["archive_url"] = json!(crate::backend::api::github::api_url(&format!(
+            "{path}/archive"
+        )));
     }
     Ok(value)
 }
@@ -239,17 +246,22 @@ async fn start(
         if name.is_empty() || name.len() > 255 {
             return Err(Error::validation("Migration", "repositories", "invalid"));
         }
-        let repo = db::repositories::records::get_repository(&state.pool, owner, &name)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(|| Error::validation("Migration", "repositories", "invalid"))?;
+        let repo =
+            crate::backend::db::repositories::records::get_repository(&state.pool, owner, &name)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(|| Error::validation("Migration", "repositories", "invalid"))?;
         ids.push(repo.id);
     }
     ids.sort_unstable();
     let row = exports::create(&state.pool, actor.user.id, org, &ids, &input.options)
         .await
         .map_err(failure)?;
-    if !super::export_worker::spawn(state.clone(), headers, row.clone()) {
+    if !crate::backend::api::github::migrations::export_worker::spawn(
+        state.clone(),
+        headers,
+        row.clone(),
+    ) {
         exports::finish(&state.pool, row.id, "failed")
             .await
             .map_err(Error::unavailable)?;
@@ -378,7 +390,7 @@ async fn download(
         StatusCode::FOUND,
         [(
             header::LOCATION,
-            super::super::api_url(&format!("/migration-archives/{}", row.guid)),
+            codeyard_model::urls::api_url(&format!("/migration-archives/{}", row.guid)),
         )],
     )
         .into_response())
@@ -390,9 +402,9 @@ pub(in crate::backend::api::github) async fn archive(
     Path(guid): Path<String>,
     method: axum::http::Method,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     let row = exports::by_guid(&state.pool, actor.user.id, &guid)
         .await
         .map_err(failure)?
@@ -401,7 +413,7 @@ pub(in crate::backend::api::github) async fn archive(
         return Err(Error::missing());
     }
     if let Some(org) = row.owner_org_id {
-        auth::refuse_classic(&state, actor.token.id, org).await?;
+        crate::backend::api::github::auth::refuse_classic(&state, actor.token.id, org).await?;
     }
     let filename = format!("migration-{}.tar.gz", row.id);
     if method == axum::http::Method::HEAD {

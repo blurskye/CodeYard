@@ -46,8 +46,8 @@ async fn authorize(
     }
     let allowed = match scope {
         InteractionScope::User(user) => user==actor && sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)").bind(actor).fetch_one(&mut **tx).await?,
-        InteractionScope::Organization(org) => match super::organizations::authority::authority(tx,actor,org).await? {OrganizationOutcome::Applied(OrgRole::Owner)=>true,OrganizationOutcome::Applied(OrgRole::Admin)=>!write,_=>false},
-        InteractionScope::Repository(repo) => super::discussions::lock_archive_authority(tx,actor,repo).await?,
+        InteractionScope::Organization(org) => match crate::backend::db::sqlite::organizations::authority::authority(tx,actor,org).await? {OrganizationOutcome::Applied(OrgRole::Owner)=>true,OrganizationOutcome::Applied(OrgRole::Admin)=>!write,_=>false},
+        InteractionScope::Repository(repo) => crate::backend::db::sqlite::discussions::lock_archive_authority(tx,actor,repo).await?,
     };
     anyhow::ensure!(allowed, InteractionRefusal::Denied);
     Ok(())
@@ -72,7 +72,8 @@ pub async fn set_restriction(
 ) -> Result<Option<Restriction>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize(&mut tx, actor, scope, true).await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     if let InteractionScope::Repository(repo) = scope {
         let overridden: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM interaction_limits l JOIN repositories r ON (r.owner_kind='user' AND r.owner_user_id=l.user_id) OR (r.owner_kind='org' AND r.owner_org_id=l.org_id) WHERE r.id=?1 AND NOT r.is_private AND l.repo_id IS NULL AND l.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))").bind(repo).fetch_one(&mut *tx).await?;
         anyhow::ensure!(!overridden, InteractionRefusal::Conflict);
@@ -133,7 +134,7 @@ pub async fn save_proof(
     contributed: bool,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let access = super::repositories::access::user_repo_access_in_transaction(
+    let access = crate::backend::db::sqlite::repositories::access::user_repo_access_in_transaction(
         &mut tx,
         actor,
         source.repo_id,

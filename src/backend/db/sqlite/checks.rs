@@ -1,7 +1,17 @@
-use crate::backend::db::checks::{
-    Annotation, AutomaticSuites, Credential, Filter, Preference, Publisher, Refusal, Run,
-    RunChange, RunData, RunDetails, RunPatch, Suite, SuiteDetails,
-};
+use crate::backend::db::checks::Annotation;
+use crate::backend::db::checks::AutomaticSuites;
+use crate::backend::db::checks::Credential;
+use crate::backend::db::checks::Filter;
+use crate::backend::db::checks::Preference;
+use crate::backend::db::checks::Publisher;
+use crate::backend::db::checks::Refusal;
+use crate::backend::db::checks::Run;
+use crate::backend::db::checks::RunChange;
+use crate::backend::db::checks::RunData;
+use crate::backend::db::checks::RunDetails;
+use crate::backend::db::checks::RunPatch;
+use crate::backend::db::checks::Suite;
+use crate::backend::db::checks::SuiteDetails;
 mod native;
 use anyhow::{ensure, Result};
 pub use native::page_snapshot;
@@ -21,9 +31,9 @@ async fn authority(
     };
     ensure!(
         if admin {
-            super::discussions::lock_admin_authority(tx, actor, repo).await?
+            crate::backend::db::sqlite::discussions::lock_admin_authority(tx, actor, repo).await?
         } else {
-            super::discussions::lock_write_authority(tx, actor, repo).await?
+            crate::backend::db::sqlite::discussions::lock_write_authority(tx, actor, repo).await?
         },
         Refusal::Denied
     );
@@ -34,7 +44,7 @@ async fn authority(
             .bind(id).fetch_optional(&mut **tx).await?;
         ensure!(
             live.is_some()
-                && super::fine_grained_tokens::repository_permission(
+                && crate::backend::db::sqlite::fine_grained_tokens::repository_permission(
                     tx, id, actor, repo, "checks", true
                 )
                 .await?,
@@ -45,7 +55,7 @@ async fn authority(
         if let Some((client, scopes, app_id, registered)) = oauth {
             ensure!(
                 (registered || client == codeyard_model::identity::CLI_CLIENT)
-                    && crate::backend::identity::oauth_apps::allows(
+                    && codeyard_model::oauth_apps::allows(
                         &scopes,
                         "/repos/owner/repo/check-runs",
                         true
@@ -73,7 +83,7 @@ async fn authority(
             let job: Option<(i64, String, i64, String)> = sqlx::query_as("SELECT t.run_id,t.job,r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=?1 AND t.revoked_at IS NULL AND r.status='running'")
                 .bind(id).fetch_optional(&mut **tx).await?;
             let (run, job, job_repo, permissions) = job.ok_or(Refusal::Denied)?;
-            let permissions: crate::backend::ci::tokens::Permissions =
+            let permissions: codeyard_model::permissions::Permissions =
                 serde_json::from_str(&permissions)?;
             ensure!(
                 job_repo == repo && permissions.allows("checks", true) && !admin,
@@ -216,7 +226,7 @@ pub async fn automatic_suites(
     {
         return Ok(page);
     }
-    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     let mut apps: Vec<i64> = sqlx::query_scalar(&format!("SELECT a.id FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN oauth_applications o ON o.client_id=a.client_id JOIN users owner ON owner.id=a.owner_id JOIN users u ON u.id=a.bot_id JOIN repositories r ON r.id=?1 LEFT JOIN check_suite_preferences p ON p.repo_id=r.id AND p.app_id=a.id WHERE a.id>?2 AND COALESCE(p.setting,1) AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT u.is_banned AND NOT u.must_change_password AND json_extract(a.permissions,'$.checks') IN ('write','admin') AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND ({access})>=3 ORDER BY a.id LIMIT 101"))
         .bind(repo.id).bind(after).fetch_all(&mut *tx).await?;
     page.has_next = apps.len() > 100;

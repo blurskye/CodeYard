@@ -1,4 +1,6 @@
-use crate::backend::db::repositories::autolinks::{Autolink, NewAutolink, Refusal};
+use crate::backend::db::repositories::autolinks::Autolink;
+use crate::backend::db::repositories::autolinks::NewAutolink;
+use crate::backend::db::repositories::autolinks::Refusal;
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 async fn admin(
@@ -10,15 +12,21 @@ async fn admin(
     let credential = actor.into();
     let actor = credential.user_id;
     let allowed = if write {
-        super::super::discussions::lock_admin_authority(tx, actor, repo).await?
+        crate::backend::db::sqlite::discussions::lock_admin_authority(tx, actor, repo).await?
     } else {
-        super::super::discussions::lock_archive_authority(tx, actor, repo).await?
+        crate::backend::db::sqlite::discussions::lock_archive_authority(tx, actor, repo).await?
     };
     anyhow::ensure!(allowed, Refusal::Denied);
     if write {
         anyhow::ensure!(
-            super::super::credentials::writes(tx, &credential, Some(repo), None, "administration")
-                .await?,
+            crate::backend::db::sqlite::credentials::writes(
+                tx,
+                &credential,
+                Some(repo),
+                None,
+                "administration"
+            )
+            .await?,
             Refusal::Denied
         );
     }

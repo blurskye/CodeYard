@@ -114,15 +114,15 @@ fn configured_http_base(clone_base: Option<String>, public_url: Option<String>) 
 pub fn ssh_clone_base() -> String {
     configured_ssh_base(
         std::env::var("PUBLIC_SSH_CLONE_BASE").ok(),
-        crate::backend::ssh::mode::selected(),
+        codeyard_support::ssh_mode::selected(),
     )
 }
 
 fn configured_ssh_base(
     value: Option<String>,
-    selected: Option<&crate::backend::ssh::mode::Selection>,
+    selected: Option<&codeyard_support::ssh_mode::Selection>,
 ) -> String {
-    use crate::backend::ssh::mode::SshMode;
+    use codeyard_support::ssh_mode::SshMode;
     let Some(selected) = selected else {
         return value_or(value, DEFAULT_SSH_CLONE_BASE);
     };
@@ -198,7 +198,8 @@ mod tests {
 
     #[test]
     fn clone_urls_follow_the_selected_transport_without_exposing_unready_ssh() {
-        use crate::backend::ssh::mode::{Selection, SshMode};
+        use codeyard_support::ssh_mode::Selection;
+        use codeyard_support::ssh_mode::SshMode;
         let mut selected = Selection {
             mode: SshMode::Openssh,
             setup_required: false,

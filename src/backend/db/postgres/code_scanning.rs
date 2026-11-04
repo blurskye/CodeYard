@@ -12,8 +12,13 @@ use sqlx::{PgConnection, PgPool};
 pub async fn enqueue(pool: &PgPool, input: &NewUpload<'_>) -> Result<Upload> {
     let mut tx = pool.begin().await?;
     ensure!(
-        super::discussions::lock_write_authority(&mut tx, input.actor.user_id, input.repo).await?
-            && super::credentials::repository(
+        crate::backend::db::postgres::discussions::lock_write_authority(
+            &mut tx,
+            input.actor.user_id,
+            input.repo
+        )
+        .await?
+            && crate::backend::db::postgres::credentials::repository(
                 &mut tx,
                 &input.actor,
                 input.repo,
@@ -211,7 +216,9 @@ pub async fn organization_alert_page(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let role = super::organizations::authority::read_authority(&mut tx, actor, org).await?;
+    let role =
+        crate::backend::db::postgres::organizations::authority::read_authority(&mut tx, actor, org)
+            .await?;
     ensure!(
         matches!(
             role,
@@ -298,7 +305,7 @@ pub async fn dismiss(
     let credential = actor.into();
     let actor = credential.user_id;
     let mut tx = pool.begin().await?;
-    super::credentials::require_account(&mut tx, &credential)
+    crate::backend::db::postgres::credentials::require_account(&mut tx, &credential)
         .await
         .map_err(|error| {
             if error.is::<codeyard_support::credentials::AccountRestricted>() {
@@ -307,18 +314,29 @@ pub async fn dismiss(
                 error
             }
         })?;
-    let mut allowed = super::discussions::lock_write_authority(&mut tx, actor, repo).await?;
+    let mut allowed =
+        crate::backend::db::postgres::discussions::lock_write_authority(&mut tx, actor, repo)
+            .await?;
     if !allowed {
         let org: Option<i64> = sqlx::query_scalar("SELECT owner_org_id FROM repositories WHERE id=$1 AND NOT is_archived AND owner_kind='org'")
             .bind(repo).fetch_optional(&mut *tx).await?.flatten();
         if let Some(org) = org {
-            allowed = super::organizations::roles::manages_security(&mut tx, actor, org).await?;
+            allowed = crate::backend::db::postgres::organizations::roles::manages_security(
+                &mut tx, actor, org,
+            )
+            .await?;
         }
     }
     ensure!(
         allowed
-            && super::credentials::repository(&mut tx, &credential, repo, "security_events", true)
-                .await?,
+            && crate::backend::db::postgres::credentials::repository(
+                &mut tx,
+                &credential,
+                repo,
+                "security_events",
+                true
+            )
+            .await?,
         Refusal::Denied
     );
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
@@ -344,9 +362,16 @@ pub async fn delete_analysis(
     let actor = credential.user_id;
     let mut tx = pool.begin().await?;
     ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor, repo).await?
-            && super::credentials::repository(&mut tx, &credential, repo, "security_events", true)
-                .await?,
+        crate::backend::db::postgres::discussions::lock_admin_authority(&mut tx, actor, repo)
+            .await?
+            && crate::backend::db::postgres::credentials::repository(
+                &mut tx,
+                &credential,
+                repo,
+                "security_events",
+                true
+            )
+            .await?,
         Refusal::Denied
     );
     sqlx::query("SELECT pg_advisory_xact_lock($1)")

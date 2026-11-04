@@ -6,7 +6,7 @@ use codeyard_db_core::DbPool;
 
 native_operation!(crate::backend::db::postgres::audit::page,
     crate::backend::db::sqlite::audit::page,
-    fn page(pool: &DbPool, authority: super::users::transitions::AdministratorActor, action: &str, actor: &str, page: i64, limit: i64) -> Result<Option<(i64, Vec<AuditEntry>)>>);
+    fn page(pool: &DbPool, authority: crate::backend::db::users::transitions::AdministratorActor, action: &str, actor: &str, page: i64, limit: i64) -> Result<Option<(i64, Vec<AuditEntry>)>>);
 
 native_operation!(crate::backend::db::postgres::audit::count_audit_entries,
     crate::backend::db::sqlite::audit::count_audit_entries,

@@ -1,8 +1,8 @@
 //! Release notes derived from a pinned Git range and the repository's real merged pull requests.
 use super::*;
-use crate::backend::api::http::config::link_origin;
 use crate::backend::repositories::store::BlobRange;
 use codeyard_git::error::ErrorKind;
+use codeyard_model::http_config::link_origin;
 use serde::Deserialize;
 use std::fmt::Write;
 
@@ -176,7 +176,7 @@ pub async fn generate_notes(
         format!("refs/tags/{}", input.tag)
     } else {
         match input.target {
-            Some(target) => super::target_revision(&refs, target),
+            Some(target) => crate::backend::repositories::releases::target_revision(&refs, target),
             None => format!("refs/heads/{}", repository.default_branch),
         }
     };

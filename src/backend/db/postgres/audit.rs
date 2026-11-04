@@ -11,7 +11,9 @@ pub async fn page(
     limit: i64,
 ) -> Result<Option<(i64, Vec<AuditEntry>)>> {
     let mut tx = pool.begin().await?;
-    if !super::users::transitions::active_admin_session(&mut tx, &authority).await? {
+    if !crate::backend::db::postgres::users::transitions::active_admin_session(&mut tx, &authority)
+        .await?
+    {
         return Ok(None);
     }
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log a LEFT JOIN users u ON u.id=a.actor_id WHERE strpos(lower(a.action),$1)>0 AND strpos(lower(COALESCE(u.username,'')),$2)>0")

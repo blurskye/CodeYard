@@ -1,5 +1,7 @@
 //! Worker execution and shutdown for this node.
-use super::{config::CiConfig, queue::RunQueue, worker};
+use crate::backend::ci::config::CiConfig;
+use crate::backend::ci::queue::RunQueue;
+
 use anyhow::{ensure, Result};
 use std::{
     path::{Path, PathBuf},
@@ -59,11 +61,11 @@ impl CiWorkers {
         queued: Arc<Notify>,
         state_dir: &Path,
     ) -> Self {
-        let (work_root, configuration_error) = match super::runner_credentials::work_root(state_dir)
-        {
-            Ok(root) => (root, None),
-            Err(error) => (state_dir.to_owned(), Some(error.to_string())),
-        };
+        let (work_root, configuration_error) =
+            match crate::backend::ci::runner_credentials::work_root(state_dir) {
+                Ok(root) => (root, None),
+                Err(error) => (state_dir.to_owned(), Some(error.to_string())),
+            };
         Self {
             queue,
             config,
@@ -91,12 +93,12 @@ impl CiWorkers {
         // finish, each worker recovers again before its first claim.
         let mut recovered = true;
         if recover {
-            crate::backend::fs::private_dir(&self.cleanup_dir)?;
+            codeyard_support::fs::private_dir(&self.cleanup_dir)?;
             // A Podman socket that accepts connections but never answers must not hold up the
             // listeners. Records the pass does not reach stay on disk for the background pass.
             match tokio::time::timeout(
                 STARTUP_RECOVERY_WAIT,
-                worker::reconcile_containers(&self.cleanup_dir),
+                crate::backend::ci::worker::reconcile_containers(&self.cleanup_dir),
             )
             .await
             {
@@ -123,13 +125,13 @@ impl CiWorkers {
         let node = crate::backend::cluster::normalize_name(&node)?;
         let mut tasks = workers.tasks.lock().unwrap_or_else(|e| e.into_inner());
         if let RunQueue::Database { .. } = &self.queue {
-            tasks.spawn(worker::fail_stale_runs(
+            tasks.spawn(crate::backend::ci::worker::fail_stale_runs(
                 self.queue.clone(),
                 workers.stop.subscribe(),
             ));
         }
         if recover {
-            tasks.spawn(worker::recover_containers(
+            tasks.spawn(crate::backend::ci::worker::recover_containers(
                 self.cleanup_dir.clone(),
                 workers.stop.subscribe(),
             ));
@@ -148,7 +150,7 @@ impl CiWorkers {
         };
         for slot in 0..self.config.max_active_runs {
             let id = format!("{owner}{node}/{}/{slot}", Uuid::new_v4().simple());
-            tasks.spawn(worker::run(
+            tasks.spawn(crate::backend::ci::worker::run(
                 self.clone(),
                 id,
                 workers.stop.subscribe(),

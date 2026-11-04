@@ -1,5 +1,5 @@
 //! Closing keyword references in pull request descriptions.
-use super::db;
+use crate::backend::issues::db;
 use std::{collections::HashMap, sync::LazyLock};
 
 static REFERENCE: LazyLock<regex::Regex> = LazyLock::new(|| {

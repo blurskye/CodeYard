@@ -3,7 +3,6 @@
 //! someone asks it to; the stack id is stored, and the order inside a stack is read from the
 //! branch names.
 
-use crate::backend::db;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::DbPool;
 use std::collections::HashSet;
@@ -90,7 +89,7 @@ fn order_open_layers(members: Vec<PullRequest>) -> Vec<PullRequest> {
     };
     let mut order = vec![bottom];
     let mut seen = HashSet::from([bottom]);
-    while order.len() < db::pull_requests::records::MAX_STACK_LAYERS {
+    while order.len() < crate::backend::db::pull_requests::records::MAX_STACK_LAYERS {
         let head = members[order[order.len() - 1]].head_branch.as_str();
         let above: Vec<usize> = (0..members.len())
             .filter(|&index| members[index].base_branch == head)
@@ -115,7 +114,9 @@ pub async fn stack_of(pool: &DbPool, pull: &PullRequest) -> anyhow::Result<Optio
     let Some(id) = pull.stack_id else {
         return Ok(None);
     };
-    let members = db::pull_requests::records::list_stack_members(pool, pull.repo_id, id).await?;
+    let members =
+        crate::backend::db::pull_requests::records::list_stack_members(pool, pull.repo_id, id)
+            .await?;
     if members.len() < 2 {
         return Ok(None);
     }
@@ -182,7 +183,10 @@ fn chain_in(pull: &PullRequest, members: &[PullRequest]) -> Chain {
 /// The chain that merging `pull` brings in.
 pub async fn chain_below(pool: &DbPool, pull: &PullRequest) -> anyhow::Result<Chain> {
     let members = match pull.stack_id {
-        Some(id) => db::pull_requests::records::list_stack_members(pool, pull.repo_id, id).await?,
+        Some(id) => {
+            crate::backend::db::pull_requests::records::list_stack_members(pool, pull.repo_id, id)
+                .await?
+        }
         None => Vec::new(),
     };
     Ok(chain_in(pull, &members))
@@ -215,7 +219,8 @@ pub async fn merge_target(
 /// The number of the open pull request that this pull request could join right now. The pull
 /// request page offers the join only when this is set; the join applies the same rules.
 pub async fn join_candidate(pool: &DbPool, pull: &PullRequest) -> anyhow::Result<Option<i32>> {
-    db::pull_requests::records::join_pull_request_stack_candidate(pool, pull.id).await
+    crate::backend::db::pull_requests::records::join_pull_request_stack_candidate(pool, pull.id)
+        .await
 }
 
 /// After `merged` lands in `to`, the open members of its stack that are based on its head branch
@@ -236,7 +241,7 @@ pub async fn retarget_after_merge(
     if merged.head_repo_id != Some(merged.repo_id) {
         return Vec::new();
     }
-    match db::pull_requests::records::retarget_stacked_pull_requests(
+    match crate::backend::db::pull_requests::records::retarget_stacked_pull_requests(
         pool,
         actor_id,
         merged.repo_id,

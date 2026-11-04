@@ -1,13 +1,16 @@
-use super::responses::{field, mutation_guard, require_account, Fields};
-use crate::backend::{
-    api::http::{context::PageContext, session},
-    app::AppState,
-    db::{
-        self,
-        interactions::{InteractionRefusal, InteractionScope, NewRestriction},
-        users::accounts::AccountCredential,
-    },
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::require_account;
+use crate::backend::api::user::responses::Fields;
+
+use crate::backend::app::AppState;
+
+use crate::backend::db::interactions::InteractionRefusal;
+use crate::backend::db::interactions::InteractionScope;
+use crate::backend::db::interactions::NewRestriction;
+use crate::backend::db::pull_caps::{CapUpdate, PullCapRefusal, PullCapScope};
+use crate::backend::db::users::accounts::AccountCredential;
 use axum::{
     extract::{Form, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -17,7 +20,6 @@ use codeyard_support::credentials::AccountRestricted;
 use codeyard_webui::components::interactions::{
     InteractionPanel, InteractionRestriction, PullCapForm,
 };
-use db::pull_caps::{CapUpdate, PullCapRefusal, PullCapScope};
 use std::sync::Arc;
 
 pub(crate) async fn panel(
@@ -32,7 +34,7 @@ pub(crate) async fn panel(
         InteractionScope::Organization(id) => ("organization", id),
         InteractionScope::Repository(id) => ("repository", id),
     };
-    let restriction = db::interactions::get_restriction(pool, actor, scope)
+    let restriction = crate::backend::db::interactions::get_restriction(pool, actor, scope)
         .await?
         .map(|restriction| InteractionRestriction {
             limit: restriction.limit,
@@ -45,7 +47,7 @@ pub(crate) async fn panel(
         InteractionScope::User(_) => None,
     };
     let cap = if let Some(scope) = cap_scope {
-        let cap = db::pull_caps::get_cap(pool, actor, scope).await?;
+        let cap = crate::backend::db::pull_caps::get_cap(pool, actor, scope).await?;
         Some(PullCapForm {
             enabled: cap.enabled,
             maximum: cap.max_open_pull_requests.to_string(),
@@ -55,7 +57,7 @@ pub(crate) async fn panel(
         None
     };
     let bypass = if let InteractionScope::Repository(repo) = scope {
-        db::pull_caps::bypass_users(pool, actor, repo)
+        crate::backend::db::pull_caps::bypass_users(pool, actor, repo)
             .await?
             .into_iter()
             .map(|user| user.username)
@@ -110,8 +112,9 @@ pub(crate) async fn post(
             }
         }
     };
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
-    if let Err(error) = db::interactions::set_restriction(
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    if let Err(error) = crate::backend::db::interactions::set_restriction(
         &ctx.state.pool,
         actor.id,
         &AccountCredential::Session(&session),
@@ -157,8 +160,16 @@ async fn scope_target(ctx: &PageContext, scope: InteractionScope) -> String {
         InteractionScope::Organization(id) => format!("/settings/organizations/{id}"),
         InteractionScope::Repository(id) => {
             match (
-                db::repositories::records::get_repository_by_id(&ctx.state.pool, id).await,
-                db::repositories::records::repository_owner_name(&ctx.state.pool, id).await,
+                crate::backend::db::repositories::records::get_repository_by_id(
+                    &ctx.state.pool,
+                    id,
+                )
+                .await,
+                crate::backend::db::repositories::records::repository_owner_name(
+                    &ctx.state.pool,
+                    id,
+                )
+                .await,
             ) {
                 (Ok(Some(repo)), Ok(Some(owner))) => format!(
                     "/{}/{}/settings",
@@ -226,8 +237,9 @@ pub(crate) async fn post_cap(
             )
         }
     };
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
-    if let Err(error) = db::pull_caps::update_cap(
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    if let Err(error) = crate::backend::db::pull_caps::update_cap(
         &ctx.state.pool,
         actor.id,
         &AccountCredential::Session(&session),
@@ -265,8 +277,9 @@ pub(crate) async fn post_bypass(
         Ok(id) if id > 0 => id,
         _ => return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Choose a repository."),
     };
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
-    if let Err(error) = db::pull_caps::change_bypass(
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    if let Err(error) = crate::backend::db::pull_caps::change_bypass(
         &ctx.state.pool,
         actor.id,
         &AccountCredential::Session(&session),

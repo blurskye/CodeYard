@@ -1,5 +1,5 @@
 //! OpenPGP enrollment verifies self-certifications and signing-subkey back signatures.
-use crate::backend::db;
+
 use crate::backend::db::users::accounts::AccountCredential;
 use codeyard_support::credentials::AccountRestricted;
 
@@ -131,7 +131,7 @@ fn uid_email(uid: &str) -> Option<String> {
         uid
     };
     let address = address.trim().to_ascii_lowercase();
-    super::credentials::validate_email(&address)
+    codeyard_model::account_input::validate_email(&address)
         .is_ok()
         .then_some(address)
 }
@@ -354,7 +354,7 @@ pub async fn enroll(
     let key = crypto(move || parse(&armored))
         .await
         .map_err(|_| GpgError::Unavailable)??;
-    db::users::gpg_keys::add_gpg_key(pool, actor, credential, name, &key)
+    crate::backend::db::users::gpg_keys::add_gpg_key(pool, actor, credential, name, &key)
         .await
         .map_err(write_error)
 }
@@ -364,7 +364,7 @@ pub async fn delete(
     credential: &AccountCredential<'_>,
     id: i64,
 ) -> Result<(), GpgError> {
-    if db::users::gpg_keys::delete_gpg_key(pool, actor, credential, id)
+    if crate::backend::db::users::gpg_keys::delete_gpg_key(pool, actor, credential, id)
         .await
         .map_err(write_error)?
     {

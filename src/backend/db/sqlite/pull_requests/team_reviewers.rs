@@ -1,6 +1,6 @@
 use crate::backend::db::pull_requests::team_reviewers::InvalidReviewTeam;
 use crate::backend::db::pull_requests::team_reviewers::ReviewTeamAction;
-use crate::backend::db::sqlite::discussions;
+
 use anyhow::{ensure, Result};
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::Team;
@@ -22,7 +22,7 @@ pub async fn request_page(
     let sql = crate::backend::db::pull_requests::team_reviewers::request_roster_sql(
         "?",
         SCOPED,
-        &super::super::repositories::access::readable_condition(),
+        &crate::backend::db::sqlite::repositories::access::readable_condition(),
     );
     let mut tx = pool.begin().await?;
     let total = if window.count {
@@ -64,7 +64,7 @@ pub async fn by_ids(
     ids: &[i64],
 ) -> Result<Vec<Team>> {
     ensure!(ids.len() <= 100, InvalidReviewTeam);
-    let readable = super::super::repositories::access::readable_condition();
+    let readable = crate::backend::db::sqlite::repositories::access::readable_condition();
     Ok(sqlx::query_as(&format!("{SCOPED} AND t.id IN (SELECT value FROM json_each(?3)) AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?2 WHERE r.id=?1 AND {readable})")).bind(repo).bind(viewer).bind(serde_json::to_string(ids)?).fetch_all(pool).await?)
 }
 
@@ -84,7 +84,7 @@ pub async fn members(
     teams: &[i64],
     after: i64,
 ) -> Result<Vec<codeyard_db_core::models::User>> {
-    let access = super::super::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     Ok(sqlx::query_as(&format!("SELECT DISTINCT u.* FROM effective_team_memberships m JOIN teams t ON t.id=m.team_id JOIN org_memberships o ON o.org_id=t.org_id AND o.user_id=m.user_id JOIN users u ON u.id=m.user_id JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=t.org_id AND r.owner_user_id IS NULL WHERE r.id=?1 AND t.id IN (SELECT value FROM json_each(?2)) AND u.id>?3 AND t.notifications_enabled AND m.role IN ('member','maintainer') AND o.role IN ('owner','admin','member') AND NOT r.is_archived AND NOT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=r.id) AND ({access})>=3 AND EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 3 AND 5) ORDER BY u.id LIMIT 100"))
         .bind(repo).bind(serde_json::to_string(teams)?).bind(after).fetch_all(pool).await?)
 }
@@ -103,7 +103,10 @@ pub async fn set_requests(
     );
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let (author, state, _) =
-        discussions::lock_pull_request_review_authority(&mut tx, actor, pull).await?;
+        crate::backend::db::sqlite::discussions::lock_pull_request_review_authority(
+            &mut tx, actor, pull,
+        )
+        .await?;
     ensure!(state == "open", InvalidReviewTeam);
     let repo: i64 = sqlx::query_scalar("SELECT repo_id FROM pull_requests WHERE id=?1")
         .bind(pull)
@@ -111,7 +114,7 @@ pub async fn set_requests(
         .await?;
     if let Some(token) = input.token {
         ensure!(
-            super::super::users::tokens::repository_write_on(
+            crate::backend::db::sqlite::users::tokens::repository_write_on(
                 &mut tx,
                 token,
                 actor,
@@ -119,7 +122,7 @@ pub async fn set_requests(
                 "pull-requests"
             )
             .await?,
-            discussions::AUTHORITY_DENIED
+            crate::backend::db::sqlite::discussions::AUTHORITY_DENIED
         );
     }
     let old: Vec<i64> =
@@ -139,8 +142,12 @@ pub async fn set_requests(
             continue;
         }
         ensure!(
-            *id != author && discussions::lock_write_authority(&mut tx, *id, repo).await?,
-            discussions::AUTHORITY_DENIED
+            *id != author
+                && crate::backend::db::sqlite::discussions::lock_write_authority(
+                    &mut tx, *id, repo
+                )
+                .await?,
+            crate::backend::db::sqlite::discussions::AUTHORITY_DENIED
         );
         users.push(
             sqlx::query_as("SELECT * FROM users WHERE id=?1")
@@ -223,9 +230,15 @@ pub async fn change(
         .fetch_one(&mut *tx)
         .await?;
     if expected.is_some() {
-        discussions::require_contribution_authority(&mut tx, actor, repo).await?;
+        crate::backend::db::sqlite::discussions::require_contribution_authority(
+            &mut tx, actor, repo,
+        )
+        .await?;
     } else {
-        discussions::lock_pull_request_review_authority(&mut tx, actor, pull).await?;
+        crate::backend::db::sqlite::discussions::lock_pull_request_review_authority(
+            &mut tx, actor, pull,
+        )
+        .await?;
     }
     let current: PullRequest = sqlx::query_as("SELECT * FROM pull_requests WHERE id=?1")
         .bind(pull)

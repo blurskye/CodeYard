@@ -1,10 +1,15 @@
 //! Author mappings retain original identities and never alter imported commits.
-use super::{administrator, repo_url, AppState, Error, Result};
-use crate::backend::{
-    db::{self, import_authors::Author, source_imports::ImportRefusal},
-    repositories::{reads, store::repo_store},
-    webhooks::payloads,
-};
+use crate::backend::api::github::migrations::administrator;
+use crate::backend::api::github::migrations::repo_url;
+use crate::backend::api::github::migrations::AppState;
+use crate::backend::api::github::migrations::Error;
+use crate::backend::api::github::migrations::Result;
+
+use crate::backend::db::import_authors::Author;
+use crate::backend::db::source_imports::ImportRefusal;
+
+use crate::backend::repositories::store::repo_store;
+
 use axum::{
     body::to_bytes,
     extract::{Path, Query, Request, State},
@@ -53,7 +58,7 @@ async fn documents(
                     .clone()
             })
             .collect::<Vec<_>>();
-        let users = reads::commit_authors(&state.pool, &emails)
+        let users = crate::backend::repositories::reads::commit_authors(&state.pool, &emails)
             .await
             .map_err(Error::unavailable)?;
         for row in chunk {
@@ -67,7 +72,7 @@ async fn documents(
             let base = format!("{}/import", repo_url(owner, name));
             values.push(json!({"id":row.id,"remote_id":row.author_email,"remote_name":row.author_name,
                 "email":email,"name":display_name,"url":format!("{base}/authors/{}",row.id),"import_url":base,
-                "user":user.map(payloads::user)}));
+                "user":user.map(crate::backend::webhooks::payloads::user)}));
         }
     }
     Ok(values)
@@ -84,14 +89,15 @@ async fn list(
     Query(query): Query<Since>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = administrator(&state, &headers, &owner, &name, false).await?;
-    db::source_imports::get(&state.pool, repo.id)
+    crate::backend::db::source_imports::get(&state.pool, repo.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let store = repo_store(&repo, state.cluster.as_ref());
-    let (refs, _) = reads::refs_and_default(&repo, state.cluster.as_ref())
-        .await
-        .map_err(super::store_error)?;
+    let (refs, _) =
+        crate::backend::repositories::reads::refs_and_default(&repo, state.cluster.as_ref())
+            .await
+            .map_err(crate::backend::api::github::migrations::store_error)?;
     let mut authors = BTreeSet::new();
     let deadline = Instant::now() + codeyard_git::COMMIT_WALK_TIMEOUT;
     // Walk branch and tag tips; tag-only and older merge-parent authors belong to the import.
@@ -107,7 +113,7 @@ async fn list(
             let commits = store
                 .commits_until(sha, offset, 100, &Default::default(), deadline)
                 .await
-                .map_err(super::store_error)?;
+                .map_err(crate::backend::api::github::migrations::store_error)?;
             let count = commits.len();
             for commit in commits {
                 if seen.insert(commit.sha) {
@@ -122,9 +128,10 @@ async fn list(
         }
     }
     let authors = authors.into_iter().collect::<Vec<_>>();
-    let mut rows = db::import_authors::record(&state.pool, actor.user.id, repo.id, &authors)
-        .await
-        .map_err(error)?;
+    let mut rows =
+        crate::backend::db::import_authors::record(&state.pool, actor.user.id, repo.id, &authors)
+            .await
+            .map_err(error)?;
     rows.retain(|row| row.id > query.since.unwrap_or(0));
     rows.sort_by_key(|row| row.id);
     Ok(Json(json!(documents(&state, &owner, &name, rows).await?)))
@@ -146,12 +153,12 @@ async fn map(
     actor.require_write()?;
     let bytes = to_bytes(request.into_body(), 16 * 1024)
         .await
-        .map_err(super::super::json_bytes_error)?;
+        .map_err(crate::backend::api::github::json_bytes_error)?;
     let input = if bytes.is_empty() {
         Mapping::default()
     } else {
         serde_json::from_slice::<Option<Mapping>>(&bytes)
-            .map_err(super::super::json_parse_error)?
+            .map_err(crate::backend::api::github::json_parse_error)?
             .unwrap_or_default()
     };
     if input.name.as_ref().is_some_and(|value| {
@@ -162,11 +169,11 @@ async fn map(
     if input
         .email
         .as_ref()
-        .is_some_and(|value| crate::backend::identity::credentials::validate_email(value).is_err())
+        .is_some_and(|value| codeyard_model::account_input::validate_email(value).is_err())
     {
         return Err(Error::validation("PorterAuthor", "email", "invalid"));
     }
-    let row = db::import_authors::map(
+    let row = crate::backend::db::import_authors::map(
         &state.pool,
         actor.user.id,
         repo.id,

@@ -1,6 +1,6 @@
 //! Team identities used by branch push restrictions. Repository authority is checked by callers;
 //! these reads never grant access, and membership is evaluated again for each publication.
-use super::protection::ProtectionWriteRefusal;
+use crate::backend::db::repositories::protection::ProtectionWriteRefusal;
 use anyhow::Result;
 use codeyard_db_core::models::Team;
 use codeyard_db_core::native_operation;
@@ -8,7 +8,7 @@ use codeyard_db_core::DbPool;
 
 pub(crate) fn validate_count(len: usize) -> Result<()> {
     anyhow::ensure!(
-        len <= super::protection::MAX_ALLOWANCE_ACTORS,
+        len <= crate::backend::db::repositories::protection::MAX_ALLOWANCE_ACTORS,
         ProtectionWriteRefusal::InvalidPushTeams
     );
     Ok(())
@@ -30,7 +30,7 @@ pub async fn resolve_names(pool: &DbPool, repo: i64, names: &[String]) -> Result
     anyhow::ensure!(
         names
             .iter()
-            .all(|name| crate::backend::identity::credentials::validate_namespace(name, 1).is_ok()),
+            .all(|name| codeyard_model::account_input::validate_namespace(name, 1).is_ok()),
         ProtectionWriteRefusal::InvalidPushTeams
     );
     names.sort_unstable();

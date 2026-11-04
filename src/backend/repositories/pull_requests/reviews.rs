@@ -1,12 +1,15 @@
-use super::{database_error, OperationError};
 use crate::backend::cluster::NodeContext;
-use crate::backend::db;
+use crate::backend::repositories::pull_requests::database_error;
+use crate::backend::repositories::pull_requests::OperationError;
+
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
-use crate::backend::notifications::mentions::{notify_mentions, MentionSource};
+use crate::backend::notifications::mentions::notify_mentions;
+use crate::backend::notifications::mentions::MentionSource;
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::store::repo_store;
-use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
+
+use crate::backend::webhooks::payloads::Scope;
 use codeyard_git::error::ErrorKind;
 use serde::Deserialize;
 use serde_json::json;
@@ -23,7 +26,8 @@ pub struct CreatePullRequestReviewRequest {
 
 pub struct CreatePullRequestReviewBatchRequest {
     pub review: CreatePullRequestReviewRequest,
-    pub comments: Vec<super::comments::CreatePullRequestCommentRequest>,
+    pub comments:
+        Vec<crate::backend::repositories::pull_requests::comments::CreatePullRequestCommentRequest>,
 }
 
 #[derive(Deserialize)]
@@ -52,8 +56,8 @@ pub async fn edit_review(
     id: i64,
     body: &str,
 ) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
-    let actor = super::actor(pool, actor_id).await?;
-    super::require_read(pool, &actor, repo).await?;
+    let actor = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
+    crate::backend::repositories::pull_requests::require_read(pool, &actor, repo).await?;
     if pull.repo_id != repo.id {
         return Err(OperationError::Missing {
             code: "not_found",
@@ -61,14 +65,15 @@ pub async fn edit_review(
         });
     }
     check_optional_text(Some(body))?;
-    let previous = db::pull_requests::reviews::get_pull_request_review_by_id(pool, id)
-        .await
-        .map_err(database_error)?
-        .filter(|r| r.pull_request_id == pull.id)
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Review not found".into(),
-        })?;
+    let previous =
+        crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(pool, id)
+            .await
+            .map_err(database_error)?
+            .filter(|r| r.pull_request_id == pull.id)
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Review not found".into(),
+            })?;
     if previous.author_id != actor.id {
         return Err(if previous.state == "pending" {
             OperationError::Missing {
@@ -82,17 +87,19 @@ pub async fn edit_review(
             }
         });
     }
-    let review = db::pull_requests::reviews::edit_review_body(pool, pull.id, actor.id, id, body)
-        .await
-        .map_err(super::write_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Review not found".into(),
-        })?;
+    let review = crate::backend::db::pull_requests::reviews::edit_review_body(
+        pool, pull.id, actor.id, id, body,
+    )
+    .await
+    .map_err(crate::backend::repositories::pull_requests::write_error)?
+    .ok_or_else(|| OperationError::Missing {
+        code: "not_found",
+        message: "Review not found".into(),
+    })?;
     if review.state != "pending" {
         // The edit is saved; an unreadable owner name only skips the mention notices.
         if let Ok(Some(owner)) =
-            db::repositories::records::repository_owner_name(pool, repo.id).await
+            crate::backend::db::repositories::records::repository_owner_name(pool, repo.id).await
         {
             let link = format!(
                 "/{owner}/{}/pulls/{}?review={2}#review-{2}",
@@ -134,13 +141,13 @@ async fn emit_review_webhook(
     let (review_for_hook, pull_for_hook, repository_for_hook) =
         (review.clone(), pull.clone(), repository.clone());
     let (pull_author_id, reviewer_id) = (pull.author_id, review.author_id);
-    webhooks::emit(
+    crate::backend::webhooks::emit(
         pool,
         repository,
-        events::PULL_REQUEST_REVIEW,
+        codeyard_model::webhook_events::PULL_REQUEST_REVIEW,
         vec![pull_author_id, reviewer_id, sender_id],
         move |owner, people| {
-            payloads::pull_request_review(
+            crate::backend::webhooks::payloads::pull_request_review(
                 action,
                 &review_for_hook,
                 &pull_for_hook,
@@ -167,7 +174,7 @@ pub enum ReviewerTarget {
 /// Review bodies and dismissal reasons use the discussion text limit. Leaving one
 /// out, or sending an empty one, is fine.
 fn check_optional_text(text: Option<&str>) -> Result<(), OperationError> {
-    crate::backend::issues::validate_body(text.unwrap_or(""), false).map_err(|message| {
+    codeyard_model::issue_input::validate_body(text.unwrap_or(""), false).map_err(|message| {
         OperationError::Invalid {
             code: "validation_error",
             message: message.to_owned(),
@@ -199,7 +206,7 @@ pub async fn create_pull_request_review(
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    credential: &db::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     target: impl Into<ReviewTarget>,
     req: CreatePullRequestReviewRequest,
 ) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
@@ -221,7 +228,7 @@ pub async fn create_pull_request_review_batch(
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    credential: &db::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     target: impl Into<ReviewTarget>,
     batch: CreatePullRequestReviewBatchRequest,
 ) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
@@ -247,10 +254,12 @@ async fn create_review(
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    credential: &db::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     target: ReviewTarget,
     req: CreatePullRequestReviewRequest,
-    batch: Option<Vec<super::comments::CreatePullRequestCommentRequest>>,
+    batch: Option<
+        Vec<crate::backend::repositories::pull_requests::comments::CreatePullRequestCommentRequest>,
+    >,
 ) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
     let ReviewTarget {
         owner,
@@ -258,9 +267,9 @@ async fn create_review(
         number,
         expected,
     } = target;
-    let user = super::actor(pool, actor_id).await?;
+    let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
 
-    let repository = db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -276,15 +285,16 @@ async fn create_review(
 
     // As on GitHub, anyone who can read the repository may review; only writers' approvals
     // count toward the merge rules (see `eligible_reviews`).
-    super::require_read(pool, &user, &repository).await?;
+    crate::backend::repositories::pull_requests::require_read(pool, &user, &repository).await?;
 
-    let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".to_owned(),
-        })?;
+    let pull_request =
+        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".to_owned(),
+            })?;
 
     if expected.is_some_and(|(repository_id, pull_id, _)| {
         repository_id != repository.id || pull_id != pull_request.id
@@ -326,7 +336,7 @@ async fn create_review(
     }
 
     let draft_commit = if let Some(id) = req.review_id {
-        db::pull_requests::reviews::get_pull_request_review_by_id(pool, id)
+        crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(pool, id)
             .await
             .map_err(database_error)?
             .filter(|review| {
@@ -394,7 +404,7 @@ async fn create_review(
 
     let create_pending = batch.is_some();
     let comments = batch.unwrap_or_default();
-    if comments.len() > db::pull_requests::reviews::MAX_REVIEW_COMMENTS as usize
+    if comments.len() > crate::backend::db::pull_requests::reviews::MAX_REVIEW_COMMENTS as usize
         || comments
             .iter()
             .any(|comment| comment.path.is_none() || comment.in_reply_to_comment_id.is_some())
@@ -404,11 +414,11 @@ async fn create_review(
             message: "A review holds at most 200 new inline threads.".into(),
         });
     }
-    let mut patches = super::comments::DiffCache::new();
+    let mut patches = crate::backend::repositories::pull_requests::comments::DiffCache::new();
     let mut prepared = Vec::with_capacity(comments.len());
     for comment in comments {
         prepared.push(
-            super::comments::prepare_comment(
+            crate::backend::repositories::pull_requests::comments::prepare_comment(
                 pool,
                 cluster,
                 &repository,
@@ -423,9 +433,9 @@ async fn create_review(
         .iter()
         .map(|comment| comment.input(&pull_request, user.id))
         .collect();
-    let (review, published_ids) = db::pull_requests::reviews::save_review_batch(
+    let (review, published_ids) = crate::backend::db::pull_requests::reviews::save_review_batch(
         pool,
-        db::pull_requests::reviews::ReviewBatch {
+        crate::backend::db::pull_requests::reviews::ReviewBatch {
             pr_id: pull_request.id,
             author_id: user.id,
             state: if create_pending && req.state.is_none() {
@@ -445,7 +455,7 @@ async fn create_review(
         },
     )
     .await
-    .map_err(super::write_error)?;
+    .map_err(crate::backend::repositories::pull_requests::write_error)?;
     if review.state == "pending" {
         return Ok(review);
     }
@@ -503,7 +513,7 @@ async fn create_review(
     let published = if published_ids.is_empty() {
         Vec::new()
     } else {
-        db::pull_requests::reviews::list_review_comments(pool, &[review.id])
+        crate::backend::db::pull_requests::reviews::list_review_comments(pool, &[review.id])
             .await
             .unwrap_or_else(|error| {
                 tracing::warn!(review_id = review.id, %error, "could not notify published review comments");
@@ -538,7 +548,7 @@ async fn create_review(
         )
         .await;
         mentioned.extend(comment_mentioned);
-        super::comments::emit_comment_webhook(
+        crate::backend::repositories::pull_requests::comments::emit_comment_webhook(
             pool,
             &repository,
             &pull_request,
@@ -576,9 +586,9 @@ pub async fn dismiss_pull_request_review(
     review_id: i64,
     req: DismissPullRequestReviewRequest,
 ) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
-    let actor = super::actor(pool, actor_id).await?;
+    let actor = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
 
-    let repository = db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -586,9 +596,9 @@ pub async fn dismiss_pull_request_review(
             message: "Repository not found".to_owned(),
         })?;
 
-    super::require_read(pool, &actor, &repository).await?;
+    crate::backend::repositories::pull_requests::require_read(pool, &actor, &repository).await?;
 
-    super::require_admin(pool, &actor, &repository).await?;
+    crate::backend::repositories::pull_requests::require_admin(pool, &actor, &repository).await?;
     if repository.owner_kind == "user" && !actor.is_admin && !repository.is_personal_owner(actor.id)
     {
         return Err(OperationError::Missing {
@@ -597,21 +607,23 @@ pub async fn dismiss_pull_request_review(
         });
     }
 
-    let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".to_owned(),
-        })?;
+    let pull_request =
+        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".to_owned(),
+            })?;
 
-    let review = db::pull_requests::reviews::get_pull_request_review_by_id(pool, review_id)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Review not found".to_owned(),
-        })?;
+    let review =
+        crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(pool, review_id)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Review not found".to_owned(),
+            })?;
 
     if review.pull_request_id != pull_request.id {
         return Err(OperationError::Invalid {
@@ -628,14 +640,14 @@ pub async fn dismiss_pull_request_review(
         });
     }
 
-    let dismissed = db::pull_requests::reviews::dismiss_pull_request_review(
+    let dismissed = crate::backend::db::pull_requests::reviews::dismiss_pull_request_review(
         pool,
         review.id,
         actor.id,
         req.reason.as_deref(),
     )
     .await
-    .map_err(super::write_error)?;
+    .map_err(crate::backend::repositories::pull_requests::write_error)?;
 
     emit_review_webhook(
         pool,
@@ -678,7 +690,7 @@ pub async fn request_reviewer_bound(
     req: RequestReviewerRequest,
     expected_repository: Option<i64>,
 ) -> Result<RequestReviewerResult, OperationError> {
-    let repository = db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -687,15 +699,17 @@ pub async fn request_reviewer_bound(
         })?;
 
     check_repository_binding(expected_repository, repository.id)?;
-    let requester = super::actor(pool, actor_id).await?;
-    super::require_write(pool, &requester, &repository).await?;
-    let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".to_owned(),
-        })?;
+    let requester = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
+    crate::backend::repositories::pull_requests::require_write(pool, &requester, &repository)
+        .await?;
+    let pull_request =
+        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".to_owned(),
+            })?;
 
     if let Some(name) = req
         .username
@@ -708,25 +722,29 @@ pub async fn request_reviewer_bound(
                 message: "Review team belongs to another organization".to_owned(),
             });
         }
-        let target =
-            db::pull_requests::team_reviewers::list(pool, repository.id, None, Some(actor_id))
-                .await
-                .map_err(database_error)?
-                .into_iter()
-                .map(|access| access.team)
-                .find(|team| team.slug.eq_ignore_ascii_case(name.1))
-                .ok_or_else(|| OperationError::Invalid {
-                    code: "invalid_review_team",
-                    message: "Review team not found or lacks write access".to_owned(),
-                })?;
-        let changed = super::team_reviewers::change(
+        let target = crate::backend::db::pull_requests::team_reviewers::list(
+            pool,
+            repository.id,
+            None,
+            Some(actor_id),
+        )
+        .await
+        .map_err(database_error)?
+        .into_iter()
+        .map(|access| access.team)
+        .find(|team| team.slug.eq_ignore_ascii_case(name.1))
+        .ok_or_else(|| OperationError::Invalid {
+            code: "invalid_review_team",
+            message: "Review team not found or lacks write access".to_owned(),
+        })?;
+        let changed = crate::backend::repositories::pull_requests::team_reviewers::change(
             pool,
             broadcaster,
             &requester,
             &repository,
             &pull_request,
             &[name.1.to_owned()],
-            db::pull_requests::team_reviewers::ReviewTeamAction::Request,
+            crate::backend::db::pull_requests::team_reviewers::ReviewTeamAction::Request,
         )
         .await?;
         return Ok(RequestReviewerResult {
@@ -734,7 +752,7 @@ pub async fn request_reviewer_bound(
             created: !changed.is_empty(),
         });
     }
-    let target = db::users::accounts::get_user_by_username(pool, &req.username)
+    let target = crate::backend::db::users::accounts::get_user_by_username(pool, &req.username)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -777,14 +795,14 @@ pub(super) async fn add_review_request(
     pull_request: &codeyard_db_core::models::PullRequest,
     target: &codeyard_db_core::models::User,
 ) -> Result<bool, OperationError> {
-    let created = db::pull_requests::reviews::request_pull_request_reviewer(
+    let created = crate::backend::db::pull_requests::reviews::request_pull_request_reviewer(
         pool,
         pull_request.id,
         requester.id,
         target.id,
     )
     .await
-    .map_err(super::write_error)?;
+    .map_err(crate::backend::repositories::pull_requests::write_error)?;
 
     if created {
         notify_review_request(
@@ -822,8 +840,11 @@ pub(super) async fn emit_reviewer_event(
     target: &codeyard_db_core::models::User,
 ) {
     let mut extra = serde_json::Map::new();
-    extra.insert("requested_reviewer".into(), payloads::user(target));
-    super::emit_pull_request_event(
+    extra.insert(
+        "requested_reviewer".into(),
+        crate::backend::webhooks::payloads::user(target),
+    );
+    crate::backend::repositories::pull_requests::emit_pull_request_event(
         pool,
         cluster,
         repository,
@@ -904,7 +925,7 @@ pub async fn remove_requested_reviewer_bound(
     username: String,
     expected_repository: Option<i64>,
 ) -> Result<(), OperationError> {
-    let repository = db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -913,15 +934,16 @@ pub async fn remove_requested_reviewer_bound(
         })?;
 
     check_repository_binding(expected_repository, repository.id)?;
-    let actor = super::actor(pool, actor_id).await?;
-    super::require_write(pool, &actor, &repository).await?;
-    let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".to_owned(),
-        })?;
+    let actor = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
+    crate::backend::repositories::pull_requests::require_write(pool, &actor, &repository).await?;
+    let pull_request =
+        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".to_owned(),
+            })?;
 
     if let Some((org, slug)) = username
         .strip_prefix('@')
@@ -933,17 +955,17 @@ pub async fn remove_requested_reviewer_bound(
                 message: "Review team belongs to another organization".to_owned(),
             });
         }
-        let removed = db::pull_requests::team_reviewers::change(
+        let removed = crate::backend::db::pull_requests::team_reviewers::change(
             pool,
             actor.id,
             pull_request.id,
             &[slug.to_owned()],
-            db::pull_requests::team_reviewers::ReviewTeamAction::Remove,
+            crate::backend::db::pull_requests::team_reviewers::ReviewTeamAction::Remove,
             None,
         )
         .await
-        .map_err(super::team_reviewers::error)?;
-        super::team_reviewers::emit_events(
+        .map_err(crate::backend::repositories::pull_requests::team_reviewers::error)?;
+        crate::backend::repositories::pull_requests::team_reviewers::emit_events(
             pool,
             None,
             &repository,
@@ -955,7 +977,7 @@ pub async fn remove_requested_reviewer_bound(
         .await;
         return Ok(());
     }
-    let target = db::users::accounts::get_user_by_username(pool, &username)
+    let target = crate::backend::db::users::accounts::get_user_by_username(pool, &username)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -963,14 +985,14 @@ pub async fn remove_requested_reviewer_bound(
             message: "User not found".to_owned(),
         })?;
 
-    let removed = db::pull_requests::reviews::remove_pull_request_reviewer(
+    let removed = crate::backend::db::pull_requests::reviews::remove_pull_request_reviewer(
         pool,
         pull_request.id,
         actor.id,
         target.id,
     )
     .await
-    .map_err(super::write_error)?;
+    .map_err(crate::backend::repositories::pull_requests::write_error)?;
 
     if removed {
         emit_reviewer_event(
@@ -1002,7 +1024,7 @@ pub async fn discard_pending_review(
     number: i32,
     review: Option<i64>,
 ) -> Result<(), OperationError> {
-    let repository = db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -1010,28 +1032,38 @@ pub async fn discard_pending_review(
             message: "Repository not found".to_owned(),
         })?;
 
-    super::require_read(pool, &super::actor(pool, actor_id).await?, &repository).await?;
-    let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".to_owned(),
-        })?;
+    crate::backend::repositories::pull_requests::require_read(
+        pool,
+        &crate::backend::repositories::pull_requests::actor(pool, actor_id).await?,
+        &repository,
+    )
+    .await?;
+    let pull_request =
+        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".to_owned(),
+            })?;
 
     let discarded = match review {
-        Some(review) => db::pull_requests::reviews::delete_pending_review_by_id(
+        Some(review) => crate::backend::db::pull_requests::reviews::delete_pending_review_by_id(
             pool,
             pull_request.id,
             actor_id,
             review,
         )
         .await
-        .map_err(super::write_error)?
+        .map_err(crate::backend::repositories::pull_requests::write_error)?
         .is_some(),
-        None => db::pull_requests::reviews::discard_pending_review(pool, pull_request.id, actor_id)
-            .await
-            .map_err(super::write_error)?,
+        None => crate::backend::db::pull_requests::reviews::discard_pending_review(
+            pool,
+            pull_request.id,
+            actor_id,
+        )
+        .await
+        .map_err(crate::backend::repositories::pull_requests::write_error)?,
     };
     if discarded {
         Ok(())

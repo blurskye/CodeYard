@@ -1,7 +1,6 @@
-use super::chrome;
-use crate::backend::{
-    api::http::context::PageContext, app::AppState, repositories::dependency_graph as graph,
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -30,11 +29,15 @@ pub fn page_router() -> Router<Arc<AppState>> {
         )
 }
 
-fn inventory_failure(ctx: &PageContext, loaded: &chrome::Loaded, error: RepoError) -> Response {
+fn inventory_failure(
+    ctx: &PageContext,
+    loaded: &crate::backend::api::repos::chrome::Loaded,
+    error: RepoError,
+) -> Response {
     if error.kind == ErrorKind::Invalid {
         return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, &error.message);
     }
-    chrome::store_error(ctx, Some(&loaded.chrome), error)
+    crate::backend::api::repos::chrome::store_error(ctx, Some(&loaded.chrome), error)
 }
 
 async fn respond(
@@ -49,7 +52,8 @@ async fn respond(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let loaded = match chrome::load_database(&ctx, &owner, &name).await {
+    let loaded = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await
+    {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
@@ -59,7 +63,7 @@ async fn respond(
     let reference = format!("refs/heads/{}", loaded.default_branch);
     if download {
         // The same typed document as the REST export, so submitted relationships survive.
-        let snapshots = match graph::pinned_snapshots(
+        let snapshots = match crate::backend::repositories::dependency_graph::pinned_snapshots(
             &ctx.state,
             &reader,
             &loaded.repository,
@@ -70,34 +74,51 @@ async fn respond(
             Ok(snapshots) => snapshots,
             Err(error) => return inventory_failure(&ctx, &loaded, error),
         };
-        if let Err((status, _)) =
-            super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
-                .await
+        if let Err((status, _)) = crate::backend::api::repos::access::check_repo_read_access(
+            &ctx.state.pool,
+            &loaded.repository,
+            &ctx.headers,
+        )
+        .await
         {
             return ctx.error(status, "Repository not found.");
         }
         let mut document =
-            crate::backend::dependency_graph::sbom(&format!("{owner}/{name}"), &snapshots);
+            codeyard_model::dependency_graph::sbom(&format!("{owner}/{name}"), &snapshots);
         return Json(document["sbom"].take()).into_response();
     }
-    let (sha, packages) =
-        match graph::inventory(&ctx.state, &reader, &loaded.repository, &reference).await {
-            Ok(inventory) => inventory,
-            // A repository without commits has no dependencies yet.
-            Err(error) if error.kind == ErrorKind::NotFound => (String::new(), Vec::new()),
-            Err(error) => return inventory_failure(&ctx, &loaded, error),
-        };
-    if let Err((status, _)) =
-        super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
-            .await
+    let (sha, packages) = match crate::backend::repositories::dependency_graph::inventory(
+        &ctx.state,
+        &reader,
+        &loaded.repository,
+        &reference,
+    )
+    .await
+    {
+        Ok(inventory) => inventory,
+        // A repository without commits has no dependencies yet.
+        Err(error) if error.kind == ErrorKind::NotFound => (String::new(), Vec::new()),
+        Err(error) => return inventory_failure(&ctx, &loaded, error),
+    };
+    if let Err((status, _)) = crate::backend::api::repos::access::check_repo_read_access(
+        &ctx.state.pool,
+        &loaded.repository,
+        &ctx.headers,
+    )
+    .await
     {
         return ctx.error(status, "Repository not found.");
     }
-    let number = match super::paging::number(&ctx, "page", 1, 1..=super::paging::MAX_PAGE) {
+    let number = match crate::backend::api::repos::paging::number(
+        &ctx,
+        "page",
+        1,
+        1..=crate::backend::api::repos::paging::MAX_PAGE,
+    ) {
         Ok(number) => number,
         Err(response) => return response,
     };
-    let per_page = super::paging::DEFAULT_PER_PAGE;
+    let per_page = crate::backend::api::repos::paging::DEFAULT_PER_PAGE;
     let offset = (number - 1) * per_page;
     let link = |page| format!("{}/dependency-graph?page={page}", loaded.chrome.base());
     let previous = (number > 1).then(|| link(number - 1));

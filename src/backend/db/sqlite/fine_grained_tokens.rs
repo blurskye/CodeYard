@@ -6,7 +6,7 @@ use crate::backend::db::fine_grained_tokens::Policy;
 use crate::backend::db::fine_grained_tokens::Token;
 use crate::backend::db::fine_grained_tokens::TokenFilter;
 use crate::backend::db::organizations::OrganizationOutcome;
-use crate::backend::db::sqlite::time;
+
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::models::OrgRole;
@@ -26,7 +26,9 @@ pub async fn create(
 ) -> Result<Option<(i64, String)>> {
     // The write lock serializes with suspension, password resets and membership changes.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::users::transitions::active_session(&mut tx, user, session).await? {
+    if !crate::backend::db::sqlite::users::transitions::active_session(&mut tx, user, session)
+        .await?
+    {
         return Ok(None);
     }
     let status = match token.owner_org_id {
@@ -42,7 +44,7 @@ pub async fn create(
         }
     };
     let id: i64 = sqlx::query_scalar("INSERT INTO personal_access_tokens(user_id,name,token_hash,scope,expires_at) VALUES($1,$2,$3,$4,$5) RETURNING id")
-        .bind(user).bind(token.name).bind(hash).bind(token.scope).bind(token.expires_at.map(time::encode)).fetch_one(&mut *tx).await?;
+        .bind(user).bind(token.name).bind(hash).bind(token.scope).bind(token.expires_at.map(crate::backend::db::sqlite::time::encode)).fetch_one(&mut *tx).await?;
     sqlx::query("INSERT INTO fine_grained_tokens(token_id,owner_org_id,description,repository_access,permissions,status) VALUES($1,$2,$3,$4,$5,$6)")
         .bind(id).bind(token.owner_org_id).bind(token.description).bind(token.repository_access).bind(token.permissions).bind(status).execute(&mut *tx).await?;
     for repo in token
@@ -71,11 +73,13 @@ pub async fn regenerate(
     expires_at: Option<DateTime<Utc>>,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::users::transitions::active_session(&mut tx, user, session).await? {
+    if !crate::backend::db::sqlite::users::transitions::active_session(&mut tx, user, session)
+        .await?
+    {
         return Ok(false);
     }
     let changed = sqlx::query("UPDATE personal_access_tokens SET token_hash=$3,expires_at=$4,last_used_at=NULL,last_used_ip=NULL WHERE id=$1 AND user_id=$2 AND EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id=$1)")
-        .bind(token).bind(user).bind(hash).bind(expires_at.map(time::encode)).execute(&mut *tx).await?.rows_affected() == 1;
+        .bind(token).bind(user).bind(hash).bind(expires_at.map(crate::backend::db::sqlite::time::encode)).execute(&mut *tx).await?.rows_affected() == 1;
     if changed {
         sqlx::query(&format!(
             "UPDATE fine_grained_tokens SET requested_at={NOW} WHERE token_id=$1"
@@ -101,8 +105,9 @@ pub async fn repository_choices(
         "Repository selection exceeds its limit"
     );
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
-    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
+    let access = crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     let projection = format!("SELECT r.id,r.name FROM repositories r JOIN users u ON u.id=?1 WHERE NOT r.is_gist AND ((?2 IS NULL AND r.owner_kind='user' AND r.owner_user_id=u.id) OR (?2 IS NOT NULL AND r.owner_kind='org' AND r.owner_org_id=?2)) AND ({access})>=1");
     let kept = sqlx::query_as(&format!(
         "{projection} AND r.id IN (SELECT value FROM json_each(?3)) ORDER BY r.id"
@@ -158,7 +163,7 @@ pub async fn repositories(
         AccountCredential::Token(id, hash) => (None, Some((*id, *hash))),
     };
     let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "?6");
-    let readable = super::repositories::access::readable_condition();
+    let readable = crate::backend::db::sqlite::repositories::access::readable_condition();
     Ok(sqlx::query_as(&format!("SELECT r.id,r.name FROM fine_grained_token_repositories selected
         JOIN fine_grained_tokens g ON g.token_id=selected.token_id JOIN personal_access_tokens p ON p.id=g.token_id
         JOIN repositories r ON r.id=selected.repo_id JOIN users u ON u.id=?2
@@ -195,7 +200,8 @@ pub async fn policy(pool: &SqlitePool, org: i64) -> Result<Policy> {
 /// checked by the shared organization guard inside the writing transaction.
 async fn active_owner(connection: &mut SqliteConnection, actor: i64, org: i64) -> Result<bool> {
     Ok(matches!(
-        super::organizations::authority::authority(connection, actor, org).await?,
+        crate::backend::db::sqlite::organizations::authority::authority(connection, actor, org)
+            .await?,
         OrganizationOutcome::Applied(OrgRole::Owner)
     ))
 }
@@ -210,7 +216,7 @@ pub async fn set_policy(
     let actor = owner.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if !active_owner(&mut tx, actor, org).await?
-        || !super::credentials::organization(
+        || !crate::backend::db::sqlite::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -286,7 +292,7 @@ pub async fn owner_tokens(
         .filter(|token| token.repository_access == "selected")
         .map(|token| token.token_id)
         .collect();
-    let readable = super::repositories::access::readable_condition();
+    let readable = crate::backend::db::sqlite::repositories::access::readable_condition();
     let repositories: Vec<(i64, String)> = sqlx::query_as(&format!("SELECT token_id,name FROM (SELECT selected.token_id,r.name,ROW_NUMBER() OVER (PARTITION BY selected.token_id ORDER BY r.name,r.id) AS row_position
         FROM fine_grained_token_repositories selected JOIN fine_grained_tokens g ON g.token_id=selected.token_id
         JOIN repositories r ON r.id=selected.repo_id JOIN users u ON u.id=$2
@@ -315,7 +321,7 @@ pub async fn review(
     let reviewer = owner.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if !active_owner(&mut tx, reviewer, org).await?
-        || !super::credentials::organization(
+        || !crate::backend::db::sqlite::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -367,7 +373,7 @@ pub(crate) async fn repository_permission(
     Ok(bounds.user_id == actor
         && bounds.active()
         && scoped
-        && crate::backend::identity::fine_grained::allows(&permissions, permission, write))
+        && codeyard_model::fine_grained::allows(&permissions, permission, write))
 }
 
 pub async fn review_all(
@@ -382,7 +388,7 @@ pub async fn review_all(
     let reviewer = owner.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if !active_owner(&mut tx, reviewer, org).await?
-        || !super::credentials::organization(
+        || !crate::backend::db::sqlite::credentials::organization(
             &mut tx,
             &owner,
             org,

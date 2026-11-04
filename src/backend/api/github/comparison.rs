@@ -1,10 +1,12 @@
-use super::{
-    auth,
-    commits::{diff_files, documents, read_document},
-    contents::{path_url, store_error},
-    pagination::Pagination,
-    repo_url, repository, Error, Result,
-};
+use crate::backend::api::github::commits::diff_files;
+use crate::backend::api::github::commits::documents;
+use crate::backend::api::github::commits::read_document;
+use crate::backend::api::github::contents::path_url;
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 use crate::backend::repositories::reads::same_fork_network;
 use crate::backend::repositories::store::repo_store;
@@ -16,6 +18,7 @@ use axum::{
     Json,
 };
 use codeyard_db_core::models::Repository;
+use codeyard_model::urls::repo_url;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -44,7 +47,10 @@ pub(super) async fn side(
             return Err(Error::missing());
         }
         let source = candidates.remove(0);
-        auth::recheck_repository_read(state, headers, source.id, "contents").await?;
+        crate::backend::api::github::auth::recheck_repository_read(
+            state, headers, source.id, "contents",
+        )
+        .await?;
         source
     };
     if !same_fork_network(&state.pool, base, &source)
@@ -99,9 +105,9 @@ async fn compare(
             .await
             .map_err(store_error)?;
     }
-    if let Some(media) = super::diff_media::requested(&headers) {
-        if media == super::diff_media::Media::Patch {
-            return super::diff_media::series(
+    if let Some(media) = crate::backend::api::github::diff_media::requested(&headers) {
+        if media == crate::backend::api::github::diff_media::Media::Patch {
+            return crate::backend::api::github::diff_media::series(
                 &head_store,
                 &comparison.commits,
                 comparison.ahead_by,
@@ -117,7 +123,7 @@ async fn compare(
             )
             .await
             .map_err(store_error)?;
-        return Ok(super::diff_media::response(
+        return Ok(crate::backend::api::github::diff_media::response(
             media,
             &comparison.base_commit,
             &diff.files,
@@ -143,7 +149,7 @@ async fn compare(
     );
     let site = format!(
         "{}/{owner}/{name}/compare",
-        crate::backend::api::http::config::link_origin()
+        codeyard_model::http_config::link_origin()
     );
     let html_url = format!("{site}/{}", path_url(&spec));
     let mut value = json!({

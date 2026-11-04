@@ -1,4 +1,5 @@
-use crate::backend::db::source_imports::{ImportRefusal, SourceImport};
+use crate::backend::db::source_imports::ImportRefusal;
+use crate::backend::db::source_imports::SourceImport;
 use anyhow::Result;
 use sqlx::PgPool;
 
@@ -20,7 +21,10 @@ pub async fn start(
 ) -> Result<SourceImport> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_repository_mutation_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::postgres::discussions::lock_repository_mutation_authority(
+            &mut tx, actor, repo
+        )
+        .await?,
         ImportRefusal::Denied
     );
     let previous: Option<SourceImport> =
@@ -47,7 +51,8 @@ pub async fn finish(pool: &PgPool, repo: i64, generation: &str, success: bool) -
 pub async fn cancel(pool: &PgPool, actor: i64, repo: i64) -> Result<()> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_archive_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::postgres::discussions::lock_archive_authority(&mut tx, actor, repo)
+            .await?,
         ImportRefusal::Denied
     );
     sqlx::query("DELETE FROM repository_imports WHERE repo_id=$1")

@@ -5,7 +5,7 @@ use codeyard_db_core::models::OrgRole;
 use sqlx::{PgConnection, PgPool};
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing};
 
-use super::authority::*;
+use crate::backend::db::postgres::organizations::authority::*;
 
 pub async fn delete_organization(
     pool: &PgPool,
@@ -17,10 +17,10 @@ pub async fn delete_organization(
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
         .await?;
-    super::super::credentials::require_account(&mut tx, &owner).await?;
+    crate::backend::db::postgres::credentials::require_account(&mut tx, &owner).await?;
     let role = require_org!(tx, actor, org);
     if role != OrgRole::Owner
-        || !super::super::credentials::organization(
+        || !crate::backend::db::postgres::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -88,9 +88,9 @@ pub async fn list_organization_deletion_repositories(
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
         .await?;
-    super::super::credentials::require_account(&mut tx, &owner).await?;
+    crate::backend::db::postgres::credentials::require_account(&mut tx, &owner).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner
-        || !super::super::credentials::organization(
+        || !crate::backend::db::postgres::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -124,9 +124,9 @@ pub async fn delete_organization_repository(
     // Retain the initiating account before organization/fork rows.
     crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
         .await?;
-    super::super::credentials::require_account(&mut tx, &owner).await?;
+    crate::backend::db::postgres::credentials::require_account(&mut tx, &owner).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner
-        || !super::super::credentials::organization(
+        || !crate::backend::db::postgres::credentials::organization(
             &mut tx,
             &owner,
             org,

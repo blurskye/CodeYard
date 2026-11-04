@@ -1,12 +1,13 @@
-use super::{auth, repository, Error, Pagination, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        events::{EventScope, EventViewer},
-    },
-    webhooks::payloads,
-};
+use crate::backend::api::github::activity::auth;
+use crate::backend::api::github::activity::repository;
+use crate::backend::api::github::activity::Error;
+use crate::backend::api::github::activity::Pagination;
+use crate::backend::api::github::activity::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::events::EventScope;
+use crate::backend::db::events::EventViewer;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -37,7 +38,7 @@ pub(super) async fn documents(
     offset: usize,
     limit: usize,
 ) -> Result<(Vec<Value>, bool)> {
-    let entries = db::events::list_events(
+    let entries = crate::backend::db::events::list_events(
         &state.pool,
         viewer,
         scope,
@@ -55,11 +56,11 @@ pub(super) async fn documents(
             if let Some(value) = actors.get(&id) {
                 value.clone()
             } else {
-                let value = db::users::accounts::get_user_by_id(&state.pool, id)
+                let value = crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
                     .await
                     .map_err(Error::unavailable)?
                     .as_ref()
-                    .map(payloads::user)
+                    .map(crate::backend::webhooks::payloads::user)
                     .unwrap_or_else(|| entry.event.payload["sender"].clone());
                 actors.insert(id, value.clone());
                 value
@@ -70,7 +71,12 @@ pub(super) async fn documents(
         if !actor.is_object() {
             return Err(Error::unavailable(()));
         }
-        let mut value = payloads::event_json(&entry.event, &entry.repository, &entry.owner, actor);
+        let mut value = crate::backend::webhooks::payloads::event_json(
+            &entry.event,
+            &entry.repository,
+            &entry.owner,
+            actor,
+        );
         if let Some(id) = value["payload"]["forkee"]["id"].as_i64() {
             if auth::referenced_repository(state, authentication, id)
                 .await?
@@ -136,7 +142,7 @@ async fn list(
                 }
             }
             Listing::Organization | Listing::UserOrganization => {
-                let org = db::organizations::profiles::get_public_organization(
+                let org = crate::backend::db::organizations::profiles::get_public_organization(
                     &state.pool,
                     param("org")?,
                 )
@@ -144,11 +150,13 @@ async fn list(
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
                 let public = if matches!(listing, Listing::UserOrganization) {
-                    let user =
-                        db::users::accounts::get_user_by_username(&state.pool, param("username")?)
-                            .await
-                            .map_err(Error::unavailable)?
-                            .ok_or_else(Error::missing)?;
+                    let user = crate::backend::db::users::accounts::get_user_by_username(
+                        &state.pool,
+                        param("username")?,
+                    )
+                    .await
+                    .map_err(Error::unavailable)?
+                    .ok_or_else(Error::missing)?;
                     if viewer != Some(user.id) {
                         return Err(Error::new(
                             StatusCode::FORBIDDEN,
@@ -156,14 +164,14 @@ async fn list(
                         ));
                     }
                     if !matches!(
-                        db::organizations::profiles::get_organization_metadata(
+                        crate::backend::db::organizations::profiles::get_organization_metadata(
                             &state.pool,
                             user.id,
                             org.id
                         )
                         .await
                         .map_err(Error::unavailable)?,
-                        db::organizations::OrganizationOutcome::Applied(_)
+                        crate::backend::db::organizations::OrganizationOutcome::Applied(_)
                     ) {
                         return Err(Error::missing());
                     }
@@ -174,12 +182,14 @@ async fn list(
                 (EventScope::Organization(org.id), public)
             }
             Listing::User { received, public } => {
-                let user =
-                    db::users::accounts::get_user_by_username(&state.pool, param("username")?)
-                        .await
-                        .map_err(Error::unavailable)?
-                        .filter(|u| !u.is_banned)
-                        .ok_or_else(Error::missing)?;
+                let user = crate::backend::db::users::accounts::get_user_by_username(
+                    &state.pool,
+                    param("username")?,
+                )
+                .await
+                .map_err(Error::unavailable)?
+                .filter(|u| !u.is_banned)
+                .ok_or_else(Error::missing)?;
                 let scope = if received {
                     EventScope::Received(user.id)
                 } else {
@@ -245,7 +255,7 @@ async fn list(
             if json {
                 error.into_response()
             } else {
-                super::super::empty(error.0)
+                crate::backend::api::github::empty(error.0)
             }
         }
     }

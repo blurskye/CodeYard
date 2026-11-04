@@ -91,7 +91,7 @@ impl PreparedBundle {
 
     pub fn new(bundle: &Value) -> Result<Self, AttestationError> {
         let text = bundle.to_string();
-        if text.len() > super::attestations::MAX_BUNDLE_BYTES {
+        if text.len() > crate::backend::db::attestations::MAX_BUNDLE_BYTES {
             return Err(AttestationError::Size);
         }
         let invalid = || AttestationError::InvalidBundle;
@@ -229,28 +229,28 @@ pub struct Attestation {
 
 pub async fn create(
     pool: &DbPool,
-    actor: impl Into<super::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     bundle: &PreparedBundle,
 ) -> Result<i64, AttestationError> {
     use sha2::{Digest, Sha256};
     let actor = actor.into();
-    let bundle = super::attestations::Bundle {
+    let bundle = crate::backend::db::attestations::Bundle {
         hash: format!("{:x}", Sha256::digest(bundle.bundle.as_bytes())),
         json: bundle.bundle.clone(),
         predicate: bundle.predicate_type.clone(),
         subjects: bundle.subjects.iter().cloned().collect(),
     };
-    let user = super::users::accounts::get_user_by_id(pool, actor.user_id)
+    let user = crate::backend::db::users::accounts::get_user_by_id(pool, actor.user_id)
         .await
         .map_err(AttestationError::Authority)?
         .ok_or(AttestationError::Denied)?;
-    super::attestations::create(
+    crate::backend::db::attestations::create(
         pool,
         actor,
         repo,
         &bundle,
-        if user.username == super::ci_tokens::BOT {
+        if user.username == crate::backend::db::ci_tokens::BOT {
             "workflow"
         } else {
             "user"
@@ -258,9 +258,9 @@ pub async fn create(
     )
     .await
     .map_err(
-        |error| match error.downcast_ref::<super::attestations::Refusal>() {
-            Some(super::attestations::Refusal::Denied) => AttestationError::Denied,
-            Some(super::attestations::Refusal::Missing) => AttestationError::NotFound,
+        |error| match error.downcast_ref::<crate::backend::db::attestations::Refusal>() {
+            Some(crate::backend::db::attestations::Refusal::Denied) => AttestationError::Denied,
+            Some(crate::backend::db::attestations::Refusal::Missing) => AttestationError::NotFound,
             _ => AttestationError::Authority(error),
         },
     )

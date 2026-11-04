@@ -1,9 +1,13 @@
 //! CI queue RPCs. The authenticated node key owns every worker id it supplies.
-use super::{link::Link, rpc, transport, NodeContext};
-use crate::backend::{
-    ci::queue::{Operation, Reply, Request, RunQueue, CORE_UNAVAILABLE},
-    db,
-};
+use crate::backend::cluster::link::Link;
+
+use crate::backend::ci::queue::Operation;
+use crate::backend::ci::queue::Reply;
+use crate::backend::ci::queue::Request;
+use crate::backend::ci::queue::RunQueue;
+use crate::backend::ci::queue::CORE_UNAVAILABLE;
+use crate::backend::cluster::NodeContext;
+
 use anyhow::{ensure, Result};
 use iroh::{
     endpoint::Connection,
@@ -47,10 +51,11 @@ fn transient_database_error(error: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::{
-        ci::{CiConfig, CiExecutionMode},
-        cluster::{IrohDialer, NodeKey, Relay},
-    };
+    use crate::backend::ci::CiConfig;
+    use crate::backend::ci::CiExecutionMode;
+    use crate::backend::cluster::IrohDialer;
+    use crate::backend::cluster::Relay;
+    use codeyard_support::node_identity::NodeKey;
 
     async fn test_context() -> (tempfile::TempDir, codeyard_db_core::DbPool, NodeContext) {
         let root = tempfile::tempdir().unwrap();
@@ -62,7 +67,7 @@ mod tests {
         .unwrap();
         codeyard_db_core::run_migrations(&pool).await.unwrap();
         let key = NodeKey::generate();
-        let node = db::cluster::register_own_node(
+        let node = crate::backend::db::cluster::register_own_node(
             &pool,
             &key.public_hex(),
             "core",
@@ -124,7 +129,7 @@ mod tests {
         frame.extend_from_slice(&header);
         let mut link = Link::tcp(
             context.key.public_key(),
-            transport::ALPN_EVENTS,
+            crate::backend::cluster::transport::ALPN_EVENTS,
             std::io::Cursor::new(frame),
             tokio::io::sink(),
         );
@@ -156,20 +161,20 @@ mod tests {
 
     #[tokio::test]
     async fn oversized_environment_claim_fails_instead_of_leaving_an_undeliverable_lease() {
-        use crate::backend::{
-            crypto::SecretEncryptor,
-            db::environment_values::{self as values, Kind, Save},
-            notifications::NotificationBroadcaster,
-            repositories::lifecycle,
-        };
+        use crate::backend::db::environment_values as values;
+        use crate::backend::db::environment_values::Kind;
+        use crate::backend::db::environment_values::Save;
+        use crate::backend::notifications::NotificationBroadcaster;
+        use codeyard_support::secrets::SecretEncryptor;
+
         let (root, pool, context) = test_context().await;
-        let owner = db::users::accounts::create_user(&pool, "owner", None)
+        let owner = crate::backend::db::users::accounts::create_user(&pool, "owner", None)
             .await
             .unwrap();
-        let repo = lifecycle::provision(
+        let repo = crate::backend::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+            crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
             "project",
             None,
             true,
@@ -186,16 +191,16 @@ mod tests {
         // Both source sets are within their 1 MiB limits, but JSON escapes expand the reply.
         for index in 0..50 {
             let name = format!("SECRET_{index}");
-            db::secrets::create_or_update_secret(
+            crate::backend::db::secrets::create_or_update_secret(
                 &pool,
                 &encryptor,
                 repo.id,
                 &name,
                 &value,
                 Some(owner.id),
-                &db::users::accounts::AccountCredential::Session(&{
+                &crate::backend::db::users::accounts::AccountCredential::Session(&{
                     let session = uuid::Uuid::new_v4().simple().to_string().repeat(2);
-                    db::users::sessions::create_session(
+                    crate::backend::db::users::sessions::create_session(
                         &pool,
                         &session,
                         owner.id,
@@ -226,9 +231,9 @@ mod tests {
             .await
             .unwrap();
         }
-        let run = db::ci::enqueue_ci_run(
+        let run = crate::backend::db::ci::enqueue_ci_run(
             &pool,
-            db::ci::NewCiRun {
+            crate::backend::db::ci::NewCiRun {
                 repo_id: repo.id,
                 triggered_by_id: owner.id,
                 pipeline: "ci",
@@ -272,7 +277,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(error.to_string(), CLAIM_TOO_LARGE);
-        let current = db::ci::get_ci_run_by_run_id(&pool, run.run_id)
+        let current = crate::backend::db::ci::get_ci_run_by_run_id(&pool, run.run_id)
             .await
             .unwrap()
             .unwrap();
@@ -302,7 +307,7 @@ pub struct CiHandler {
     slots: Arc<Semaphore>,
     accepting_claims: Arc<AtomicBool>,
     headers: Arc<std::sync::Mutex<std::collections::HashMap<iroh::PublicKey, Arc<Semaphore>>>>,
-    sessions: rpc::SessionGate,
+    sessions: crate::backend::cluster::rpc::SessionGate,
 }
 
 impl std::fmt::Debug for CiHandler {
@@ -319,7 +324,7 @@ impl CiHandler {
             slots: Arc::new(Semaphore::new(16)),
             accepting_claims: Arc::new(AtomicBool::new(true)),
             headers: Default::default(),
-            sessions: rpc::SessionGate::default(),
+            sessions: crate::backend::cluster::rpc::SessionGate::default(),
         }
     }
 
@@ -345,8 +350,11 @@ impl CiHandler {
     /// Whether this core's node may read repositories held by other nodes. Only web and ssh
     /// nodes may, and claim preparation reads each run's workflow that way.
     async fn may_read_repositories(&self) -> Result<bool> {
-        let node =
-            db::cluster::get_node_by_id(self.context.database()?, self.context.node_id).await?;
+        let node = crate::backend::db::cluster::get_node_by_id(
+            self.context.database()?,
+            self.context.node_id,
+        )
+        .await?;
         Ok(node.is_some_and(|node| node.roles.iter().any(|role| role == "web" || role == "ssh")))
     }
 
@@ -398,7 +406,7 @@ impl CiHandler {
                 let bytes = serde_json::to_vec(&Reply {
                     result: Ok(value.clone()),
                 })?;
-                if bytes.len() > rpc::MAX_JSON {
+                if bytes.len() > codeyard_db_core::limits::MAX_JSON {
                     if let Some(claim) = &claim {
                         self.queue
                             .finish(&worker, claim.run.id, "failed", Some(CLAIM_TOO_LARGE))
@@ -410,21 +418,24 @@ impl CiHandler {
             }
             Operation::Storage { run_id } => {
                 let pool = self.context.database()?;
-                let run = db::ci::get_ci_run_by_run_id(pool, run_id)
+                let run = crate::backend::db::ci::get_ci_run_by_run_id(pool, run_id)
                     .await?
                     .filter(|run| run.status == "running" && run.worker.as_deref() == Some(&worker))
                     .ok_or_else(|| anyhow::anyhow!("CI run does not belong to this worker"))?;
-                let repo = db::repositories::records::get_repository_by_id(pool, run.repo_id)
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("repository not found"))?;
+                let repo = crate::backend::db::repositories::records::get_repository_by_id(
+                    pool,
+                    run.repo_id,
+                )
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("repository not found"))?;
                 let id = repo.storage_node_id.unwrap_or(self.context.node_id);
-                let node = db::cluster::get_node_by_id(pool, id)
+                let node = crate::backend::db::cluster::get_node_by_id(pool, id)
                     .await?
                     .filter(|node| {
                         node.status == "active" && node.roles.iter().any(|role| role == "storage")
                     })
                     .ok_or_else(|| anyhow::anyhow!(CORE_UNAVAILABLE))?;
-                let peer = super::CorePeer {
+                let peer = crate::backend::cluster::CorePeer {
                     target: None,
                     public_key: node.public_key,
                     address: serde_json::from_str(
@@ -495,16 +506,17 @@ impl CiHandler {
     async fn refusal(&self, peer: iroh::PublicKey) -> Option<&'static str> {
         let checked = async {
             let pool = self.context.database()?;
-            let serving = db::cluster::get_node_by_id(pool, self.context.node_id)
+            let serving = crate::backend::db::cluster::get_node_by_id(pool, self.context.node_id)
                 .await?
                 .is_some_and(|node| {
                     node.status == "active" && node.public_key == self.context.key.public_hex()
                 });
-            let worker = db::cluster::get_node_by_public_key(pool, &peer.to_string())
-                .await?
-                .is_some_and(|node| {
-                    node.status == "active" && node.roles.iter().any(|role| role == "runner")
-                });
+            let worker =
+                crate::backend::db::cluster::get_node_by_public_key(pool, &peer.to_string())
+                    .await?
+                    .is_some_and(|node| {
+                        node.status == "active" && node.roles.iter().any(|role| role == "runner")
+                    });
             Ok::<_, anyhow::Error>((serving, worker))
         };
         match checked.await {
@@ -530,7 +542,11 @@ impl CiHandler {
             return Ok(Err(refusal.to_owned()));
         }
         tracing::trace!(name: "ci_request_authorized", %peer, "CI queue request authorized; waiting for frame");
-        let header = rpc::read_frame(&mut link.reader, rpc::MAX_JSON + 64 * 1024).await?;
+        let header = crate::backend::cluster::rpc::read_frame(
+            &mut link.reader,
+            codeyard_db_core::limits::MAX_JSON + 64 * 1024,
+        )
+        .await?;
         let request = match serde_json::from_slice::<Request>(&header) {
             Ok(request) => request,
             Err(error) => {
@@ -544,7 +560,9 @@ impl CiHandler {
             return Ok(Err(refusal.to_owned()));
         }
         if let Ok(pool) = self.context.database() {
-            if let Err(error) = db::cluster::touch_node(pool, &peer.to_string()).await {
+            if let Err(error) =
+                crate::backend::db::cluster::touch_node(pool, &peer.to_string()).await
+            {
                 tracing::debug!(%error, "could not record a worker's last request");
             }
         }
@@ -581,7 +599,8 @@ impl CiHandler {
     }
 
     async fn answer_link(&self, mut link: Link) -> Result<()> {
-        let _header = transport::peer_header_slot(&self.headers, link.peer)?;
+        let _header =
+            crate::backend::cluster::transport::peer_header_slot(&self.headers, link.peer)?;
         tokio::time::timeout(std::time::Duration::from_secs(90), async {
             // A busy core refuses at once, as pairing does, so the client asks another
             // core instead of waiting in a queue. Hold admission through the reply write, and
@@ -592,7 +611,12 @@ impl CiHandler {
                 Err(_) => Err(CORE_UNAVAILABLE.to_owned()),
             };
             let header = serde_json::to_vec(&Reply { result })?;
-            rpc::write_frame(&mut link.writer, &header, rpc::MAX_JSON).await?;
+            crate::backend::cluster::rpc::write_frame(
+                &mut link.writer,
+                &header,
+                codeyard_db_core::limits::MAX_JSON,
+            )
+            .await?;
             link.finish().await?;
             Ok::<_, anyhow::Error>(())
         })
@@ -603,10 +627,12 @@ impl CiHandler {
 
 impl ProtocolHandler for CiHandler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-        let Ok(_connection) = transport::connection_slot(&connection) else {
+        let Ok(_connection) = crate::backend::cluster::transport::connection_slot(&connection)
+        else {
             return Ok(());
         };
-        while let Some(link) = transport::accept_stream(&connection).await {
+        while let Some(link) = crate::backend::cluster::transport::accept_stream(&connection).await
+        {
             if let Err(error) = self.serve_link(link).await {
                 tracing::warn!(%error, "CI queue RPC failed");
                 connection.close(500u32.into(), b"CI request failed");

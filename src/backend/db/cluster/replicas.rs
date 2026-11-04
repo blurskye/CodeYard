@@ -104,7 +104,7 @@ pub(crate) fn family_plan(
     setting: ReplicaSetting,
     primary: i64,
     storage: &mut [ClusterNode],
-    rows: &[super::PrimaryReplicaRow],
+    rows: &[crate::backend::db::cluster::PrimaryReplicaRow],
     reservations: &[(i64, i64)],
 ) -> anyhow::Result<Vec<(i64, Plan)>> {
     use std::collections::{BTreeMap, BTreeSet};
@@ -115,7 +115,7 @@ pub(crate) fn family_plan(
             *repository,
             (*size)
                 .max(1)
-                .checked_mul(super::REPLICA_STAGING_FACTOR)
+                .checked_mul(crate::backend::db::cluster::REPLICA_STAGING_FACTOR)
                 .ok_or_else(|| anyhow::anyhow!("replica reservation overflow"))?,
         );
         holders.extend(*node);
@@ -220,14 +220,14 @@ mod tests {
         storage: &[ClusterNode],
         copies: &[Holder],
     ) -> Plan {
-        super::plan(setting, primary, storage, copies, 1)
+        crate::backend::db::cluster::replicas::plan(setting, primary, storage, copies, 1)
     }
 
     #[test]
     fn an_unfinished_copy_on_a_full_holder_is_replaced_but_completed_copies_stay() {
         let storage = [node(1, 10, true), node(2, 0, true), node(3, 30, true)];
         assert_eq!(
-            super::plan(
+            crate::backend::db::cluster::replicas::plan(
                 ReplicaSetting::Copies(2),
                 1,
                 &storage,
@@ -240,7 +240,7 @@ mod tests {
             }
         );
         assert_eq!(
-            super::plan(
+            crate::backend::db::cluster::replicas::plan(
                 ReplicaSetting::Copies(2),
                 1,
                 &storage,

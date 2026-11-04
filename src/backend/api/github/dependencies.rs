@@ -1,13 +1,14 @@
 //! Native leased dependency scans and ordinary, reviewed security-update pull requests.
-use super::{auth, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::repositories::dependencies::Feature,
-    repositories::{
-        access::AccessError,
-        dependencies::{self, DependencyError, Status},
-    },
-};
+
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use crate::backend::db::repositories::dependencies::Feature;
+use crate::backend::repositories::access::AccessError;
+
+use crate::backend::repositories::dependencies::DependencyError;
+use crate::backend::repositories::dependencies::Status;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -42,8 +43,8 @@ async fn status(
     feature: Feature,
 ) -> Result<Status> {
     let (repo, actor) = repository(state, headers, owner, name, false).await?;
-    let actor = actor.ok_or_else(auth::required)?;
-    dependencies::status(&state.pool, actor.user.id, repo.id, feature)
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
+    crate::backend::repositories::dependencies::status(&state.pool, actor.user.id, repo.id, feature)
         .await
         .map_err(failure)
 }
@@ -56,8 +57,8 @@ async fn change(
     enabled: bool,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(state, headers, owner, name, true).await?;
-    let actor = actor.ok_or_else(auth::required)?;
-    dependencies::set_enabled(
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
+    crate::backend::repositories::dependencies::set_enabled(
         &state.pool,
         state.cluster.as_ref(),
         actor.user.id,

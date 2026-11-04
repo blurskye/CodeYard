@@ -59,7 +59,7 @@ pub(crate) fn valid_lock_reason(reason: Option<&str>) -> bool {
 
 native_operation!(crate::backend::db::postgres::discussions::set_lock,
     crate::backend::db::sqlite::discussions::set_lock,
-    fn set_lock(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo_id: i64, item: super::assignees::AssignedItem, locked: bool, reason: Option<&str>) -> Result<()>);
+    fn set_lock(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, item: crate::backend::db::assignees::AssignedItem, locked: bool, reason: Option<&str>) -> Result<()>);
 
 pub struct DiscussionEdit<'a> {
     pub actor_id: i64,

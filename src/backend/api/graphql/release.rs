@@ -1,8 +1,14 @@
 //! Release lists share the native draft visibility rule.
-use super::{
-    arg, connection, db, missing, node_objects, repository, unavailable, Arguments, RequestContext,
-    Result, Value,
-};
+use crate::backend::api::graphql::arg;
+
+use crate::backend::api::graphql::db;
+use crate::backend::api::graphql::missing;
+
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
 use crate::backend::repositories::store::repo_store;
 
 pub(super) async fn drafts_visible(
@@ -44,7 +50,9 @@ pub(super) async fn resolve(
                     .map_err(unavailable)?
             };
             match row {
-                Some(row) if !row.is_draft || writer => node_objects::release(&row, request).await,
+                Some(row) if !row.is_draft || writer => {
+                    crate::backend::api::graphql::node_objects::release(&row, request).await
+                }
                 _ => Ok(Value::Null),
             }
         }
@@ -52,7 +60,7 @@ pub(super) async fn resolve(
             let total = db::releases::count_releases(pool, repo.id, writer)
                 .await
                 .map_err(unavailable)?;
-            let page = connection::Page::new(ctx, total)?;
+            let page = crate::backend::api::graphql::connection::Page::new(ctx, total)?;
             // The schema gives `orderBy` no default; without one, releases come newest first.
             let order = match ctx.args.get("orderBy").filter(|order| !order.is_null()) {
                 None => db::releases::ReleaseOrder::CreatedDesc,
@@ -82,7 +90,10 @@ pub(super) async fn resolve(
             .map_err(unavailable)?;
             let mut nodes = Vec::new();
             for row in rows {
-                nodes.push(node_objects::release(&row.release, request).await?);
+                nodes.push(
+                    crate::backend::api::graphql::node_objects::release(&row.release, request)
+                        .await?,
+                );
             }
             Ok(page.finish(nodes))
         }
@@ -95,11 +106,15 @@ pub(super) async fn field(
     parent: &Value,
     request: &RequestContext,
 ) -> Result<Value> {
-    let repo = repository::by_id(parent["_repo"].as_i64().ok_or_else(missing)?, request).await?;
+    let repo = crate::backend::api::graphql::repository::by_id(
+        parent["_repo"].as_i64().ok_or_else(missing)?,
+        request,
+    )
+    .await?;
     request.authorize(repo.id, "contents", false).await?;
     match field {
         "reactionGroups" => {
-            super::collaboration::reactions(
+            crate::backend::api::graphql::collaboration::reactions(
                 db::reactions::Subject::Release,
                 parent["databaseId"].as_i64().ok_or_else(missing)?,
                 request,
@@ -107,7 +122,7 @@ pub(super) async fn field(
             .await
         }
         "releaseAssets" => {
-            connection::validate(args)?;
+            crate::backend::api::graphql::connection::validate(args)?;
             let mut rows = db::releases::list_release_assets(
                 &request.state.pool,
                 parent["_release"].as_i64().ok_or_else(missing)?,
@@ -118,19 +133,23 @@ pub(super) async fn field(
                 let name = name.string()?;
                 rows.retain(|row| row.name == name);
             }
-            let page = connection::Page::new(args, rows.len() as i64)?;
+            let page =
+                crate::backend::api::graphql::connection::Page::new(args, rows.len() as i64)?;
             let mut nodes = vec![];
             for row in rows
                 .into_iter()
                 .skip(page.offset as usize)
                 .take(page.limit as usize)
             {
-                nodes.push(node_objects::asset(repo.id, &row, request).await?);
+                nodes.push(
+                    crate::backend::api::graphql::node_objects::asset(repo.id, &row, request)
+                        .await?,
+                );
             }
             Ok(page.finish(nodes))
         }
         "tag" => {
-            super::git_objects::reference(
+            crate::backend::api::graphql::git_objects::reference(
                 &repo,
                 &format!(
                     "refs/tags/{}",
@@ -150,7 +169,7 @@ pub(super) async fn field(
                 return Ok(Value::Null);
             }
             let row = store.commit(&name).await.map_err(unavailable)?;
-            super::git::commit(repo.id, &row, "contents", request)
+            crate::backend::api::graphql::git::commit(repo.id, &row, "contents", request)
         }
         _ => Err(async_graphql::Error::new(format!(
             "Codeyard does not support Release.{field} yet"

@@ -1,15 +1,18 @@
 //! Cache and artifact metadata, deletion, and short-lived artifact downloads.
-use super::{id, run};
-use crate::backend::{
-    api::github::{auth, pagination::Pagination, repository, Error, Result},
-    app::AppState,
-    ci::runtime,
-    db::{
-        self,
-        action_objects::{self as objects, ActionObject, ObjectOrder, ObjectQuery},
-    },
-    webhooks::payloads,
-};
+use crate::backend::api::github::actions::id;
+use crate::backend::api::github::actions::run;
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::action_objects as objects;
+use crate::backend::db::action_objects::ActionObject;
+use crate::backend::db::action_objects::ObjectOrder;
+use crate::backend::db::action_objects::ObjectQuery;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -75,14 +78,19 @@ async fn artifact_document(
 ) -> Result<Value> {
     let run = match object.run_id {
         Some(id) => Some(
-            db::ci::get_ci_run_by_id(&state.pool, object.repo_id, id)
+            crate::backend::db::ci::get_ci_run_by_id(&state.pool, object.repo_id, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?,
         ),
         None => None,
     };
-    Ok(payloads::action_artifact(object, run.as_ref(), owner, name))
+    Ok(crate::backend::webhooks::payloads::action_artifact(
+        object,
+        run.as_ref(),
+        owner,
+        name,
+    ))
 }
 
 async fn listing(
@@ -191,7 +199,10 @@ async fn artifact(
     name: &str,
     id: i64,
     write: bool,
-) -> Result<(ActionObject, Option<auth::Authentication>)> {
+) -> Result<(
+    ActionObject,
+    Option<crate::backend::api::github::auth::Authentication>,
+)> {
     let (repo, auth) = repository(state, headers, owner, name, write).await?;
     let object = objects::object_by_id(&state.pool, repo.id, id, "artifact")
         .await
@@ -217,7 +228,7 @@ async fn delete_artifact(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (object, auth) = artifact(&state, &headers, &owner, &name, id, true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = auth.workflow_actor(&state, object.repo_id).await?;
     let credential = auth.ci_credential(&headers, "actions")?;
     if !objects::delete_artifact(
@@ -244,20 +255,22 @@ async fn download_artifact(
     Path((owner, name, id, format)): Path<(String, String, i64, String)>,
 ) -> Result<Response> {
     let (object, auth) = artifact(&state, &headers, &owner, &name, id, false).await?;
-    let actor = auth.ok_or_else(auth::required)?.database_actor();
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .database_actor();
     if format != "zip" {
         return Err(Error::invalid("archive_format must be zip"));
     }
     if object.expires_at <= chrono::Utc::now().timestamp() {
         return Err(Error::new(StatusCode::GONE, "Artifact has expired"));
     }
-    let token = runtime::secret();
+    let token = crate::backend::ci::runtime::secret();
     if !objects::grant_artifact_download(
         &state.pool,
         actor,
         object.repo_id,
         object.id,
-        &runtime::token_hash(&token),
+        &crate::backend::ci::runtime::token_hash(&token),
     )
     .await
     .map_err(Error::unavailable)?
@@ -270,7 +283,7 @@ async fn download_artifact(
             header::LOCATION,
             format!(
                 "{}/twirp/blobs/{}?sig={token}",
-                crate::backend::api::http::config::link_origin(),
+                codeyard_model::http_config::link_origin(),
                 object.id
             ),
         )],
@@ -301,7 +314,10 @@ async fn delete_cache(
     input.validate()?;
     let (repo, auth) =
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user.id;
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user
+        .id;
     let cache_id = params
         .contains_key("cache_id")
         .then(|| id(&params, "cache_id"))

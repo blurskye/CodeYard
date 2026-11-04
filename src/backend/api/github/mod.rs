@@ -111,7 +111,8 @@ pub(crate) const RELEASE_ASSET_UPLOAD_ROUTE: &str =
 pub(crate) const GISTS_ROUTE: &str = "/api/v3/gists";
 pub(crate) const GIST_ROUTE: &str = "/api/v3/gists/:gist_id";
 
-use crate::backend::{app::AppState, db};
+use crate::backend::app::AppState;
+
 use axum::{
     body::HttpBody,
     extract::{Path, Request, State},
@@ -163,7 +164,7 @@ impl Error {
             StatusCode::SERVICE_UNAVAILABLE => "INTERNAL",
             _ => "UNPROCESSABLE",
         };
-        super::graphql::error(self.1, kind)
+        crate::backend::api::graphql::error(self.1, kind)
     }
 
     fn new(status: StatusCode, message: impl Into<String>) -> Self {
@@ -246,18 +247,6 @@ pub(crate) async fn pull_diff_text(
         .unwrap_or_else(IntoResponse::into_response)
 }
 
-pub(crate) fn api_url(path: &str) -> String {
-    format!("{}/api/v3{path}", super::http::config::link_origin())
-}
-
-pub(crate) fn repo_url(owner: &str, repo: &str) -> String {
-    api_url(&format!(
-        "/repos/{}/{}",
-        codeyard_webui::encode_component(owner),
-        codeyard_webui::encode_component(repo),
-    ))
-}
-
 /// Non-authoritative identity lookup for derived Git proof preparation. The actual handler
 /// still owns authentication, token scope, rate limits and the final domain authority check.
 pub(crate) async fn interaction_actor(
@@ -265,13 +254,13 @@ pub(crate) async fn interaction_actor(
     headers: &HeaderMap,
 ) -> Option<codeyard_db_core::models::User> {
     let credential = auth::credential(headers)?;
-    let token = db::users::tokens::find_token(
+    let token = crate::backend::db::users::tokens::find_token(
         &state.pool,
-        &crate::backend::identity::tokens::token_hash(credential),
+        &codeyard_support::token_hash::token_hash(credential),
     )
     .await
     .ok()??;
-    db::users::tokens::token_user(&state.pool, token.id, false)
+    crate::backend::db::users::tokens::token_user(&state.pool, token.id, false)
         .await
         .ok()?
 }
@@ -290,7 +279,7 @@ pub(super) async fn repository(
     if write {
         auth.as_ref().ok_or_else(auth::required)?.require_write()?;
     }
-    let repo = db::repositories::records::get_repository(&state.pool, owner, name)
+    let repo = crate::backend::db::repositories::records::get_repository(&state.pool, owner, name)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -524,13 +513,13 @@ pub fn router() -> Router<Arc<AppState>> {
                 .layer(axum::extract::DefaultBodyLimit::disable()),
         )
         .layer(axum::middleware::from_fn(
-            super::http::interaction_proofs::prepare,
+            crate::backend::api::http::interaction_proofs::prepare,
         ))
         .layer(axum::middleware::from_fn(auth::authorize_request))
         .layer(axum::middleware::from_fn(rate_limits::enforce))
         .layer(axum::middleware::from_fn(auth::request_context))
         .layer(axum::middleware::from_fn(
-            super::http::middleware::bounded_form_body,
+            crate::backend::api::http::middleware::bounded_form_body,
         ))
         .layer(axum::middleware::from_fn(responses))
         .merge(activity::feeds::resources())
@@ -541,6 +530,6 @@ mod tests {
     #[test]
     fn every_operation_routes() {
         // Building the router panics on conflicting paths and on handlers for unknown operations.
-        let _ = super::router();
+        let _ = crate::backend::api::github::router();
     }
 }

@@ -1,10 +1,9 @@
-use crate::backend::{
-    db::dependency_graph::{
-        self, GraphError, Reader, Submission, SBOM_REPORTS_PER_REPOSITORY,
-        SBOM_REPORT_LIFETIME_SECONDS,
-    },
-    dependency_graph::Snapshot,
-};
+use crate::backend::db::dependency_graph::Reader;
+use crate::backend::db::dependency_graph::Submission;
+use crate::backend::db::dependency_graph::SBOM_REPORTS_PER_REPOSITORY;
+use crate::backend::db::dependency_graph::SBOM_REPORT_LIFETIME_SECONDS;
+use codeyard_model::dependency_graph::GraphError;
+use codeyard_model::dependency_graph::Snapshot;
 use sqlx::PgPool;
 
 pub(super) async fn enabled_in(
@@ -13,7 +12,7 @@ pub(super) async fn enabled_in(
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(&format!(
         "SELECT {}",
-        dependency_graph::enabled_sql(true, "$1")
+        crate::backend::db::dependency_graph::enabled_sql(true, "$1")
     ))
     .bind(repo)
     .fetch_one(connection)
@@ -28,9 +27,8 @@ async fn authorize_in(
 ) -> Result<(), GraphError> {
     match reader {
         Reader::Viewer(Some(actor)) => {
-            use super::repositories::access::{
-                lock_readable_repository_in_transaction, RepositoryRowLock,
-            };
+            use crate::backend::db::postgres::repositories::access::lock_readable_repository_in_transaction;
+            use crate::backend::db::postgres::repositories::access::RepositoryRowLock;
             let lock = if exclusive {
                 RepositoryRowLock::Exclusive
             } else {
@@ -39,9 +37,11 @@ async fn authorize_in(
             if !lock_readable_repository_in_transaction(tx, actor.user_id, repo, lock)
                 .await
                 .map_err(GraphError::Authority)?
-                || !super::credentials::repository(tx, actor, repo, "contents", false)
-                    .await
-                    .map_err(GraphError::Authority)?
+                || !crate::backend::db::postgres::credentials::repository(
+                    tx, actor, repo, "contents", false,
+                )
+                .await
+                .map_err(GraphError::Authority)?
             {
                 return Err(GraphError::Denied);
             }
@@ -52,11 +52,15 @@ async fn authorize_in(
             } else {
                 "FOR SHARE"
             };
-            super::repositories::records::lock_fork_ancestors(tx, repo, source_lock)
-                .await
-                .map_err(GraphError::Authority)?;
+            crate::backend::db::postgres::repositories::records::lock_fork_ancestors(
+                tx,
+                repo,
+                source_lock,
+            )
+            .await
+            .map_err(GraphError::Authority)?;
             let lock = if exclusive { "FOR UPDATE" } else { "FOR SHARE" };
-            let row: Option<i64> = sqlx::query_scalar(&format!("SELECT r.id FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived) {lock} OF r", super::repositories::access::readable_condition()))
+            let row: Option<i64> = sqlx::query_scalar(&format!("SELECT r.id FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived) {lock} OF r", crate::backend::db::postgres::repositories::access::readable_condition()))
                 .bind(repo).bind(matches!(reader, Reader::Scan(_))).fetch_optional(&mut **tx).await?;
             if row.is_none() {
                 return Err(GraphError::Denied);
@@ -116,15 +120,23 @@ pub async fn submit(
     let credential = actor.into();
     let actor = credential.user_id;
     let mut tx = pool.begin().await?;
-    if !super::discussions::lock_exclusive_write_authority(&mut tx, actor, repo)
-        .await
-        .map_err(GraphError::Authority)?
+    if !crate::backend::db::postgres::discussions::lock_exclusive_write_authority(
+        &mut tx, actor, repo,
+    )
+    .await
+    .map_err(GraphError::Authority)?
     {
         return Err(GraphError::Denied);
     }
-    if !super::credentials::repository(&mut tx, &credential, repo, "contents", true)
-        .await
-        .map_err(GraphError::Authority)?
+    if !crate::backend::db::postgres::credentials::repository(
+        &mut tx,
+        &credential,
+        repo,
+        "contents",
+        true,
+    )
+    .await
+    .map_err(GraphError::Authority)?
     {
         return Err(GraphError::Denied);
     }
@@ -156,17 +168,19 @@ pub(super) async fn bounded_snapshot_ids(
     reference: Option<&str>,
     sha: Option<&str>,
 ) -> Result<Vec<i64>, GraphError> {
-    let rows: Vec<(i64, i64)> = sqlx::query_as(&dependency_graph::snapshot_candidates_sql(
-        true,
-        reference.is_some(),
-        sha.is_some(),
-    ))
+    let rows: Vec<(i64, i64)> = sqlx::query_as(
+        &crate::backend::db::dependency_graph::snapshot_candidates_sql(
+            true,
+            reference.is_some(),
+            sha.is_some(),
+        ),
+    )
     .bind(repo)
     .bind(reference)
     .bind(sha)
     .fetch_all(connection)
     .await?;
-    dependency_graph::snapshot_ids(rows)
+    crate::backend::db::dependency_graph::snapshot_ids(rows)
 }
 
 pub(super) async fn snapshots_in(

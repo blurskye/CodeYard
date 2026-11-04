@@ -1,10 +1,14 @@
-use super::{auth, outcome, target, AppState, Error, Result};
-use crate::backend::api::http::config::link_origin;
-use crate::backend::db::organizations::discovery;
-use crate::backend::db::organizations::settings;
+use crate::backend::api::github::orgs::auth;
+use crate::backend::api::github::orgs::outcome;
+use crate::backend::api::github::orgs::target;
+use crate::backend::api::github::orgs::AppState;
+use crate::backend::api::github::orgs::Error;
+use crate::backend::api::github::orgs::Result;
+use codeyard_model::http_config::link_origin;
+
 use crate::backend::db::organizations::settings::Changes;
 use crate::backend::db::organizations::settings::Settings;
-use crate::backend::webhooks::payloads;
+
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -31,9 +35,14 @@ async fn update(
     let org = target(&state, &name).await?;
     let input=Changes::parse(&input).map_err(|error|Error(StatusCode::UNPROCESSABLE_ENTITY,"Validation Failed".into(),Some(json!([{"resource":"Organization","field":error.field,"code":"invalid","message":error.message}]))))?;
     let updated = outcome(
-        settings::change(&state.pool, actor.database_actor(), org.id, &input)
-            .await
-            .map_err(Error::unavailable)?,
+        crate::backend::db::organizations::settings::change(
+            &state.pool,
+            actor.database_actor(),
+            org.id,
+            &input,
+        )
+        .await
+        .map_err(Error::unavailable)?,
     )?;
     document(&state, &updated.organization, &updated.settings, true)
         .await
@@ -45,7 +54,7 @@ pub(super) async fn document(
     settings: &Settings,
     owner: bool,
 ) -> Result<Value> {
-    let mut value = payloads::organization(org);
+    let mut value = crate::backend::webhooks::payloads::organization(org);
     value["name"] = json!(org.display_name.as_deref().unwrap_or(&org.name));
     value["html_url"] = json!(format!(
         "{}{}",
@@ -55,9 +64,12 @@ pub(super) async fn document(
     value["type"] = json!("Organization");
     value["is_verified"] = json!(org.is_verified);
     value["public_repos"] = json!(
-        discovery::organization_public_repositories(&state.pool, org.id)
-            .await
-            .map_err(Error::unavailable)?
+        crate::backend::db::organizations::discovery::organization_public_repositories(
+            &state.pool,
+            org.id
+        )
+        .await
+        .map_err(Error::unavailable)?
     );
     for field in ["public_gists", "followers", "following"] {
         value[field] = json!(0);

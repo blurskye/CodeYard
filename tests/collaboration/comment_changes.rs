@@ -8,7 +8,7 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::db;
+
 use codeyard_db_core::models::AccessLevel;
 use database::Database;
 use pulls::Client;
@@ -38,7 +38,7 @@ async fn setup(pg: bool) -> World {
     let proj = codeyard::backend::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -47,10 +47,15 @@ async fn setup(pg: bool) -> World {
     .await
     .unwrap()
     .id;
-    db::repositories::access::grant_repo_access(database.pool(), bob_id, proj, AccessLevel::Write)
-        .await
-        .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
+        database.pool(),
+        bob_id,
+        proj,
+        AccessLevel::Write,
+    )
+    .await
+    .unwrap();
+    codeyard::backend::db::repositories::access::grant_repo_access(
         database.pool(),
         carol_id,
         proj,
@@ -213,11 +218,11 @@ async fn edit_and_delete_rules(pg: bool) {
         .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(body["body"], "After lock");
-    let stored = db::issues::get_issue_comment(database.pool(), locked)
+    let stored = codeyard::backend::db::issues::get_issue_comment(database.pool(), locked)
         .await
         .unwrap()
         .unwrap();
-    assert!(db::issues::add_issue_comment(
+    assert!(codeyard::backend::db::issues::add_issue_comment(
         database.pool(),
         repository_id.parse().unwrap(),
         stored.issue_id,
@@ -352,14 +357,14 @@ async fn late_notifications_and_long_discussions(pg: bool) {
         .await;
     let issue_id = issue["id"].as_i64().unwrap();
     let pool = world.database.pool();
-    let repo = db::repositories::records::get_repository(pool, "alice", "proj")
+    let repo = codeyard::backend::db::repositories::records::get_repository(pool, "alice", "proj")
         .await
         .unwrap()
         .unwrap();
     let alice_id = repo.owner_user_id.unwrap();
     let comment_id = comment(&world.bob, "issues/1", "deleted private text").await;
     let metadata = json!({"comment_id": comment_id});
-    let input = |kind| db::notifications::records::NewNotification {
+    let input = |kind| codeyard::backend::db::notifications::records::NewNotification {
         user_id: alice_id,
         actor_id: None,
         repo_id: Some(repo.id),
@@ -369,10 +374,10 @@ async fn late_notifications_and_long_discussions(pg: bool) {
         link: None,
         metadata: &metadata,
     };
-    db::notifications::records::create_notification(pool, input("mention"))
+    codeyard::backend::db::notifications::records::create_notification(pool, input("mention"))
         .await
         .unwrap();
-    assert!(db::issues::delete_issue_comment(
+    assert!(codeyard::backend::db::issues::delete_issue_comment(
         pool,
         alice_id,
         repo.id,
@@ -387,7 +392,7 @@ async fn late_notifications_and_long_discussions(pg: bool) {
     .is_some());
     for kind in ["issue_comment", "mention"] {
         assert!(
-            db::notifications::records::create_notification(pool, input(kind))
+            codeyard::backend::db::notifications::records::create_notification(pool, input(kind))
                 .await
                 .is_err(),
             "late {kind} resurrected a deleted comment"

@@ -84,12 +84,18 @@ async fn lock_discussion_authority(
         }
         _ => return Ok(None),
     };
-    if !admin && super::users::blocks::repository_interaction_blocked(tx, actor_id, repo_id).await?
+    if !admin
+        && crate::backend::db::sqlite::users::blocks::repository_interaction_blocked(
+            tx, actor_id, repo_id,
+        )
+        .await?
     {
         return Ok(None);
     }
-    let access =
-        super::repositories::access::user_repo_access_in_transaction(tx, actor_id, repo_id).await?;
+    let access = crate::backend::db::sqlite::repositories::access::user_repo_access_in_transaction(
+        tx, actor_id, repo_id,
+    )
+    .await?;
     Ok(Some(DiscussionAuthority {
         access,
         personal_override: !organization && admin,
@@ -173,7 +179,10 @@ pub(crate) async fn lock_security_authority(
         .fetch_one(&mut **tx)
         .await?;
     match org {
-        Some(org) => super::organizations::roles::manages_security(tx, actor_id, org).await,
+        Some(org) => {
+            crate::backend::db::sqlite::organizations::roles::manages_security(tx, actor_id, org)
+                .await
+        }
         None => Ok(false),
     }
 }
@@ -198,8 +207,10 @@ pub(crate) async fn lock_settings_read_authority(
     if admin {
         lock_policy_authority(tx, actor_id, repo_id, false).await
     } else {
-        super::repositories::access::lock_readable_repository_in_transaction(tx, actor_id, repo_id)
-            .await
+        crate::backend::db::sqlite::repositories::access::lock_readable_repository_in_transaction(
+            tx, actor_id, repo_id,
+        )
+        .await
     }
 }
 
@@ -233,11 +244,14 @@ pub(crate) async fn lock_contribution_authority(
         return Ok(false);
     };
     if !(authority.access.can_read() || authority.personal_override)
-        || super::users::blocks::repository_interaction_blocked(tx, actor_id, repo_id).await?
+        || crate::backend::db::sqlite::users::blocks::repository_interaction_blocked(
+            tx, actor_id, repo_id,
+        )
+        .await?
     {
         return Ok(false);
     }
-    super::interactions::allows_contribution(
+    crate::backend::db::sqlite::interactions::allows_contribution(
         tx,
         actor_id,
         repo_id,
@@ -266,7 +280,8 @@ pub async fn set_lock(
     locked: bool,
     reason: Option<&str>,
 ) -> Result<()> {
-    use crate::backend::db::{assignees::AssignedItem, discussions::LockRefusal};
+    use crate::backend::db::assignees::AssignedItem;
+    use crate::backend::db::discussions::LockRefusal;
     anyhow::ensure!(
         crate::backend::db::discussions::valid_lock_reason(reason),
         LockRefusal::InvalidReason
@@ -281,7 +296,10 @@ pub async fn set_lock(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         lock_triage_authority(&mut tx, actor_id, repo_id).await?
-            && super::credentials::repository(&mut tx, &actor, repo_id, permission, true).await?,
+            && crate::backend::db::sqlite::credentials::repository(
+                &mut tx, &actor, repo_id, permission, true
+            )
+            .await?,
         LockRefusal::Denied
     );
     let (previous, previous_reason, updated): (
@@ -297,7 +315,7 @@ pub async fn set_lock(
     .await?
     .ok_or(LockRefusal::Missing)?;
     if previous != locked || previous_reason.as_deref() != reason {
-        let next = super::time::next_revision(updated)?;
+        let next = crate::backend::db::sqlite::time::next_revision(updated)?;
         sqlx::query(&format!(
             "UPDATE {table} SET locked=?2,lock_reason=?3,updated_at=?4 WHERE id=?1"
         ))
@@ -307,7 +325,7 @@ pub async fn set_lock(
         .bind(next)
         .execute(&mut *tx)
         .await?;
-        super::timeline::append(
+        crate::backend::db::sqlite::timeline::append(
             &mut tx,
             repo_id,
             subject,

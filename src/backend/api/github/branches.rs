@@ -1,11 +1,14 @@
 //! Branch reads use the same protection matcher as pushes.
-use super::{contents::store_error, pagination::Pagination, repo_url, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    ci::workflows::WorkflowMatchBudget,
-    db,
-    repositories::{protection, store::repo_store},
-};
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use codeyard_model::urls::repo_url;
+use codeyard_model::workflow_glob::WorkflowMatchBudget;
+
+use crate::backend::repositories::store::repo_store;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -37,7 +40,7 @@ async fn list(
         per_page: query.per_page,
     };
     let (offset, limit) = page.window()?;
-    let rules = protection::load_rules(&state.pool, &repo)
+    let rules = crate::backend::repositories::protection::load_rules(&state.pool, &repo)
         .await
         .map_err(Error::unavailable)?;
     let refs = repo_store(&repo, state.cluster.as_ref())
@@ -60,8 +63,12 @@ async fn list(
     let mut branches = Vec::new();
     let mut budget = WorkflowMatchBudget::new();
     for (branch, sha) in refs {
-        let protected = protection::branch_is_protected(&rules, &branch, &mut budget)
-            .map_err(Error::unavailable)?;
+        let protected = crate::backend::repositories::protection::branch_is_protected(
+            &rules,
+            &branch,
+            &mut budget,
+        )
+        .map_err(Error::unavailable)?;
         if query.protected.is_none_or(|filter| filter == protected) {
             branches.push((branch, sha, protected));
         }
@@ -88,10 +95,13 @@ async fn read(
         .await
         .map_err(store_error)?;
     if !refs.contains_key(&format!("refs/heads/{branch}")) {
-        if let Some(target) =
-            db::repositories::protection::branch_redirect(&state.pool, repo.id, &branch)
-                .await
-                .map_err(Error::unavailable)?
+        if let Some(target) = crate::backend::db::repositories::protection::branch_redirect(
+            &state.pool,
+            repo.id,
+            &branch,
+        )
+        .await
+        .map_err(Error::unavailable)?
         {
             if refs.contains_key(&format!("refs/heads/{target}")) {
                 let url = format!(
@@ -125,7 +135,7 @@ pub(super) async fn document(
         .get(&format!("refs/heads/{branch}"))
         .ok_or_else(Error::missing)?;
     let commit = store.commit(sha).await.map_err(store_error)?;
-    let rules = protection::matching_rules(&state.pool, repo, branch)
+    let rules = crate::backend::repositories::protection::matching_rules(&state.pool, repo, branch)
         .await
         .map_err(Error::unavailable)?;
     let protected = !rules.is_empty();
@@ -144,7 +154,7 @@ pub(super) async fn document(
     let mut checks: Vec<_> = rules
         .iter()
         .filter(|rule| rule.require_status_checks)
-        .flat_map(super::protection::check_documents)
+        .flat_map(crate::backend::api::github::protection::check_documents)
         .collect();
     checks.sort_by(|a, b| {
         a["context"]
@@ -154,14 +164,14 @@ pub(super) async fn document(
     });
     checks.dedup();
     Ok(json!({
-        "name": branch, "commit": super::commits::read_document(state, repo.id, &commit, owner, name).await?,
+        "name": branch, "commit": crate::backend::api::github::commits::read_document(state, repo.id, &commit, owner, name).await?,
         "protected": protected, "protection_url": format!("{url}/protection"),
         "protection": {"enabled": protected, "required_status_checks": {
             "enforcement_level": if rules.iter().any(|rule| rule.enforce_admins) { "everyone" } else if protected { "non_admins" } else { "off" },
             "contexts": contexts,
             "checks": checks,
         }},
-        "_links": {"self": url, "html": format!("{}/{owner}/{name}/tree/{}", crate::backend::api::http::config::link_origin(), codeyard_webui::encode_component(branch))},
+        "_links": {"self": url, "html": format!("{}/{owner}/{name}/tree/{}", codeyard_model::http_config::link_origin(), codeyard_webui::encode_component(branch))},
     }))
 }
 
@@ -180,7 +190,7 @@ async fn heads(
     let store = repo_store(&repo, state.cluster.as_ref());
     let sha = store.commit(&sha).await.map_err(store_error)?.sha;
     let refs = store.refs().await.map_err(store_error)?;
-    let rules = protection::load_rules(&state.pool, &repo)
+    let rules = crate::backend::repositories::protection::load_rules(&state.pool, &repo)
         .await
         .map_err(Error::unavailable)?;
     let mut matches: Vec<_> = refs
@@ -197,8 +207,12 @@ async fn heads(
     let mut values = Vec::new();
     let mut budget = WorkflowMatchBudget::new();
     for branch in matches.into_iter().skip(offset).take(limit) {
-        let protected = protection::branch_is_protected(&rules, &branch, &mut budget)
-            .map_err(Error::unavailable)?;
+        let protected = crate::backend::repositories::protection::branch_is_protected(
+            &rules,
+            &branch,
+            &mut budget,
+        )
+        .map_err(Error::unavailable)?;
         values.push(json!({"name": branch, "commit": {"sha": sha, "url": format!("{}/commits/{sha}", repo_url(&owner, &name))}, "protected": protected}));
     }
     page.response(&uri, values, has_next)

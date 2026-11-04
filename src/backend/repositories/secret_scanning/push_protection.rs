@@ -1,7 +1,6 @@
 //! Push protection refuses a publication that adds a secret, unless the actor holds an unused
 //! bypass for that exact secret. Receive hooks and file saves both run it on the commits they add.
 
-use crate::backend::db;
 use codeyard_git::error::{ErrorKind, RepoError};
 use std::path::Path;
 
@@ -22,17 +21,18 @@ pub async fn refuse_blocked_secrets(
     quarantine: Option<&Path>,
     heads: &[String],
 ) -> anyhow::Result<Vec<ApprovedBypass>> {
-    if !db::secret_scanning::settings(pool, repo.id)
+    if !crate::backend::db::secret_scanning::settings(pool, repo.id)
         .await?
         .push_protection
     {
         return Ok(Vec::new());
     }
-    let owner = db::repositories::records::repository_owner_names(pool, &[repo.id])
+    let owner = crate::backend::db::repositories::records::repository_owner_names(pool, &[repo.id])
         .await?
         .remove(&repo.id)
         .ok_or_else(|| anyhow::anyhow!("Repository owner unavailable"))?;
-    let (patterns, disabled) = db::secret_scanning::effective_patterns(pool, repo.id).await?;
+    let (patterns, disabled) =
+        crate::backend::db::secret_scanning::effective_patterns(pool, repo.id).await?;
     let findings = codeyard_git::secret_scanning::added_secrets(
         path.to_owned(),
         quarantine.map(Path::to_owned),
@@ -44,8 +44,8 @@ pub async fn refuse_blocked_secrets(
     let mut violations = Vec::new();
     let mut bypasses = Vec::new();
     for finding in findings {
-        let hash = crate::backend::identity::tokens::token_hash(&finding.detection.secret);
-        if let Some(placeholder) = db::secret_scanning::protection(
+        let hash = codeyard_support::token_hash::token_hash(&finding.detection.secret);
+        if let Some(placeholder) = crate::backend::db::secret_scanning::protection(
             pool,
             actor,
             repo.id,
@@ -56,7 +56,7 @@ pub async fn refuse_blocked_secrets(
         {
             let link = format!(
                 "{}/{}/{}/security/secret-scanning/unblock-secret/{}",
-                crate::backend::api::http::config::link_origin(),
+                codeyard_model::http_config::link_origin(),
                 codeyard_webui::encode_component(&owner),
                 codeyard_webui::encode_component(&repo.name),
                 placeholder.id

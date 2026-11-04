@@ -4,15 +4,12 @@
 //! records what would have happened, as GitHub's evaluate mode does. Ref, history and name
 //! rules are judged. Unsupported evaluate definitions cannot be saved; historical unsupported
 //! rules produce an indeterminate verdict, never a successful evaluation.
-use super::{
-    git_sessions::{
-        validation::{RefUpdate, ZERO_SHA},
-        ReceiveCredential,
-    },
-    protection::History,
-};
-use crate::backend::ci::workflows::WorkflowMatchBudget;
-use crate::backend::db;
+use crate::backend::repositories::git_sessions::validation::RefUpdate;
+use crate::backend::repositories::git_sessions::validation::ZERO_SHA;
+use crate::backend::repositories::git_sessions::ReceiveCredential;
+use crate::backend::repositories::protection::History;
+use codeyard_model::workflow_glob::WorkflowMatchBudget;
+
 use crate::backend::db::organizations::OrganizationOutcome;
 use crate::backend::db::rulesets::ActorType;
 use crate::backend::db::rulesets::BypassMode;
@@ -66,14 +63,17 @@ async fn exempted(
     let deploy_key = matches!(credential, Some(ReceiveCredential::DeployKey(_)));
     let has = |kind| !deploy_key && entries.iter().any(|entry| entry.actor_type == kind);
     let role = if has(ActorType::RepositoryRole) {
-        super::access::user_access(pool, actor, repository).await?
+        crate::backend::repositories::access::user_access(pool, actor, repository).await?
     } else {
         AccessLevel::None
     };
     let org_admin = if has(ActorType::OrganizationAdmin) && repository.owner_kind == "org" {
         if let Some(org) = repository.owner_org_id {
             matches!(
-                db::organizations::membership::get_organization_role(pool, actor.id, org).await?,
+                crate::backend::db::organizations::membership::get_organization_role(
+                    pool, actor.id, org
+                )
+                .await?,
                 OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin)
             )
         } else {
@@ -91,7 +91,10 @@ async fn exempted(
             .collect();
         let ids: Vec<_> = ids.into_iter().collect();
         for batch in ids.chunks(500) {
-            teams.extend(db::rulesets::bypass_teams(pool, repository.id, actor.id, batch).await?);
+            teams.extend(
+                crate::backend::db::rulesets::bypass_teams(pool, repository.id, actor.id, batch)
+                    .await?,
+            );
         }
     }
     Ok(rulesets
@@ -214,7 +217,7 @@ pub(crate) async fn record_push(
     history: &History<'_>,
     credential: Option<ReceiveCredential>,
 ) -> Result<()> {
-    let mut rulesets = db::rulesets::push_rulesets(pool, repository.id).await?;
+    let mut rulesets = crate::backend::db::rulesets::push_rulesets(pool, repository.id).await?;
     rulesets.retain(|ruleset| ruleset.definition.enforcement == Enforcement::Evaluate);
     if rulesets.is_empty() {
         return Ok(());
@@ -276,7 +279,7 @@ pub(crate) async fn record_push(
         if !targeted {
             continue;
         }
-        db::rulesets::record_rule_suite(
+        crate::backend::db::rulesets::record_rule_suite(
             pool,
             &Suite {
                 id: 0,

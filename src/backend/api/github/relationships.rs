@@ -1,12 +1,13 @@
-use super::{auth, issues, pagination::Pagination, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        assignees::AssignedItem,
-        relationships::{Kind, Mutation, Refusal},
-    },
-};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::assignees::AssignedItem;
+use crate::backend::db::relationships::Kind;
+use crate::backend::db::relationships::Mutation;
+use crate::backend::db::relationships::Refusal;
 use axum::{
     body::Bytes,
     extract::{OriginalUri, Path, Query, State},
@@ -28,30 +29,41 @@ pub(super) fn error(error: anyhow::Error) -> Error {
     }
 }
 async fn root(pool: &codeyard_db_core::DbPool, repo: i64, p: &Params) -> Result<i64> {
-    issues::required_issue(pool, repo, &p["issue_number"]).await
+    crate::backend::api::github::issues::required_issue(pool, repo, &p["issue_number"]).await
 }
 /// A linked issue may sit in another repository, which the credential must reach as well.
-async fn document(state: &AppState, auth: Option<&auth::Authentication>, id: i64) -> Result<Value> {
-    let issue = db::issues::get_issue_by_id(&state.pool, id)
+async fn document(
+    state: &AppState,
+    auth: Option<&crate::backend::api::github::auth::Authentication>,
+    id: i64,
+) -> Result<Value> {
+    let issue = crate::backend::db::issues::get_issue_by_id(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    if auth::readable_repositories(state, auth, &[issue.repo_id], "issues")
-        .await?
-        .is_empty()
+    if crate::backend::api::github::auth::readable_repositories(
+        state,
+        auth,
+        &[issue.repo_id],
+        "issues",
+    )
+    .await?
+    .is_empty()
     {
         return Err(Error::missing());
     }
-    let repo = db::repositories::records::get_repository_by_id(&state.pool, issue.repo_id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    let owners = db::repositories::records::repository_owner_names(&state.pool, &[repo.id])
-        .await
-        .map_err(Error::unavailable)?;
-    issues::document(
+    let repo =
+        crate::backend::db::repositories::records::get_repository_by_id(&state.pool, issue.repo_id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+    let owners =
+        crate::backend::db::repositories::records::repository_owner_names(&state.pool, &[repo.id])
+            .await
+            .map_err(Error::unavailable)?;
+    crate::backend::api::github::issues::document(
         &state.pool,
-        issues::Reader::Request(state, auth),
+        crate::backend::api::github::issues::Reader::Request(state, auth),
         &repo,
         owners.get(&repo.id).ok_or_else(Error::missing)?,
         AssignedItem::Issue(id),
@@ -89,15 +101,22 @@ async fn list(
     let mut rows = Vec::new();
     let (mut scanned, mut skipped) = (0, 0);
     loop {
-        let batch = db::relationships::list(&state.pool, viewer, root, kind, scanned, 100)
-            .await
-            .map_err(Error::unavailable)?;
+        let batch =
+            crate::backend::db::relationships::list(&state.pool, viewer, root, kind, scanned, 100)
+                .await
+                .map_err(Error::unavailable)?;
         let done = batch.len() < 100;
         scanned += batch.len() as i64;
         let mut ids: Vec<_> = batch.iter().map(|link| link.repo_id).collect();
         ids.sort_unstable();
         ids.dedup();
-        let readable = auth::readable_repositories(&state, auth.as_ref(), &ids, "issues").await?;
+        let readable = crate::backend::api::github::auth::readable_repositories(
+            &state,
+            auth.as_ref(),
+            &ids,
+            "issues",
+        )
+        .await?;
         for row in batch
             .into_iter()
             .filter(|link| readable.contains(&link.repo_id))
@@ -137,7 +156,7 @@ struct Input {
     after_id: Option<i64>,
 }
 fn input(body: &[u8]) -> Result<Input> {
-    serde_json::from_slice(body).map_err(super::json_parse_error)
+    serde_json::from_slice(body).map_err(crate::backend::api::github::json_parse_error)
 }
 async fn apply(
     state: &AppState,
@@ -146,7 +165,7 @@ async fn apply(
     mutation: Mutation,
 ) -> Result<Value> {
     let (repo, auth) = repository(state, headers, &p["owner"], &p["repo"], true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let root = root(&state.pool, repo.id, p).await?;
     let other = match mutation {
         Mutation::Add { other, .. } | Mutation::Remove { other, .. } => other,
@@ -154,7 +173,7 @@ async fn apply(
     };
     // The linked issue's repository must be within the credential's reach before the change.
     document(state, Some(&auth), other).await?;
-    db::relationships::change_with_token(
+    crate::backend::db::relationships::change_with_token(
         &state.pool,
         auth.user.id,
         repo.id,
@@ -197,7 +216,7 @@ async fn add(
         axum::http::header::LOCATION,
         format!(
             "{}{}",
-            crate::backend::api::http::config::link_origin(),
+            codeyard_model::http_config::link_origin(),
             uri.path()
         )
         .parse()

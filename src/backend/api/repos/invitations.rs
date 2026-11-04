@@ -1,8 +1,8 @@
 //! Native recipient workflow, backed by the same invitation transactions as the REST adapters.
-use super::paging;
+
 use crate::backend::api::http::context::PageContext;
 use crate::backend::app::AppState;
-use crate::backend::repositories::collaborators;
+
 use crate::backend::repositories::collaborators::Error;
 use axum::{
     extract::{Path, State},
@@ -32,10 +32,10 @@ fn refusal(ctx: &PageContext, error: Error) -> Response {
     }
 }
 async fn load(ctx: &PageContext, actor: i64, page: usize) -> Result<view::Page, Error> {
-    let limit = paging::DEFAULT_PER_PAGE;
+    let limit = crate::backend::api::repos::paging::DEFAULT_PER_PAGE;
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let mut rows = collaborators::recipient_invitations(
+    let mut rows = crate::backend::repositories::collaborators::recipient_invitations(
         &ctx.state.pool,
         actor,
         &session,
@@ -43,7 +43,12 @@ async fn load(ctx: &PageContext, actor: i64, page: usize) -> Result<view::Page, 
         (limit + 1) as i64,
     )
     .await?;
-    let has_more = paging::has_next_page(page, rows.len(), limit, paging::MAX_PAGE);
+    let has_more = crate::backend::api::repos::paging::has_next_page(
+        page,
+        rows.len(),
+        limit,
+        crate::backend::api::repos::paging::MAX_PAGE,
+    );
     rows.truncate(limit);
     let mut invitations = Vec::new();
     for row in rows {
@@ -74,7 +79,12 @@ async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
         Ok(user) => user.id,
         Err(response) => return response,
     };
-    let page = match paging::number(&ctx, "page", 1, 1..=paging::MAX_PAGE) {
+    let page = match crate::backend::api::repos::paging::number(
+        &ctx,
+        "page",
+        1,
+        1..=crate::backend::api::repos::paging::MAX_PAGE,
+    ) {
         Ok(page) => page,
         Err(response) => return response,
     };
@@ -110,7 +120,14 @@ async fn respond(
         _ => return ctx.error(StatusCode::NOT_FOUND, "Unknown invitation action."),
     };
     let authority = ctx.database_actor(actor);
-    match collaborators::respond(&ctx.state.pool, authority, id, accept).await {
+    match crate::backend::repositories::collaborators::respond(
+        &ctx.state.pool,
+        authority,
+        id,
+        accept,
+    )
+    .await
+    {
         Ok(()) => ctx.redirect("/settings/invitations"),
         Err(error) => refusal(&ctx, error),
     }

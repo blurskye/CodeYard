@@ -1,12 +1,9 @@
-use super::{
-    organization::{self, Fields},
-    INDEX,
-};
-use crate::backend::{
-    api::http::context::PageContext,
-    app::AppState,
-    db::{self, secrets::SecretsError},
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::organizations::organization::Fields;
+use crate::backend::api::organizations::INDEX;
+use crate::backend::app::AppState;
+
+use crate::backend::db::secrets::SecretsError;
 use axum::{
     extract::{rejection::FormRejection, Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -31,31 +28,33 @@ pub(super) async fn post(
     };
     let form = match form {
         Ok(Form(form)) => form,
-        Err(_) => return organization::invalid(&ctx),
+        Err(_) => return crate::backend::api::organizations::organization::invalid(&ctx),
     };
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
     ctx.query.insert("tab".into(), "dependabot".into());
-    if let Err(response) = organization::selected(&ctx, actor, org).await {
+    if let Err(response) =
+        crate::backend::api::organizations::organization::selected(&ctx, actor, org).await
+    {
         return response;
     }
-    let draft = organization::draft(&form);
-    let result = if !organization::bounded(&form) {
+    let draft = crate::backend::api::organizations::organization::draft(&form);
+    let result = if !crate::backend::api::organizations::organization::bounded(&form) {
         Err(SecretsError::InvalidRepositorySelection)
     } else {
-        match organization::field(&form, "action") {
+        match crate::backend::api::organizations::organization::field(&form, "action") {
             "dependabot-default" => {
-                db::dependabot::set_repository_access_default(
+                crate::backend::db::dependabot::set_repository_access_default(
                     &ctx.state.pool,
                     ctx.database_actor(actor),
                     org,
-                    organization::field(&form, "default_level"),
+                    crate::backend::api::organizations::organization::field(&form, "default_level"),
                 )
                 .await
             }
             action @ ("dependabot-add" | "dependabot-remove") => {
-                match organization::id(&form, "repo_id") {
+                match crate::backend::api::organizations::organization::id(&form, "repo_id") {
                     Ok(id) => {
                         let ids = [id];
                         let (add, remove): (&[i64], &[i64]) = if action == "dependabot-add" {
@@ -63,7 +62,7 @@ pub(super) async fn post(
                         } else {
                             (&[], &ids)
                         };
-                        db::dependabot::update_repository_access(
+                        crate::backend::db::dependabot::update_repository_access(
                             &ctx.state.pool,
                             ctx.database_actor(actor),
                             org,
@@ -80,7 +79,9 @@ pub(super) async fn post(
     };
     let status = match result {
         Ok(()) => return ctx.redirect(&format!("{INDEX}/{org}?tab=dependabot")),
-        Err(SecretsError::NotFound) => return organization::not_found(&ctx),
+        Err(SecretsError::NotFound) => {
+            return crate::backend::api::organizations::organization::not_found(&ctx)
+        }
         Err(SecretsError::Denied) => {
             return ctx.error(
                 StatusCode::FORBIDDEN,
@@ -88,9 +89,9 @@ pub(super) async fn post(
             )
         }
         Err(SecretsError::InvalidRepositorySelection) => StatusCode::UNPROCESSABLE_ENTITY,
-        Err(_) => return organization::unavailable(&ctx),
+        Err(_) => return crate::backend::api::organizations::organization::unavailable(&ctx),
     };
-    organization::respond(
+    crate::backend::api::organizations::organization::respond(
         &ctx,
         Some(org),
         status,

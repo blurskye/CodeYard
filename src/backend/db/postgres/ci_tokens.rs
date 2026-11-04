@@ -1,4 +1,6 @@
-use crate::backend::db::ci_tokens::{JobToken, NewJobToken, BOT};
+use crate::backend::db::ci_tokens::JobToken;
+use crate::backend::db::ci_tokens::NewJobToken;
+use crate::backend::db::ci_tokens::BOT;
 use anyhow::{ensure, Result};
 use sqlx::PgPool;
 
@@ -14,10 +16,11 @@ pub async fn issue(
         .fetch_optional(&mut *tx)
         .await?;
     if let Some(bot) = existing_bot {
-        super::users::transitions::lock_accounts_shared(&mut tx, &[bot]).await?;
+        crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[bot])
+            .await?;
     } else {
         // Initial bot creation participates in setup's account-count exclusion.
-        super::users::transitions::lock_namespace(&mut tx).await?;
+        crate::backend::db::postgres::users::transitions::lock_namespace(&mut tx).await?;
     }
     let repo: i64 = sqlx::query_scalar("SELECT repo_id FROM ci_runs WHERE id=$1")
         .bind(run_id)

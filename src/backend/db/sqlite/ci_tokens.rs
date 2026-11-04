@@ -1,4 +1,6 @@
-use crate::backend::db::ci_tokens::{JobToken, NewJobToken, BOT};
+use crate::backend::db::ci_tokens::JobToken;
+use crate::backend::db::ci_tokens::NewJobToken;
+use crate::backend::db::ci_tokens::BOT;
 use anyhow::{ensure, Result};
 use sqlx::SqlitePool;
 

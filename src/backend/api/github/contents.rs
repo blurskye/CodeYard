@@ -1,12 +1,14 @@
 //! Contents API preconditions use blob IDs; publication still leases the entire branch tip.
-use super::{auth, repo_url, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    repositories::{
-        files,
-        store::{repo_store, FileWrite, MAX_EDITOR_BYTES},
-    },
-};
+
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use codeyard_model::urls::repo_url;
+
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::FileWrite;
+use crate::backend::repositories::store::MAX_EDITOR_BYTES;
 use axum::{
     extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -40,8 +42,8 @@ pub(super) fn store_error(error: RepoError) -> Error {
     }
 }
 
-fn file_error(error: files::WriteError) -> Error {
-    use files::WriteFailure;
+fn file_error(error: crate::backend::repositories::files::WriteError) -> Error {
+    use crate::backend::repositories::files::WriteFailure;
     let status = match error.kind {
         WriteFailure::Invalid | WriteFailure::Encoding => StatusCode::UNPROCESSABLE_ENTITY,
         WriteFailure::Conflict => StatusCode::CONFLICT,
@@ -120,7 +122,7 @@ pub(super) fn entry(
     );
     let base = format!(
         "{}/{}/{}",
-        crate::backend::api::http::config::link_origin(),
+        codeyard_model::http_config::link_origin(),
         codeyard_webui::encode_component(owner),
         codeyard_webui::encode_component(repo)
     );
@@ -187,7 +189,7 @@ pub(super) async fn blob_response(
             repo: name.to_owned(),
             ..Default::default()
         };
-        return super::meta::render(text, references).await;
+        return crate::backend::api::github::meta::render(text, references).await;
     }
     let mut value = entry(
         owner, name, reference, revision, path, &blob.id, blob.size, "file",
@@ -226,7 +228,10 @@ async fn readme(
         .blob_bytes(&revision, &path)
         .await
         .map_err(store_error)?;
-    auth::recheck_repository_read(&state, &headers, repo.id, "contents").await?;
+    crate::backend::api::github::auth::recheck_repository_read(
+        &state, &headers, repo.id, "contents",
+    )
+    .await?;
     blob_response(&headers, owner, name, reference, &revision, &path, blob).await
 }
 
@@ -356,7 +361,10 @@ async fn read(
         Ok(Json(value).into_response())
     }
     .await?;
-    auth::recheck_repository_read(&state, &headers, repo.id, "contents").await?;
+    crate::backend::api::github::auth::recheck_repository_read(
+        &state, &headers, repo.id, "contents",
+    )
+    .await?;
     Ok(response)
 }
 
@@ -379,7 +387,7 @@ async fn save(
 ) -> Result<Response> {
     let (owner, name, path) = (&params["owner"], &params["repo"], &params["path"]);
     let (repo, auth) = repository(&state, &headers, owner, name, true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let authority = auth.database_actor();
     let branch = input.branch.as_deref().unwrap_or(&repo.default_branch);
     let store = repo_store(&repo, state.cluster.as_ref());
@@ -422,12 +430,14 @@ async fn save(
             .content
             .as_deref()
             .ok_or_else(|| Error::invalid("content is required"))?;
-        files::decode_base64(content, MAX_EDITOR_BYTES).map_err(|error| match error {
-            files::WriteFailure::TooLarge => {
-                Error::new(StatusCode::PAYLOAD_TOO_LARGE, "File exceeds 1 MiB")
-            }
-            _ => Error::invalid("Invalid base64 content"),
-        })?
+        crate::backend::repositories::files::decode_base64(content, MAX_EDITOR_BYTES).map_err(
+            |error| match error {
+                crate::backend::repositories::files::WriteFailure::TooLarge => {
+                    Error::new(StatusCode::PAYLOAD_TOO_LARGE, "File exceeds 1 MiB")
+                }
+                _ => Error::invalid("Invalid base64 content"),
+            },
+        )?
     };
     let write = FileWrite {
         branch: branch.to_owned(),
@@ -438,7 +448,7 @@ async fn save(
         deleting,
     };
     let saved = if deleting {
-        files::delete_file(
+        crate::backend::repositories::files::delete_file(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
@@ -451,7 +461,7 @@ async fn save(
         )
         .await
     } else {
-        files::write_file_bytes(
+        crate::backend::repositories::files::write_file_bytes(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
@@ -538,17 +548,27 @@ mod link_tests {
     #[test]
     fn links_and_submodules_resolve_inside_the_repository() {
         assert_eq!(
-            super::link_target("docs/link", "../README.md").as_deref(),
+            crate::backend::api::github::contents::link_target("docs/link", "../README.md")
+                .as_deref(),
             Some("README.md")
         );
-        assert_eq!(super::link_target("link", "../outside"), None);
-        assert_eq!(super::link_target("link", "/etc/passwd"), None);
+        assert_eq!(
+            crate::backend::api::github::contents::link_target("link", "../outside"),
+            None
+        );
+        assert_eq!(
+            crate::backend::api::github::contents::link_target("link", "/etc/passwd"),
+            None
+        );
         let modules =
             "[submodule \"lib\"]\n\tpath = vendor/lib\n\turl = https://example.test/lib.git\n";
         assert_eq!(
-            super::submodule_url(modules, "vendor/lib").as_deref(),
+            crate::backend::api::github::contents::submodule_url(modules, "vendor/lib").as_deref(),
             Some("https://example.test/lib.git")
         );
-        assert_eq!(super::submodule_url(modules, "other"), None);
+        assert_eq!(
+            crate::backend::api::github::contents::submodule_url(modules, "other"),
+            None
+        );
     }
 }

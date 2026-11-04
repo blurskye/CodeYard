@@ -1,7 +1,7 @@
-use super::authority::*;
 use crate::backend::db::organizations::immutable_releases::Change;
 use crate::backend::db::organizations::immutable_releases::Settings;
 use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::sqlite::organizations::authority::*;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use sqlx::SqlitePool;

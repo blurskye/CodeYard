@@ -1,7 +1,7 @@
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::refs::commits::statuses::CommitStatusResponse;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
-use crate::backend::db;
+
 use crate::backend::repositories::store::CommitInfo;
 use axum::http::StatusCode;
 use axum::Json;
@@ -29,7 +29,7 @@ pub(crate) async fn repository_owners(
             )),
         )
     };
-    let owners = db::repositories::records::repository_owner_names(pool, ids)
+    let owners = crate::backend::db::repositories::records::repository_owner_names(pool, ids)
         .await
         .map_err(|_| unavailable())?;
     if ids.iter().any(|id| !owners.contains_key(id)) {
@@ -43,7 +43,7 @@ pub(crate) async fn repository_topics(
     pool: &codeyard_db_core::DbPool,
     ids: &[i64],
 ) -> Result<std::collections::BTreeMap<i64, Vec<String>>, (StatusCode, Json<ApiError>)> {
-    db::repositories::topics::repository_topics(pool, ids)
+    crate::backend::db::repositories::topics::repository_topics(pool, ids)
         .await
         .map_err(|_| {
             (
@@ -93,9 +93,14 @@ pub(crate) async fn repository_fork_counts(
     let mut counts = std::collections::HashMap::new();
     for ids in ids.chunks(100) {
         counts.extend(
-            db::repositories::discovery::visible_fork_counts(pool, viewer, session.as_deref(), ids)
-                .await
-                .map_err(|_| repository_unavailable())?,
+            crate::backend::db::repositories::discovery::visible_fork_counts(
+                pool,
+                viewer,
+                session.as_deref(),
+                ids,
+            )
+            .await
+            .map_err(|_| repository_unavailable())?,
         );
     }
     Ok(counts)

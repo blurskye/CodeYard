@@ -1,14 +1,17 @@
 pub(crate) mod management;
 use crate::backend::db::assignees::AssignedItem;
-use crate::backend::db::discussions::{
-    contains_pattern, DiscussionWriteRefusal, ListFilter, StateCounts,
-};
+use crate::backend::db::discussions::contains_pattern;
+use crate::backend::db::discussions::DiscussionWriteRefusal;
+use crate::backend::db::discussions::ListFilter;
+use crate::backend::db::discussions::StateCounts;
 use crate::backend::db::issues::IssueCommentEntry;
 use crate::backend::db::issues::IssueListEntry;
 use crate::backend::db::issues::IssueMetadata;
-use crate::backend::db::issues::{IssueRelation, ViewerIssueEntry};
+use crate::backend::db::issues::IssueRelation;
+use crate::backend::db::issues::ViewerIssueEntry;
 use crate::backend::db::labels::LabelTarget;
-use crate::backend::db::relationships::{Kind, Mutation};
+use crate::backend::db::relationships::Kind;
+use crate::backend::db::relationships::Mutation;
 use anyhow::Result;
 use codeyard_db_core::models::Issue;
 use codeyard_db_core::models::IssueComment;
@@ -39,40 +42,54 @@ pub async fn create_issue_with_metadata(
         assignees: &assignees,
         ..metadata
     };
-    super::retry_on_conflict(|| async {
+    crate::backend::db::postgres::retry_on_conflict(|| async {
         let mut tx = pool.begin().await?;
         // A milestone write locks the repository row exclusively, so that lock comes first
         // rather than as an upgrade of the shared lock the other checks take.
         if metadata.milestone.is_some() {
             anyhow::ensure!(
-                super::discussions::lock_exclusive_write_authority(&mut tx, author_id, repo_id)
-                    .await?,
+                crate::backend::db::postgres::discussions::lock_exclusive_write_authority(
+                    &mut tx, author_id, repo_id
+                )
+                .await?,
                 DiscussionWriteRefusal::Denied
             );
         }
-        super::discussions::require_contribution_authority(&mut tx, author_id, repo_id).await?;
+        crate::backend::db::postgres::discussions::require_contribution_authority(
+            &mut tx, author_id, repo_id,
+        )
+        .await?;
         if !metadata.labels.is_empty() || !metadata.assignees.is_empty() {
             anyhow::ensure!(
-                super::discussions::lock_triage_authority(&mut tx, author_id, repo_id).await?,
+                crate::backend::db::postgres::discussions::lock_triage_authority(
+                    &mut tx, author_id, repo_id
+                )
+                .await?,
                 DiscussionWriteRefusal::Denied
             );
         }
         if metadata.issue_type.is_some() {
             anyhow::ensure!(
-                super::discussions::lock_write_authority(&mut tx, author_id, repo_id).await?,
+                crate::backend::db::postgres::discussions::lock_write_authority(
+                    &mut tx, author_id, repo_id
+                )
+                .await?,
                 DiscussionWriteRefusal::Denied
             );
             // Type writes take the attribute guard before any issue row.
-            super::issue_attributes::lock_metadata(&mut tx).await?;
+            crate::backend::db::postgres::issue_attributes::lock_metadata(&mut tx).await?;
         }
         anyhow::ensure!(
-            super::credentials::repository(&mut tx, &authority, repo_id, "issues", true).await?,
+            crate::backend::db::postgres::credentials::repository(
+                &mut tx, &authority, repo_id, "issues", true
+            )
+            .await?,
             DiscussionWriteRefusal::Denied
         );
         let issue = insert_in_transaction(&mut tx, repo_id, author_id, title, body).await?;
         if !metadata.labels.is_empty() {
             // The label write records each "labeled" event with its color.
-            super::labels::write_item_labels_transaction(
+            crate::backend::db::postgres::labels::write_item_labels_transaction(
                 &mut tx,
                 Some(author_id),
                 repo_id,
@@ -84,7 +101,7 @@ pub async fn create_issue_with_metadata(
             .await?;
         }
         for &user in metadata.assignees {
-            super::assignees::assign_in_transaction(
+            crate::backend::db::postgres::assignees::assign_in_transaction(
                 &mut tx,
                 author_id,
                 repo_id,
@@ -94,7 +111,7 @@ pub async fn create_issue_with_metadata(
             .await?;
         }
         if let Some(number) = metadata.milestone {
-            super::milestones::set_item_milestone_in_transaction(
+            crate::backend::db::postgres::milestones::set_item_milestone_in_transaction(
                 &mut tx,
                 author_id,
                 repo_id,
@@ -109,7 +126,7 @@ pub async fn create_issue_with_metadata(
                     .bind(number)
                     .fetch_one(&mut *tx)
                     .await?;
-            super::issue_attributes::event(
+            crate::backend::db::postgres::issue_attributes::event(
                 &mut tx,
                 (repo_id, issue.id, author_id),
                 "milestoned",
@@ -119,7 +136,7 @@ pub async fn create_issue_with_metadata(
             .await?;
         }
         if let Some(kind) = metadata.issue_type {
-            super::issue_attributes::type_in_transaction(
+            crate::backend::db::postgres::issue_attributes::type_in_transaction(
                 &mut tx,
                 repo_id,
                 author_id,
@@ -130,7 +147,7 @@ pub async fn create_issue_with_metadata(
         }
         let mut tx = match metadata.parent {
             Some(parent) => {
-                super::relationships::change_in_transaction(
+                crate::backend::db::postgres::relationships::change_in_transaction(
                     tx,
                     author_id,
                     repo_id,
@@ -207,7 +224,7 @@ pub async fn issue_ids_by_numbers(
     numbers: &[i32],
 ) -> Result<Vec<(i64, i32)>> {
     anyhow::ensure!(numbers.len() <= 500, "Too many issue numbers");
-    Ok(sqlx::query_as(&format!("SELECT i.id,i.number FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$3 WHERE i.repo_id=$1 AND i.number=ANY($2) AND {} ORDER BY i.number,i.id", super::repositories::access::readable_condition())).bind(repo).bind(numbers).bind(viewer).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&format!("SELECT i.id,i.number FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$3 WHERE i.repo_id=$1 AND i.number=ANY($2) AND {} ORDER BY i.number,i.id", crate::backend::db::postgres::repositories::access::readable_condition())).bind(repo).bind(numbers).bind(viewer).fetch_all(pool).await?)
 }
 
 pub async fn get_issues_by_ids(pool: &PgPool, repo_id: i64, ids: &[i64]) -> Result<Vec<Issue>> {
@@ -242,7 +259,7 @@ pub async fn list_repo_issues(
     let columns = crate::backend::db::postgres::users::accounts::AUTHOR_DISPLAY_COLUMNS;
     let (assignee_mode, assignee_id) = filter.assignee.binding();
     let (milestone_mode, milestone_id) = filter.milestone.binding();
-    let labels = super::discussions::label_names_array(filter.labels);
+    let labels = crate::backend::db::postgres::discussions::label_names_array(filter.labels);
     let order = filter.sort.order_by("issue_comments", "issue_id", "");
     let issues = sqlx::query_as::<_, IssueListEntry>(&format!(
         r#"SELECT i.*, {columns} FROM issues i JOIN users u ON u.id=i.author_id
@@ -349,7 +366,7 @@ pub async fn count_repo_issues(
 ) -> Result<StateCounts> {
     let (assignee_mode, assignee_id) = filter.assignee.binding();
     let (milestone_mode, milestone_id) = filter.milestone.binding();
-    let labels = super::discussions::label_names_array(filter.labels);
+    let labels = crate::backend::db::postgres::discussions::label_names_array(filter.labels);
     let rows = sqlx::query_as::<_, (String, i64)>(
         r#"SELECT i.state, COUNT(*) FROM issues i WHERE i.repo_id = $1
             AND ($2::TEXT IS NULL OR i.title ILIKE $2::TEXT ESCAPE '\' OR i.body ILIKE $2::TEXT ESCAPE '\')
@@ -400,15 +417,25 @@ pub async fn update_issue_with_reason(
     let Some(repo) = repo else {
         return Ok(None);
     };
-    if !super::discussions::lock_write_authority(&mut tx, edit.actor_id, repo).await? {
+    if !crate::backend::db::postgres::discussions::lock_write_authority(
+        &mut tx,
+        edit.actor_id,
+        repo,
+    )
+    .await?
+    {
         // The issue's author may still edit and close it with read access.
         let author: Option<i64> = sqlx::query_scalar("SELECT author_id FROM issues WHERE id = $1")
             .bind(issue_id)
             .fetch_optional(&mut *tx)
             .await?;
         if author != Some(edit.actor_id)
-            || !super::discussions::lock_contribution_authority(&mut tx, edit.actor_id, repo)
-                .await?
+            || !crate::backend::db::postgres::discussions::lock_contribution_authority(
+                &mut tx,
+                edit.actor_id,
+                repo,
+            )
+            .await?
         {
             return Ok(None);
         }
@@ -461,7 +488,7 @@ pub(crate) async fn update_issue_in_transaction(
             &issue.title,
             &issue.state,
         ) {
-            super::timeline::append(
+            crate::backend::db::postgres::timeline::append(
                 tx,
                 repo,
                 "issue",
@@ -486,9 +513,15 @@ pub async fn add_issue_comment(
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<IssueComment> {
     let mut tx = pool.begin().await?;
-    super::discussions::lock_issue_contribution(&mut tx, author_id, repo_id, issue_id).await?;
+    crate::backend::db::postgres::discussions::lock_issue_contribution(
+        &mut tx, author_id, repo_id, issue_id,
+    )
+    .await?;
     anyhow::ensure!(
-        super::users::transitions::credential_live(&mut tx, author_id, credential, true).await?,
+        crate::backend::db::postgres::users::transitions::credential_live(
+            &mut tx, author_id, credential, true
+        )
+        .await?,
         codeyard_support::credentials::AccountRestricted
     );
     let comment = sqlx::query_as::<_, IssueComment>(
@@ -700,14 +733,23 @@ pub async fn edit_issue_comment(
 ) -> Result<Option<IssueComment>> {
     let mut tx = pool.begin().await?;
     // Repository authority precedes the issue and comment rows.
-    if !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? {
+    if !crate::backend::db::postgres::discussions::lock_contribution_authority(
+        &mut tx, actor_id, repo_id,
+    )
+    .await?
+    {
         return Ok(None);
     }
     anyhow::ensure!(
-        super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await?,
+        crate::backend::db::postgres::users::transitions::credential_live(
+            &mut tx, actor_id, credential, true
+        )
+        .await?,
         codeyard_support::credentials::AccountRestricted
     );
-    let writer = super::discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
+    let writer =
+        crate::backend::db::postgres::discussions::lock_write_authority(&mut tx, actor_id, repo_id)
+            .await?;
     let author: Option<i64> = sqlx::query_scalar(
         "SELECT c.author_id FROM issue_comments c JOIN issues i ON i.id = c.issue_id
          WHERE c.id = $1 AND c.issue_id = $2 AND i.repo_id = $3 AND (NOT i.locked OR $4) FOR UPDATE OF i, c",
@@ -731,7 +773,7 @@ pub async fn edit_issue_comment(
     .fetch_optional(&mut *tx)
     .await?;
     if comment.is_some() {
-        super::issue_attributes::touch(&mut tx, issue_id).await?;
+        crate::backend::db::postgres::issue_attributes::touch(&mut tx, issue_id).await?;
     }
     tx.commit().await?;
     Ok(comment)
@@ -749,14 +791,23 @@ pub async fn delete_issue_comment(
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<Option<IssueComment>> {
     let mut tx = pool.begin().await?;
-    if !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? {
+    if !crate::backend::db::postgres::discussions::lock_contribution_authority(
+        &mut tx, actor_id, repo_id,
+    )
+    .await?
+    {
         return Ok(None);
     }
     anyhow::ensure!(
-        super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await?,
+        crate::backend::db::postgres::users::transitions::credential_live(
+            &mut tx, actor_id, credential, true
+        )
+        .await?,
         codeyard_support::credentials::AccountRestricted
     );
-    let writer = super::discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
+    let writer =
+        crate::backend::db::postgres::discussions::lock_write_authority(&mut tx, actor_id, repo_id)
+            .await?;
     let author: Option<i64> = sqlx::query_scalar(
         "SELECT c.author_id FROM issue_comments c JOIN issues i ON i.id = c.issue_id
          WHERE c.id = $1 AND c.issue_id = $2 AND i.repo_id = $3 AND (NOT i.locked OR $4) FOR UPDATE OF i, c",
@@ -791,7 +842,7 @@ pub async fn delete_issue_comment(
             .fetch_optional(&mut *tx)
             .await?;
     if removed.is_some() {
-        super::issue_attributes::touch(&mut tx, issue_id).await?;
+        crate::backend::db::postgres::issue_attributes::touch(&mut tx, issue_id).await?;
     }
     tx.commit().await?;
     Ok(removed)

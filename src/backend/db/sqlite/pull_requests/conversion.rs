@@ -11,8 +11,8 @@ pub(super) async fn read_source(
     number: i32,
 ) -> Result<Issue> {
     anyhow::ensure!(
-        super::super::discussions::lock_write_authority(tx, actor, repo).await?,
-        super::super::discussions::AUTHORITY_DENIED
+        crate::backend::db::sqlite::discussions::lock_write_authority(tx, actor, repo).await?,
+        crate::backend::db::sqlite::discussions::AUTHORITY_DENIED
     );
     let issue = sqlx::query_as::<_, Issue>("SELECT * FROM issues WHERE repo_id=?1 AND number=?2")
         .bind(repo)
@@ -67,7 +67,7 @@ pub(super) async fn move_source(
     sqlx::query("UPDATE timeline_events SET subject_kind='pull_request',subject_id=?1 WHERE subject_kind='issue' AND subject_id=?2")
         .bind(pull.id).bind(issue.id).execute(&mut **tx).await?;
     if issue.state == "closed" {
-        super::super::timeline::append(
+        crate::backend::db::sqlite::timeline::append(
             tx,
             pull.repo_id,
             "pull_request",
@@ -79,7 +79,7 @@ pub(super) async fn move_source(
         )
         .await?;
     }
-    super::super::timeline::append(
+    crate::backend::db::sqlite::timeline::append(
         tx,
         pull.repo_id,
         "pull_request",

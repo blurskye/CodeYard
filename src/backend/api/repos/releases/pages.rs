@@ -2,17 +2,21 @@
 //! who may write, and a refused form is shown as it was submitted, with the reason.
 use crate::backend::api::files::download::asset_response;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::repos::chrome;
+
 use crate::backend::api::repos::code::upload::READ_TIMEOUT as UPLOAD_READ_TIMEOUT;
-use crate::backend::api::repos::forms::{authorize_post, field, with_status};
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::field;
+use crate::backend::api::repos::forms::with_status;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::files::{DownloadError, UploadError};
+
+use crate::backend::files::DownloadError;
+use crate::backend::files::UploadError;
 use crate::backend::repositories::access::AccessError;
 use crate::backend::repositories::refs::RefError;
-use crate::backend::repositories::releases::{
-    self as releases, ReleaseError, ReleaseFields, ReleaseInput,
-};
+use crate::backend::repositories::releases as releases;
+use crate::backend::repositories::releases::ReleaseError;
+use crate::backend::repositories::releases::ReleaseFields;
+use crate::backend::repositories::releases::ReleaseInput;
 use axum::extract::multipart::MultipartError;
 use axum::extract::{Form, Multipart, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -54,7 +58,7 @@ fn release_item(row: &ReleaseRow, with_body: bool) -> ReleaseItem {
         },
         author: row.author.clone(),
         target: release.target_commitish.clone(),
-        archive_revision: super::json::archive_revision(release),
+        archive_revision: crate::backend::api::repos::releases::json::archive_revision(release),
         created_at: release.created_at.to_rfc3339(),
         published_at: release.published_at.map(|date| date.to_rfc3339()),
         draft: release.is_draft,
@@ -314,7 +318,7 @@ pub(crate) async fn list(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+    let repo = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await {
         Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
@@ -360,7 +364,7 @@ pub(crate) async fn detail(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+    let repo = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await {
         Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
@@ -374,7 +378,7 @@ pub(crate) async fn detail(
                 .iter()
                 .map(|asset| asset_item(&base, &release.tag, asset))
                 .collect();
-            let counts = match db::reactions::reaction_counts(
+            let counts = match crate::backend::db::reactions::reaction_counts(
                 &ctx.state.pool,
                 "release",
                 &[release.id],
@@ -426,7 +430,7 @@ pub(crate) async fn new_page(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+    let repo = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await {
         Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
@@ -451,7 +455,7 @@ pub(crate) async fn create(
     if let Err(response) = authorize_post(&ctx, &form) {
         return response;
     }
-    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+    let repo = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await {
         Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
@@ -550,7 +554,7 @@ pub(crate) async fn edit_page(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+    let repo = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await {
         Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
@@ -571,7 +575,7 @@ pub(crate) async fn update(
     if let Err(response) = authorize_post(&ctx, &form) {
         return response;
     }
-    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+    let repo = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await {
         Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
@@ -626,7 +630,7 @@ pub(crate) async fn delete(
     if let Err(response) = authorize_post(&ctx, &form) {
         return response;
     }
-    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+    let repo = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await {
         Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
@@ -741,7 +745,7 @@ pub(crate) async fn upload_asset(
     if let Err(response) = authorize_post(&ctx, &fields) {
         return response;
     }
-    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+    let repo = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await {
         Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
@@ -759,7 +763,7 @@ pub(crate) async fn upload_asset(
         &ctx.state.pool,
         &ctx.state.storage,
         actor,
-        &db::users::accounts::AccountCredential::Session(&session),
+        &crate::backend::db::users::accounts::AccountCredential::Session(&session),
         &owner,
         &name,
         id,
@@ -788,15 +792,20 @@ pub(crate) async fn update_asset(
     if let Err(response) = authorize_post(&ctx, &form) {
         return response;
     }
-    let loaded = match chrome::load_database(&ctx, &owner, &name).await {
+    let loaded = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await
+    {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
     let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to edit an asset.");
     };
-    match db::releases::get_repository_release_asset(&ctx.state.pool, loaded.repository.id, asset)
-        .await
+    match crate::backend::db::releases::get_repository_release_asset(
+        &ctx.state.pool,
+        loaded.repository.id,
+        asset,
+    )
+    .await
     {
         Ok(Some(asset)) if asset.release_id == id => {}
         Ok(_) => return ctx.error(StatusCode::NOT_FOUND, "Asset not found."),
@@ -804,7 +813,7 @@ pub(crate) async fn update_asset(
     }
     let label = field(&form, "label");
     let label = label.trim();
-    let changes = db::releases::AssetChanges {
+    let changes = crate::backend::db::releases::AssetChanges {
         name: Some(field(&form, "name").to_owned()),
         label: Some((!label.is_empty()).then(|| label.to_owned())),
     };
@@ -828,7 +837,7 @@ pub(crate) async fn delete_asset(
     if let Err(response) = authorize_post(&ctx, &form) {
         return response;
     }
-    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+    let repo = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await {
         Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
@@ -863,7 +872,8 @@ pub(crate) async fn download(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let loaded = match chrome::load_database(&ctx, &owner, &name).await {
+    let loaded = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await
+    {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
@@ -886,9 +896,11 @@ pub(crate) async fn download(
             Ok(response) => ctx.with_cookie(response),
             Err(failure) => failure.into_response(),
         },
-        Err(error) => match chrome::load_database(&ctx, &owner, &name).await {
-            Ok(loaded) => refusal(&ctx, &loaded.chrome, error),
-            Err(response) => response,
-        },
+        Err(error) => {
+            match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await {
+                Ok(loaded) => refusal(&ctx, &loaded.chrome, error),
+                Err(response) => response,
+            }
+        }
     }
 }

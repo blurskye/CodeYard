@@ -1,18 +1,15 @@
-use super::{
-    auth,
-    interactions::{self, ScopeName},
-    Error, Result,
-};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        interactions::InteractionScope,
-        pull_caps::{CapUpdate, PullCap, PullCapRefusal, PullCapScope},
-        users::accounts::AccountCredential,
-    },
-    webhooks::payloads,
-};
+use crate::backend::api::github::interactions::ScopeName;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::interactions::InteractionScope;
+use crate::backend::db::pull_caps::CapUpdate;
+use crate::backend::db::pull_caps::PullCap;
+use crate::backend::db::pull_caps::PullCapRefusal;
+use crate::backend::db::pull_caps::PullCapScope;
+use crate::backend::db::users::accounts::AccountCredential;
+
 use axum::{
     extract::{rejection::JsonRejection, Path, State},
     http::{HeaderMap, StatusCode},
@@ -82,14 +79,19 @@ async fn actor_scope(
     headers: &HeaderMap,
     scope: ScopeName,
     write: bool,
-) -> Result<(auth::Authentication, PullCapScope)> {
-    let actor = auth::authenticate(state, headers, true)
+) -> Result<(
+    crate::backend::api::github::auth::Authentication,
+    PullCapScope,
+)> {
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     if write {
         actor.require_write()?;
     }
-    let scope = match interactions::resolve(state, &actor.user, scope).await? {
+    let scope = match crate::backend::api::github::interactions::resolve(state, &actor.user, scope)
+        .await?
+    {
         InteractionScope::Organization(id) => PullCapScope::Organization(id),
         InteractionScope::Repository(id) => PullCapScope::Repository(id),
         InteractionScope::User(_) => return Err(Error::invalid("Invalid cap scope")),
@@ -99,7 +101,7 @@ async fn actor_scope(
 async fn read(state: Arc<AppState>, headers: HeaderMap, scope: ScopeName) -> Result<Json<PullCap>> {
     let (actor, scope) = actor_scope(&state, &headers, scope, false).await?;
     Ok(Json(
-        db::pull_caps::get_cap(&state.pool, actor.user.id, scope)
+        crate::backend::db::pull_caps::get_cap(&state.pool, actor.user.id, scope)
             .await
             .map_err(failure)?,
     ))
@@ -111,9 +113,9 @@ async fn update(
     input: std::result::Result<Json<CapUpdate>, JsonRejection>,
 ) -> Result<Json<PullCap>> {
     let (actor, scope) = actor_scope(&state, &headers, scope, true).await?;
-    let Json(input) = input.map_err(super::json_error)?;
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     Ok(Json(
-        db::pull_caps::update_cap(
+        crate::backend::db::pull_caps::update_cap(
             &state.pool,
             actor.user.id,
             &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
@@ -161,10 +163,15 @@ async fn bypass(
 ) -> Result<Json<Vec<Value>>> {
     let (actor, scope) =
         actor_scope(&state, &headers, ScopeName::Repository(owner, repo), false).await?;
-    let users = db::pull_caps::bypass_users(&state.pool, actor.user.id, scope.id())
+    let users = crate::backend::db::pull_caps::bypass_users(&state.pool, actor.user.id, scope.id())
         .await
         .map_err(failure)?;
-    Ok(Json(users.iter().map(payloads::user).collect()))
+    Ok(Json(
+        users
+            .iter()
+            .map(crate::backend::webhooks::payloads::user)
+            .collect(),
+    ))
 }
 #[derive(Deserialize)]
 struct Bypass {
@@ -180,8 +187,8 @@ async fn change_bypass(
 ) -> Result<StatusCode> {
     let (actor, scope) =
         actor_scope(&state, &headers, ScopeName::Repository(owner, repo), true).await?;
-    let Json(input) = input.map_err(super::json_error)?;
-    db::pull_caps::change_bypass(
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
+    crate::backend::db::pull_caps::change_bypass(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),

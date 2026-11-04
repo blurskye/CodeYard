@@ -5,8 +5,7 @@ use super::{
 };
 use crate::support::{database::Database, fake_webui_bundle};
 use axum::http::StatusCode;
-use codeyard::backend::ci::runtime;
-use codeyard::backend::db;
+
 use codeyard_actions::progress::{Conclusion, Event, JobResult, State, Update};
 use codeyard_model::ci::LogLine;
 use serde_json::{json, Value};
@@ -30,7 +29,7 @@ async fn contract(pg: bool) {
     let repo = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice),
         "project",
         None,
         true,
@@ -41,7 +40,7 @@ async fn contract(pg: bool) {
     let other = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice),
         "other",
         None,
         true,
@@ -68,7 +67,7 @@ async fn contract(pg: bool) {
         StatusCode::OK,
     )
     .await;
-    let run = db::ci::claim_ci_run(
+    let run = codeyard::backend::db::ci::claim_ci_run(
         f.pool(),
         "jobs",
         "local",
@@ -80,8 +79,8 @@ async fn contract(pg: bool) {
     .unwrap();
     assert_eq!(dispatch["workflow_run_id"], run.id);
     let workflow = ".github/workflows/ci.yml";
-    let generation = runtime::token_hash("private-runtime");
-    db::action_objects::issue_token(
+    let generation = codeyard::backend::ci::runtime::token_hash("private-runtime");
+    codeyard::backend::db::action_objects::issue_token(
         f.pool(),
         run.id,
         run.worker.as_deref().unwrap_or(""),
@@ -91,7 +90,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     super::actions_objects::job_credentials(&f, &run, &["build"]).await;
-    db::action_jobs::save_state(
+    codeyard::backend::db::action_jobs::save_state(
         f.pool(),
         "jobs",
         run.id,
@@ -112,17 +111,27 @@ async fn contract(pg: bool) {
             }),
         },
     );
-    assert!(
-        db::action_jobs::apply(f.pool(), "other", run.id, &generation, workflow, &queued)
-            .await
-            .is_err()
-    );
-    assert!(
-        db::action_jobs::apply(f.pool(), "jobs", run.id, "stale", workflow, &queued)
-            .await
-            .is_err()
-    );
-    assert!(db::action_jobs::apply(
+    assert!(codeyard::backend::db::action_jobs::apply(
+        f.pool(),
+        "other",
+        run.id,
+        &generation,
+        workflow,
+        &queued
+    )
+    .await
+    .is_err());
+    assert!(codeyard::backend::db::action_jobs::apply(
+        f.pool(),
+        "jobs",
+        run.id,
+        "stale",
+        workflow,
+        &queued
+    )
+    .await
+    .is_err());
+    assert!(codeyard::backend::db::action_jobs::apply(
         f.pool(),
         "jobs",
         run.id,
@@ -132,14 +141,23 @@ async fn contract(pg: bool) {
     )
     .await
     .is_err());
-    let job = db::action_jobs::apply(f.pool(), "jobs", run.id, &generation, workflow, &queued)
-        .await
-        .unwrap()
-        .id;
-    assert!(db::action_jobs::get(f.pool(), repo.id, job, false)
-        .await
-        .unwrap()
-        .is_none());
+    let job = codeyard::backend::db::action_jobs::apply(
+        f.pool(),
+        "jobs",
+        run.id,
+        &generation,
+        workflow,
+        &queued,
+    )
+    .await
+    .unwrap()
+    .id;
+    assert!(
+        codeyard::backend::db::action_jobs::get(f.pool(), repo.id, job, false)
+            .await
+            .unwrap()
+            .is_none()
+    );
     let (_, empty) = checked(
         &api,
         "actions/list-jobs-for-workflow-run",
@@ -159,7 +177,7 @@ async fn contract(pg: bool) {
         },
     ] {
         assert_eq!(
-            db::action_jobs::apply(
+            codeyard::backend::db::action_jobs::apply(
                 f.pool(),
                 "jobs",
                 run.id,
@@ -174,7 +192,7 @@ async fn contract(pg: bool) {
         );
     }
     assert_eq!(
-        db::action_jobs::get(f.pool(), repo.id, job, false)
+        codeyard::backend::db::action_jobs::get(f.pool(), repo.id, job, false)
             .await
             .unwrap()
             .unwrap()
@@ -183,11 +201,13 @@ async fn contract(pg: bool) {
             .0,
         json!({"os":"linux"})
     );
-    assert!(db::action_jobs::get(f.pool(), other.id, job, false)
-        .await
-        .unwrap()
-        .is_none());
-    assert!(db::ci::append_ci_logs(
+    assert!(
+        codeyard::backend::db::action_jobs::get(f.pool(), other.id, job, false)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(codeyard::backend::db::ci::append_ci_logs(
         f.pool(),
         run.id,
         "jobs",
@@ -202,7 +222,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap());
-    assert!(db::ci::append_ci_logs(
+    assert!(codeyard::backend::db::ci::append_ci_logs(
         f.pool(),
         run.id,
         "jobs",
@@ -217,7 +237,7 @@ async fn contract(pg: bool) {
     )
     .await
     .is_err());
-    assert!(db::ci::append_ci_logs(
+    assert!(codeyard::backend::db::ci::append_ci_logs(
         f.pool(),
         run.id,
         "jobs",
@@ -232,7 +252,7 @@ async fn contract(pg: bool) {
     )
     .await
     .is_err());
-    db::action_jobs::apply(
+    codeyard::backend::db::action_jobs::apply(
         f.pool(),
         "jobs",
         run.id,
@@ -249,7 +269,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let second = db::action_jobs::apply(
+    let second = codeyard::backend::db::action_jobs::apply(
         f.pool(),
         "jobs",
         run.id,
@@ -270,7 +290,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .id;
-    db::action_jobs::apply(
+    codeyard::backend::db::action_jobs::apply(
         f.pool(),
         "jobs",
         run.id,
@@ -280,7 +300,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::action_jobs::apply(
+    codeyard::backend::db::action_jobs::apply(
         f.pool(),
         "jobs",
         run.id,
@@ -377,11 +397,16 @@ async fn contract(pg: bool) {
             outputs: BTreeMap::new(),
         },
     );
-    assert!(
-        db::action_jobs::save_state(f.pool(), "jobs", run.id, &generation, workflow, &state)
-            .await
-            .is_err()
-    );
+    assert!(codeyard::backend::db::action_jobs::save_state(
+        f.pool(),
+        "jobs",
+        run.id,
+        &generation,
+        workflow,
+        &state
+    )
+    .await
+    .is_err());
     state.jobs.clear();
     state.variants.insert(
         "build".into(),
@@ -393,12 +418,17 @@ async fn contract(pg: bool) {
             },
         )]),
     );
-    assert!(
-        db::action_jobs::save_state(f.pool(), "jobs", run.id, &generation, workflow, &state)
-            .await
-            .is_err()
-    );
-    db::action_jobs::apply(
+    assert!(codeyard::backend::db::action_jobs::save_state(
+        f.pool(),
+        "jobs",
+        run.id,
+        &generation,
+        workflow,
+        &state
+    )
+    .await
+    .is_err());
+    codeyard::backend::db::action_jobs::apply(
         f.pool(),
         "jobs",
         run.id,
@@ -414,14 +444,21 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::action_jobs::save_state(f.pool(), "jobs", run.id, &generation, workflow, &state)
-        .await
-        .unwrap();
-    db::ci::finish_ci_run(f.pool(), run.id, "jobs", "cancelled", None)
+    codeyard::backend::db::action_jobs::save_state(
+        f.pool(),
+        "jobs",
+        run.id,
+        &generation,
+        workflow,
+        &state,
+    )
+    .await
+    .unwrap();
+    codeyard::backend::db::ci::finish_ci_run(f.pool(), run.id, "jobs", "cancelled", None)
         .await
         .unwrap()
         .unwrap();
-    assert!(db::action_jobs::apply(
+    assert!(codeyard::backend::db::action_jobs::apply(
         f.pool(),
         "jobs",
         run.id,
@@ -527,10 +564,12 @@ async fn contract(pg: bool) {
         StatusCode::NO_CONTENT,
     )
     .await;
-    assert!(db::action_jobs::get(f.pool(), repo.id, job, false)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        codeyard::backend::db::action_jobs::get(f.pool(), repo.id, job, false)
+            .await
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(
         f.scalar("SELECT COUNT(*) FROM actions_steps WHERE job_id=$1", &[job])
             .await,
@@ -589,7 +628,7 @@ async fn summaries(f: &Database, (run, job, repo, other): (i64, i64, i64, i64), 
             markdown: markdown.into(),
         };
         async move {
-            db::action_jobs::apply(
+            codeyard::backend::db::action_jobs::apply(
                 f.pool(),
                 worker,
                 run,
@@ -617,16 +656,18 @@ async fn summaries(f: &Database, (run, job, repo, other): (i64, i64, i64, i64), 
         send("jobs", 1, "### Build\nall green").await.unwrap().id,
         job
     );
-    let stored = db::action_jobs::summaries(f.pool(), repo, run)
+    let stored = codeyard::backend::db::action_jobs::summaries(f.pool(), repo, run)
         .await
         .unwrap();
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].number, 1);
     assert_eq!(stored[0].markdown, "### Build\nall green");
-    assert!(db::action_jobs::summaries(f.pool(), other, run)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        codeyard::backend::db::action_jobs::summaries(f.pool(), other, run)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 async fn annotations(
@@ -659,7 +700,7 @@ async fn annotations(
         ("jobs", &annotation),
         ("jobs", &second),
     ] {
-        let result = db::action_jobs::apply(
+        let result = codeyard::backend::db::action_jobs::apply(
             f.pool(),
             worker,
             run,
@@ -679,11 +720,13 @@ async fn annotations(
             assert_eq!(result.unwrap().id, job);
         }
     }
-    assert!(db::action_jobs::annotations(f.pool(), other, job, 0, 100)
-        .await
-        .unwrap()
-        .1
-        .is_empty());
+    assert!(
+        codeyard::backend::db::action_jobs::annotations(f.pool(), other, job, 0, 100)
+            .await
+            .unwrap()
+            .1
+            .is_empty()
+    );
     let check = f
         .scalar("SELECT check_run_id FROM actions_jobs WHERE id=$1", &[job])
         .await;

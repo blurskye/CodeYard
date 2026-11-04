@@ -1,13 +1,14 @@
-use super::{
-    profile::settings_response,
-    responses::{field, mutation_guard, require_account, Fields},
-};
-use crate::backend::{
-    api::http::{context::PageContext, session},
-    app::AppState,
-    db::users::accounts::AccountCredential,
-    identity::blocks::{self, BlockError},
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::user::profile::settings_response;
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::require_account;
+use crate::backend::api::user::responses::Fields;
+
+use crate::backend::app::AppState;
+use crate::backend::db::users::accounts::AccountCredential;
+
+use crate::backend::identity::blocks::BlockError;
 use axum::{
     extract::{Form, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -32,8 +33,9 @@ pub(crate) async fn blocks_post(
         Ok(actor) => actor,
         Err(response) => return response,
     };
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match blocks::change(
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    match crate::backend::identity::blocks::change(
         &ctx.state.pool,
         actor.id,
         &AccountCredential::Session(&session),

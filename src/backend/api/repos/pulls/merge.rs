@@ -2,10 +2,10 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::discussion::*;
-use crate::backend::api::repos::forms::{authorize_post, field};
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::field;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::repositories::pull_requests;
+
 use crate::backend::repositories::pull_requests::branches::refresh_open_pull_request;
 use crate::backend::repositories::pull_requests::merge::MergeRequest;
 use crate::backend::repositories::pull_requests::merge::MergeResponse;
@@ -29,7 +29,7 @@ pub async fn merge_pull_request(
     Json(request): Json<MergeRequest>,
 ) -> Result<Json<MergeResponse>, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
-    pull_requests::merge::merge_pull_request(
+    crate::backend::repositories::pull_requests::merge::merge_pull_request(
         &state,
         crate::backend::db::credentials::Actor::from((
             actor.id,
@@ -40,7 +40,7 @@ pub async fn merge_pull_request(
     )
     .await
     .map(Json)
-    .map_err(super::operation_error)
+    .map_err(crate::backend::api::repos::pulls::operation_error)
 }
 
 pub(crate) async fn native_merge(
@@ -56,11 +56,14 @@ pub(crate) async fn native_merge(
     // Catch up with the branches first, so a stale form shows the pull request as it is
     // now. Only a writer may start that refresh; everyone else is refused below.
     if repo.view.can_write {
-        let pull =
-            db::pull_requests::records::get_pull_request(&ctx.state.pool, repo.record.id, number)
-                .await
-                .map_err(|_| unavailable(&ctx))?
-                .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
+        let pull = crate::backend::db::pull_requests::records::get_pull_request(
+            &ctx.state.pool,
+            repo.record.id,
+            number,
+        )
+        .await
+        .map_err(|_| unavailable(&ctx))?
+        .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
         let _ = refresh_open_pull_request(
             &ctx.state.pool,
             &repo.record,

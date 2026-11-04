@@ -1,10 +1,10 @@
 //! Authorized browser destinations for discussion and discussion-comment URLs.
-use super::{chrome, discussion::ResultPage, paging};
-use crate::backend::{
-    api::http::context::PageContext,
-    app::AppState,
-    db::{self, repository_discussions as store},
-};
+
+use crate::backend::api::repos::discussion::ResultPage;
+
+use crate::backend::api::http::context::PageContext;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -26,13 +26,15 @@ pub fn page_router() -> Router<Arc<AppState>> {
 async fn names(ctx: &PageContext, mut ids: Vec<i64>) -> ResultPage<HashMap<i64, String>> {
     ids.sort_unstable();
     ids.dedup();
-    Ok(db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
-        .await
-        .map_err(|_| chrome::unavailable(ctx))?
-        .into_iter()
-        .filter(|user| !user.is_banned)
-        .map(|user| (user.id, user.username))
-        .collect())
+    Ok(
+        crate::backend::db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
+            .await
+            .map_err(|_| crate::backend::api::repos::chrome::unavailable(ctx))?
+            .into_iter()
+            .filter(|user| !user.is_banned)
+            .map(|user| (user.id, user.username))
+            .collect(),
+    )
 }
 fn author(names: &HashMap<i64, String>, id: i64) -> String {
     names
@@ -41,8 +43,13 @@ fn author(names: &HashMap<i64, String>, id: i64) -> String {
         .unwrap_or_else(|| "Deleted user".into())
 }
 fn window(ctx: &PageContext) -> ResultPage<(usize, i64)> {
-    let page = paging::number(ctx, "page", 1, 1..=paging::MAX_PAGE)?;
-    let (offset, _) = paging::page_window(page, 30)
+    let page = crate::backend::api::repos::paging::number(
+        ctx,
+        "page",
+        1,
+        1..=crate::backend::api::repos::paging::MAX_PAGE,
+    )?;
+    let (offset, _) = crate::backend::api::repos::paging::page_window(page, 30)
         .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid page."))?;
     Ok((page, offset as i64))
 }
@@ -53,24 +60,24 @@ async fn index(
     uri: Uri,
 ) -> ResultPage<Response> {
     let ctx = PageContext::load(state, headers, &uri).await?;
-    let loaded = chrome::load_database(&ctx, &owner, &name).await?;
+    let loaded = crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await?;
     let (page, offset) = window(&ctx)?;
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let mut rows = store::list_rows(
+    let mut rows = crate::backend::db::repository_discussions::list_rows(
         &ctx.state.pool,
         ctx.user.as_ref().map_or(-1, |user| user.id),
-        &db::users::accounts::AccountCredential::Session(&session),
-        &store::Filter {
+        &crate::backend::db::users::accounts::AccountCredential::Session(&session),
+        &crate::backend::db::repository_discussions::Filter {
             repo: Some(loaded.repository.id),
-            order: store::Order::Updated,
+            order: crate::backend::db::repository_discussions::Order::Updated,
             ..Default::default()
         },
         offset,
         31,
     )
     .await
-    .map_err(|_| chrome::unavailable(&ctx))?;
+    .map_err(|_| crate::backend::api::repos::chrome::unavailable(&ctx))?;
     let more = rows.len() > 30;
     rows.truncate(30);
     let names = names(&ctx, rows.iter().map(|row| row.author_id).collect()).await?;
@@ -83,7 +90,7 @@ async fn index(
             author: author(&names, row.author_id),
         })
         .collect();
-    let current = chrome::load_database(&ctx, &owner, &name).await?;
+    let current = crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await?;
     if current.repository.id != loaded.repository.id {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Repository not found."));
     }
@@ -99,10 +106,14 @@ async fn index(
         }),
     ))
 }
-async fn comment(ctx: &PageContext, discussion: i64, id: i64) -> ResultPage<store::Comment> {
-    store::comment(&ctx.state.pool, id)
+async fn comment(
+    ctx: &PageContext,
+    discussion: i64,
+    id: i64,
+) -> ResultPage<crate::backend::db::repository_discussions::Comment> {
+    crate::backend::db::repository_discussions::comment(&ctx.state.pool, id)
         .await
-        .map_err(|_| chrome::unavailable(ctx))?
+        .map_err(|_| crate::backend::api::repos::chrome::unavailable(ctx))?
         .filter(|comment| comment.discussion_id == discussion)
         .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Comment not found."))
 }
@@ -113,11 +124,15 @@ async fn detail(
     uri: Uri,
 ) -> ResultPage<Response> {
     let ctx = PageContext::load(state, headers, &uri).await?;
-    let loaded = chrome::load_database(&ctx, &owner, &name).await?;
-    let discussion = store::by_number(&ctx.state.pool, loaded.repository.id, number)
-        .await
-        .map_err(|_| chrome::unavailable(&ctx))?
-        .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Discussion not found."))?;
+    let loaded = crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await?;
+    let discussion = crate::backend::db::repository_discussions::by_number(
+        &ctx.state.pool,
+        loaded.repository.id,
+        number,
+    )
+    .await
+    .map_err(|_| crate::backend::api::repos::chrome::unavailable(&ctx))?
+    .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Discussion not found."))?;
     let target = |key: &str| -> ResultPage<Option<i64>> {
         ctx.query
             .get(key)
@@ -140,9 +155,15 @@ async fn detail(
         }
         root = Some(row);
     }
-    let (_, mut rows) = store::comments(&ctx.state.pool, discussion.id, thread, offset, 31)
-        .await
-        .map_err(|_| chrome::unavailable(&ctx))?;
+    let (_, mut rows) = crate::backend::db::repository_discussions::comments(
+        &ctx.state.pool,
+        discussion.id,
+        thread,
+        offset,
+        31,
+    )
+    .await
+    .map_err(|_| crate::backend::api::repos::chrome::unavailable(&ctx))?;
     let more = rows.len() > 30;
     rows.truncate(30);
     if let Some(root) = root {
@@ -178,7 +199,7 @@ async fn detail(
         body: discussion.body,
         author: author(&names, discussion.author_id),
     };
-    let current = chrome::load_database(&ctx, &owner, &name).await?;
+    let current = crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await?;
     if current.repository.id != loaded.repository.id {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Repository not found."));
     }

@@ -1,4 +1,7 @@
-use crate::backend::db::action_objects::{ActionObject, BlobPart, NewObject, RuntimeRun};
+use crate::backend::db::action_objects::ActionObject;
+use crate::backend::db::action_objects::BlobPart;
+use crate::backend::db::action_objects::NewObject;
+use crate::backend::db::action_objects::RuntimeRun;
 use anyhow::Result;
 use sqlx::PgPool;
 
@@ -495,7 +498,7 @@ pub async fn artifact_for_reader(
     run: i64,
     id: i64,
 ) -> Result<Option<ActionObject>> {
-    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     Ok(sqlx::query_as(&format!("SELECT o.* FROM actions_objects o JOIN repositories r ON r.id=o.repo_id JOIN ci_runs c ON c.id=o.run_id AND c.repo_id=r.id JOIN users u ON u.id=$1 JOIN sessions s ON s.user_id=u.id AND s.id=$2 WHERE r.id=$3 AND c.id=$4 AND o.id=$5 AND o.kind='artifact' AND o.finalized AND o.expires_at>$6 AND s.expires_at>clock_timestamp() AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>0)"))
         .bind(actor).bind(session).bind(repo).bind(run).bind(id).bind(chrono::Utc::now().timestamp()).fetch_optional(pool).await?)
 }
@@ -519,11 +522,15 @@ pub async fn delete_artifact(
             .fetch_optional(&mut *tx)
             .await?;
         let Some(repo) = repo else { return Ok(false) };
-        if !super::discussions::lock_exclusive_write_authority(&mut tx, actor, repo).await? {
+        if !crate::backend::db::postgres::discussions::lock_exclusive_write_authority(
+            &mut tx, actor, repo,
+        )
+        .await?
+        {
             return Ok(false);
         }
         if let Some(proof) = credential {
-            if !super::credentials::ci(&mut tx, actor, repo, proof).await? {
+            if !crate::backend::db::postgres::credentials::ci(&mut tx, actor, repo, proof).await? {
                 return Ok(false);
             }
         }
@@ -585,7 +592,8 @@ pub async fn query_objects(
     pool: &PgPool,
     filter: &crate::backend::db::action_objects::ObjectQuery<'_>,
 ) -> Result<crate::backend::db::action_objects::ObjectPage> {
-    use crate::backend::db::action_objects::{ObjectOrder, ObjectPage};
+    use crate::backend::db::action_objects::ObjectOrder;
+    use crate::backend::db::action_objects::ObjectPage;
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
@@ -646,7 +654,9 @@ pub async fn delete_caches(
         "a cache id or key is required"
     );
     let mut tx = pool.begin().await?;
-    if !super::discussions::lock_write_authority(&mut tx, actor, repo).await? {
+    if !crate::backend::db::postgres::discussions::lock_write_authority(&mut tx, actor, repo)
+        .await?
+    {
         return Ok(None);
     }
     let objects = sqlx::query_as("DELETE FROM actions_objects WHERE repo_id=$1 AND kind='cache' AND finalized AND ($2::bigint IS NULL OR id=$2) AND ($3::text IS NULL OR name=$3) AND ($4::text IS NULL OR scope=$4 OR 'refs/heads/' || scope=$4) RETURNING *")
@@ -666,7 +676,8 @@ pub async fn grant_artifact_download(
     id: i64,
     hash: &str,
 ) -> Result<bool> {
-    use super::repositories::access::{lock_user_repo_access_in_transaction, RepositoryRowLock};
+    use crate::backend::db::postgres::repositories::access::lock_user_repo_access_in_transaction;
+    use crate::backend::db::postgres::repositories::access::RepositoryRowLock;
     let actor = actor.into();
     let mut tx = pool.begin().await?;
     let authority = lock_user_repo_access_in_transaction(
@@ -680,7 +691,11 @@ pub async fn grant_artifact_download(
     if !authority.is_some_and(|a| a.access.can_read() || (!a.organization && a.is_admin)) {
         return Ok(false);
     }
-    if !super::credentials::repository(&mut tx, &actor, repo, "actions", false).await? {
+    if !crate::backend::db::postgres::credentials::repository(
+        &mut tx, &actor, repo, "actions", false,
+    )
+    .await?
+    {
         return Ok(false);
     }
     let changed = sqlx::query("INSERT INTO actions_blob_grants(token_hash,object_id,run_id,write,expires_at) SELECT $1,id,run_id,FALSE,FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint+60 FROM actions_objects WHERE id=$2 AND repo_id=$3 AND kind='artifact' AND finalized AND expires_at>FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint")
@@ -695,6 +710,6 @@ pub async fn expire_objects(pool: &PgPool) -> Result<()> {
         .bind(now).bind(now-86400).execute(pool).await?;
     sqlx::query("DELETE FROM actions_blob_grants WHERE token_hash IN (SELECT token_hash FROM actions_blob_grants WHERE expires_at<=$1 ORDER BY expires_at,token_hash LIMIT 1000)")
         .bind(now).execute(pool).await?;
-    super::action_logs::expire(pool).await?;
+    crate::backend::db::postgres::action_logs::expire(pool).await?;
     Ok(())
 }

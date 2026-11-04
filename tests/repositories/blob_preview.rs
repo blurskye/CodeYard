@@ -1,6 +1,6 @@
 use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
 use axum::http::StatusCode;
-use codeyard::backend::db;
+
 use codeyard_webui::{app::Page, pages::repos};
 
 async fn contract(pg: bool) {
@@ -42,7 +42,7 @@ async fn contract(pg: bool) {
     )
     .unwrap();
     git.set_head("refs/heads/main").unwrap();
-    db::repositories::records::create_repository(
+    codeyard::backend::db::repositories::records::create_repository(
         f.pool(),
         actor,
         "preview",

@@ -1,5 +1,6 @@
 //! Original credentials retained through database admission. Authority remains feature-owned.
-use crate::backend::db::users::accounts::{AccountCredential, OwnedAccountCredential};
+use crate::backend::db::users::accounts::AccountCredential;
+use crate::backend::db::users::accounts::OwnedAccountCredential;
 
 /// Bare IDs are trusted in-process calls. HTTP adapters must retain their original credential.
 /// The credential's own `Debug` redacts the session and token secret.
@@ -80,7 +81,7 @@ pub(crate) fn app_permission(
     let selected: Vec<i64> = serde_json::from_str(repositories)?;
     let permissions: serde_json::Value = serde_json::from_str(permissions)?;
     Ok((selected.is_empty() || selected.contains(&repo))
-        && crate::backend::identity::github_apps::allows(&permissions, permission, write))
+        && codeyard_model::github_apps::allows(&permissions, permission, write))
 }
 
 pub(crate) fn oauth_organization_path(permission: &str) -> String {

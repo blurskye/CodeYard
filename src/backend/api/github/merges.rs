@@ -1,13 +1,13 @@
 //! Branch merges are direct native writes, never synthetic pull-request merges.
-use super::{commits, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    repositories::{
-        access::AccessError,
-        merges::{self, BranchMerge},
-        refs::RefError,
-    },
-};
+
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use crate::backend::repositories::access::AccessError;
+
+use crate::backend::repositories::merges::BranchMerge;
+use crate::backend::repositories::refs::RefError;
 use axum::{
     extract::{FromRequest, Path, Request, State},
     http::{HeaderMap, StatusCode},
@@ -36,7 +36,7 @@ pub(super) fn failure(error: RefError) -> Error {
         RefError::Git(error) => match error.kind {
             ErrorKind::Conflict => Error::new(StatusCode::CONFLICT, "Merge conflict or branch changed"),
             ErrorKind::NotFound | ErrorKind::MissingPath => Error::missing(),
-            _ => super::contents::store_error(error),
+            _ => crate::backend::api::github::contents::store_error(error),
         },
     }
 }
@@ -48,11 +48,11 @@ async fn merge(
     request: Request,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let Json(input) = Json::<Input>::from_request(request, &state)
         .await
-        .map_err(super::json_error)?;
-    let result = merges::merge_branch(
+        .map_err(crate::backend::api::github::json_error)?;
+    let result = crate::backend::repositories::merges::merge_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -73,7 +73,12 @@ async fn merge(
         None => Ok(StatusCode::NO_CONTENT.into_response()),
         Some(commit) => Ok((
             StatusCode::CREATED,
-            Json(commits::read_document(&state, repo.id, &commit, &owner, &name).await?),
+            Json(
+                crate::backend::api::github::commits::read_document(
+                    &state, repo.id, &commit, &owner, &name,
+                )
+                .await?,
+            ),
         )
             .into_response()),
     }

@@ -1,7 +1,9 @@
 use super::*;
-use crate::backend::db::rulesets::{
-    StoredSuite, Suite, SuiteEnforcement, SuiteFilter, SuiteResult,
-};
+use crate::backend::db::rulesets::StoredSuite;
+use crate::backend::db::rulesets::Suite;
+use crate::backend::db::rulesets::SuiteEnforcement;
+use crate::backend::db::rulesets::SuiteFilter;
+use crate::backend::db::rulesets::SuiteResult;
 
 pub async fn list_suites(
     pool: &SqlitePool,
@@ -12,7 +14,7 @@ pub async fn list_suites(
 ) -> Result<OrganizationOutcome<Vec<Suite>>> {
     let mut tx = begin_read(pool).await?;
     require_read_org!(tx, actor, org);
-    let readable = super::super::super::repositories::access::readable_condition();
+    let readable = crate::backend::db::sqlite::repositories::access::readable_condition();
     let reference = filter.reference.as_deref();
     let short_ref = reference.filter(|r| !r.starts_with("refs/"));
     let enforcement = enforcement(filter);
@@ -36,7 +38,7 @@ pub async fn get_suite(
 ) -> Result<OrganizationOutcome<Suite>> {
     let mut tx = begin_read(pool).await?;
     require_read_org!(tx, actor, org);
-    let readable = super::super::super::repositories::access::readable_condition();
+    let readable = crate::backend::db::sqlite::repositories::access::readable_condition();
     let row:Option<StoredSuite>=sqlx::query_as(&format!("SELECT s.* FROM repository_rule_suites s JOIN repositories r ON r.id=s.repo_id JOIN users u ON u.id=?2 WHERE s.org_id=?1 AND s.id=?3 AND r.owner_kind='org' AND r.owner_org_id=?1 AND r.owner_user_id IS NULL AND {readable}")).bind(org).bind(actor).bind(id).fetch_optional(&mut *tx).await?;
     let Some(row) = row else { return Ok(Missing) };
     let row = row.decode()?;

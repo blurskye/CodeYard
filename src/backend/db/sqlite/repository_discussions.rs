@@ -1,6 +1,11 @@
-use crate::backend::db::repository_discussions::{
-    valid_body, Category, Comment, Discussion, Filter, Refusal, Write, DEFAULT_CATEGORIES,
-};
+use crate::backend::db::repository_discussions::valid_body;
+use crate::backend::db::repository_discussions::Category;
+use crate::backend::db::repository_discussions::Comment;
+use crate::backend::db::repository_discussions::Discussion;
+use crate::backend::db::repository_discussions::Filter;
+use crate::backend::db::repository_discussions::Refusal;
+use crate::backend::db::repository_discussions::Write;
+use crate::backend::db::repository_discussions::DEFAULT_CATEGORIES;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -91,7 +96,7 @@ pub async fn list(
         crate::backend::db::repositories::credentials::Reader::authenticated(viewer, credential);
     let statement = filter.statement(
         false,
-        &super::repositories::access::readable_condition(),
+        &crate::backend::db::sqlite::repositories::access::readable_condition(),
         &reader,
     )?;
     let mut connection = pool.begin().await?;
@@ -132,9 +137,14 @@ async fn credential_authority(
     repo: i64,
     scope: &str,
 ) -> Result<()> {
-    use crate::backend::db::repositories::credentials::{repository_condition, Access, Reader};
+    use crate::backend::db::repositories::credentials::repository_condition;
+    use crate::backend::db::repositories::credentials::Access;
+    use crate::backend::db::repositories::credentials::Reader;
     anyhow::ensure!(
-        super::users::transitions::credential_live(tx, actor, credential, true).await?,
+        crate::backend::db::sqlite::users::transitions::credential_live(
+            tx, actor, credential, true
+        )
+        .await?,
         Refusal::Denied
     );
     let reader = Reader::authenticated(actor, credential);
@@ -155,16 +165,24 @@ pub async fn write(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if let Write::Enabled(value) = change {
         anyhow::ensure!(
-            super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
+            crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo)
+                .await?,
             Refusal::Denied
         );
         credential_authority(&mut tx, actor, credential, repo, "administration").await?;
-        super::repositories::records::features_on(&mut tx, repo, None, Some(*value)).await?;
+        crate::backend::db::sqlite::repositories::records::features_on(
+            &mut tx,
+            repo,
+            None,
+            Some(*value),
+        )
+        .await?;
         tx.commit().await?;
         return Ok(repo);
     }
     anyhow::ensure!(
-        super::discussions::lock_contribution_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::sqlite::discussions::lock_contribution_authority(&mut tx, actor, repo)
+            .await?,
         Refusal::Denied
     );
     credential_authority(&mut tx, actor, credential, repo, "discussions").await?;
@@ -190,7 +208,8 @@ pub async fn write(
             body,
         } => {
             anyhow::ensure!(
-                super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+                crate::backend::db::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
+                    .await?,
                 Refusal::Denied
             );
             anyhow::ensure!(
@@ -206,7 +225,8 @@ pub async fn write(
             .fetch_one(&mut *tx)
             .await?;
             anyhow::ensure!(valid, Refusal::Invalid);
-            let number = super::discussions::allocate_number(&mut tx, repo).await?;
+            let number =
+                crate::backend::db::sqlite::discussions::allocate_number(&mut tx, repo).await?;
             sqlx::query_scalar("INSERT INTO discussions(repo_id,number,title,body,author_id,category_id) VALUES (?1,?2,?3,?4,?5,?6) RETURNING id").bind(repo).bind(number).bind(title).bind(body).bind(actor).bind(category).fetch_one(&mut *tx).await?
         }
         Write::Edit {
@@ -217,7 +237,10 @@ pub async fn write(
             let current = current.as_ref().ok_or(Refusal::Missing)?;
             anyhow::ensure!(
                 actor == current.author_id
-                    || super::discussions::lock_triage_authority(&mut tx, actor, repo).await?,
+                    || crate::backend::db::sqlite::discussions::lock_triage_authority(
+                        &mut tx, actor, repo
+                    )
+                    .await?,
                 Refusal::Denied
             );
             if let Some(title) = title {
@@ -255,7 +278,10 @@ pub async fn write(
             let current = current.as_ref().ok_or(Refusal::Missing)?;
             anyhow::ensure!(
                 actor == current.author_id
-                    || super::discussions::lock_triage_authority(&mut tx, actor, repo).await?,
+                    || crate::backend::db::sqlite::discussions::lock_triage_authority(
+                        &mut tx, actor, repo
+                    )
+                    .await?,
                 Refusal::Denied
             );
             sqlx::query("DELETE FROM discussions WHERE id=?1")
@@ -268,7 +294,10 @@ pub async fn write(
             let current = current.as_ref().ok_or(Refusal::Missing)?;
             anyhow::ensure!(
                 !current.locked
-                    && super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+                    && crate::backend::db::sqlite::discussions::lock_write_authority(
+                        &mut tx, actor, repo
+                    )
+                    .await?,
                 Refusal::Denied
             );
             valid_body(body)?;
@@ -295,8 +324,10 @@ pub async fn write(
                 // The discussion's author chooses its answer, as maintainers can.
                 anyhow::ensure!(
                     actor == current.author_id
-                        || super::discussions::lock_maintain_authority(&mut tx, actor, repo)
-                            .await?,
+                        || crate::backend::db::sqlite::discussions::lock_maintain_authority(
+                            &mut tx, actor, repo
+                        )
+                        .await?,
                     Refusal::Denied
                 );
                 if *mark {
@@ -320,7 +351,10 @@ pub async fn write(
             } else {
                 anyhow::ensure!(
                     actor == saved.author_id
-                        || super::discussions::lock_triage_authority(&mut tx, actor, repo).await?,
+                        || crate::backend::db::sqlite::discussions::lock_triage_authority(
+                            &mut tx, actor, repo
+                        )
+                        .await?,
                     Refusal::Denied
                 );
                 if let Write::EditComment { body, .. } = change {
@@ -355,7 +389,10 @@ pub async fn write(
         Write::Labels { labels, add } => {
             anyhow::ensure!(current.is_some(), Refusal::Missing);
             anyhow::ensure!(
-                super::discussions::lock_triage_authority(&mut tx, actor, repo).await?,
+                crate::backend::db::sqlite::discussions::lock_triage_authority(
+                    &mut tx, actor, repo
+                )
+                .await?,
                 Refusal::Denied
             );
             anyhow::ensure!(labels.len() <= 100, Refusal::Invalid);

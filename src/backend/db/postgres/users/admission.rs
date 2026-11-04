@@ -1,6 +1,9 @@
 // Shared, bounded PostgreSQL failed-login budgets per client address and per account. No per-node
 // authority.
-use crate::backend::db::users::admission::{Receipt, ACCOUNT_LIMIT, CLIENT_LIMIT, WINDOW_SECONDS};
+use crate::backend::db::users::admission::Receipt;
+use crate::backend::db::users::admission::ACCOUNT_LIMIT;
+use crate::backend::db::users::admission::CLIENT_LIMIT;
+use crate::backend::db::users::admission::WINDOW_SECONDS;
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use sqlx::{PgConnection, PgPool};

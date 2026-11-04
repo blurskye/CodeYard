@@ -1,5 +1,9 @@
-use super::{labels, pagination::Pagination, repository, Error, Result};
-use crate::backend::{app::AppState, db, webhooks::payloads};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -19,7 +23,7 @@ async fn list(
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let (offset, limit) = page.window()?;
-    let users = db::assignees::list_assignable_users(
+    let users = crate::backend::db::assignees::list_assignable_users(
         &state.pool,
         repo.id,
         "",
@@ -29,7 +33,11 @@ async fn list(
     .await
     .map_err(Error::unavailable)?;
     let next = users.len() > limit;
-    let items = users.iter().take(limit).map(payloads::user).collect();
+    let items = users
+        .iter()
+        .take(limit)
+        .map(crate::backend::webhooks::payloads::user)
+        .collect();
     page.response(&uri, items, next)
 }
 
@@ -40,13 +48,14 @@ async fn check(
 ) -> Result<StatusCode> {
     let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     if let Some(number) = p.get("issue_number") {
-        labels::item(&state.pool, repo.id, number).await?;
+        crate::backend::api::github::labels::item(&state.pool, repo.id, number).await?;
     }
-    let user = db::users::accounts::get_user_by_username(&state.pool, &p["assignee"])
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    if !db::assignees::assignable_user_ids(&state.pool, repo.id, &[user.id])
+    let user =
+        crate::backend::db::users::accounts::get_user_by_username(&state.pool, &p["assignee"])
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+    if !crate::backend::db::assignees::assignable_user_ids(&state.pool, repo.id, &[user.id])
         .await
         .map_err(Error::unavailable)?
         .is_empty()

@@ -2,18 +2,20 @@
 //! view with comments and reactions, and the text shown for failed operations.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::access::check_repo_read_access;
-use crate::backend::api::repos::forms::{field, with_status};
-use crate::backend::api::repos::milestones::{milestone_choice_view, milestone_view};
-use crate::backend::api::repos::paging;
-use crate::backend::api::repos::pulls;
-use crate::backend::api::repos::pulls::review_forms;
+use crate::backend::api::repos::forms::field;
+use crate::backend::api::repos::forms::with_status;
+use crate::backend::api::repos::milestones::milestone_choice_view;
+use crate::backend::api::repos::milestones::milestone_view;
+
 use crate::backend::api::repos::refs::references::resolve_references_or_none;
-use crate::backend::db;
+
 use crate::backend::db::pull_requests::reviews::DiscussionItem;
-use crate::backend::issues::{COMMENTS_PER_PAGE, MAX_COMMENT_PAGE};
-use crate::backend::repositories::pull_requests::restack;
-use crate::backend::repositories::pull_requests::stacks;
-use crate::backend::repositories::store::{allowed_merge_methods, repo_store, MergeMethod};
+use crate::backend::issues::COMMENTS_PER_PAGE;
+use crate::backend::issues::MAX_COMMENT_PAGE;
+
+use crate::backend::repositories::store::allowed_merge_methods;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::MergeMethod;
 use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
@@ -33,7 +35,7 @@ pub(crate) use crate::backend::api::http::error::ApiFailure;
 pub(crate) fn kind(uri: &Uri) -> Kind {
     let path = uri
         .path()
-        .strip_prefix(super::LEGACY_PREFIX)
+        .strip_prefix(crate::backend::api::repos::LEGACY_PREFIX)
         .unwrap_or(uri.path());
     if path.split('/').nth(3) == Some("pulls") {
         Kind::Pull
@@ -51,9 +53,9 @@ pub(crate) fn safe_api_error(failure: &ApiFailure) -> (StatusCode, String) {
     let (status, Json(error)) = failure;
     let message = if status.is_server_error() {
         match error.message.as_str() {
-            pulls::BRANCH_MERGED_MESSAGE => "The branch was merged, but the pull request status could not be updated. Reload before retrying.",
-            pulls::OPENED_MESSAGE => "The pull request was opened, but its head could not be fetched. Reload before retrying.",
-            pulls::UPDATED_MESSAGE => pulls::UPDATED_MESSAGE,
+            crate::backend::api::repos::pulls::BRANCH_MERGED_MESSAGE => "The branch was merged, but the pull request status could not be updated. Reload before retrying.",
+            crate::backend::api::repos::pulls::OPENED_MESSAGE => "The pull request was opened, but its head could not be fetched. Reload before retrying.",
+            crate::backend::api::repos::pulls::UPDATED_MESSAGE => crate::backend::api::repos::pulls::UPDATED_MESSAGE,
             _ => "The operation could not be completed. Its outcome may be uncertain; reload before retrying.",
         }
     } else {
@@ -153,7 +155,7 @@ pub(crate) async fn repository(
     };
     let mutable = ctx.user.is_some()
         && !record.is_archived
-        && !db::repository_exports::locked(&ctx.state.pool, record.id)
+        && !crate::backend::db::repository_exports::locked(&ctx.state.pool, record.id)
             .await
             .map_err(|_| unavailable(ctx))?;
     let can_write = mutable && access.can_write();
@@ -182,14 +184,16 @@ pub(crate) async fn repository(
     })
 }
 
-pub(crate) use db::discussions::comment_revision;
+pub(crate) use crate::backend::db::discussions::comment_revision;
 
 pub(crate) async fn author(ctx: &PageContext, id: i64) -> ResultPage<String> {
-    Ok(db::users::accounts::get_user_by_id(&ctx.state.pool, id)
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .map(|user| user.username)
-        .unwrap_or_else(|| "Deleted user".into()))
+    Ok(
+        crate::backend::db::users::accounts::get_user_by_id(&ctx.state.pool, id)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .map(|user| user.username)
+            .unwrap_or_else(|| "Deleted user".into()),
+    )
 }
 pub(crate) fn label(value: codeyard_db_core::models::Label) -> view::Label {
     view::Label {
@@ -213,7 +217,8 @@ pub(crate) async fn issue_reference(
     .await
     .map(|issue| issue.id)
     .map_err(|error| {
-        let (status, axum::Json(reason)) = super::issues::operation_error(error);
+        let (status, axum::Json(reason)) =
+            crate::backend::api::repos::issues::operation_error(error);
         ctx.error(
             if status == StatusCode::BAD_REQUEST {
                 StatusCode::UNPROCESSABLE_ENTITY
@@ -272,7 +277,7 @@ pub(crate) fn issue_item(
 /// link are shown only to a viewer who can read that repository.
 #[derive(Clone)]
 pub(crate) enum HeadRepository {
-    Readable(db::pull_requests::records::PullRequestHeadDisplay),
+    Readable(crate::backend::db::pull_requests::records::PullRequestHeadDisplay),
     /// It exists, but this viewer cannot read it.
     Unreadable,
     Deleted,
@@ -298,11 +303,12 @@ async fn head_for_viewer(
     if !can_view_head(ctx, &head).await? {
         return Ok(HeadRepository::Unreadable);
     }
-    let owner_name = db::repositories::records::repository_owner_name(&ctx.state.pool, head.id)
-        .await
-        .map_err(|_| unavailable(ctx))?;
+    let owner_name =
+        crate::backend::db::repositories::records::repository_owner_name(&ctx.state.pool, head.id)
+            .await
+            .map_err(|_| unavailable(ctx))?;
     Ok(HeadRepository::Readable(
-        db::pull_requests::records::PullRequestHeadDisplay {
+        crate::backend::db::pull_requests::records::PullRequestHeadDisplay {
             id: head.id,
             name: head.name,
             owner_name,
@@ -316,7 +322,7 @@ pub(crate) async fn listed_head(
     ctx: &PageContext,
     base_id: i64,
     cache: &mut HashMap<i64, HeadRepository>,
-    head: Option<db::pull_requests::records::PullRequestHeadDisplay>,
+    head: Option<crate::backend::db::pull_requests::records::PullRequestHeadDisplay>,
 ) -> ResultPage<HeadRepository> {
     let Some(head) = head else {
         return Ok(HeadRepository::Deleted);
@@ -328,9 +334,10 @@ pub(crate) async fn listed_head(
         return Ok(shown.clone());
     }
     let id = head.id;
-    let Some(record) = db::repositories::records::get_repository_by_id(&ctx.state.pool, head.id)
-        .await
-        .map_err(|_| unavailable(ctx))?
+    let Some(record) =
+        crate::backend::db::repositories::records::get_repository_by_id(&ctx.state.pool, head.id)
+            .await
+            .map_err(|_| unavailable(ctx))?
     else {
         cache.insert(id, HeadRepository::Deleted);
         return Ok(HeadRepository::Deleted);
@@ -352,7 +359,7 @@ pub(crate) async fn listed_assignees(
 ) -> ResultPage<HashMap<i64, Vec<String>>> {
     let mut assignees: HashMap<i64, Vec<String>> = HashMap::new();
     for (id, username) in
-        db::assignees::list_item_assignees(&ctx.state.pool, pull_requests, item_ids)
+        crate::backend::db::assignees::list_item_assignees(&ctx.state.pool, pull_requests, item_ids)
             .await
             .map_err(|_| unavailable(ctx))?
     {
@@ -477,7 +484,11 @@ pub(crate) fn pull_item(
     })
 }
 /// The stack a pull request page shows, with the viewed pull request marked.
-fn stack_map(stack: &stacks::Stack, current: i64, restack: bool) -> view::StackMap {
+fn stack_map(
+    stack: &crate::backend::repositories::pull_requests::stacks::Stack,
+    current: i64,
+    restack: bool,
+) -> view::StackMap {
     view::StackMap {
         trunk: stack.trunk().to_owned(),
         position: stack.position(current),
@@ -506,7 +517,7 @@ pub(crate) async fn named_milestone(
         return Ok(None);
     };
     Ok(
-        db::milestones::get_milestone_by_id(&ctx.state.pool, repo.record.id, id)
+        crate::backend::db::milestones::get_milestone_by_id(&ctx.state.pool, repo.record.id, id)
             .await
             .map_err(|_| unavailable(ctx))?
             .map(milestone_view),
@@ -544,26 +555,32 @@ async fn item_with_comparison(
     }
     match kind {
         Kind::Issue => {
-            let value = db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
-                .await
-                .map_err(|_| unavailable(ctx))?
-                .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
+            let value =
+                crate::backend::db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
+                    .await
+                    .map_err(|_| unavailable(ctx))?
+                    .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
             let author = author(ctx, value.author_id).await?;
-            let labels = db::labels::get_issue_labels(&ctx.state.pool, repo.record.id, value.id)
-                .await
-                .map_err(|_| unavailable(ctx))?;
-            let assignees = db::assignees::list_assignees(
+            let labels = crate::backend::db::labels::get_issue_labels(
                 &ctx.state.pool,
-                db::assignees::AssignedItem::Issue(value.id),
+                repo.record.id,
+                value.id,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?;
+            let assignees = crate::backend::db::assignees::list_assignees(
+                &ctx.state.pool,
+                crate::backend::db::assignees::AssignedItem::Issue(value.id),
             )
             .await
             .map_err(|_| unavailable(ctx))?;
             let milestone = named_milestone(ctx, repo, value.milestone_id).await?;
-            let comment_count = db::issues::count_issue_comments(&ctx.state.pool, &[value.id])
-                .await
-                .map_err(|_| unavailable(ctx))?
-                .first()
-                .map_or(0, |(_, count)| *count);
+            let comment_count =
+                crate::backend::db::issues::count_issue_comments(&ctx.state.pool, &[value.id])
+                    .await
+                    .map_err(|_| unavailable(ctx))?
+                    .first()
+                    .map_or(0, |(_, count)| *count);
             let can_edit = can_edit_entry(ctx, repo, value.author_id);
             let mut shown = issue_item(value, author, labels);
             shown.can_edit = can_edit;
@@ -574,7 +591,7 @@ async fn item_with_comparison(
             Ok(shown)
         }
         Kind::Pull => {
-            let value = db::pull_requests::records::get_pull_request(
+            let value = crate::backend::db::pull_requests::records::get_pull_request(
                 &ctx.state.pool,
                 repo.record.id,
                 number,
@@ -589,27 +606,41 @@ async fn item_with_comparison(
             }
             let head = match value.head_repo_id {
                 Some(id) if id != repo.record.id => {
-                    db::repositories::records::get_repository_by_id(&ctx.state.pool, id)
-                        .await
-                        .map_err(|_| unavailable(ctx))?
+                    crate::backend::db::repositories::records::get_repository_by_id(
+                        &ctx.state.pool,
+                        id,
+                    )
+                    .await
+                    .map_err(|_| unavailable(ctx))?
                 }
                 _ => None,
             };
             let head_repository = head_for_viewer(ctx, head).await?;
             let current = value.id;
-            let stack = stacks::stack_of(&ctx.state.pool, &value)
+            let stack = crate::backend::repositories::pull_requests::stacks::stack_of(
+                &ctx.state.pool,
+                &value,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?;
+            let stack_candidate =
+                crate::backend::repositories::pull_requests::stacks::join_candidate(
+                    &ctx.state.pool,
+                    &value,
+                )
                 .await
                 .map_err(|_| unavailable(ctx))?;
-            let stack_candidate = stacks::join_candidate(&ctx.state.pool, &value)
-                .await
-                .map_err(|_| unavailable(ctx))?;
-            let (merge_target, _, merge_with) = stacks::merge_target(&ctx.state.pool, &value)
+            let (merge_target, _, merge_with) =
+                crate::backend::repositories::pull_requests::stacks::merge_target(
+                    &ctx.state.pool,
+                    &value,
+                )
                 .await
                 .map_err(|_| unavailable(ctx))?;
             // Only a writer sees the button, so readers do not pay for the check.
             let restack = match &stack {
                 Some(stack) if repo.view.can_write => {
-                    restack::restack_pending(
+                    crate::backend::repositories::pull_requests::restack::restack_pending(
                         &ctx.state.ci_runs,
                         &repo.record,
                         &value,
@@ -620,10 +651,13 @@ async fn item_with_comparison(
                 _ => false,
             };
             let milestone_id = value.milestone_id;
-            let labels =
-                db::labels::get_pull_request_labels(&ctx.state.pool, repo.record.id, current)
-                    .await
-                    .map_err(|_| unavailable(ctx))?;
+            let labels = crate::backend::db::labels::get_pull_request_labels(
+                &ctx.state.pool,
+                repo.record.id,
+                current,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?;
             let head_sha = value.head_sha.clone();
             let diff_base = value.diff_base().to_owned();
             let mut view_item = pull_item(ctx, repo, value, author, head_repository)
@@ -634,19 +668,22 @@ async fn item_with_comparison(
                 .as_ref()
                 .map(|stack| stack_map(stack, current, restack));
             view_item.stack_candidate = stack_candidate;
-            view_item.assignees = db::assignees::list_assignees(
+            view_item.assignees = crate::backend::db::assignees::list_assignees(
                 &ctx.state.pool,
-                db::assignees::AssignedItem::PullRequest(current),
+                crate::backend::db::assignees::AssignedItem::PullRequest(current),
             )
             .await
             .map_err(|_| unavailable(ctx))?;
             view_item.comment_count =
-                db::pull_requests::reviews::count_pull_request_comments(&ctx.state.pool, current)
-                    .await
-                    .map_err(|_| unavailable(ctx))?;
+                crate::backend::db::pull_requests::reviews::count_pull_request_comments(
+                    &ctx.state.pool,
+                    current,
+                )
+                .await
+                .map_err(|_| unavailable(ctx))?;
             // A check run or a commit status on the head commit is what makes a green merge box mean
             // something; the merge box says so when there is none.
-            let runs = db::ci::latest_ci_runs_for_commit(
+            let runs = crate::backend::db::ci::latest_ci_runs_for_commit(
                 &ctx.state.pool,
                 repo.record.id,
                 &head_sha,
@@ -655,7 +692,7 @@ async fn item_with_comparison(
             )
             .await
             .map_err(|_| unavailable(ctx))?;
-            let statuses = db::repositories::protection::list_commit_statuses(
+            let statuses = crate::backend::db::repositories::protection::list_commit_statuses(
                 &ctx.state.pool,
                 repo.record.id,
                 &head_sha,
@@ -664,12 +701,15 @@ async fn item_with_comparison(
             .map_err(|_| unavailable(ctx))?
             .into_iter()
             .filter(|status| {
-                !db::repositories::protection::server_owned_status_context(&status.context)
+                !crate::backend::db::repositories::protection::server_owned_status_context(
+                    &status.context,
+                )
             })
             .collect::<Vec<_>>();
-            let integration = db::checks::summary(&ctx.state.pool, repo.record.id, &head_sha)
-                .await
-                .map_err(|_| unavailable(ctx))?;
+            let integration =
+                crate::backend::db::checks::summary(&ctx.state.pool, repo.record.id, &head_sha)
+                    .await
+                    .map_err(|_| unavailable(ctx))?;
             view_item.check_count = runs.len() as i64
                 + integration.total
                 + statuses
@@ -787,7 +827,7 @@ pub(crate) async fn discussion(
 ) -> ResultPage<view::CommentPage> {
     let page = match edit_page {
         Some(page) => page,
-        None => paging::number(ctx, "page", 1, 1..=MAX_COMMENT_PAGE)?,
+        None => crate::backend::api::repos::paging::number(ctx, "page", 1, 1..=MAX_COMMENT_PAGE)?,
     };
     if page == 0 {
         return Err(ctx.error(StatusCode::BAD_REQUEST, "Page numbers start at 1."));
@@ -803,22 +843,33 @@ pub(crate) async fn discussion(
     let locked: bool;
     let lock_reason: Option<String>;
     // The item and the span of time this page covers, for the events that fall in it.
-    let subject: (db::timeline::Subject, i64);
+    let subject: (crate::backend::db::timeline::Subject, i64);
     let span: (Option<DateTime<Utc>>, Option<DateTime<Utc>>);
     match kind {
         Kind::Issue => {
-            let issue = db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
-                .await
-                .map_err(|_| unavailable(ctx))?
-                .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
-            let rows = db::issues::list_issue_comments(&ctx.state.pool, issue.id, fetch, offset)
-                .await
-                .map_err(|_| unavailable(ctx))?;
+            let issue =
+                crate::backend::db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
+                    .await
+                    .map_err(|_| unavailable(ctx))?
+                    .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
+            let rows = crate::backend::db::issues::list_issue_comments(
+                &ctx.state.pool,
+                issue.id,
+                fetch,
+                offset,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?;
             locked = issue.locked;
             lock_reason = issue.lock_reason;
             let rights = CommentRights::for_repository(ctx, repo, !locked);
-            has_more = paging::has_next_page(page, rows.len(), COMMENTS_PER_PAGE, MAX_COMMENT_PAGE);
-            subject = (db::timeline::Subject::Issue, issue.id);
+            has_more = crate::backend::api::repos::paging::has_next_page(
+                page,
+                rows.len(),
+                COMMENTS_PER_PAGE,
+                MAX_COMMENT_PAGE,
+            );
+            subject = (crate::backend::db::timeline::Subject::Issue, issue.id);
             span = (
                 (page > 1)
                     .then(|| rows.first().map(|row| row.comment.created_at))
@@ -853,7 +904,7 @@ pub(crate) async fn discussion(
             }
         }
         Kind::Pull => {
-            let pull = db::pull_requests::records::get_pull_request(
+            let pull = crate::backend::db::pull_requests::records::get_pull_request(
                 &ctx.state.pool,
                 repo.record.id,
                 number,
@@ -863,7 +914,7 @@ pub(crate) async fn discussion(
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
             // The page is a run of Conversation items, so the count, the links and the reviews all
             // agree. The page's span runs from its first item up to the next page's first item.
-            let rows = db::pull_requests::reviews::list_discussion_items(
+            let rows = crate::backend::db::pull_requests::reviews::list_discussion_items(
                 &ctx.state.pool,
                 pull.id,
                 fetch,
@@ -871,13 +922,18 @@ pub(crate) async fn discussion(
             )
             .await
             .map_err(|_| unavailable(ctx))?;
-            has_more = paging::has_next_page(page, rows.len(), COMMENTS_PER_PAGE, MAX_COMMENT_PAGE);
+            has_more = crate::backend::api::repos::paging::has_next_page(
+                page,
+                rows.len(),
+                COMMENTS_PER_PAGE,
+                MAX_COMMENT_PAGE,
+            );
             let first = rows.first().map(DiscussionItem::created_at);
             span = (
                 (page > 1).then_some(first).flatten(),
                 rows.get(COMMENTS_PER_PAGE).map(DiscussionItem::created_at),
             );
-            subject = (db::timeline::Subject::PullRequest, pull.id);
+            subject = (crate::backend::db::timeline::Subject::PullRequest, pull.id);
             let mut page_reviews = Vec::new();
             locked = pull.locked;
             lock_reason = pull.lock_reason.clone();
@@ -890,39 +946,50 @@ pub(crate) async fn discussion(
                             entry.comment.created_at,
                             entry.comment.updated_at,
                         );
-                        let mut shown = review_forms::discussion_comment(ctx, repo, &pull, entry);
+                        let mut shown =
+                            crate::backend::api::repos::pulls::review_forms::discussion_comment(
+                                ctx, repo, &pull, entry,
+                            );
                         rights.apply(&mut shown, author_id, created, updated);
                         comments.push(shown);
                     }
                     DiscussionItem::Review(entry) => page_reviews.push(entry),
                 }
             }
-            reviews = review_forms::page_reviews(ctx, repo, &pull, page_reviews, &rights).await?;
+            reviews = crate::backend::api::repos::pulls::review_forms::page_reviews(
+                ctx,
+                repo,
+                &pull,
+                page_reviews,
+                &rights,
+            )
+            .await?;
         }
     }
-    let max_event_page = (i64::MAX / db::timeline::EVENT_LIMIT) as usize;
-    let event_page = paging::number(ctx, "event_page", 1, 1..=max_event_page)?;
-    let event_offset = (event_page as i64 - 1) * db::timeline::EVENT_LIMIT;
-    let mut event_rows = db::timeline::list_events(
+    let max_event_page = (i64::MAX / crate::backend::db::timeline::EVENT_LIMIT) as usize;
+    let event_page =
+        crate::backend::api::repos::paging::number(ctx, "event_page", 1, 1..=max_event_page)?;
+    let event_offset = (event_page as i64 - 1) * crate::backend::db::timeline::EVENT_LIMIT;
+    let mut event_rows = crate::backend::db::timeline::list_events(
         &ctx.state.pool,
         repo.record.id,
         subject.0.name(),
         subject.1,
         span.0,
         span.1,
-        db::timeline::EVENT_LIMIT + 1,
+        crate::backend::db::timeline::EVENT_LIMIT + 1,
         event_offset,
     )
     .await
     .map_err(|_| unavailable(ctx))?;
-    let events_next = paging::has_next_page(
+    let events_next = crate::backend::api::repos::paging::has_next_page(
         event_page,
         event_rows.len(),
-        db::timeline::EVENT_LIMIT as usize,
+        crate::backend::db::timeline::EVENT_LIMIT as usize,
         max_event_page,
     )
     .then_some(event_page + 1);
-    event_rows.truncate(db::timeline::EVENT_LIMIT as usize);
+    event_rows.truncate(crate::backend::db::timeline::EVENT_LIMIT as usize);
     let events = event_rows
         .into_iter()
         .map(|event| view::Event {
@@ -934,18 +1001,20 @@ pub(crate) async fn discussion(
         })
         .collect();
     let item = match kind {
-        Kind::Issue => db::assignees::AssignedItem::Issue(subject.1),
-        Kind::Pull => db::assignees::AssignedItem::PullRequest(subject.1),
+        Kind::Issue => crate::backend::db::assignees::AssignedItem::Issue(subject.1),
+        Kind::Pull => crate::backend::db::assignees::AssignedItem::PullRequest(subject.1),
     };
-    let pinned = super::issues::pins::pinned_comment(ctx, repo, kind, number, item).await?;
+    let pinned =
+        crate::backend::api::repos::issues::pins::pinned_comment(ctx, repo, kind, number, item)
+            .await?;
     let relationships = if kind == Kind::Issue {
-        super::issues::relationships::load(ctx, subject.1).await?
+        crate::backend::api::repos::issues::relationships::load(ctx, subject.1).await?
     } else {
         Vec::new()
     };
     let attributes = if kind == Kind::Issue {
         Some(
-            super::issues::attributes::load(
+            crate::backend::api::repos::issues::attributes::load(
                 ctx,
                 repo.record.id,
                 subject.1,
@@ -957,17 +1026,23 @@ pub(crate) async fn discussion(
         None
     };
     let suggestions = if kind == Kind::Issue {
-        super::issues::suggestions::load(ctx, &repo.record, subject.1, locked, repo.view.can_admin)
-            .await?
+        crate::backend::api::repos::issues::suggestions::load(
+            ctx,
+            &repo.record,
+            subject.1,
+            locked,
+            repo.view.can_admin,
+        )
+        .await?
     } else {
         None
     };
     let issue_management = if kind == Kind::Issue {
-        let issue = db::issues::get_issue_by_id(&ctx.state.pool, subject.1)
+        let issue = crate::backend::db::issues::get_issue_by_id(&ctx.state.pool, subject.1)
             .await
             .map_err(|_| unavailable(ctx))?
             .ok_or_else(|| unavailable(ctx))?;
-        Some(super::issues::management::load(ctx, repo, &issue).await?)
+        Some(crate::backend::api::repos::issues::management::load(ctx, repo, &issue).await?)
     } else {
         None
     };
@@ -1031,23 +1106,23 @@ pub(crate) async fn render_detail(
     let edit_page = match draft.editing {
         Some(id) => {
             let position = match kind {
-                Kind::Issue => match db::issues::get_issue_comment(&ctx.state.pool, id).await {
+                Kind::Issue => match crate::backend::db::issues::get_issue_comment(&ctx.state.pool, id).await {
                     Ok(Some(comment)) if comment.issue_id == shown.id => {
-                        db::issues::issue_comment_position(&ctx.state.pool, id).await
+                        crate::backend::db::issues::issue_comment_position(&ctx.state.pool, id).await
                     }
                     _ => Err(anyhow::anyhow!("Comment not found")),
                 },
-                Kind::Pull => match db::pull_requests::reviews::get_pull_request_comment_by_id(
+                Kind::Pull => match crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
                     &ctx.state.pool,
                     id,
                 )
                 .await
                 {
                     Ok(Some(comment)) if comment.pull_request_id == shown.id => {
-                        db::pull_requests::reviews::count_discussion_items_through(
+                        crate::backend::db::pull_requests::reviews::count_discussion_items_through(
                             &ctx.state.pool,
                             comment.pull_request_id,
-                            db::pull_requests::reviews::DiscussionRef::of_comment(&comment),
+                            crate::backend::db::pull_requests::reviews::DiscussionRef::of_comment(&comment),
                         )
                         .await
                     }
@@ -1123,7 +1198,7 @@ pub(crate) async fn render_detail(
     // The label picker lists every label of the repository. A label the item has is removed by
     // clicking it, and any other label is added the same way.
     let mut labels: Vec<_> = if comments.can_triage {
-        db::labels::list_repo_labels_page(
+        crate::backend::db::labels::list_repo_labels_page(
             &ctx.state.pool,
             repo.record.id,
             ctx.query.get("label_search").map_or("", String::as_str),
@@ -1146,22 +1221,27 @@ pub(crate) async fn render_detail(
     }
     // Choices are offered only when the viewer may triage.
     let (assignable, milestones): (Vec<String>, Vec<view::Milestone>) = if comments.can_triage {
-        let assignable = if (value.assignees.len() as i64) < db::assignees::MAX_ASSIGNEES {
-            db::assignees::list_assignable_usernames(&ctx.state.pool, repo.record.id)
+        let assignable =
+            if (value.assignees.len() as i64) < crate::backend::db::assignees::MAX_ASSIGNEES {
+                crate::backend::db::assignees::list_assignable_usernames(
+                    &ctx.state.pool,
+                    repo.record.id,
+                )
                 .await
                 .map_err(|_| unavailable(ctx))?
                 .into_iter()
                 .filter(|name| !value.assignees.contains(name))
                 .collect()
-        } else {
-            Vec::new()
-        };
-        let milestones = db::milestones::list_milestone_choices(&ctx.state.pool, repo.record.id)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .into_iter()
-            .map(milestone_choice_view)
-            .collect();
+            } else {
+                Vec::new()
+            };
+        let milestones =
+            crate::backend::db::milestones::list_milestone_choices(&ctx.state.pool, repo.record.id)
+                .await
+                .map_err(|_| unavailable(ctx))?
+                .into_iter()
+                .map(milestone_choice_view)
+                .collect();
         (assignable, milestones)
     } else {
         (Vec::new(), Vec::new())
@@ -1174,17 +1254,21 @@ pub(crate) async fn render_detail(
     ));
     let ctx = &ctx;
     let mut reviewer_choices: Vec<String> = if kind == Kind::Pull && repo.view.can_write {
-        db::repositories::access::list_write_access_users(&ctx.state.pool, repo.record.id, -1)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .into_iter()
-            .map(|(name, _)| name)
-            .collect()
+        crate::backend::db::repositories::access::list_write_access_users(
+            &ctx.state.pool,
+            repo.record.id,
+            -1,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect()
     } else {
         Vec::new()
     };
     if kind == Kind::Pull && repo.view.can_write {
-        let teams = db::pull_requests::team_reviewers::list(
+        let teams = crate::backend::db::pull_requests::team_reviewers::list(
             &ctx.state.pool,
             repo.record.id,
             None,
@@ -1192,9 +1276,10 @@ pub(crate) async fn render_detail(
         )
         .await
         .map_err(|_| unavailable(ctx))?;
-        if let Some(owner) = db::ci::ci_repository_owner(&ctx.state.pool, repo.record.id)
-            .await
-            .map_err(|_| unavailable(ctx))?
+        if let Some(owner) =
+            crate::backend::db::ci::ci_repository_owner(&ctx.state.pool, repo.record.id)
+                .await
+                .map_err(|_| unavailable(ctx))?
         {
             reviewer_choices.extend(
                 teams
@@ -1205,13 +1290,18 @@ pub(crate) async fn render_detail(
     }
     let reviewers = match &value.comparison {
         Some(compare) if kind == Kind::Pull => {
-            review_forms::reviewers(ctx, repo, value.id, (&compare.base_sha, &compare.head_sha))
-                .await?
+            crate::backend::api::repos::pulls::review_forms::reviewers(
+                ctx,
+                repo,
+                value.id,
+                (&compare.base_sha, &compare.head_sha),
+            )
+            .await?
         }
         _ => Vec::new(),
     };
     if kind == Kind::Issue {
-        db::issues::get_issue_by_id(&ctx.state.pool, value.id)
+        crate::backend::db::issues::get_issue_by_id(&ctx.state.pool, value.id)
             .await
             .map_err(|_| unavailable(ctx))?
             .filter(|issue| issue.repo_id == repo.record.id)
@@ -1299,8 +1389,12 @@ async fn fill_merge_blockers(
             .await
             .is_ok_and(|files| !files.is_empty());
     }
-    let Ok(Some(pull_request)) =
-        db::pull_requests::records::get_pull_request(&ctx.state.pool, repo.record.id, number).await
+    let Ok(Some(pull_request)) = crate::backend::db::pull_requests::records::get_pull_request(
+        &ctx.state.pool,
+        repo.record.id,
+        number,
+    )
+    .await
     else {
         return;
     };
@@ -1377,24 +1471,32 @@ pub(crate) async fn head_choices(
     HashMap<String, String>,
 )> {
     let mut candidates = vec![base.record.clone()];
-    let mut forks =
-        db::repositories::discovery::list_forks(&ctx.state.pool, base.record.id, 100, 0)
-            .await
-            .map_err(|_| unavailable(ctx))?;
+    let mut forks = crate::backend::db::repositories::discovery::list_forks(
+        &ctx.state.pool,
+        base.record.id,
+        100,
+        0,
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?;
     // The user's own fork and an explicitly selected head stay reachable beyond the first
     // page. The batch below still checks read access for each of them.
     let own_fork = match &ctx.user {
-        Some(user) => {
-            db::repositories::discovery::get_user_fork(&ctx.state.pool, user.id, base.record.id)
-                .await
-                .map_err(|_| unavailable(ctx))?
-        }
+        Some(user) => crate::backend::db::repositories::discovery::get_user_fork(
+            &ctx.state.pool,
+            user.id,
+            base.record.id,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?,
         None => None,
     };
     let selected = match draft.head_repo.parse::<i64>() {
-        Ok(id) => db::repositories::records::get_repository_by_id(&ctx.state.pool, id)
-            .await
-            .map_err(|_| unavailable(ctx))?,
+        Ok(id) => {
+            crate::backend::db::repositories::records::get_repository_by_id(&ctx.state.pool, id)
+                .await
+                .map_err(|_| unavailable(ctx))?
+        }
         Err(_) => None,
     };
     for fork in own_fork
@@ -1409,7 +1511,7 @@ pub(crate) async fn head_choices(
     let mut readable = Vec::new();
     for ids in ids.chunks(100) {
         readable.extend(
-            db::repositories::access::readable_repository_ids(
+            crate::backend::db::repositories::access::readable_repository_ids(
                 &ctx.state.pool,
                 ctx.user.as_ref().map(|user| user.id),
                 ids,
@@ -1443,9 +1545,10 @@ pub(crate) async fn head_choices(
         .iter()
         .map(|candidate| candidate.id)
         .collect::<Vec<_>>();
-    let mut owners = db::repositories::records::repository_owner_names(&ctx.state.pool, &ids)
-        .await
-        .map_err(|_| unavailable(ctx))?;
+    let mut owners =
+        crate::backend::db::repositories::records::repository_owner_names(&ctx.state.pool, &ids)
+            .await
+            .map_err(|_| unavailable(ctx))?;
     let mut repositories = Vec::new();
     for candidate in candidates {
         let owner = owners
@@ -1499,7 +1602,7 @@ mod tests {
             unreachable!()
         };
         sqlx::query("INSERT INTO node_configuration(id, setup_completed) VALUES(1, TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(sqlite).await.unwrap();
-        let owner = db::users::accounts::create_user(&pool, "alice", None)
+        let owner = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
@@ -1507,7 +1610,9 @@ mod tests {
             crate::backend::repositories::lifecycle::provision(
                 (&pool, None),
                 root.path(),
-                db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+                crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+                    owner.id,
+                ),
                 name,
                 None,
                 private,
@@ -1536,15 +1641,17 @@ mod tests {
         .await
         .unwrap();
         let repo = repository(&ctx, "alice", "proj").await.unwrap();
-        let private = db::repositories::records::get_repository(&pool, "alice", "vault")
-            .await
-            .unwrap()
-            .unwrap();
-        let display = |id, name: &str| db::pull_requests::records::PullRequestHeadDisplay {
-            id,
-            name: name.into(),
-            owner_name: Some("alice".into()),
-        };
+        let private =
+            crate::backend::db::repositories::records::get_repository(&pool, "alice", "vault")
+                .await
+                .unwrap()
+                .unwrap();
+        let display =
+            |id, name: &str| crate::backend::db::pull_requests::records::PullRequestHeadDisplay {
+                id,
+                name: name.into(),
+                owner_name: Some("alice".into()),
+            };
         let mut cache = HashMap::new();
         assert!(matches!(
             listed_head(

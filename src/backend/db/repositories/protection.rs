@@ -1,12 +1,12 @@
 //! Branch protection rules and commit statuses.
-use crate::backend::ci::workflows::{
-    github_glob_matches_bounded, WorkflowMatchBudget, WorkflowMatchLimit,
-};
 use anyhow::Result;
 use codeyard_db_core::models::BranchProtectionRule;
 use codeyard_db_core::models::CommitStatus;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
+use codeyard_model::workflow_glob::github_glob_matches_bounded;
+use codeyard_model::workflow_glob::WorkflowMatchBudget;
+use codeyard_model::workflow_glob::WorkflowMatchLimit;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ProtectionWriteRefusal {

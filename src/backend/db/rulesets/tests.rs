@@ -2,7 +2,7 @@ use super::*;
 use serde_json::json;
 #[test]
 fn repository_and_ref_selectors_share_native_globs_and_effective_typed_values() {
-    use crate::backend::ci::workflows::WorkflowMatchBudget;
+    use codeyard_model::workflow_glob::WorkflowMatchBudget;
     let values = std::collections::HashMap::from([
         ("critical".to_owned(), vec!["true".to_owned()]),
         (

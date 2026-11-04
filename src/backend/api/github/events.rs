@@ -1,6 +1,14 @@
 //! Issue events and discussion entries share one chronological, paginated timeline.
-use super::{comments, issues, labels, pagination::Pagination, pulls, repository, Error, Result};
-use crate::backend::{app::AppState, db, db::assignees::AssignedItem, webhooks::payloads};
+
+use crate::backend::api::github::pagination::Pagination;
+
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::assignees::AssignedItem;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::HeaderMap,
@@ -15,14 +23,14 @@ type Params = HashMap<String, String>;
 
 async fn event_document(
     state: &AppState,
-    auth: Option<&super::auth::Authentication>,
+    auth: Option<&crate::backend::api::github::auth::Authentication>,
     repo: &codeyard_db_core::models::Repository,
     owner: &str,
     id: i64,
     include_issue: bool,
     issues: &mut HashMap<(String, i64), Value>,
 ) -> Result<Value> {
-    let event = db::timeline::get_event(&state.pool, repo.id, id)
+    let event = crate::backend::db::timeline::get_event(&state.pool, repo.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -32,12 +40,13 @@ async fn event_document(
         _ => return Err(Error::missing()),
     };
     let actor = match event.actor_id {
-        Some(id) => db::users::accounts::get_user_by_id(&state.pool, id)
+        Some(id) => crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?,
         None => None,
     };
-    let mut value = payloads::issue_event(&event, actor.as_ref(), repo, owner);
+    let mut value =
+        crate::backend::webhooks::payloads::issue_event(&event, actor.as_ref(), repo, owner);
     match event.kind.as_str() {
         "renamed" => value["rename"] = json!({"from":event.previous,"to":event.detail}),
         "labeled" | "unlabeled" => {
@@ -48,10 +57,15 @@ async fn event_document(
         }
         "milestoned" | "demilestoned" => value["milestone"] = json!({"title":event.detail}),
         "assigned" | "unassigned" => {
-            let user = db::users::accounts::get_user_by_username(&state.pool, &event.detail)
-                .await
-                .map_err(Error::unavailable)?;
-            value["assignee"] = user.as_ref().map_or(Value::Null, payloads::user);
+            let user = crate::backend::db::users::accounts::get_user_by_username(
+                &state.pool,
+                &event.detail,
+            )
+            .await
+            .map_err(Error::unavailable)?;
+            value["assignee"] = user
+                .as_ref()
+                .map_or(Value::Null, crate::backend::webhooks::payloads::user);
             value["assigner"] = value["actor"].clone();
         }
         _ => {}
@@ -61,9 +75,9 @@ async fn event_document(
         if !issues.contains_key(&key) {
             issues.insert(
                 key.clone(),
-                issues::document(
+                crate::backend::api::github::issues::document(
                     &state.pool,
-                    issues::Reader::Request(state, auth),
+                    crate::backend::api::github::issues::Reader::Request(state, auth),
                     repo,
                     owner,
                     item,
@@ -103,31 +117,35 @@ async fn review_document(
     owner: &str,
     id: i64,
 ) -> Result<Value> {
-    let review = db::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
-        .await
-        .map_err(Error::unavailable)?
-        .filter(|review| review.state != "pending")
-        .ok_or_else(Error::missing)?;
-    let pull =
-        db::pull_requests::records::get_pull_request_by_id(&state.pool, review.pull_request_id)
+    let review =
+        crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
-            .filter(|pull| pull.repo_id == repo.id)
+            .filter(|review| review.state != "pending")
             .ok_or_else(Error::missing)?;
-    let user = db::users::accounts::get_user_by_id(&state.pool, review.author_id)
+    let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+        &state.pool,
+        review.pull_request_id,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .filter(|pull| pull.repo_id == repo.id)
+    .ok_or_else(Error::missing)?;
+    let user = crate::backend::db::users::accounts::get_user_by_id(&state.pool, review.author_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let mut value = payloads::pull_request_review_json(
+    let mut value = crate::backend::webhooks::payloads::pull_request_review_json(
         &review,
-        &payloads::Person::of(&user),
+        &crate::backend::webhooks::payloads::Person::of(&user),
         &pull,
         repo,
         owner,
     );
-    value["user"] = payloads::user(&user);
+    value["user"] = crate::backend::webhooks::payloads::user(&user);
     value["event"] = json!("reviewed");
-    value["author_association"] = json!(pulls::association(&state.pool, repo, user.id).await?);
+    value["author_association"] =
+        json!(crate::backend::api::github::pulls::association(&state.pool, repo, user.id).await?);
     Ok(value)
 }
 
@@ -140,12 +158,14 @@ async fn list(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let item = match p.get("issue_number") {
-        Some(number) => Some(labels::item(&state.pool, repo.id, number).await?),
+        Some(number) => {
+            Some(crate::backend::api::github::labels::item(&state.pool, repo.id, number).await?)
+        }
         None => None,
     };
     let timeline = uri.path().ends_with("/timeline");
     let (offset, limit) = page.window()?;
-    let rows = db::timeline::list_entries(
+    let rows = crate::backend::db::timeline::list_entries(
         &state.pool,
         repo.id,
         item,
@@ -175,18 +195,23 @@ async fn list(
             }
             "review" => review_document(&state, &repo, &p["owner"], id).await?,
             "issue_comment" | "pr_comment" => {
-                let comment = comments::find(
+                let comment = crate::backend::api::github::comments::find(
                     &state.pool,
                     repo.id,
-                    payloads::conversation_comment_id(id, kind == "pr_comment"),
+                    codeyard_model::webhook_ids::conversation_comment_id(id, kind == "pr_comment"),
                 )
                 .await?;
-                let mut value =
-                    comments::document(&state.pool, &repo, &p["owner"], &comment).await?;
+                let mut value = crate::backend::api::github::comments::document(
+                    &state.pool,
+                    &repo,
+                    &p["owner"],
+                    &comment,
+                )
+                .await?;
                 value["event"] = json!("commented");
                 value["actor"] = value["user"].clone();
                 value["author_association"] = json!(
-                    pulls::association(
+                    crate::backend::api::github::pulls::association(
                         &state.pool,
                         &repo,
                         value["user"]["id"].as_i64().ok_or_else(Error::missing)?

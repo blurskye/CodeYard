@@ -1,4 +1,5 @@
-use crate::backend::db::source_imports::{ImportRefusal, SourceImport};
+use crate::backend::db::source_imports::ImportRefusal;
+use crate::backend::db::source_imports::SourceImport;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -20,7 +21,7 @@ pub async fn start(
 ) -> Result<SourceImport> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
         ImportRefusal::Denied
     );
     let previous: Option<SourceImport> =
@@ -47,7 +48,8 @@ pub async fn finish(pool: &SqlitePool, repo: i64, generation: &str, success: boo
 pub async fn cancel(pool: &SqlitePool, actor: i64, repo: i64) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_archive_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::sqlite::discussions::lock_archive_authority(&mut tx, actor, repo)
+            .await?,
         ImportRefusal::Denied
     );
     sqlx::query("DELETE FROM repository_imports WHERE repo_id=$1")

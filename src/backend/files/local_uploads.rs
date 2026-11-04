@@ -1,5 +1,5 @@
-use super::uploads::upload;
-use crate::backend::db::files as files_db;
+use crate::backend::files::uploads::upload;
+
 use crate::backend::storage::ObjectStore;
 use crate::backend::storage::StorageError;
 use codeyard_db_core::DbPool;
@@ -28,14 +28,14 @@ pub enum LocalUploadError {
 pub async fn put_local_upload(
     pool: &DbPool,
     store: &ObjectStore,
-    actor: impl Into<files_db::FileAuthority>,
+    actor: impl Into<crate::backend::db::files::FileAuthority>,
     file_id: Uuid,
     content_type: &str,
     reader: impl AsyncRead + Unpin,
 ) -> Result<(), LocalUploadError> {
     let actor = actor.into();
     let actor_id = actor.user_id.ok_or(LocalUploadError::NotFound)?;
-    let first = files_db::get_owned_file(pool, file_id, actor_id)
+    let first = crate::backend::db::files::get_owned_file(pool, file_id, actor_id)
         .await
         .map_err(|_| LocalUploadError::MetadataUnavailable)?
         .ok_or(LocalUploadError::NotFound)?;
@@ -55,7 +55,7 @@ pub async fn put_local_upload(
                 .try_acquire_io()
                 .map_err(|_| LocalUploadError::StorageUnavailable)?,
         );
-        let file = files_db::get_owned_file(pool, file_id, actor_id)
+        let file = crate::backend::db::files::get_owned_file(pool, file_id, actor_id)
             .await
             .map_err(|_| LocalUploadError::MetadataUnavailable)?
             .ok_or(LocalUploadError::NotFound)?;
@@ -72,7 +72,7 @@ pub async fn put_local_upload(
                 StorageError::Unavailable => LocalUploadError::StorageUnavailable,
                 _ => LocalUploadError::Rejected,
             })?;
-        if !files_db::can_publish_upload(pool, file_id, actor)
+        if !crate::backend::db::files::can_publish_upload(pool, file_id, actor)
             .await
             .map_err(|_| LocalUploadError::MetadataUnavailable)?
         {

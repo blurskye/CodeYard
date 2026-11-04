@@ -1,6 +1,5 @@
 //! Shared HTTP plumbing: config, request context, CSRF, errors, middleware, origin checks,
 //! page rendering, sessions and static assets. Resource areas use these and own no routes here.
-pub(crate) mod config;
 pub(crate) mod context;
 pub(crate) mod credentials;
 pub(crate) mod csrf;

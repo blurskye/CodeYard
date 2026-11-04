@@ -1,7 +1,9 @@
 //! The iroh endpoint: protocol names, relay choice, binding, and the rule that only
 //! active cluster members may connect.
-use super::{identity::NodeKey, link::Link, pairing::PairingHandler, tcp};
-use crate::backend::db;
+use crate::backend::cluster::link::Link;
+use crate::backend::cluster::pairing::PairingHandler;
+use codeyard_support::node_identity::NodeKey;
+
 use anyhow::{anyhow, bail, Context, Result};
 use codeyard_db_core::DbPool;
 use futures_util::{stream::FuturesUnordered, StreamExt};
@@ -188,7 +190,7 @@ impl EndpointHooks for MembersOnly {
 /// An active member whose roles the installation's mode allows: in single-node mode only
 /// runners connect, so a node joined for another role is refused on its next request.
 pub(crate) async fn active_member(pool: &DbPool, peer: PublicKey) -> Result<bool> {
-    db::cluster::is_admitted_node(pool, &peer.to_string()).await
+    crate::backend::db::cluster::is_admitted_node(pool, &peer.to_string()).await
 }
 
 /// iroh's connections wait 30 s for a silent peer. Three missed 5 s heartbeats is enough
@@ -332,7 +334,12 @@ pub async fn dial_node(
             tokio::time::sleep(std::time::Duration::from_millis(index.min(5) as u64 * 200)).await;
             tokio::time::timeout(
                 DIAL_TIMEOUT,
-                Box::pin(tcp::dial(iroh.key(), *tcp_address, node, alpn)),
+                Box::pin(crate::backend::cluster::tcp::dial(
+                    iroh.key(),
+                    *tcp_address,
+                    node,
+                    alpn,
+                )),
             )
             .await
             .map_err(|_| anyhow!("timed out reaching {tcp_address} over TCP"))?

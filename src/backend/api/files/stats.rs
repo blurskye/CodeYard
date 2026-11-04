@@ -1,8 +1,7 @@
-use crate::backend::{
-    api::{http::error::ApiError, http::session::get_current_user},
-    app::AppState,
-    db::files as files_db,
-};
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -43,7 +42,7 @@ pub async fn get_my_file_stats(
     headers: HeaderMap,
 ) -> Result<Json<UserFileStatsResponse>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    let stats = files_db::get_user_file_stats(&state.pool, user.id)
+    let stats = crate::backend::db::files::get_user_file_stats(&state.pool, user.id)
         .await
         .map_err(|_| {
             (

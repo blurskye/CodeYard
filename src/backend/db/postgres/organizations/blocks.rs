@@ -1,5 +1,5 @@
-use super::authority::*;
 use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::postgres::organizations::authority::*;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::User;
@@ -70,7 +70,7 @@ pub async fn change(
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
-    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+    if !crate::backend::db::postgres::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
     let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE id=$1 FOR UPDATE")

@@ -1,5 +1,6 @@
-use super::access::{lock_readable_repository_in_transaction, readable_condition};
 use crate::backend::db::repositories::engagement::StarSort;
+use crate::backend::db::sqlite::repositories::access::lock_readable_repository_in_transaction;
+use crate::backend::db::sqlite::repositories::access::readable_condition;
 use crate::backend::db::sqlite::search::contains;
 use crate::backend::db::users::blocks::InteractionBlocked;
 use anyhow::Result;
@@ -30,8 +31,12 @@ async fn begin_removal(
 ) -> Result<(Transaction<'_, Sqlite>, i64)> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if let Some(credential) = actor.credential() {
-        super::super::users::transitions::require_account(&mut tx, actor.user_id, &credential)
-            .await?;
+        crate::backend::db::sqlite::users::transitions::require_account(
+            &mut tx,
+            actor.user_id,
+            &credential,
+        )
+        .await?;
     }
     Ok((tx, actor.user_id))
 }
@@ -43,9 +48,17 @@ async fn begin_change(
 ) -> Result<(Transaction<'_, Sqlite>, i64)> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let user_id = actor.user_id;
-    super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
+    crate::backend::db::sqlite::users::blocks::require_repository_interaction(
+        &mut tx, user_id, repo_id,
+    )
+    .await?;
     if let Some(credential) = actor.credential() {
-        super::super::users::transitions::require_account(&mut tx, user_id, &credential).await?;
+        crate::backend::db::sqlite::users::transitions::require_account(
+            &mut tx,
+            user_id,
+            &credential,
+        )
+        .await?;
     }
     require_readable(&mut tx, user_id, repo_id).await?;
     Ok((tx, user_id))

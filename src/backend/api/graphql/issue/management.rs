@@ -1,15 +1,14 @@
 use super::*;
-use crate::backend::db::issues::management as store;
 
 pub(super) fn error(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<store::Refusal>() {
+    match error.downcast_ref::<crate::backend::db::issues::management::Refusal>() {
         Some(refusal) => Error::new(refusal.to_string()),
         None => unavailable(error),
     }
 }
 
 pub(super) async fn linked(
-    branch: store::LinkedBranch,
+    branch: crate::backend::db::issues::management::LinkedBranch,
     request: &RequestContext,
 ) -> Result<Option<Value>> {
     linked_at(branch, request, &mut std::collections::HashMap::new()).await
@@ -24,7 +23,7 @@ type LinkedSnapshots = std::collections::HashMap<
 >;
 
 async fn linked_target(
-    branch: &store::LinkedBranch,
+    branch: &crate::backend::db::issues::management::LinkedBranch,
     request: &RequestContext,
     snapshots: &mut LinkedSnapshots,
 ) -> Result<Option<String>> {
@@ -59,7 +58,7 @@ async fn linked_target(
 }
 
 async fn linked_at(
-    branch: store::LinkedBranch,
+    branch: crate::backend::db::issues::management::LinkedBranch,
     request: &RequestContext,
     snapshots: &mut LinkedSnapshots,
 ) -> Result<Option<Value>> {
@@ -67,7 +66,7 @@ async fn linked_at(
         return Ok(None);
     };
     let (repo, _) = snapshots[&branch.repo_id].as_ref().ok_or_else(missing)?;
-    let reference = super::super::git_objects::reference_at(
+    let reference = crate::backend::api::graphql::git_objects::reference_at(
         repo,
         &format!("refs/heads/{}", branch.name),
         &oid,
@@ -87,11 +86,14 @@ pub(super) async fn resolve(
     id: i64,
 ) -> Result<Value> {
     match field {
-        "isPinned" => Ok(json!(store::pinned(&request.state.pool, repo.id)
-            .await
-            .map_err(unavailable)?
-            .iter()
-            .any(|issue| issue.id == id))),
+        "isPinned" => Ok(json!(crate::backend::db::issues::management::pinned(
+            &request.state.pool,
+            repo.id
+        )
+        .await
+        .map_err(unavailable)?
+        .iter()
+        .any(|issue| issue.id == id))),
         "closedByPullRequestsReferences" => {
             connection::validate(ctx)?;
             let issue = db::issues::get_issue_by_id(&request.state.pool, id)
@@ -133,9 +135,10 @@ pub(super) async fn resolve(
             connection::validate(ctx)?;
             let mut branches = Vec::new();
             let mut snapshots = LinkedSnapshots::new();
-            for branch in store::linked_branches(&request.state.pool, id)
-                .await
-                .map_err(unavailable)?
+            for branch in
+                crate::backend::db::issues::management::linked_branches(&request.state.pool, id)
+                    .await
+                    .map_err(unavailable)?
             {
                 request.charge(branch.name.len() + 104)?;
                 if linked_target(&branch, request, &mut snapshots)
@@ -176,9 +179,15 @@ pub(super) async fn mutation(
     let mut payload = json!({"clientMutationId":input["clientMutationId"]});
     match field {
         "pinIssue" | "unpinIssue" => {
-            store::pin(pool, actor, repo.id, id, field == "pinIssue")
-                .await
-                .map_err(error)?;
+            crate::backend::db::issues::management::pin(
+                pool,
+                actor,
+                repo.id,
+                id,
+                field == "pinIssue",
+            )
+            .await
+            .map_err(error)?;
             payload["issue"] = object(
                 &db::issues::get_issue_by_id(pool, id)
                     .await
@@ -187,7 +196,7 @@ pub(super) async fn mutation(
             );
         }
         "deleteIssue" => {
-            store::delete(pool, actor, repo.id, id)
+            crate::backend::db::issues::management::delete(pool, actor, repo.id, id)
                 .await
                 .map_err(error)?;
             payload["repository"] = repository::object(repo);
@@ -198,13 +207,20 @@ pub(super) async fn mutation(
                     "Creating labels during issue transfer is not supported",
                 ));
             }
-            let destination = super::mutations::id(input, "repositoryId", "R")?;
+            let destination =
+                crate::backend::api::graphql::issue::mutations::id(input, "repositoryId", "R")?;
             let target = repository::by_id(destination, request).await?;
             request.authorize(target.id, "issues", true).await?;
             payload["issue"] = object(
-                &store::transfer(pool, actor, repo.id, id, destination)
-                    .await
-                    .map_err(error)?,
+                &crate::backend::db::issues::management::transfer(
+                    pool,
+                    actor,
+                    repo.id,
+                    id,
+                    destination,
+                )
+                .await
+                .map_err(error)?,
             );
         }
         "createLinkedBranch" => {
@@ -215,7 +231,7 @@ pub(super) async fn mutation(
             let destination = if input["repositoryId"].is_null() {
                 repo.id
             } else {
-                super::mutations::id(input, "repositoryId", "R")?
+                crate::backend::api::graphql::issue::mutations::id(input, "repositoryId", "R")?
             };
             let target = repository::by_id(destination, request).await?;
             request.authorize(target.id, "contents", true).await?;

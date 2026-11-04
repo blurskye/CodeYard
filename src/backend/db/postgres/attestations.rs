@@ -1,4 +1,9 @@
-use crate::backend::db::attestations::{Attestation, Bundle, Filter, Owner, Refusal, Summary};
+use crate::backend::db::attestations::Attestation;
+use crate::backend::db::attestations::Bundle;
+use crate::backend::db::attestations::Filter;
+use crate::backend::db::attestations::Owner;
+use crate::backend::db::attestations::Refusal;
+use crate::backend::db::attestations::Summary;
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -36,9 +41,16 @@ pub async fn create(
     let actor = credential.user_id;
     let mut tx = begin(pool).await?;
     anyhow::ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?
-            && super::credentials::repository(&mut tx, &credential, repo, "attestations", true)
-                .await?,
+        crate::backend::db::postgres::discussions::lock_write_authority(&mut tx, actor, repo)
+            .await?
+            && crate::backend::db::postgres::credentials::repository(
+                &mut tx,
+                &credential,
+                repo,
+                "attestations",
+                true
+            )
+            .await?,
         Refusal::Denied
     );
     sqlx::query(
@@ -65,7 +77,7 @@ pub async fn create(
 }
 
 fn condition() -> String {
-    format!("FROM artifact_attestations a JOIN repositories r ON r.id=a.repo_id LEFT JOIN users u ON u.id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND (CAST($10 AS TEXT) IS NULL OR EXISTS(SELECT 1 FROM sessions s WHERE s.id=$10 AND s.user_id=u.id AND s.expires_at>NOW())) WHERE (CAST($2 AS BIGINT) IS NULL OR r.owner_org_id=$2) AND (CAST($9 AS BIGINT) IS NULL OR r.owner_user_id=$9) AND (CAST($3 AS BIGINT) IS NULL OR r.id=$3) AND (CAST($4 AS TEXT[]) IS NULL OR EXISTS(SELECT 1 FROM attestation_subjects s WHERE s.attestation_id=a.id AND s.digest=ANY($4))) AND (CAST($5 AS TEXT) IS NULL OR a.predicate_type=$5 OR ($5='provenance' AND a.predicate_type LIKE 'https://slsa.dev/provenance/%') OR ($5='sbom' AND (a.predicate_type LIKE 'https://spdx.dev/Document%' OR a.predicate_type LIKE 'https://cyclonedx.org/bom%')) OR ($5='release' AND (a.predicate_type LIKE 'https://in-toto.io/attestation/release/%' OR a.predicate_type LIKE 'https://github.com/attestations/release/%'))) AND {}", super::repositories::access::readable_condition())
+    format!("FROM artifact_attestations a JOIN repositories r ON r.id=a.repo_id LEFT JOIN users u ON u.id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND (CAST($10 AS TEXT) IS NULL OR EXISTS(SELECT 1 FROM sessions s WHERE s.id=$10 AND s.user_id=u.id AND s.expires_at>NOW())) WHERE (CAST($2 AS BIGINT) IS NULL OR r.owner_org_id=$2) AND (CAST($9 AS BIGINT) IS NULL OR r.owner_user_id=$9) AND (CAST($3 AS BIGINT) IS NULL OR r.id=$3) AND (CAST($4 AS TEXT[]) IS NULL OR EXISTS(SELECT 1 FROM attestation_subjects s WHERE s.attestation_id=a.id AND s.digest=ANY($4))) AND (CAST($5 AS TEXT) IS NULL OR a.predicate_type=$5 OR ($5='provenance' AND a.predicate_type LIKE 'https://slsa.dev/provenance/%') OR ($5='sbom' AND (a.predicate_type LIKE 'https://spdx.dev/Document%' OR a.predicate_type LIKE 'https://cyclonedx.org/bom%')) OR ($5='release' AND (a.predicate_type LIKE 'https://in-toto.io/attestation/release/%' OR a.predicate_type LIKE 'https://github.com/attestations/release/%'))) AND {}", crate::backend::db::postgres::repositories::access::readable_condition())
 }
 
 pub async fn list(pool: &PgPool, filter: &Filter<'_>) -> Result<Vec<Attestation>> {
@@ -94,7 +106,7 @@ pub async fn list(pool: &PgPool, filter: &Filter<'_>) -> Result<Vec<Attestation>
 }
 
 pub async fn summaries(pool: &PgPool, filter: &Filter<'_>) -> Result<Vec<Summary>> {
-    Ok(sqlx::query_as(&format!("SELECT a.id,a.repo_id,r.name AS repository,r.owner_org_id,COALESCE((SELECT name FROM organizations WHERE id=r.owner_org_id),(SELECT username FROM users WHERE id=r.owner_user_id)) AS owner_name,COALESCE(NOT r.is_archived AND ({write_access})>=3,false) AS can_delete,a.predicate_type,(SELECT COALESCE(json_agg(s.digest ORDER BY s.digest),'[]')::text FROM attestation_subjects s WHERE s.attestation_id=a.id) AS subjects {} AND a.id>$6 AND a.id<$7 ORDER BY a.id {} LIMIT $8", condition(), if filter.before < i64::MAX { "DESC" } else { "ASC" }, write_access=super::repositories::access::USER_REPO_ACCESS_SQL))
+    Ok(sqlx::query_as(&format!("SELECT a.id,a.repo_id,r.name AS repository,r.owner_org_id,COALESCE((SELECT name FROM organizations WHERE id=r.owner_org_id),(SELECT username FROM users WHERE id=r.owner_user_id)) AS owner_name,COALESCE(NOT r.is_archived AND ({write_access})>=3,false) AS can_delete,a.predicate_type,(SELECT COALESCE(json_agg(s.digest ORDER BY s.digest),'[]')::text FROM attestation_subjects s WHERE s.attestation_id=a.id) AS subjects {} AND a.id>$6 AND a.id<$7 ORDER BY a.id {} LIMIT $8", condition(), if filter.before < i64::MAX { "DESC" } else { "ASC" }, write_access=crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL))
         .bind(filter.actor).bind(filter.owner.and_then(Owner::org)).bind(filter.repo).bind(filter.digests).bind(filter.predicate).bind(filter.after).bind(filter.before).bind(filter.limit).bind(filter.owner.and_then(Owner::user)).bind(filter.session).fetch_all(pool).await?)
 }
 
@@ -132,7 +144,7 @@ pub async fn delete(
     let credential = actor.into();
     let actor = credential.user_id;
     let mut tx = begin(pool).await?;
-    super::credentials::require_account(&mut tx, &credential)
+    crate::backend::db::postgres::credentials::require_account(&mut tx, &credential)
         .await
         .map_err(|error| {
             if error.is::<codeyard_support::credentials::AccountRestricted>() {
@@ -141,12 +153,13 @@ pub async fn delete(
                 error
             }
         })?;
-    let rows: Vec<(i64,i64)> = sqlx::query_as(&format!("SELECT DISTINCT a.id,a.repo_id FROM artifact_attestations a JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=$4 WHERE ((CAST($1 AS BIGINT) IS NOT NULL AND r.owner_org_id=$1) OR (CAST($5 AS BIGINT) IS NOT NULL AND r.owner_user_id=$5)) AND (a.id=ANY($2) OR EXISTS(SELECT 1 FROM attestation_subjects s WHERE s.attestation_id=a.id AND s.digest=ANY($3))) AND {} ORDER BY a.repo_id,a.id",super::repositories::access::readable_condition()))
+    let rows: Vec<(i64,i64)> = sqlx::query_as(&format!("SELECT DISTINCT a.id,a.repo_id FROM artifact_attestations a JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=$4 WHERE ((CAST($1 AS BIGINT) IS NOT NULL AND r.owner_org_id=$1) OR (CAST($5 AS BIGINT) IS NOT NULL AND r.owner_user_id=$5)) AND (a.id=ANY($2) OR EXISTS(SELECT 1 FROM attestation_subjects s WHERE s.attestation_id=a.id AND s.digest=ANY($3))) AND {} ORDER BY a.repo_id,a.id",crate::backend::db::postgres::repositories::access::readable_condition()))
         .bind(owner.org()).bind(ids).bind(digests).bind(actor).bind(owner.user()).fetch_all(&mut *tx).await?;
     for (_, repo) in &rows {
         anyhow::ensure!(
-            super::discussions::lock_write_authority(&mut tx, actor, *repo).await?
-                && super::credentials::repository(
+            crate::backend::db::postgres::discussions::lock_write_authority(&mut tx, actor, *repo)
+                .await?
+                && crate::backend::db::postgres::credentials::repository(
                     &mut tx,
                     &credential,
                     *repo,

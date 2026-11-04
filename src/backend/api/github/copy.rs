@@ -1,15 +1,16 @@
 //! Forks and template generation use the same authoritative creation and storage pipeline as forms.
-use super::{
-    auth,
-    optional_json::OptionalJson,
-    repos::{document, lifecycle_error},
-    repository, Error, Result,
-};
+
+use crate::backend::api::github::optional_json::OptionalJson;
+use crate::backend::api::github::repos::document;
+use crate::backend::api::github::repos::lifecycle_error;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::db::repositories::creation::RepositoryCreationOwner;
 use crate::backend::db::repositories::creation::RepositoryTarget;
-use crate::backend::repositories::lifecycle;
+
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -26,10 +27,11 @@ async fn organization_owner(
     actor: i64,
     slug: &str,
 ) -> Result<RepositoryCreationOwner> {
-    let org = db::organizations::profiles::get_public_organization(&state.pool, slug)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let org =
+        crate::backend::db::organizations::profiles::get_public_organization(&state.pool, slug)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     Ok(RepositoryCreationOwner {
         actor_id: actor,
         target: RepositoryTarget::Organization(org.id),
@@ -60,7 +62,7 @@ async fn fork(
     OptionalJson(body): OptionalJson<Value>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (source, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = actor.ok_or_else(auth::required)?;
+    let auth = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = &auth.user;
     let input = body
         .map(serde_json::from_value::<Option<Fork>>)
@@ -72,13 +74,13 @@ async fn fork(
         Some(slug) => organization_owner(&state, actor.id, slug).await?,
         None => RepositoryCreationOwner::personal(actor.id),
     };
-    auth::require_copy_owner(&state, &auth, target.target).await?;
-    let repo = lifecycle::fork_into(
+    crate::backend::api::github::auth::require_copy_owner(&state, &auth, target.target).await?;
+    let repo = crate::backend::repositories::lifecycle::fork_into(
         &state.pool,
         state.cluster.as_ref(),
         &state.repos_path,
         &state.notification_broadcaster,
-        lifecycle::ForkOptions {
+        crate::backend::repositories::lifecycle::ForkOptions {
             owner: target,
             name: input.name.as_deref(),
             default_branch_only: input.default_branch_only,
@@ -114,15 +116,15 @@ async fn generate(
 ) -> Result<(StatusCode, Json<Value>)> {
     let (source, actor) =
         repository(&state, &headers, &template_owner, &template_name, true).await?;
-    let auth = actor.ok_or_else(auth::required)?;
+    let auth = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     let target = owner(&state, &auth.user, input.owner.as_deref()).await?;
-    auth::require_copy_owner(&state, &auth, target.target).await?;
-    let repo = lifecycle::generate(
+    crate::backend::api::github::auth::require_copy_owner(&state, &auth, target.target).await?;
+    let repo = crate::backend::repositories::lifecycle::generate(
         (&state.pool, state.cluster.as_ref()),
         &state.repos_path,
         target,
         source.id,
-        lifecycle::TemplateOptions {
+        crate::backend::repositories::lifecycle::TemplateOptions {
             name: &input.name,
             description: input.description.as_deref(),
             private: input.private,

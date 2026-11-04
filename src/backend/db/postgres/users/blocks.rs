@@ -41,7 +41,8 @@ pub(crate) async fn require_repository_interaction(
     actor: i64,
     repo: i64,
 ) -> Result<()> {
-    super::transitions::lock_accounts_shared(connection, &[actor]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(connection, &[actor])
+        .await?;
     let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)").bind(actor).fetch_one(&mut *connection).await?;
     anyhow::ensure!(
         active && !repository_interaction_blocked(connection, actor, repo).await?,
@@ -60,8 +61,12 @@ pub async fn change_block(
     anyhow::ensure!(user != target, InvalidBlock);
     let mut tx = pool.begin().await?;
     // Either participant's effects must finish before removing their shared state.
-    super::transitions::lock_accounts(&mut tx, &[user, target]).await?;
-    super::transitions::require_account_exclusive(&mut tx, user, credential).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts(&mut tx, &[user, target])
+        .await?;
+    crate::backend::db::postgres::users::transitions::require_account_exclusive(
+        &mut tx, user, credential,
+    )
+    .await?;
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1)")
         .bind(target)
         .fetch_one(&mut *tx)

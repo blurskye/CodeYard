@@ -1,9 +1,11 @@
-use super::{page_number, repository_cards, unavailable, DiscoveryReadError};
-use crate::backend::{
-    api::http::context::PageContext,
-    app::AppState,
-    db::{self, repositories::engagement::StarSort},
-};
+use crate::backend::api::discovery::page_number;
+use crate::backend::api::discovery::repository_cards;
+use crate::backend::api::discovery::unavailable;
+use crate::backend::api::discovery::DiscoveryReadError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::app::AppState;
+
+use crate::backend::db::repositories::engagement::StarSort;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode, Uri},
@@ -34,7 +36,7 @@ pub(crate) async fn starred_page(
 ) -> Result<StarredPage, DiscoveryReadError> {
     let offset = i64::try_from((page - 1).saturating_mul(STARS_PAGE_SIZE)).unwrap_or(i64::MAX);
     // One row past the page shows whether an older page exists.
-    let mut repos = db::repositories::engagement::list_starred_repositories(
+    let mut repos = crate::backend::db::repositories::engagement::list_starred_repositories(
         &state.pool,
         starred_by,
         viewer,

@@ -1,6 +1,10 @@
 //! The Git database API does not move refs when it creates objects.
-use super::{contents::store_error, repo_url, repository, Error, Result};
-use crate::backend::{app::AppState, repositories::store::repo_store};
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use crate::backend::repositories::store::repo_store;
 use axum::{
     extract::{DefaultBodyLimit, FromRequest, Path, Query, Request, State},
     http::{HeaderMap, StatusCode},
@@ -11,6 +15,7 @@ use axum::{
 use codeyard_git::objects::{
     ObjectWrite, Signature, TagObject, TreeChange, TreeObject, MAX_BLOB_WRITE_BYTES,
 };
+use codeyard_model::urls::repo_url;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -22,7 +27,7 @@ const BLOB_BODY_LIMIT: usize = MAX_BLOB_WRITE_BYTES * 6 + 64 * 1024;
 fn tree_document(tree: TreeObject, owner: &str, name: &str, repo: i64) -> Value {
     let url = repo_url(owner, name);
     json!({
-        "sha": tree.sha, "node_id": super::node_id::git_object("T", repo, &tree.sha), "url": format!("{url}/git/trees/{}", tree.sha), "truncated": tree.truncated,
+        "sha": tree.sha, "node_id": crate::backend::api::github::node_id::git_object("T", repo, &tree.sha), "url": format!("{url}/git/trees/{}", tree.sha), "truncated": tree.truncated,
         "tree": tree.tree.into_iter().map(|entry| {
             let mut value = json!({"path": entry.path, "mode": entry.mode, "type": entry.kind, "sha": entry.sha,
                 "url": format!("{url}/git/{}s/{}", entry.kind, entry.sha)});
@@ -52,7 +57,7 @@ async fn tag_document(
     .await
     .map_err(Error::unavailable)?;
     Ok(json!({
-        "sha": tag.sha, "node_id": super::node_id::git_object("TAG", repo, &tag.sha), "url": format!("{url}/git/tags/{}", tag.sha),
+        "sha": tag.sha, "node_id": crate::backend::api::github::node_id::git_object("TAG", repo, &tag.sha), "url": format!("{url}/git/tags/{}", tag.sha),
         "tag": tag.tag, "message": tag.message, "tagger": tag.tagger,
         "object": {"sha": tag.object, "type": tag.kind, "url": format!("{url}/git/{}s/{}", tag.kind, tag.object)},
         "verification": verification,
@@ -70,7 +75,10 @@ async fn tree(
         .git_tree(&sha, query.contains_key("recursive"))
         .await
         .map_err(store_error)?;
-    super::auth::recheck_repository_read(&state, &headers, repo.id, "contents").await?;
+    crate::backend::api::github::auth::recheck_repository_read(
+        &state, &headers, repo.id, "contents",
+    )
+    .await?;
     Ok(Json(tree_document(tree, &owner, &name, repo.id)))
 }
 
@@ -102,7 +110,7 @@ async fn create_blob(
     request: Request,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = auth.user.id;
     crate::backend::repositories::access::check_write(&state.pool, repo.id, actor)
         .await
@@ -118,7 +126,7 @@ async fn create_blob(
         .try_acquire_owned()
         .map_err(|_| Error::unavailable(()))?;
     let Json(input) = tokio::time::timeout(
-        super::super::repos::code::upload::READ_TIMEOUT,
+        crate::backend::api::repos::code::upload::READ_TIMEOUT,
         Json::<Blob>::from_request(request, &state),
     )
     .await
@@ -154,7 +162,7 @@ async fn create_blob(
         .map_err(write_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(json!({"sha": sha, "node_id": super::node_id::git_object("B", repo.id, &sha), "url": format!("{}/git/blobs/{sha}", repo_url(&owner, &name))})),
+        Json(json!({"sha": sha, "node_id": crate::backend::api::github::node_id::git_object("B", repo.id, &sha), "url": format!("{}/git/blobs/{sha}", repo_url(&owner, &name))})),
     )
         .into_response())
 }
@@ -184,7 +192,7 @@ async fn create_tree(
     Json(input): Json<Tree>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = auth.user.id;
     let store = repo_store(&repo, state.cluster.as_ref());
     let sha = store
@@ -234,7 +242,7 @@ async fn create_commit(
     Json(input): Json<Commit>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = auth.user;
     let author = input.author.unwrap_or(Signature {
         name: actor
@@ -277,7 +285,7 @@ async fn create_commit(
     Ok((
         StatusCode::CREATED,
         Json(
-            super::commits::git_document(
+            crate::backend::api::github::commits::git_document(
                 &state,
                 &mut Default::default(),
                 &commit,
@@ -308,7 +316,7 @@ async fn create_tag(
     Json(input): Json<Tag>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = auth.user;
     let tagger = input.tagger.unwrap_or(Signature {
         name: actor

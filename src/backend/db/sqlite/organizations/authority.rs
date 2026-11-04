@@ -14,7 +14,8 @@ pub(super) async fn credential(
     org: i64,
     permission: &str,
 ) -> Result<bool> {
-    super::super::credentials::writes(connection, actor, None, Some(org), permission).await
+    crate::backend::db::sqlite::credentials::writes(connection, actor, None, Some(org), permission)
+        .await
 }
 
 pub(super) async fn begin(pool: &SqlitePool) -> Result<Transaction<'_, Sqlite>> {
@@ -203,7 +204,7 @@ pub(super) async fn cancel_actor(
 ) -> Result<()> {
     let runs: Vec<i64> = sqlx::query_scalar("SELECT id FROM ci_runs WHERE triggered_by_id=?1 AND (status IN ('queued','running') OR completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) AND repo_id IN (SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=?2 AND owner_user_id IS NULL)")
         .bind(target).bind(org).fetch_all(&mut **tx).await?;
-    super::super::ci::stop_ci_runs(tx, &runs).await
+    crate::backend::db::sqlite::ci::stop_ci_runs(tx, &runs).await
 }
 pub(super) async fn cancel_team(
     tx: &mut Transaction<'_, Sqlite>,
@@ -213,7 +214,7 @@ pub(super) async fn cancel_team(
 ) -> Result<()> {
     let runs: Vec<i64> = sqlx::query_scalar("SELECT id FROM ci_runs WHERE repo_id=?1 AND (status IN ('queued','running') OR completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) AND triggered_by_id IN (SELECT user_id FROM effective_team_memberships WHERE team_id=?2) AND EXISTS(SELECT 1 FROM repositories WHERE id=?1 AND owner_kind='org' AND owner_org_id=?3 AND owner_user_id IS NULL)")
         .bind(repo).bind(team).bind(org).fetch_all(&mut **tx).await?;
-    super::super::ci::stop_ci_runs(tx, &runs).await
+    crate::backend::db::sqlite::ci::stop_ci_runs(tx, &runs).await
 }
 pub(super) async fn remaining_active_owner(
     connection: &mut SqliteConnection,

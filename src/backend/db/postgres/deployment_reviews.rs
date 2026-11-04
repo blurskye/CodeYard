@@ -72,9 +72,16 @@ pub async fn review(
     let actor = credential.user_id;
     let mut tx = pool.begin().await?;
     ensure!(
-        super::discussions::lock_read_authority(&mut tx, actor, repo).await?
-            && super::credentials::repository(&mut tx, &credential, repo, "deployments", true)
-                .await?,
+        crate::backend::db::postgres::discussions::lock_read_authority(&mut tx, actor, repo)
+            .await?
+            && crate::backend::db::postgres::credentials::repository(
+                &mut tx,
+                &credential,
+                repo,
+                "deployments",
+                true
+            )
+            .await?,
         Refusal::Denied
     );
     let source: CiRun =

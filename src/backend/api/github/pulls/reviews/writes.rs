@@ -1,14 +1,13 @@
-use super::super::super::{auth, json_parse_error, repository, Error, Result};
-use super::super::{comments, document as pull_document, target};
-use super::document;
-use crate::backend::{
-    app::AppState,
-    db,
-    repositories::{
-        access,
-        pull_requests::{self, reviews as domain},
-    },
-};
+use crate::backend::api::github::json_parse_error;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+
+use crate::backend::api::github::pulls::document as pull_document;
+use crate::backend::api::github::pulls::reviews::document;
+use crate::backend::api::github::pulls::target;
+use crate::backend::app::AppState;
+
 use axum::{
     body::Bytes,
     extract::{Path, State},
@@ -21,11 +20,15 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-fn failure(error: pull_requests::OperationError) -> Error {
+fn failure(error: crate::backend::repositories::pull_requests::OperationError) -> Error {
     match error {
-        pull_requests::OperationError::Invalid { message, .. }
-        | pull_requests::OperationError::Conflict { message, .. } => Error::invalid_simple(message),
-        other => super::super::mutations::operation_error(other),
+        crate::backend::repositories::pull_requests::OperationError::Invalid {
+            message, ..
+        }
+        | crate::backend::repositories::pull_requests::OperationError::Conflict {
+            message, ..
+        } => Error::invalid_simple(message),
+        other => crate::backend::api::github::pulls::mutations::operation_error(other),
     }
 }
 fn state_for(event: Option<&str>) -> Result<Option<String>> {
@@ -43,7 +46,7 @@ struct Create {
     event: Option<String>,
     commit_id: Option<String>,
     #[serde(default)]
-    comments: Vec<comments::Create>,
+    comments: Vec<crate::backend::api::github::pulls::comments::Create>,
 }
 
 async fn create(
@@ -53,7 +56,7 @@ async fn create(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = viewer.ok_or_else(auth::required)?;
+    let auth = viewer.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = &auth.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Create = if body.is_empty() {
@@ -62,7 +65,7 @@ async fn create(
         serde_json::from_slice(&body).map_err(json_parse_error)?
     };
     let review_state = state_for(input.event.as_deref())?;
-    crate::backend::issues::validate_body(input.body.as_deref().unwrap_or(""), false)
+    codeyard_model::issue_input::validate_body(input.body.as_deref().unwrap_or(""), false)
         .map_err(Error::invalid_simple)?;
     if input.comments.len() > 200 {
         return Err(Error::invalid_simple("A review holds at most 200 comments"));
@@ -82,18 +85,18 @@ async fn create(
             crate::backend::repositories::store::repo_store(&repo, state.cluster.as_ref())
                 .diff(pull.diff_base(), &pull.head_sha)
                 .await
-                .map_err(super::super::store_error)?,
+                .map_err(crate::backend::api::github::pulls::store_error)?,
         )
     } else {
         None
     };
     let mut prepared = Vec::new();
     for mut comment in input.comments {
-        crate::backend::issues::validate_body(&comment.body, true)
+        codeyard_model::issue_input::validate_body(&comment.body, true)
             .map_err(Error::invalid_simple)?;
         comment.commit_id = Some(commit.clone());
         prepared.push(
-            comments::prepare_with_diff(
+            crate::backend::api::github::pulls::comments::prepare_with_diff(
                 &state,
                 &headers,
                 &repo,
@@ -107,14 +110,14 @@ async fn create(
         );
     }
     if review_state.is_some() && prepared.is_empty() {
-        let review = domain::create_pull_request_review(
+        let review = crate::backend::repositories::pull_requests::reviews::create_pull_request_review(
             &state.pool,
             state.cluster.as_ref(),
             &state.notification_broadcaster,
             actor.id,
             &auth.credential(),
             (owner.clone(), name, number),
-            domain::CreatePullRequestReviewRequest {
+            crate::backend::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
                 state: review_state,
                 body: input.body,
                 commit_sha: Some(commit),
@@ -126,15 +129,15 @@ async fn create(
         .map_err(failure)?;
         return Ok(Json(document(&state, &owner, &repo, &pull, &review).await?));
     }
-    let review = domain::create_pull_request_review_batch(
+    let review = crate::backend::repositories::pull_requests::reviews::create_pull_request_review_batch(
         &state.pool,
         state.cluster.as_ref(),
         &state.notification_broadcaster,
         actor.id,
         &auth.credential(),
         (owner.clone(), name, number),
-        domain::CreatePullRequestReviewBatchRequest {
-            review: domain::CreatePullRequestReviewRequest {
+        crate::backend::repositories::pull_requests::reviews::CreatePullRequestReviewBatchRequest {
+            review: crate::backend::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
                 state: review_state,
                 body: input.body,
                 commit_sha: Some(commit),
@@ -160,10 +163,12 @@ async fn update(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(auth::required)?.user;
+    let actor = viewer
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Body = serde_json::from_slice(&body).map_err(json_parse_error)?;
-    let review = domain::edit_review(
+    let review = crate::backend::repositories::pull_requests::reviews::edit_review(
         &state.pool,
         &state.notification_broadcaster,
         actor.id,
@@ -182,21 +187,28 @@ async fn remove(
     Path((owner, name, number, id)): Path<(String, String, i32, i64)>,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(auth::required)?.user;
+    let actor = viewer
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
-    let review = db::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
-        .await
-        .map_err(Error::unavailable)?
-        .filter(|r| r.pull_request_id == pull.id && r.author_id == actor.id)
-        .ok_or_else(Error::missing)?;
+    let review =
+        crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
+            .await
+            .map_err(Error::unavailable)?
+            .filter(|r| r.pull_request_id == pull.id && r.author_id == actor.id)
+            .ok_or_else(Error::missing)?;
     if review.state != "pending" {
         return Err(Error::invalid_simple("Only pending reviews may be deleted"));
     }
-    let deleted =
-        db::pull_requests::reviews::delete_pending_review_by_id(&state.pool, pull.id, actor.id, id)
-            .await
-            .map_err(|e| failure(pull_requests::write_error(e)))?
-            .ok_or_else(Error::missing)?;
+    let deleted = crate::backend::db::pull_requests::reviews::delete_pending_review_by_id(
+        &state.pool,
+        pull.id,
+        actor.id,
+        id,
+    )
+    .await
+    .map_err(|e| failure(crate::backend::repositories::pull_requests::write_error(e)))?
+    .ok_or_else(Error::missing)?;
     Ok(Json(
         document(&state, &owner, &repo, &pull, &deleted).await?,
     ))
@@ -213,26 +225,27 @@ async fn submit(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = viewer.ok_or_else(auth::required)?;
+    let auth = viewer.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = &auth.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Submit = serde_json::from_slice(&body).map_err(json_parse_error)?;
-    let draft = db::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
-        .await
-        .map_err(Error::unavailable)?
-        .filter(|r| r.pull_request_id == pull.id && r.author_id == actor.id)
-        .ok_or_else(Error::missing)?;
+    let draft =
+        crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
+            .await
+            .map_err(Error::unavailable)?
+            .filter(|r| r.pull_request_id == pull.id && r.author_id == actor.id)
+            .ok_or_else(Error::missing)?;
     if draft.state != "pending" {
         return Err(Error::invalid_simple("Review is not pending"));
     }
-    let review = domain::create_pull_request_review(
+    let review = crate::backend::repositories::pull_requests::reviews::create_pull_request_review(
         &state.pool,
         state.cluster.as_ref(),
         &state.notification_broadcaster,
         actor.id,
         &auth.credential(),
         (owner.clone(), name, number),
-        domain::CreatePullRequestReviewRequest {
+        crate::backend::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
             state: state_for(Some(&input.event))?,
             body: input.body,
             commit_sha: draft.commit_sha,
@@ -260,9 +273,11 @@ async fn change_reviewers(
 ) -> Result<Response> {
     let (owner, name, number) = namespace;
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(auth::required)?.user;
+    let actor = viewer
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
-    if !access::can_write(&state.pool, &actor, &repo)
+    if !crate::backend::repositories::access::can_write(&state.pool, &actor, &repo)
         .await
         .map_err(Error::unavailable)?
     {
@@ -278,13 +293,13 @@ async fn change_reviewers(
         return Err(Error::invalid("At most 100 reviewers per request"));
     }
     for username in &names {
-        let user = db::users::accounts::get_user_by_username(&state.pool, username)
+        let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(|| Error::invalid("Reviewer not found"))?;
         if !remove
             && (user.id == pull.author_id
-                || !access::can_write(&state.pool, &user, &repo)
+                || !crate::backend::repositories::access::can_write(&state.pool, &user, &repo)
                     .await
                     .map_err(Error::unavailable)?)
         {
@@ -293,10 +308,14 @@ async fn change_reviewers(
             ));
         }
     }
-    let eligible =
-        db::pull_requests::team_reviewers::list(&state.pool, repo.id, None, Some(actor.id))
-            .await
-            .map_err(Error::unavailable)?;
+    let eligible = crate::backend::db::pull_requests::team_reviewers::list(
+        &state.pool,
+        repo.id,
+        None,
+        Some(actor.id),
+    )
+    .await
+    .map_err(Error::unavailable)?;
     if !remove
         && teams.iter().any(|slug| {
             !eligible
@@ -316,26 +335,28 @@ async fn change_reviewers(
         &pull,
         &teams,
         if remove {
-            db::pull_requests::team_reviewers::ReviewTeamAction::Remove
+            crate::backend::db::pull_requests::team_reviewers::ReviewTeamAction::Remove
         } else if rerequest {
-            db::pull_requests::team_reviewers::ReviewTeamAction::Rerequest
+            crate::backend::db::pull_requests::team_reviewers::ReviewTeamAction::Rerequest
         } else {
-            db::pull_requests::team_reviewers::ReviewTeamAction::Request
+            crate::backend::db::pull_requests::team_reviewers::ReviewTeamAction::Request
         },
     )
     .await
-    .map_err(super::super::mutations::operation_error)?;
+    .map_err(crate::backend::api::github::pulls::mutations::operation_error)?;
     for username in names {
         if remove || rerequest {
-            let existing =
-                db::pull_requests::reviews::list_pull_request_reviewers(&state.pool, pull.id)
-                    .await
-                    .map_err(Error::unavailable)?;
+            let existing = crate::backend::db::pull_requests::reviews::list_pull_request_reviewers(
+                &state.pool,
+                pull.id,
+            )
+            .await
+            .map_err(Error::unavailable)?;
             if existing
                 .iter()
                 .any(|u| u.username.eq_ignore_ascii_case(&username))
             {
-                domain::remove_requested_reviewer(
+                crate::backend::repositories::pull_requests::reviews::remove_requested_reviewer(
                     &state.pool,
                     actor.id,
                     owner.clone(),
@@ -344,21 +365,23 @@ async fn change_reviewers(
                     username.clone(),
                 )
                 .await
-                .map_err(super::super::mutations::operation_error)?;
+                .map_err(crate::backend::api::github::pulls::mutations::operation_error)?;
             }
         }
         if !remove {
-            domain::request_reviewer(
+            crate::backend::repositories::pull_requests::reviews::request_reviewer(
                 &state.pool,
                 &state.notification_broadcaster,
                 actor.id,
                 owner.clone(),
                 name.clone(),
                 number,
-                domain::RequestReviewerRequest { username },
+                crate::backend::repositories::pull_requests::reviews::RequestReviewerRequest {
+                    username,
+                },
             )
             .await
-            .map_err(super::super::mutations::operation_error)?;
+            .map_err(crate::backend::api::github::pulls::mutations::operation_error)?;
         }
     }
     let value = pull_document(&state, &headers, &repo, &owner, &pull, false).await?;

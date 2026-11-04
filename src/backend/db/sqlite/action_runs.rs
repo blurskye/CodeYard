@@ -17,7 +17,7 @@ pub(crate) async fn record(
         return Ok(run.clone());
     }
     let (workflow, number, root, attempt, head, owner) = if let Some(parent) = parent {
-        let source:CiRun=sqlx::query_as("SELECT * FROM ci_runs WHERE id=$1 AND repo_id=$2 AND workflow_path=$3 AND head_sha IS $4 AND branch=$5 AND event=$6").bind(parent).bind(run.repo_id).bind(&run.workflow_path).bind(&run.head_sha).bind(&run.branch).bind(&run.event).fetch_optional(&mut *connection).await?.ok_or(crate::backend::db::ci::CiAdmissionRefusal::Conflict("Rerun source changed"))?;
+        let source:CiRun=sqlx::query_as("SELECT * FROM ci_runs WHERE id=$1 AND repo_id=$2 AND workflow_path=$3 AND head_sha IS $4 AND branch=$5 AND event=$6").bind(parent).bind(run.repo_id).bind(&run.workflow_path).bind(&run.head_sha).bind(&run.branch).bind(&run.event).fetch_optional(&mut *connection).await?.ok_or(codeyard_db_core::ci_policy::CiAdmissionRefusal::Conflict("Rerun source changed"))?;
         let metadata: RunMetadata =
             sqlx::query_as("SELECT * FROM actions_run_metadata WHERE run_id=$1")
                 .bind(parent)
@@ -84,7 +84,7 @@ pub async fn list(
         "invalid workflow run page"
     );
     let mut tx = pool.begin().await?;
-    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "c");
     let phase = crate::backend::db::action_runs::state_sql(false, "c");
     let filter = format!(

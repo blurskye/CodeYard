@@ -1,13 +1,16 @@
-use super::{database_error, OperationError};
-use crate::backend::db;
+use crate::backend::issues::database_error;
+use crate::backend::issues::OperationError;
+
 use crate::backend::db::users::accounts::AccountCredential;
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
-use crate::backend::notifications::mentions::{
-    mentions_anyone, notify_mentions, MentionComment, MentionSource,
-};
+use crate::backend::notifications::mentions::mentions_anyone;
+use crate::backend::notifications::mentions::notify_mentions;
+use crate::backend::notifications::mentions::MentionComment;
+use crate::backend::notifications::mentions::MentionSource;
 use crate::backend::notifications::NotificationBroadcaster;
-use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
+
+use crate::backend::webhooks::payloads::Scope;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -40,15 +43,15 @@ async fn read_issue(
     ),
     OperationError,
 > {
-    let repository = db::repositories::records::get_repository(pool, owner, repo)
+    let repository = crate::backend::db::repositories::records::get_repository(pool, owner, repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
         })?;
-    super::require_read(pool, user, &repository).await?;
-    let issue = db::issues::get_issue(pool, repository.id, number)
+    crate::backend::issues::require_read(pool, user, &repository).await?;
+    let issue = crate::backend::db::issues::get_issue(pool, repository.id, number)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -64,7 +67,7 @@ async fn issue_comment(
     issue: &codeyard_db_core::models::Issue,
     comment_id: i64,
 ) -> Result<codeyard_db_core::models::IssueComment, OperationError> {
-    db::issues::get_issue_comment(pool, comment_id)
+    crate::backend::db::issues::get_issue_comment(pool, comment_id)
         .await
         .map_err(database_error)?
         .filter(|comment| comment.issue_id == issue.id)
@@ -113,11 +116,11 @@ pub async fn create_issue_comment(
     number: i32,
     req: CreateCommentRequest,
 ) -> Result<codeyard_db_core::models::IssueComment, OperationError> {
-    let user = super::actor(pool, actor_id).await?;
+    let user = crate::backend::issues::actor(pool, actor_id).await?;
     let (repository, issue) = read_issue(pool, &user, &owner, &repo, number).await?;
     require_change(pool, &user, &repository, &issue).await?;
 
-    if let Err(message) = super::validate_body(&req.body, true) {
+    if let Err(message) = codeyard_model::issue_input::validate_body(&req.body, true) {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: message.to_owned(),
@@ -132,7 +135,7 @@ pub async fn create_issue_comment(
             message: "The comment target changed. Reload before submitting.".into(),
         });
     }
-    let comment = db::issues::add_issue_comment(
+    let comment = crate::backend::db::issues::add_issue_comment(
         pool,
         repository.id,
         issue.id,
@@ -141,7 +144,7 @@ pub async fn create_issue_comment(
         credential,
     )
     .await
-    .map_err(super::write_error)?;
+    .map_err(crate::backend::issues::write_error)?;
 
     let base = format!("/{}/{}/issues/{}", owner, repo, issue.number);
     let link = format!("{base}?comment={}#comment-{}", comment.id, comment.id);
@@ -188,7 +191,7 @@ pub async fn create_issue_comment(
         .await;
 
     // The comment moved the issue's revision, so the hook names the issue as it is now.
-    let commented = match db::issues::get_issue_by_id(pool, issue.id).await {
+    let commented = match crate::backend::db::issues::get_issue_by_id(pool, issue.id).await {
         Ok(Some(current)) if current.repo_id == repository.id => current,
         Ok(_) => issue,
         Err(error) => {
@@ -220,10 +223,10 @@ async fn emit_comment_webhook(
     let (issue, comment, repository_for_hook) =
         (issue.clone(), comment.clone(), repository.clone());
     let (issue_author_id, comment_author_id) = (issue.author_id, comment.author_id);
-    webhooks::emit(
+    crate::backend::webhooks::emit(
         pool,
         repository,
-        events::ISSUE_COMMENT,
+        codeyard_model::webhook_events::ISSUE_COMMENT,
         vec![issue_author_id, comment_author_id, sender_id],
         move |owner, people| {
             let (issue_author, comment_author, sender) = (
@@ -231,7 +234,7 @@ async fn emit_comment_webhook(
                 people.get(comment_author_id),
                 people.get(sender_id),
             );
-            payloads::issue_comment(
+            crate::backend::webhooks::payloads::issue_comment(
                 action,
                 previous_body.as_deref(),
                 &comment,
@@ -265,7 +268,7 @@ pub async fn edit_issue_comment(
         number,
         comment_id,
     } = target;
-    let user = super::actor(pool, actor_id).await?;
+    let user = crate::backend::issues::actor(pool, actor_id).await?;
     let (repository, issue) = read_issue(pool, &user, &owner, &repo, number).await?;
     require_change(pool, &user, &repository, &issue).await?;
     let previous = issue_comment(pool, &issue, comment_id).await?;
@@ -285,13 +288,13 @@ pub async fn edit_issue_comment(
             message: "The comment changed. Your draft is preserved; reload before saving.".into(),
         });
     }
-    if let Err(message) = super::validate_body(&req.body, true) {
+    if let Err(message) = codeyard_model::issue_input::validate_body(&req.body, true) {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: message.to_owned(),
         });
     }
-    let comment = db::issues::edit_issue_comment(
+    let comment = crate::backend::db::issues::edit_issue_comment(
         pool,
         user.id,
         repository.id,
@@ -302,7 +305,7 @@ pub async fn edit_issue_comment(
         credential,
     )
     .await
-    .map_err(super::write_error)?
+    .map_err(crate::backend::issues::write_error)?
     .ok_or_else(|| match expected_body {
         Some(_) => OperationError::Conflict {
             code: "conflict",
@@ -365,11 +368,11 @@ pub async fn delete_issue_comment(
         number,
         comment_id,
     } = target;
-    let user = super::actor(pool, actor_id).await?;
+    let user = crate::backend::issues::actor(pool, actor_id).await?;
     let (repository, issue) = read_issue(pool, &user, &owner, &repo, number).await?;
     require_change(pool, &user, &repository, &issue).await?;
     issue_comment(pool, &issue, comment_id).await?;
-    let removed = db::issues::delete_issue_comment(
+    let removed = crate::backend::db::issues::delete_issue_comment(
         pool,
         user.id,
         repository.id,
@@ -378,7 +381,7 @@ pub async fn delete_issue_comment(
         credential,
     )
     .await
-    .map_err(super::write_error)?;
+    .map_err(crate::backend::issues::write_error)?;
     // The hook carries the comment as the delete removed it, not as it was read before.
     let Some(removed) = removed else {
         return Err(OperationError::Denied {

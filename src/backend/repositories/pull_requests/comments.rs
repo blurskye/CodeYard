@@ -1,14 +1,20 @@
-use super::{database_error, OperationError};
 use crate::backend::cluster::NodeContext;
-use crate::backend::db;
+use crate::backend::repositories::pull_requests::database_error;
+use crate::backend::repositories::pull_requests::OperationError;
+
 use crate::backend::issues::comments::CommentTarget;
-use crate::backend::issues::{discussion_link, discussion_page, COMMENTS_PER_PAGE};
+use crate::backend::issues::discussion_link;
+use crate::backend::issues::discussion_page;
+use crate::backend::issues::COMMENTS_PER_PAGE;
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
-use crate::backend::notifications::mentions::{mentions_anyone, notify_mentions, MentionSource};
+use crate::backend::notifications::mentions::mentions_anyone;
+use crate::backend::notifications::mentions::notify_mentions;
+use crate::backend::notifications::mentions::MentionSource;
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::store::repo_store;
-use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
+
+use crate::backend::webhooks::payloads::Scope;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;
@@ -43,9 +49,9 @@ impl PreparedComment {
         &'a self,
         pull: &'a codeyard_db_core::models::PullRequest,
         author: i64,
-    ) -> db::pull_requests::reviews::NewPullRequestComment<'a> {
+    ) -> crate::backend::db::pull_requests::reviews::NewPullRequestComment<'a> {
         let req = &self.request;
-        db::pull_requests::reviews::NewPullRequestComment {
+        crate::backend::db::pull_requests::reviews::NewPullRequestComment {
             pr_id: pull.id,
             author_id: author,
             body: &req.body,
@@ -82,13 +88,14 @@ async fn thread_root(
                 message: "That comment thread is damaged and cannot be replied to.".to_owned(),
             });
         }
-        let comment = db::pull_requests::reviews::get_pull_request_comment_by_id(pool, id)
-            .await
-            .map_err(database_error)?
-            .ok_or_else(|| OperationError::Missing {
-                code: "not_found",
-                message: "Parent comment not found".to_owned(),
-            })?;
+        let comment =
+            crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(pool, id)
+                .await
+                .map_err(database_error)?
+                .ok_or_else(|| OperationError::Missing {
+                    code: "not_found",
+                    message: "Parent comment not found".to_owned(),
+                })?;
         root_id = comment.id;
         next = comment.in_reply_to_comment_id;
     }
@@ -116,7 +123,7 @@ pub(crate) async fn saved_comment_link(
     base: &str,
     comment: &codeyard_db_core::models::PullRequestComment,
 ) -> String {
-    use db::pull_requests::reviews::{self, DiscussionItem, DiscussionRef};
+    use crate::backend::db::pull_requests::reviews::{self, DiscussionItem, DiscussionRef};
     let page = discussion_page(
         reviews::count_discussion_items_through(
             pool,
@@ -176,9 +183,10 @@ async fn in_pending_review(
     let Some(review_id) = comment.review_id else {
         return Ok(false);
     };
-    let review = db::pull_requests::reviews::get_pull_request_review_by_id(pool, review_id)
-        .await
-        .map_err(database_error)?;
+    let review =
+        crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(pool, review_id)
+            .await
+            .map_err(database_error)?;
     Ok(review.is_none_or(|review| review.state == "pending"))
 }
 
@@ -229,9 +237,9 @@ pub(super) async fn emit_comment_webhook(
         return;
     }
     let event = if on_file {
-        events::PULL_REQUEST_REVIEW_COMMENT
+        codeyard_model::webhook_events::PULL_REQUEST_REVIEW_COMMENT
     } else {
-        events::ISSUE_COMMENT
+        codeyard_model::webhook_events::ISSUE_COMMENT
     };
     // The conversation link names the comment; the pull request page finds its page.
     let link = if on_file {
@@ -244,7 +252,7 @@ pub(super) async fn emit_comment_webhook(
     let (comment_for_hook, pull_for_hook, repository_for_hook) =
         (comment.clone(), pull_request.clone(), repository.clone());
     let (pull_author_id, comment_author_id) = (pull_request.author_id, comment.author_id);
-    webhooks::emit(
+    crate::backend::webhooks::emit(
         pool,
         repository,
         event,
@@ -261,7 +269,7 @@ pub(super) async fn emit_comment_webhook(
                 sender: &sender,
             };
             if on_file {
-                payloads::pull_request_review_comment(
+                crate::backend::webhooks::payloads::pull_request_review_comment(
                     action,
                     &comment_for_hook,
                     &pull_for_hook,
@@ -270,7 +278,7 @@ pub(super) async fn emit_comment_webhook(
                     scope,
                 )
             } else {
-                payloads::pull_request_conversation_comment(
+                crate::backend::webhooks::payloads::pull_request_conversation_comment(
                     action,
                     &comment_for_hook,
                     &pull_for_hook,
@@ -431,9 +439,9 @@ pub async fn create_pull_request_comment(
     number: i32,
     req: CreatePullRequestCommentRequest,
 ) -> Result<codeyard_db_core::models::PullRequestComment, OperationError> {
-    let user = super::actor(pool, actor_id).await?;
+    let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
 
-    let repository = db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -449,15 +457,16 @@ pub async fn create_pull_request_comment(
                     .into(),
         });
     }
-    super::require_read(pool, &user, &repository).await?;
+    crate::backend::repositories::pull_requests::require_read(pool, &user, &repository).await?;
 
-    let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".to_owned(),
-        })?;
+    let pull_request =
+        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".to_owned(),
+            })?;
 
     let prepared = prepare_comment(
         pool,
@@ -496,7 +505,7 @@ pub(super) async fn prepare_comment(
                     .into(),
         });
     }
-    if let Err(message) = crate::backend::issues::validate_body(&req.body, true) {
+    if let Err(message) = codeyard_model::issue_input::validate_body(&req.body, true) {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: message.to_owned(),
@@ -544,13 +553,15 @@ pub(super) async fn prepare_comment(
     let mut reply_parent = None;
     if let Some(parent_id) = req.in_reply_to_comment_id {
         let parent_comment =
-            db::pull_requests::reviews::get_pull_request_comment_by_id(pool, parent_id)
-                .await
-                .map_err(database_error)?
-                .ok_or_else(|| OperationError::Missing {
-                    code: "not_found",
-                    message: "Parent comment not found".to_owned(),
-                })?;
+            crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
+                pool, parent_id,
+            )
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Parent comment not found".to_owned(),
+            })?;
 
         if parent_comment.pull_request_id != pull_request.id {
             return Err(OperationError::Invalid {
@@ -574,10 +585,9 @@ pub(super) async fn prepare_comment(
         commit_sha = parent_comment.commit_sha;
     }
 
-    if path
-        .as_ref()
-        .is_some_and(|path| path.len() > db::pull_requests::reviews::MAX_COMMENT_PATH_BYTES)
-    {
+    if path.as_ref().is_some_and(|path| {
+        path.len() > crate::backend::db::pull_requests::reviews::MAX_COMMENT_PATH_BYTES
+    }) {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: "path must be at most 4096 bytes".to_owned(),
@@ -711,14 +721,14 @@ async fn save_comment(
     let pending = req.pending;
     let reply_parent = prepared.reply_parent;
     let input = prepared.input(pull_request, user.id);
-    let (comment, deferred) = db::pull_requests::reviews::insert_comment(
+    let (comment, deferred) = crate::backend::db::pull_requests::reviews::insert_comment(
         pool,
         input,
         pending || req.review_id.is_some(),
         req.review_id,
     )
     .await
-    .map_err(super::write_error)?;
+    .map_err(crate::backend::repositories::pull_requests::write_error)?;
     // Submission owns publication for every comment that was pending when inserted.
     if deferred {
         return Ok(comment);
@@ -798,22 +808,23 @@ pub async fn set_comment_resolved(
     comment_id: i64,
     resolved: bool,
 ) -> Result<codeyard_db_core::models::PullRequestComment, OperationError> {
-    let user = super::actor(pool, actor_id).await?;
-    let repository = db::repositories::records::get_repository(pool, owner, repo)
+    let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
+    let repository = crate::backend::db::repositories::records::get_repository(pool, owner, repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
         })?;
-    super::require_read(pool, &user, &repository).await?;
-    let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".to_owned(),
-        })?;
+    crate::backend::repositories::pull_requests::require_read(pool, &user, &repository).await?;
+    let pull_request =
+        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".to_owned(),
+            })?;
     if repository.is_archived || user.must_change_password {
         return Err(OperationError::Denied {
             code: "write_denied",
@@ -831,14 +842,16 @@ pub async fn set_comment_resolved(
             message: "Only the pull request author or a collaborator with write access can resolve conversations".to_owned(),
         });
     }
-    let comment = db::pull_requests::reviews::get_pull_request_comment_by_id(pool, comment_id)
-        .await
-        .map_err(database_error)?
-        .filter(|comment| comment.pull_request_id == pull_request.id)
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Comment not found".to_owned(),
-        })?;
+    let comment = crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
+        pool, comment_id,
+    )
+    .await
+    .map_err(database_error)?
+    .filter(|comment| comment.pull_request_id == pull_request.id)
+    .ok_or_else(|| OperationError::Missing {
+        code: "not_found",
+        message: "Comment not found".to_owned(),
+    })?;
     if comment.in_reply_to_comment_id.is_some() || comment.path.is_none() {
         return Err(OperationError::Invalid {
             code: "validation_error",
@@ -848,7 +861,7 @@ pub async fn set_comment_resolved(
     }
     // The database checks the resolver's authority in the same transaction as the update. The
     // checks above only give the specific early refusals.
-    db::pull_requests::reviews::set_pull_request_comment_resolved(
+    crate::backend::db::pull_requests::reviews::set_pull_request_comment_resolved(
         pool,
         pull_request.id,
         comment.id,
@@ -856,7 +869,7 @@ pub async fn set_comment_resolved(
         user.id,
     )
     .await
-    .map_err(super::write_error)?
+    .map_err(crate::backend::repositories::pull_requests::write_error)?
     .ok_or_else(|| OperationError::Missing {
         code: "not_found",
         message: "Comment not found".to_owned(),
@@ -880,29 +893,32 @@ async fn conversation_comment_on_pull(
     ),
     OperationError,
 > {
-    let repository = db::repositories::records::get_repository(pool, owner, repo)
+    let repository = crate::backend::db::repositories::records::get_repository(pool, owner, repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
         })?;
-    super::require_read(pool, user, &repository).await?;
-    let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".to_owned(),
-        })?;
-    let comment = db::pull_requests::reviews::get_pull_request_comment_by_id(pool, comment_id)
-        .await
-        .map_err(database_error)?
-        .filter(|comment| comment.pull_request_id == pull_request.id)
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Comment not found".to_owned(),
-        })?;
+    crate::backend::repositories::pull_requests::require_read(pool, user, &repository).await?;
+    let pull_request =
+        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".to_owned(),
+            })?;
+    let comment = crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
+        pool, comment_id,
+    )
+    .await
+    .map_err(database_error)?
+    .filter(|comment| comment.pull_request_id == pull_request.id)
+    .ok_or_else(|| OperationError::Missing {
+        code: "not_found",
+        message: "Comment not found".to_owned(),
+    })?;
     if in_pending_review(pool, &comment).await? && comment.author_id != user.id {
         return Err(OperationError::Missing {
             code: "not_found",
@@ -927,7 +943,7 @@ pub async fn edit_pull_request_comment(
         number,
         comment_id,
     } = target;
-    let user = super::actor(pool, actor_id).await?;
+    let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
     let (repository, pull_request, previous) =
         conversation_comment_on_pull(pool, &user, &owner, &repo, number, comment_id).await?;
     if repository.is_archived {
@@ -949,13 +965,13 @@ pub async fn edit_pull_request_comment(
             message: "The comment changed. Reload before saving.".into(),
         });
     }
-    if let Err(message) = crate::backend::issues::validate_body(&body, true) {
+    if let Err(message) = codeyard_model::issue_input::validate_body(&body, true) {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: message.to_owned(),
         });
     }
-    let comment = db::pull_requests::reviews::edit_pull_request_comment(
+    let comment = crate::backend::db::pull_requests::reviews::edit_pull_request_comment(
         pool,
         user.id,
         repository.id,
@@ -965,7 +981,7 @@ pub async fn edit_pull_request_comment(
         &previous.body,
     )
     .await
-    .map_err(super::write_error)?
+    .map_err(crate::backend::repositories::pull_requests::write_error)?
     .ok_or_else(|| match expected_body {
         Some(_) => OperationError::Conflict {
             code: "conflict",
@@ -1031,13 +1047,13 @@ pub async fn delete_pull_request_comment(
         number,
         comment_id,
     } = target;
-    let user = super::actor(pool, actor_id).await?;
+    let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
     let (repository, pull_request, previous) =
         conversation_comment_on_pull(pool, &user, &owner, &repo, number, comment_id).await?;
     if repository.is_archived {
         return Err(archived_refusal());
     }
-    let removed = db::pull_requests::reviews::delete_pull_request_comment(
+    let removed = crate::backend::db::pull_requests::reviews::delete_pull_request_comment(
         pool,
         user.id,
         repository.id,
@@ -1045,7 +1061,7 @@ pub async fn delete_pull_request_comment(
         comment_id,
     )
     .await
-    .map_err(super::write_error)?;
+    .map_err(crate::backend::repositories::pull_requests::write_error)?;
     if removed {
         emit_comment_webhook(
             pool,

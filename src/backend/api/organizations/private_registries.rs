@@ -1,16 +1,11 @@
-use super::{
-    organization::{self, Fields},
-    INDEX,
-};
-use crate::backend::{
-    api::http::context::PageContext,
-    app::AppState,
-    db::{
-        self,
-        private_registries::{Configuration, RegistryError},
-        secrets::SecretsError,
-    },
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::organizations::organization::Fields;
+use crate::backend::api::organizations::INDEX;
+use crate::backend::app::AppState;
+
+use crate::backend::db::private_registries::Configuration;
+use crate::backend::db::private_registries::RegistryError;
+use crate::backend::db::secrets::SecretsError;
 use axum::{
     extract::{rejection::FormRejection, Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -25,7 +20,7 @@ use std::{collections::BTreeMap, sync::Arc};
 pub(super) const BODY_LIMIT: usize = 512 * 1024;
 
 pub(super) fn project(
-    registry: db::private_registries::Registry,
+    registry: crate::backend::db::private_registries::Registry,
 ) -> Result<view::Registry, RegistryError> {
     let config: Configuration = serde_json::from_str(&registry.configuration)?;
     let value = serde_json::to_value(&config)?;
@@ -64,19 +59,26 @@ pub(super) fn project(
 fn input(form: &Fields) -> Result<Value, RegistryError> {
     let mut body = json!({});
     for name in ["registry_type", "url", "visibility", "auth_type"] {
-        body[name] = json!(organization::field(form, name));
+        body[name] = json!(crate::backend::api::organizations::organization::field(
+            form, name
+        ));
     }
     body["username"] = form
         .get("username")
         .filter(|v| !v.is_empty())
         .map_or(Value::Null, |v| json!(v));
-    body["replaces_base"] = json!(organization::field(form, "replaces_base")
-        .parse::<bool>()
-        .map_err(|_| RegistryError::Invalid("replaces_base"))?);
+    body["replaces_base"] = json!(crate::backend::api::organizations::organization::field(
+        form,
+        "replaces_base"
+    )
+    .parse::<bool>()
+    .map_err(|_| RegistryError::Invalid("replaces_base"))?);
     for (name, _) in view::OIDC_FIELDS {
-        let value = organization::field(form, name);
+        let value = crate::backend::api::organizations::organization::field(form, name);
         if name == "selected_repository_ids" {
-            if organization::field(form, "visibility") == "selected" {
+            if crate::backend::api::organizations::organization::field(form, "visibility")
+                == "selected"
+            {
                 let ids: Vec<i64> = value
                     .split(',')
                     .filter(|v| !v.trim().is_empty())
@@ -116,16 +118,19 @@ pub(super) async fn post(
     };
     let form = match form {
         Ok(Form(form)) => form,
-        Err(_) => return organization::invalid(&ctx),
+        Err(_) => return crate::backend::api::organizations::organization::invalid(&ctx),
     };
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
-    if let Err(response) = organization::selected(&ctx, actor, org).await {
+    if let Err(response) =
+        crate::backend::api::organizations::organization::selected(&ctx, actor, org).await
+    {
         return response;
     }
     ctx.query.insert("tab".into(), "private-registries".into());
-    let name = organization::field(&form, "name").to_ascii_uppercase();
+    let name =
+        crate::backend::api::organizations::organization::field(&form, "name").to_ascii_uppercase();
     if !name.is_empty() {
         ctx.query.insert("registry".into(), name.clone());
     }
@@ -154,14 +159,20 @@ pub(super) async fn post(
         });
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let credential = db::users::accounts::AccountCredential::Session(&session);
+    let credential = crate::backend::db::users::accounts::AccountCredential::Session(&session);
     let result = if !bounded {
         Err(RegistryError::Invalid("configuration"))
     } else {
-        match organization::field(&form, "action") {
+        match crate::backend::api::organizations::organization::field(&form, "action") {
             "registry-delete" => {
-                db::private_registries::delete(&ctx.state.pool, actor, &credential, org, &name)
-                    .await
+                crate::backend::db::private_registries::delete(
+                    &ctx.state.pool,
+                    actor,
+                    &credential,
+                    org,
+                    &name,
+                )
+                .await
             }
             "registry-save" => match input(&form) {
                 Ok(body) => {
@@ -169,7 +180,7 @@ pub(super) async fn post(
                         .get("value")
                         .filter(|v| !v.is_empty())
                         .map(String::as_str);
-                    db::private_registries::save(
+                    crate::backend::db::private_registries::save(
                         &ctx.state.pool,
                         ctx.state.secret_encryptor.as_deref(),
                         actor,
@@ -190,7 +201,7 @@ pub(super) async fn post(
     let status = match result {
         Ok(()) => return ctx.redirect(&format!("{INDEX}/{org}?tab=private-registries")),
         Err(RegistryError::Missing | RegistryError::Secret(SecretsError::NotFound)) => {
-            return organization::not_found(&ctx)
+            return crate::backend::api::organizations::organization::not_found(&ctx)
         }
         Err(RegistryError::Secret(SecretsError::Denied)) => {
             return ctx.error(
@@ -202,7 +213,7 @@ pub(super) async fn post(
             RegistryError::Invalid(_)
             | RegistryError::Secret(SecretsError::InvalidRepositorySelection),
         ) => StatusCode::UNPROCESSABLE_ENTITY,
-        Err(_) => return organization::unavailable(&ctx),
+        Err(_) => return crate::backend::api::organizations::organization::unavailable(&ctx),
     };
     let draft = form
         .into_iter()
@@ -210,5 +221,5 @@ pub(super) async fn post(
             !matches!(key.as_str(), "value" | "csrf_token") && value.len() <= view::field_max(key)
         })
         .collect();
-    organization::respond(&ctx, Some(org), status, Some("Check the registry URL, authentication fields and repository selection. Re-enter the credential if needed.".into()), draft).await
+    crate::backend::api::organizations::organization::respond(&ctx, Some(org), status, Some("Check the registry URL, authentication fields and repository selection. Re-enter the credential if needed.".into()), draft).await
 }

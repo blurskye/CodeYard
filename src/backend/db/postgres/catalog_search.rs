@@ -1,4 +1,8 @@
-use crate::backend::db::catalog_search::{Hit, Options, Results, Search, Topic};
+use crate::backend::db::catalog_search::Hit;
+use crate::backend::db::catalog_search::Options;
+use crate::backend::db::catalog_search::Results;
+use crate::backend::db::catalog_search::Search;
+use crate::backend::db::catalog_search::Topic;
 use anyhow::Result;
 use sqlx::PgPool;
 pub async fn search(
@@ -14,14 +18,15 @@ pub async fn search(
     let statement = query
         .statement(
             true,
-            &super::repositories::access::readable_condition(),
+            &crate::backend::db::postgres::repositories::access::readable_condition(),
             options.repository,
         )
         .map_err(anyhow::Error::msg)?;
     let order = query
         .order(options.sort.as_deref(), options.ascending)
         .map_err(anyhow::Error::msg)?;
-    let mut tx = super::repositories::discovery::search_connection(pool).await?;
+    let mut tx =
+        crate::backend::db::postgres::repositories::discovery::search_connection(pool).await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await?;
@@ -50,10 +55,11 @@ pub async fn topic(
     name: &str,
     policy_token: Option<i64>,
 ) -> Result<Option<Topic>> {
-    let mut tx = super::repositories::discovery::search_connection(pool).await?;
+    let mut tx =
+        crate::backend::db::postgres::repositories::discovery::search_connection(pool).await?;
     let mut statement = crate::backend::db::discussion_search::Statement::new(true);
     let readable = statement.repository_policy(
-        &super::repositories::access::readable_condition(),
+        &crate::backend::db::postgres::repositories::access::readable_condition(),
         policy_token,
     );
     let name = statement.bind(name);

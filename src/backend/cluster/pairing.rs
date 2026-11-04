@@ -4,12 +4,16 @@
 //! - an invite ticket from `cluster invite`, redeemed by `cluster join`;
 //! - the same ticket kept as `CLUSTER_JOIN_TOKEN` (reusable, for autoscaling);
 //! - a declared list of keys in `CLUSTER_NODES`, applied by core nodes at startup.
-use super::{
-    identity::{parse_public_key, NodeKey},
-    link::{read_to_end_within, Link},
-    transport::{self, NodeAddress, Relay, ALPN_PAIR, CLOSE_UNAVAILABLE},
-};
-use crate::backend::db;
+use crate::backend::cluster::link::read_to_end_within;
+use crate::backend::cluster::link::Link;
+use codeyard_support::node_identity::parse_public_key;
+use codeyard_support::node_identity::NodeKey;
+
+use crate::backend::cluster::transport::NodeAddress;
+use crate::backend::cluster::transport::Relay;
+use crate::backend::cluster::transport::ALPN_PAIR;
+use crate::backend::cluster::transport::CLOSE_UNAVAILABLE;
+
 use crate::backend::db::cluster::Authority;
 use crate::backend::db::cluster::DeclaredMember;
 use crate::backend::db::cluster::JoinRequest;
@@ -232,7 +236,7 @@ pub async fn create_invite(
         "an invite can be valid for at most 365d"
     );
     let ticket = JoinTicket::new(node, address)?;
-    db::cluster::create_join_token(
+    crate::backend::db::cluster::create_join_token(
         pool,
         NewJoinToken {
             token_hash: &ticket.secret_hash(),
@@ -302,7 +306,7 @@ pub async fn join(
     }
     // The dialer opens an iroh endpoint only if a peer needs one, so a ticket with TCP
     // addresses alone opens no socket.
-    let iroh = transport::IrohDialer::new(relay.clone(), key.clone());
+    let iroh = crate::backend::cluster::transport::IrohDialer::new(relay.clone(), key.clone());
     let reply = request_join(&iroh, ticket, &name, roles).await;
     iroh.close().await;
     match reply? {
@@ -335,7 +339,7 @@ fn membership(
 }
 
 async fn request_join(
-    iroh: &transport::IrohDialer,
+    iroh: &crate::backend::cluster::transport::IrohDialer,
     ticket: &JoinTicket,
     name: &str,
     roles: Option<&NodeRoles>,
@@ -347,9 +351,14 @@ async fn request_join(
         version: Some(env!("CARGO_PKG_VERSION").to_owned()),
     })?;
     // dial_node bounds each attempt itself, so the join needs no timeout of its own.
-    let mut link = transport::dial_node(iroh, ticket.node, &ticket.address, ALPN_PAIR)
-        .await
-        .context("could not reach the cluster node named in the ticket")?;
+    let mut link = crate::backend::cluster::transport::dial_node(
+        iroh,
+        ticket.node,
+        &ticket.address,
+        ALPN_PAIR,
+    )
+    .await
+    .context("could not reach the cluster node named in the ticket")?;
     let answer = tokio::time::timeout(EXCHANGE_TIMEOUT, async {
         link.writer.write_all(&request).await?;
         link.finish().await?;
@@ -456,7 +465,7 @@ impl PairingHandler {
                         .all(|byte| byte.is_ascii_alphanumeric() || b".-+".contains(&byte))
             })
             .unwrap_or("unknown");
-        let outcome = db::cluster::join_with_token(
+        let outcome = crate::backend::db::cluster::join_with_token(
             &self.pool,
             JoinRequest {
                 token_hash: &hash_secret(&secret),
@@ -511,7 +520,12 @@ impl ProtocolHandler for PairingHandler {
         // One request stream per connection. Waiting for that stream counts against the
         // exchange deadline, as it always has.
         let deadline = tokio::time::Instant::now() + EXCHANGE_TIMEOUT;
-        match tokio::time::timeout_at(deadline, transport::accept_stream(&connection)).await {
+        match tokio::time::timeout_at(
+            deadline,
+            crate::backend::cluster::transport::accept_stream(&connection),
+        )
+        .await
+        {
             Ok(Some(link)) => self.serve_link(link, deadline, slot).await,
             Ok(None) => connection.close(1u32.into(), b"bad pairing request"),
             Err(_) => connection.close(1u32.into(), b"pairing timed out"),
@@ -601,7 +615,7 @@ pub async fn apply_declared_nodes(
         .collect();
     // Two core nodes that start together lock the rows in the same order, so they cannot deadlock.
     members.sort_by(|a, b| a.public_key.cmp(&b.public_key));
-    let rows = db::cluster::upsert_declared_nodes(pool, &members)
+    let rows = crate::backend::db::cluster::upsert_declared_nodes(pool, &members)
         .await
         .context("cannot apply the declared node list")?;
     let mut summary = DeclaredSummary::default();
@@ -622,7 +636,8 @@ pub async fn approve(
     authority: Authority<'_>,
     name: &str,
 ) -> Result<NodeStatusChange> {
-    db::cluster::set_node_status(pool, authority, &normalize_name(name)?, "active").await
+    crate::backend::db::cluster::set_node_status(pool, authority, &normalize_name(name)?, "active")
+        .await
 }
 
 /// Stops a node from connecting. Its next connection attempt is refused.
@@ -631,7 +646,8 @@ pub async fn revoke(
     authority: Authority<'_>,
     name: &str,
 ) -> Result<NodeStatusChange> {
-    db::cluster::set_node_status(pool, authority, &normalize_name(name)?, "revoked").await
+    crate::backend::db::cluster::set_node_status(pool, authority, &normalize_name(name)?, "revoked")
+        .await
 }
 
 #[cfg(test)]

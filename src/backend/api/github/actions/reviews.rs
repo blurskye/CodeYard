@@ -1,10 +1,10 @@
 //! Deployment reviews retain the native revision and reviewer checks.
-use crate::backend::{
-    api::github::{auth, deployments, environments, repository, Error, Result},
-    app::AppState,
-    db::{self, deployment_reviews},
-    webhooks::payloads,
-};
+
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{FromRequest, Path, Request, State},
     http::HeaderMap,
@@ -20,32 +20,51 @@ async fn pending(
     Path((owner, name, id)): Path<(String, String, i64)>,
     request: Request,
 ) -> Result<Json<Value>> {
-    let write = !auth::read_method(request.method());
+    let write = !crate::backend::api::github::auth::read_method(request.method());
     // Required environment reviewers need only repository read access.
     let (repo, auth) = repository(&state, &headers, &owner, &name, write).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
-    let run = super::run(&state, repo.id, id).await?;
+    let run = crate::backend::api::github::actions::run(&state, repo.id, id).await?;
     if write {
-        let actor = auth.ok_or_else(auth::required)?.database_actor();
-        let Json(input) = Json::<deployment_reviews::Input>::from_request(request, &state)
-            .await
-            .map_err(|_| Error::validation("DeploymentReview", "configuration", "invalid"))?;
-        let rows = deployment_reviews::review(&state.pool, actor, repo.id, run.id, &input)
-            .await
-            .map_err(super::settings::failure)?;
+        let actor = auth
+            .ok_or_else(crate::backend::api::github::auth::required)?
+            .database_actor();
+        let Json(input) =
+            Json::<crate::backend::db::deployment_reviews::Input>::from_request(request, &state)
+                .await
+                .map_err(|_| Error::validation("DeploymentReview", "configuration", "invalid"))?;
+        let rows = crate::backend::db::deployment_reviews::review(
+            &state.pool,
+            actor,
+            repo.id,
+            run.id,
+            &input,
+        )
+        .await
+        .map_err(crate::backend::api::github::actions::settings::failure)?;
         let mut values = Vec::new();
         for row in rows {
-            values.push(deployments::document(&state, &row, &owner, &name).await?);
+            values.push(
+                crate::backend::api::github::deployments::document(&state, &row, &owner, &name)
+                    .await?,
+            );
         }
         return Ok(Json(json!(values)));
     }
-    let rows = deployment_reviews::pending(&state.pool, repo.id, run.id, viewer)
-        .await
-        .map_err(Error::unavailable)?;
+    let rows =
+        crate::backend::db::deployment_reviews::pending(&state.pool, repo.id, run.id, viewer)
+            .await
+            .map_err(Error::unavailable)?;
     let mut values = Vec::new();
     for row in rows {
-        let environment =
-            environments::document(&state, viewer, &row.environment, &owner, &name).await?;
+        let environment = crate::backend::api::github::environments::document(
+            &state,
+            viewer,
+            &row.environment,
+            &owner,
+            &name,
+        )
+        .await?;
         let reviewers = environment["protection_rules"]
             .as_array()
             .and_then(|rules| {
@@ -66,33 +85,35 @@ async fn history(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let run = super::run(&state, repo.id, id).await?;
-    let rows = deployment_reviews::history(&state.pool, repo.id, run.id)
+    let run = crate::backend::api::github::actions::run(&state, repo.id, id).await?;
+    let rows = crate::backend::db::deployment_reviews::history(&state.pool, repo.id, run.id)
         .await
         .map_err(Error::unavailable)?;
     let mut values = Vec::new();
     for row in rows {
         let user = if let Some(actor) = row.actor_id {
-            db::users::accounts::get_user_by_id(&state.pool, actor)
+            crate::backend::db::users::accounts::get_user_by_id(&state.pool, actor)
                 .await
                 .map_err(Error::unavailable)?
-                .map(|user| payloads::user(&user))
+                .map(|user| crate::backend::webhooks::payloads::user(&user))
         } else {
             None
         }
         .unwrap_or_else(|| {
-            payloads::person(&payloads::Person {
-                login: "ghost".into(),
-                id: 0,
-                site_admin: false,
-            })
+            crate::backend::webhooks::payloads::person(
+                &crate::backend::webhooks::payloads::Person {
+                    login: "ghost".into(),
+                    id: 0,
+                    site_admin: false,
+                },
+            )
         });
         let encoded = codeyard_webui::encode_component(&row.environment_name);
         let environment = json!({"id":row.environment_id,
             "node_id":crate::backend::api::github::node_id::encode("EN", row.environment_id),
             "name":row.environment_name,
-            "url":format!("{}/environments/{encoded}", crate::backend::api::github::repo_url(&owner, &name)),
-            "html_url":format!("{}/{}/{}/deployments/activity_log?environments_filter={encoded}", crate::backend::api::http::config::link_origin(), codeyard_webui::encode_component(&owner), codeyard_webui::encode_component(&name))});
+            "url":format!("{}/environments/{encoded}", codeyard_model::urls::repo_url(&owner, &name)),
+            "html_url":format!("{}/{}/{}/deployments/activity_log?environments_filter={encoded}", codeyard_model::http_config::link_origin(), codeyard_webui::encode_component(&owner), codeyard_webui::encode_component(&name))});
         values.push(json!({"environments":[environment],"state":row.state,"user":user,"comment":row.comment}));
     }
     Ok(Json(json!(values)))

@@ -1,6 +1,12 @@
-use super::{page_number, repository_cards, unavailable};
-use crate::backend::db::repositories::records::{RepositoryFilter, RepositoryKind, RepositorySort};
-use crate::backend::{api::http::context::PageContext, app::AppState, db};
+use crate::backend::api::discovery::page_number;
+use crate::backend::api::discovery::repository_cards;
+use crate::backend::api::discovery::unavailable;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::app::AppState;
+use crate::backend::db::repositories::records::RepositoryFilter;
+use crate::backend::db::repositories::records::RepositoryKind;
+use crate::backend::db::repositories::records::RepositorySort;
+
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode, Uri},
@@ -93,7 +99,7 @@ pub(super) async fn explore_page(
     };
     // One row past the page shows whether an older page exists.
     let offset = (filters.page as i64 - 1) * EXPLORE_PAGE_SIZE as i64;
-    let mut repos = match db::repositories::records::search_public_repositories(
+    let mut repos = match crate::backend::db::repositories::records::search_public_repositories(
         &ctx.state.pool,
         &filters.query,
         RepositoryFilter {
@@ -117,9 +123,10 @@ pub(super) async fn explore_page(
             Ok(cards) => cards,
             Err(_) => return unavailable(&ctx, "explore_owners"),
         };
-    let languages = db::repositories::records::public_languages(&ctx.state.pool, 100)
-        .await
-        .unwrap_or_default();
+    let languages =
+        crate::backend::db::repositories::records::public_languages(&ctx.state.pool, 100)
+            .await
+            .unwrap_or_default();
     ctx.page_model(
         "Explore repositories",
         AppPage::Discovery(view::Page::Explore(ExploreModel {

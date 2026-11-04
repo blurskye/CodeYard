@@ -4,14 +4,14 @@
 
 use crate::support::database::Database;
 use chrono::{Duration, Utc};
-use codeyard::backend::db;
+
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::OrganizationOutcome;
 use codeyard::backend::db::organizations::OrganizationPage;
 use codeyard::backend::db::organizations::OrganizationProfile;
 use codeyard::backend::db::users::transitions::BanChange;
 use codeyard::backend::db::users::transitions::RoleChange;
-use codeyard::backend::identity;
+
 use codeyard::backend::identity::accounts::EmailChangeError;
 use codeyard_db_core::models::OrgRole;
 
@@ -32,19 +32,19 @@ async fn administrator_roles(pg: bool) {
 
     // A plain member changes no role, and nobody changes their own.
     assert!(matches!(
-        db::users::transitions::change_admin_role(pool, member, plain, true)
+        codeyard::backend::db::users::transitions::change_admin_role(pool, member, plain, true)
             .await
             .unwrap(),
         RoleChange::Denied
     ));
     assert!(matches!(
-        db::users::transitions::change_admin_role(pool, admin, admin, false)
+        codeyard::backend::db::users::transitions::change_admin_role(pool, admin, admin, false)
             .await
             .unwrap(),
         RoleChange::SelfChange
     ));
     assert!(matches!(
-        db::users::transitions::change_admin_role(pool, admin, 9_999_999, true)
+        codeyard::backend::db::users::transitions::change_admin_role(pool, admin, 9_999_999, true)
             .await
             .unwrap(),
         RoleChange::Missing
@@ -52,13 +52,13 @@ async fn administrator_roles(pg: bool) {
 
     // An administrator grants the role, then removes another administrator's role.
     assert!(matches!(
-        db::users::transitions::change_admin_role(pool, admin, plain, true)
+        codeyard::backend::db::users::transitions::change_admin_role(pool, admin, plain, true)
             .await
             .unwrap(),
         RoleChange::Updated(user) if user.is_admin
     ));
     assert!(matches!(
-        db::users::transitions::change_admin_role(pool, admin, second, false)
+        codeyard::backend::db::users::transitions::change_admin_role(pool, admin, second, false)
             .await
             .unwrap(),
         RoleChange::Updated(user) if !user.is_admin
@@ -66,19 +66,19 @@ async fn administrator_roles(pg: bool) {
 
     // Self-ban is refused; banning another administrator leaves the acting one in charge.
     assert!(matches!(
-        db::users::transitions::change_ban(pool, admin, admin, true)
+        codeyard::backend::db::users::transitions::change_ban(pool, admin, admin, true)
             .await
             .unwrap(),
         BanChange::SelfBan
     ));
     assert!(matches!(
-        db::users::transitions::change_ban(pool, admin, plain, true)
+        codeyard::backend::db::users::transitions::change_ban(pool, admin, plain, true)
             .await
             .unwrap(),
         BanChange::Updated(_)
     ));
     assert!(matches!(
-        db::users::transitions::change_ban(pool, plain, admin, true)
+        codeyard::backend::db::users::transitions::change_ban(pool, plain, admin, true)
             .await
             .unwrap(),
         BanChange::Denied
@@ -86,7 +86,7 @@ async fn administrator_roles(pg: bool) {
 
     // Browser operations keep the initiating session, not just the administrator ID.
     f.execute("INSERT INTO node_configuration(id,node_mode,setup_completed) VALUES(1,'private',TRUE) ON CONFLICT(id) DO UPDATE SET node_mode='private',setup_completed=TRUE", &[]).await;
-    db::users::sessions::create_session(
+    codeyard::backend::db::users::sessions::create_session(
         pool,
         "admin-original",
         admin,
@@ -96,7 +96,7 @@ async fn administrator_roles(pg: bool) {
     )
     .await
     .unwrap();
-    let created = db::users::transitions::register_password(
+    let created = codeyard::backend::db::users::transitions::register_password(
         pool,
         "managed-admin",
         None,
@@ -106,13 +106,13 @@ async fn administrator_roles(pg: bool) {
     .await
     .unwrap();
     assert!(
-        matches!(created, db::users::transitions::AccountAdmission::User(user) if user.is_admin && user.must_change_password)
+        matches!(created, codeyard::backend::db::users::transitions::AccountAdmission::User(user) if user.is_admin && user.must_change_password)
     );
-    db::users::sessions::delete_session(pool, "admin-original")
+    codeyard::backend::db::users::sessions::delete_session(pool, "admin-original")
         .await
         .unwrap();
     assert!(matches!(
-        db::users::transitions::change_admin_role(
+        codeyard::backend::db::users::transitions::change_admin_role(
             pool,
             (admin, "admin-original".to_owned()),
             second,
@@ -123,7 +123,7 @@ async fn administrator_roles(pg: bool) {
         RoleChange::Denied
     ));
     assert!(matches!(
-        db::users::transitions::change_ban(
+        codeyard::backend::db::users::transitions::change_ban(
             pool,
             (admin, "admin-original".to_owned()),
             member,
@@ -134,7 +134,7 @@ async fn administrator_roles(pg: bool) {
         BanChange::Denied
     ));
     assert!(matches!(
-        db::users::transitions::register_password(
+        codeyard::backend::db::users::transitions::register_password(
             pool,
             "not-created",
             None,
@@ -143,36 +143,44 @@ async fn administrator_roles(pg: bool) {
         )
         .await
         .unwrap(),
-        db::users::transitions::AccountAdmission::Denied
+        codeyard::backend::db::users::transitions::AccountAdmission::Denied
     ));
     assert!(
-        db::users::accounts::get_user_by_username(pool, "not-created")
+        codeyard::backend::db::users::accounts::get_user_by_username(pool, "not-created")
             .await
             .unwrap()
             .is_none()
     );
-    let pending = db::users::signup_requests::create_signup_request(pool, "pending", None, "hash")
+    let pending = codeyard::backend::db::users::signup_requests::create_signup_request(
+        pool, "pending", None, "hash",
+    )
+    .await
+    .unwrap();
+    assert!(
+        codeyard::backend::db::users::signup_requests::approve_signup_request(
+            pool,
+            pending.id,
+            (admin, "admin-original".to_owned())
+        )
         .await
-        .unwrap();
-    assert!(db::users::signup_requests::approve_signup_request(
-        pool,
-        pending.id,
-        (admin, "admin-original".to_owned())
-    )
-    .await
-    .is_err());
-    assert!(db::users::signup_requests::reject_signup_request(
-        pool,
-        pending.id,
-        (admin, "admin-original".to_owned())
-    )
-    .await
-    .is_err());
+        .is_err()
+    );
+    assert!(
+        codeyard::backend::db::users::signup_requests::reject_signup_request(
+            pool,
+            pending.id,
+            (admin, "admin-original".to_owned())
+        )
+        .await
+        .is_err()
+    );
     assert_eq!(
-        db::users::signup_requests::list_signup_requests(pool, "pending", 100, 0, 0)
-            .await
-            .unwrap()
-            .len(),
+        codeyard::backend::db::users::signup_requests::list_signup_requests(
+            pool, "pending", 100, 0, 0
+        )
+        .await
+        .unwrap()
+        .len(),
         1
     );
 
@@ -182,10 +190,10 @@ async fn administrator_roles(pg: bool) {
 async fn email_changes(pg: bool) {
     let mut f = Database::new(pg).await;
     let pool = f.pool();
-    let hash = identity::passwords::hash_password("correct-password")
+    let hash = codeyard::backend::identity::passwords::hash_password("correct-password")
         .await
         .unwrap();
-    let user = db::users::accounts::create_user_with_password(
+    let user = codeyard::backend::db::users::accounts::create_user_with_password(
         pool,
         "mailer",
         Some("old@example.test"),
@@ -193,7 +201,7 @@ async fn email_changes(pg: bool) {
     )
     .await
     .unwrap();
-    db::users::accounts::create_user_with_password(
+    codeyard::backend::db::users::accounts::create_user_with_password(
         pool,
         "taken",
         Some("taken@example.test"),
@@ -201,7 +209,7 @@ async fn email_changes(pg: bool) {
     )
     .await
     .unwrap();
-    db::users::sessions::create_session(
+    codeyard::backend::db::users::sessions::create_session(
         pool,
         "email-session",
         user.id,
@@ -214,7 +222,7 @@ async fn email_changes(pg: bool) {
 
     // A wrong password changes nothing.
     assert!(matches!(
-        identity::accounts::change_email(
+        codeyard::backend::identity::accounts::change_email(
             pool,
             Some("email-session"),
             "wrong-password",
@@ -223,7 +231,7 @@ async fn email_changes(pg: bool) {
         .await,
         Err(EmailChangeError::InvalidCredentials)
     ));
-    let stored = db::users::accounts::get_user_by_id(pool, user.id)
+    let stored = codeyard::backend::db::users::accounts::get_user_by_id(pool, user.id)
         .await
         .unwrap()
         .unwrap();
@@ -231,7 +239,7 @@ async fn email_changes(pg: bool) {
 
     // Malformed and taken addresses are refused, with the right password.
     assert!(matches!(
-        identity::accounts::change_email(
+        codeyard::backend::identity::accounts::change_email(
             pool,
             Some("email-session"),
             "correct-password",
@@ -241,7 +249,7 @@ async fn email_changes(pg: bool) {
         Err(EmailChangeError::InvalidEmail)
     ));
     assert!(matches!(
-        identity::accounts::change_email(
+        codeyard::backend::identity::accounts::change_email(
             pool,
             Some("email-session"),
             "correct-password",
@@ -251,7 +259,7 @@ async fn email_changes(pg: bool) {
         Err(EmailChangeError::InvalidEmail)
     ));
     assert!(matches!(
-        identity::accounts::change_email(
+        codeyard::backend::identity::accounts::change_email(
             pool,
             Some("email-session"),
             "correct-password",
@@ -266,7 +274,7 @@ async fn email_changes(pg: bool) {
         &[user.id],
     )
     .await;
-    let saved = identity::accounts::change_email(
+    let saved = codeyard::backend::identity::accounts::change_email(
         pool,
         Some("email-session"),
         "correct-password",
@@ -280,11 +288,11 @@ async fn email_changes(pg: bool) {
         "verification must not survive an address change"
     );
     // A request that verified a snapshot must retain its original credentials and session.
-    db::users::sessions::delete_session(pool, "email-session")
+    codeyard::backend::db::users::sessions::delete_session(pool, "email-session")
         .await
         .unwrap();
     assert!(matches!(
-        db::users::transitions::change_email(
+        codeyard::backend::db::users::transitions::change_email(
             pool,
             user.id,
             "stale@example.test",
@@ -293,21 +301,23 @@ async fn email_changes(pg: bool) {
         )
         .await
         .unwrap(),
-        db::users::transitions::EmailChange::Missing
+        codeyard::backend::db::users::transitions::EmailChange::Missing
     ));
-    assert!(db::users::transitions::compare_exchange_password(
-        pool,
-        user.id,
-        &hash,
-        "replacement",
-        true,
-        true,
-        Some("email-session")
-    )
-    .await
-    .unwrap()
-    .is_none());
-    db::users::sessions::create_session(
+    assert!(
+        codeyard::backend::db::users::transitions::compare_exchange_password(
+            pool,
+            user.id,
+            &hash,
+            "replacement",
+            true,
+            true,
+            Some("email-session")
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+    codeyard::backend::db::users::sessions::create_session(
         pool,
         "replacement-session",
         user.id,
@@ -317,7 +327,7 @@ async fn email_changes(pg: bool) {
     )
     .await
     .unwrap();
-    let changed = db::users::transitions::compare_exchange_password(
+    let changed = codeyard::backend::db::users::transitions::compare_exchange_password(
         pool,
         user.id,
         &hash,
@@ -332,7 +342,7 @@ async fn email_changes(pg: bool) {
     assert_eq!(changed.password_hash.as_deref(), Some("replacement"));
     assert!(!changed.must_change_password);
     assert!(matches!(
-        db::users::transitions::change_email(
+        codeyard::backend::db::users::transitions::change_email(
             pool,
             user.id,
             "stale@example.test",
@@ -341,7 +351,7 @@ async fn email_changes(pg: bool) {
         )
         .await
         .unwrap(),
-        db::users::transitions::EmailChange::Missing
+        codeyard::backend::db::users::transitions::EmailChange::Missing
     ));
 
     f.finish().await;
@@ -354,15 +364,15 @@ async fn sessions_belong_to_their_account(pg: bool) {
     let b = f.actor("sessions-b").await;
     let expires = Utc::now() + Duration::days(1);
     for id in ["a-one", "a-two"] {
-        db::users::sessions::create_session(pool, id, a, None, None, expires)
+        codeyard::backend::db::users::sessions::create_session(pool, id, a, None, None, expires)
             .await
             .unwrap();
     }
-    db::users::sessions::create_session(pool, "b-one", b, None, None, expires)
+    codeyard::backend::db::users::sessions::create_session(pool, "b-one", b, None, None, expires)
         .await
         .unwrap();
     assert_eq!(
-        db::users::sessions::list_user_sessions(pool, a)
+        codeyard::backend::db::users::sessions::list_user_sessions(pool, a)
             .await
             .unwrap()
             .len(),
@@ -371,67 +381,71 @@ async fn sessions_belong_to_their_account(pg: bool) {
 
     // Revoking another account's session does nothing.
     assert!(
-        !db::users::sessions::revoke_user_session(pool, a, "b-one", "a-two")
+        !codeyard::backend::db::users::sessions::revoke_user_session(pool, a, "b-one", "a-two")
             .await
             .unwrap()
     );
-    assert!(db::users::sessions::get_session(pool, "b-one")
-        .await
-        .unwrap()
-        .is_some());
+    assert!(
+        codeyard::backend::db::users::sessions::get_session(pool, "b-one")
+            .await
+            .unwrap()
+            .is_some()
+    );
 
     assert!(
-        db::users::sessions::revoke_user_session(pool, a, "a-one", "a-two")
+        codeyard::backend::db::users::sessions::revoke_user_session(pool, a, "a-one", "a-two")
             .await
             .unwrap()
     );
     // Sign out everywhere else keeps the named session and leaves the other account alone.
     assert_eq!(
-        db::users::sessions::revoke_other_user_sessions(pool, a, "a-two")
+        codeyard::backend::db::users::sessions::revoke_other_user_sessions(pool, a, "a-two")
             .await
             .unwrap(),
         0
     );
-    db::users::sessions::create_session(pool, "a-three", a, None, None, expires)
+    codeyard::backend::db::users::sessions::create_session(pool, "a-three", a, None, None, expires)
         .await
         .unwrap();
     assert_eq!(
-        db::users::sessions::revoke_other_user_sessions(pool, a, "a-two")
+        codeyard::backend::db::users::sessions::revoke_other_user_sessions(pool, a, "a-two")
             .await
             .unwrap(),
         1
     );
-    let left = db::users::sessions::list_user_sessions(pool, a)
+    let left = codeyard::backend::db::users::sessions::list_user_sessions(pool, a)
         .await
         .unwrap();
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].id, "a-two");
     // A request from a session that was revoked meanwhile cannot end the replacement login.
-    db::users::sessions::create_session(pool, "a-four", a, None, None, expires)
+    codeyard::backend::db::users::sessions::create_session(pool, "a-four", a, None, None, expires)
         .await
         .unwrap();
-    assert!(
-        db::users::sessions::revoke_user_session(pool, a, "a-two", "a-four")
-            .await
-            .unwrap()
-    );
+    assert!(codeyard::backend::db::users::sessions::revoke_user_session(
+        pool, a, "a-two", "a-four"
+    )
+    .await
+    .unwrap());
     assert_eq!(
-        db::users::sessions::revoke_other_user_sessions(pool, a, "a-two")
+        codeyard::backend::db::users::sessions::revoke_other_user_sessions(pool, a, "a-two")
             .await
             .unwrap(),
         0
     );
     assert!(
-        !db::users::sessions::revoke_user_session(pool, a, "a-four", "a-two")
+        !codeyard::backend::db::users::sessions::revoke_user_session(pool, a, "a-four", "a-two")
             .await
             .unwrap()
     );
-    assert!(db::users::sessions::get_session(pool, "a-four")
-        .await
-        .unwrap()
-        .is_some());
+    assert!(
+        codeyard::backend::db::users::sessions::get_session(pool, "a-four")
+            .await
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(
-        db::users::sessions::list_user_sessions(pool, b)
+        codeyard::backend::db::users::sessions::list_user_sessions(pool, b)
             .await
             .unwrap()
             .len(),
@@ -447,7 +461,7 @@ async fn session_list_shows_recorded_addresses(pg: bool) {
     let pool = f.pool();
     let a = f.actor("sessions-address").await;
     let expires = Utc::now() + Duration::days(1);
-    db::users::sessions::create_session(
+    codeyard::backend::db::users::sessions::create_session(
         pool,
         "with-address",
         a,
@@ -457,7 +471,7 @@ async fn session_list_shows_recorded_addresses(pg: bool) {
     )
     .await
     .unwrap();
-    let listed = db::users::sessions::list_user_sessions(pool, a)
+    let listed = codeyard::backend::db::users::sessions::list_user_sessions(pool, a)
         .await
         .unwrap();
     assert_eq!(listed.len(), 1);
@@ -468,8 +482,8 @@ async fn session_list_shows_recorded_addresses(pg: bool) {
 }
 
 fn organization(
-    outcome: OrganizationOutcome<db::organizations::OrganizationMetadata>,
-) -> db::organizations::OrganizationMetadata {
+    outcome: OrganizationOutcome<codeyard::backend::db::organizations::OrganizationMetadata>,
+) -> codeyard::backend::db::organizations::OrganizationMetadata {
     match outcome {
         OrganizationOutcome::Applied(metadata) => metadata,
         _ => panic!("the owner creates the organization"),
@@ -483,7 +497,7 @@ async fn invitations(pg: bool) {
     let invitee = f.actor("invitee").await;
     let org_admin = f.actor("invite-admin").await;
     let org = organization(
-        db::organizations::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             pool,
             owner,
             &NewOrganization::new("invite-org", OrganizationProfile::new(None, None).unwrap())
@@ -496,7 +510,7 @@ async fn invitations(pg: bool) {
 
     // The invitation is pending: the invitee is not a member until they accept.
     assert!(matches!(
-        db::organizations::invite_organization_member(
+        codeyard::backend::db::organizations::invite_organization_member(
             pool,
             owner,
             org.id,
@@ -508,14 +522,14 @@ async fn invitations(pg: bool) {
         OrganizationOutcome::Applied(_)
     ));
     assert!(matches!(
-        db::organizations::get_organization_role(pool, invitee, org.id)
+        codeyard::backend::db::organizations::get_organization_role(pool, invitee, org.id)
             .await
             .unwrap(),
         OrganizationOutcome::Denied
     ));
     // Someone already invited, and an existing member, are refused.
     assert!(matches!(
-        db::organizations::invite_organization_member(
+        codeyard::backend::db::organizations::invite_organization_member(
             pool,
             owner,
             org.id,
@@ -527,20 +541,28 @@ async fn invitations(pg: bool) {
         OrganizationOutcome::Conflict
     ));
     assert!(matches!(
-        db::organizations::invite_organization_member(pool, owner, org.id, owner, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::invite_organization_member(
+            pool,
+            owner,
+            org.id,
+            owner,
+            OrgRole::Member
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Conflict
     ));
     // The owner sees the pending invitation; the invitee sees it on their own list.
-    match db::organizations::list_organization_invitations(pool, owner, org.id, page)
-        .await
-        .unwrap()
+    match codeyard::backend::db::organizations::list_organization_invitations(
+        pool, owner, org.id, page,
+    )
+    .await
+    .unwrap()
     {
         OrganizationOutcome::Applied(rows) => assert_eq!(rows.len(), 1),
         _ => panic!("the owner lists invitations"),
     }
-    let received = db::organizations::list_received_organization_invitations(
+    let received = codeyard::backend::db::organizations::list_received_organization_invitations(
         pool,
         invitee,
         OrganizationPage::new(0, 100).unwrap(),
@@ -552,73 +574,105 @@ async fn invitations(pg: bool) {
 
     // Declining removes it, and a second answer finds nothing.
     assert!(matches!(
-        db::organizations::decline_organization_invitation(pool, invitee, org.id, None)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::decline_organization_invitation(
+            pool, invitee, org.id, None
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Applied(())
     ));
     assert!(matches!(
-        db::organizations::decline_organization_invitation(pool, invitee, org.id, None)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::decline_organization_invitation(
+            pool, invitee, org.id, None
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Missing
     ));
 
     // Cancelling withdraws the offer; only an owner or admin can do it.
-    db::organizations::invite_organization_member(pool, owner, org.id, invitee, OrgRole::Member)
-        .await
-        .unwrap();
+    codeyard::backend::db::organizations::invite_organization_member(
+        pool,
+        owner,
+        org.id,
+        invitee,
+        OrgRole::Member,
+    )
+    .await
+    .unwrap();
     assert!(matches!(
-        db::organizations::cancel_organization_invitation(pool, invitee, org.id, invitee)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::cancel_organization_invitation(
+            pool, invitee, org.id, invitee
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Denied
     ));
     assert!(matches!(
-        db::organizations::cancel_organization_invitation(pool, owner, org.id, invitee)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::cancel_organization_invitation(
+            pool, owner, org.id, invitee
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Applied(())
     ));
     assert!(matches!(
-        db::organizations::cancel_organization_invitation(pool, owner, org.id, invitee)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::cancel_organization_invitation(
+            pool, owner, org.id, invitee
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Missing
     ));
 
     // Accepting makes the member, once.
-    db::organizations::invite_organization_member(pool, owner, org.id, invitee, OrgRole::Member)
-        .await
-        .unwrap();
+    codeyard::backend::db::organizations::invite_organization_member(
+        pool,
+        owner,
+        org.id,
+        invitee,
+        OrgRole::Member,
+    )
+    .await
+    .unwrap();
     assert!(matches!(
-        db::organizations::accept_organization_invitation(pool, invitee, org.id, None)
+        codeyard::backend::db::organizations::accept_organization_invitation(pool, invitee, org.id, None)
             .await
             .unwrap(),
         OrganizationOutcome::Applied(member) if member.role == "member"
     ));
     assert!(matches!(
-        db::organizations::get_organization_role(pool, invitee, org.id)
+        codeyard::backend::db::organizations::get_organization_role(pool, invitee, org.id)
             .await
             .unwrap(),
         OrganizationOutcome::Applied(OrgRole::Member)
     ));
     assert!(matches!(
-        db::organizations::accept_organization_invitation(pool, invitee, org.id, None)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::accept_organization_invitation(
+            pool, invitee, org.id, None
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Missing
     ));
 
     // An administrator may invite only plain members, not another administrator.
-    db::organizations::invite_organization_member(pool, owner, org.id, org_admin, OrgRole::Admin)
-        .await
-        .unwrap();
-    db::organizations::accept_organization_invitation(pool, org_admin, org.id, None)
-        .await
-        .unwrap();
+    codeyard::backend::db::organizations::invite_organization_member(
+        pool,
+        owner,
+        org.id,
+        org_admin,
+        OrgRole::Admin,
+    )
+    .await
+    .unwrap();
+    codeyard::backend::db::organizations::accept_organization_invitation(
+        pool, org_admin, org.id, None,
+    )
+    .await
+    .unwrap();
     assert!(matches!(
-        db::organizations::invite_organization_member(
+        codeyard::backend::db::organizations::invite_organization_member(
             pool,
             org_admin,
             org.id,

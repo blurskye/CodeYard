@@ -1,8 +1,9 @@
-use crate::backend::db::{
-    advisories::{Advisory, Refusal},
-    credentials::Actor,
-    dependabot_alerts::{self, Alert, Update},
-};
+use crate::backend::db::credentials::Actor;
+use codeyard_model::advisories::Advisory;
+use codeyard_model::advisories::Refusal;
+
+use crate::backend::db::dependabot_alerts::Alert;
+use crate::backend::db::dependabot_alerts::Update;
 use anyhow::{ensure, Result};
 use chrono::Utc;
 use serde_json::Value;
@@ -21,7 +22,7 @@ async fn global_in(tx: &mut Transaction<'_, Sqlite>, keys: Option<&str>) -> Resu
     let mut documents = std::collections::BTreeMap::new();
     let published: Vec<Advisory> = sqlx::query_as("SELECT a.* FROM repository_advisories a JOIN repositories r ON r.id=a.repo_id WHERE a.state='published' AND NOT r.is_private AND NOT EXISTS (SELECT 1 FROM global_advisories g WHERE g.ghsa_id=a.ghsa_id) ORDER BY a.ghsa_id").fetch_all(&mut **tx).await?;
     for row in published {
-        match dependabot_alerts::published(row) {
+        match crate::backend::db::dependabot_alerts::published(row) {
             Ok(value) => {
                 documents.insert(value["ghsa_id"].as_str().unwrap().to_owned(), value);
             }
@@ -36,16 +37,18 @@ async fn global_in(tx: &mut Transaction<'_, Sqlite>, keys: Option<&str>) -> Resu
 }
 pub async fn global_page(
     pool: &SqlitePool,
-    query: &dependabot_alerts::CatalogueQuery,
-) -> Result<dependabot_alerts::CataloguePage> {
+    query: &crate::backend::db::dependabot_alerts::CatalogueQuery,
+) -> Result<crate::backend::db::dependabot_alerts::CataloguePage> {
     use futures_util::TryStreamExt;
     ensure!(
         (1..=100).contains(&query.limit) && query.offset <= 1_000_000,
         Refusal::Invalid
     );
     let mut tx = pool.begin().await?;
-    let (statement, args, offset_applied) = dependabot_alerts::catalogue_statement(false, query);
-    let mut selected = dependabot_alerts::CatalogueSelection::new(query, offset_applied);
+    let (statement, args, offset_applied) =
+        crate::backend::db::dependabot_alerts::catalogue_statement(false, query);
+    let mut selected =
+        crate::backend::db::dependabot_alerts::CatalogueSelection::new(query, offset_applied);
     {
         let mut candidates = sqlx::query_as::<_, (String, String)>(&statement);
         for value in &args {
@@ -71,7 +74,7 @@ pub async fn global_page(
         }
     }
     tx.commit().await?;
-    Ok(dependabot_alerts::CataloguePage {
+    Ok(crate::backend::db::dependabot_alerts::CataloguePage {
         documents,
         previous,
         next,
@@ -98,7 +101,7 @@ pub async fn without_osv(pool: &SqlitePool) -> Result<Vec<Value>> {
     tx.commit().await?;
     let mut rows = Vec::with_capacity(imported.len() + published.len());
     for row in published {
-        match dependabot_alerts::published(row) {
+        match crate::backend::db::dependabot_alerts::published(row) {
             Ok(value) => rows.push(value),
             Err(_) => tracing::warn!("Invalid published advisory excluded from catalogue"),
         }
@@ -130,21 +133,26 @@ async fn global_one_in(
         .fetch_optional(&mut *connection)
         .await?;
     match published {
-        Some(row) => Ok(Some(dependabot_alerts::published(row)?)),
+        Some(row) => Ok(Some(crate::backend::db::dependabot_alerts::published(row)?)),
         None => Ok(None),
     }
 }
 pub async fn import(pool: &SqlitePool, actor: impl Into<Actor>, value: &Value) -> Result<Value> {
     let authority = actor.into();
     let actor = authority.user_id;
-    let value = dependabot_alerts::import_document(value)?;
+    let value = codeyard_model::advisory_documents::import_document(value)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
-        super::users::transitions::active_admin(&mut tx, actor).await?,
+        crate::backend::db::sqlite::users::transitions::active_admin(&mut tx, actor).await?,
         Refusal::Denied
     );
     if let Some(credential) = authority.credential() {
-        super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+        crate::backend::db::sqlite::users::transitions::require_account(
+            &mut tx,
+            actor,
+            &credential,
+        )
+        .await?;
     }
     sqlx::query("INSERT INTO global_advisories(ghsa_id,document) VALUES($1,$2) ON CONFLICT(ghsa_id) DO UPDATE SET document=$2,osv_id=NULL")
         .bind(value["ghsa_id"].as_str().unwrap()).bind(value.to_string()).execute(&mut *tx).await?;
@@ -161,7 +169,7 @@ pub(crate) async fn refresh(
             .bind(repo)
             .fetch_one(&mut **tx)
             .await?;
-    if archived || !super::dependency_graph::enabled_in(tx, repo).await? {
+    if archived || !crate::backend::db::sqlite::dependency_graph::enabled_in(tx, repo).await? {
         return Ok(());
     }
     let reference = format!("refs/heads/{branch}");
@@ -179,12 +187,17 @@ pub(crate) async fn refresh(
     }
     // No inventory is not evidence of a fix. All contributing detectors share one revision.
     let Some(sha) = sha else { return Ok(()) };
-    let snapshots =
-        super::dependency_graph::snapshots_in(tx, repo, Some(&reference), Some(&sha)).await?;
+    let snapshots = crate::backend::db::sqlite::dependency_graph::snapshots_in(
+        tx,
+        repo,
+        Some(&reference),
+        Some(&sha),
+    )
+    .await?;
     for snapshot in &snapshots {
         snapshot.validate()?;
     }
-    let keys = dependabot_alerts::osv_keys(&snapshots);
+    let keys = crate::backend::db::dependabot_alerts::osv_keys(&snapshots);
     let mut advisories = global_in(tx, Some(&keys)).await?;
     let rows: Vec<String> = sqlx::query_scalar(
         "SELECT a.data FROM osv_advisories a WHERE a.id IN (SELECT p.advisory FROM osv_packages p JOIN json_each($1) j ON p.ecosystem=json_extract(j.value,'$[0]') AND p.name=json_extract(j.value,'$[1]')) ORDER BY a.id",
@@ -192,11 +205,15 @@ pub(crate) async fn refresh(
     .bind(&keys)
     .fetch_all(&mut **tx)
     .await?;
-    let (mut osv, aliases) = dependabot_alerts::osv_records(rows)?;
+    let (mut osv, aliases) = crate::backend::db::dependabot_alerts::osv_records(rows)?;
     let overrides: Vec<(String, Option<String>)> = sqlx::query_as("SELECT document,osv_id FROM global_advisories WHERE ghsa_id IN (SELECT value FROM json_each($1))")
         .bind(serde_json::to_string(&aliases)?).fetch_all(&mut **tx).await?;
-    dependabot_alerts::catalogue_for_records(&mut advisories, &mut osv, overrides)?;
-    let matches = dependabot_alerts::matches(&snapshots, &advisories, &osv)?;
+    crate::backend::db::dependabot_alerts::catalogue_for_records(
+        &mut advisories,
+        &mut osv,
+        overrides,
+    )?;
+    let matches = crate::backend::db::dependabot_alerts::matches(&snapshots, &advisories, &osv)?;
     let now = Utc::now();
     let previous: Vec<Alert> =
         sqlx::query_as("SELECT * FROM dependabot_alerts WHERE repo_id=$1 ORDER BY number")
@@ -266,7 +283,7 @@ pub(crate) async fn refresh(
             continue;
         }
         sqlx::query("INSERT INTO dependabot_alerts(repo_id,number,ghsa_id,manifest,ecosystem,package,version,scope,advisory,vulnerability,created_at,updated_at,state,manifest_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,'open',$12) ON CONFLICT(repo_id,number) DO UPDATE SET version=$7,scope=$8,advisory=$9,vulnerability=$10,updated_at=$11,state=CASE WHEN dependabot_alerts.state='fixed' THEN 'open' ELSE dependabot_alerts.state END,fixed_at=NULL")
-            .bind(repo).bind(number).bind(a["ghsa_id"].as_str().unwrap()).bind(&p.manifest).bind(&p.ecosystem).bind(&p.name).bind(&p.version).bind(&p.scope).bind(advisory).bind(vulnerability).bind(now).bind(dependabot_alerts::manifest_digest(&p.manifest)).execute(&mut **tx).await?;
+            .bind(repo).bind(number).bind(a["ghsa_id"].as_str().unwrap()).bind(&p.manifest).bind(&p.ecosystem).bind(&p.name).bind(&p.version).bind(&p.scope).bind(advisory).bind(vulnerability).bind(now).bind(crate::backend::db::dependabot_alerts::manifest_digest(&p.manifest)).execute(&mut **tx).await?;
     }
     Ok(())
 }
@@ -277,9 +294,21 @@ async fn authorize(
     write: bool,
 ) -> Result<()> {
     ensure!(
-        super::discussions::lock_security_authority(tx, actor.user_id, repo, write).await?
-            && super::credentials::repository(tx, actor, repo, "vulnerability_alerts", write)
-                .await?,
+        crate::backend::db::sqlite::discussions::lock_security_authority(
+            tx,
+            actor.user_id,
+            repo,
+            write
+        )
+        .await?
+            && crate::backend::db::sqlite::credentials::repository(
+                tx,
+                actor,
+                repo,
+                "vulnerability_alerts",
+                write
+            )
+            .await?,
         Refusal::Denied
     );
     let settings: Option<String> = sqlx::query_scalar(
@@ -345,7 +374,11 @@ pub async fn organization_repositories(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND m.user_id=$2 AND m.role IN ('owner','admin') AND NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM org_memberships owners JOIN users active ON active.id=owners.user_id WHERE owners.org_id=m.org_id AND owners.role='owner' AND NOT active.is_banned AND NOT active.must_change_password))").bind(org).bind(actor).fetch_one(&mut *tx).await?;
     ensure!(
-        allowed || super::organizations::roles::manages_security(&mut tx, actor, org).await?,
+        allowed
+            || crate::backend::db::sqlite::organizations::roles::manages_security(
+                &mut tx, actor, org
+            )
+            .await?,
         Refusal::Denied
     );
     let rows = sqlx::query_scalar(

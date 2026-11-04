@@ -67,7 +67,7 @@ pub fn is_reserved_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_reserved_name;
+    use crate::backend::db::users::is_reserved_name;
 
     #[test]
     fn the_asset_and_avatar_addresses_are_reserved() {

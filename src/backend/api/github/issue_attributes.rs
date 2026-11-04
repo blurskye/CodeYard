@@ -1,12 +1,12 @@
-use super::{auth, issues, pagination::Pagination, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        issue_attributes::{Refusal, ValueInput},
-    },
-    webhooks::payloads,
-};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::issue_attributes::Refusal;
+use crate::backend::db::issue_attributes::ValueInput;
+
 use axum::{
     body::Bytes,
     extract::{OriginalUri, Path, Query, State},
@@ -41,7 +41,7 @@ async fn types(
     Path(p): Path<Params>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
-    let attributes = db::issue_attributes::catalog(
+    let attributes = crate::backend::db::issue_attributes::catalog(
         &state.pool,
         repo.id,
         auth.as_ref().map(|a| a.user.id),
@@ -53,7 +53,7 @@ async fn types(
         attributes
             .iter()
             .filter(|a| a.is_enabled)
-            .map(payloads::issue_type)
+            .map(crate::backend::webhooks::payloads::issue_type)
             .collect(),
     )))
 }
@@ -65,8 +65,13 @@ async fn list(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
-    let issue = issues::required_issue(&state.pool, repo.id, &p["issue_number"]).await?;
-    let values = db::issue_attributes::values(
+    let issue = crate::backend::api::github::issues::required_issue(
+        &state.pool,
+        repo.id,
+        &p["issue_number"],
+    )
+    .await?;
+    let values = crate::backend::db::issue_attributes::values(
         &state.pool,
         repo.id,
         issue,
@@ -82,7 +87,7 @@ async fn list(
             .iter()
             .skip(offset)
             .take(limit)
-            .map(payloads::issue_field_value)
+            .map(crate::backend::webhooks::payloads::issue_field_value)
             .collect(),
         next,
     )
@@ -99,11 +104,16 @@ async fn save(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?;
-    let issue = issues::required_issue(&state.pool, repo.id, &p["issue_number"]).await?;
+    let actor = auth.ok_or_else(crate::backend::api::github::auth::required)?;
+    let issue = crate::backend::api::github::issues::required_issue(
+        &state.pool,
+        repo.id,
+        &p["issue_number"],
+    )
+    .await?;
     let input: Input = serde_json::from_slice(&body)
         .map_err(|_| Error::validation("IssueFieldValue", "issue_field_values", "invalid"))?;
-    db::issue_attributes::set_values(
+    crate::backend::db::issue_attributes::set_values(
         &state.pool,
         repo.id,
         actor.database_actor(),
@@ -113,11 +123,19 @@ async fn save(
     )
     .await
     .map_err(error)?;
-    let values = db::issue_attributes::values(&state.pool, repo.id, issue, Some(actor.user.id))
-        .await
-        .map_err(Error::unavailable)?;
+    let values = crate::backend::db::issue_attributes::values(
+        &state.pool,
+        repo.id,
+        issue,
+        Some(actor.user.id),
+    )
+    .await
+    .map_err(Error::unavailable)?;
     Ok(Json(Value::Array(
-        values.iter().map(payloads::issue_field_value).collect(),
+        values
+            .iter()
+            .map(crate::backend::webhooks::payloads::issue_field_value)
+            .collect(),
     )))
 }
 async fn remove(
@@ -126,12 +144,23 @@ async fn remove(
     Path(p): Path<Params>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?;
-    let issue = issues::required_issue(&state.pool, repo.id, &p["issue_number"]).await?;
+    let actor = auth.ok_or_else(crate::backend::api::github::auth::required)?;
+    let issue = crate::backend::api::github::issues::required_issue(
+        &state.pool,
+        repo.id,
+        &p["issue_number"],
+    )
+    .await?;
     let field = p["issue_field_id"].parse().map_err(|_| Error::missing())?;
-    db::issue_attributes::delete_value(&state.pool, repo.id, actor.database_actor(), issue, field)
-        .await
-        .map_err(error)?;
+    crate::backend::db::issue_attributes::delete_value(
+        &state.pool,
+        repo.id,
+        actor.database_actor(),
+        issue,
+        field,
+    )
+    .await
+    .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

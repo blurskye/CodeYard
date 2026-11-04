@@ -1,13 +1,14 @@
 use super::request;
-use crate::support::{database::Database, http_client::Client, organizations::applied};
-use codeyard::backend::db;
-use codeyard::backend::db::organizations;
+use crate::support::{
+    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+};
+
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::OrganizationProfile;
 use codeyard::backend::db::repositories::creation::NewRepository;
 use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
 use codeyard::backend::db::repositories::creation::RepositoryTarget;
-use codeyard::backend::identity::tokens;
+
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
@@ -20,7 +21,7 @@ async fn contract(pg: bool) {
     let member = f.actor("member").await;
     let outsider = f.actor("outsider").await;
     let org = applied(
-        organizations::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -29,12 +30,18 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        organizations::add_organization_member(f.pool(), owner, org.id, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::add_organization_member(
+            f.pool(),
+            owner,
+            org.id,
+            member,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     applied(
-        organizations::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("other", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -52,7 +59,7 @@ async fn contract(pg: bool) {
         (outsider, "write"),
     ] {
         let session = Client::login(&router, f.pool(), actor).await;
-        let token = tokens::create(
+        let token = codeyard::backend::identity::tokens::create(
             f.pool(),
             actor,
             Some(&session.session),
@@ -211,7 +218,7 @@ async fn contract(pg: bool) {
     )
     .await;
     let disk = uuid::Uuid::new_v4().to_string();
-    db::repositories::creation::insert_repository(
+    codeyard::backend::db::repositories::creation::insert_repository(
         f.pool(),
         NewRepository {
             owner: RepositoryCreationOwner {

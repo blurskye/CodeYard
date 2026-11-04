@@ -1,6 +1,13 @@
-use crate::backend::db::repositories::dependencies::{
-    self as records, Feature, Job, Policy, Refusal, Snapshot, State, Update, COLUMNS, LEASE_SECONDS,
-};
+use crate::backend::db::repositories::dependencies as records;
+use crate::backend::db::repositories::dependencies::Feature;
+use crate::backend::db::repositories::dependencies::Job;
+use crate::backend::db::repositories::dependencies::Policy;
+use crate::backend::db::repositories::dependencies::Refusal;
+use crate::backend::db::repositories::dependencies::Snapshot;
+use crate::backend::db::repositories::dependencies::State;
+use crate::backend::db::repositories::dependencies::Update;
+use crate::backend::db::repositories::dependencies::COLUMNS;
+use crate::backend::db::repositories::dependencies::LEASE_SECONDS;
 use anyhow::{ensure, Result};
 use codeyard_db_core::models::Repository;
 use sqlx::{PgPool, Postgres, Transaction};
@@ -61,7 +68,7 @@ async fn document(tx: &mut Transaction<'_, Postgres>, repo: i64) -> Result<Snaps
                     .bind(repo)
                     .fetch_one(&mut **tx)
                     .await?;
-            super::super::dependency_graph::snapshots_in(
+            crate::backend::db::postgres::dependency_graph::snapshots_in(
                 tx,
                 repo,
                 Some(&format!("refs/heads/{branch}")),
@@ -99,8 +106,14 @@ pub async fn configure(
     let mut tx = pool.begin().await?;
     let repository = admin(&mut tx, actor, repo, true).await?;
     ensure!(
-        super::super::credentials::repository(&mut tx, &authority, repo, "administration", true)
-            .await?,
+        crate::backend::db::postgres::credentials::repository(
+            &mut tx,
+            &authority,
+            repo,
+            "administration",
+            true
+        )
+        .await?,
         Refusal::Denied
     );
     let current = state_in(&mut tx, repo).await?;

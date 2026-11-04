@@ -1,28 +1,29 @@
 //! Verified proposals only. No package manager, repository script, force push or auto-merge.
-use super::{npm, registry::Client, worker::Pinned};
-use crate::backend::{
-    ci::CiRuns,
-    db::{
-        self,
-        repositories::dependencies::{
-            self as records, AlertState, Feature, Job, Publication, Refusal, Update,
-        },
-    },
-    notifications::NotificationBroadcaster,
-    repositories::{
-        pull_requests::{
-            self,
-            mutations::{create_pull_request, CreatePullRequestRequest},
-        },
-        store::{repo_store, UploadFile, UploadWrite},
-    },
-};
+
+use crate::backend::ci::CiRuns;
+use crate::backend::repositories::dependencies::registry::Client;
+use crate::backend::repositories::dependencies::worker::Pinned;
+
+use crate::backend::db::repositories::dependencies as records;
+use crate::backend::db::repositories::dependencies::AlertState;
+use crate::backend::db::repositories::dependencies::Feature;
+use crate::backend::db::repositories::dependencies::Job;
+use crate::backend::db::repositories::dependencies::Publication;
+use crate::backend::db::repositories::dependencies::Refusal;
+use crate::backend::db::repositories::dependencies::Update;
+use crate::backend::notifications::NotificationBroadcaster;
+
+use crate::backend::repositories::pull_requests::mutations::create_pull_request;
+use crate::backend::repositories::pull_requests::mutations::CreatePullRequestRequest;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::UploadFile;
+use crate::backend::repositories::store::UploadWrite;
 use anyhow::{ensure, Context, Result};
 use sha2::{Digest, Sha256};
 
 /// The owner name of a repository, as push events and pull requests name it.
 async fn owner_name(pool: &codeyard_db_core::DbPool, repository: i64) -> Result<String> {
-    db::repositories::records::repository_owner_names(pool, &[repository])
+    crate::backend::db::repositories::records::repository_owner_names(pool, &[repository])
         .await?
         .get(&repository)
         .cloned()
@@ -49,9 +50,13 @@ async fn open(
         records::proposal_number(pool, actor, pinned.repository.id, &update.branch).await?;
     let pull = if let Some(number) = existing {
         // Include closed/merged proposals: a crash before receipt storage never reopens one.
-        db::pull_requests::records::get_pull_request(pool, pinned.repository.id, number)
-            .await?
-            .ok_or(Refusal::Stale)?
+        crate::backend::db::pull_requests::records::get_pull_request(
+            pool,
+            pinned.repository.id,
+            number,
+        )
+        .await?
+        .ok_or(Refusal::Stale)?
     } else {
         let refs = repo_store(&pinned.repository, ci.cluster.as_ref())
             .refs_from_primary()
@@ -79,10 +84,11 @@ async fn open(
             CreatePullRequestRequest {
                 suppress_ci: true,
                 head_repo_id: Some(pinned.repository.id),
-                source: pull_requests::mutations::PullRequestSource::New {
-                    title,
-                    body: Some(body),
-                },
+                source:
+                    crate::backend::repositories::pull_requests::mutations::PullRequestSource::New {
+                        title,
+                        body: Some(body),
+                    },
                 maintainer_can_modify: None,
                 head_branch: update.branch.clone(),
                 base_branch: pinned.repository.default_branch.clone(),
@@ -92,10 +98,14 @@ async fn open(
         .await
         {
             Ok(pull) => pull,
-            Err(pull_requests::OperationError::Opened { number }) => {
-                db::pull_requests::records::get_pull_request(pool, pinned.repository.id, number)
-                    .await?
-                    .ok_or(Refusal::Stale)?
+            Err(crate::backend::repositories::pull_requests::OperationError::Opened { number }) => {
+                crate::backend::db::pull_requests::records::get_pull_request(
+                    pool,
+                    pinned.repository.id,
+                    number,
+                )
+                .await?
+                .ok_or(Refusal::Stale)?
             }
             Err(error) => return Err(error.into()),
         }
@@ -112,7 +122,7 @@ async fn open(
         return Ok(());
     }
     if pull.state == "open" {
-        pull_requests::mutations::repair_open_pull(
+        crate::backend::repositories::pull_requests::mutations::repair_open_pull(
             pool,
             ci,
             &pinned.repository,
@@ -163,11 +173,15 @@ pub(crate) async fn propose(
             })
         })
         .collect::<std::collections::HashMap<_, _>>();
-    let packages = npm::Lockfile::parse(&pinned.manifest, &pinned.lock)?.packages;
+    let packages = crate::backend::repositories::dependencies::npm::Lockfile::parse(
+        &pinned.manifest,
+        &pinned.lock,
+    )?
+    .packages;
     let store = repo_store(&pinned.repository, ci.cluster.as_ref());
     // The advisories without OSV records veto every candidate too, and they are read once for
     // the job. The OSV ones are looked up by package below.
-    let advisories = db::dependabot_alerts::without_osv(pool).await?;
+    let advisories = crate::backend::db::dependabot_alerts::without_osv(pool).await?;
     let (mut attempted, mut proposed) = (0, 0);
     for (key, alert) in snapshot.alerts {
         if proposed >= 3 || attempted >= 5 {
@@ -284,7 +298,7 @@ pub(crate) async fn propose(
                         .any(|v| {
                             v["package"]["ecosystem"] == "npm"
                                 && v["package"]["name"] == package.name
-                                && db::dependabot_alerts::affected(
+                                && crate::backend::db::dependabot_alerts::affected(
                                     &version.to_string(),
                                     v["vulnerable_version_range"].as_str().unwrap_or(""),
                                 )
@@ -299,11 +313,12 @@ pub(crate) async fn propose(
                 Err(error) if error.is::<reqwest::Error>() => return Err(error),
                 Err(_) => continue,
             };
-            let patch = match npm::Lockfile::parse(&pinned.manifest, &pinned.lock)?.patch(
-                &package.path,
-                &old,
-                &new,
-            ) {
+            let patch = match crate::backend::repositories::dependencies::npm::Lockfile::parse(
+                &pinned.manifest,
+                &pinned.lock,
+            )?
+            .patch(&package.path, &old, &new)
+            {
                 Ok(patch) => patch,
                 Err(_) => continue,
             };

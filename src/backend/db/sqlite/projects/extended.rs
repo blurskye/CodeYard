@@ -1,7 +1,9 @@
 //! GraphQL project operations, with authority checked in the same transaction.
-use super::items::{writable_item, ITEM};
 use super::*;
-use crate::backend::db::projects::{valid_name, Item};
+use crate::backend::db::projects::valid_name;
+use crate::backend::db::projects::Item;
+use crate::backend::db::sqlite::projects::items::writable_item;
+use crate::backend::db::sqlite::projects::items::ITEM;
 use std::collections::HashMap;
 
 pub async fn link_team(
@@ -90,7 +92,12 @@ pub async fn item_by_id_at(
         .ok_or(Refusal::Missing)?;
     readable_at(&mut tx, viewer, item.project_id, include_deleted).await?;
     if let Some(repo) = item.repo_id {
-        super::items::repository_read(&mut tx, viewer.unwrap_or(0), repo).await?;
+        crate::backend::db::sqlite::projects::items::repository_read(
+            &mut tx,
+            viewer.unwrap_or(0),
+            repo,
+        )
+        .await?;
     }
     tx.commit().await?;
     Ok(item)
@@ -104,7 +111,7 @@ pub async fn metadata(
     template: Option<bool>,
 ) -> Result<Project> {
     anyhow::ensure!(
-        readme.is_none_or(|text| crate::backend::issues::validate_body(text, false).is_ok()),
+        readme.is_none_or(|text| codeyard_model::issue_input::validate_body(text, false).is_ok()),
         Refusal::Invalid
     );
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -221,7 +228,10 @@ pub async fn copy(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     owner_authority(&mut tx, actor, owner).await?;
     anyhow::ensure!(
-        super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        crate::backend::db::sqlite::users::transitions::credential_live(
+            &mut tx, actor, credential, true
+        )
+        .await?,
         Refusal::Denied
     );
     readable(&mut tx, Some(actor), source).await?;

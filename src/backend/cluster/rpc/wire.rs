@@ -1,8 +1,18 @@
-use crate::backend::repositories::store::{
-    AsyncMergePublication, BlobRange, CommitFilter, FileWrite, GitService, GitSession,
-    MergeFailure, MergeMethod, MergeRequest, PreparedFile, PullBranchUpdate, RestackMove,
-    UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_TOTAL_BYTES,
-};
+use crate::backend::repositories::store::AsyncMergePublication;
+use crate::backend::repositories::store::BlobRange;
+use crate::backend::repositories::store::CommitFilter;
+use crate::backend::repositories::store::FileWrite;
+use crate::backend::repositories::store::GitService;
+use crate::backend::repositories::store::GitSession;
+use crate::backend::repositories::store::MergeFailure;
+use crate::backend::repositories::store::MergeMethod;
+use crate::backend::repositories::store::MergeRequest;
+use crate::backend::repositories::store::PreparedFile;
+use crate::backend::repositories::store::PullBranchUpdate;
+use crate::backend::repositories::store::RestackMove;
+use crate::backend::repositories::store::UploadWrite;
+use crate::backend::repositories::store::MAX_EDITOR_BYTES;
+use crate::backend::repositories::store::MAX_UPLOAD_TOTAL_BYTES;
 use anyhow::{ensure, Result};
 use codeyard_git::error::{ErrorKind, RepoError};
 use serde::{Deserialize, Serialize};
@@ -11,7 +21,6 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use uuid::Uuid;
 
-pub const MAX_JSON: usize = 8 * 1024 * 1024;
 pub const MAX_BYTES: usize = 128 * 1024 * 1024;
 pub const TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -436,7 +445,7 @@ pub enum Operation {
     },
     MutateRelease {
         mutation: crate::backend::repositories::releases::immutable::Mutation,
-        attestation: Option<crate::backend::repositories::releases::integrity::Attestation>,
+        attestation: Option<codeyard_model::release_integrity::Attestation>,
     },
     PatchRepository {
         default_branch: PublicationText,
@@ -960,13 +969,21 @@ mod tests {
         tokio_rustls::client::TlsStream<tokio::io::DuplexStream>,
         tokio_rustls::server::TlsStream<tokio::io::DuplexStream>,
     ) {
-        use crate::backend::cluster::{tls, transport::ALPN_RPC, NodeKey};
+        use crate::backend::cluster::transport::ALPN_RPC;
+        use codeyard_support::node_identity::NodeKey;
         let server_key = NodeKey::generate();
         let client_key = NodeKey::generate();
         let (client_io, server_io) = tokio::io::duplex(capacity);
-        let acceptor = tokio_rustls::TlsAcceptor::from(tls::server_config(&server_key).unwrap());
+        let acceptor = tokio_rustls::TlsAcceptor::from(
+            crate::backend::cluster::tls::server_config(&server_key).unwrap(),
+        );
         let connector = tokio_rustls::TlsConnector::from(
-            tls::client_config(&client_key, server_key.public_key(), ALPN_RPC).unwrap(),
+            crate::backend::cluster::tls::client_config(
+                &client_key,
+                server_key.public_key(),
+                ALPN_RPC,
+            )
+            .unwrap(),
         );
         let name = tokio_rustls::rustls::pki_types::ServerName::IpAddress(
             std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST).into(),
@@ -1016,3 +1033,5 @@ mod tests {
         copying.await.unwrap().unwrap();
     }
 }
+
+use codeyard_db_core::limits::MAX_JSON;

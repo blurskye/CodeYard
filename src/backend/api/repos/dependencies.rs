@@ -1,20 +1,20 @@
 //! Confidential dependency review; the domain and transactional DAL remain authoritative.
-use super::{
-    chrome::{self, Loaded},
-    forms::{authorize_post, checkbox, field, with_status},
-};
-use crate::backend::{
-    api::http::context::PageContext,
-    app::AppState,
-    db::{
-        self,
-        repositories::dependencies::{self as records, AlertState, Feature, Refusal},
-    },
-    repositories::{
-        access::AccessError,
-        dependencies::{self, DependencyError},
-    },
-};
+
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::repos::chrome::Loaded;
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::checkbox;
+use crate::backend::api::repos::forms::field;
+use crate::backend::api::repos::forms::with_status;
+use crate::backend::app::AppState;
+
+use crate::backend::db::repositories::dependencies as records;
+use crate::backend::db::repositories::dependencies::AlertState;
+use crate::backend::db::repositories::dependencies::Feature;
+use crate::backend::db::repositories::dependencies::Refusal;
+use crate::backend::repositories::access::AccessError;
+
+use crate::backend::repositories::dependencies::DependencyError;
 use axum::{
     extract::{DefaultBodyLimit, Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -26,7 +26,9 @@ use codeyard_git::error::ErrorKind;
 use codeyard_webui::{
     app::Page,
     pages::repos::{
-        dependencies::{Alert, Draft, Package, Page as DependencyPage, Proposal},
+        crate::backend::repositories::dependencies::{
+            Alert, Draft, Package, Page as DependencyPage, Proposal,
+        },
         page::Page as RepoPage,
     },
 };
@@ -42,9 +44,9 @@ pub fn page_router() -> Router<Arc<AppState>> {
 }
 fn failure(error: &anyhow::Error) -> (StatusCode, String) {
     if let Some(
-        graph @ (db::dependency_graph::GraphError::Limit
-        | db::dependency_graph::GraphError::Disabled),
-    ) = error.downcast_ref::<db::dependency_graph::GraphError>()
+        graph @ (codeyard_model::dependency_graph::GraphError::Limit
+        | codeyard_model::dependency_graph::GraphError::Disabled),
+    ) = error.downcast_ref::<codeyard_model::dependency_graph::GraphError>()
     {
         return (StatusCode::UNPROCESSABLE_ENTITY, graph.to_string());
     }
@@ -112,7 +114,7 @@ fn domain_failure(error: DependencyError) -> (StatusCode, String) {
     }
 }
 fn page_number(ctx: &PageContext, key: &str) -> Result<usize, Response> {
-    super::paging::number(ctx, key, 1, 1..=usize::MAX / 20)
+    crate::backend::api::repos::paging::number(ctx, key, 1, 1..=usize::MAX / 20)
 }
 fn state_name(state: &AlertState) -> &'static str {
     match state {
@@ -129,7 +131,7 @@ async fn open(
     name: &str,
 ) -> Result<(PageContext, Loaded), Response> {
     let ctx = PageContext::load(state, headers, uri).await?;
-    let loaded = chrome::load_database(&ctx, owner, name).await?;
+    let loaded = crate::backend::api::repos::chrome::load_database(&ctx, owner, name).await?;
     Ok((ctx, loaded))
 }
 async fn model(ctx: &PageContext, loaded: Loaded, error: Option<String>, draft: Draft) -> Response {
@@ -153,14 +155,28 @@ async fn model(ctx: &PageContext, loaded: Loaded, error: Option<String>, draft: 
     }
     let pool = &ctx.state.pool;
     let repo = loaded.repository.id;
-    let alerts = match dependencies::status(pool, actor, repo, Feature::Alerts).await {
+    let alerts = match crate::backend::repositories::dependencies::status(
+        pool,
+        actor,
+        repo,
+        Feature::Alerts,
+    )
+    .await
+    {
         Ok(v) => v,
         Err(e) => {
             let (s, m) = domain_failure(e);
             return ctx.error(s, &m);
         }
     };
-    let updates = match dependencies::status(pool, actor, repo, Feature::Updates).await {
+    let updates = match crate::backend::repositories::dependencies::status(
+        pool,
+        actor,
+        repo,
+        Feature::Updates,
+    )
+    .await
+    {
         Ok(v) => v,
         Err(e) => {
             let (s, m) = domain_failure(e);
@@ -328,11 +344,11 @@ async fn configure(
             "Private dependency export consent is required".into(),
         ))
     } else {
-        dependencies::set_enabled(
+        crate::backend::repositories::dependencies::set_enabled(
             &ctx.state.pool,
             ctx.state.cluster.as_ref(),
             ctx.user.as_ref().unwrap().id,
-            db::users::accounts::OwnedAccountCredential::Session(
+            crate::backend::db::users::accounts::OwnedAccountCredential::Session(
                 crate::backend::api::http::session::extract_session_id(&ctx.headers)
                     .unwrap_or_default(),
             ),

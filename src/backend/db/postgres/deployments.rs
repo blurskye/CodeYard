@@ -1,7 +1,11 @@
-use crate::backend::db::{
-    credentials::Actor,
-    deployments::{pair, Deployment, Filter, NewDeployment, NewStatus, Refusal, Status},
-};
+use crate::backend::db::credentials::Actor;
+use crate::backend::db::deployments::pair;
+use crate::backend::db::deployments::Deployment;
+use crate::backend::db::deployments::Filter;
+use crate::backend::db::deployments::NewDeployment;
+use crate::backend::db::deployments::NewStatus;
+use crate::backend::db::deployments::Refusal;
+use crate::backend::db::deployments::Status;
 use anyhow::{ensure, Result};
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -12,8 +16,20 @@ async fn write<'p>(
 ) -> Result<Transaction<'p, Postgres>> {
     let mut tx = pool.begin().await?;
     ensure!(
-        super::discussions::lock_exclusive_write_authority(&mut tx, actor.user_id, repo).await?
-            && super::credentials::repository(&mut tx, actor, repo, "deployments", true).await?,
+        crate::backend::db::postgres::discussions::lock_exclusive_write_authority(
+            &mut tx,
+            actor.user_id,
+            repo
+        )
+        .await?
+            && crate::backend::db::postgres::credentials::repository(
+                &mut tx,
+                actor,
+                repo,
+                "deployments",
+                true
+            )
+            .await?,
         Refusal::Denied
     );
     Ok(tx)
@@ -45,7 +61,7 @@ pub async fn get(
     repo: i64,
     id: i64,
 ) -> Result<Option<Deployment>> {
-    Ok(sqlx::query_as(&format!("SELECT d.* FROM repository_deployments d JOIN repositories r ON r.id=d.repo_id LEFT JOIN users u ON u.id=$3 WHERE d.repo_id=$1 AND d.id=$2 AND {}", super::repositories::access::readable_condition()))
+    Ok(sqlx::query_as(&format!("SELECT d.* FROM repository_deployments d JOIN repositories r ON r.id=d.repo_id LEFT JOIN users u ON u.id=$3 WHERE d.repo_id=$1 AND d.id=$2 AND {}", crate::backend::db::postgres::repositories::access::readable_condition()))
         .bind(repo).bind(id).bind(viewer).fetch_optional(pool).await?)
 }
 
@@ -57,7 +73,7 @@ pub async fn list(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<Deployment>> {
-    Ok(sqlx::query_as(&format!("SELECT d.* FROM repository_deployments d JOIN repositories r ON r.id=d.repo_id LEFT JOIN users u ON u.id=$8 WHERE d.repo_id=$1 AND (CAST($2 AS TEXT) IS NULL OR d.sha=$2) AND (CAST($3 AS TEXT) IS NULL OR d.reference=$3) AND (CAST($4 AS TEXT) IS NULL OR d.task=$4) AND (CAST($5 AS TEXT) IS NULL OR d.environment_key=$5) AND {} ORDER BY d.id DESC LIMIT $6 OFFSET $7", super::repositories::access::readable_condition()))
+    Ok(sqlx::query_as(&format!("SELECT d.* FROM repository_deployments d JOIN repositories r ON r.id=d.repo_id LEFT JOIN users u ON u.id=$8 WHERE d.repo_id=$1 AND (CAST($2 AS TEXT) IS NULL OR d.sha=$2) AND (CAST($3 AS TEXT) IS NULL OR d.reference=$3) AND (CAST($4 AS TEXT) IS NULL OR d.task=$4) AND (CAST($5 AS TEXT) IS NULL OR d.environment_key=$5) AND {} ORDER BY d.id DESC LIMIT $6 OFFSET $7", crate::backend::db::postgres::repositories::access::readable_condition()))
         .bind(repo).bind(&filter.sha).bind(&filter.reference).bind(&filter.task).bind(filter.environment.as_ref().map(|name| name.to_lowercase())).bind(limit).bind(offset).bind(viewer).fetch_all(pool).await?)
 }
 
@@ -154,7 +170,7 @@ pub async fn get_status(
     deployment: i64,
     id: i64,
 ) -> Result<Option<Status>> {
-    Ok(sqlx::query_as(&format!("SELECT s.* FROM deployment_statuses s JOIN repository_deployments d ON d.id=s.deployment_id JOIN repositories r ON r.id=d.repo_id LEFT JOIN users u ON u.id=$3 WHERE s.deployment_id=$1 AND s.id=$2 AND {}", super::repositories::access::readable_condition()))
+    Ok(sqlx::query_as(&format!("SELECT s.* FROM deployment_statuses s JOIN repository_deployments d ON d.id=s.deployment_id JOIN repositories r ON r.id=d.repo_id LEFT JOIN users u ON u.id=$3 WHERE s.deployment_id=$1 AND s.id=$2 AND {}", crate::backend::db::postgres::repositories::access::readable_condition()))
         .bind(deployment).bind(id).bind(viewer).fetch_optional(pool).await?)
 }
 
@@ -165,6 +181,6 @@ pub async fn statuses(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<Status>> {
-    Ok(sqlx::query_as(&format!("SELECT s.* FROM deployment_statuses s JOIN repository_deployments d ON d.id=s.deployment_id JOIN repositories r ON r.id=d.repo_id LEFT JOIN users u ON u.id=$4 WHERE s.deployment_id=$1 AND {} ORDER BY s.id DESC LIMIT $2 OFFSET $3", super::repositories::access::readable_condition()))
+    Ok(sqlx::query_as(&format!("SELECT s.* FROM deployment_statuses s JOIN repository_deployments d ON d.id=s.deployment_id JOIN repositories r ON r.id=d.repo_id LEFT JOIN users u ON u.id=$4 WHERE s.deployment_id=$1 AND {} ORDER BY s.id DESC LIMIT $2 OFFSET $3", crate::backend::db::postgres::repositories::access::readable_condition()))
         .bind(deployment).bind(limit).bind(offset).bind(viewer).fetch_all(pool).await?)
 }

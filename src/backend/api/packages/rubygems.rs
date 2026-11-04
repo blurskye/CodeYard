@@ -1,11 +1,11 @@
 //! RubyGems push and Bundler's compact index; no Ruby deserialization or extraction.
-use super::{authenticate, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{self, packages::Publish},
-    packages,
-    storage::MAX_OBJECT_BYTES,
-};
+use crate::backend::api::packages::authenticate;
+use crate::backend::api::packages::Error;
+use crate::backend::api::packages::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::packages::Publish;
+
 use axum::{
     body::{to_bytes, Body},
     extract::{Path, Request, State},
@@ -15,6 +15,7 @@ use axum::{
     Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+use codeyard_support::object_limits::MAX_OBJECT_BYTES;
 use serde_json::{json, Value};
 use serde_yaml::Value as Yaml;
 use sha2::{Digest, Sha256};
@@ -32,14 +33,14 @@ async fn handle(
 }
 async fn run(state: &AppState, owner: &str, path: &str, request: Request) -> Response {
     let anonymous = !request.headers().contains_key(header::AUTHORIZATION);
-    super::finish(
+    crate::backend::api::packages::finish(
         tokio::time::timeout(
             Duration::from_secs(120),
             dispatch(state, owner, path, request),
         )
         .await,
         anonymous,
-        super::RegistryFormat::Standard,
+        crate::backend::api::packages::RegistryFormat::Standard,
     )
 }
 
@@ -93,10 +94,10 @@ fn valid_version(version: &str) -> bool {
             .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric()))
 }
 fn parse(bytes: &[u8]) -> Result<(String, String, Value)> {
-    let spec = super::archives::gem_metadata(bytes)?;
+    let spec = crate::backend::api::packages::archives::gem_metadata(bytes)?;
     let name = field(&spec, "name")
         .and_then(string)
-        .filter(|s| packages::valid_package_name("rubygems", s))
+        .filter(|s| crate::backend::packages::valid_package_name("rubygems", s))
         .ok_or_else(Error::invalid)?
         .to_owned();
     let version = field(&spec, "version")
@@ -141,7 +142,7 @@ fn parse(bytes: &[u8]) -> Result<(String, String, Value)> {
             }
             let name = field(dep, "name")
                 .and_then(string)
-                .filter(|s| packages::valid_package_name("rubygems", s))
+                .filter(|s| crate::backend::packages::valid_package_name("rubygems", s))
                 .ok_or_else(Error::invalid)?;
             dependencies.push(format!(
                 "{name}:{}",
@@ -155,10 +156,10 @@ fn parse(bytes: &[u8]) -> Result<(String, String, Value)> {
         json!({"version":version,"platform":platform,"dependencies":dependencies,"ruby":requirements(field(&spec,"required_ruby_version"))?,"rubygems":requirements(field(&spec,"required_rubygems_version"))?}),
     ))
 }
-fn metadata(version: &db::packages::Version) -> Result<Value> {
+fn metadata(version: &crate::backend::db::packages::Version) -> Result<Value> {
     serde_json::from_str(&version.manifest).map_err(|_| Error::unavailable())
 }
-fn info_body(versions: &[db::packages::Version]) -> Result<String> {
+fn info_body(versions: &[crate::backend::db::packages::Version]) -> Result<String> {
     let mut body = String::from("---\n");
     for version in versions {
         let meta = metadata(version)?;
@@ -197,7 +198,7 @@ fn compact(body: String, method: &Method, headers: &HeaderMap) -> Result<Respons
         // Ignoring an unsatisfiable range sends a complete new index instead of stranding
         // a client whose old cached index was longer than the current one.
         if let Ok(Some((first, last))) =
-            super::oci::byte_range(headers, bytes.len() as u64, Some(&etag))
+            crate::backend::api::packages::oci::byte_range(headers, bytes.len() as u64, Some(&etag))
         {
             start = first as usize;
             end = last as usize + 1;
@@ -267,27 +268,35 @@ async fn dispatch(
         }
     }
     let auth = authenticate(state, &headers, !read).await?;
-    let owner = super::owner(state, namespace).await?;
+    let owner = crate::backend::api::packages::owner(state, namespace).await?;
     let token = auth.as_ref().map(|a| a.token.id.into());
     if path == "api/v1/gems" && request.method() == Method::POST {
-        let auth = super::writer(auth.as_ref())?;
-        let _slot = super::upload_slot(state)?;
+        let auth = crate::backend::api::packages::writer(auth.as_ref())?;
+        let _slot = crate::backend::api::packages::upload_slot(state)?;
         let bytes = to_bytes(request.into_body(), MAX_OBJECT_BYTES as usize)
             .await
             .map_err(|_| Error::invalid())?;
         let (name, key, metadata) = parse(&bytes)?;
-        let package = super::package(state, &owner, "rubygems", &name, Some(auth), true).await?;
-        let blob = packages::store(
+        let package = crate::backend::api::packages::package(
+            state,
+            &owner,
+            "rubygems",
+            &name,
+            Some(auth),
+            true,
+        )
+        .await?;
+        let blob = crate::backend::packages::store(
             &state.pool,
             &state.storage,
             package.id,
             auth.token.id,
             bytes.to_vec(),
-            db::packages::Charge::Upload,
+            crate::backend::db::packages::Charge::Upload,
         )
         .await
         .map_err(Error::db)?;
-        db::packages::publish(
+        crate::backend::db::packages::publish(
             &state.pool,
             auth.token.id,
             Publish {
@@ -313,13 +322,17 @@ async fn dispatch(
     }
     if path == "versions" {
         let mut body = String::from("---\n");
-        let mut rows = super::owner_packages(state, &owner, "rubygems", auth.as_ref()).await?;
+        let mut rows =
+            crate::backend::api::packages::owner_packages(state, &owner, "rubygems", auth.as_ref())
+                .await?;
         if rows.is_empty() && auth.is_none() {
             return Err(Error::required());
         }
         rows.sort_by(|a, b| a.name.cmp(&b.name));
         for package in rows {
-            let mut versions = super::all_versions(state, package.id, auth.as_ref()).await?;
+            let mut versions =
+                crate::backend::api::packages::all_versions(state, package.id, auth.as_ref())
+                    .await?;
             versions.sort_by(|a, b| a.name.cmp(&b.name));
             if versions.is_empty() {
                 continue;
@@ -339,8 +352,17 @@ async fn dispatch(
         return compact(body, request.method(), request.headers());
     }
     if let Some(name) = path.strip_prefix("info/") {
-        let package = super::package(state, &owner, "rubygems", name, auth.as_ref(), false).await?;
-        let mut versions = super::all_versions(state, package.id, auth.as_ref()).await?;
+        let package = crate::backend::api::packages::package(
+            state,
+            &owner,
+            "rubygems",
+            name,
+            auth.as_ref(),
+            false,
+        )
+        .await?;
+        let mut versions =
+            crate::backend::api::packages::all_versions(state, package.id, auth.as_ref()).await?;
         versions.sort_by(|a, b| a.name.cmp(&b.name));
         return compact(info_body(&versions)?, request.method(), request.headers());
     }
@@ -348,10 +370,17 @@ async fn dispatch(
         .strip_prefix("gems/")
         .and_then(|s| s.strip_suffix(".gem"))
     {
-        let blob = db::packages::rubygems_file(&state.pool, &owner, token, filename)
-            .await
-            .map_err(Error::db)?;
-        return super::oci::download(state, &blob, request.method(), request.headers()).await;
+        let blob =
+            crate::backend::db::packages::rubygems_file(&state.pool, &owner, token, filename)
+                .await
+                .map_err(Error::db)?;
+        return crate::backend::api::packages::oci::download(
+            state,
+            &blob,
+            request.method(),
+            request.headers(),
+        )
+        .await;
     }
     Err(Error::missing())
 }

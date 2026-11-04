@@ -1,6 +1,9 @@
 //! The repository execution switch leaves native limits and engine selection intact.
-use super::{auth, repos, Error, Result};
-use crate::backend::{app::AppState, db};
+
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -23,8 +26,9 @@ async fn get_repository(
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
-    let (repo, actor) = super::repository(&state, &headers, &owner, &name, false).await?;
-    let actor = actor.ok_or_else(auth::required)?;
+    let (repo, actor) =
+        crate::backend::api::github::repository(&state, &headers, &owner, &name, false).await?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     if !crate::backend::repositories::access::can_admin(&state.pool, &actor.user, &repo)
         .await
         .map_err(Error::unavailable)?
@@ -34,7 +38,7 @@ async fn get_repository(
             "Repository administration required",
         ));
     }
-    let settings = db::actions::get_repo_actions_settings(&state.pool, repo.id)
+    let settings = crate::backend::db::actions::get_repo_actions_settings(&state.pool, repo.id)
         .await
         .map_err(Error::unavailable)?;
     Ok(Json(
@@ -48,8 +52,9 @@ async fn put_repository(
     Path((owner, name)): Path<(String, String)>,
     Json(input): Json<RepositoryInput>,
 ) -> Result<StatusCode> {
-    let (repo, actor) = super::repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(auth::required)?;
+    let (repo, actor) =
+        crate::backend::api::github::repository(&state, &headers, &owner, &name, true).await?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     if input
         .allowed_actions
         .as_deref()
@@ -60,9 +65,14 @@ async fn put_repository(
             "Configure an available action execution policy",
         ));
     }
-    db::actions::set_repo_enabled(&state.pool, actor.database_actor(), repo.id, input.enabled)
-        .await
-        .map_err(repos::settings_error)?;
+    crate::backend::db::actions::set_repo_enabled(
+        &state.pool,
+        actor.database_actor(),
+        repo.id,
+        input.enabled,
+    )
+    .await
+    .map_err(crate::backend::api::github::repos::settings_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -7,7 +7,7 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::db;
+
 use database::Database;
 use pulls::{visible_text, Client};
 use serde_json::{json, Value};
@@ -23,7 +23,7 @@ async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
     codeyard::backend::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -457,16 +457,21 @@ async fn commentless_timeline_has_event_continuation(pg: bool) {
         )
         .await;
     let issue_id = issue["id"].as_i64().unwrap();
-    let repo = db::repositories::records::get_repository(database.pool(), "alice", "proj")
-        .await
-        .unwrap()
-        .unwrap();
-    let actor = db::users::accounts::get_user_by_username(database.pool(), "alice")
-        .await
-        .unwrap()
-        .unwrap();
+    let repo = codeyard::backend::db::repositories::records::get_repository(
+        database.pool(),
+        "alice",
+        "proj",
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let actor =
+        codeyard::backend::db::users::accounts::get_user_by_username(database.pool(), "alice")
+            .await
+            .unwrap()
+            .unwrap();
     for index in 0..201 {
-        db::timeline::record_event(
+        codeyard::backend::db::timeline::record_event(
             database.pool(),
             repo.id,
             "issue",
@@ -511,17 +516,22 @@ async fn timeline_events_load_for_each_page(pg: bool) {
         )
         .await;
     let issue_id = issue["id"].as_i64().unwrap();
-    let repo = db::repositories::records::get_repository(database.pool(), "alice", "proj")
-        .await
-        .unwrap()
-        .unwrap();
-    let actor = db::users::accounts::get_user_by_username(database.pool(), "alice")
-        .await
-        .unwrap()
-        .unwrap();
+    let repo = codeyard::backend::db::repositories::records::get_repository(
+        database.pool(),
+        "alice",
+        "proj",
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let actor =
+        codeyard::backend::db::users::accounts::get_user_by_username(database.pool(), "alice")
+            .await
+            .unwrap()
+            .unwrap();
     // 210 changes come before the first page's comments, more than one page's limit of 200.
     for index in 0..210 {
-        db::timeline::record_event(
+        codeyard::backend::db::timeline::record_event(
             database.pool(),
             repo.id,
             "issue",
@@ -546,7 +556,7 @@ async fn timeline_events_load_for_each_page(pg: bool) {
             .await;
     }
     for index in 0..10 {
-        db::timeline::record_event(
+        codeyard::backend::db::timeline::record_event(
             database.pool(),
             repo.id,
             "issue",
@@ -609,7 +619,7 @@ async fn timeline_records_only_real_unassignments(pg: bool) {
         .await;
     assert!(reply.status.is_redirection(), "{}", reply.text());
     let pool = database.pool();
-    let issue = db::issues::get_issue(pool, proj_id(pool).await, 1)
+    let issue = codeyard::backend::db::issues::get_issue(pool, proj_id(pool).await, 1)
         .await
         .unwrap()
         .unwrap()
@@ -719,7 +729,7 @@ async fn sqlite_reaction_returns_to_its_discussion_page() {
 
 /// The id of alice's repository, for checks that read the database.
 async fn proj_id(pool: &codeyard_db_core::DbPool) -> i64 {
-    db::repositories::records::get_repository(pool, "alice", "proj")
+    codeyard::backend::db::repositories::records::get_repository(pool, "alice", "proj")
         .await
         .unwrap()
         .unwrap()
@@ -728,14 +738,14 @@ async fn proj_id(pool: &codeyard_db_core::DbPool) -> i64 {
 
 /// The number of `unassigned` lines in the timeline of an issue.
 async fn unassigned_lines(pool: &codeyard_db_core::DbPool, issue: i64) -> usize {
-    db::timeline::list_events(
+    codeyard::backend::db::timeline::list_events(
         pool,
         proj_id(pool).await,
         "issue",
         issue,
         None,
         None,
-        db::timeline::EVENT_LIMIT,
+        codeyard::backend::db::timeline::EVENT_LIMIT,
         0,
     )
     .await
@@ -747,7 +757,7 @@ async fn unassigned_lines(pool: &codeyard_db_core::DbPool, issue: i64) -> usize 
 
 /// The reactions of `viewer` on an issue, summed over every reaction.
 async fn reaction_total(pool: &codeyard_db_core::DbPool, issue: i64, viewer: i64) -> i64 {
-    db::reactions::reaction_counts(pool, "issue", &[issue], viewer)
+    codeyard::backend::db::reactions::reaction_counts(pool, "issue", &[issue], viewer)
         .await
         .unwrap()
         .iter()
@@ -760,8 +770,8 @@ fn assert_denied(result: anyhow::Result<bool>) {
     let error = result.expect_err("the toggle is refused");
     assert!(
         matches!(
-            error.downcast_ref::<db::discussions::DiscussionWriteRefusal>(),
-            Some(db::discussions::DiscussionWriteRefusal::Denied)
+            error.downcast_ref::<codeyard::backend::db::discussions::DiscussionWriteRefusal>(),
+            Some(codeyard::backend::db::discussions::DiscussionWriteRefusal::Denied)
         ),
         "{error:#}"
     );
@@ -773,25 +783,27 @@ fn assert_denied(result: anyhow::Result<bool>) {
 async fn toggles_check_access_in_their_transaction(pg: bool) {
     let (mut database, _root, _alice, _bob) = setup(pg).await;
     let pool = database.pool();
-    let owner = db::users::accounts::get_user_by_username(pool, "alice")
+    let owner = codeyard::backend::db::users::accounts::get_user_by_username(pool, "alice")
         .await
         .unwrap()
         .unwrap()
         .id;
-    let bob = db::users::accounts::get_user_by_username(pool, "bob")
+    let bob = codeyard::backend::db::users::accounts::get_user_by_username(pool, "bob")
         .await
         .unwrap()
         .unwrap()
         .id;
     let repo = proj_id(pool).await;
-    let issue = db::issues::create_issue(pool, repo, owner, "Reacted", "")
+    let issue = codeyard::backend::db::issues::create_issue(pool, repo, owner, "Reacted", "")
         .await
         .unwrap()
         .id;
-    let owner_credential = db::users::accounts::AccountCredential::Session(&_alice.session);
-    let bob_credential = db::users::accounts::AccountCredential::Session(&_bob.session);
+    let owner_credential =
+        codeyard::backend::db::users::accounts::AccountCredential::Session(&_alice.session);
+    let bob_credential =
+        codeyard::backend::db::users::accounts::AccountCredential::Session(&_bob.session);
     let toggle = |actor: i64| {
-        db::reactions::toggle_reaction(
+        codeyard::backend::db::reactions::toggle_reaction(
             pool,
             actor,
             if actor == owner {
@@ -801,7 +813,7 @@ async fn toggles_check_access_in_their_transaction(pg: bool) {
             },
             repo,
             issue,
-            db::reactions::Subject::Issue,
+            codeyard::backend::db::reactions::Subject::Issue,
             issue,
             "heart",
         )
@@ -815,7 +827,7 @@ async fn toggles_check_access_in_their_transaction(pg: bool) {
     assert_eq!(reaction_total(pool, issue, owner).await, 0);
 
     // With a grant he can react. Taking the grant back refuses his next toggle and keeps his heart.
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         pool,
         bob,
         repo,
@@ -824,7 +836,7 @@ async fn toggles_check_access_in_their_transaction(pg: bool) {
     .await
     .unwrap();
     assert!(toggle(bob).await.unwrap());
-    db::repositories::access::revoke_repo_access(pool, bob, repo)
+    codeyard::backend::db::repositories::access::revoke_repo_access(pool, bob, repo)
         .await
         .unwrap();
     assert_denied(toggle(bob).await);
@@ -853,36 +865,37 @@ async fn sqlite_toggles_check_access_in_their_transaction() {
 async fn concurrent_toggles_do_not_lose_updates(pg: bool) {
     let (mut database, _root, _alice, _bob) = setup(pg).await;
     let pool = database.pool();
-    let owner = db::users::accounts::get_user_by_username(pool, "alice")
+    let owner = codeyard::backend::db::users::accounts::get_user_by_username(pool, "alice")
         .await
         .unwrap()
         .unwrap()
         .id;
     let repo = proj_id(pool).await;
-    let issue = db::issues::create_issue(pool, repo, owner, "Contended", "")
+    let issue = codeyard::backend::db::issues::create_issue(pool, repo, owner, "Contended", "")
         .await
         .unwrap()
         .id;
-    let credential = db::users::accounts::AccountCredential::Session(&_alice.session);
+    let credential =
+        codeyard::backend::db::users::accounts::AccountCredential::Session(&_alice.session);
     for _ in 0..10 {
         let (first, second) = tokio::join!(
-            db::reactions::toggle_reaction(
+            codeyard::backend::db::reactions::toggle_reaction(
                 pool,
                 owner,
                 &credential,
                 repo,
                 issue,
-                db::reactions::Subject::Issue,
+                codeyard::backend::db::reactions::Subject::Issue,
                 issue,
                 "eyes"
             ),
-            db::reactions::toggle_reaction(
+            codeyard::backend::db::reactions::toggle_reaction(
                 pool,
                 owner,
                 &credential,
                 repo,
                 issue,
-                db::reactions::Subject::Issue,
+                codeyard::backend::db::reactions::Subject::Issue,
                 issue,
                 "eyes"
             ),

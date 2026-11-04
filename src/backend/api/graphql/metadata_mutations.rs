@@ -1,6 +1,15 @@
 //! Translate GraphQL IDs into the REST lane's validated metadata batch, not a second write path.
-use super::{db, missing, node_id, repository, unavailable, RequestContext, Result, Value};
-use crate::backend::{api::github, db::assignees::AssignedItem, repositories::access};
+use crate::backend::api::graphql::db;
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::node_id;
+
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
+
+use crate::backend::db::assignees::AssignedItem;
+
 use serde_json::json;
 
 pub(super) fn list(value: &Value) -> &[Value] {
@@ -26,17 +35,21 @@ pub(super) async fn prepare(
     input: &Value,
     repo: &codeyard_db_core::models::Repository,
     request: &RequestContext,
-) -> Result<github::issues::Metadata> {
+) -> Result<crate::backend::api::github::issues::Metadata> {
     let mut translated = json!({});
     let changed = ["labelIds", "assigneeIds", "milestoneId"]
         .iter()
         .any(|key| input.get(*key).is_some());
     if changed
-        && !access::can_triage(&request.state.pool, &request.auth.user, repo)
-            .await
-            .map_err(unavailable)?
+        && !crate::backend::repositories::access::can_triage(
+            &request.state.pool,
+            &request.auth.user,
+            repo,
+        )
+        .await
+        .map_err(unavailable)?
     {
-        return Err(super::token_denied());
+        return Err(crate::backend::api::graphql::token_denied());
     }
     if let Some(value) = input.get("labelIds").filter(|v| !v.is_null()) {
         let mut selected = ids(value, "L")?;
@@ -95,20 +108,25 @@ pub(super) async fn prepare(
             )
         };
     }
-    github::issues::metadata(&request.state.pool, repo, &request.auth.user, &translated)
-        .await
-        .map_err(github::Error::graphql)
+    crate::backend::api::github::issues::metadata(
+        &request.state.pool,
+        repo,
+        &request.auth.user,
+        &translated,
+    )
+    .await
+    .map_err(crate::backend::api::github::Error::graphql)
 }
 pub(super) async fn apply(
     repo: &codeyard_db_core::models::Repository,
     item: AssignedItem,
     number: i32,
     title: &str,
-    metadata: github::issues::Metadata,
+    metadata: crate::backend::api::github::issues::Metadata,
     request: &RequestContext,
 ) -> Result<()> {
-    let owner = repository::owner(repo, request).await?;
-    github::issues::apply_metadata(
+    let owner = crate::backend::api::graphql::repository::owner(repo, request).await?;
+    crate::backend::api::github::issues::apply_metadata(
         &request.state,
         &request.auth,
         repo,
@@ -117,5 +135,5 @@ pub(super) async fn apply(
         metadata,
     )
     .await
-    .map_err(github::Error::graphql)
+    .map_err(crate::backend::api::github::Error::graphql)
 }

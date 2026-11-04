@@ -1,6 +1,11 @@
 //! Repository-scoped view of the existing organization team grants.
-use super::{auth, pagination::Pagination, repository, Error, Result};
-use crate::backend::{app::AppState, db, webhooks::payloads};
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -17,9 +22,11 @@ async fn list(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repository, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = actor.ok_or_else(auth::required)?.user;
+    let actor = actor
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
     let (offset, limit) = page.window()?;
-    let teams = db::repositories::github::repository_teams(
+    let teams = crate::backend::db::repositories::github::repository_teams(
         &state.pool,
         actor.id,
         repository.id,
@@ -41,10 +48,17 @@ async fn list(
             .into_iter()
             .take(limit)
             .map(|row| {
-                let mut value = payloads::team_document(&row.team, &owner, row.permission);
+                let mut value = crate::backend::webhooks::payloads::team_document(
+                    &row.team,
+                    &owner,
+                    row.permission,
+                );
                 if let Some(parent) = row.parent {
-                    value["parent"] =
-                        payloads::team_document(&parent, &owner, parent.default_permission);
+                    value["parent"] = crate::backend::webhooks::payloads::team_document(
+                        &parent,
+                        &owner,
+                        parent.default_permission,
+                    );
                 }
                 value
             })

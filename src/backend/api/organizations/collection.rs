@@ -1,8 +1,7 @@
 //! The actor's organization collection, using the same authorized settings projection.
 
-use super::organization;
-use super::organization::Fields;
 use crate::backend::api::http::context::PageContext;
+use crate::backend::api::organizations::organization::Fields;
 use crate::backend::app::AppState;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -18,5 +17,12 @@ pub(super) async fn show(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    organization::respond(&ctx, None, StatusCode::OK, None, Fields::new()).await
+    crate::backend::api::organizations::organization::respond(
+        &ctx,
+        None,
+        StatusCode::OK,
+        None,
+        Fields::new(),
+    )
+    .await
 }

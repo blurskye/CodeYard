@@ -360,24 +360,32 @@ async fn test_access_control() {
 
 #[tokio::test]
 async fn test_private_repository_grants_are_scoped_and_revocable() {
-    use codeyard::backend::db;
-
     let fixture = setup_test_db().await;
-    let owner = db::users::accounts::create_user(&fixture.pool, &unique_name("access-owner"), None)
-        .await
-        .expect("create fixture owner");
-    let collaborator =
-        db::users::accounts::create_user(&fixture.pool, &unique_name("access-member"), None)
-            .await
-            .expect("create fixture collaborator");
-    let unrelated =
-        db::users::accounts::create_user(&fixture.pool, &unique_name("access-unrelated"), None)
-            .await
-            .expect("create unrelated fixture account");
+    let owner = codeyard::backend::db::users::accounts::create_user(
+        &fixture.pool,
+        &unique_name("access-owner"),
+        None,
+    )
+    .await
+    .expect("create fixture owner");
+    let collaborator = codeyard::backend::db::users::accounts::create_user(
+        &fixture.pool,
+        &unique_name("access-member"),
+        None,
+    )
+    .await
+    .expect("create fixture collaborator");
+    let unrelated = codeyard::backend::db::users::accounts::create_user(
+        &fixture.pool,
+        &unique_name("access-unrelated"),
+        None,
+    )
+    .await
+    .expect("create unrelated fixture account");
     let mut repositories = Vec::new();
     for _ in 0..2 {
         repositories.push(
-            db::repositories::records::create_repository(
+            codeyard::backend::db::repositories::records::create_repository(
                 &fixture.pool,
                 owner.id,
                 &unique_name("scoped-private"),
@@ -389,7 +397,7 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
             .expect("create private fixture repository"),
         );
     }
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         &fixture.pool,
         collaborator.id,
         repositories[0].id,
@@ -398,7 +406,7 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
     .await
     .expect("grant fixture access");
     assert_eq!(
-        db::repositories::access::get_user_repo_access(
+        codeyard::backend::db::repositories::access::get_user_repo_access(
             &fixture.pool,
             collaborator.id,
             repositories[0].id
@@ -408,7 +416,7 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
         codeyard_db_core::models::AccessLevel::Write
     );
     assert_eq!(
-        db::repositories::access::get_user_repo_access(
+        codeyard::backend::db::repositories::access::get_user_repo_access(
             &fixture.pool,
             collaborator.id,
             repositories[1].id
@@ -418,7 +426,7 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
         codeyard_db_core::models::AccessLevel::None
     );
     assert_eq!(
-        db::repositories::access::get_user_repo_access(
+        codeyard::backend::db::repositories::access::get_user_repo_access(
             &fixture.pool,
             unrelated.id,
             repositories[0].id
@@ -427,15 +435,17 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
         .unwrap(),
         codeyard_db_core::models::AccessLevel::None
     );
-    assert!(db::repositories::access::revoke_repo_access(
-        &fixture.pool,
-        collaborator.id,
-        repositories[0].id
-    )
-    .await
-    .unwrap());
+    assert!(
+        codeyard::backend::db::repositories::access::revoke_repo_access(
+            &fixture.pool,
+            collaborator.id,
+            repositories[0].id
+        )
+        .await
+        .unwrap()
+    );
     assert_eq!(
-        db::repositories::access::get_user_repo_access(
+        codeyard::backend::db::repositories::access::get_user_repo_access(
             &fixture.pool,
             collaborator.id,
             repositories[0].id
@@ -445,9 +455,13 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
         codeyard_db_core::models::AccessLevel::None
     );
     assert_eq!(
-        db::repositories::access::get_user_repo_access(&fixture.pool, owner.id, repositories[0].id)
-            .await
-            .unwrap(),
+        codeyard::backend::db::repositories::access::get_user_repo_access(
+            &fixture.pool,
+            owner.id,
+            repositories[0].id
+        )
+        .await
+        .unwrap(),
         codeyard_db_core::models::AccessLevel::Owner
     );
 }
@@ -589,12 +603,12 @@ async fn test_branch_protection_and_commit_statuses() {
 
 #[tokio::test]
 async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
-    use codeyard::backend::db;
     let fixture = setup_test_db().await;
     let pool = fixture.pool.clone();
-    let owner = db::users::accounts::create_user(&pool, &unique_name("ci-owner"), None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard::backend::db::users::accounts::create_user(&pool, &unique_name("ci-owner"), None)
+            .await
+            .unwrap();
     // Workflows run on the server's machines: only admins or trusted users queue runs.
     sqlx::query("UPDATE users SET is_admin = TRUE WHERE id = $1")
         .bind(owner.id)
@@ -602,7 +616,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         .await
         .unwrap();
     let repo_name = unique_name("ci-repo");
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard::backend::db::repositories::records::create_repository(
         &pool,
         owner.id,
         &repo_name,
@@ -614,26 +628,29 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
     .unwrap();
     let sha = "0123456789012345678901234567890123456789";
     let blobs = serde_json::json!({".github/workflows/ci.yml": sha});
-    let new_run = |pipeline: &'static str, environment: Option<&'static str>| db::ci::NewCiRun {
-        repo_id: repo.id,
-        triggered_by_id: owner.id,
-        pipeline,
-        event: "push",
-        pull_request_id: None,
-        branch: "main",
-        head_sha: sha,
-        workflow_path: ".github/workflows/ci.yml",
-        workflow_blobs: &blobs,
-        workflow_inputs: None,
-        environment,
-        manual: false,
+    let new_run = |pipeline: &'static str, environment: Option<&'static str>| {
+        codeyard::backend::db::ci::NewCiRun {
+            repo_id: repo.id,
+            triggered_by_id: owner.id,
+            pipeline,
+            event: "push",
+            pull_request_id: None,
+            branch: "main",
+            head_sha: sha,
+            workflow_path: ".github/workflows/ci.yml",
+            workflow_blobs: &blobs,
+            workflow_inputs: None,
+            environment,
+            manual: false,
+        }
     };
 
-    let run = db::ci::enqueue_ci_run(&pool, new_run("full", Some("production")), &[])
-        .await
-        .unwrap();
+    let run =
+        codeyard::backend::db::ci::enqueue_ci_run(&pool, new_run("full", Some("production")), &[])
+            .await
+            .unwrap();
     assert_eq!(run.status, "queued");
-    let claimed = db::ci::claim_ci_run(
+    let claimed = codeyard::backend::db::ci::claim_ci_run(
         &pool,
         "node-a/1",
         "podman",
@@ -647,7 +664,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
     assert_eq!(claimed.status, "running");
     assert_eq!(claimed.worker.as_deref(), Some("node-a/1"));
     assert!(
-        db::ci::claim_ci_run(
+        codeyard::backend::db::ci::claim_ci_run(
             &pool,
             "node-b/1",
             "local",
@@ -660,19 +677,19 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         "one run, one worker"
     );
     assert_eq!(
-        db::ci::heartbeat_ci_run(&pool, run.id, "node-a/1")
+        codeyard::backend::db::ci::heartbeat_ci_run(&pool, run.id, "node-a/1")
             .await
             .unwrap(),
         Some(false)
     );
     assert_eq!(
-        db::ci::heartbeat_ci_run(&pool, run.id, "node-b/1")
+        codeyard::backend::db::ci::heartbeat_ci_run(&pool, run.id, "node-b/1")
             .await
             .unwrap(),
         None
     );
 
-    db::ci::append_ci_logs(
+    codeyard::backend::db::ci::append_ci_logs(
         &pool,
         run.id,
         "node-a/1",
@@ -694,26 +711,28 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
     )
     .await
     .unwrap();
-    let logs = db::ci::list_ci_logs(&pool, run.id, 50).await.unwrap();
+    let logs = codeyard::backend::db::ci::list_ci_logs(&pool, run.id, 50)
+        .await
+        .unwrap();
     assert_eq!(logs.len(), 2);
     assert_eq!(logs[0].line, "running tests");
     assert_eq!(logs[1].level, "warn");
 
     assert!(
-        db::ci::finish_ci_run(&pool, run.id, "node-b/1", "success", None)
+        codeyard::backend::db::ci::finish_ci_run(&pool, run.id, "node-b/1", "success", None)
             .await
             .unwrap()
             .is_none()
     );
     let (finished, notifications, _) =
-        db::ci::finish_ci_run(&pool, run.id, "node-a/1", "success", None)
+        codeyard::backend::db::ci::finish_ci_run(&pool, run.id, "node-a/1", "success", None)
             .await
             .unwrap()
             .unwrap();
     assert_eq!(finished.status, "success");
     assert!(notifications.is_empty(), "a successful run tells no one");
     assert!(finished.completed_at.is_some());
-    let deployment = db::ci::get_ci_deployment_by_run_id(&pool, run.id)
+    let deployment = codeyard::backend::db::ci::get_ci_deployment_by_run_id(&pool, run.id)
         .await
         .unwrap()
         .unwrap();
@@ -721,23 +740,24 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         (deployment.environment.as_str(), deployment.status.as_str()),
         ("production", "success")
     );
-    let statuses = db::repositories::protection::list_commit_statuses(&pool, repo.id, sha)
-        .await
-        .unwrap();
+    let statuses =
+        codeyard::backend::db::repositories::protection::list_commit_statuses(&pool, repo.id, sha)
+            .await
+            .unwrap();
     assert_eq!(statuses.len(), 1);
     assert_eq!(
         (statuses[0].context.as_str(), statuses[0].state.as_str()),
         ("gitserv/workflow/.github/workflows/ci.yml", "success")
     );
     assert_eq!(
-        db::ci::list_ci_runs_for_repo(&pool, repo.id, 20)
+        codeyard::backend::db::ci::list_ci_runs_for_repo(&pool, repo.id, 20)
             .await
             .unwrap()
             .len(),
         1
     );
     assert_eq!(
-        db::ci::list_ci_runs_for_user(&pool, owner.id, 20)
+        codeyard::backend::db::ci::list_ci_runs_for_user(&pool, owner.id, 20)
             .await
             .unwrap()
             .len(),
@@ -745,24 +765,24 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
     );
 
     // Cancelling a queued run finishes it; cancelling a running one asks its worker.
-    let queued = db::ci::enqueue_ci_run(&pool, new_run("ci", None), &[])
+    let queued = codeyard::backend::db::ci::enqueue_ci_run(&pool, new_run("ci", None), &[])
         .await
         .unwrap();
     assert!(
-        db::ci::request_ci_cancellation(&pool, queued.run_id, owner.id)
+        codeyard::backend::db::ci::request_ci_cancellation(&pool, queued.run_id, owner.id)
             .await
             .unwrap()
             .0
     );
-    let cancelled = db::ci::get_ci_run_by_run_id(&pool, queued.run_id)
+    let cancelled = codeyard::backend::db::ci::get_ci_run_by_run_id(&pool, queued.run_id)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(cancelled.status, "cancelled");
-    let running = db::ci::enqueue_ci_run(&pool, new_run("ci", None), &[])
+    let running = codeyard::backend::db::ci::enqueue_ci_run(&pool, new_run("ci", None), &[])
         .await
         .unwrap();
-    db::ci::claim_ci_run(
+    codeyard::backend::db::ci::claim_ci_run(
         &pool,
         "node-a/1",
         "podman",
@@ -773,13 +793,13 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
     .unwrap()
     .unwrap();
     assert!(
-        db::ci::request_ci_cancellation(&pool, running.run_id, owner.id)
+        codeyard::backend::db::ci::request_ci_cancellation(&pool, running.run_id, owner.id)
             .await
             .unwrap()
             .0
     );
     assert_eq!(
-        db::ci::heartbeat_ci_run(&pool, running.id, "node-a/1")
+        codeyard::backend::db::ci::heartbeat_ci_run(&pool, running.id, "node-a/1")
             .await
             .unwrap(),
         Some(true)
@@ -792,20 +812,28 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         .await
         .unwrap();
     assert_eq!(
-        db::ci::fail_stale_ci_runs(&pool, 90).await.unwrap().0.len(),
+        codeyard::backend::db::ci::fail_stale_ci_runs(&pool, 90)
+            .await
+            .unwrap()
+            .0
+            .len(),
         1
     );
-    let failed = db::ci::get_ci_run_by_run_id(&pool, running.run_id)
+    let failed = codeyard::backend::db::ci::get_ci_run_by_run_id(&pool, running.run_id)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(failed.status, "failed");
 
     // Non-admin, untrusted users can't queue runs.
-    let stranger = db::users::accounts::create_user(&pool, &unique_name("ci-stranger"), None)
-        .await
-        .unwrap();
-    db::repositories::access::grant_repo_access(
+    let stranger = codeyard::backend::db::users::accounts::create_user(
+        &pool,
+        &unique_name("ci-stranger"),
+        None,
+    )
+    .await
+    .unwrap();
+    codeyard::backend::db::repositories::access::grant_repo_access(
         &pool,
         stranger.id,
         repo.id,
@@ -815,10 +843,14 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
     .unwrap();
     let mut untrusted = new_run("ci", None);
     untrusted.triggered_by_id = stranger.id;
-    assert!(db::ci::enqueue_ci_run(&pool, untrusted, &[]).await.is_err());
+    assert!(
+        codeyard::backend::db::ci::enqueue_ci_run(&pool, untrusted, &[])
+            .await
+            .is_err()
+    );
     let mut trusted = new_run("ci", None);
     trusted.triggered_by_id = stranger.id;
-    db::ci::enqueue_ci_run(&pool, trusted, &[stranger.id])
+    codeyard::backend::db::ci::enqueue_ci_run(&pool, trusted, &[stranger.id])
         .await
         .unwrap();
 }
@@ -946,7 +978,7 @@ async fn test_token_creation_refuses_session_revoked_by_password_change_on_sqlit
 /// change either precedes the insert or the insert is refused.
 async fn token_session_revocation_contract(pool: &DbPool) {
     use codeyard::backend::{
-        db::users::{accounts, sessions, transitions},
+        codeyard::backend::db::users::{accounts, sessions, transitions},
         identity::tokens::{self, TokenError, TokenInput},
     };
     let user = accounts::create_user_with_password_and_flags(
@@ -1192,11 +1224,12 @@ async fn test_repository_delete_removes_row_history_and_frees_name() {
 /// Editing a pull request needs the latest revision, and a merge is recorded once.
 async fn pull_request_edit_contract(pool: &DbPool) {
     use codeyard::backend::db::{self, discussions::DiscussionEdit};
-    let owner = db::users::accounts::create_user(pool, &unique_name("pr-owner"), None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard::backend::db::users::accounts::create_user(pool, &unique_name("pr-owner"), None)
+            .await
+            .unwrap();
     let repo_name = unique_name("pr-repo");
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard::backend::db::repositories::records::create_repository(
         pool,
         owner.id,
         &repo_name,
@@ -1207,9 +1240,9 @@ async fn pull_request_edit_contract(pool: &DbPool) {
     .await
     .unwrap();
     let (head, base, merged_sha) = ("1".repeat(40), "2".repeat(40), "3".repeat(40));
-    let pr = db::pull_requests::records::create_pull_request(
+    let pr = codeyard::backend::db::pull_requests::records::create_pull_request(
         pool,
-        db::pull_requests::records::NewPullRequest {
+        codeyard::backend::db::pull_requests::records::NewPullRequest {
             head_repo_id: None,
             repo_id: repo.id,
             author_id: owner.id,
@@ -1234,7 +1267,7 @@ async fn pull_request_edit_contract(pool: &DbPool) {
         body: None,
         state,
     };
-    let edited = db::pull_requests::records::update_pull_request(
+    let edited = codeyard::backend::db::pull_requests::records::update_pull_request(
         pool,
         pr.id,
         edit("open", pr.updated_at, Some("second"), None),
@@ -1245,33 +1278,39 @@ async fn pull_request_edit_contract(pool: &DbPool) {
     .expect("the owner can edit an open pull request");
     assert_eq!(edited.title, "second");
     // The revision the editor started from is out of date now.
-    assert!(db::pull_requests::records::update_pull_request(
-        pool,
-        pr.id,
-        edit("open", pr.updated_at, Some("stale"), None),
-        Default::default(),
-    )
-    .await
-    .unwrap()
-    .is_none());
-    assert!(db::pull_requests::records::mark_pull_requests_merged(
-        pool,
-        std::slice::from_ref(&edited),
-        owner.id,
-        &merged_sha
-    )
-    .await
-    .unwrap());
+    assert!(
+        codeyard::backend::db::pull_requests::records::update_pull_request(
+            pool,
+            pr.id,
+            edit("open", pr.updated_at, Some("stale"), None),
+            Default::default(),
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+    assert!(
+        codeyard::backend::db::pull_requests::records::mark_pull_requests_merged(
+            pool,
+            std::slice::from_ref(&edited),
+            owner.id,
+            &merged_sha
+        )
+        .await
+        .unwrap()
+    );
     // It can only be merged once, and a merged pull request cannot be reopened.
-    assert!(!db::pull_requests::records::mark_pull_requests_merged(
-        pool,
-        std::slice::from_ref(&edited),
-        owner.id,
-        &merged_sha
-    )
-    .await
-    .unwrap());
-    let merged = db::pull_requests::records::get_pull_request_by_id(pool, pr.id)
+    assert!(
+        !codeyard::backend::db::pull_requests::records::mark_pull_requests_merged(
+            pool,
+            std::slice::from_ref(&edited),
+            owner.id,
+            &merged_sha
+        )
+        .await
+        .unwrap()
+    );
+    let merged = codeyard::backend::db::pull_requests::records::get_pull_request_by_id(pool, pr.id)
         .await
         .unwrap()
         .unwrap();
@@ -1280,15 +1319,17 @@ async fn pull_request_edit_contract(pool: &DbPool) {
         merged.merge_commit_sha.as_deref(),
         Some(merged_sha.as_str())
     );
-    assert!(db::pull_requests::records::update_pull_request(
-        pool,
-        pr.id,
-        edit("merged", merged.updated_at, None, Some("open")),
-        Default::default(),
-    )
-    .await
-    .unwrap()
-    .is_none());
+    assert!(
+        codeyard::backend::db::pull_requests::records::update_pull_request(
+            pool,
+            pr.id,
+            edit("merged", merged.updated_at, None, Some("open")),
+            Default::default(),
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
 }
 
 #[tokio::test]
@@ -1309,11 +1350,12 @@ async fn pull_request_revision_contract(pool: &DbPool) {
     use codeyard::backend::db::{
         self, discussions::DiscussionEdit, pull_requests::records::PullRequestRevisions,
     };
-    let owner = db::users::accounts::create_user(pool, &unique_name("rev-owner"), None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard::backend::db::users::accounts::create_user(pool, &unique_name("rev-owner"), None)
+            .await
+            .unwrap();
     let repo_name = unique_name("rev-repo");
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard::backend::db::repositories::records::create_repository(
         pool,
         owner.id,
         &repo_name,
@@ -1327,9 +1369,9 @@ async fn pull_request_revision_contract(pool: &DbPool) {
     let open = |branch: &str, head: char| {
         let (branch, head) = (branch.to_owned(), sha(head));
         async move {
-            db::pull_requests::records::create_pull_request(
+            codeyard::backend::db::pull_requests::records::create_pull_request(
                 pool,
-                db::pull_requests::records::NewPullRequest {
+                codeyard::backend::db::pull_requests::records::NewPullRequest {
                     head_repo_id: None,
                     repo_id: repo.id,
                     author_id: owner.id,
@@ -1360,24 +1402,32 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         body: None,
         state: Some("closed"),
     };
-    let closed =
-        db::pull_requests::records::update_pull_request(pool, closed.id, close, Default::default())
-            .await
-            .unwrap()
-            .expect("the owner can close it");
-    assert!(db::pull_requests::records::mark_pull_requests_merged(
+    let closed = codeyard::backend::db::pull_requests::records::update_pull_request(
         pool,
-        std::slice::from_ref(&merged),
-        owner.id,
-        &sha('f')
+        closed.id,
+        close,
+        Default::default(),
     )
     .await
-    .unwrap());
+    .unwrap()
+    .expect("the owner can close it");
+    assert!(
+        codeyard::backend::db::pull_requests::records::mark_pull_requests_merged(
+            pool,
+            std::slice::from_ref(&merged),
+            owner.id,
+            &sha('f')
+        )
+        .await
+        .unwrap()
+    );
 
     // Only open pull requests are listed, with the commits they record.
-    let listed = db::pull_requests::records::list_open_pull_request_revisions(pool, repo.id)
-        .await
-        .unwrap();
+    let listed = codeyard::backend::db::pull_requests::records::list_open_pull_request_revisions(
+        pool, repo.id,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         listed,
         vec![
@@ -1411,9 +1461,9 @@ async fn pull_request_revision_contract(pool: &DbPool) {
     );
 
     // Consent cannot survive a head without a known base-writer publisher.
-    db::pull_requests::auto_merge::enable_auto_merge(
+    codeyard::backend::db::pull_requests::auto_merge::enable_auto_merge(
         pool,
-        &db::pull_requests::auto_merge::AutoMergeRequest {
+        &codeyard::backend::db::pull_requests::auto_merge::AutoMergeRequest {
             pull_request_id: first.id,
             enabled_by: owner.id,
             token_id: None,
@@ -1428,48 +1478,55 @@ async fn pull_request_revision_contract(pool: &DbPool) {
     .unwrap();
     // Head and base moves use independent compare-and-swaps, so contention on
     // one revision cannot prevent the other revision from advancing.
-    assert!(!db::pull_requests::records::move_open_pull_request_head(
-        pool,
-        first.id,
-        &sha('9'),
-        &sha('6'),
-        first.head_repo_id,
-        &first.head_branch,
-        None,
-    )
-    .await
-    .unwrap());
-    assert!(db::pull_requests::records::move_open_pull_request_head(
-        pool,
-        first.id,
-        &sha('1'),
-        &sha('6'),
-        first.head_repo_id,
-        &first.head_branch,
-        None,
-    )
-    .await
-    .unwrap());
     assert!(
-        db::pull_requests::auto_merge::get_auto_merge(pool, first.id)
+        !codeyard::backend::db::pull_requests::records::move_open_pull_request_head(
+            pool,
+            first.id,
+            &sha('9'),
+            &sha('6'),
+            first.head_repo_id,
+            &first.head_branch,
+            None,
+        )
+        .await
+        .unwrap()
+    );
+    assert!(
+        codeyard::backend::db::pull_requests::records::move_open_pull_request_head(
+            pool,
+            first.id,
+            &sha('1'),
+            &sha('6'),
+            first.head_repo_id,
+            &first.head_branch,
+            None,
+        )
+        .await
+        .unwrap()
+    );
+    assert!(
+        codeyard::backend::db::pull_requests::auto_merge::get_auto_merge(pool, first.id)
             .await
             .unwrap()
             .is_none()
     );
-    assert!(db::pull_requests::records::move_open_pull_request_base(
-        pool,
-        first.id,
-        &sha('2'),
-        &sha('7'),
-        "main",
-        None,
-    )
-    .await
-    .unwrap());
-    let moved = db::pull_requests::records::get_pull_request_by_id(pool, first.id)
+    assert!(
+        codeyard::backend::db::pull_requests::records::move_open_pull_request_base(
+            pool,
+            first.id,
+            &sha('2'),
+            &sha('7'),
+            "main",
+            None,
+        )
         .await
         .unwrap()
-        .unwrap();
+    );
+    let moved =
+        codeyard::backend::db::pull_requests::records::get_pull_request_by_id(pool, first.id)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(
         (moved.head_sha.as_str(), moved.base_sha.as_str()),
         (sha('6').as_str(), sha('7').as_str())
@@ -1480,48 +1537,56 @@ async fn pull_request_revision_contract(pool: &DbPool) {
     );
     // A refresh that read another base branch cannot move this base sha, even when the sha still
     // matches; a refresh that read the current base branch can.
-    assert!(!db::pull_requests::records::move_open_pull_request_base(
-        pool,
-        first.id,
-        &sha('7'),
-        &sha('8'),
-        "develop",
-        None,
-    )
-    .await
-    .unwrap());
-    assert!(db::pull_requests::records::move_open_pull_request_base(
-        pool,
-        first.id,
-        &sha('7'),
-        &sha('8'),
-        "main",
-        None,
-    )
-    .await
-    .unwrap());
+    assert!(
+        !codeyard::backend::db::pull_requests::records::move_open_pull_request_base(
+            pool,
+            first.id,
+            &sha('7'),
+            &sha('8'),
+            "develop",
+            None,
+        )
+        .await
+        .unwrap()
+    );
+    assert!(
+        codeyard::backend::db::pull_requests::records::move_open_pull_request_base(
+            pool,
+            first.id,
+            &sha('7'),
+            &sha('8'),
+            "main",
+            None,
+        )
+        .await
+        .unwrap()
+    );
     // Neither move can be applied twice with a stale expected revision.
-    assert!(!db::pull_requests::records::move_open_pull_request_head(
-        pool,
-        first.id,
-        &sha('1'),
-        &sha('8'),
-        first.head_repo_id,
-        &first.head_branch,
-        None,
-    )
-    .await
-    .unwrap());
-    assert!(!db::pull_requests::records::move_open_pull_request_base(
-        pool,
-        first.id,
-        &sha('2'),
-        &sha('8'),
-        "main",
-        None,
-    )
-    .await
-    .unwrap());
+    assert!(
+        !codeyard::backend::db::pull_requests::records::move_open_pull_request_head(
+            pool,
+            first.id,
+            &sha('1'),
+            &sha('8'),
+            first.head_repo_id,
+            &first.head_branch,
+            None,
+        )
+        .await
+        .unwrap()
+    );
+    assert!(
+        !codeyard::backend::db::pull_requests::records::move_open_pull_request_base(
+            pool,
+            first.id,
+            &sha('2'),
+            &sha('8'),
+            "main",
+            None,
+        )
+        .await
+        .unwrap()
+    );
     // A form opened before the move is out of date now.
     let stale = DiscussionEdit {
         actor_id: owner.id,
@@ -1531,41 +1596,47 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         body: None,
         state: None,
     };
-    assert!(db::pull_requests::records::update_pull_request(
-        pool,
-        first.id,
-        stale,
-        Default::default()
-    )
-    .await
-    .unwrap()
-    .is_none());
+    assert!(
+        codeyard::backend::db::pull_requests::records::update_pull_request(
+            pool,
+            first.id,
+            stale,
+            Default::default()
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
     // Closed and merged pull requests never move.
     for pull in [&closed, &merged] {
-        assert!(!db::pull_requests::records::move_open_pull_request_head(
-            pool,
-            pull.id,
-            &pull.head_sha,
-            &sha('8'),
-            pull.head_repo_id,
-            &pull.head_branch,
-            None,
-        )
-        .await
-        .unwrap());
-        assert!(!db::pull_requests::records::move_open_pull_request_base(
-            pool,
-            pull.id,
-            &pull.base_sha,
-            &sha('8'),
-            "main",
-            None,
-        )
-        .await
-        .unwrap());
+        assert!(
+            !codeyard::backend::db::pull_requests::records::move_open_pull_request_head(
+                pool,
+                pull.id,
+                &pull.head_sha,
+                &sha('8'),
+                pull.head_repo_id,
+                &pull.head_branch,
+                None,
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !codeyard::backend::db::pull_requests::records::move_open_pull_request_base(
+                pool,
+                pull.id,
+                &pull.base_sha,
+                &sha('8'),
+                "main",
+                None,
+            )
+            .await
+            .unwrap()
+        );
     }
     for id in [closed.id, merged.id] {
-        let row = db::pull_requests::records::get_pull_request_by_id(pool, id)
+        let row = codeyard::backend::db::pull_requests::records::get_pull_request_by_id(pool, id)
             .await
             .unwrap()
             .unwrap();
@@ -1577,18 +1648,21 @@ async fn pull_request_revision_contract(pool: &DbPool) {
     let mut merging = moved.clone();
     merging.head_sha = sha('a');
     merging.base_sha = sha('b');
-    assert!(db::pull_requests::records::mark_pull_requests_merged(
-        pool,
-        std::slice::from_ref(&merging),
-        owner.id,
-        &sha('c')
-    )
-    .await
-    .unwrap());
-    let done = db::pull_requests::records::get_pull_request_by_id(pool, first.id)
+    assert!(
+        codeyard::backend::db::pull_requests::records::mark_pull_requests_merged(
+            pool,
+            std::slice::from_ref(&merging),
+            owner.id,
+            &sha('c')
+        )
         .await
         .unwrap()
-        .unwrap();
+    );
+    let done =
+        codeyard::backend::db::pull_requests::records::get_pull_request_by_id(pool, first.id)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(done.state, "merged");
     assert_eq!(
         (
@@ -1603,10 +1677,12 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         )
     );
     assert_eq!(
-        db::pull_requests::records::list_open_pull_request_revisions(pool, repo.id)
-            .await
-            .unwrap()
-            .len(),
+        codeyard::backend::db::pull_requests::records::list_open_pull_request_revisions(
+            pool, repo.id
+        )
+        .await
+        .unwrap()
+        .len(),
         1,
         "only the second pull request is still open"
     );
@@ -1620,9 +1696,9 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         tokio::spawn(async move {
             let head_sha = "d".repeat(40);
             let base_sha = "e".repeat(40);
-            db::pull_requests::records::create_pull_request(
+            codeyard::backend::db::pull_requests::records::create_pull_request(
                 &pool,
-                db::pull_requests::records::NewPullRequest {
+                codeyard::backend::db::pull_requests::records::NewPullRequest {
                     head_repo_id: Some(repo_id),
                     repo_id,
                     author_id,
@@ -1647,14 +1723,16 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         match result {
             Ok(pull) => winner = Some(pull),
             Err(error) => {
-                assert!(error.is::<db::pull_requests::records::DuplicateOpenPullRequest>());
+                assert!(error
+                    .is::<codeyard::backend::db::pull_requests::records::DuplicateOpenPullRequest>(
+                ));
                 refused += 1;
             }
         }
     }
     assert_eq!(refused, 1);
     let winner = winner.expect("one concurrent creator must win");
-    let closed_duplicate = db::pull_requests::records::update_pull_request(
+    let closed_duplicate = codeyard::backend::db::pull_requests::records::update_pull_request(
         pool,
         winner.id,
         DiscussionEdit {
@@ -1673,9 +1751,9 @@ async fn pull_request_revision_contract(pool: &DbPool) {
     assert_eq!(closed_duplicate.state, "closed");
     let head_sha = sha('d');
     let base_sha = sha('e');
-    let reopened = db::pull_requests::records::create_pull_request(
+    let reopened = codeyard::backend::db::pull_requests::records::create_pull_request(
         pool,
-        db::pull_requests::records::NewPullRequest {
+        codeyard::backend::db::pull_requests::records::NewPullRequest {
             head_repo_id: Some(repo.id),
             repo_id: repo.id,
             author_id: owner.id,
@@ -1694,7 +1772,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
     .unwrap();
     assert!(reopened.number > winner.number);
     // Reopening the closed one would give the same branches two open pull requests.
-    let refused = db::pull_requests::records::update_pull_request(
+    let refused = codeyard::backend::db::pull_requests::records::update_pull_request(
         pool,
         winner.id,
         DiscussionEdit {
@@ -1710,7 +1788,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
     .await
     .unwrap_err();
     let duplicate = refused
-        .downcast::<db::pull_requests::records::DuplicateOpenPullRequest>()
+        .downcast::<codeyard::backend::db::pull_requests::records::DuplicateOpenPullRequest>()
         .unwrap();
     assert_eq!(duplicate.number, reopened.number);
 }
@@ -1723,11 +1801,12 @@ async fn pull_request_merge_mark_contract(pool: &DbPool) {
         discussions::DiscussionEdit,
         pull_requests::records::{NewBase, NewPullRequest},
     };
-    let owner = db::users::accounts::create_user(pool, &unique_name("mark-owner"), None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard::backend::db::users::accounts::create_user(pool, &unique_name("mark-owner"), None)
+            .await
+            .unwrap();
     let repo_name = unique_name("mark-repo");
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard::backend::db::repositories::records::create_repository(
         pool,
         owner.id,
         &repo_name,
@@ -1738,7 +1817,7 @@ async fn pull_request_merge_mark_contract(pool: &DbPool) {
     .await
     .unwrap();
     let sha = "a".repeat(40);
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard::backend::db::pull_requests::records::create_pull_request(
         pool,
         NewPullRequest {
             repo_id: repo.id,
@@ -1759,7 +1838,7 @@ async fn pull_request_merge_mark_contract(pool: &DbPool) {
     .unwrap();
     let merged_sha = "c".repeat(40);
     // The base moves to develop after the merge went into main, before the row is marked.
-    let moved = db::pull_requests::records::update_pull_request(
+    let moved = codeyard::backend::db::pull_requests::records::update_pull_request(
         pool,
         pull.id,
         DiscussionEdit {
@@ -1770,7 +1849,7 @@ async fn pull_request_merge_mark_contract(pool: &DbPool) {
             body: None,
             state: None,
         },
-        db::pull_requests::records::PullRequestUpdate {
+        codeyard::backend::db::pull_requests::records::PullRequestUpdate {
             base: Some(NewBase {
                 branch: "develop",
                 sha: &"b".repeat(40),
@@ -1784,7 +1863,7 @@ async fn pull_request_merge_mark_contract(pool: &DbPool) {
     .unwrap();
     assert_eq!(moved.base_branch, "develop");
     assert!(
-        !db::pull_requests::records::mark_pull_requests_merged(
+        !codeyard::backend::db::pull_requests::records::mark_pull_requests_merged(
             pool,
             std::slice::from_ref(&pull),
             owner.id,
@@ -1794,7 +1873,7 @@ async fn pull_request_merge_mark_contract(pool: &DbPool) {
         .unwrap(),
         "the merge went into main, so the row that now targets develop is not marked"
     );
-    let row = db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
+    let row = codeyard::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
         .await
         .unwrap()
         .unwrap();
@@ -1803,7 +1882,7 @@ async fn pull_request_merge_mark_contract(pool: &DbPool) {
         ("open", "develop", false)
     );
     assert!(
-        db::pull_requests::records::mark_pull_requests_merged(
+        codeyard::backend::db::pull_requests::records::mark_pull_requests_merged(
             pool,
             std::slice::from_ref(&moved),
             owner.id,
@@ -1813,7 +1892,7 @@ async fn pull_request_merge_mark_contract(pool: &DbPool) {
         .unwrap(),
         "a row that still targets the merged branch is marked"
     );
-    let row = db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
+    let row = codeyard::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
         .await
         .unwrap()
         .unwrap();
@@ -1851,11 +1930,15 @@ async fn test_pull_request_revisions_on_sqlite() {
 /// name is a different branch.
 async fn pull_request_branch_filter_contract(pool: &DbPool) {
     use codeyard::backend::db::{self, pull_requests::records::NewPullRequest};
-    let owner = db::users::accounts::create_user(pool, &unique_name("branch-owner"), None)
-        .await
-        .unwrap();
+    let owner = codeyard::backend::db::users::accounts::create_user(
+        pool,
+        &unique_name("branch-owner"),
+        None,
+    )
+    .await
+    .unwrap();
     let repo_name = unique_name("branch-repo");
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard::backend::db::repositories::records::create_repository(
         pool,
         owner.id,
         &repo_name,
@@ -1866,9 +1949,9 @@ async fn pull_request_branch_filter_contract(pool: &DbPool) {
     .await
     .unwrap();
     let fork_name = unique_name("branch-fork");
-    let fork = db::repositories::discovery::create_forked_repository(
+    let fork = codeyard::backend::db::repositories::discovery::create_forked_repository(
         pool,
-        db::repositories::discovery::NewForkedRepository {
+        codeyard::backend::db::repositories::discovery::NewForkedRepository {
             owner_id: owner.id,
             name: &fork_name,
             description: None,
@@ -1887,7 +1970,7 @@ async fn pull_request_branch_filter_contract(pool: &DbPool) {
         (fork.id, "topic", "main"),
         (repo.id, "other", "release"),
     ] {
-        let pull = db::pull_requests::records::create_pull_request(
+        let pull = codeyard::backend::db::pull_requests::records::create_pull_request(
             pool,
             NewPullRequest {
                 repo_id: repo.id,
@@ -2262,21 +2345,25 @@ fn sorted(mut titles: Vec<&str>) -> Vec<&str> {
 /// A viewer's lists hold the issues and pull requests assigned to them, opened by them, or waiting
 /// for their review, in repositories they can read. Closed and merged items are in the closed list.
 async fn viewer_work_contract(pool: &DbPool) {
-    use codeyard::backend::db;
     use codeyard::backend::db::assignees::assign_user;
     use codeyard::backend::db::assignees::AssignedItem;
     use codeyard::backend::db::issues::IssueRelation;
     use codeyard::backend::db::pull_requests::records::NewPullRequest;
     use codeyard::backend::db::pull_requests::records::PullRequestRelation;
 
-    let owner = db::users::accounts::create_user(pool, &unique_name("work-owner"), None)
-        .await
-        .unwrap();
-    let viewer = db::users::accounts::create_user(pool, &unique_name("work-viewer"), None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard::backend::db::users::accounts::create_user(pool, &unique_name("work-owner"), None)
+            .await
+            .unwrap();
+    let viewer = codeyard::backend::db::users::accounts::create_user(
+        pool,
+        &unique_name("work-viewer"),
+        None,
+    )
+    .await
+    .unwrap();
     let public_name = unique_name("work-public");
-    let public = db::repositories::records::create_repository(
+    let public = codeyard::backend::db::repositories::records::create_repository(
         pool,
         owner.id,
         &public_name,
@@ -2287,7 +2374,7 @@ async fn viewer_work_contract(pool: &DbPool) {
     .await
     .unwrap();
     // Only the owner and collaborators can be assigned, so the viewer collaborates here first.
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         pool,
         viewer.id,
         public.id,
@@ -2296,7 +2383,7 @@ async fn viewer_work_contract(pool: &DbPool) {
     .await
     .unwrap();
     let private_name = unique_name("work-private");
-    let private = db::repositories::records::create_repository(
+    let private = codeyard::backend::db::repositories::records::create_repository(
         pool,
         owner.id,
         &private_name,
@@ -2307,9 +2394,10 @@ async fn viewer_work_contract(pool: &DbPool) {
     .await
     .unwrap();
 
-    let assigned = db::issues::create_issue(pool, public.id, owner.id, "assigned open", "")
-        .await
-        .unwrap();
+    let assigned =
+        codeyard::backend::db::issues::create_issue(pool, public.id, owner.id, "assigned open", "")
+            .await
+            .unwrap();
     assign_user(
         pool,
         owner.id,
@@ -2319,10 +2407,15 @@ async fn viewer_work_contract(pool: &DbPool) {
     )
     .await
     .unwrap();
-    let assigned_closed =
-        db::issues::create_issue(pool, public.id, owner.id, "assigned closed", "")
-            .await
-            .unwrap();
+    let assigned_closed = codeyard::backend::db::issues::create_issue(
+        pool,
+        public.id,
+        owner.id,
+        "assigned closed",
+        "",
+    )
+    .await
+    .unwrap();
     assign_user(
         pool,
         owner.id,
@@ -2333,21 +2426,33 @@ async fn viewer_work_contract(pool: &DbPool) {
     .await
     .unwrap();
     set_state(pool, "issues", assigned_closed.id, "closed").await;
-    db::issues::create_issue(pool, public.id, viewer.id, "opened open", "")
+    codeyard::backend::db::issues::create_issue(pool, public.id, viewer.id, "opened open", "")
         .await
         .unwrap();
-    let opened_closed = db::issues::create_issue(pool, public.id, viewer.id, "opened closed", "")
-        .await
-        .unwrap();
+    let opened_closed = codeyard::backend::db::issues::create_issue(
+        pool,
+        public.id,
+        viewer.id,
+        "opened closed",
+        "",
+    )
+    .await
+    .unwrap();
     set_state(pool, "issues", opened_closed.id, "closed").await;
-    db::issues::create_issue(pool, public.id, owner.id, "unrelated", "")
+    codeyard::backend::db::issues::create_issue(pool, public.id, owner.id, "unrelated", "")
         .await
         .unwrap();
     // Assigned in a private repository while the viewer could read it; hidden once access ends.
-    let hidden = db::issues::create_issue(pool, private.id, owner.id, "private assigned", "")
-        .await
-        .unwrap();
-    db::repositories::access::grant_repo_access(
+    let hidden = codeyard::backend::db::issues::create_issue(
+        pool,
+        private.id,
+        owner.id,
+        "private assigned",
+        "",
+    )
+    .await
+    .unwrap();
+    codeyard::backend::db::repositories::access::grant_repo_access(
         pool,
         viewer.id,
         private.id,
@@ -2364,37 +2469,52 @@ async fn viewer_work_contract(pool: &DbPool) {
     )
     .await
     .unwrap();
-    db::repositories::access::revoke_repo_access(pool, viewer.id, private.id)
+    codeyard::backend::db::repositories::access::revoke_repo_access(pool, viewer.id, private.id)
         .await
         .unwrap();
 
-    let assigned_open =
-        db::issues::list_viewer_issues(pool, viewer.id, IssueRelation::Assigned, true, 100)
-            .await
-            .unwrap();
+    let assigned_open = codeyard::backend::db::issues::list_viewer_issues(
+        pool,
+        viewer.id,
+        IssueRelation::Assigned,
+        true,
+        100,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         sorted(assigned_open.iter().map(|e| e.title.as_str()).collect()),
         ["assigned open"]
     );
-    let created_closed =
-        db::issues::list_viewer_issues(pool, viewer.id, IssueRelation::Created, false, 100)
-            .await
-            .unwrap();
+    let created_closed = codeyard::backend::db::issues::list_viewer_issues(
+        pool,
+        viewer.id,
+        IssueRelation::Created,
+        false,
+        100,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         sorted(created_closed.iter().map(|e| e.title.as_str()).collect()),
         ["opened closed"]
     );
     assert_eq!(created_closed[0].repo_owner, owner.username);
-    let counts = db::issues::count_viewer_issues(pool, viewer.id, IssueRelation::Assigned)
-        .await
-        .unwrap();
+    let counts = codeyard::backend::db::issues::count_viewer_issues(
+        pool,
+        viewer.id,
+        IssueRelation::Assigned,
+    )
+    .await
+    .unwrap();
     assert_eq!((counts.open, counts.closed), (1, 1));
-    let counts = db::issues::count_viewer_issues(pool, viewer.id, IssueRelation::Created)
-        .await
-        .unwrap();
+    let counts =
+        codeyard::backend::db::issues::count_viewer_issues(pool, viewer.id, IssueRelation::Created)
+            .await
+            .unwrap();
     assert_eq!((counts.open, counts.closed), (1, 1));
 
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         pool,
         viewer.id,
         private.id,
@@ -2402,10 +2522,15 @@ async fn viewer_work_contract(pool: &DbPool) {
     )
     .await
     .unwrap();
-    let assigned_open =
-        db::issues::list_viewer_issues(pool, viewer.id, IssueRelation::Assigned, true, 100)
-            .await
-            .unwrap();
+    let assigned_open = codeyard::backend::db::issues::list_viewer_issues(
+        pool,
+        viewer.id,
+        IssueRelation::Assigned,
+        true,
+        100,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         sorted(assigned_open.iter().map(|e| e.title.as_str()).collect()),
         ["assigned open", "private assigned"]
@@ -2430,20 +2555,20 @@ async fn viewer_work_contract(pool: &DbPool) {
             maintainer_can_modify: false,
             issue: None,
         };
-    db::pull_requests::records::create_pull_request(
+    codeyard::backend::db::pull_requests::records::create_pull_request(
         pool,
         new_pr(public.id, viewer.id, "opened pr", "opened"),
     )
     .await
     .unwrap();
-    let merged = db::pull_requests::records::create_pull_request(
+    let merged = codeyard::backend::db::pull_requests::records::create_pull_request(
         pool,
         new_pr(public.id, viewer.id, "merged pr", "merged"),
     )
     .await
     .unwrap();
     set_state(pool, "pull_requests", merged.id, "merged").await;
-    let assigned_pr = db::pull_requests::records::create_pull_request(
+    let assigned_pr = codeyard::backend::db::pull_requests::records::create_pull_request(
         pool,
         new_pr(public.id, owner.id, "assigned pr", "assigned"),
     )
@@ -2458,38 +2583,42 @@ async fn viewer_work_contract(pool: &DbPool) {
     )
     .await
     .unwrap();
-    let review_pr = db::pull_requests::records::create_pull_request(
+    let review_pr = codeyard::backend::db::pull_requests::records::create_pull_request(
         pool,
         new_pr(public.id, owner.id, "review pr", "review"),
     )
     .await
     .unwrap();
-    assert!(db::pull_requests::request_pull_request_reviewer(
-        pool,
-        review_pr.id,
-        owner.id,
-        viewer.id
-    )
-    .await
-    .unwrap());
-    let private_pr = db::pull_requests::records::create_pull_request(
+    assert!(
+        codeyard::backend::db::pull_requests::request_pull_request_reviewer(
+            pool,
+            review_pr.id,
+            owner.id,
+            viewer.id
+        )
+        .await
+        .unwrap()
+    );
+    let private_pr = codeyard::backend::db::pull_requests::records::create_pull_request(
         pool,
         new_pr(private.id, owner.id, "private review pr", "private-review"),
     )
     .await
     .unwrap();
-    assert!(db::pull_requests::request_pull_request_reviewer(
-        pool,
-        private_pr.id,
-        owner.id,
-        viewer.id
-    )
-    .await
-    .unwrap());
-    db::repositories::access::revoke_repo_access(pool, viewer.id, private.id)
+    assert!(
+        codeyard::backend::db::pull_requests::request_pull_request_reviewer(
+            pool,
+            private_pr.id,
+            owner.id,
+            viewer.id
+        )
+        .await
+        .unwrap()
+    );
+    codeyard::backend::db::repositories::access::revoke_repo_access(pool, viewer.id, private.id)
         .await
         .unwrap();
-    let review_open = db::pull_requests::records::list_viewer_pull_requests(
+    let review_open = codeyard::backend::db::pull_requests::records::list_viewer_pull_requests(
         pool,
         viewer.id,
         PullRequestRelation::ReviewRequested,
@@ -2502,7 +2631,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(review_open.iter().map(|e| e.title.as_str()).collect()),
         ["review pr"]
     );
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         pool,
         viewer.id,
         private.id,
@@ -2510,7 +2639,7 @@ async fn viewer_work_contract(pool: &DbPool) {
     )
     .await
     .unwrap();
-    let review_open = db::pull_requests::records::list_viewer_pull_requests(
+    let review_open = codeyard::backend::db::pull_requests::records::list_viewer_pull_requests(
         pool,
         viewer.id,
         PullRequestRelation::ReviewRequested,
@@ -2523,20 +2652,21 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(review_open.iter().map(|e| e.title.as_str()).collect()),
         ["private review pr", "review pr"]
     );
-    let assigned_pr_open = db::pull_requests::records::list_viewer_pull_requests(
-        pool,
-        viewer.id,
-        PullRequestRelation::Assigned,
-        true,
-        100,
-    )
-    .await
-    .unwrap();
+    let assigned_pr_open =
+        codeyard::backend::db::pull_requests::records::list_viewer_pull_requests(
+            pool,
+            viewer.id,
+            PullRequestRelation::Assigned,
+            true,
+            100,
+        )
+        .await
+        .unwrap();
     assert_eq!(
         sorted(assigned_pr_open.iter().map(|e| e.title.as_str()).collect()),
         ["assigned pr"]
     );
-    let created_closed = db::pull_requests::records::list_viewer_pull_requests(
+    let created_closed = codeyard::backend::db::pull_requests::records::list_viewer_pull_requests(
         pool,
         viewer.id,
         PullRequestRelation::Created,
@@ -2549,7 +2679,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(created_closed.iter().map(|e| e.title.as_str()).collect()),
         ["merged pr"]
     );
-    let counts = db::pull_requests::records::count_viewer_pull_requests(
+    let counts = codeyard::backend::db::pull_requests::records::count_viewer_pull_requests(
         pool,
         viewer.id,
         PullRequestRelation::Created,
@@ -2558,7 +2688,7 @@ async fn viewer_work_contract(pool: &DbPool) {
     .unwrap();
     assert_eq!((counts.open, counts.closed), (1, 1));
     // Involved is the three relations together, each pull request once.
-    let involved_open = db::pull_requests::records::list_viewer_pull_requests(
+    let involved_open = codeyard::backend::db::pull_requests::records::list_viewer_pull_requests(
         pool,
         viewer.id,
         PullRequestRelation::Involved,
@@ -2571,7 +2701,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(involved_open.iter().map(|e| e.title.as_str()).collect()),
         ["assigned pr", "opened pr", "private review pr", "review pr"]
     );
-    let involved = db::pull_requests::records::count_viewer_pull_requests(
+    let involved = codeyard::backend::db::pull_requests::records::count_viewer_pull_requests(
         pool,
         viewer.id,
         PullRequestRelation::Involved,
@@ -2584,11 +2714,15 @@ async fn viewer_work_contract(pool: &DbPool) {
 /// A label's count is the issues and pull requests it is on, and a label on neither counts 0.
 async fn label_usage_contract(pool: &DbPool) {
     use codeyard::backend::db::{self, pull_requests::records::NewPullRequest};
-    let owner = db::users::accounts::create_user(pool, &unique_name("usage-owner"), None)
-        .await
-        .unwrap();
+    let owner = codeyard::backend::db::users::accounts::create_user(
+        pool,
+        &unique_name("usage-owner"),
+        None,
+    )
+    .await
+    .unwrap();
     let repo_name = unique_name("usage-repo");
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard::backend::db::repositories::records::create_repository(
         pool,
         owner.id,
         &repo_name,
@@ -2598,22 +2732,35 @@ async fn label_usage_contract(pool: &DbPool) {
     )
     .await
     .unwrap();
-    let bug = db::labels::create_label(pool, owner.id, repo.id, "bug", "#d73a4a", None)
-        .await
-        .unwrap();
-    let docs = db::labels::create_label(pool, owner.id, repo.id, "docs", "#0075ca", None)
-        .await
-        .unwrap();
-    let unused = db::labels::create_label(pool, owner.id, repo.id, "unused", "#ededed", None)
-        .await
-        .unwrap();
-    let issue = db::issues::create_issue(pool, repo.id, owner.id, "usage issue", "")
-        .await
-        .unwrap();
-    db::labels::add_issue_labels(pool, owner.id, repo.id, issue.id, &[bug.id, docs.id])
-        .await
-        .unwrap();
-    let pr = db::pull_requests::records::create_pull_request(
+    let bug = codeyard::backend::db::labels::create_label(
+        pool, owner.id, repo.id, "bug", "#d73a4a", None,
+    )
+    .await
+    .unwrap();
+    let docs = codeyard::backend::db::labels::create_label(
+        pool, owner.id, repo.id, "docs", "#0075ca", None,
+    )
+    .await
+    .unwrap();
+    let unused = codeyard::backend::db::labels::create_label(
+        pool, owner.id, repo.id, "unused", "#ededed", None,
+    )
+    .await
+    .unwrap();
+    let issue =
+        codeyard::backend::db::issues::create_issue(pool, repo.id, owner.id, "usage issue", "")
+            .await
+            .unwrap();
+    codeyard::backend::db::labels::add_issue_labels(
+        pool,
+        owner.id,
+        repo.id,
+        issue.id,
+        &[bug.id, docs.id],
+    )
+    .await
+    .unwrap();
+    let pr = codeyard::backend::db::pull_requests::records::create_pull_request(
         pool,
         NewPullRequest {
             head_repo_id: None,
@@ -2632,15 +2779,25 @@ async fn label_usage_contract(pool: &DbPool) {
     )
     .await
     .unwrap();
-    db::labels::add_pull_request_labels(pool, owner.id, repo.id, pr.id, &[bug.id])
-        .await
-        .unwrap();
+    codeyard::backend::db::labels::add_pull_request_labels(
+        pool,
+        owner.id,
+        repo.id,
+        pr.id,
+        &[bug.id],
+    )
+    .await
+    .unwrap();
     let usage: std::collections::BTreeMap<i64, i64> =
-        db::labels::list_label_usage(pool, repo.id, &[bug.id, docs.id, unused.id])
-            .await
-            .unwrap()
-            .into_iter()
-            .collect();
+        codeyard::backend::db::labels::list_label_usage(
+            pool,
+            repo.id,
+            &[bug.id, docs.id, unused.id],
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .collect();
     let expected: std::collections::BTreeMap<i64, i64> =
         [(bug.id, 2), (docs.id, 1), (unused.id, 0)]
             .into_iter()
@@ -2648,7 +2805,7 @@ async fn label_usage_contract(pool: &DbPool) {
     assert_eq!(usage, expected);
 
     // Another repository's labels and items do not count here, and are counted there.
-    let other = db::repositories::records::create_repository(
+    let other = codeyard::backend::db::repositories::records::create_repository(
         pool,
         owner.id,
         &format!("{repo_name}-other"),
@@ -2658,25 +2815,42 @@ async fn label_usage_contract(pool: &DbPool) {
     )
     .await
     .unwrap();
-    let other_bug =
-        db::labels::create_label(pool, owner.id, other.id, "other-bug", "#d73a4a", None)
+    let other_bug = codeyard::backend::db::labels::create_label(
+        pool,
+        owner.id,
+        other.id,
+        "other-bug",
+        "#d73a4a",
+        None,
+    )
+    .await
+    .unwrap();
+    let other_issue =
+        codeyard::backend::db::issues::create_issue(pool, other.id, owner.id, "other issue", "")
             .await
             .unwrap();
-    let other_issue = db::issues::create_issue(pool, other.id, owner.id, "other issue", "")
-        .await
-        .unwrap();
-    db::labels::add_issue_labels(pool, owner.id, other.id, other_issue.id, &[other_bug.id])
-        .await
-        .unwrap();
+    codeyard::backend::db::labels::add_issue_labels(
+        pool,
+        owner.id,
+        other.id,
+        other_issue.id,
+        &[other_bug.id],
+    )
+    .await
+    .unwrap();
     let usage: std::collections::BTreeMap<i64, i64> =
-        db::labels::list_label_usage(pool, repo.id, &[bug.id, docs.id, unused.id])
-            .await
-            .unwrap()
-            .into_iter()
-            .collect();
+        codeyard::backend::db::labels::list_label_usage(
+            pool,
+            repo.id,
+            &[bug.id, docs.id, unused.id],
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .collect();
     assert_eq!(usage, expected);
     let other_usage: Vec<(i64, i64)> =
-        db::labels::list_label_usage(pool, other.id, &[other_bug.id])
+        codeyard::backend::db::labels::list_label_usage(pool, other.id, &[other_bug.id])
             .await
             .unwrap();
     assert_eq!(other_usage, vec![(other_bug.id, 1)]);

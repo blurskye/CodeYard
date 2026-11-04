@@ -24,3 +24,21 @@ tracing-subscriber.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies.codeyard-model]
+workspace = true
+
+[dependencies.codeyard-actions]
+workspace = true
+
+[dependencies.codeyard-git]
+workspace = true
+
+[dependencies.codeyard-webui]
+workspace = true
+
+[dependencies.thiserror]
+workspace = true
+
+[dependencies.serde_yaml]
+workspace = true

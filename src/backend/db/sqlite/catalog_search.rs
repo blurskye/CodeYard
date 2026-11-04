@@ -1,4 +1,8 @@
-use crate::backend::db::catalog_search::{Hit, Options, Results, Search, Topic};
+use crate::backend::db::catalog_search::Hit;
+use crate::backend::db::catalog_search::Options;
+use crate::backend::db::catalog_search::Results;
+use crate::backend::db::catalog_search::Search;
+use crate::backend::db::catalog_search::Topic;
 use anyhow::Result;
 use sqlx::SqlitePool;
 pub async fn search(
@@ -14,14 +18,15 @@ pub async fn search(
     let statement = query
         .statement(
             false,
-            &super::repositories::access::readable_condition(),
+            &crate::backend::db::sqlite::repositories::access::readable_condition(),
             options.repository,
         )
         .map_err(anyhow::Error::msg)?;
     let order = query
         .order(options.sort.as_deref(), options.ascending)
         .map_err(anyhow::Error::msg)?;
-    let mut connection = super::repositories::discovery::search_connection(pool).await?;
+    let mut connection =
+        crate::backend::db::sqlite::repositories::discovery::search_connection(pool).await?;
     let result=async{sqlx::query("BEGIN").execute(&mut *connection).await?;
         let count_sql=format!("{} SELECT COUNT(*) FROM matched",statement.prefix);let mut count=sqlx::query_scalar::<_,i64>(&count_sql).bind(viewer);for value in &statement.args{count=count.bind(value);}let total=count.fetch_one(&mut *connection).await?;
         let sql=format!("{} SELECT m.key,m.repository_id,m.score FROM matched m ORDER BY {order} LIMIT {} OFFSET {}",statement.prefix,statement.placeholder(statement.args.len()+2),statement.placeholder(statement.args.len()+3));let mut rows=sqlx::query_as::<_,Hit>(&sql).bind(viewer);for value in &statement.args{rows=rows.bind(value);}let items=rows.bind(options.limit).bind(options.offset).fetch_all(&mut *connection).await?;sqlx::query("COMMIT").execute(&mut *connection).await?;Ok::<_,anyhow::Error>(Results{total,items})}.await;
@@ -37,10 +42,11 @@ pub async fn topic(
     name: &str,
     policy_token: Option<i64>,
 ) -> Result<Option<Topic>> {
-    let mut connection = super::repositories::discovery::search_connection(pool).await?;
+    let mut connection =
+        crate::backend::db::sqlite::repositories::discovery::search_connection(pool).await?;
     let mut statement = crate::backend::db::discussion_search::Statement::new(false);
     let readable = statement.repository_policy(
-        &super::repositories::access::readable_condition(),
+        &crate::backend::db::sqlite::repositories::access::readable_condition(),
         policy_token,
     );
     let name = statement.bind(name);

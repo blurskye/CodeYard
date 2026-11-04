@@ -1,10 +1,16 @@
 //! Uploaded file records. A file is pending until its bytes are confirmed,
 //! then active; pending uploads expire.
-use crate::backend::db::files::{
-    AdmissionError, DeleteFileOutcome, DeleteUnreferencedOutcome, FileAuthority, ReserveUpload,
-    DOWNLOAD_CHARGE_DAYS, IN_FLIGHT_PUT_GRACE_SECONDS, PUT_LIFETIME_SECONDS, SWEEP_BATCH,
-    SWEEP_BATCHES, UPLOAD_CHARGE_DAYS,
-};
+use crate::backend::db::files::AdmissionError;
+use crate::backend::db::files::DeleteFileOutcome;
+use crate::backend::db::files::DeleteUnreferencedOutcome;
+use crate::backend::db::files::FileAuthority;
+use crate::backend::db::files::ReserveUpload;
+use crate::backend::db::files::DOWNLOAD_CHARGE_DAYS;
+use crate::backend::db::files::IN_FLIGHT_PUT_GRACE_SECONDS;
+use crate::backend::db::files::PUT_LIFETIME_SECONDS;
+use crate::backend::db::files::SWEEP_BATCH;
+use crate::backend::db::files::SWEEP_BATCHES;
+use crate::backend::db::files::UPLOAD_CHARGE_DAYS;
 use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
 use std::net::IpAddr;
 use uuid::Uuid;
@@ -212,7 +218,7 @@ async fn require_file_actor(
         return Ok(false);
     };
     if let Some(session) = &actor.session {
-        match super::users::transitions::require_account(
+        match crate::backend::db::sqlite::users::transitions::require_account(
             tx,
             user,
             &crate::backend::db::users::accounts::AccountCredential::Session(session),
@@ -583,7 +589,7 @@ pub async fn record_download(
     ip: Option<IpAddr>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("INSERT INTO download_rate_limit (user_id, file_id, reason, ip_address) VALUES (?1,?2,?3,?4)")
-        .bind(user_id).bind(file_id).bind(reason).bind(ip.map(super::inet::address)).execute(pool).await?;
+        .bind(user_id).bind(file_id).bind(reason).bind(ip.map(crate::backend::db::sqlite::inet::address)).execute(pool).await?;
     Ok(())
 }
 

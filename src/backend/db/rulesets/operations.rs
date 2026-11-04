@@ -1,5 +1,13 @@
-use super::{Definition, ListFilter, Owner, Page, Ruleset, Suite, SuiteFilter, Version, View};
 use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::rulesets::Definition;
+use crate::backend::db::rulesets::ListFilter;
+use crate::backend::db::rulesets::Owner;
+use crate::backend::db::rulesets::Page;
+use crate::backend::db::rulesets::Ruleset;
+use crate::backend::db::rulesets::Suite;
+use crate::backend::db::rulesets::SuiteFilter;
+use crate::backend::db::rulesets::Version;
+use crate::backend::db::rulesets::View;
 use anyhow::Result;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;

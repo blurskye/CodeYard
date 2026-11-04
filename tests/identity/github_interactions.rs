@@ -3,7 +3,7 @@ use crate::support::{
     database::{wait_until_blocked, Database},
     http_client::Client,
 };
-use codeyard::backend::db;
+
 use codeyard::backend::db::interactions::InteractionExpiry;
 use codeyard::backend::db::interactions::InteractionGroup;
 use codeyard::backend::db::interactions::InteractionRefusal;
@@ -57,20 +57,32 @@ async fn contract(pg: bool) {
         )
         .await;
     }
-    let project = db::repositories::records::get_repository(f.pool(), "alice", "project")
-        .await
-        .unwrap()
-        .unwrap();
-    let private = db::repositories::records::get_repository(f.pool(), "alice", "private")
-        .await
-        .unwrap()
-        .unwrap();
-    db::repositories::access::grant_repo_access(f.pool(), bob, private.id, AccessLevel::Read)
-        .await
-        .unwrap();
-    db::repositories::access::grant_repo_access(f.pool(), bob, project.id, AccessLevel::Write)
-        .await
-        .unwrap();
+    let project =
+        codeyard::backend::db::repositories::records::get_repository(f.pool(), "alice", "project")
+            .await
+            .unwrap()
+            .unwrap();
+    let private =
+        codeyard::backend::db::repositories::records::get_repository(f.pool(), "alice", "private")
+            .await
+            .unwrap()
+            .unwrap();
+    codeyard::backend::db::repositories::access::grant_repo_access(
+        f.pool(),
+        bob,
+        private.id,
+        AccessLevel::Read,
+    )
+    .await
+    .unwrap();
+    codeyard::backend::db::repositories::access::grant_repo_access(
+        f.pool(),
+        bob,
+        project.id,
+        AccessLevel::Write,
+    )
+    .await
+    .unwrap();
     request(
         &router,
         "repos/create-or-update-file-contents",
@@ -81,7 +93,7 @@ async fn contract(pg: bool) {
         201,
     )
     .await;
-    db::repositories::access::revoke_repo_access(f.pool(), bob, project.id)
+    codeyard::backend::db::repositories::access::revoke_repo_access(f.pool(), bob, project.id)
         .await
         .unwrap();
     request(
@@ -138,18 +150,33 @@ async fn contract(pg: bool) {
             axum::http::StatusCode::FORBIDDEN,
         )
         .await;
-    assert!(
-        db::issues::create_issue(f.pool(), project.id, bob, "Refused", "Body")
-            .await
-            .is_err()
-    );
-    db::issues::create_issue(f.pool(), project.id, alice, "Owner allowed", "Body")
-        .await
-        .unwrap();
-    db::repositories::access::grant_repo_access(f.pool(), carol, project.id, AccessLevel::Read)
-        .await
-        .unwrap();
-    assert!(db::issues::create_issue(
+    assert!(codeyard::backend::db::issues::create_issue(
+        f.pool(),
+        project.id,
+        bob,
+        "Refused",
+        "Body"
+    )
+    .await
+    .is_err());
+    codeyard::backend::db::issues::create_issue(
+        f.pool(),
+        project.id,
+        alice,
+        "Owner allowed",
+        "Body",
+    )
+    .await
+    .unwrap();
+    codeyard::backend::db::repositories::access::grant_repo_access(
+        f.pool(),
+        carol,
+        project.id,
+        AccessLevel::Read,
+    )
+    .await
+    .unwrap();
+    assert!(codeyard::backend::db::issues::create_issue(
         f.pool(),
         project.id,
         carol,
@@ -158,12 +185,23 @@ async fn contract(pg: bool) {
     )
     .await
     .is_err());
-    db::repositories::access::grant_repo_access(f.pool(), carol, project.id, AccessLevel::Write)
-        .await
-        .unwrap();
-    db::issues::create_issue(f.pool(), project.id, carol, "Collaborator allowed", "Body")
-        .await
-        .unwrap();
+    codeyard::backend::db::repositories::access::grant_repo_access(
+        f.pool(),
+        carol,
+        project.id,
+        AccessLevel::Write,
+    )
+    .await
+    .unwrap();
+    codeyard::backend::db::issues::create_issue(
+        f.pool(),
+        project.id,
+        carol,
+        "Collaborator allowed",
+        "Body",
+    )
+    .await
+    .unwrap();
     request(
         &router,
         "interactions/set-restrictions-for-repo",
@@ -203,11 +241,15 @@ async fn contract(pg: bool) {
         201,
     )
     .await;
-    assert!(
-        db::issues::create_issue(f.pool(), project.id, bob, "Stale proof", "Body")
-            .await
-            .is_err()
-    );
+    assert!(codeyard::backend::db::issues::create_issue(
+        f.pool(),
+        project.id,
+        bob,
+        "Stale proof",
+        "Body"
+    )
+    .await
+    .is_err());
     bob_session
         .expect(
             "POST",
@@ -372,19 +414,23 @@ async fn contract(pg: bool) {
         204,
     )
     .await;
-    let organization = db::organizations::profiles::NewOrganization::new(
+    let organization = codeyard::backend::db::organizations::profiles::NewOrganization::new(
         "acme",
-        db::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
+        codeyard::backend::db::organizations::profiles::OrganizationProfile::new(None, None)
+            .unwrap(),
     )
     .unwrap();
-    let organization =
-        match db::organizations::profiles::create_organization(f.pool(), alice, &organization)
-            .await
-            .unwrap()
-        {
-            db::organizations::OrganizationOutcome::Applied(org) => org,
-            _ => panic!("organization creation refused"),
-        };
+    let organization = match codeyard::backend::db::organizations::profiles::create_organization(
+        f.pool(),
+        alice,
+        &organization,
+    )
+    .await
+    .unwrap()
+    {
+        codeyard::backend::db::organizations::OrganizationOutcome::Applied(org) => org,
+        _ => panic!("organization creation refused"),
+    };
     session
         .expect(
             "POST",
@@ -451,7 +497,7 @@ async fn contract(pg: bool) {
         200,
     )
     .await;
-    let error = db::interactions::set_restriction(
+    let error = codeyard::backend::db::interactions::set_restriction(
         f.pool(),
         bob,
         &AccountCredential::Session(&bob_session.session),
@@ -560,7 +606,7 @@ async fn contract(pg: bool) {
         204,
     )
     .await;
-    let error = db::interactions::set_restriction(
+    let error = codeyard::backend::db::interactions::set_restriction(
         f.pool(),
         alice,
         &AccountCredential::Token(i64::MAX, ""),
@@ -588,7 +634,7 @@ async fn contract(pg: bool) {
         let pool = f.pool().clone();
         let repo = project.id;
         let writer = tokio::spawn(async move {
-            db::issues::create_issue(&pool, repo, bob, "Pending policy", "Body")
+            codeyard::backend::db::issues::create_issue(&pool, repo, bob, "Pending policy", "Body")
                 .await
                 .is_err()
         });

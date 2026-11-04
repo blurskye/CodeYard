@@ -1,12 +1,15 @@
-use super::{auth, issues, labels, pagination::Pagination, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db,
-    db::assignees::AssignedItem,
-    issues::comments::{CommentTarget, CreateCommentRequest},
-    repositories::pull_requests::comments::{self, CreatePullRequestCommentRequest},
-    webhooks::payloads,
-};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::assignees::AssignedItem;
+use crate::backend::issues::comments::CommentTarget;
+use crate::backend::issues::comments::CreateCommentRequest;
+
+use crate::backend::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -31,8 +34,8 @@ pub(super) struct Comment {
     updated_at: DateTime<Utc>,
 }
 
-impl From<db::issues::ConversationComment> for Comment {
-    fn from(row: db::issues::ConversationComment) -> Self {
+impl From<crate::backend::db::issues::ConversationComment> for Comment {
+    fn from(row: crate::backend::db::issues::ConversationComment) -> Self {
         Self {
             id: row.id,
             item: if row.pull_request {
@@ -66,11 +69,11 @@ pub(super) async fn find(
     }
     let native_id = id / 2;
     if id % 2 == 0 {
-        let comment = db::issues::get_issue_comment(pool, native_id)
+        let comment = crate::backend::db::issues::get_issue_comment(pool, native_id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        let issue = db::issues::get_issue_by_id(pool, comment.issue_id)
+        let issue = crate::backend::db::issues::get_issue_by_id(pool, comment.issue_id)
             .await
             .map_err(Error::unavailable)?
             .filter(|issue| issue.repo_id == repo_id)
@@ -85,17 +88,21 @@ pub(super) async fn find(
             updated_at: comment.updated_at,
         })
     } else {
-        let comment = db::pull_requests::reviews::get_pull_request_comment_by_id(pool, native_id)
-            .await
-            .map_err(Error::unavailable)?
-            .filter(|comment| comment.path.is_none() && comment.review_id.is_none())
-            .ok_or_else(Error::missing)?;
-        let pull =
-            db::pull_requests::records::get_pull_request_by_id(pool, comment.pull_request_id)
-                .await
-                .map_err(Error::unavailable)?
-                .filter(|pull| pull.repo_id == repo_id)
-                .ok_or_else(Error::missing)?;
+        let comment = crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
+            pool, native_id,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .filter(|comment| comment.path.is_none() && comment.review_id.is_none())
+        .ok_or_else(Error::missing)?;
+        let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+            pool,
+            comment.pull_request_id,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .filter(|pull| pull.repo_id == repo_id)
+        .ok_or_else(Error::missing)?;
         Ok(Comment {
             id: native_id,
             item: AssignedItem::PullRequest(pull.id),
@@ -142,7 +149,7 @@ async fn documents(
             .collect();
         ids.sort_unstable();
         ids.dedup();
-        for pin in db::pins::get_pins(pool, pull, &ids)
+        for pin in crate::backend::db::pins::get_pins(pool, pull, &ids)
             .await
             .map_err(Error::unavailable)?
         {
@@ -160,7 +167,7 @@ async fn documents(
     ids.extend(pins.values().filter_map(|pin| pin.pinned_by));
     ids.sort_unstable();
     ids.dedup();
-    let users: HashMap<_, _> = db::users::accounts::get_users_by_ids(pool, &ids)
+    let users: HashMap<_, _> = crate::backend::db::users::accounts::get_users_by_ids(pool, &ids)
         .await
         .map_err(Error::unavailable)?
         .into_iter()
@@ -171,13 +178,13 @@ async fn documents(
         let user = users
             .get(&comment.author_id)
             .ok_or_else(|| Error::unavailable(()))?;
-        let author = payloads::Person::of(user);
-        let mut value = payloads::conversation_comment(
+        let author = crate::backend::webhooks::payloads::Person::of(user);
+        let mut value = crate::backend::webhooks::payloads::conversation_comment(
             comment.id,
             &comment.body,
             &author,
             (comment.created_at, comment.updated_at),
-            payloads::Scope {
+            crate::backend::webhooks::payloads::Scope {
                 repo,
                 owner,
                 sender: &author,
@@ -185,14 +192,17 @@ async fn documents(
             comment.number,
             matches!(comment.item, AssignedItem::PullRequest(_)),
         );
-        value["user"] = payloads::user(user);
+        value["user"] = crate::backend::webhooks::payloads::user(user);
         value["author_association"] =
             serde_json::json!(associations.get(&user.id).map_or("NONE", String::as_str));
         value["pin"] = pins
             .get(&item_key(comment.item))
             .filter(|pin| pin.comment_id == comment.id)
             .map_or(Value::Null, |pin| {
-                payloads::comment_pin(pin, pin.pinned_by.and_then(|id| users.get(&id)))
+                crate::backend::webhooks::payloads::comment_pin(
+                    pin,
+                    pin.pinned_by.and_then(|id| users.get(&id)),
+                )
             });
         values.push(value);
     }
@@ -258,12 +268,13 @@ async fn represent(
     let html = matches!(profile, Representation::Html | Representation::Full);
     let text = matches!(profile, Representation::Text | Representation::Full);
     let references = if html {
-        let authentication = auth::authenticate(state, headers, false).await?;
+        let authentication =
+            crate::backend::api::github::auth::authenticate(state, headers, false).await?;
         let texts: Vec<_> = values
             .iter()
             .filter_map(|value| value["body"].as_str())
             .collect();
-        super::meta::resolve_references(
+        crate::backend::api::github::meta::resolve_references(
             state,
             authentication.as_ref(),
             repo,
@@ -359,9 +370,10 @@ async fn create(
     Json(input): Json<Body>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let (actor, credential) = (&auth.user, auth.credential());
-    let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
+    let item =
+        crate::backend::api::github::labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
     let number = p["issue_number"].parse().map_err(|_| Error::missing())?;
     let (id, pull) = match item {
         AssignedItem::Issue(_) => {
@@ -380,42 +392,43 @@ async fn create(
                 },
             )
             .await
-            .map_err(issues::operation_error)?;
+            .map_err(crate::backend::api::github::issues::operation_error)?;
             (comment.id, false)
         }
         AssignedItem::PullRequest(_) => {
-            let comment = comments::create_pull_request_comment(
-                &state.pool,
-                state.cluster.as_ref(),
-                &state.notification_broadcaster,
-                actor.id,
-                p["owner"].clone(),
-                repo.name.clone(),
-                number,
-                CreatePullRequestCommentRequest {
-                    body: input.body,
-                    repository_id: Some(repo.id),
-                    path: None,
-                    line: None,
-                    side: None,
-                    start_line: None,
-                    start_side: None,
-                    commit_sha: None,
-                    base_sha: None,
-                    in_reply_to_comment_id: None,
-                    review_id: None,
-                    pending: false,
-                },
-            )
-            .await
-            .map_err(issues::pull_error)?;
+            let comment =
+                crate::backend::repositories::pull_requests::comments::create_pull_request_comment(
+                    &state.pool,
+                    state.cluster.as_ref(),
+                    &state.notification_broadcaster,
+                    actor.id,
+                    p["owner"].clone(),
+                    repo.name.clone(),
+                    number,
+                    CreatePullRequestCommentRequest {
+                        body: input.body,
+                        repository_id: Some(repo.id),
+                        path: None,
+                        line: None,
+                        side: None,
+                        start_line: None,
+                        start_side: None,
+                        commit_sha: None,
+                        base_sha: None,
+                        in_reply_to_comment_id: None,
+                        review_id: None,
+                        pending: false,
+                    },
+                )
+                .await
+                .map_err(crate::backend::api::github::issues::pull_error)?;
             (comment.id, true)
         }
     };
     let comment = find(
         &state.pool,
         repo.id,
-        payloads::conversation_comment_id(id, pull),
+        codeyard_model::webhook_ids::conversation_comment_id(id, pull),
     )
     .await?;
     Ok((
@@ -431,7 +444,7 @@ async fn update(
     Json(input): Json<Body>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let (actor, credential) = (&auth.user, auth.credential());
     let api_id = p["comment_id"].parse().map_err(|_| Error::missing())?;
     let comment = find(&state.pool, repo.id, api_id).await?;
@@ -457,10 +470,10 @@ async fn update(
                 None,
             )
             .await
-            .map_err(issues::operation_error)?;
+            .map_err(crate::backend::api::github::issues::operation_error)?;
         }
         AssignedItem::PullRequest(_) => {
-            comments::edit_pull_request_comment(
+            crate::backend::repositories::pull_requests::comments::edit_pull_request_comment(
                 &state.pool,
                 &state.notification_broadcaster,
                 actor.id,
@@ -469,7 +482,7 @@ async fn update(
                 None,
             )
             .await
-            .map_err(issues::pull_error)?;
+            .map_err(crate::backend::api::github::issues::pull_error)?;
         }
     }
     let comment = find(&state.pool, repo.id, api_id).await?;
@@ -484,7 +497,7 @@ async fn remove(
     Path(p): Path<Params>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let (actor, credential) = (&auth.user, auth.credential());
     let comment = find(
         &state.pool,
@@ -506,11 +519,15 @@ async fn remove(
             target,
         )
         .await
-        .map_err(issues::operation_error)?,
+        .map_err(crate::backend::api::github::issues::operation_error)?,
         AssignedItem::PullRequest(_) => {
-            comments::delete_pull_request_comment(&state.pool, actor.id, target)
-                .await
-                .map_err(issues::pull_error)?
+            crate::backend::repositories::pull_requests::comments::delete_pull_request_comment(
+                &state.pool,
+                actor.id,
+                target,
+            )
+            .await
+            .map_err(crate::backend::api::github::issues::pull_error)?
         }
     }
     Ok(StatusCode::NO_CONTENT)
@@ -524,11 +541,11 @@ async fn list(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    use db::discussions::ListSort;
+    use crate::backend::db::discussions::ListSort;
     let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let number = match p.get("issue_number") {
         Some(number) => {
-            labels::item(&state.pool, repo.id, number).await?;
+            crate::backend::api::github::labels::item(&state.pool, repo.id, number).await?;
             Some(number.parse().map_err(|_| Error::missing())?)
         }
         None => None,
@@ -556,10 +573,10 @@ async fn list(
         })
         .transpose()?;
     let (offset, limit) = page.window()?;
-    let rows = db::issues::list_repository_comments(
+    let rows = crate::backend::db::issues::list_repository_comments(
         &state.pool,
         repo.id,
-        &db::issues::CommentFilter {
+        &crate::backend::db::issues::CommentFilter {
             number,
             since,
             sort,

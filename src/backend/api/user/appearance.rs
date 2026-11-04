@@ -1,12 +1,9 @@
-use crate::backend::{
-    api::{
-        http::context::PageContext,
-        http::origin::safe_redirect_path,
-        http::render::{accepts_page_model, secure_html_headers},
-        http::session::secure_cookie,
-    },
-    app::AppState,
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::origin::safe_redirect_path;
+use crate::backend::api::http::render::accepts_page_model;
+use crate::backend::api::http::render::secure_html_headers;
+use crate::backend::api::http::session::secure_cookie;
+use crate::backend::app::AppState;
 use axum::{
     body::Body,
     extract::{Form, OriginalUri, State},

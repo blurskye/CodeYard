@@ -4,46 +4,6 @@ use codeyard_model::ci::MAX_RUN_LOG_LINES;
 pub mod archive;
 use codeyard_model::ci::LogLine;
 
-const TRUNCATED_LINE: &str = "Log output truncated: this run reached its log limit.";
-/// Bytes kept free for the truncation line, whose stage is at most 255 bytes.
-const TRUNCATION_RESERVE: i64 = 255 + TRUNCATED_LINE.len() as i64;
-
-/// Decides which lines of a batch a run stores, given the totals it has stored so far,
-/// and returns them with the new totals. The batch that reaches a limit stores one
-/// truncation line in place of the first line it cannot keep. The line total then moves
-/// to the limit, which closes the log: later lines are dropped and no second marker is
-/// written.
-pub fn admit_log_lines(
-    stored_lines: i64,
-    stored_bytes: i64,
-    batch: &[LogLine],
-) -> (Vec<LogLine>, i64, i64) {
-    let mut stored = Vec::new();
-    let (mut lines, mut bytes) = (stored_lines, stored_bytes);
-    if lines >= MAX_RUN_LOG_LINES {
-        return (stored, lines, bytes);
-    }
-    for line in batch {
-        let size = (line.stage.len() + line.line.len()) as i64;
-        let full = lines + 1 >= MAX_RUN_LOG_LINES;
-        let over_bytes = bytes + size + TRUNCATION_RESERVE > MAX_RUN_LOG_BYTES;
-        if full || over_bytes {
-            stored.push(LogLine {
-                stage: line.stage.clone(),
-                line: TRUNCATED_LINE.to_owned(),
-                level: "warn".to_owned(),
-                job_id: line.job_id,
-                step_number: line.step_number,
-            });
-            return (stored, MAX_RUN_LOG_LINES, bytes);
-        }
-        stored.push(line.clone());
-        lines += 1;
-        bytes += size;
-    }
-    (stored, lines, bytes)
-}
-
 pub fn normalize_stage_name(stage: &str) -> String {
     stage.strip_prefix("act:").unwrap_or(stage).to_owned()
 }
@@ -94,3 +54,9 @@ mod tests {
         assert_eq!(lines, MAX_RUN_LOG_LINES);
     }
 }
+
+use codeyard_db_core::ci_logs::TRUNCATED_LINE;
+
+use codeyard_db_core::ci_logs::TRUNCATION_RESERVE;
+
+use codeyard_db_core::ci_logs::admit_log_lines;

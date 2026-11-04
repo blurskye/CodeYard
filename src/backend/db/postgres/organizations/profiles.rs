@@ -3,7 +3,7 @@ use anyhow::Result;
 use sqlx::PgPool;
 use OrganizationOutcome::{Applied, Conflict, Denied};
 
-use super::authority::*;
+use crate::backend::db::postgres::organizations::authority::*;
 
 pub async fn create_organization(
     pool: &PgPool,

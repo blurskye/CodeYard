@@ -1,8 +1,8 @@
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::session;
+
 use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
-use crate::backend::identity;
+
 use axum::extract::{Form, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::response::Response;
@@ -38,8 +38,8 @@ pub(crate) async fn logout_post(
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
-    let id = session::extract_session_id(&ctx.headers);
-    if identity::sessions::end_session(&ctx.state.pool, id.as_deref())
+    let id = crate::backend::api::http::session::extract_session_id(&ctx.headers);
+    if crate::backend::identity::sessions::end_session(&ctx.state.pool, id.as_deref())
         .await
         .is_err()
     {
@@ -49,7 +49,7 @@ pub(crate) async fn logout_post(
         );
     }
     let mut response = ctx.redirect("/login");
-    match HeaderValue::from_str(&session::build_logout_cookie()) {
+    match HeaderValue::from_str(&crate::backend::api::http::session::build_logout_cookie()) {
         Ok(cookie) => {
             response.headers_mut().append(header::SET_COOKIE, cookie);
             response

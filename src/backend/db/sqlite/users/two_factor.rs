@@ -1,4 +1,5 @@
-use crate::backend::db::users::two_factor::{FactorAuthority, StoredTwoFactor};
+use crate::backend::db::users::two_factor::FactorAuthority;
+use crate::backend::db::users::two_factor::StoredTwoFactor;
 
 async fn authorized(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
@@ -7,12 +8,18 @@ async fn authorized(
 ) -> Result<bool> {
     match authority {
         FactorAuthority::Password { session, expected } => {
-            super::transitions::current_password(tx, target, expected, session, false).await
+            crate::backend::db::sqlite::users::transitions::current_password(
+                tx, target, expected, session, false,
+            )
+            .await
         }
-        FactorAuthority::Administrator { user_id, session } => {
-            Ok(super::transitions::active_admin(tx, user_id).await?
-                && super::transitions::live_session(tx, user_id, session).await?)
-        }
+        FactorAuthority::Administrator { user_id, session } => Ok(
+            crate::backend::db::sqlite::users::transitions::active_admin(tx, user_id).await?
+                && crate::backend::db::sqlite::users::transitions::live_session(
+                    tx, user_id, session,
+                )
+                .await?,
+        ),
     }
 }
 use anyhow::Result;

@@ -21,11 +21,11 @@ pub struct FollowRestricted;
 
 native_operation!(crate::backend::db::postgres::following::follow_user,
     crate::backend::db::sqlite::following::follow_user,
-    fn follow_user(pool: &DbPool, follower_id: i64, following_id: i64, credential: &super::users::accounts::AccountCredential<'_>) -> Result<bool>);
+    fn follow_user(pool: &DbPool, follower_id: i64, following_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::following::unfollow_user,
     crate::backend::db::sqlite::following::unfollow_user,
-    fn unfollow_user(pool: &DbPool, follower_id: i64, following_id: i64, credential: &super::users::accounts::AccountCredential<'_>) -> Result<bool>);
+    fn unfollow_user(pool: &DbPool, follower_id: i64, following_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::following::is_user_following,
     crate::backend::db::sqlite::following::is_user_following,

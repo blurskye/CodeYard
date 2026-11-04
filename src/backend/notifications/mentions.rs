@@ -1,9 +1,10 @@
 //! Mention notifications. A new issue, pull request, comment or review text, and an edited
 //! issue or pull request body, notifies each user it newly @mentions. The names are the ones the
 //! Markdown renderer links, so a mention in code or in a link notifies nobody.
-use super::create::{create_and_broadcast_notification, NotificationRequest};
-use super::NotificationBroadcaster;
-use crate::backend::db;
+use crate::backend::notifications::create::create_and_broadcast_notification;
+use crate::backend::notifications::create::NotificationRequest;
+use crate::backend::notifications::NotificationBroadcaster;
+
 use crate::backend::repositories::access::can_read;
 use codeyard_webui::components::references::mentioned_usernames;
 use serde_json::json;
@@ -73,13 +74,14 @@ pub async fn notify_mentions(
     if names.is_empty() {
         return Vec::new();
     }
-    let users = match db::users::accounts::get_users_by_usernames(pool, &names).await {
-        Ok(users) => users,
-        Err(error) => {
-            tracing::warn!(%error, "Mention notifications were not sent: user lookup failed");
-            return Vec::new();
-        }
-    };
+    let users =
+        match crate::backend::db::users::accounts::get_users_by_usernames(pool, &names).await {
+            Ok(users) => users,
+            Err(error) => {
+                tracing::warn!(%error, "Mention notifications were not sent: user lookup failed");
+                return Vec::new();
+            }
+        };
     let title = match source.comment_id {
         Some(MentionComment::Commit(_)) => format!(
             "{} mentioned you in {}/{}@{}",

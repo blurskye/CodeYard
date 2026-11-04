@@ -1,4 +1,3 @@
-use crate::backend::db::files as files_db;
 use crate::backend::storage::ObjectStore;
 use crate::backend::storage::StorageError;
 use crate::backend::storage::Upload;
@@ -70,9 +69,9 @@ async fn reserve(
     actor_id: i64,
     input: &UploadDeclaration<'_>,
 ) -> Result<File, UploadError> {
-    files_db::reserve_upload(
+    crate::backend::db::files::reserve_upload(
         pool,
-        files_db::ReserveUpload {
+        crate::backend::db::files::ReserveUpload {
             user_id: actor_id,
             filename: input.filename,
             content_type: input.content_type,
@@ -84,9 +83,10 @@ async fn reserve(
     )
     .await
     .map_err(|error| match error {
-        files_db::AdmissionError::Invalid => UploadError::Invalid,
-        files_db::AdmissionError::Quota => UploadError::Quota,
-        files_db::AdmissionError::PolicyUnavailable | files_db::AdmissionError::Database(_) => {
+        crate::backend::db::files::AdmissionError::Invalid => UploadError::Invalid,
+        crate::backend::db::files::AdmissionError::Quota => UploadError::Quota,
+        crate::backend::db::files::AdmissionError::PolicyUnavailable
+        | crate::backend::db::files::AdmissionError::Database(_) => {
             UploadError::AdmissionUnavailable
         }
     })
@@ -101,7 +101,7 @@ pub async fn reserve_and_sign_upload(
     input: UploadDeclaration<'_>,
 ) -> Result<UploadReservation, UploadError> {
     let file = reserve(pool, actor_id, &input).await?;
-    let seconds = files_db::PUT_LIFETIME_SECONDS as u64;
+    let seconds = crate::backend::db::files::PUT_LIFETIME_SECONDS as u64;
     let target = store
         .upload_target(
             &upload(&file),
@@ -111,9 +111,14 @@ pub async fn reserve_and_sign_upload(
         .await
         .map_err(|_| UploadError::SigningUnavailable { file_id: file.id })?;
     if target.direct
-        && !files_db::extend_direct_upload(pool, file.id, actor_id, files_db::PUT_LIFETIME_SECONDS)
-            .await
-            .map_err(|_| UploadError::SigningUnavailable { file_id: file.id })?
+        && !crate::backend::db::files::extend_direct_upload(
+            pool,
+            file.id,
+            actor_id,
+            crate::backend::db::files::PUT_LIFETIME_SECONDS,
+        )
+        .await
+        .map_err(|_| UploadError::SigningUnavailable { file_id: file.id })?
     {
         return Err(UploadError::SigningUnavailable { file_id: file.id });
     }
@@ -161,7 +166,7 @@ pub async fn store_upload(
         verify_upload(store, &file)
             .await
             .map_err(|_| UploadError::StorageUnavailable)?;
-        if !files_db::verify_pending_upload(pool, file.id, actor_id)
+        if !crate::backend::db::files::verify_pending_upload(pool, file.id, actor_id)
             .await
             .map_err(|_| UploadError::StorageUnavailable)?
         {
@@ -172,7 +177,9 @@ pub async fn store_upload(
     .await;
     drop(io);
     if let Err(error) = stored {
-        if let Err(cleanup) = super::delete_owned_file(pool, store, actor_id, file.id).await {
+        if let Err(cleanup) =
+            crate::backend::files::delete_owned_file(pool, store, actor_id, file.id).await
+        {
             tracing::warn!(file = %file.id, %cleanup, "could not remove a failed upload");
             return Err(UploadError::CleanupFailed { file_id: file.id });
         }
@@ -199,12 +206,12 @@ pub enum ConfirmationError {
 pub async fn confirm_upload(
     pool: &DbPool,
     store: &ObjectStore,
-    actor: impl Into<files_db::FileAuthority>,
+    actor: impl Into<crate::backend::db::files::FileAuthority>,
     file_id: Uuid,
 ) -> Result<(), ConfirmationError> {
     let actor = actor.into();
     let actor_id = actor.user_id.ok_or(ConfirmationError::NotFound)?;
-    let first = files_db::get_owned_file(pool, file_id, actor_id)
+    let first = crate::backend::db::files::get_owned_file(pool, file_id, actor_id)
         .await
         .map_err(|_| ConfirmationError::MetadataUnavailable)?
         .ok_or(ConfirmationError::NotFound)?;
@@ -215,7 +222,7 @@ pub async fn confirm_upload(
     .await
     .map_err(|_| ConfirmationError::StorageUnavailable)?
     .map_err(|_| ConfirmationError::StorageUnavailable)?;
-    let file = files_db::get_owned_file(pool, file_id, actor_id)
+    let file = crate::backend::db::files::get_owned_file(pool, file_id, actor_id)
         .await
         .map_err(|_| ConfirmationError::MetadataUnavailable)?
         .ok_or(ConfirmationError::NotFound)?;
@@ -226,7 +233,7 @@ pub async fn confirm_upload(
         .try_acquire_io()
         .map_err(|_| ConfirmationError::StorageUnavailable)?;
     verify_upload(store, &file).await?;
-    if !files_db::activate_upload(pool, file_id, actor)
+    if !crate::backend::db::files::activate_upload(pool, file_id, actor)
         .await
         .map_err(|_| ConfirmationError::MetadataUnavailable)?
     {

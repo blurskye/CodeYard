@@ -1,5 +1,11 @@
-use super::{auth, labels, pagination::Pagination, repository, Error, Result};
-use crate::backend::{app::AppState, db, db::assignees::AssignedItem, webhooks::payloads};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::assignees::AssignedItem;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -16,7 +22,10 @@ use std::{collections::HashMap, sync::Arc};
 #[derive(Clone, Copy)]
 pub(super) enum Reader<'a> {
     /// An API request, within its credential's bounds.
-    Request(&'a AppState, Option<&'a auth::Authentication>),
+    Request(
+        &'a AppState,
+        Option<&'a crate::backend::api::github::auth::Authentication>,
+    ),
     /// A webhook delivery or an export, which goes wherever the repository's administrators send
     /// it: other repositories count only when they are public.
     Repository,
@@ -98,10 +107,11 @@ pub(super) async fn documents(
     // The pages were read by separate queries after the request's access check. Checking the
     // reader's access again afterwards means nothing returned was read after it was lost.
     if let Reader::Request(_, credential) = reader {
-        let current = db::repositories::records::get_repository_by_id(pool, repo.id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let current =
+            crate::backend::db::repositories::records::get_repository_by_id(pool, repo.id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
         if !crate::backend::repositories::access::can_read(
             pool,
             credential.map(|auth| &auth.user),
@@ -145,25 +155,27 @@ async fn documents_page(
 ) -> Result<Vec<Value>> {
     let (issue_ids, pull_ids) = split(items);
     let issues: HashMap<i64, codeyard_db_core::models::Issue> =
-        db::issues::get_issues_by_ids(pool, repo.id, &issue_ids)
+        crate::backend::db::issues::get_issues_by_ids(pool, repo.id, &issue_ids)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
             .map(|issue| (issue.id, issue))
             .collect();
     let pulls: HashMap<i64, codeyard_db_core::models::PullRequest> =
-        db::pull_requests::records::get_pull_requests_by_ids(pool, repo.id, &pull_ids)
-            .await
-            .map_err(Error::unavailable)?
-            .into_iter()
-            .map(|pull| (pull.id, pull))
-            .collect();
+        crate::backend::db::pull_requests::records::get_pull_requests_by_ids(
+            pool, repo.id, &pull_ids,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .into_iter()
+        .map(|pull| (pull.id, pull))
+        .collect();
     let found = |item: &AssignedItem| match *item {
         AssignedItem::Issue(id) => issues.contains_key(&id),
         AssignedItem::PullRequest(id) => pulls.contains_key(&id),
     };
     let milestones: HashMap<i64, codeyard_db_core::models::MilestoneSummary> =
-        db::milestones::get_milestones_by_ids(
+        crate::backend::db::milestones::get_milestones_by_ids(
             pool,
             repo.id,
             &sorted(
@@ -181,7 +193,7 @@ async fn documents_page(
         .collect();
     // People: authors, closers and milestone creators by id, assignees by name, each read once.
     let users: HashMap<i64, codeyard_db_core::models::User> =
-        db::users::accounts::get_users_by_ids(
+        crate::backend::db::users::accounts::get_users_by_ids(
             pool,
             &sorted(
                 issues
@@ -211,7 +223,7 @@ async fn documents_page(
         if ids.is_empty() {
             continue;
         }
-        for (id, name) in db::assignees::list_item_assignees(pool, pull, ids)
+        for (id, name) in crate::backend::db::assignees::list_item_assignees(pool, pull, ids)
             .await
             .map_err(Error::unavailable)?
         {
@@ -224,7 +236,7 @@ async fn documents_page(
     let assignees: HashMap<String, codeyard_db_core::models::User> = if names.is_empty() {
         HashMap::new()
     } else {
-        db::users::accounts::get_users_by_usernames(pool, &names)
+        crate::backend::db::users::accounts::get_users_by_usernames(pool, &names)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
@@ -242,56 +254,64 @@ async fn documents_page(
         crate::backend::repositories::access::author_associations(pool, repo, &authors)
             .await
             .map_err(Error::unavailable)?;
-    let issue_labels = db::labels::get_issues_labels(pool, repo.id, &issue_ids)
+    let issue_labels = crate::backend::db::labels::get_issues_labels(pool, repo.id, &issue_ids)
         .await
         .map_err(Error::unavailable)?;
-    let pull_labels = db::labels::get_pull_requests_labels(pool, repo.id, &pull_ids)
-        .await
-        .map_err(Error::unavailable)?;
-    let issue_comments: HashMap<i64, i64> = db::issues::count_issue_comments(pool, &issue_ids)
-        .await
-        .map_err(Error::unavailable)?
-        .into_iter()
-        .collect();
-    let pull_comments: HashMap<i64, i64> =
-        db::pull_requests::reviews::count_pull_request_conversation_comments_for(pool, &pull_ids)
+    let pull_labels =
+        crate::backend::db::labels::get_pull_requests_labels(pool, repo.id, &pull_ids)
+            .await
+            .map_err(Error::unavailable)?;
+    let issue_comments: HashMap<i64, i64> =
+        crate::backend::db::issues::count_issue_comments(pool, &issue_ids)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
             .collect();
-    let issue_reactions =
-        db::reactions::reaction_counts(pool, db::reactions::Subject::Issue.name(), &issue_ids, 0)
-            .await
-            .map_err(Error::unavailable)?;
-    let pull_reactions = db::reactions::reaction_counts(
+    let pull_comments: HashMap<i64, i64> =
+        crate::backend::db::pull_requests::reviews::count_pull_request_conversation_comments_for(
+            pool, &pull_ids,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .into_iter()
+        .collect();
+    let issue_reactions = crate::backend::db::reactions::reaction_counts(
         pool,
-        db::reactions::Subject::PullRequest.name(),
+        crate::backend::db::reactions::Subject::Issue.name(),
+        &issue_ids,
+        0,
+    )
+    .await
+    .map_err(Error::unavailable)?;
+    let pull_reactions = crate::backend::db::reactions::reaction_counts(
+        pool,
+        crate::backend::db::reactions::Subject::PullRequest.name(),
         &pull_ids,
         0,
     )
     .await
     .map_err(Error::unavailable)?;
-    let types: HashMap<i64, db::issue_attributes::Attribute> =
-        db::issue_attributes::assigned_types(pool, repo.id, &issue_ids)
+    let types: HashMap<i64, crate::backend::db::issue_attributes::Attribute> =
+        crate::backend::db::issue_attributes::assigned_types(pool, repo.id, &issue_ids)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
             .map(|row| (row.issue_id, row.attribute))
             .collect();
     let summaries = relationship_summaries(pool, reader, repo, &issue_ids).await?;
-    let mut pins: HashMap<(bool, i64), db::pins::Pin> = HashMap::new();
+    let mut pins: HashMap<(bool, i64), crate::backend::db::pins::Pin> = HashMap::new();
     for (pull, ids) in [(false, &issue_ids), (true, &pull_ids)] {
-        for row in db::pins::get_pins(pool, pull, ids)
+        for row in crate::backend::db::pins::get_pins(pool, pull, ids)
             .await
             .map_err(Error::unavailable)?
         {
             pins.insert((pull, row.item_id), row.pin);
         }
     }
-    let person = |id: i64| -> Result<payloads::Person> {
+    let person = |id: i64| -> Result<crate::backend::webhooks::payloads::Person> {
         users
             .get(&id)
-            .map(payloads::Person::of)
+            .map(crate::backend::webhooks::payloads::Person::of)
             .ok_or_else(|| Error::unavailable(()))
     };
     let mut values = Vec::with_capacity(items.len());
@@ -307,7 +327,12 @@ async fn documents_page(
         let (mut value, author, milestone, closed_by, labels, comments, reactions) = if pull {
             let pull = &pulls[&id];
             (
-                payloads::pull_request_issue(pull, &person(pull.author_id)?, repo, owner),
+                crate::backend::webhooks::payloads::pull_request_issue(
+                    pull,
+                    &person(pull.author_id)?,
+                    repo,
+                    owner,
+                ),
                 pull.author_id,
                 pull.milestone_id,
                 pull.closed_by_id,
@@ -318,7 +343,12 @@ async fn documents_page(
         } else {
             let issue = &issues[&id];
             (
-                payloads::issue_json(issue, &person(issue.author_id)?, repo, owner),
+                crate::backend::webhooks::payloads::issue_json(
+                    issue,
+                    &person(issue.author_id)?,
+                    repo,
+                    owner,
+                ),
                 issue.author_id,
                 issue.milestone_id,
                 issue.closed_by_id,
@@ -327,16 +357,16 @@ async fn documents_page(
                 &issue_reactions,
             )
         };
-        value["user"] = payloads::user(&users[&author]);
+        value["user"] = crate::backend::webhooks::payloads::user(&users[&author]);
         value["author_association"] =
             json!(associations.get(&author).map_or("NONE", String::as_str));
         value["closed_by"] = closed_by
             .and_then(|id| users.get(&id))
-            .map_or(Value::Null, payloads::user);
+            .map_or(Value::Null, crate::backend::webhooks::payloads::user);
         value["labels"] = json!(labels
             .into_iter()
             .flatten()
-            .map(|label| payloads::label(label, owner, &repo.name))
+            .map(|label| crate::backend::webhooks::payloads::label(label, owner, &repo.name))
             .collect::<Vec<_>>());
         value["comments"] = json!(comments.copied().unwrap_or(0));
         value["milestone"] =
@@ -344,14 +374,16 @@ async fn documents_page(
                 .and_then(|id| milestones.get(&id))
                 .map_or(Value::Null, |summary| {
                     let creator = summary.milestone.creator_id.and_then(|id| users.get(&id));
-                    payloads::milestone(summary, creator, owner, &repo.name)
+                    crate::backend::webhooks::payloads::milestone(
+                        summary, creator, owner, &repo.name,
+                    )
                 });
         let item_assignees: Vec<Value> = assigned
             .get(&(pull, id))
             .into_iter()
             .flatten()
             .filter_map(|name| assignees.get(name))
-            .map(payloads::user)
+            .map(crate::backend::webhooks::payloads::user)
             .collect();
         value["assignee"] = item_assignees.first().cloned().unwrap_or(Value::Null);
         value["assignees"] = json!(item_assignees);
@@ -359,14 +391,19 @@ async fn documents_page(
             .as_str()
             .ok_or_else(|| Error::unavailable(()))?
             .to_owned();
-        let counts: Vec<db::reactions::ReactionCount> = reactions
+        let counts: Vec<crate::backend::db::reactions::ReactionCount> = reactions
             .iter()
             .filter(|count| count.subject_id == id)
             .cloned()
             .collect();
-        value["reactions"] = payloads::reaction_rollup(&format!("{url}/reactions"), &counts);
+        value["reactions"] = crate::backend::webhooks::payloads::reaction_rollup(
+            &format!("{url}/reactions"),
+            &counts,
+        );
         if !pull {
-            value["type"] = types.get(&id).map_or(Value::Null, payloads::issue_type);
+            value["type"] = types
+                .get(&id)
+                .map_or(Value::Null, crate::backend::webhooks::payloads::issue_type);
             let summary = summaries.get(&id).copied().unwrap_or_default();
             value["sub_issues_summary"] = json!({
                 "total": summary.total,
@@ -382,9 +419,11 @@ async fn documents_page(
         }
         value["pinned_comment"] = match pins.get(&(pull, id)) {
             Some(pin) => {
-                let comment_id = payloads::conversation_comment_id(pin.comment_id, pull);
-                let comment = super::comments::find(pool, repo.id, comment_id).await?;
-                super::comments::document(pool, repo, owner, &comment).await?
+                let comment_id =
+                    codeyard_model::webhook_ids::conversation_comment_id(pin.comment_id, pull);
+                let comment =
+                    crate::backend::api::github::comments::find(pool, repo.id, comment_id).await?;
+                crate::backend::api::github::comments::document(pool, repo, owner, &comment).await?
             }
             None => Value::Null,
         };
@@ -397,9 +436,14 @@ async fn documents_page(
             (true, &pull_ids, "pull-requests"),
         ] {
             if !ids.is_empty()
-                && !auth::readable_repositories(state, credential, &[repo.id], scope)
-                    .await?
-                    .contains(&repo.id)
+                && !crate::backend::api::github::auth::readable_repositories(
+                    state,
+                    credential,
+                    &[repo.id],
+                    scope,
+                )
+                .await?
+                .contains(&repo.id)
             {
                 for (value, item) in values.iter_mut().zip(items) {
                     if matches!(item, AssignedItem::PullRequest(_)) == pull {
@@ -434,7 +478,7 @@ async fn relationship_summaries(
     let mut rows = Vec::new();
     for chunk in issue_ids.chunks(100) {
         rows.extend(
-            db::relationships::summaries(pool, chunk)
+            crate::backend::db::relationships::summaries(pool, chunk)
                 .await
                 .map_err(Error::unavailable)?,
         );
@@ -448,15 +492,20 @@ async fn relationship_summaries(
     others.dedup();
     let readable: std::collections::HashSet<i64> = match reader {
         Reader::Request(state, credential) => {
-            auth::readable_repositories(state, credential, &others, "issues").await?
+            crate::backend::api::github::auth::readable_repositories(
+                state, credential, &others, "issues",
+            )
+            .await?
         }
         Reader::Repository => {
             let mut public = std::collections::HashSet::new();
             for chunk in others.chunks(100) {
                 public.extend(
-                    db::repositories::access::readable_repository_ids(pool, None, chunk)
-                        .await
-                        .map_err(Error::unavailable)?,
+                    crate::backend::db::repositories::access::readable_repository_ids(
+                        pool, None, chunk,
+                    )
+                    .await
+                    .map_err(Error::unavailable)?,
                 );
             }
             public
@@ -484,7 +533,7 @@ pub(super) async fn required_issue(
     number: &str,
 ) -> Result<i64> {
     let number = number.parse().map_err(|_| Error::missing())?;
-    db::issues::get_issue(pool, repo, number)
+    crate::backend::db::issues::get_issue(pool, repo, number)
         .await
         .map_err(Error::unavailable)?
         .map(|i| i.id)
@@ -497,7 +546,8 @@ async fn read(
     Path(p): Path<HashMap<String, String>>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
-    let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
+    let item =
+        crate::backend::api::github::labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
     Ok(Json(
         document(
             &state.pool,
@@ -518,7 +568,7 @@ async fn list(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    use db::discussions::{ListFilter, ListSort, Pick};
+    use crate::backend::db::discussions::{ListFilter, ListSort, Pick};
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let state_filter = match query.get("state").map(String::as_str).unwrap_or("open") {
         "all" => None,
@@ -546,7 +596,7 @@ async fn list(
         None | Some("*") => Pick::Any,
         Some("none") => Pick::Unset,
         Some(name) => Pick::Is(
-            db::issue_attributes::catalog(
+            crate::backend::db::issue_attributes::catalog(
                 &state.pool,
                 repo.id,
                 auth.as_ref().map(|a| a.user.id),
@@ -565,14 +615,14 @@ async fn list(
         .map(|name| {
             let name = if name == "@me" {
                 auth.as_ref()
-                    .ok_or_else(auth::required)?
+                    .ok_or_else(crate::backend::api::github::auth::required)?
                     .user
                     .username
                     .clone()
             } else {
                 name.clone()
             };
-            crate::backend::identity::credentials::validate_namespace(&name, 3)
+            codeyard_model::account_input::validate_namespace(&name, 3)
                 .map_err(|_| Error::invalid("Invalid mentioned user"))?;
             Ok::<_, Error>(name)
         })
@@ -591,7 +641,7 @@ async fn list(
     labels.dedup();
     let author_id = match query.get("creator") {
         Some(name) => Some(
-            db::users::accounts::get_user_by_username(&state.pool, name)
+            crate::backend::db::users::accounts::get_user_by_username(&state.pool, name)
                 .await
                 .map_err(Error::unavailable)?
                 .map_or(-1, |user| user.id),
@@ -603,7 +653,7 @@ async fn list(
         None | Some("*") => Pick::Any,
         Some("none") => Pick::Unset,
         Some(name) => Pick::Is(
-            db::users::accounts::get_user_by_username(&state.pool, name)
+            crate::backend::db::users::accounts::get_user_by_username(&state.pool, name)
                 .await
                 .map_err(Error::unavailable)?
                 .map_or(-1, |user| user.id),
@@ -618,7 +668,7 @@ async fn list(
                 .parse()
                 .map_err(|_| Error::invalid("Invalid milestone"))?;
             Pick::Is(
-                db::milestones::get_milestone(&state.pool, repo.id, number)
+                crate::backend::db::milestones::get_milestone(&state.pool, repo.id, number)
                     .await
                     .map_err(Error::unavailable)?
                     .map_or(-1, |summary| summary.milestone.id),
@@ -644,11 +694,11 @@ async fn list(
         offset: offset as i64,
         ..Default::default()
     };
-    let rows = db::issues::list_repository_items(
+    let rows = crate::backend::db::issues::list_repository_items(
         &state.pool,
         repo.id,
         &filter,
-        &db::issues::RepositoryItemOptions {
+        &crate::backend::db::issues::RepositoryItemOptions {
             since,
             any_assignee,
             any_milestone,
@@ -689,7 +739,7 @@ pub(super) fn operation_error(error: crate::backend::issues::OperationError) -> 
         OperationError::Invalid { message, .. } => Error::invalid(message),
         OperationError::Missing { .. } => Error::missing(),
         OperationError::Denied { message, .. } => Error::new(StatusCode::FORBIDDEN, message),
-        OperationError::Unauthenticated { .. } => auth::required(),
+        OperationError::Unauthenticated { .. } => crate::backend::api::github::auth::required(),
         OperationError::Conflict { message, .. } => Error::new(StatusCode::CONFLICT, message),
         OperationError::Unavailable { .. } => Error::unavailable(()),
     }
@@ -698,7 +748,7 @@ pub(super) fn operation_error(error: crate::backend::issues::OperationError) -> 
 pub(super) fn pull_error(
     error: crate::backend::repositories::pull_requests::OperationError,
 ) -> Error {
-    super::pulls::operation_error(error)
+    crate::backend::api::github::pulls::operation_error(error)
 }
 
 fn title(value: Option<&Value>) -> Result<Option<String>> {
@@ -725,7 +775,7 @@ fn assignee_names(names: Vec<String>) -> Result<Vec<String>> {
     let mut unique = std::collections::BTreeSet::new();
     for name in names {
         unique.insert(name);
-        if unique.len() > db::assignees::MAX_ASSIGNEES as usize {
+        if unique.len() > crate::backend::db::assignees::MAX_ASSIGNEES as usize {
             return Err(Error::invalid("Too many assignees"));
         }
     }
@@ -736,7 +786,7 @@ async fn resolve_assignees(
     pool: &codeyard_db_core::DbPool,
     names: &[String],
 ) -> Result<Vec<codeyard_db_core::models::User>> {
-    let users = db::users::accounts::get_users_by_usernames(pool, names)
+    let users = crate::backend::db::users::accounts::get_users_by_usernames(pool, names)
         .await
         .map_err(Error::unavailable)?;
     if users.len() != names.len() {
@@ -754,8 +804,10 @@ pub(in crate::backend::api) struct Metadata {
 }
 
 impl Metadata {
-    pub(in crate::backend::api) fn creation(&self) -> db::issues::OwnedIssueMetadata {
-        db::issues::OwnedIssueMetadata {
+    pub(in crate::backend::api) fn creation(
+        &self,
+    ) -> crate::backend::db::issues::OwnedIssueMetadata {
+        crate::backend::db::issues::OwnedIssueMetadata {
             labels: self.labels.clone().unwrap_or_default(),
             assignees: self
                 .assignees
@@ -792,13 +844,18 @@ pub(in crate::backend::api) async fn metadata(
                 .as_str()
                 .ok_or_else(|| Error::invalid("Invalid issue type"))?;
             Some(
-                db::issue_attributes::catalog(pool, repo.id, Some(actor.id), "type")
-                    .await
-                    .map_err(Error::unavailable)?
-                    .into_iter()
-                    .find(|a| a.is_enabled && a.name.to_lowercase() == name.to_lowercase())
-                    .ok_or_else(|| Error::invalid("Issue type does not exist"))?
-                    .id,
+                crate::backend::db::issue_attributes::catalog(
+                    pool,
+                    repo.id,
+                    Some(actor.id),
+                    "type",
+                )
+                .await
+                .map_err(Error::unavailable)?
+                .into_iter()
+                .find(|a| a.is_enabled && a.name.to_lowercase() == name.to_lowercase())
+                .ok_or_else(|| Error::invalid("Issue type does not exist"))?
+                .id,
             )
         });
     }
@@ -806,10 +863,10 @@ pub(in crate::backend::api) async fn metadata(
         let labels = labels
             .as_array()
             .ok_or_else(|| Error::invalid("Invalid labels"))?;
-        if labels.len() > db::labels::MAX_ISSUE_LABELS {
+        if labels.len() > crate::backend::db::labels::MAX_ISSUE_LABELS {
             return Err(Error::invalid("Too many labels"));
         }
-        let catalogue = db::labels::list_repo_labels(pool, repo.id)
+        let catalogue = crate::backend::db::labels::list_repo_labels(pool, repo.id)
             .await
             .map_err(Error::unavailable)?;
         let mut ids = Vec::new();
@@ -842,7 +899,7 @@ pub(in crate::backend::api) async fn metadata(
         let names = assignee_names(names)?;
         let users = resolve_assignees(pool, &names).await?;
         let ids: Vec<_> = users.iter().map(|user| user.id).collect();
-        if db::assignees::assignable_user_ids(pool, repo.id, &ids)
+        if crate::backend::db::assignees::assignable_user_ids(pool, repo.id, &ids)
             .await
             .map_err(Error::unavailable)?
             .len()
@@ -861,7 +918,7 @@ pub(in crate::backend::api) async fn metadata(
                 .or_else(|| number.as_str().and_then(|number| number.parse().ok()))
                 .and_then(|number| i32::try_from(number).ok())
                 .ok_or_else(|| Error::invalid("Invalid milestone"))?;
-            db::milestones::get_milestone(pool, repo.id, number)
+            crate::backend::db::milestones::get_milestone(pool, repo.id, number)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(|| Error::invalid("Milestone does not exist"))?;
@@ -872,7 +929,7 @@ pub(in crate::backend::api) async fn metadata(
 }
 
 pub(in crate::backend::api) fn assignment_error(error: anyhow::Error) -> Error {
-    use db::assignees::AssignmentRefusal;
+    use crate::backend::db::assignees::AssignmentRefusal;
     match error.downcast_ref::<AssignmentRefusal>() {
         Some(AssignmentRefusal::Denied) => Error::new(StatusCode::FORBIDDEN, "Assignment denied"),
         Some(AssignmentRefusal::NotFound) => Error::missing(),
@@ -883,7 +940,7 @@ pub(in crate::backend::api) fn assignment_error(error: anyhow::Error) -> Error {
 
 pub(in crate::backend::api) async fn apply_metadata(
     state: &AppState,
-    authentication: &auth::Authentication,
+    authentication: &crate::backend::api::github::auth::Authentication,
     repo: &codeyard_db_core::models::Repository,
     item: AssignedItem,
     detail: (&str, i32, &str),
@@ -894,7 +951,7 @@ pub(in crate::backend::api) async fn apply_metadata(
         let AssignedItem::Issue(id) = item else {
             return Err(Error::invalid("Pull requests do not support issue types"));
         };
-        db::issue_attributes::set_type(
+        crate::backend::db::issue_attributes::set_type(
             &state.pool,
             repo.id,
             authentication.database_actor(),
@@ -902,10 +959,10 @@ pub(in crate::backend::api) async fn apply_metadata(
             kind,
         )
         .await
-        .map_err(super::issue_attributes::error)?;
+        .map_err(crate::backend::api::github::issue_attributes::error)?;
     }
     if let Some(ids) = metadata.labels {
-        labels::save_labels(
+        crate::backend::api::github::labels::save_labels(
             &state.pool,
             authentication.database_actor(),
             repo.id,
@@ -918,7 +975,7 @@ pub(in crate::backend::api) async fn apply_metadata(
     if let Some(number) = metadata.milestone {
         match item {
             AssignedItem::Issue(id) => {
-                db::milestones::set_issue_milestone(
+                crate::backend::db::milestones::set_issue_milestone(
                     &state.pool,
                     authentication.database_actor(),
                     repo.id,
@@ -928,7 +985,7 @@ pub(in crate::backend::api) async fn apply_metadata(
                 .await
             }
             AssignedItem::PullRequest(id) => {
-                db::milestones::set_pull_request_milestone(
+                crate::backend::db::milestones::set_pull_request_milestone(
                     &state.pool,
                     authentication.database_actor(),
                     repo.id,
@@ -941,9 +998,8 @@ pub(in crate::backend::api) async fn apply_metadata(
         .map_err(Error::unavailable)?;
     }
     if let Some(users) = metadata.assignees {
-        use crate::backend::issues::assignments;
         let (owner, number, title) = detail;
-        let target = assignments::Target {
+        let target = crate::backend::issues::assignments::Target {
             actor,
             repository: repo,
             owner,
@@ -951,13 +1007,13 @@ pub(in crate::backend::api) async fn apply_metadata(
             number,
             title,
         };
-        let removed: Vec<_> = db::assignees::list_assignees(&state.pool, item)
+        let removed: Vec<_> = crate::backend::db::assignees::list_assignees(&state.pool, item)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
             .filter(|name| !users.iter().any(|user| user.username == *name))
             .collect();
-        assignments::unassign(
+        crate::backend::issues::assignments::unassign(
             &state.pool,
             &target,
             authentication.database_actor(),
@@ -965,7 +1021,7 @@ pub(in crate::backend::api) async fn apply_metadata(
         )
         .await
         .map_err(assignment_error)?;
-        assignments::assign(
+        crate::backend::issues::assignments::assign(
             &state.pool,
             &state.notification_broadcaster,
             &target,
@@ -985,7 +1041,7 @@ async fn create(
     Json(input): Json<Value>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let authentication = auth.ok_or_else(auth::required)?;
+    let authentication = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = &authentication.user;
     let title = title(input.get("title"))?.ok_or_else(|| Error::invalid("Title is required"))?;
     let parent_issue_id = input
@@ -998,14 +1054,14 @@ async fn create(
         })
         .transpose()?;
     let parent_repository_id = if let Some(parent) = parent_issue_id {
-        let parent = db::issues::get_issue_by_id(&state.pool, parent)
+        let parent = crate::backend::db::issues::get_issue_by_id(&state.pool, parent)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
         authentication
             .repository_scope(&state.pool, parent.repo_id, "issues", true)
             .await
-            .map_err(super::auth::scope_error)?;
+            .map_err(crate::backend::api::github::auth::scope_error)?;
         Some(parent.repo_id)
     } else {
         None
@@ -1052,9 +1108,10 @@ async fn update(
     Json(input): Json<Value>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let authentication = auth.ok_or_else(auth::required)?;
+    let authentication = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = &authentication.user;
-    let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
+    let item =
+        crate::backend::api::github::labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
     let title = title(input.get("title"))?;
     let body = text(&input, "body")?;
     let requested_state = text(&input, "state")?;
@@ -1073,21 +1130,22 @@ async fn update(
             || metadata.milestone.is_some());
     let (number, title) = match item {
         AssignedItem::Issue(id) if metadata_only => {
-            let issue = db::issues::get_issue_by_id(&state.pool, id)
+            let issue = crate::backend::db::issues::get_issue_by_id(&state.pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
             (issue.number, issue.title)
         }
         AssignedItem::PullRequest(id) if metadata_only => {
-            let pull = db::pull_requests::records::get_pull_request_by_id(&state.pool, id)
-                .await
-                .map_err(Error::unavailable)?
-                .ok_or_else(Error::missing)?;
+            let pull =
+                crate::backend::db::pull_requests::records::get_pull_request_by_id(&state.pool, id)
+                    .await
+                    .map_err(Error::unavailable)?
+                    .ok_or_else(Error::missing)?;
             (pull.number, pull.title)
         }
         AssignedItem::Issue(id) => {
-            let issue = db::issues::get_issue_by_id(&state.pool, id)
+            let issue = crate::backend::db::issues::get_issue_by_id(&state.pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
@@ -1111,10 +1169,11 @@ async fn update(
             (saved.number, saved.title)
         }
         AssignedItem::PullRequest(id) => {
-            let pull = db::pull_requests::records::get_pull_request_by_id(&state.pool, id)
-                .await
-                .map_err(Error::unavailable)?
-                .ok_or_else(Error::missing)?;
+            let pull =
+                crate::backend::db::pull_requests::records::get_pull_request_by_id(&state.pool, id)
+                    .await
+                    .map_err(Error::unavailable)?
+                    .ok_or_else(Error::missing)?;
             let saved = crate::backend::repositories::pull_requests::mutations::update_pull_request_latest(&state.pool, &state.ci_runs, &state.notification_broadcaster, actor.id, (repo.id, pull.number), crate::backend::repositories::pull_requests::mutations::UpdatePullRequestRequest { expected_state: pull.state, expected_updated: pull.updated_at.to_rfc3339(), title, body, state: requested_state, base: None, maintainer_can_modify: None }).await.map_err(pull_error)?;
             (saved.number, saved.title)
         }
@@ -1153,9 +1212,10 @@ async fn change_assignees(
     remove: bool,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let authentication = auth.ok_or_else(auth::required)?;
+    let authentication = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = &authentication.user;
-    let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
+    let item =
+        crate::backend::api::github::labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
     let names = assignee_names(input.assignees)?;
     let current = document(
         &state.pool,
@@ -1172,8 +1232,8 @@ async fn change_assignees(
     let title = current["title"]
         .as_str()
         .ok_or_else(|| Error::unavailable(()))?;
-    use crate::backend::issues::assignments;
-    let target = assignments::Target {
+
+    let target = crate::backend::issues::assignments::Target {
         actor,
         repository: &repo,
         owner: &p["owner"],
@@ -1182,7 +1242,7 @@ async fn change_assignees(
         title,
     };
     if remove {
-        assignments::unassign(
+        crate::backend::issues::assignments::unassign(
             &state.pool,
             &target,
             authentication.database_actor(),
@@ -1192,7 +1252,7 @@ async fn change_assignees(
         .map_err(assignment_error)?;
     } else {
         let users = resolve_assignees(&state.pool, &names).await?;
-        assignments::assign(
+        crate::backend::issues::assignments::assign(
             &state.pool,
             &state.notification_broadcaster,
             &target,

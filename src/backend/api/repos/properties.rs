@@ -1,6 +1,8 @@
 //! Native metadata forms use the same policy and transactions as REST and creation.
-use super::{chrome::Loaded, repository};
-use crate::backend::{api::http::context::PageContext, db::organizations::properties as data};
+use crate::backend::api::repos::chrome::Loaded;
+
+use crate::backend::api::http::context::PageContext;
+
 use axum::{http::StatusCode, response::Response};
 use codeyard_webui::{
     components::repository_properties::RepositoryPropertyField,
@@ -13,7 +15,7 @@ pub(super) async fn panel(
     loaded: &Loaded,
     name: Option<&str>,
 ) -> Result<view::Properties, Response> {
-    let metadata = data::repository(
+    let metadata = crate::backend::db::organizations::properties::repository(
         &ctx.state.pool,
         ctx.user.as_ref().map(|user| user.id),
         loaded.repository.id,
@@ -48,7 +50,7 @@ pub(super) async fn panel(
             .iter()
             .find(|row| row.property_name.eq_ignore_ascii_case(name))
             .and_then(|row| row.value.as_ref())
-            .map(data::PropertyValue::form_value);
+            .map(crate::backend::db::organizations::properties::PropertyValue::form_value);
         Some(view::Property {
             id: definition.id,
             field: RepositoryPropertyField {
@@ -59,7 +61,7 @@ pub(super) async fn panel(
                 required: fields.needs_explicit_value(),
                 editable: metadata.organization_owner
                     || (metadata.repository_admin
-                        && fields.values_editable_by == data::EditableBy::OrgAndRepoActors),
+                        && fields.values_editable_by == crate::backend::db::organizations::properties::EditableBy::OrgAndRepoActors),
                 default_preview: None,
             },
             draft: value.clone().unwrap_or_default(),
@@ -102,7 +104,9 @@ pub(super) async fn form(
     }
     let name = form.get("property_name").map(String::as_str).unwrap_or("");
     let raw = form.get("value").map(String::as_str).unwrap_or("");
-    if !data::valid_name(name) || raw.len() > data::MAX_FORM_VALUE_BYTES {
+    if !crate::backend::db::organizations::properties::valid_name(name)
+        || raw.len() > crate::backend::db::organizations::properties::MAX_FORM_VALUE_BYTES
+    {
         return ctx.repo_error(
             &loaded.chrome,
             StatusCode::BAD_REQUEST,
@@ -124,7 +128,12 @@ pub(super) async fn form(
         Ok(user) => user.id,
         Err(response) => return response,
     };
-    let metadata = match data::repository(&ctx.state.pool, Some(actor), loaded.repository.id).await
+    let metadata = match crate::backend::db::organizations::properties::repository(
+        &ctx.state.pool,
+        Some(actor),
+        loaded.repository.id,
+    )
+    .await
     {
         Ok(Some(metadata)) => metadata,
         Ok(None) => {
@@ -163,16 +172,18 @@ pub(super) async fn form(
                 "Provide a repository property value.",
             );
         }
-        Some(data::PropertyValue::from_form(
-            definition.fields.value_type,
-            raw,
-        ))
+        Some(
+            crate::backend::db::organizations::properties::PropertyValue::from_form(
+                definition.fields.value_type,
+                raw,
+            ),
+        )
     };
-    let input = data::ValueInput {
+    let input = crate::backend::db::organizations::properties::ValueInput {
         property_name: name.to_owned(),
         value,
     };
-    let outcome = data::set_repository_value(
+    let outcome = crate::backend::db::organizations::properties::set_repository_value(
         &ctx.state.pool,
         ctx.database_actor(actor),
         loaded.repository.id,
@@ -188,26 +199,34 @@ pub(super) async fn form(
                 codeyard_webui::encode_component(name)
             ))
         }
-        Err(error) => match error.downcast_ref::<data::Refusal>() {
-            Some(data::Refusal::Invalid { message, .. }) => (StatusCode::BAD_REQUEST, *message),
-            Some(data::Refusal::Denied) => (
-                StatusCode::FORBIDDEN,
-                "Organization policy does not allow editing this property.",
-            ),
-            Some(data::Refusal::Missing) => (
-                StatusCode::CONFLICT,
-                "The repository property changed. Reload before retrying.",
-            ),
-            _ => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Repository properties are unavailable.",
-            ),
-        },
+        Err(error) => {
+            match error.downcast_ref::<crate::backend::db::organizations::properties::Refusal>() {
+                Some(crate::backend::db::organizations::properties::Refusal::Invalid {
+                    message,
+                    ..
+                }) => (StatusCode::BAD_REQUEST, *message),
+                Some(crate::backend::db::organizations::properties::Refusal::Denied) => (
+                    StatusCode::FORBIDDEN,
+                    "Organization policy does not allow editing this property.",
+                ),
+                Some(crate::backend::db::organizations::properties::Refusal::Missing) => (
+                    StatusCode::CONFLICT,
+                    "The repository property changed. Reload before retrying.",
+                ),
+                _ => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Repository properties are unavailable.",
+                ),
+            }
+        }
     };
-    let mut settings = match repository::settings_model(ctx, loaded, "properties").await {
-        Ok(settings) => settings,
-        Err(response) => return response,
-    };
+    let mut settings =
+        match crate::backend::api::repos::repository::settings_model(ctx, loaded, "properties")
+            .await
+        {
+            Ok(settings) => settings,
+            Err(response) => return response,
+        };
     let mut properties = match panel(ctx, loaded, Some(name)).await {
         Ok(properties) => properties,
         Err(response) => return response,
@@ -219,5 +238,5 @@ pub(super) async fn form(
     }
     settings.properties = Some(Box::new(properties));
     settings.error = Some(message.into());
-    repository::settings_response(ctx, loaded, settings, status)
+    crate::backend::api::repos::repository::settings_response(ctx, loaded, settings, status)
 }

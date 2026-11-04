@@ -1,12 +1,12 @@
 //! Secret alert adapters share the stored alerts and resolution rules with native forms.
 mod patterns;
-use super::{auth, pagination::Pagination, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{self, secret_scanning as records},
-    repositories::secret_scanning::jobs,
-    webhooks::payloads,
-};
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -48,8 +48,8 @@ async fn create_bypass(
     Json(input): Json<CreateBypass>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(auth::required)?;
-    let bypass = records::bypass(
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
+    let bypass = crate::backend::db::secret_scanning::bypass(
         &state.pool,
         actor.user.id,
         repo.id,
@@ -59,8 +59,8 @@ async fn create_bypass(
     .await
     .map_err(|refusal| {
         if matches!(
-            refusal.downcast_ref::<records::Refusal>(),
-            Some(records::Refusal::Invalid)
+            refusal.downcast_ref::<crate::backend::db::secret_scanning::Refusal>(),
+            Some(crate::backend::db::secret_scanning::Refusal::Invalid)
         ) {
             Error::validation("SecretScanningPushProtectionBypass", "reason", "invalid")
         } else {
@@ -73,20 +73,20 @@ async fn create_bypass(
 }
 
 pub(super) fn error(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<records::Refusal>() {
-        Some(records::Refusal::Denied) => {
+    match error.downcast_ref::<crate::backend::db::secret_scanning::Refusal>() {
+        Some(crate::backend::db::secret_scanning::Refusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Resource not accessible by token")
         }
-        Some(records::Refusal::Missing) => Error::missing(),
-        Some(records::Refusal::Version) => Error::new(
+        Some(crate::backend::db::secret_scanning::Refusal::Missing) => Error::missing(),
+        Some(crate::backend::db::secret_scanning::Refusal::Version) => Error::new(
             StatusCode::PRECONDITION_FAILED,
             "Custom pattern version changed",
         ),
-        Some(records::Refusal::Conflict) => Error::new(
+        Some(crate::backend::db::secret_scanning::Refusal::Conflict) => Error::new(
             StatusCode::CONFLICT,
             "Pattern configuration version changed",
         ),
-        Some(records::Refusal::Invalid) => {
+        Some(crate::backend::db::secret_scanning::Refusal::Invalid) => {
             Error::validation("SecretScanningAlert", "state", "invalid")
         }
         None => Error::unavailable(error),
@@ -166,8 +166,8 @@ impl Filters {
         }
         Ok(())
     }
-    fn filter(&self, offset: usize, limit: usize) -> records::Filter {
-        records::Filter {
+    fn filter(&self, offset: usize, limit: usize) -> crate::backend::db::secret_scanning::Filter {
+        crate::backend::db::secret_scanning::Filter {
             state: self.state.clone(),
             secret_type: self.secret_type.clone(),
             exclude_secret_types: self.exclude_secret_types.clone(),
@@ -192,15 +192,15 @@ async fn list_org(
     Path(org): Path<String>,
     OriginalUri(uri): OriginalUri,
     Query(query): Query<Filters>,
-    Query(pagination): Query<super::pagination::CursorPagination>,
+    Query(pagination): Query<crate::backend::api::github::pagination::CursorPagination>,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
-    let org = super::orgs::target(&state, &org).await?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
+    let org = crate::backend::api::github::orgs::target(&state, &org).await?;
     query.validate()?;
     let (offset, limit) = pagination.window()?;
-    let alerts = records::org_alerts(
+    let alerts = crate::backend::db::secret_scanning::org_alerts(
         &state.pool,
         actor.user.id,
         org.id,
@@ -211,15 +211,17 @@ async fn list_org(
     let has_next = alerts.len() > limit;
     let alerts = alerts.into_iter().take(limit).collect::<Vec<_>>();
     let ids = alerts.iter().map(|alert| alert.repo_id).collect::<Vec<_>>();
-    let repositories = db::repositories::records::get_repositories_by_ids(&state.pool, &ids)
-        .await
-        .map_err(Error::unavailable)?
-        .into_iter()
-        .map(|repo| (repo.id, repo))
-        .collect::<HashMap<_, _>>();
-    let documents = jobs::Documents::load(&state, &alerts)
-        .await
-        .map_err(Error::unavailable)?;
+    let repositories =
+        crate::backend::db::repositories::records::get_repositories_by_ids(&state.pool, &ids)
+            .await
+            .map_err(Error::unavailable)?
+            .into_iter()
+            .map(|repo| (repo.id, repo))
+            .collect::<HashMap<_, _>>();
+    let documents =
+        crate::backend::repositories::secret_scanning::jobs::Documents::load(&state, &alerts)
+            .await
+            .map_err(Error::unavailable)?;
     let mut items = Vec::new();
     for alert in &alerts {
         let repo = repositories
@@ -231,7 +233,7 @@ async fn list_org(
         let mut document = documents
             .document(&state, alert, &org.name, &repo.name, query.hide_secret)
             .map_err(Error::unavailable)?;
-        document["repository"] = payloads::repository(repo, &org.name);
+        document["repository"] = crate::backend::webhooks::payloads::repository(repo, &org.name);
         items.push(document);
     }
     pagination.response(&uri, items, has_next)
@@ -251,13 +253,13 @@ async fn list(
     Path((owner, name)): Path<(String, String)>,
     OriginalUri(uri): OriginalUri,
     Query(query): Query<Filters>,
-    Query(pagination): Query<super::pagination::CursorPagination>,
+    Query(pagination): Query<crate::backend::api::github::pagination::CursorPagination>,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = actor.ok_or_else(auth::required)?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     query.validate()?;
     let (offset, limit) = pagination.window()?;
-    let alerts = records::alerts(
+    let alerts = crate::backend::db::secret_scanning::alerts(
         &state.pool,
         actor.user.id,
         repo.id,
@@ -267,9 +269,10 @@ async fn list(
     .map_err(error)?;
     let has_next = alerts.len() > limit;
     let alerts = alerts.into_iter().take(limit).collect::<Vec<_>>();
-    let documents = jobs::Documents::load(&state, &alerts)
-        .await
-        .map_err(Error::unavailable)?;
+    let documents =
+        crate::backend::repositories::secret_scanning::jobs::Documents::load(&state, &alerts)
+            .await
+            .map_err(Error::unavailable)?;
     let items = alerts
         .iter()
         .map(|alert| {
@@ -289,12 +292,12 @@ async fn get_alert(
 ) -> Result<Json<Value>> {
     let (owner, name) = (&params["owner"], &params["repo"]);
     let (repo, actor) = repository(&state, &headers, owner, name, false).await?;
-    let actor = actor.ok_or_else(auth::required)?;
-    let alert = records::alerts(
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
+    let alert = crate::backend::db::secret_scanning::alerts(
         &state.pool,
         actor.user.id,
         repo.id,
-        &records::Filter {
+        &crate::backend::db::secret_scanning::Filter {
             number: Some(number(&params)?),
             limit: 1,
             ..Default::default()
@@ -306,9 +309,15 @@ async fn get_alert(
     .next()
     .ok_or_else(Error::missing)?;
     Ok(Json(
-        jobs::document(&state, &alert, owner, name, query.hide_secret)
-            .await
-            .map_err(Error::unavailable)?,
+        crate::backend::repositories::secret_scanning::jobs::document(
+            &state,
+            &alert,
+            owner,
+            name,
+            query.hide_secret,
+        )
+        .await
+        .map_err(Error::unavailable)?,
     ))
 }
 
@@ -340,13 +349,13 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (owner, name) = (&params["owner"], &params["repo"]);
     let (repo, actor) = repository(&state, &headers, owner, name, true).await?;
-    let actor = actor.ok_or_else(auth::required)?;
-    let alert = records::update_alert(
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
+    let alert = crate::backend::db::secret_scanning::update_alert(
         &state.pool,
         actor.user.id,
         repo.id,
         number(&params)?,
-        &records::AlertUpdate {
+        &crate::backend::db::secret_scanning::AlertUpdate {
             state: input.state.as_deref(),
             reason: input.resolution.as_deref(),
             comment: input.resolution_comment.as_deref(),
@@ -356,7 +365,7 @@ async fn update(
     )
     .await
     .map_err(error)?;
-    jobs::emit_alert(
+    crate::backend::repositories::secret_scanning::jobs::emit_alert(
         &state,
         &repo,
         &alert,
@@ -377,9 +386,11 @@ async fn update(
     .await
     .map_err(Error::unavailable)?;
     Ok(Json(
-        jobs::document(&state, &alert, owner, name, false)
-            .await
-            .map_err(Error::unavailable)?,
+        crate::backend::repositories::secret_scanning::jobs::document(
+            &state, &alert, owner, name, false,
+        )
+        .await
+        .map_err(Error::unavailable)?,
     ))
 }
 
@@ -392,9 +403,9 @@ async fn locations(
 ) -> Result<Response> {
     let (owner, name) = (&params["owner"], &params["repo"]);
     let (repo, actor) = repository(&state, &headers, owner, name, false).await?;
-    let actor = actor.ok_or_else(auth::required)?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     let (offset, limit) = page.window()?;
-    let locations = records::locations(
+    let locations = crate::backend::db::secret_scanning::locations(
         &state.pool,
         actor.user.id,
         repo.id,
@@ -409,7 +420,9 @@ async fn locations(
         &uri,
         locations
             .into_iter()
-            .map(|location| payloads::secret_scanning_location(&location, owner, name))
+            .map(|location| {
+                crate::backend::webhooks::payloads::secret_scanning_location(&location, owner, name)
+            })
             .collect(),
         has_next,
     )
@@ -421,8 +434,8 @@ async fn history(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = actor.ok_or_else(auth::required)?;
-    let history = records::history(&state.pool, actor.user.id, repo.id)
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
+    let history = crate::backend::db::secret_scanning::history(&state.pool, actor.user.id, repo.id)
         .await
         .map_err(error)?;
     let scans = |kind| {

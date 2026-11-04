@@ -11,7 +11,7 @@ pub async fn account_statistics(
     user: i64,
     token: i64,
 ) -> Result<Option<crate::backend::db::users::profiles::AccountStatistics>> {
-    let readable = super::super::repositories::access::readable_condition();
+    let readable = crate::backend::db::postgres::repositories::access::readable_condition();
     Ok(sqlx::query_as(&format!("SELECT
         (SELECT COUNT(*) FROM gists g JOIN repositories r ON r.id=g.repo_id WHERE r.owner_user_id=$1 AND g.ready AND g.is_public) AS public_gists,
         (SELECT COUNT(*) FROM gists g JOIN repositories r ON r.id=g.repo_id WHERE r.owner_user_id=$1 AND g.ready AND NOT g.is_public) AS private_gists,
@@ -49,7 +49,10 @@ pub async fn save_profile(
     input: &ProfilePatch<'_>,
 ) -> Result<User> {
     let mut tx = pool.begin().await?;
-    super::transitions::require_account_exclusive(&mut tx, user, credential).await?;
+    crate::backend::db::postgres::users::transitions::require_account_exclusive(
+        &mut tx, user, credential,
+    )
+    .await?;
     let current: User = sqlx::query_as("SELECT * FROM users WHERE id=$1")
         .bind(user)
         .fetch_one(&mut *tx)

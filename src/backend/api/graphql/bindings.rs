@@ -1,8 +1,17 @@
 //! Typed schema bindings over the authorized presentation values loaded by each family.
-use super::{
-    arg, collaboration, db, issue, missing, node, repository, unavailable, user, Arguments,
-    RequestContext, Result, Value,
-};
+use crate::backend::api::graphql::arg;
+
+use crate::backend::api::graphql::db;
+
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::node;
+
+use crate::backend::api::graphql::unavailable;
+
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
 use async_graphql::futures_util::future::BoxFuture;
 use async_graphql::{Context, Error, InputType, ID};
 use codeyard_github_graphql as gql;
@@ -465,7 +474,7 @@ impl Object {
                         "forks" | "viewerHasStarred" | "viewerSubscription" | "watchers"
                     )))
         {
-            return Err(super::token_denied());
+            return Err(crate::backend::api::graphql::token_denied());
         }
         match (ty, field) {
             ("GitActor", "user") => {
@@ -480,11 +489,21 @@ impl Object {
                     .into_values()
                     .next()
                     .filter(|user| !user.is_banned)
-                    .map_or(Value::Null, |row| user::object(&row, request.auth.user.id)))
+                    .map_or(Value::Null, |row| {
+                        crate::backend::api::graphql::user::object(&row, request.auth.user.id)
+                    }))
             }
             ("UpdateProjectV2ItemPositionPayload", "items") => {
-                boxed(|| super::projects::resolve("ProjectV2", field, arguments, request, &self.0))
-                    .await
+                boxed(|| {
+                    crate::backend::api::graphql::projects::resolve(
+                        "ProjectV2",
+                        field,
+                        arguments,
+                        request,
+                        &self.0,
+                    )
+                })
+                .await
             }
             (_, "repository")
                 if matches!(
@@ -492,13 +511,16 @@ impl Object {
                     "Blob" | "Tree" | "Tag" | "Ref" | "Milestone" | "Release"
                 ) =>
             {
-                Ok(repository::object(
-                    &repository::by_id(self.0["_repo"].as_i64().ok_or_else(missing)?, request)
-                        .await?,
+                Ok(crate::backend::api::graphql::repository::object(
+                    &crate::backend::api::graphql::repository::by_id(
+                        self.0["_repo"].as_i64().ok_or_else(missing)?,
+                        request,
+                    )
+                    .await?,
                 ))
             }
             ("PullRequestReview" | "PullRequestReviewComment", "reactionGroups") => {
-                super::collaboration::reactions(
+                crate::backend::api::graphql::collaboration::reactions(
                     if ty == "PullRequestReview" {
                         db::reactions::Subject::PullRequestReview
                     } else {
@@ -511,18 +533,34 @@ impl Object {
             }
             ("CommitComment", _) => match self.0.get(field) {
                 Some(value) => Ok(value.clone()),
-                None => boxed(|| super::commit_comment::field(field, &self.0, request)).await,
+                None => {
+                    boxed(|| {
+                        crate::backend::api::graphql::commit_comment::field(field, &self.0, request)
+                    })
+                    .await
+                }
             },
             ("Release", _) => match self.0.get(field) {
                 Some(value) => Ok(value.clone()),
-                None => boxed(|| super::release::field(field, arguments, &self.0, request)).await,
+                None => {
+                    boxed(|| {
+                        crate::backend::api::graphql::release::field(
+                            field, arguments, &self.0, request,
+                        )
+                    })
+                    .await
+                }
             },
-            ("Blob", "text") => super::git_objects::blob_text(&self.0, request).await,
+            ("Blob", "text") => {
+                crate::backend::api::graphql::git_objects::blob_text(&self.0, request).await
+            }
             ("Tag", "target") => {
-                let repo =
-                    repository::by_id(self.0["_repo"].as_i64().ok_or_else(missing)?, request)
-                        .await?;
-                super::git_objects::load(
+                let repo = crate::backend::api::graphql::repository::by_id(
+                    self.0["_repo"].as_i64().ok_or_else(missing)?,
+                    request,
+                )
+                .await?;
+                crate::backend::api::graphql::git_objects::load(
                     &repo,
                     self.0["_target"].as_str().ok_or_else(missing)?,
                     request,
@@ -533,32 +571,48 @@ impl Object {
                 if self.0["mode"].as_i64() == Some(0o160000) {
                     return Ok(Value::Null);
                 }
-                super::git_objects::load(
-                    &repository::by_id(self.0["_repo"].as_i64().ok_or_else(missing)?, request)
-                        .await?,
+                crate::backend::api::graphql::git_objects::load(
+                    &crate::backend::api::graphql::repository::by_id(
+                        self.0["_repo"].as_i64().ok_or_else(missing)?,
+                        request,
+                    )
+                    .await?,
                     self.0["oid"].as_str().ok_or_else(missing)?,
                     request,
                 )
                 .await
             }
             ("Query", "viewer" | "user" | "organization" | "repositoryOwner") => {
-                boxed(|| user::query(field, arguments, request)).await
+                boxed(|| crate::backend::api::graphql::user::query(field, arguments, request)).await
             }
-            ("Query", "repository") => boxed(|| repository::query(arguments, request)).await,
+            ("Query", "repository") => {
+                boxed(|| crate::backend::api::graphql::repository::query(arguments, request)).await
+            }
             ("Query", "search") => {
                 if request.bounded() {
-                    return Err(super::token_denied());
+                    return Err(crate::backend::api::graphql::token_denied());
                 }
                 request.require_oauth_scope("repo")?;
                 let kind = arguments.args.try_get("type")?.enum_name()?;
                 let mut value = match kind {
                     "REPOSITORY" => {
-                        boxed(|| super::repository_list::search(arguments, request)).await?
+                        boxed(|| {
+                            crate::backend::api::graphql::repository_list::search(
+                                arguments, request,
+                            )
+                        })
+                        .await?
                     }
                     "DISCUSSION" => {
-                        boxed(|| super::discussions::search(arguments, request)).await?
+                        boxed(|| {
+                            crate::backend::api::graphql::discussions::search(arguments, request)
+                        })
+                        .await?
                     }
-                    _ => boxed(|| issue::search(arguments, request)).await?,
+                    _ => {
+                        boxed(|| crate::backend::api::graphql::issue::search(arguments, request))
+                            .await?
+                    }
                 };
                 for key in [
                     "codeCount",
@@ -582,13 +636,24 @@ impl Object {
             }
             ("ReviewRequest", "pullRequest") => {
                 let id = self.0["_pull"].as_i64().ok_or_else(missing)?;
-                boxed(|| super::review_requests::pull_projection(id, request)).await
+                boxed(|| {
+                    crate::backend::api::graphql::review_requests::pull_projection(id, request)
+                })
+                .await
             }
             ("User", "organizations") => {
-                boxed(|| super::repository_list::organizations(arguments, request, &self.0)).await
+                boxed(|| {
+                    crate::backend::api::graphql::repository_list::organizations(
+                        arguments, request, &self.0,
+                    )
+                })
+                .await
             }
             ("User" | "Organization", "repositories") => {
-                boxed(|| super::repository_list::list(arguments, request, &self.0)).await
+                boxed(|| {
+                    crate::backend::api::graphql::repository_list::list(arguments, request, &self.0)
+                })
+                .await
             }
             ("Query", "node") => {
                 let id = arg(arguments, "id")?;
@@ -597,14 +662,29 @@ impl Object {
             ("Query", "rateLimit") => Ok(
                 json!({"limit":db::graphql::QUERY_LIMIT,"cost":1,"remaining":db::graphql::QUERY_LIMIT.saturating_sub(request.rate.used).max(0),"used":request.rate.used,"nodeCount":request.nodes.load(Ordering::Relaxed),"resetAt":request.rate.reset_at}),
             ),
-            ("Query", "resource") => boxed(|| super::projects::resource(arguments, request)).await,
+            ("Query", "resource") => {
+                boxed(|| crate::backend::api::graphql::projects::resource(arguments, request)).await
+            }
             ("Mutation", _) if field.contains("ProjectV2") => {
-                boxed(|| super::projects::mutation(field, arguments, request)).await
+                boxed(|| {
+                    crate::backend::api::graphql::projects::mutation(field, arguments, request)
+                })
+                .await
             }
             ("Mutation", "requestReviews" | "rerequestReviews") => {
-                boxed(|| super::review_requests::mutation(field, arguments, request)).await
+                boxed(|| {
+                    crate::backend::api::graphql::review_requests::mutation(
+                        field, arguments, request,
+                    )
+                })
+                .await
             }
-            ("Mutation", _) => boxed(|| super::mutations::resolve(field, arguments, request)).await,
+            ("Mutation", _) => {
+                boxed(|| {
+                    crate::backend::api::graphql::mutations::resolve(field, arguments, request)
+                })
+                .await
+            }
             (ty, _)
                 if ty.starts_with("ProjectV2")
                     || ty == "DraftIssue"
@@ -614,39 +694,97 @@ impl Object {
                             "projectV2" | "projects" | "projectsV2" | "viewerCanCreateProjects"
                         )) =>
             {
-                boxed(|| super::projects::resolve(ty, field, arguments, request, &self.0)).await
+                boxed(|| {
+                    crate::backend::api::graphql::projects::resolve(
+                        ty, field, arguments, request, &self.0,
+                    )
+                })
+                .await
             }
             ("Discussion" | "DiscussionComment" | "DiscussionCategory", _) => {
-                boxed(|| super::discussions::resolve(ty, field, arguments, request, &self.0)).await
+                boxed(|| {
+                    crate::backend::api::graphql::discussions::resolve(
+                        ty, field, arguments, request, &self.0,
+                    )
+                })
+                .await
             }
-            ("Gist", "files") => boxed(|| super::gists::files(arguments, request, &self.0)).await,
-            ("GistFile", "text") => boxed(|| super::gists::text(arguments, request, &self.0)).await,
-            ("Label", "url") => boxed(|| repository::label_url(&self.0, request)).await,
-            ("Repository" | "Organization", "rulesets") => {
-                boxed(|| super::rulesets::list(ty, arguments, request, &self.0)).await
-            }
-            ("RepositoryRuleset", "rules") => super::rulesets::rules(arguments, &self.0),
-            ("Repository", _) => {
-                boxed(|| repository::resolve(field, arguments, request, &self.0)).await
-            }
-            ("User" | "Organization", _) => {
-                boxed(|| user::resolve(ty, field, arguments, request, &self.0)).await
-            }
-            ("Ref", "target" | "branchProtectionRule" | "compare") => {
-                boxed(|| super::git_objects::reference_field(field, arguments, &self.0, request))
+            ("Gist", "files") => {
+                boxed(|| crate::backend::api::graphql::gists::files(arguments, request, &self.0))
                     .await
             }
+            ("GistFile", "text") => {
+                boxed(|| crate::backend::api::graphql::gists::text(arguments, request, &self.0))
+                    .await
+            }
+            ("Label", "url") => {
+                boxed(|| crate::backend::api::graphql::repository::label_url(&self.0, request))
+                    .await
+            }
+            ("Repository" | "Organization", "rulesets") => {
+                boxed(|| {
+                    crate::backend::api::graphql::rulesets::list(ty, arguments, request, &self.0)
+                })
+                .await
+            }
+            ("RepositoryRuleset", "rules") => {
+                crate::backend::api::graphql::rulesets::rules(arguments, &self.0)
+            }
+            ("Repository", _) => {
+                boxed(|| {
+                    crate::backend::api::graphql::repository::resolve(
+                        field, arguments, request, &self.0,
+                    )
+                })
+                .await
+            }
+            ("User" | "Organization", _) => {
+                boxed(|| {
+                    crate::backend::api::graphql::user::resolve(
+                        ty, field, arguments, request, &self.0,
+                    )
+                })
+                .await
+            }
+            ("Ref", "target" | "branchProtectionRule" | "compare") => {
+                boxed(|| {
+                    crate::backend::api::graphql::git_objects::reference_field(
+                        field, arguments, &self.0, request,
+                    )
+                })
+                .await
+            }
             ("CheckRun" | "CheckSuite" | "WorkflowRun" | "Workflow", _) => {
-                boxed(|| super::checks::resolve(ty, field, arguments, request, &self.0)).await
+                boxed(|| {
+                    crate::backend::api::graphql::checks::resolve(
+                        ty, field, arguments, request, &self.0,
+                    )
+                })
+                .await
             }
             ("Commit" | "Status" | "StatusContext" | "StatusCheckRollup", _) => {
-                boxed(|| super::git::resolve(ty, field, arguments, request, &self.0)).await
+                boxed(|| {
+                    crate::backend::api::graphql::git::resolve(
+                        ty, field, arguments, request, &self.0,
+                    )
+                })
+                .await
             }
             ("IssueComment", _) => {
-                boxed(|| collaboration::resolve_comment(field, request, &self.0)).await
+                boxed(|| {
+                    crate::backend::api::graphql::collaboration::resolve_comment(
+                        field, request, &self.0,
+                    )
+                })
+                .await
             }
             ("Issue" | "PullRequest", _) => {
-                boxed(|| issue::resolve(ty, field, arguments, request, &self.0)).await
+                boxed(|| {
+                    crate::backend::api::graphql::issue::resolve(
+                        ty, field, arguments, request, &self.0,
+                    )
+                })
+                .await
             }
             _ => {
                 self.0.get(field).cloned().ok_or_else(|| {

@@ -1,8 +1,8 @@
-use crate::backend::db::{
-    github_app_manifests::Draft,
-    github_apps::App,
-    webhooks::{SealedSecret, WebhookFields, WebhookPatch},
-};
+use crate::backend::db::github_app_manifests::Draft;
+use crate::backend::db::github_apps::App;
+use crate::backend::db::webhooks::SealedSecret;
+use crate::backend::db::webhooks::WebhookFields;
+use crate::backend::db::webhooks::WebhookPatch;
 use anyhow::Result;
 use sqlx::PgPool;
 pub async fn save(pool: &PgPool, hash: &str, manifest: &str, state: &str) -> Result<()> {
@@ -34,7 +34,9 @@ pub async fn approve(
     code: &str,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    if !super::users::transitions::active_session(&mut tx, actor, session).await? {
+    if !crate::backend::db::postgres::users::transitions::active_session(&mut tx, actor, session)
+        .await?
+    {
         return Ok(false);
     }
     let changed=sqlx::query("UPDATE github_app_manifests SET conversion_hash=$4,user_id=$2,session_id=$3,expires_at=$5 WHERE hash=$1 AND user_id IS NULL AND expires_at>$6").bind(hash).bind(actor).bind(session).bind(code).bind(chrono::Utc::now().timestamp()+3600).bind(chrono::Utc::now().timestamp()).execute(&mut *tx).await?.rows_affected()==1;
@@ -58,10 +60,12 @@ pub async fn convert(
     let (Some(actor), Some(session)) = (candidate.user_id, candidate.session_id) else {
         return Ok(None);
     };
-    super::users::transitions::lock_accounts(&mut tx, &[actor]).await?;
-    super::users::transitions::lock_namespace(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts(&mut tx, &[actor]).await?;
+    crate::backend::db::postgres::users::transitions::lock_namespace(&mut tx).await?;
     // Account -> session -> grant, matching logout/account revocation and its FK cascades.
-    if !super::users::transitions::active_session(&mut tx, actor, &session).await? {
+    if !crate::backend::db::postgres::users::transitions::active_session(&mut tx, actor, &session)
+        .await?
+    {
         return Ok(None);
     }
     let draft:Option<Draft>=sqlx::query_as("SELECT * FROM github_app_manifests WHERE conversion_hash=$1 AND user_id IS NOT NULL AND expires_at>$2 FOR UPDATE").bind(hash).bind(chrono::Utc::now().timestamp()).fetch_optional(&mut *tx).await?;
@@ -71,9 +75,14 @@ pub async fn convert(
     if draft.user_id != Some(actor) || draft.session_id.as_deref() != Some(session.as_str()) {
         return Ok(None);
     }
-    let Some(app) =
-        super::github_apps::register_in_connection(&mut tx, actor, &session, app, secret_hash)
-            .await?
+    let Some(app) = crate::backend::db::postgres::github_apps::register_in_connection(
+        &mut tx,
+        actor,
+        &session,
+        app,
+        secret_hash,
+    )
+    .await?
     else {
         return Ok(None);
     };
@@ -94,7 +103,7 @@ pub async fn convert(
         .await?;
     }
     if let Some(hook) = hook {
-        super::github_app_hooks::save_in_connection(
+        crate::backend::db::postgres::github_app_hooks::save_in_connection(
             &mut tx,
             app.id,
             &WebhookPatch::from(hook),

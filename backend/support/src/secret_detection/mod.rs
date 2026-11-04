@@ -30,7 +30,7 @@ pub fn scan_with_patterns(
     )
 }
 
-pub(crate) fn scan_with_patterns_until(
+pub fn scan_with_patterns_until(
     path: &str,
     commit: &str,
     bytes: &[u8],

@@ -4,11 +4,11 @@
 //! by itself: the dialer accepts only the key it pinned, and the listener accepts any
 //! well-formed ed25519 key so that unpaired nodes can reach pairing. `cluster::tcp`
 //! applies membership to everything after the handshake.
-use super::{
-    identity::NodeKey,
-    transport::{ALPN_EVENTS, ALPN_PAIR, ALPN_RPC},
-};
+use crate::backend::cluster::transport::ALPN_EVENTS;
+use crate::backend::cluster::transport::ALPN_PAIR;
+use crate::backend::cluster::transport::ALPN_RPC;
 use anyhow::Result;
+use codeyard_support::node_identity::NodeKey;
 use iroh::PublicKey;
 use std::sync::Arc;
 use tokio_rustls::rustls::{

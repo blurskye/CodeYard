@@ -1,12 +1,14 @@
 //! A CI worker: claims queued runs and executes their workflows with `act`.
-use super::config::{podman_socket_path, CiExecutionMode};
-use super::process::{self, Stopped};
-use super::queue::ClaimedRun;
-use super::queue::CoreRefusal;
-use super::queue::RunQueue;
-use super::runner_labels::labels_from_value;
-use super::workers::CiWorkers;
-use crate::backend::db;
+use crate::backend::ci::config::podman_socket_path;
+use crate::backend::ci::config::CiExecutionMode;
+
+use crate::backend::ci::process::Stopped;
+use crate::backend::ci::queue::ClaimedRun;
+use crate::backend::ci::queue::CoreRefusal;
+use crate::backend::ci::queue::RunQueue;
+use crate::backend::ci::runner_labels::labels_from_value;
+use crate::backend::ci::workers::CiWorkers;
+
 use anyhow::{bail, ensure, Context, Result};
 use codeyard_db_core::models::CiRun;
 use codeyard_model::ci::LogLine;
@@ -100,7 +102,7 @@ pub(super) async fn run(
             } = &service.queue
             {
                 ensure!(
-                    db::cluster::get_node_by_id(pool, context.node_id)
+                    crate::backend::db::cluster::get_node_by_id(pool, context.node_id)
                         .await?
                         .is_some_and(|node| {
                             node.public_key == context.key.public_hex()
@@ -320,7 +322,7 @@ async fn execute(
             // A delayed claim must renew its live authority before any workflow process starts.
             tokio::select! {
                 biased;
-                _ = process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
+                _ = crate::backend::ci::process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
                 _ = ready.wait_for(|ready| *ready) => {}
             }
             run_workflows(
@@ -508,7 +510,7 @@ async fn run_workflows(
         .join(format!("{}.workspace", run.run_id));
     let workspace = tokio::select! {
         prepared = Workspace::prepare(&service.queue, claim, &workspace_directory, service.cleanups.clone(), cleaned) => prepared?,
-        _ = process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
+        _ = crate::backend::ci::process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
         _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => {
             return Err(Stopped::TimedOut.into());
         }
@@ -525,7 +527,7 @@ async fn run_workflows(
     } else {
         workspace.write_github_secrets(&claim.secrets, &claim.github_tokens.act)?
     };
-    db::variables::validate_workflow_variables(&claim.variables)?;
+    crate::backend::db::variables::validate_workflow_variables(&claim.variables)?;
     let variable_file = workspace.write_values("variables.env", &claim.variables, !native)?;
     workspace.write_event(claim)?;
     if !native && claim.github_tokens.act_limited {
@@ -543,7 +545,9 @@ async fn run_workflows(
     {
         let definition = workspace.definition(workflow);
         let preparing = async {
-            let permit = super::workflows::PARSING_SLOTS.acquire().await?;
+            let permit = codeyard_model::workflow_yaml::PARSING_SLOTS
+                .acquire()
+                .await?;
             let path = definition.clone();
             let config = service.config.clone();
             let run_id = run.run_id;
@@ -556,7 +560,7 @@ async fn run_workflows(
         };
         let labels = tokio::select! {
             prepared = preparing => prepared?,
-            _ = process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
+            _ = crate::backend::ci::process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
             _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => return Err(Stopped::TimedOut.into()),
         };
         all_labels.extend(labels);
@@ -623,7 +627,7 @@ async fn run_workflows(
             "::codeyard-progress::{}:",
             claim.github_tokens.completion_secret
         );
-        let generation = super::runtime::token_hash(&claim.runtime.token);
+        let generation = crate::backend::ci::runtime::token_hash(&claim.runtime.token);
         let records = Arc::new(Mutex::new(BTreeMap::<(String, u32), i64>::new()));
         let admissions = Arc::new(Mutex::new(BTreeMap::<(String, u32), i64>::new()));
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -653,19 +657,19 @@ async fn run_workflows(
                 }
             };
             let grace = if native {
-                process::Grace {
+                crate::backend::ci::process::Grace {
                     interrupt: Duration::ZERO,
                     terminate: codeyard_actions::runner::SHUTDOWN_GRACE,
                 }
             } else {
                 // act cancels its job on SIGINT and runs the steps that clean up after it, as the
                 // native runner does on SIGTERM. SIGTERM makes act stop at once.
-                process::Grace {
+                crate::backend::ci::process::Grace {
                     interrupt: codeyard_actions::runner::CLEANUP_GRACE,
                     terminate: Duration::from_secs(3),
                 }
             };
-            let output = process::run_with_grace(
+            let output = crate::backend::ci::process::run_with_grace(
                 command,
                 remaining,
                 grace,
@@ -785,7 +789,7 @@ async fn run_workflows(
                     }
                     tokio::select! {
                         result = deliver(|| service.queue.job_state(worker, run.id, &generation, workflow, &state)) => result?,
-                        _ = process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
+                        _ = crate::backend::ci::process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
                         _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => return Err(Stopped::TimedOut.into()),
                     }
                 }
@@ -801,7 +805,7 @@ async fn run_workflows(
             tokio::select! {
                 sent = &mut batches => sent,
                 _ = output_end => tokio::time::timeout(LOG_FLUSH_GRACE, &mut batches).await.context("CI final log flush timed out")?,
-                _ = process::cancelled(cancel.clone()) => Err(Stopped::Cancelled.into()),
+                _ = crate::backend::ci::process::cancelled(cancel.clone()) => Err(Stopped::Cancelled.into()),
                 _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => Err(Stopped::TimedOut.into()),
             }
         };
@@ -949,7 +953,7 @@ fn act_command(
     let run = &claim.run;
     let native = run.engine.as_deref() == Some("codeyard-actions");
     let home = workspace.root().join("home");
-    let mut command = process::command(if native {
+    let mut command = crate::backend::ci::process::command(if native {
         &config.actions_binary
     } else {
         &config.act_binary
@@ -1010,7 +1014,7 @@ fn act_command(
     }
     // Workflow URLs come from the core, so a runner without PUBLIC_URL still names the forge.
     let origin = if claim.forge_origin.is_empty() {
-        crate::backend::api::http::config::link_origin()
+        codeyard_model::http_config::link_origin()
     } else {
         claim.forge_origin.clone()
     };
@@ -1126,7 +1130,11 @@ fn act_command(
             for (label, image) in &config.act_platform_map {
                 // The site's runner image replaces the node's for the Ubuntu labels.
                 let image = match &claim.limits.image {
-                    Some(site) if super::config::UBUNTU_LABELS.contains(&label.as_str()) => site,
+                    Some(site)
+                        if crate::backend::ci::config::UBUNTU_LABELS.contains(&label.as_str()) =>
+                    {
+                        site
+                    }
                     _ => image,
                 };
                 command.arg("-P").arg(format!("{label}={image}"));
@@ -1179,7 +1187,7 @@ fn container_filters(label: &str) -> String {
 #[cfg(test)]
 fn prepare_workflow(
     path: &Path,
-    config: &super::config::CiConfig,
+    config: &crate::backend::ci::config::CiConfig,
     run_id: uuid::Uuid,
 ) -> Result<BTreeSet<String>> {
     prepare_workflow_for_engine(path, config, run_id, false, "")
@@ -1187,12 +1195,12 @@ fn prepare_workflow(
 
 fn prepare_workflow_for_engine(
     path: &Path,
-    config: &super::config::CiConfig,
+    config: &crate::backend::ci::config::CiConfig,
     run_id: uuid::Uuid,
     native: bool,
     limits: &str,
 ) -> Result<BTreeSet<String>> {
-    let mut value = super::workflows::parse_yaml(&std::fs::read(path)?)?;
+    let mut value = codeyard_model::workflow_yaml::parse_yaml(&std::fs::read(path)?)?;
     ensure!(
         native || !codeyard_actions::workflow::has_job_concurrency(&value),
         "Job concurrency requires the codeyard-actions engine"
@@ -1911,7 +1919,7 @@ impl Workspace {
         for workflow in called {
             ensure!(
                 workflow.starts_with(".github/workflows/codeyard-call-")
-                    && super::admission::is_safe_workflow_path(workflow),
+                    && crate::backend::ci::admission::is_safe_workflow_path(workflow),
                 "Invalid called workflow path"
             );
             let target = checkout.join(workflow);
@@ -1960,9 +1968,9 @@ impl Workspace {
             .context("the run has no workflow files")?;
         let mut definitions = BTreeMap::new();
         for (path, id) in blobs {
-            let content = if let Some(content) = super::reusable::content(id) {
+            let content = if let Some(content) = crate::backend::ci::reusable::content(id) {
                 ensure!(
-                    super::admission::is_safe_workflow_path(path),
+                    crate::backend::ci::admission::is_safe_workflow_path(path),
                     "invalid workflow path"
                 );
                 content.as_bytes().to_vec()
@@ -2091,7 +2099,7 @@ impl Workspace {
     fn write_environment_values(
         &self,
         workflow: &str,
-        values: &super::environment_values::EnvironmentValues,
+        values: &crate::backend::ci::environment_values::EnvironmentValues,
         fork: bool,
     ) -> Result<Option<PathBuf>> {
         use std::{io::Write, os::unix::fs::OpenOptionsExt};
@@ -2117,7 +2125,7 @@ impl Workspace {
                 .iter()
                 .map(|(name, value)| (name.clone(), value.clone()))
                 .collect();
-            db::secrets::validate_repository_secrets(&secrets)?;
+            crate::backend::db::secrets::validate_repository_secrets(&secrets)?;
             ensure!(
                 scope.variables.len() <= codeyard_actions::values::MAX_SCOPE_VALUES,
                 "Too many environment variables"
@@ -2127,7 +2135,7 @@ impl Workspace {
                 .iter()
                 .map(|(name, value)| (name.clone(), value.clone()))
                 .collect();
-            db::variables::validate_all(&variables)?;
+            crate::backend::db::variables::validate_all(&variables)?;
             environments.insert(key, scope);
         }
         let bytes =
@@ -2170,7 +2178,7 @@ impl Workspace {
         &self,
         workflow: &str,
         tokens: &BTreeMap<String, String>,
-        credentials: &super::tokens::GithubTokens,
+        credentials: &crate::backend::ci::tokens::GithubTokens,
     ) -> Result<PathBuf> {
         use std::os::unix::fs::OpenOptionsExt;
         let path = self
@@ -2205,7 +2213,7 @@ impl Workspace {
             return Ok(None);
         }
         // Remote claims are untrusted input here. Validate the whole set before the file exists.
-        db::secrets::validate_workflow_secrets(secrets)?;
+        crate::backend::db::secrets::validate_workflow_secrets(secrets)?;
 
         self.write_values("secrets.env", secrets, act)
     }
@@ -2302,14 +2310,17 @@ mod tests {
         let path = root.path().join("ci.yml");
         let source = b"name: Test\njobs: {build: {runs-on: ubuntu-latest, container: alpine}}\n";
         std::fs::write(&path, source).unwrap();
-        let config = super::super::config::CiConfig {
+        let config = crate::backend::ci::config::CiConfig {
             mode: CiExecutionMode::Podman,
             ..Default::default()
         };
         let run_id = uuid::Uuid::new_v4();
         let labels = prepare_workflow(&path, &config, run_id).unwrap();
         assert!(labels.contains("ubuntu-latest"));
-        let value = super::super::workflows::parse_yaml(&std::fs::read(&path).unwrap()).unwrap();
+        let value = crate::backend::ci::worker::codeyard_model::workflow_yaml::parse_yaml(
+            &std::fs::read(&path).unwrap(),
+        )
+        .unwrap();
         // The workflow keeps its public name; act's resource names carry the run instead.
         assert_eq!(value["name"].as_str(), Some("Test"));
         assert!(value["jobs"]["build"]["container"]["options"]
@@ -2318,14 +2329,17 @@ mod tests {
             .contains(&run_container_label(run_id)));
         std::fs::write(&path, source).unwrap();
         prepare_workflow_for_engine(&path, &config, run_id, true, "").unwrap();
-        let native = super::super::workflows::parse_yaml(&std::fs::read(&path).unwrap()).unwrap();
+        let native = crate::backend::ci::worker::codeyard_model::workflow_yaml::parse_yaml(
+            &std::fs::read(&path).unwrap(),
+        )
+        .unwrap();
         assert_eq!(native["name"].as_str(), Some("Test"));
         assert!(native["jobs"]["build"]["container"]["options"]
             .as_str()
             .unwrap()
             .contains(&run_container_label(run_id)));
         std::fs::write(&path, source).unwrap();
-        let config = super::super::config::CiConfig {
+        let config = crate::backend::ci::config::CiConfig {
             mode: CiExecutionMode::Local,
             ..Default::default()
         };
@@ -2343,10 +2357,10 @@ mod tests {
                 .await
                 .unwrap();
         codeyard_db_core::run_migrations(&pool).await.unwrap();
-        let owner = db::users::accounts::create_user(&pool, "worker_owner", None)
+        let owner = crate::backend::db::users::accounts::create_user(&pool, "worker_owner", None)
             .await
             .unwrap();
-        let repo = db::repositories::records::create_repository(
+        let repo = crate::backend::db::repositories::records::create_repository(
             &pool,
             owner.id,
             "project",
@@ -2357,9 +2371,9 @@ mod tests {
         .await
         .unwrap();
         let sha = "1".repeat(40);
-        let run = db::ci::enqueue_ci_run(
+        let run = crate::backend::db::ci::enqueue_ci_run(
             &pool,
-            db::ci::NewCiRun {
+            crate::backend::db::ci::NewCiRun {
                 repo_id: repo.id,
                 triggered_by_id: owner.id,
                 pipeline: "ci",
@@ -2377,7 +2391,7 @@ mod tests {
         )
         .await
         .unwrap();
-        db::ci::claim_ci_run(
+        crate::backend::db::ci::claim_ci_run(
             &pool,
             "worker",
             "local",
@@ -2387,7 +2401,7 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
-        let config = Arc::new(super::super::config::CiConfig::default());
+        let config = Arc::new(crate::backend::ci::config::CiConfig::default());
         let service = CiWorkers::new(
             RunQueue::Database {
                 pool: pool.clone(),
@@ -2428,10 +2442,12 @@ mod tests {
             .await
             .unwrap();
             flush_log_lines(&tx).await.unwrap();
-            let stored = db::ci::list_ci_logs(pool, run.id, 100).await.unwrap();
+            let stored = crate::backend::db::ci::list_ci_logs(pool, run.id, 100)
+                .await
+                .unwrap();
             assert_eq!(stored.len(), 1);
             assert_eq!(stored[0].line, "last output");
-            db::ci::finish_ci_run(pool, run.id, "worker", "success", None)
+            crate::backend::db::ci::finish_ci_run(pool, run.id, "worker", "success", None)
                 .await
                 .unwrap()
                 .unwrap();
@@ -2487,7 +2503,7 @@ mod tests {
                 }
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
-            db::ci::finish_ci_run(pool, run.id, "worker", "success", None)
+            crate::backend::db::ci::finish_ci_run(pool, run.id, "worker", "success", None)
                 .await
                 .unwrap()
                 .unwrap();
@@ -2517,7 +2533,10 @@ mod tests {
         sent.unwrap();
         assert!(!open);
         assert_eq!(
-            db::ci::list_ci_logs(pool, run.id, 100).await.unwrap().len(),
+            crate::backend::db::ci::list_ci_logs(pool, run.id, 100)
+                .await
+                .unwrap()
+                .len(),
             2
         );
         pool.close().await;
@@ -2562,7 +2581,7 @@ mod tests {
         };
         // The fixture's repository is missing, so the run fails before any job starts.
         tokio::time::timeout(Duration::from_secs(40), async {
-            while !db::ci::list_ci_logs(pool, run.id, 100)
+            while !crate::backend::db::ci::list_ci_logs(pool, run.id, 100)
                 .await
                 .unwrap()
                 .iter()
@@ -2575,7 +2594,7 @@ mod tests {
         .unwrap();
         // A container may still be running, so the run keeps its lease until removal succeeds.
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let current = db::ci::get_ci_run_by_run_id(pool, run.run_id)
+        let current = crate::backend::db::ci::get_ci_run_by_run_id(pool, run.run_id)
             .await
             .unwrap()
             .unwrap();
@@ -2632,11 +2651,11 @@ mod tests {
     #[tokio::test]
     async fn environment_values_files_are_private_and_bound_to_one_workflow() {
         let workspace = secret_workspace();
-        let mut values = super::super::environment_values::EnvironmentValues::default();
+        let mut values = crate::backend::ci::environment_values::EnvironmentValues::default();
         for (key, secret) in [("prod", "production-secret"), ("other", "other-secret")] {
             values.environments.insert(
                 key.into(),
-                db::environment_values::WorkflowValues {
+                crate::backend::db::environment_values::WorkflowValues {
                     secrets: BTreeMap::from([("TOKEN".into(), secret.into())]),
                     variables: BTreeMap::from([("COLOR".into(), "visible-variable".into())]),
                 },
@@ -2683,10 +2702,11 @@ mod tests {
     async fn environment_values_masking_retains_shadowed_secrets_but_not_variables() {
         let root = tempfile::tempdir().unwrap();
         let (_, run) = queued_fixture(root.path()).await;
-        let mut environment_values = super::super::environment_values::EnvironmentValues::default();
+        let mut environment_values =
+            crate::backend::ci::environment_values::EnvironmentValues::default();
         environment_values.environments.insert(
             "prod".into(),
-            db::environment_values::WorkflowValues {
+            crate::backend::db::environment_values::WorkflowValues {
                 secrets: BTreeMap::from([("TOKEN".into(), "shared-secret".into())]),
                 variables: BTreeMap::from([("COLOR".into(), "visible-variable".into())]),
             },
@@ -2771,7 +2791,7 @@ mod tests {
             ),
             (
                 "VALID_NAME",
-                "x".repeat(db::secrets::MAX_SECRET_VALUE_BYTES + 1),
+                "x".repeat(crate::backend::db::secrets::MAX_SECRET_VALUE_BYTES + 1),
                 "Repository secret value exceeds 48 KiB",
             ),
         ] {
@@ -2836,7 +2856,7 @@ mod tests {
         .unwrap();
         let home = workspace.root().join("home");
         std::fs::create_dir_all(&home).unwrap();
-        let mut command = process::command(act);
+        let mut command = crate::backend::ci::process::command(act);
         command
             .arg("push")
             .arg("-W")
@@ -2858,10 +2878,15 @@ mod tests {
         let lines = Arc::new(Mutex::new(Vec::new()));
         let captured = lines.clone();
         let (_stop_tx, stop) = watch::channel(false);
-        let status = process::tests::run(command, Duration::from_secs(30), stop, move |line, _| {
-            captured.lock().unwrap().push(line);
-            async { Ok(()) }
-        })
+        let status = crate::backend::ci::process::tests::run(
+            command,
+            Duration::from_secs(30),
+            stop,
+            move |line, _| {
+                captured.lock().unwrap().push(line);
+                async { Ok(()) }
+            },
+        )
         .await
         .unwrap();
         let lines = lines.lock().unwrap();
@@ -2996,7 +3021,7 @@ mod tests {
             storage_replicas: Vec::new(),
             limits: Default::default(),
             github_tokens: Default::default(),
-            runtime: super::super::runtime::RuntimeCredentials {
+            runtime: crate::backend::ci::runtime::RuntimeCredentials {
                 token: "runtime-test-token".into(),
                 results_url: "https://results.example".into(),
             },
@@ -3104,7 +3129,10 @@ jobs:
 "#,
         )
         .unwrap();
-        let mut yaml = super::super::workflows::parse_yaml(&std::fs::read(path).unwrap()).unwrap();
+        let mut yaml = crate::backend::ci::worker::codeyard_model::workflow_yaml::parse_yaml(
+            &std::fs::read(path).unwrap(),
+        )
+        .unwrap();
         add_container_options(&mut yaml, &run_container_options(&label)).unwrap();
         let jobs = yaml.get("jobs").unwrap();
         assert_eq!(
@@ -3643,10 +3671,10 @@ jobs:
             .unwrap();
         let pool = codeyard_db_core::DbPool::from(native);
         codeyard_db_core::run_migrations(&pool).await.unwrap();
-        let owner = db::users::accounts::create_user(&pool, "result_owner", None)
+        let owner = crate::backend::db::users::accounts::create_user(&pool, "result_owner", None)
             .await
             .unwrap();
-        let repository = db::repositories::records::create_repository(
+        let repository = crate::backend::db::repositories::records::create_repository(
             &pool,
             owner.id,
             "result",
@@ -3658,9 +3686,9 @@ jobs:
         .unwrap();
         let sha = "a".repeat(40);
         let blobs = serde_json::json!({ ".github/workflows/ci.yml": sha });
-        let run = db::ci::enqueue_ci_run(
+        let run = crate::backend::db::ci::enqueue_ci_run(
             &pool,
-            db::ci::NewCiRun {
+            crate::backend::db::ci::NewCiRun {
                 repo_id: repository.id,
                 triggered_by_id: owner.id,
                 pipeline: "ci",

@@ -30,7 +30,7 @@ pub async fn issue_type_repositories(
     after: i64,
     viewer: i64,
 ) -> Result<Vec<i64>> {
-    Ok(sqlx::query_scalar(&format!("SELECT r.id FROM repositories r JOIN issue_attributes a ON a.owner_user_id=r.owner_user_id OR a.owner_org_id=r.owner_org_id LEFT JOIN users u ON u.id=?3 WHERE a.id=?1 AND a.kind='type' AND r.id>?2 AND ({}) ORDER BY r.id LIMIT 100", super::repositories::access::readable_condition()))
+    Ok(sqlx::query_scalar(&format!("SELECT r.id FROM repositories r JOIN issue_attributes a ON a.owner_user_id=r.owner_user_id OR a.owner_org_id=r.owner_org_id LEFT JOIN users u ON u.id=?3 WHERE a.id=?1 AND a.kind='type' AND r.id>?2 AND ({}) ORDER BY r.id LIMIT 100", crate::backend::db::sqlite::repositories::access::readable_condition()))
         .bind(id).bind(after).bind(viewer).fetch_all(pool).await?)
 }
 

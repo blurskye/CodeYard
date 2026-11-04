@@ -1,4 +1,7 @@
-use crate::backend::db::repositories::activity::{Activity, Filter, Kind, RefActivity};
+use crate::backend::db::repositories::activity::Activity;
+use crate::backend::db::repositories::activity::Filter;
+use crate::backend::db::repositories::activity::Kind;
+use crate::backend::db::repositories::activity::RefActivity;
 use anyhow::Result;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -44,7 +47,7 @@ pub async fn list(
         sqlx::query_as::<_, Activity>(&crate::backend::db::repositories::activity::list_sql(
             true,
             filter,
-            &super::access::readable_condition(),
+            &crate::backend::db::postgres::repositories::access::readable_condition(),
         ))
         .bind(repo)
         .bind(filter.boundary)

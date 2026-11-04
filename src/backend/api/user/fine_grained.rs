@@ -1,17 +1,26 @@
 //! Settings pages for fine-grained personal access tokens. Every change goes through
 //! `identity::fine_grained`, which checks the session, the owner and the policy.
-use crate::backend::api::http::{context::PageContext, session::extract_session_id};
-use crate::backend::api::user::responses::{field, mutation_guard, require_account, Fields};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::session::extract_session_id;
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::require_account;
+use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::db::fine_grained_tokens::Token;
-use crate::backend::db::organizations;
+
 use crate::backend::db::organizations::OrganizationOutcome;
 use crate::backend::db::organizations::OrganizationPage;
-use crate::backend::identity::{
-    fine_grained::{self, catalog, Access, Group, Owner, Request, TokenError, PERMISSIONS},
-    tokens,
-};
+
+use crate::backend::identity::fine_grained::Access;
+use crate::backend::identity::fine_grained::Owner;
+use crate::backend::identity::fine_grained::Request;
+use crate::backend::identity::fine_grained::TokenError;
+use codeyard_model::fine_grained::catalog;
+use codeyard_model::fine_grained::Group;
+use codeyard_model::fine_grained::PERMISSIONS;
+
 use axum::extract::{rejection::FormRejection, Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -130,9 +139,11 @@ fn group_label(group: Group) -> &'static str {
 async fn owner_name(ctx: &PageContext, user: &User, org: Option<i64>) -> anyhow::Result<String> {
     Ok(match org {
         None => user.username.clone(),
-        Some(org) => organizations::get_public_organization_by_id(&ctx.state.pool, org)
-            .await?
-            .map_or_else(|| "Deleted organization".to_owned(), |org| org.name),
+        Some(org) => {
+            crate::backend::db::organizations::get_public_organization_by_id(&ctx.state.pool, org)
+                .await?
+                .map_or_else(|| "Deleted organization".to_owned(), |org| org.name)
+        }
     })
 }
 
@@ -152,7 +163,9 @@ async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
         },
         None => None,
     };
-    let Ok(rows) = db::fine_grained_tokens::list_before(&ctx.state.pool, user.id, before).await
+    let Ok(rows) =
+        crate::backend::db::fine_grained_tokens::list_before(&ctx.state.pool, user.id, before)
+            .await
     else {
         return ctx.error(StatusCode::SERVICE_UNAVAILABLE, UNAVAILABLE);
     };
@@ -194,10 +207,16 @@ async fn organizations_of(
     ctx: &PageContext,
     user: &User,
     after: i64,
-) -> anyhow::Result<Vec<organizations::OrganizationMetadata>> {
+) -> anyhow::Result<Vec<crate::backend::db::organizations::OrganizationMetadata>> {
     let page = OrganizationPage::new(after, 100).map_err(|_| anyhow::anyhow!("page"))?;
     Ok(
-        match organizations::list_actor_organizations(&ctx.state.pool, user.id, page).await? {
+        match crate::backend::db::organizations::list_actor_organizations(
+            &ctx.state.pool,
+            user.id,
+            page,
+        )
+        .await?
+        {
             OrganizationOutcome::Applied(orgs) => orgs,
             _ => Vec::new(),
         },
@@ -213,7 +232,8 @@ async fn owner_of(ctx: &PageContext, draft: &Draft, user: &User) -> anyhow::Resu
         return Ok(None);
     };
     Ok(matches!(
-        organizations::get_organization_role(&ctx.state.pool, user.id, id).await?,
+        crate::backend::db::organizations::get_organization_role(&ctx.state.pool, user.id, id)
+            .await?,
         OrganizationOutcome::Applied(_)
     )
     .then_some(Owner::Organization(id)))
@@ -245,14 +265,14 @@ async fn choices(ctx: &PageContext, user: &User, draft: &Draft) -> anyhow::Resul
         }
     }
     let session = extract_session_id(&ctx.headers).unwrap_or_default();
-    let credential = db::users::accounts::AccountCredential::Session(&session);
+    let credential = crate::backend::db::users::accounts::AccountCredential::Session(&session);
     let selected: Vec<_> = draft
         .repositories
         .iter()
         .copied()
-        .take(fine_grained::MAX_REPOSITORIES)
+        .take(crate::backend::identity::fine_grained::MAX_REPOSITORIES)
         .collect();
-    let choices = db::fine_grained_tokens::repository_choices(
+    let choices = crate::backend::db::fine_grained_tokens::repository_choices(
         pool,
         user.id,
         &credential,
@@ -271,9 +291,9 @@ async fn choices(ctx: &PageContext, user: &User, draft: &Draft) -> anyhow::Resul
         .map(|(id, name)| (id, format!("{prefix}/{name}")))
         .collect();
     let never_allowed = if let Some(org) = org {
-        fine_grained::max_lifetime(
+        crate::backend::identity::fine_grained::max_lifetime(
             owner,
-            Some(&db::fine_grained_tokens::policy(pool, org).await?),
+            Some(&crate::backend::db::fine_grained_tokens::policy(pool, org).await?),
         )
         .is_none()
     } else {
@@ -477,7 +497,14 @@ async fn create(
         }
     };
     let session = extract_session_id(&ctx.headers);
-    match fine_grained::create(&ctx.state.pool, user.id, session.as_deref(), request).await {
+    match crate::backend::identity::fine_grained::create(
+        &ctx.state.pool,
+        user.id,
+        session.as_deref(),
+        request,
+    )
+    .await
+    {
         Ok(created) => match detail(&ctx, &user, created.id).await {
             Ok(token) => {
                 let message = (created.status == "pending").then_some(
@@ -518,7 +545,7 @@ async fn create(
 async fn detail(ctx: &PageContext, user: &User, id: i64) -> Result<Detail, TokenError> {
     let pool = &ctx.state.pool;
     let unavailable = |_| TokenError::Unavailable;
-    let token = db::fine_grained_tokens::get(pool, id)
+    let token = crate::backend::db::fine_grained_tokens::get(pool, id)
         .await
         .map_err(unavailable)?
         .filter(|token| token.user_id == user.id)
@@ -527,10 +554,10 @@ async fn detail(ctx: &PageContext, user: &User, id: i64) -> Result<Detail, Token
         .await
         .map_err(unavailable)?;
     let never_allowed = match token.owner_org_id {
-        Some(org) => fine_grained::max_lifetime(
+        Some(org) => crate::backend::identity::fine_grained::max_lifetime(
             Owner::Organization(org),
             Some(
-                &db::fine_grained_tokens::policy(pool, org)
+                &crate::backend::db::fine_grained_tokens::policy(pool, org)
                     .await
                     .map_err(unavailable)?,
             ),
@@ -539,11 +566,11 @@ async fn detail(ctx: &PageContext, user: &User, id: i64) -> Result<Detail, Token
         None => false,
     };
     let repositories = if token.repository_access == "selected" {
-        db::fine_grained_tokens::repositories(
+        crate::backend::db::fine_grained_tokens::repositories(
             pool,
             token.token_id,
             user.id,
-            &db::users::accounts::AccountCredential::Session(
+            &crate::backend::db::users::accounts::AccountCredential::Session(
                 ctx.session_id.as_deref().unwrap_or(""),
             ),
         )
@@ -632,8 +659,14 @@ async fn regenerate(
         Utc::now(),
     ) {
         Some(expires_at) => {
-            fine_grained::regenerate(&ctx.state.pool, user.id, session.as_deref(), id, expires_at)
-                .await
+            crate::backend::identity::fine_grained::regenerate(
+                &ctx.state.pool,
+                user.id,
+                session.as_deref(),
+                id,
+                expires_at,
+            )
+            .await
         }
         None => Err(TokenError::Invalid(
             "Choose an expiration, and a valid date for a custom one.",
@@ -683,16 +716,20 @@ async fn delete(
         );
     }
     // Only the user's own fine-grained token; classic tokens are deleted from their own list.
-    match db::fine_grained_tokens::get(&ctx.state.pool, id).await {
+    match crate::backend::db::fine_grained_tokens::get(&ctx.state.pool, id).await {
         Ok(Some(token)) if token.user_id == user.id => {}
         Ok(_) => return ctx.error(StatusCode::NOT_FOUND, MISSING),
         Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, UNAVAILABLE),
     }
     let session = extract_session_id(&ctx.headers);
-    match tokens::delete(&ctx.state.pool, user.id, session.as_deref(), id).await {
+    match crate::backend::identity::tokens::delete(&ctx.state.pool, user.id, session.as_deref(), id)
+        .await
+    {
         Ok(()) => ctx.redirect(&format!("{BASE}?deleted=1")),
-        Err(tokens::TokenError::Missing) => ctx.error(StatusCode::NOT_FOUND, MISSING),
-        Err(tokens::TokenError::Denied) => {
+        Err(crate::backend::identity::tokens::TokenError::Missing) => {
+            ctx.error(StatusCode::NOT_FOUND, MISSING)
+        }
+        Err(crate::backend::identity::tokens::TokenError::Denied) => {
             ctx.error(StatusCode::FORBIDDEN, "Sign in again to delete this token.")
         }
         Err(_) => ctx.error(StatusCode::SERVICE_UNAVAILABLE, UNAVAILABLE),

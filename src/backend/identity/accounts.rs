@@ -1,21 +1,23 @@
-use super::{
-    admission::AdmissionError,
-    credentials::{
-        validate_account, validate_email, validate_new_account_name, validate_new_password,
-        AccountInputError, PasswordAccount,
-    },
-    passwords::{self, CurrentPasswordError, PasswordError},
-    sessions::{self, AccountAuthorityError},
-    setup,
-};
-use crate::backend::db;
+use crate::backend::identity::admission::AdmissionError;
+use crate::backend::identity::credentials::validate_account;
+use crate::backend::identity::credentials::validate_new_account_name;
+use crate::backend::identity::credentials::validate_new_password;
+use crate::backend::identity::credentials::PasswordAccount;
+use codeyard_model::account_input::validate_email;
+use codeyard_model::account_input::AccountInputError;
+
+use crate::backend::identity::passwords::CurrentPasswordError;
+use crate::backend::identity::passwords::PasswordError;
+
+use crate::backend::identity::sessions::AccountAuthorityError;
+
 use crate::backend::db::users::signup_requests::ReviewError;
-use crate::backend::db::users::transitions;
+
 use crate::backend::db::users::transitions::AccountAdmission;
 use crate::backend::db::users::transitions::BanChange;
 use crate::backend::db::users::transitions::EmailChange;
 use crate::backend::db::users::transitions::RoleChange;
-use crate::backend::email::links;
+
 use codeyard_db_core::models::User;
 use codeyard_db_core::DbPool;
 
@@ -41,17 +43,21 @@ pub async fn change_password(
     session_id: Option<&str>,
     input: PasswordChange<'_>,
 ) -> Result<User, PasswordChangeError> {
-    let user = sessions::password_change_account(pool, session_id)
+    let user = crate::backend::identity::sessions::password_change_account(pool, session_id)
         .await
         .map_err(PasswordChangeError::Authority)?;
     validate_new_password(input.new_password).map_err(PasswordChangeError::Input)?;
-    passwords::verify_current_password(pool, &user, input.current_password)
-        .await
-        .map_err(|error| match error {
-            CurrentPasswordError::Admission(error) => PasswordChangeError::Admission(error),
-            CurrentPasswordError::Password(error) => PasswordChangeError::Password(error),
-            CurrentPasswordError::Invalid => PasswordChangeError::InvalidCredentials,
-        })?;
+    crate::backend::identity::passwords::verify_current_password(
+        pool,
+        &user,
+        input.current_password,
+    )
+    .await
+    .map_err(|error| match error {
+        CurrentPasswordError::Admission(error) => PasswordChangeError::Admission(error),
+        CurrentPasswordError::Password(error) => PasswordChangeError::Password(error),
+        CurrentPasswordError::Invalid => PasswordChangeError::InvalidCredentials,
+    })?;
     if user.must_change_password && input.current_password == input.new_password {
         return Err(PasswordChangeError::UnchangedPassword);
     }
@@ -59,15 +65,17 @@ pub async fn change_password(
         .password_hash
         .as_deref()
         .ok_or(PasswordChangeError::InvalidCredentials)?;
-    let hash = passwords::hash_password(input.new_password)
+    let hash = crate::backend::identity::passwords::hash_password(input.new_password)
         .await
         .map_err(PasswordChangeError::Password)?;
     // Hash replacement, must-change clearance and every session's revocation are
     // one existing transaction. Failure leaves all three prior facts intact.
-    transitions::compare_exchange_password(pool, user.id, expected, &hash, true, true, session_id)
-        .await
-        .map_err(|_| PasswordChangeError::AccountUnavailable)?
-        .ok_or(PasswordChangeError::CredentialsChanged)
+    crate::backend::db::users::transitions::compare_exchange_password(
+        pool, user.id, expected, &hash, true, true, session_id,
+    )
+    .await
+    .map_err(|_| PasswordChangeError::AccountUnavailable)?
+    .ok_or(PasswordChangeError::CredentialsChanged)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -89,23 +97,26 @@ pub async fn reset_password(
 ) -> Result<(), PasswordResetError> {
     validate_new_password(new_password).map_err(PasswordResetError::Input)?;
     // Hashing is costly, so it waits until the link is known to be good.
-    let user = links::password_reset_account(pool, token)
+    let user = crate::backend::email::links::password_reset_account(pool, token)
         .await
         .map_err(|_| PasswordResetError::AccountUnavailable)?
         .ok_or(PasswordResetError::InvalidLink)?;
     if user.must_change_password
-        && passwords::verify_password(new_password, user.password_hash.as_deref())
-            .await
-            .map_err(PasswordResetError::Password)?
-            .valid
+        && crate::backend::identity::passwords::verify_password(
+            new_password,
+            user.password_hash.as_deref(),
+        )
+        .await
+        .map_err(PasswordResetError::Password)?
+        .valid
     {
         return Err(PasswordResetError::UnchangedPassword);
     }
-    let hash = passwords::hash_password(new_password)
+    let hash = crate::backend::identity::passwords::hash_password(new_password)
         .await
         .map_err(PasswordResetError::Password)?;
     // Using the link, replacing the hash and ending the sessions commit together.
-    links::use_reset_link(pool, token, &hash, &user)
+    crate::backend::email::links::use_reset_link(pool, token, &hash, &user)
         .await
         .map_err(|_| PasswordResetError::AccountUnavailable)?
         .map(|_| ())
@@ -132,21 +143,21 @@ pub async fn change_email(
     current_password: &str,
     email: &str,
 ) -> Result<User, EmailChangeError> {
-    let user = sessions::password_change_account(pool, session_id)
+    let user = crate::backend::identity::sessions::password_change_account(pool, session_id)
         .await
         .map_err(EmailChangeError::Authority)?;
     let email = email.trim();
     if validate_email(email).is_err() {
         return Err(EmailChangeError::InvalidEmail);
     }
-    passwords::verify_current_password(pool, &user, current_password)
+    crate::backend::identity::passwords::verify_current_password(pool, &user, current_password)
         .await
         .map_err(|error| match error {
             CurrentPasswordError::Admission(error) => EmailChangeError::Admission(error),
             CurrentPasswordError::Password(error) => EmailChangeError::Password(error),
             CurrentPasswordError::Invalid => EmailChangeError::InvalidCredentials,
         })?;
-    match transitions::change_email(
+    match crate::backend::db::users::transitions::change_email(
         pool,
         user.id,
         email,
@@ -161,7 +172,7 @@ pub async fn change_email(
         EmailChange::Updated(user) => {
             // The transition clears the flag for a new address; a repeated one stays verified.
             if !user.email_verified {
-                let _ = links::send_verification(pool, &user).await;
+                let _ = crate::backend::email::links::send_verification(pool, &user).await;
             }
             Ok(*user)
         }
@@ -191,10 +202,11 @@ pub async fn create_managed_account(
     let administrator_session = administrator_session.ok_or(ManagedAccountError::Authority(
         AccountAuthorityError::NotAuthenticated,
     ))?;
-    let admin = sessions::administrator(pool, Some(administrator_session))
-        .await
-        .map_err(ManagedAccountError::Authority)?;
-    let setup = setup::status(pool)
+    let admin =
+        crate::backend::identity::sessions::administrator(pool, Some(administrator_session))
+            .await
+            .map_err(ManagedAccountError::Authority)?;
+    let setup = crate::backend::identity::setup::status(pool)
         .await
         .map_err(|_| ManagedAccountError::AccountUnavailable)?;
     if !setup.setup_completed || setup.node_mode != "private" {
@@ -202,12 +214,12 @@ pub async fn create_managed_account(
     }
     validate_account(&input).map_err(ManagedAccountError::Input)?;
     validate_new_account_name(input.username).map_err(ManagedAccountError::Input)?;
-    let hash = passwords::hash_password(input.password)
+    let hash = crate::backend::identity::passwords::hash_password(input.password)
         .await
         .map_err(ManagedAccountError::Password)?;
     // The transaction revalidates the actor, original session and private mode,
     // and sets the temporary credential's must-change flag.
-    let user = match transitions::register_password(
+    let user = match crate::backend::db::users::transitions::register_password(
         pool,
         input.username,
         input.email.filter(|email| !email.trim().is_empty()),
@@ -221,7 +233,7 @@ pub async fn create_managed_account(
         AccountAdmission::Conflict => return Err(ManagedAccountError::Conflict),
         _ => return Err(ManagedAccountError::Denied),
     };
-    let _ = links::send_verification(pool, &user).await;
+    let _ = crate::backend::email::links::send_verification(pool, &user).await;
     Ok(user)
 }
 
@@ -262,7 +274,7 @@ pub async fn review_signup(
     request_id: i64,
     decision: Option<SignupDecision>,
 ) -> Result<SignupReviewOutcome, SignupReviewError> {
-    let admin = sessions::administrator(pool, administrator_session)
+    let admin = crate::backend::identity::sessions::administrator(pool, administrator_session)
         .await
         .map_err(SignupReviewError::Authority)?;
     let decision = decision.ok_or(SignupReviewError::InvalidDecision)?;
@@ -270,7 +282,7 @@ pub async fn review_signup(
     // decision mail with the decision.
     match decision {
         SignupDecision::Approve => {
-            let user = db::users::signup_requests::approve_signup_request(
+            let user = crate::backend::db::users::signup_requests::approve_signup_request(
                 pool,
                 request_id,
                 (
@@ -280,11 +292,11 @@ pub async fn review_signup(
             )
             .await
             .map_err(review_failure)?;
-            let _ = links::send_verification(pool, &user).await;
+            let _ = crate::backend::email::links::send_verification(pool, &user).await;
             Ok(SignupReviewOutcome::Approved(Box::new(user)))
         }
         SignupDecision::Reject => {
-            db::users::signup_requests::reject_signup_request(
+            crate::backend::db::users::signup_requests::reject_signup_request(
                 pool,
                 request_id,
                 (
@@ -315,10 +327,10 @@ pub async fn set_ban(
     target: i64,
     banned: bool,
 ) -> Result<User, BanError> {
-    let admin = sessions::administrator(pool, administrator_session)
+    let admin = crate::backend::identity::sessions::administrator(pool, administrator_session)
         .await
         .map_err(BanError::Authority)?;
-    match transitions::change_ban(
+    match crate::backend::db::users::transitions::change_ban(
         pool,
         (
             admin.id,
@@ -353,10 +365,10 @@ pub async fn set_admin_role(
     target: i64,
     admin: bool,
 ) -> Result<User, RoleError> {
-    let actor = sessions::administrator(pool, administrator_session)
+    let actor = crate::backend::identity::sessions::administrator(pool, administrator_session)
         .await
         .map_err(RoleError::Authority)?;
-    match transitions::change_admin_role(
+    match crate::backend::db::users::transitions::change_admin_role(
         pool,
         (
             actor.id,

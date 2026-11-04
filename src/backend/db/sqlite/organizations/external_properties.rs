@@ -1,5 +1,5 @@
-use super::authority::*;
-use crate::backend::db::organizations::external_properties;
+use crate::backend::db::sqlite::organizations::authority::*;
+
 use crate::backend::db::organizations::external_properties::Installation;
 use crate::backend::db::organizations::external_properties::RepositoryValue;
 use crate::backend::db::organizations::OrganizationOutcome;
@@ -104,7 +104,8 @@ pub async fn set_values(
     if values.len() > 3000 {
         return Ok(Conflict);
     }
-    let Some(changes) = external_properties::changes(values)? else {
+    let Some(changes) = crate::backend::db::organizations::external_properties::changes(values)?
+    else {
         return Ok(Conflict);
     };
     let found: Vec<(i64, String)> = sqlx::query_as("SELECT id,name FROM repositories WHERE owner_kind='org' AND owner_org_id=$1 AND owner_user_id IS NULL AND name IN (SELECT value FROM json_each($2))").bind(org).bind(serde_json::to_string(&changes.repositories)?).fetch_all(&mut *tx).await?;
@@ -145,7 +146,7 @@ pub async fn delete_values(
     {
         return Ok(Denied);
     }
-    if !external_properties::valid_name(property) {
+    if !crate::backend::db::organizations::external_properties::valid_name(property) {
         return Ok(Conflict);
     }
     sqlx::query(

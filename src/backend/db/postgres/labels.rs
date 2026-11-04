@@ -1,6 +1,8 @@
-use crate::backend::db::labels::{
-    bounded_label_ids, ItemLabel, LabelTarget, LabelWriteRefusal, PAGE_DESCRIPTION_CHARS,
-};
+use crate::backend::db::labels::bounded_label_ids;
+use crate::backend::db::labels::ItemLabel;
+use crate::backend::db::labels::LabelTarget;
+use crate::backend::db::labels::LabelWriteRefusal;
+use crate::backend::db::labels::PAGE_DESCRIPTION_CHARS;
 use anyhow::Result;
 use codeyard_db_core::models::Label;
 use sqlx::{PgPool, Postgres, Transaction};
@@ -14,7 +16,12 @@ async fn begin_label_write<'a>(
     // CI singleton FIRST, before any issue/label lock. Retain authority to commit. Catalog
     // writers queue on the repository row, so a name check holds until the commit.
     anyhow::ensure!(
-        super::discussions::lock_exclusive_write_authority(&mut tx, actor.user_id, repo_id).await?,
+        crate::backend::db::postgres::discussions::lock_exclusive_write_authority(
+            &mut tx,
+            actor.user_id,
+            repo_id
+        )
+        .await?,
         LabelWriteRefusal::Denied
     );
     anyhow::ensure!(
@@ -52,7 +59,12 @@ async fn begin_item_label_write<'a>(
     let mut tx = pool.begin().await?;
     // CI singleton FIRST, before any issue/label lock. Retain authority to commit.
     anyhow::ensure!(
-        super::discussions::lock_triage_authority(&mut tx, actor.user_id, repo_id).await?,
+        crate::backend::db::postgres::discussions::lock_triage_authority(
+            &mut tx,
+            actor.user_id,
+            repo_id
+        )
+        .await?,
         LabelWriteRefusal::Denied
     );
     anyhow::ensure!(
@@ -70,8 +82,16 @@ async fn writes_labels(
     repo_id: i64,
 ) -> Result<bool> {
     Ok(
-        super::credentials::repository(tx, actor, repo_id, "issues", true).await?
-            || super::credentials::repository(tx, actor, repo_id, "pull_requests", true).await?,
+        crate::backend::db::postgres::credentials::repository(tx, actor, repo_id, "issues", true)
+            .await?
+            || crate::backend::db::postgres::credentials::repository(
+                tx,
+                actor,
+                repo_id,
+                "pull_requests",
+                true,
+            )
+            .await?,
     )
 }
 
@@ -204,7 +224,7 @@ pub async fn list_milestone_labels(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Label>> {
-    Ok(sqlx::query_as(&format!("SELECT l.* FROM labels l WHERE l.repo_id=$1 AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$5 WHERE r.id=l.repo_id AND {}) AND (EXISTS (SELECT 1 FROM issue_labels il JOIN issues i ON i.id=il.issue_id WHERE il.label_id=l.id AND i.milestone_id=$2) OR EXISTS (SELECT 1 FROM pr_labels pl JOIN pull_requests p ON p.id=pl.pull_request_id WHERE pl.label_id=l.id AND p.milestone_id=$2)) ORDER BY lower(l.name),l.id LIMIT $3 OFFSET $4", super::repositories::access::readable_condition()))
+    Ok(sqlx::query_as(&format!("SELECT l.* FROM labels l WHERE l.repo_id=$1 AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$5 WHERE r.id=l.repo_id AND {}) AND (EXISTS (SELECT 1 FROM issue_labels il JOIN issues i ON i.id=il.issue_id WHERE il.label_id=l.id AND i.milestone_id=$2) OR EXISTS (SELECT 1 FROM pr_labels pl JOIN pull_requests p ON p.id=pl.pull_request_id WHERE pl.label_id=l.id AND p.milestone_id=$2)) ORDER BY lower(l.name),l.id LIMIT $3 OFFSET $4", crate::backend::db::postgres::repositories::access::readable_condition()))
         .bind(repo_id).bind(milestone_id).bind(limit).bind(offset).bind(viewer).fetch_all(pool).await?)
 }
 
@@ -649,7 +669,7 @@ async fn record_label_changes(
             .iter()
             .filter(|label| !new.iter().any(|other| other.id == label.id))
         {
-            super::timeline::append(
+            crate::backend::db::postgres::timeline::append(
                 tx,
                 repo,
                 subject,

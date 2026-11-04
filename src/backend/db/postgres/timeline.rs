@@ -1,5 +1,6 @@
 use crate::backend::db::assignees::AssignedItem;
-use crate::backend::db::timeline::{Event, TimelineEvent};
+use crate::backend::db::timeline::Event;
+use crate::backend::db::timeline::TimelineEvent;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;

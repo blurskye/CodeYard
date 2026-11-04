@@ -1,6 +1,6 @@
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::app::AppState;
-use crate::backend::files;
+
 use crate::backend::files::UploadCapability;
 use crate::backend::files::UploadDeclaration;
 use crate::backend::files::UploadError;
@@ -14,7 +14,8 @@ use codeyard_db_core::models::FileVisibility;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
 
-use crate::backend::api::http::error::{ApiError, ApiFailure};
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::ApiFailure;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -58,7 +59,7 @@ pub async fn create_upload_url(
     Json(req): Json<CreateUploadUrlRequest>,
 ) -> Result<Json<CreateUploadUrlResponse>, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
-    let reservation = files::reserve_and_sign_upload(
+    let reservation = crate::backend::files::reserve_and_sign_upload(
         &state.pool,
         &state.storage,
         user.id,

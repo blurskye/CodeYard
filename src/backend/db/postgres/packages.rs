@@ -1,7 +1,15 @@
-use crate::backend::db::packages::{
-    self, Actor, Blob, Charge, Credential, Listing, Owner, Package, Permission, Publish, Refusal,
-    Upload, Version,
-};
+use crate::backend::db::packages::Actor;
+use crate::backend::db::packages::Blob;
+use crate::backend::db::packages::Charge;
+use crate::backend::db::packages::Credential;
+use crate::backend::db::packages::Listing;
+use crate::backend::db::packages::Owner;
+use crate::backend::db::packages::Package;
+use crate::backend::db::packages::Permission;
+use crate::backend::db::packages::Publish;
+use crate::backend::db::packages::Refusal;
+use crate::backend::db::packages::Upload;
+use crate::backend::db::packages::Version;
 use anyhow::{ensure, Result};
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -75,7 +83,7 @@ async fn actor<'a>(
         }
     };
     let account = account.ok_or(Refusal::Unauthorized)?;
-    super::users::transitions::lock_accounts_shared(tx, &[account]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(tx, &[account]).await?;
     let token = match token {
         Credential::Token(id) => id,
         Credential::Session(session) => {
@@ -83,7 +91,8 @@ async fn actor<'a>(
                 .bind(session).fetch_optional(&mut **tx).await?;
             let user = id.ok_or(Refusal::Unauthorized)?;
             ensure!(
-                super::users::transitions::live_session(tx, user, session).await?,
+                crate::backend::db::postgres::users::transitions::live_session(tx, user, session)
+                    .await?,
                 Refusal::Unauthorized
             );
             return Ok(Actor {
@@ -109,8 +118,9 @@ async fn actor<'a>(
             .fetch_optional(&mut **tx)
             .await?;
     ensure!(
-        oauth.is_none_or(|scopes| !write
-            && crate::backend::identity::oauth_apps::has_scope(&scopes, "read:packages")),
+        oauth.is_none_or(
+            |scopes| !write && codeyard_model::oauth_apps::has_scope(&scopes, "read:packages")
+        ),
         Refusal::Forbidden
     );
     ensure!(!write || scope == "write", Refusal::Forbidden);
@@ -123,7 +133,7 @@ async fn actor<'a>(
             .fetch_optional(&mut **tx)
             .await?;
     let bounds: Option<crate::backend::db::fine_grained_tokens::Bounds> =
-        sqlx::query_as(super::fine_grained_tokens::BOUNDS)
+        sqlx::query_as(crate::backend::db::postgres::fine_grained_tokens::BOUNDS)
             .bind(token)
             .fetch_optional(&mut **tx)
             .await?;
@@ -147,11 +157,11 @@ async fn actor<'a>(
     }
     let mut repo = None;
     if name == crate::backend::db::ci_tokens::BOT {
-        let job = super::ci_tokens::get_in_connection(&mut *tx, token)
+        let job = crate::backend::db::postgres::ci_tokens::get_in_connection(&mut *tx, token)
             .await?
             .ok_or(Refusal::Unauthorized)?;
         let (repo_id, permissions) = (job.repo_id, job.permissions);
-        let permissions: crate::backend::ci::tokens::Permissions =
+        let permissions: codeyard_model::permissions::Permissions =
             serde_json::from_str(&permissions)?;
         ensure!(permissions.allows("packages", write), Refusal::Forbidden);
         repo = Some(repo_id);
@@ -166,7 +176,10 @@ async fn actor<'a>(
 }
 
 fn read_condition(actor: &Actor) -> String {
-    packages::read_condition(actor, super::repositories::access::USER_REPO_ACCESS_SQL)
+    crate::backend::db::packages::read_condition(
+        actor,
+        crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL,
+    )
 }
 
 async fn owner_level(tx: &mut Tx<'_>, package: &Package, user: i64) -> Result<i64> {
@@ -240,11 +253,11 @@ async fn authorize<'a>(
         let user = actor.id.ok_or(Refusal::Unauthorized)?;
         let mut level = owner_level(tx, &package, user).await?;
         if let Some(repo) = package.repo_id {
-            let locked = super::repositories::access::lock_user_repo_access_in_transaction(
+            let locked = crate::backend::db::postgres::repositories::access::lock_user_repo_access_in_transaction(
                 &mut *tx,
                 user,
                 repo,
-                super::repositories::access::RepositoryRowLock::Shared,
+                crate::backend::db::postgres::repositories::access::RepositoryRowLock::Shared,
                 matches!(permission, Permission::Admin),
             )
             .await?
@@ -274,7 +287,7 @@ pub async fn container_namespace(pool: &PgPool, owner: &Owner) -> Result<String>
     if let Some(namespace) = sqlx::query_scalar::<_, String>("SELECT namespace FROM registry_namespaces WHERE ($1='user' AND owner_user_id=$2) OR ($1='org' AND owner_org_id=$2)")
         .bind(&owner.kind).bind(owner.id).fetch_optional(&mut *tx).await? { return Ok(namespace); }
     let base = owner.name.to_ascii_lowercase();
-    let base = if crate::backend::packages::valid_name(&base) {
+    let base = if codeyard_model::package_input::valid_name(&base) {
         base
     } else {
         format!("cy-{}-{}", owner.kind, owner.id)
@@ -305,7 +318,7 @@ pub async fn container_namespace(pool: &PgPool, owner: &Owner) -> Result<String>
 }
 
 pub async fn container_owner(pool: &PgPool, namespace: &str) -> Result<Option<Owner>> {
-    if !crate::backend::packages::valid_name(namespace) || namespace.contains('/') {
+    if !codeyard_model::package_input::valid_name(namespace) || namespace.contains('/') {
         return Ok(None);
     }
     let mapped: Option<Owner> = sqlx::query_as("SELECT u.id,u.username AS name,'user' AS kind FROM registry_namespaces n JOIN users u ON u.id=n.owner_user_id WHERE n.namespace=$1 UNION ALL SELECT o.id,o.name,'org' AS kind FROM registry_namespaces n JOIN organizations o ON o.id=n.owner_org_id WHERE n.namespace=$1")
@@ -440,7 +453,7 @@ pub async fn create(
             .bind(owner.id).fetch_one(&mut *tx).await?;
         ensure!(allowed, Refusal::Forbidden);
     }
-    let now = packages::now();
+    let now = crate::backend::db::packages::now();
     let candidate = Package {
         id: 0,
         owner_kind: owner.kind.clone(),
@@ -474,11 +487,11 @@ pub async fn create(
     let owner_access = owner_level(&mut tx, &candidate, user).await?;
     let mut allowed = owner_access >= 3;
     if let Some(repo) = repo {
-        let locked = super::repositories::access::lock_user_repo_access_in_transaction(
+        let locked = crate::backend::db::postgres::repositories::access::lock_user_repo_access_in_transaction(
             &mut tx,
             user,
             repo,
-            super::repositories::access::RepositoryRowLock::Shared,
+            crate::backend::db::postgres::repositories::access::RepositoryRowLock::Shared,
             false,
         )
         .await?
@@ -675,7 +688,7 @@ pub async fn set_tag(
     ensure!(changed.rows_affected() == 1, Refusal::Missing);
     sqlx::query("UPDATE packages SET updated_at=$2 WHERE id=$1")
         .bind(package)
-        .bind(packages::now())
+        .bind(crate::backend::db::packages::now())
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -694,7 +707,7 @@ pub async fn delete_tag(pool: &PgPool, package: i64, token: i64, tag: &str) -> R
     ensure!(changed.rows_affected() == 1, Refusal::Missing);
     sqlx::query("UPDATE packages SET updated_at=$2 WHERE id=$1")
         .bind(package)
-        .bind(packages::now())
+        .bind(crate::backend::db::packages::now())
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -773,7 +786,7 @@ pub async fn maven_file(
 pub async fn put_maven_file(
     pool: &PgPool,
     token: i64,
-    file: packages::MavenFile<'_>,
+    file: crate::backend::db::packages::MavenFile<'_>,
 ) -> Result<()> {
     let mut tx = begin(pool).await?;
     // Maven index paths are shared by coordinates in the same repository.
@@ -791,7 +804,7 @@ pub async fn put_maven_file(
         p.package_type == "maven" && p.repo_id == Some(file.repo_id),
         Refusal::Missing
     );
-    let now = packages::now();
+    let now = crate::backend::db::packages::now();
     // Index replacement can release older blobs shared with other repositories.
     sqlx::query("SELECT digest FROM package_blobs WHERE digest=$1 OR digest IN (SELECT vb.digest FROM package_version_blobs vb JOIN package_versions v ON v.id=vb.version_id JOIN packages p ON p.id=v.package_id WHERE p.repo_id=$2 AND p.package_type='maven') ORDER BY digest FOR UPDATE")
         .bind(&file.blob.digest).bind(p.repo_id).execute(&mut *tx).await?;
@@ -870,7 +883,7 @@ pub async fn publish(pool: &PgPool, token: i64, new: Publish<'_>) -> Result<Vers
     )
     .await?;
     ensure!(
-        packages::listed_metadata_fits(&package.package_type, new.manifest),
+        crate::backend::db::packages::listed_metadata_fits(&package.package_type, new.manifest),
         Refusal::Conflict
     );
     if package.package_type == "rubygems" {
@@ -888,7 +901,7 @@ pub async fn publish(pool: &PgPool, token: i64, new: Publish<'_>) -> Result<Vers
             .bind(&package.owner_kind).bind(package.owner_user_id.or(package.owner_org_id)).bind(package.id).bind(format!("{}-{}", package.name, new.name)).fetch_one(&mut *tx).await?;
         ensure!(!collision, Refusal::Conflict);
     }
-    let now = packages::now();
+    let now = crate::backend::db::packages::now();
     check_blobs(&mut tx, package.id, new.blobs, now).await?;
     let existing: Option<Version> =
         sqlx::query_as("SELECT * FROM package_versions WHERE package_id=$1 AND name=$2")
@@ -950,7 +963,7 @@ pub async fn set_deleted(
     let mut tx = begin(pool).await?;
     lock_package(&mut tx, package).await?;
     let p = authorize(&mut tx, package, Some(token), Permission::Admin, true).await?;
-    let now = packages::now();
+    let now = crate::backend::db::packages::now();
     if let Some(version) = version {
         ensure!(p.deleted_at.is_none(), Refusal::Missing);
         let deleted: Option<Option<i64>> = sqlx::query_scalar(
@@ -1016,11 +1029,11 @@ pub async fn settings(
         if let Some(repo) = repo {
             let actor = actor(&mut tx, Some(token), Permission::Admin).await?;
             let user = actor.id.ok_or(Refusal::Unauthorized)?;
-            let locked = super::repositories::access::lock_user_repo_access_in_transaction(
+            let locked = crate::backend::db::postgres::repositories::access::lock_user_repo_access_in_transaction(
                 &mut tx,
                 user,
                 repo,
-                super::repositories::access::RepositoryRowLock::Shared,
+                crate::backend::db::postgres::repositories::access::RepositoryRowLock::Shared,
                 false,
             )
             .await?
@@ -1046,7 +1059,7 @@ pub async fn settings(
     sqlx::query("UPDATE packages SET visibility=$2,updated_at=$3,repo_id=$4 WHERE id=$1")
         .bind(package)
         .bind(visibility)
-        .bind(packages::now())
+        .bind(crate::backend::db::packages::now())
         .bind(repo)
         .execute(&mut *tx)
         .await?;
@@ -1066,10 +1079,10 @@ pub async fn reserve_blob(
     authorize(&mut tx, package, Some(token), Permission::Write, false).await?;
     let actor = actor(&mut tx, Some(token), Permission::Write).await?;
     let user = actor.id.ok_or(Refusal::Unauthorized)?;
-    let now = packages::now();
+    let now = crate::backend::db::packages::now();
     match charge {
         Charge::Upload => {
-            super::files::charge_upload_in_transaction(
+            crate::backend::db::postgres::files::charge_upload_in_transaction(
                 &mut tx,
                 user,
                 "package",
@@ -1081,7 +1094,7 @@ pub async fn reserve_blob(
         Charge::Chunk(upload) => {
             let earlier: Option<uuid::Uuid> = sqlx::query_scalar("SELECT charge_id FROM package_uploads WHERE id=$1 AND package_id=$2 AND token_id=$3 AND expires_at>$4 FOR UPDATE")
                 .bind(upload).bind(package).bind(token).bind(now).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
-            let charge = super::files::charge_upload_in_transaction(
+            let charge = crate::backend::db::postgres::files::charge_upload_in_transaction(
                 &mut tx,
                 user,
                 "package",
@@ -1121,7 +1134,7 @@ pub async fn ready_blob(pool: &PgPool, package: i64, token: i64, blob: &Blob) ->
     lock_package(&mut tx, package).await?;
     authorize(&mut tx, package, Some(token), Permission::Write, false).await?;
     let changed = sqlx::query("UPDATE package_blobs SET ready=true WHERE digest=$1 AND size=$2 AND NOT deleting AND expires_at>$3 AND EXISTS(SELECT 1 FROM package_blob_grants g WHERE g.package_id=$4 AND g.digest=package_blobs.digest)")
-        .bind(&blob.digest).bind(blob.size).bind(packages::now()).bind(package).execute(&mut *tx).await?;
+        .bind(&blob.digest).bind(blob.size).bind(crate::backend::db::packages::now()).bind(package).execute(&mut *tx).await?;
     ensure!(changed.rows_affected() == 1, Refusal::Blob);
     tx.commit().await?;
     Ok(())
@@ -1136,7 +1149,7 @@ pub async fn blob(
     let mut tx = read(pool).await?;
     authorize(&mut tx, package, token, Permission::Read, false).await?;
     let result = sqlx::query_as("SELECT b.digest,b.size FROM package_blobs b WHERE b.digest=$2 AND b.ready AND NOT b.deleting AND (EXISTS(SELECT 1 FROM package_blob_grants g WHERE g.package_id=$1 AND g.digest=b.digest AND g.expires_at>$3) OR EXISTS(SELECT 1 FROM package_version_blobs vb JOIN package_versions v ON v.id=vb.version_id WHERE v.package_id=$1 AND v.deleted_at IS NULL AND vb.digest=b.digest))")
-        .bind(package).bind(digest).bind(packages::now()).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
+        .bind(package).bind(digest).bind(crate::backend::db::packages::now()).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
     tx.commit().await?;
     Ok(result)
 }
@@ -1146,7 +1159,7 @@ pub async fn start_upload(pool: &PgPool, package: i64, token: i64, id: &str) -> 
     lock_package(&mut tx, package).await?;
     authorize(&mut tx, package, Some(token), Permission::Write, false).await?;
     let result = sqlx::query_as("INSERT INTO package_uploads(id,package_id,token_id,expires_at) VALUES($1,$2,$3,$4) RETURNING *")
-        .bind(id).bind(package).bind(token).bind(packages::now()+3600).fetch_one(&mut *tx).await?;
+        .bind(id).bind(package).bind(token).bind(crate::backend::db::packages::now()+3600).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(result)
 }
@@ -1154,7 +1167,7 @@ pub async fn start_upload(pool: &PgPool, package: i64, token: i64, id: &str) -> 
 async fn get_upload(tx: &mut Tx<'_>, package: i64, token: i64, id: &str) -> Result<Upload> {
     authorize(tx, package, Some(token), Permission::Write, false).await?;
     Ok(sqlx::query_as("SELECT * FROM package_uploads WHERE id=$1 AND package_id=$2 AND token_id=$3 AND expires_at>$4")
-        .bind(id).bind(package).bind(token).bind(packages::now()).fetch_optional(&mut **tx).await?.ok_or(Refusal::Missing)?)
+        .bind(id).bind(package).bind(token).bind(crate::backend::db::packages::now()).fetch_optional(&mut **tx).await?.ok_or(Refusal::Missing)?)
 }
 
 pub async fn upload(pool: &PgPool, package: i64, token: i64, id: &str) -> Result<Upload> {
@@ -1224,7 +1237,7 @@ pub async fn finish_upload(
 
 pub async fn garbage(pool: &PgPool) -> Result<Vec<String>> {
     let mut tx = begin(pool).await?;
-    let now = packages::now();
+    let now = crate::backend::db::packages::now();
     let expired: Vec<i64> = sqlx::query_scalar("SELECT id FROM packages WHERE deleted_at<=$1 OR id IN (SELECT package_id FROM package_versions WHERE deleted_at<=$1 ORDER BY id LIMIT 100) ORDER BY id LIMIT 200")
         .bind(now - 30 * 86400).fetch_all(&mut *tx).await?;
     for id in &expired {
@@ -1284,14 +1297,17 @@ pub async fn issue_registry_token(
     )
     .await?;
     sqlx::query("INSERT INTO package_registry_tokens(hash,token_id,resources,write,expires_at) VALUES($1,$2,$3,$4,$5)")
-        .bind(hash).bind(token).bind(resources).bind(write).bind(packages::now()+300).execute(&mut *tx).await?;
+        .bind(hash).bind(token).bind(resources).bind(write).bind(crate::backend::db::packages::now()+300).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
 
-pub async fn registry_token(pool: &PgPool, hash: &str) -> Result<Option<packages::RegistryToken>> {
+pub async fn registry_token(
+    pool: &PgPool,
+    hash: &str,
+) -> Result<Option<crate::backend::db::packages::RegistryToken>> {
     Ok(sqlx::query_as("SELECT token_id,resources,write,expires_at FROM package_registry_tokens WHERE hash=$1 AND expires_at>$2")
-        .bind(hash).bind(packages::now()).fetch_optional(pool).await?)
+        .bind(hash).bind(crate::backend::db::packages::now()).fetch_optional(pool).await?)
 }
 
 pub async fn registry_source(

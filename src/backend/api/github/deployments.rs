@@ -1,20 +1,23 @@
 //! Deployment requests use immutable commits and preserve every reported status.
-use super::{
-    auth, contents::store_error, pagination::Pagination, repo_url, repository, Error, Result,
-};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        deployments::{self, Deployment, Filter, NewDeployment, NewStatus, Refusal, Status},
-    },
-    repositories::{
-        access,
-        merges::{self, BranchMerge},
-        store::repo_store,
-    },
-    webhooks::{self, payloads},
-};
+
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use codeyard_model::urls::repo_url;
+
+use crate::backend::db::deployments::Deployment;
+use crate::backend::db::deployments::Filter;
+use crate::backend::db::deployments::NewDeployment;
+use crate::backend::db::deployments::NewStatus;
+use crate::backend::db::deployments::Refusal;
+use crate::backend::db::deployments::Status;
+
+use crate::backend::repositories::merges::BranchMerge;
+use crate::backend::repositories::store::repo_store;
+
 use axum::{
     extract::{FromRequest, OriginalUri, Path, Query, Request, State},
     http::{header, HeaderMap, Method, StatusCode},
@@ -42,10 +45,12 @@ fn write_error(error: anyhow::Error) -> Error {
 
 async fn creator(state: &AppState, id: Option<i64>) -> Result<Option<Value>> {
     match id {
-        Some(id) => Ok(db::users::accounts::get_user_by_id(&state.pool, id)
-            .await
-            .map_err(Error::unavailable)?
-            .map(|user| payloads::user(&user))),
+        Some(id) => Ok(
+            crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+                .await
+                .map_err(Error::unavailable)?
+                .map(|user| crate::backend::webhooks::payloads::user(&user)),
+        ),
         None => Ok(None),
     }
 }
@@ -56,7 +61,7 @@ pub(super) async fn document(
     owner: &str,
     repo: &str,
 ) -> Result<Value> {
-    Ok(payloads::deployment(
+    Ok(crate::backend::webhooks::payloads::deployment(
         deployment,
         creator(state, deployment.creator_id).await?,
         serde_json::from_str(&deployment.payload).map_err(Error::unavailable)?,
@@ -71,7 +76,7 @@ async fn status_document(
     owner: &str,
     repo: &str,
 ) -> Result<Value> {
-    Ok(payloads::deployment_status(
+    Ok(crate::backend::webhooks::payloads::deployment_status(
         status,
         creator(state, status.creator_id).await?,
         owner,
@@ -89,7 +94,7 @@ async fn list(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let (offset, limit) = page.window()?;
-    let rows = deployments::list(
+    let rows = crate::backend::db::deployments::list(
         &state.pool,
         auth.as_ref().map(|actor| actor.user.id),
         repo.id,
@@ -128,12 +133,14 @@ async fn create(
     request: Request,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = &auth.user;
-    access::check_write(&state.pool, repo.id, actor.id)
+    crate::backend::repositories::access::check_write(&state.pool, repo.id, actor.id)
         .await
         .map_err(|error| match error {
-            access::AccessError::Unavailable => Error::unavailable(()),
+            crate::backend::repositories::access::AccessError::Unavailable => {
+                Error::unavailable(())
+            }
             _ => Error::new(StatusCode::FORBIDDEN, "Deployment write denied"),
         })?;
     let Json(input) = Json::<Create>::from_request(request, &state)
@@ -191,8 +198,8 @@ async fn create(
                 // contents write, and publication checks its workflows permission.
                 auth.repository_scope(&state.pool, repo.id, "contents", true)
                     .await
-                    .map_err(auth::scope_error)?;
-                merges::merge_branch(
+                    .map_err(crate::backend::api::github::auth::scope_error)?;
+                crate::backend::repositories::merges::merge_branch(
                     &state.pool,
                     state.cluster.as_ref(),
                     &state.ci_runs,
@@ -208,19 +215,19 @@ async fn create(
                     },
                 )
                 .await
-                .map_err(super::merges::failure)?;
+                .map_err(crate::backend::api::github::merges::failure)?;
                 return Ok((StatusCode::ACCEPTED, Json(json!({"message": format!("Auto-merged {} into {branch} on deployment.", repo.default_branch)}))).into_response());
             }
         }
     }
-    let saved = deployments::create(&state.pool, new)
+    let saved = crate::backend::db::deployments::create(&state.pool, new)
         .await
         .map_err(write_error)?;
     let value = document(&state, &saved, &owner, &name).await?;
     let deployment = value.clone();
     let snapshot = repo.clone();
-    let sender = payloads::Person::of(actor);
-    webhooks::emit(&state.pool, &repo, webhooks::events::DEPLOYMENT, vec![actor.id], move |owner, _| json!({"deployment": deployment, "repository": payloads::repository(&snapshot, owner), "sender": payloads::person(&sender)})).await;
+    let sender = crate::backend::webhooks::payloads::Person::of(actor);
+    crate::backend::webhooks::emit(&state.pool, &repo, codeyard_model::webhook_events::DEPLOYMENT, vec![actor.id], move |owner, _| json!({"deployment": deployment, "repository": crate::backend::webhooks::payloads::repository(&snapshot, owner), "sender": crate::backend::webhooks::payloads::person(&sender)})).await;
     Ok((
         StatusCode::CREATED,
         [(
@@ -238,12 +245,13 @@ async fn deployment(
     Path((owner, name, id)): Path<(String, String, i64)>,
     method: Method,
 ) -> Result<Response> {
-    let write = !auth::read_method(&method);
+    let write = !crate::backend::api::github::auth::read_method(&method);
     let (repo, auth) = repository(&state, &headers, &owner, &name, write).await?;
     if write {
-        deployments::delete(
+        crate::backend::db::deployments::delete(
             &state.pool,
-            auth.ok_or_else(auth::required)?.database_actor(),
+            auth.ok_or_else(crate::backend::api::github::auth::required)?
+                .database_actor(),
             repo.id,
             id,
         )
@@ -251,7 +259,7 @@ async fn deployment(
         .map_err(write_error)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let saved = deployments::get(
+    let saved = crate::backend::db::deployments::get(
         &state.pool,
         auth.as_ref().map(|actor| actor.user.id),
         repo.id,
@@ -271,20 +279,20 @@ async fn statuses(
     OriginalUri(uri): OriginalUri,
     request: Request,
 ) -> Result<Response> {
-    let read = auth::read_method(request.method());
+    let read = crate::backend::api::github::auth::read_method(request.method());
     let (owner, name) = (&params["owner"], &params["repo"]);
     let (repo, auth) = repository(&state, &headers, owner, name, !read).await?;
     let viewer = auth.as_ref().map(|actor| actor.user.id);
     let id = params["deployment_id"]
         .parse()
         .map_err(|_| Error::missing())?;
-    let saved = deployments::get(&state.pool, viewer, repo.id, id)
+    let saved = crate::backend::db::deployments::get(&state.pool, viewer, repo.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     if read {
         if let Some(status) = params.get("status_id") {
-            let row = deployments::get_status(
+            let row = crate::backend::db::deployments::get_status(
                 &state.pool,
                 viewer,
                 id,
@@ -296,10 +304,15 @@ async fn statuses(
             return Ok(Json(status_document(&state, &row, owner, name).await?).into_response());
         }
         let (offset, limit) = page.window()?;
-        let rows =
-            deployments::statuses(&state.pool, viewer, id, offset as i64, (limit + 1) as i64)
-                .await
-                .map_err(Error::unavailable)?;
+        let rows = crate::backend::db::deployments::statuses(
+            &state.pool,
+            viewer,
+            id,
+            offset as i64,
+            (limit + 1) as i64,
+        )
+        .await
+        .map_err(Error::unavailable)?;
         let has_next = rows.len() > limit;
         let mut values = Vec::new();
         for row in rows.into_iter().take(limit) {
@@ -307,15 +320,21 @@ async fn statuses(
         }
         return page.response(&uri, values, has_next);
     }
-    let authentication = auth.ok_or_else(auth::required)?;
+    let authentication = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let credential = authentication.database_actor();
     let actor = authentication.user;
     let Json(input) = Json::<NewStatus>::from_request(request, &state)
         .await
         .map_err(|_| Error::validation("DeploymentStatus", "state", "invalid"))?;
-    let statuses = deployments::create_status(&state.pool, credential, repo.id, saved.id, &input)
-        .await
-        .map_err(write_error)?;
+    let statuses = crate::backend::db::deployments::create_status(
+        &state.pool,
+        credential,
+        repo.id,
+        saved.id,
+        &input,
+    )
+    .await
+    .map_err(write_error)?;
     let mut result = None;
     for (deployment, status) in statuses {
         let value = status_document(&state, &status, owner, name).await?;
@@ -324,8 +343,8 @@ async fn statuses(
         }
         let deployment = document(&state, &deployment, owner, name).await?;
         let snapshot = repo.clone();
-        let sender = payloads::Person::of(&actor);
-        webhooks::emit(&state.pool, &repo, webhooks::events::DEPLOYMENT_STATUS, vec![actor.id], move |owner, _| json!({"deployment_status": value, "deployment": deployment, "repository": payloads::repository(&snapshot, owner), "sender": payloads::person(&sender)})).await;
+        let sender = crate::backend::webhooks::payloads::Person::of(&actor);
+        crate::backend::webhooks::emit(&state.pool, &repo, codeyard_model::webhook_events::DEPLOYMENT_STATUS, vec![actor.id], move |owner, _| json!({"deployment_status": value, "deployment": deployment, "repository": crate::backend::webhooks::payloads::repository(&snapshot, owner), "sender": crate::backend::webhooks::payloads::person(&sender)})).await;
     }
     let value = result.ok_or_else(|| Error::unavailable(()))?;
     Ok((

@@ -1,12 +1,18 @@
 //! CodeQL archives uploaded by workflows and downloaded by repository readers.
-use super::{failure, scope};
-use crate::backend::{
-    api::github::{auth, repo_url, repository, Error, Result},
-    app::AppState,
-    db::{self, codeql},
-    storage::{attachment_disposition, Download, Upload, MAX_OBJECT_BYTES},
-    webhooks::payloads,
-};
+use crate::backend::api::github::code_scanning::failure;
+use crate::backend::api::github::code_scanning::scope;
+
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use codeyard_model::urls::repo_url;
+
+use crate::backend::storage::attachment_disposition;
+use crate::backend::storage::Download;
+use crate::backend::storage::Upload;
+use codeyard_support::object_limits::MAX_OBJECT_BYTES;
+
 use axum::{
     body::to_bytes,
     extract::{Path, Query, Request, State},
@@ -32,20 +38,20 @@ pub(crate) const HOST_UPLOAD_ROUTE: &str =
 
 async fn document(
     state: &AppState,
-    row: &codeql::Database,
+    row: &crate::backend::db::codeql::Database,
     owner: &str,
     name: &str,
 ) -> Result<Value> {
     let uploader = match row.uploader_id {
-        Some(id) => db::users::accounts::get_user_by_id(&state.pool, id)
+        Some(id) => crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .as_ref()
-            .map(payloads::user),
+            .map(crate::backend::webhooks::payloads::user),
         None => None,
     }
     .unwrap_or_else(|| {
-        payloads::person(&payloads::Person {
+        crate::backend::webhooks::payloads::person(&crate::backend::webhooks::payloads::Person {
             login: "ghost".into(),
             id: 0,
             site_admin: false,
@@ -63,9 +69,9 @@ async fn readable(
     headers: &HeaderMap,
     owner: &str,
     name: &str,
-) -> Result<(i64, db::credentials::Actor)> {
+) -> Result<(i64, crate::backend::db::credentials::Actor)> {
     let (repo, auth) = repository(state, headers, owner, name, false).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     Ok((repo.id, auth.database_actor()))
 }
 
@@ -75,7 +81,7 @@ pub(super) async fn list(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<axum::Json<Value>> {
     let (repo, actor) = readable(&state, &headers, &owner, &name).await?;
-    let rows = codeql::list(&state.pool, actor, repo)
+    let rows = crate::backend::db::codeql::list(&state.pool, actor, repo)
         .await
         .map_err(failure)?;
     let mut values = Vec::new();
@@ -92,7 +98,7 @@ pub(super) async fn get(
     method: axum::http::Method,
 ) -> Result<Response> {
     let (repo, actor) = readable(&state, &headers, &owner, &name).await?;
-    let row = codeql::get(&state.pool, actor, repo, &language)
+    let row = crate::backend::db::codeql::get(&state.pool, actor, repo, &language)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)?;
@@ -240,20 +246,25 @@ pub(in crate::backend::api::github) async fn upload(
     let actor = auth.database_actor();
     let size = bytes.len() as i64;
     // Every upload counts, including one that replaces an earlier database.
-    let charge = db::files::charge_upload(&state.pool, auth.user.id, codeql::UPLOAD_QUOTA, size)
-        .await
-        .map_err(|error| match error {
-            db::files::AdmissionError::Quota => {
-                Error::new(StatusCode::TOO_MANY_REQUESTS, "Upload quota exhausted")
-            }
-            db::files::AdmissionError::Invalid => {
-                Error::validation("CodeqlDatabase", "file", "invalid")
-            }
-            other => Error::unavailable(other),
-        })?;
+    let charge = crate::backend::db::files::charge_upload(
+        &state.pool,
+        auth.user.id,
+        crate::backend::db::codeql::UPLOAD_QUOTA,
+        size,
+    )
+    .await
+    .map_err(|error| match error {
+        crate::backend::db::files::AdmissionError::Quota => {
+            Error::new(StatusCode::TOO_MANY_REQUESTS, "Upload quota exhausted")
+        }
+        crate::backend::db::files::AdmissionError::Invalid => {
+            Error::validation("CodeqlDatabase", "file", "invalid")
+        }
+        other => Error::unavailable(other),
+    })?;
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
     let key = format!("codeql/{}", uuid::Uuid::new_v4());
-    codeql::stage(&state.pool, actor.clone(), repo.id, &key)
+    crate::backend::db::codeql::stage(&state.pool, actor.clone(), repo.id, &key)
         .await
         .map_err(failure)?;
     state
@@ -270,9 +281,9 @@ pub(in crate::backend::api::github) async fn upload(
         )
         .await
         .map_err(Error::unavailable)?;
-    let row = codeql::publish(
+    let row = crate::backend::db::codeql::publish(
         &state.pool,
-        &codeql::NewDatabase {
+        &crate::backend::db::codeql::NewDatabase {
             charge,
             repo: repo.id,
             actor,
@@ -297,7 +308,7 @@ pub(super) async fn delete(
     Path((owner, name, language)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, auth) = scope(&state, &headers, &owner, &name, true, false).await?;
-    codeql::delete(&state.pool, auth.database_actor(), repo.id, &language)
+    crate::backend::db::codeql::delete(&state.pool, auth.database_actor(), repo.id, &language)
         .await
         .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)

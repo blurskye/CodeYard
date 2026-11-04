@@ -1,7 +1,13 @@
 mod writes;
-use super::super::{auth, pagination::Pagination, repository, Error, Result};
-use super::{association, target};
-use crate::backend::{app::AppState, db, repositories::pull_requests, webhooks::payloads};
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::pulls::association;
+use crate::backend::api::github::pulls::target;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -20,13 +26,18 @@ async fn document(
     pull: &codeyard_db_core::models::PullRequest,
     review: &codeyard_db_core::models::PullRequestReview,
 ) -> Result<Value> {
-    let user = db::users::accounts::get_user_by_id(&state.pool, review.author_id)
+    let user = crate::backend::db::users::accounts::get_user_by_id(&state.pool, review.author_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let mut value =
-        payloads::pull_request_review_json(review, &payloads::Person::of(&user), pull, repo, owner);
-    value["user"] = payloads::user(&user);
+    let mut value = crate::backend::webhooks::payloads::pull_request_review_json(
+        review,
+        &crate::backend::webhooks::payloads::Person::of(&user),
+        pull,
+        repo,
+        owner,
+    );
+    value["user"] = crate::backend::webhooks::payloads::user(&user);
     value["author_association"] = json!(association(&state.pool, repo, user.id).await?);
     Ok(value)
 }
@@ -37,18 +48,21 @@ async fn read(
     Path((owner, name, number, review_id)): Path<(String, String, i32, i64)>,
 ) -> Result<Json<Value>> {
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
-    let viewer = auth::authenticate(&state, &headers, false).await?;
-    let review = db::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, review_id)
-        .await
-        .map_err(Error::unavailable)?
-        .filter(|review| {
-            review.pull_request_id == pull.id
-                && (review.state != "pending"
-                    || viewer
-                        .as_ref()
-                        .is_some_and(|viewer| viewer.user.id == review.author_id))
-        })
-        .ok_or_else(Error::missing)?;
+    let viewer = crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
+    let review = crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(
+        &state.pool,
+        review_id,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .filter(|review| {
+        review.pull_request_id == pull.id
+            && (review.state != "pending"
+                || viewer
+                    .as_ref()
+                    .is_some_and(|viewer| viewer.user.id == review.author_id))
+    })
+    .ok_or_else(Error::missing)?;
     Ok(Json(document(&state, &owner, &repo, &pull, &review).await?))
 }
 
@@ -60,9 +74,9 @@ async fn list(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
-    let viewer = auth::authenticate(&state, &headers, false).await?;
+    let viewer = crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     let (offset, limit) = page.window()?;
-    let rows = db::pull_requests::reviews::list_visible_pull_request_reviews(
+    let rows = crate::backend::db::pull_requests::reviews::list_visible_pull_request_reviews(
         &state.pool,
         pull.id,
         viewer.as_ref().map(|auth| auth.user.id),
@@ -92,9 +106,12 @@ async fn dismiss(
     input: std::result::Result<Json<Dismiss>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>> {
     let (_, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
     // GitHub documents this 422 with plain string errors.
-    let Json(input) = input.map_err(|error| super::super::json_error(error).simple())?;
+    let Json(input) =
+        input.map_err(|error| crate::backend::api::github::json_error(error).simple())?;
     if input.message.trim().is_empty()
         || input
             .event
@@ -105,22 +122,26 @@ async fn dismiss(
             "A dismissal message and DISMISS event are required",
         ));
     }
-    let review = pull_requests::reviews::dismiss_pull_request_review(
+    let review = crate::backend::repositories::pull_requests::reviews::dismiss_pull_request_review(
         &state.pool,
         actor.id,
         owner.clone(),
         name.clone(),
         number,
         review_id,
-        pull_requests::reviews::DismissPullRequestReviewRequest {
+        crate::backend::repositories::pull_requests::reviews::DismissPullRequestReviewRequest {
             reason: Some(input.message),
         },
     )
     .await
     .map_err(|error| match error {
-        pull_requests::OperationError::Invalid { message, .. } => Error::invalid_simple(message),
-        pull_requests::OperationError::Missing { .. } => Error::missing(),
-        pull_requests::OperationError::Denied { message, .. } => {
+        crate::backend::repositories::pull_requests::OperationError::Invalid {
+            message, ..
+        } => Error::invalid_simple(message),
+        crate::backend::repositories::pull_requests::OperationError::Missing { .. } => {
+            Error::missing()
+        }
+        crate::backend::repositories::pull_requests::OperationError::Denied { message, .. } => {
             Error::new(StatusCode::FORBIDDEN, message)
         }
         _ => Error::unavailable(()),
@@ -137,17 +158,20 @@ async fn requested(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
-    let viewer = auth::authenticate(&state, &headers, false).await?;
-    let teams = super::team_reviewers::documents(
+    let viewer = crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
+    let teams = crate::backend::api::github::pulls::team_reviewers::documents(
         &state,
         repo.id,
         pull.id,
         viewer.as_ref().map(|viewer| viewer.user.id),
     )
     .await?;
-    let rows = db::pull_requests::reviews::list_pull_request_reviewers(&state.pool, pull.id)
-        .await
-        .map_err(Error::unavailable)?;
+    let rows = crate::backend::db::pull_requests::reviews::list_pull_request_reviewers(
+        &state.pool,
+        pull.id,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     let (offset, limit) = page.window()?;
     let more =
         rows.len() > offset.saturating_add(limit) || teams.len() > offset.saturating_add(limit);
@@ -155,7 +179,7 @@ async fn requested(
         .iter()
         .skip(offset)
         .take(limit)
-        .map(payloads::user)
+        .map(crate::backend::webhooks::payloads::user)
         .collect();
     let teams: Vec<_> = teams.into_iter().skip(offset).take(limit).collect();
     Ok((

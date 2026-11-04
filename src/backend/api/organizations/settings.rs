@@ -1,10 +1,10 @@
 //! Session-bound, bounded owner controls for the same organization policies used by REST.
-use super::organization::{self, Fields};
-use crate::backend::{
-    api::http::context::PageContext,
-    app::AppState,
-    db::organizations::{settings as data, OrganizationOutcome},
-};
+
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::organizations::organization::Fields;
+use crate::backend::app::AppState;
+
+use crate::backend::db::organizations::OrganizationOutcome;
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -24,11 +24,19 @@ pub(super) async fn panel(
     actor: i64,
     org: i64,
 ) -> Result<view::SettingsPanel, Response> {
-    let updated = match data::owned(&ctx.state.pool, actor, org).await {
-        Ok(Applied(updated)) => updated,
-        Ok(_) => return Err(organization::not_found(ctx)),
-        Err(_) => return Err(organization::unavailable(ctx)),
-    };
+    let updated =
+        match crate::backend::db::organizations::settings::owned(&ctx.state.pool, actor, org).await
+        {
+            Ok(Applied(updated)) => updated,
+            Ok(_) => {
+                return Err(crate::backend::api::organizations::organization::not_found(
+                    ctx,
+                ))
+            }
+            Err(_) => {
+                return Err(crate::backend::api::organizations::organization::unavailable(ctx))
+            }
+        };
     let settings = updated.settings;
     Ok(view::SettingsPanel {
         company: settings.company.unwrap_or_default(),
@@ -86,7 +94,9 @@ fn bound(key: &str) -> usize {
     }
 }
 fn valid(form: &Fields) -> bool {
-    let keys = allowed(organization::field(form, "action"));
+    let keys = allowed(crate::backend::api::organizations::organization::field(
+        form, "action",
+    ));
     !keys.is_empty()
         && form.len() <= keys.len() + 2
         && form.iter().all(|(key, value)| {
@@ -94,9 +104,16 @@ fn valid(form: &Fields) -> bool {
                 && value.len() <= bound(key)
         })
 }
-fn changes(form: &Fields) -> Result<data::Changes, data::Invalid> {
+fn changes(
+    form: &Fields,
+) -> Result<
+    crate::backend::db::organizations::settings::Changes,
+    crate::backend::db::organizations::settings::Invalid,
+> {
     let mut input = Map::new();
-    for &key in allowed(organization::field(form, "action")) {
+    for &key in allowed(crate::backend::api::organizations::organization::field(
+        form, "action",
+    )) {
         if key == "has_organization_projects"
             || key.starts_with("members_can_")
             || matches!(
@@ -108,7 +125,7 @@ fn changes(form: &Fields) -> Result<data::Changes, data::Invalid> {
                 None | Some("false") => false,
                 Some("true") => true,
                 _ => {
-                    return Err(data::Invalid {
+                    return Err(crate::backend::db::organizations::settings::Invalid {
                         field: key,
                         message: "Invalid checkbox value",
                     })
@@ -119,7 +136,7 @@ fn changes(form: &Fields) -> Result<data::Changes, data::Invalid> {
             input.insert(key.into(), Value::String(value.clone()));
         }
     }
-    data::Changes::parse(&Value::Object(input))
+    crate::backend::db::organizations::settings::Changes::parse(&Value::Object(input))
 }
 async fn mutate(
     State(state): State<Arc<AppState>>,
@@ -139,7 +156,7 @@ async fn mutate(
     };
     let mut seen = HashSet::new();
     if pairs.len() > 16 || pairs.iter().any(|(key, _)| !seen.insert(key)) {
-        return organization::invalid(&ctx);
+        return crate::backend::api::organizations::organization::invalid(&ctx);
     }
     let form: Fields = pairs.into_iter().collect();
     if let Err(response) = ctx.check_csrf(&form) {
@@ -150,9 +167,11 @@ async fn mutate(
         Err(response) => return response,
     };
     if !valid(&form) {
-        return organization::invalid(&ctx);
+        return crate::backend::api::organizations::organization::invalid(&ctx);
     }
-    if let Err(response) = organization::selected(&ctx, actor, org).await {
+    if let Err(response) =
+        crate::backend::api::organizations::organization::selected(&ctx, actor, org).await
+    {
         return response;
     }
     let draft = form
@@ -161,9 +180,17 @@ async fn mutate(
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     let result = match changes(&form) {
-        Ok(input) => data::change(&ctx.state.pool, ctx.database_actor(actor), org, &input).await,
+        Ok(input) => {
+            crate::backend::db::organizations::settings::change(
+                &ctx.state.pool,
+                ctx.database_actor(actor),
+                org,
+                &input,
+            )
+            .await
+        }
         Err(error) => {
-            return organization::respond(
+            return crate::backend::api::organizations::organization::respond(
                 &ctx,
                 Some(org),
                 StatusCode::BAD_REQUEST,
@@ -174,7 +201,12 @@ async fn mutate(
         }
     };
     let (status, message) = match result {
-        Ok(Applied(_)) => return ctx.redirect(&format!("{}/{org}?tab=settings", super::INDEX)),
+        Ok(Applied(_)) => {
+            return ctx.redirect(&format!(
+                "{}/{org}?tab=settings",
+                crate::backend::api::organizations::INDEX
+            ))
+        }
         Ok(Denied) => (
             StatusCode::FORBIDDEN,
             "Only organization owners can change organization settings.",
@@ -188,7 +220,14 @@ async fn mutate(
             StatusCode::CONFLICT,
             "Organization settings changed. Reload and try again.",
         ),
-        Err(_) => return organization::unavailable(&ctx),
+        Err(_) => return crate::backend::api::organizations::organization::unavailable(&ctx),
     };
-    organization::respond(&ctx, Some(org), status, Some(message.into()), draft).await
+    crate::backend::api::organizations::organization::respond(
+        &ctx,
+        Some(org),
+        status,
+        Some(message.into()),
+        draft,
+    )
+    .await
 }

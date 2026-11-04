@@ -1,10 +1,9 @@
 pub mod collection;
 pub mod job;
-use crate::backend::{
-    api::{http::error::ApiError, http::session::get_current_user},
-    app::AppState,
-    db,
-};
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
+use crate::backend::app::AppState;
+
 use axum::{
     http::{HeaderMap, StatusCode},
     routing::get,
@@ -47,14 +46,15 @@ async fn authorized_run(
     job_id: &str,
 ) -> Result<codeyard_db_core::models::CiRun, CiReadError> {
     let user = get_current_user(&state.pool, headers).await?;
-    let run = db::ci::get_ci_run_by_run_id(&state.pool, parse_job_id(job_id)?)
+    let run = crate::backend::db::ci::get_ci_run_by_run_id(&state.pool, parse_job_id(job_id)?)
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;
-    let repo = db::repositories::records::get_repository_by_id(&state.pool, run.repo_id)
-        .await
-        .map_err(unavailable)?
-        .ok_or_else(missing)?;
+    let repo =
+        crate::backend::db::repositories::records::get_repository_by_id(&state.pool, run.repo_id)
+            .await
+            .map_err(unavailable)?
+            .ok_or_else(missing)?;
     ensure_repo_read_access(state, &user, &repo).await?;
     Ok(run)
 }

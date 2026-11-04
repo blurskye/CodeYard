@@ -1,9 +1,17 @@
 //! Owner-scoped repository connections used by the CLI's list and search paths.
-use super::{
-    arg, connection, db, missing, repository, unavailable, user, Arguments, RequestContext, Result,
-    Value,
-};
-use crate::backend::repositories::access::{self, AccessError};
+use crate::backend::api::graphql::arg;
+
+use crate::backend::api::graphql::db;
+use crate::backend::api::graphql::missing;
+
+use crate::backend::api::graphql::unavailable;
+
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
+
+use crate::backend::repositories::access::AccessError;
 use db::repositories::github::{self, RepositoryList, RepositoryListQuery};
 use serde_json::json;
 
@@ -13,7 +21,7 @@ pub(super) async fn organizations(
     parent: &Value,
 ) -> Result<Value> {
     request.require_oauth_scope("read:org")?;
-    connection::validate(ctx)?;
+    crate::backend::api::graphql::connection::validate(ctx)?;
     let id = parent["databaseId"].as_i64().ok_or_else(missing)?;
     let mut rows = db::organizations::discovery::list_organizations(
         &request.state.pool,
@@ -47,12 +55,12 @@ pub(super) async fn organizations(
             rows.reverse();
         }
     }
-    let page = connection::Page::new(ctx, rows.len() as i64)?;
+    let page = crate::backend::api::graphql::connection::Page::new(ctx, rows.len() as i64)?;
     let nodes = rows
         .iter()
         .skip(page.offset as usize)
         .take(page.limit as usize)
-        .map(user::organization)
+        .map(crate::backend::api::graphql::user::organization)
         .collect();
     Ok(page.finish(nodes))
 }
@@ -78,9 +86,12 @@ fn query<'a>(
     if let Some(value) = ctx.args.get("ownerAffiliations").filter(|v| !v.is_null()) {
         let values: Value = value.deserialize()?;
         let organization = matches!(list, RepositoryList::Organization(_));
-        if super::metadata_mutations::list(&values).iter().any(|v| {
-            v.as_str() != Some("OWNER") && !(organization && v.as_str() == Some("COLLABORATOR"))
-        }) {
+        if crate::backend::api::graphql::metadata_mutations::list(&values)
+            .iter()
+            .any(|v| {
+                v.as_str() != Some("OWNER") && !(organization && v.as_str() == Some("COLLABORATOR"))
+            })
+        {
             return Err(async_graphql::Error::new(
                 "Codeyard only supports OWNER ownerAffiliations",
             ));
@@ -147,7 +158,7 @@ async fn connection(
     request: &RequestContext,
     list: RepositoryList,
 ) -> Result<Value> {
-    connection::validate(ctx)?;
+    crate::backend::api::graphql::connection::validate(ctx)?;
     if let Some(value) = ctx.args.get("ownerAffiliations").filter(|v| !v.is_null()) {
         let values = value.deserialize::<Vec<Option<String>>>()?;
         // An organization is never a collaborator, so GitHub's default [OWNER, COLLABORATOR]
@@ -155,14 +166,14 @@ async fn connection(
         if !values.iter().any(|v| v.as_deref() == Some("OWNER"))
             && (values.is_empty() || matches!(list, RepositoryList::Organization(_)))
         {
-            return connection::slice(ctx, vec![]);
+            return crate::backend::api::graphql::connection::slice(ctx, vec![]);
         }
     }
     let mut query = query(ctx, request, list)?;
     let total = github::count_repositories(&request.state.pool, query)
         .await
         .map_err(unavailable)?;
-    let page = connection::Page::new(ctx, total)?;
+    let page = crate::backend::api::graphql::connection::Page::new(ctx, total)?;
     query.limit = page.limit;
     query.offset = page.offset;
     let rows = if page.limit == 0 {
@@ -172,7 +183,11 @@ async fn connection(
             .await
             .map_err(unavailable)?
     };
-    Ok(page.finish(rows.iter().map(repository::object).collect()))
+    Ok(page.finish(
+        rows.iter()
+            .map(crate::backend::api::graphql::repository::object)
+            .collect(),
+    ))
 }
 
 pub(super) async fn forks(ctx: &Arguments, request: &RequestContext, repo: i64) -> Result<Value> {
@@ -189,7 +204,7 @@ pub(super) async fn list(
 }
 
 pub(super) async fn search(ctx: &Arguments, request: &RequestContext) -> Result<Value> {
-    connection::validate(ctx)?;
+    crate::backend::api::graphql::connection::validate(ctx)?;
     if ctx.args.try_get("type")?.enum_name()? != "REPOSITORY" {
         return Err(async_graphql::Error::new("Unsupported search type"));
     }
@@ -249,7 +264,7 @@ pub(super) async fn search(ctx: &Arguments, request: &RequestContext) -> Result<
         .await
         .map_err(unavailable)?
         .total;
-    let page = connection::Page::new(ctx, total.min(1000))?;
+    let page = crate::backend::api::graphql::connection::Page::new(ctx, total.min(1000))?;
     let hits = if page.limit > 0 {
         db::catalog_search::search(pool, viewer, &search, &options(page.offset, page.limit))
             .await
@@ -263,8 +278,8 @@ pub(super) async fn search(ctx: &Arguments, request: &RequestContext) -> Result<
         let Some(id) = hit.repository_id else {
             continue;
         };
-        match access::check_read(pool, id, viewer).await {
-            Ok(repo) => nodes.push(repository::object(&repo)),
+        match crate::backend::repositories::access::check_read(pool, id, viewer).await {
+            Ok(repo) => nodes.push(crate::backend::api::graphql::repository::object(&repo)),
             Err(AccessError::NotFound) => {}
             Err(_) => return Err(unavailable(())),
         }

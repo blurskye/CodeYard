@@ -1,14 +1,15 @@
 use super::request;
-use crate::support::{database::Database, http_client::Client, organizations::applied};
+use crate::support::{
+    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+};
 use axum::http::StatusCode;
-use codeyard::backend::db;
-use codeyard::backend::db::organizations;
+
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::NewTeam;
 use codeyard::backend::db::organizations::OrganizationProfile;
 use codeyard::backend::db::organizations::TeamPrivacy;
 use codeyard::backend::db::organizations::TeamProfile;
-use codeyard::backend::identity::tokens;
+
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
@@ -28,7 +29,7 @@ async fn contract(pg: bool) {
     )
     .await;
     let org = applied(
-        organizations::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -37,7 +38,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let foreign = applied(
-        organizations::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("foreign", OrganizationProfile::new(None, None).unwrap())
@@ -48,9 +49,15 @@ async fn contract(pg: bool) {
     );
     for (user, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
         applied(
-            organizations::add_organization_member(f.pool(), owner, org.id, user, role)
-                .await
-                .unwrap(),
+            codeyard::backend::db::organizations::add_organization_member(
+                f.pool(),
+                owner,
+                org.id,
+                user,
+                role,
+            )
+            .await
+            .unwrap(),
         );
     }
     let mut teams = Vec::new();
@@ -61,7 +68,7 @@ async fn contract(pg: bool) {
     ] {
         teams.push(
             applied(
-                organizations::create_organization_team(
+                codeyard::backend::db::organizations::create_organization_team(
                     f.pool(),
                     owner,
                     org,
@@ -91,7 +98,7 @@ async fn contract(pg: bool) {
         (other, "write"),
     ] {
         let session = Client::login(&router, f.pool(), user).await;
-        let token = tokens::create(
+        let token = codeyard::backend::identity::tokens::create(
             f.pool(),
             user,
             Some(&session.session),
@@ -480,12 +487,16 @@ async fn contract(pg: bool) {
     let email_invitation = body["id"].as_i64().unwrap();
     assert_eq!(body["login"], Value::Null);
     assert_eq!(body["email"], "late@example.com");
-    let late = db::users::accounts::create_user(f.pool(), "late", Some("late@example.com"))
-        .await
-        .unwrap()
-        .id;
+    let late = codeyard::backend::db::users::accounts::create_user(
+        f.pool(),
+        "late",
+        Some("late@example.com"),
+    )
+    .await
+    .unwrap()
+    .id;
     let late_browser = Client::login(&router, f.pool(), late).await;
-    let late_token = tokens::create(
+    let late_token = codeyard::backend::identity::tokens::create(
         f.pool(),
         late,
         Some(&late_browser.session),
@@ -529,13 +540,13 @@ async fn contract(pg: bool) {
     )
     .await;
     let code = "email-invitation-verification-code";
-    assert!(db::email::save_email_token(
+    assert!(codeyard::backend::db::email::save_email_token(
         f.pool(),
-        &db::email::EmailLink {
+        &codeyard::backend::db::email::EmailLink {
             user_id: late,
             purpose: "verify",
             email: "late@example.com",
-            token_hash: &tokens::token_hash(code),
+            token_hash: &codeyard::backend::identity::tokens::token_hash(code),
             ttl_seconds: 3600,
             subject: "Verify your email",
             body_text: "Verification code",
@@ -698,9 +709,16 @@ async fn contract(pg: bool) {
         .await;
     f.execute("UPDATE email_outbox SET attempts=5 WHERE id=$1", &[mail])
         .await;
-    db::email::mark_email_failed(f.pool(), mail, 5, "SMTP rejected the recipient", 60, 5)
-        .await
-        .unwrap();
+    codeyard::backend::db::email::mark_email_failed(
+        f.pool(),
+        mail,
+        5,
+        "SMTP rejected the recipient",
+        60,
+        5,
+    )
+    .await
+    .unwrap();
     let (_, body) = request(
         &router,
         "orgs/list-failed-invitations",

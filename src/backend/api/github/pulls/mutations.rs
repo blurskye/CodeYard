@@ -1,13 +1,10 @@
-use super::super::{auth, repository, Error, Result};
-use super::{document, target};
-use crate::backend::{
-    app::AppState,
-    db,
-    repositories::{
-        access,
-        pull_requests::{self, mutations},
-    },
-};
+use crate::backend::api::github::pulls::document;
+use crate::backend::api::github::pulls::target;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     body::Bytes,
     extract::{Path, State},
@@ -21,12 +18,12 @@ use serde_json::Value;
 use std::sync::Arc;
 
 pub(in crate::backend::api::github) fn operation_error(
-    error: pull_requests::OperationError,
+    error: crate::backend::repositories::pull_requests::OperationError,
 ) -> Error {
-    use pull_requests::OperationError::*;
+    use crate::backend::repositories::pull_requests::OperationError::*;
     match error {
         Missing { .. } => Error::missing(),
-        Unauthenticated { .. } => auth::required(),
+        Unauthenticated { .. } => crate::backend::api::github::auth::required(),
         Denied { message, .. } => Error::new(StatusCode::FORBIDDEN, message),
         // GitHub answers a pull request write it refuses with 422 (an open duplicate, a stale
         // revision, a refused stack); merges map their own 405 and 409 first.
@@ -67,17 +64,20 @@ async fn create_value(
     body: Bytes,
 ) -> Result<Response> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let viewer = viewer.ok_or_else(auth::required)?;
+    let viewer = viewer.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = viewer.user.clone();
-    let input: Create = serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
+    let input: Create =
+        serde_json::from_slice(&body).map_err(crate::backend::api::github::json_parse_error)?;
     let source = match input.issue {
-        Some(number) => mutations::PullRequestSource::Issue {
-            issue: i32::try_from(number)
-                .ok()
-                .filter(|number| *number > 0)
-                .ok_or_else(|| Error::invalid("issue must be a positive discussion number"))?,
-        },
-        None => mutations::PullRequestSource::New {
+        Some(number) => {
+            crate::backend::repositories::pull_requests::mutations::PullRequestSource::Issue {
+                issue: i32::try_from(number)
+                    .ok()
+                    .filter(|number| *number > 0)
+                    .ok_or_else(|| Error::invalid("issue must be a positive discussion number"))?,
+            }
+        }
+        None => crate::backend::repositories::pull_requests::mutations::PullRequestSource::New {
             title: input
                 .title
                 .ok_or_else(|| Error::invalid("title is required"))?,
@@ -90,13 +90,23 @@ async fn create_value(
         None => (head_owner, name.as_str()),
     };
     let head = if input.head_repo.is_some() {
-        db::repositories::records::get_repository(&state.pool, head_owner, head_name).await
+        crate::backend::db::repositories::records::get_repository(
+            &state.pool,
+            head_owner,
+            head_name,
+        )
+        .await
     } else {
-        pull_requests::branches::owner_head_repository(&state.pool, &repo, head_owner).await
+        crate::backend::repositories::pull_requests::branches::owner_head_repository(
+            &state.pool,
+            &repo,
+            head_owner,
+        )
+        .await
     }
     .map_err(Error::unavailable)?
     .ok_or_else(|| Error::invalid("Invalid head repository"))?;
-    if !access::can_read(&state.pool, Some(&actor), &head)
+    if !crate::backend::repositories::access::can_read(&state.pool, Some(&actor), &head)
         .await
         .map_err(Error::unavailable)?
     {
@@ -107,8 +117,8 @@ async fn create_value(
     viewer
         .repository_scope(&state.pool, head.id, "contents", false)
         .await
-        .map_err(auth::scope_error)?;
-    let pull = mutations::create_pull_request(
+        .map_err(crate::backend::api::github::auth::scope_error)?;
+    let pull = crate::backend::repositories::pull_requests::mutations::create_pull_request(
         &state.pool,
         &state.ci_runs,
         &state.notification_broadcaster,
@@ -118,7 +128,7 @@ async fn create_value(
         },
         owner.clone(),
         name,
-        mutations::CreatePullRequestRequest {
+        crate::backend::repositories::pull_requests::mutations::CreatePullRequestRequest {
             suppress_ci: false,
             head_repo_id: Some(head.id),
             source,
@@ -126,7 +136,9 @@ async fn create_value(
             base_branch: input.base,
             is_draft: input.draft.unwrap_or(false),
             maintainer_can_modify: Some(input.maintainer_can_modify.unwrap_or_else(|| {
-                db::pull_requests::records::can_grant_maintainer_edit(actor.id, repo.id, &head)
+                crate::backend::db::pull_requests::records::can_grant_maintainer_edit(
+                    actor.id, repo.id, &head,
+                )
             })),
         },
     )
@@ -174,11 +186,11 @@ async fn update_value(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let viewer = viewer.ok_or_else(auth::required)?;
+    let viewer = viewer.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = &viewer.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     if pull.head_repo_id.is_some()
-        && super::readable_head(&state, Some(&viewer), &pull)
+        && crate::backend::api::github::pulls::readable_head(&state, Some(&viewer), &pull)
             .await?
             .is_none()
     {
@@ -187,15 +199,15 @@ async fn update_value(
     let input: Update = if body.is_empty() {
         Update::default()
     } else {
-        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?
+        serde_json::from_slice(&body).map_err(crate::backend::api::github::json_parse_error)?
     };
-    let pull = mutations::update_pull_request_latest(
+    let pull = crate::backend::repositories::pull_requests::mutations::update_pull_request_latest(
         &state.pool,
         &state.ci_runs,
         &state.notification_broadcaster,
         actor.id,
         (repo.id, number),
-        mutations::UpdatePullRequestRequest {
+        crate::backend::repositories::pull_requests::mutations::UpdatePullRequestRequest {
             expected_state: pull.state,
             expected_updated: pull.updated_at.to_rfc3339(),
             title: input.title,

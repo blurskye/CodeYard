@@ -11,16 +11,18 @@ pub async fn page(
     limit: i64,
 ) -> Result<Option<(i64, Vec<AuditEntry>)>> {
     let mut tx = pool.begin().await?;
-    if !super::users::transitions::active_admin_session(&mut tx, &authority).await? {
+    if !crate::backend::db::sqlite::users::transitions::active_admin_session(&mut tx, &authority)
+        .await?
+    {
         return Ok(None);
     }
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log a LEFT JOIN users u ON u.id=a.actor_id WHERE a.action REGEXP ?1 AND COALESCE(u.username,'') REGEXP ?2")
-        .bind(super::search::contains(action.trim())).bind(super::search::contains(actor.trim())).fetch_one(&mut *tx).await?;
+        .bind(crate::backend::db::sqlite::search::contains(action.trim())).bind(crate::backend::db::sqlite::search::contains(actor.trim())).fetch_one(&mut *tx).await?;
     let limit = limit.clamp(1, 100);
     let page = page.clamp(1, ((total + limit - 1) / limit).max(1));
     let entries = sqlx::query_as(AUDIT_ROWS)
-        .bind(super::search::contains(action.trim()))
-        .bind(super::search::contains(actor.trim()))
+        .bind(crate::backend::db::sqlite::search::contains(action.trim()))
+        .bind(crate::backend::db::sqlite::search::contains(actor.trim()))
         .bind(limit)
         .bind((page - 1) * limit)
         .fetch_all(&mut *tx)
@@ -31,8 +33,8 @@ pub async fn page(
 
 pub async fn count_audit_entries(pool: &SqlitePool, action: &str, actor: &str) -> Result<i64> {
     Ok(sqlx::query_scalar("SELECT COUNT(*) FROM audit_log a LEFT JOIN users u ON u.id=a.actor_id WHERE a.action REGEXP ?1 AND COALESCE(u.username,'') REGEXP ?2")
-        .bind(super::search::contains(action.trim()))
-        .bind(super::search::contains(actor.trim()))
+        .bind(crate::backend::db::sqlite::search::contains(action.trim()))
+        .bind(crate::backend::db::sqlite::search::contains(actor.trim()))
         .fetch_one(pool)
         .await?)
 }
@@ -47,8 +49,8 @@ pub async fn list_audit_entries(
     offset: i64,
 ) -> Result<Vec<AuditEntry>> {
     Ok(sqlx::query_as(AUDIT_ROWS)
-        .bind(super::search::contains(action.trim()))
-        .bind(super::search::contains(actor.trim()))
+        .bind(crate::backend::db::sqlite::search::contains(action.trim()))
+        .bind(crate::backend::db::sqlite::search::contains(actor.trim()))
         .bind(limit.clamp(1, 100))
         .bind(offset.max(0))
         .fetch_all(pool)

@@ -4,7 +4,7 @@ use crate::support::fake_s3::FakeS3;
 use crate::support::native_database as native;
 use crate::support::server::spawn_on_free_ports;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard::backend::db;
+
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use std::{
@@ -149,7 +149,7 @@ pub async fn write_token(pool: &codeyard_db_core::DbPool, owner: i64) -> String 
     let token = native::token();
     let stored = hex::encode(Sha256::digest(token.as_bytes()));
     let session = native::token();
-    db::users::sessions::create_session(
+    codeyard::backend::db::users::sessions::create_session(
         pool,
         &session,
         owner,
@@ -159,9 +159,11 @@ pub async fn write_token(pool: &codeyard_db_core::DbPool, owner: i64) -> String 
     )
     .await
     .unwrap();
-    db::users::tokens::create_token(pool, owner, &session, "push", &stored, "write", None)
-        .await
-        .unwrap()
-        .unwrap();
+    codeyard::backend::db::users::tokens::create_token(
+        pool, owner, &session, "push", &stored, "write", None,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     token
 }

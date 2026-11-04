@@ -1,12 +1,15 @@
 use crate::backend::ci::CiRuns;
 use crate::backend::db::repositories::records::get_git_repository;
 use crate::backend::db::users::ssh_keys::get_user_by_key_fingerprint;
-use crate::backend::repositories::deploy_keys;
-use crate::backend::repositories::git_sessions::{validation, GitTasks, ReceiveCredential};
-use crate::backend::repositories::store::{
-    repo_store, GitService, GitSession, GitStreams, RepoStore,
-};
-use crate::backend::repositories::traffic;
+
+use crate::backend::repositories::git_sessions::GitTasks;
+use crate::backend::repositories::git_sessions::ReceiveCredential;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::GitService;
+use crate::backend::repositories::store::GitSession;
+use crate::backend::repositories::store::GitStreams;
+use crate::backend::repositories::store::RepoStore;
+
 use crate::backend::ssh::rate_limit::RateLimiter;
 use anyhow::Result;
 use bytes::Bytes;
@@ -442,7 +445,10 @@ impl russh::server::Handler for GitSshHandler {
             .filter(|state| state.channel.is_some())
             .filter(|_| variable_name == "GIT_PROTOCOL")
             .and_then(|state| {
-                let protocol = validation::protocol(Some(variable_value)).ok()?;
+                let protocol = crate::backend::repositories::git_sessions::validation::protocol(
+                    Some(variable_value),
+                )
+                .ok()?;
                 state.git_protocol = protocol.map(str::to_owned);
                 Some(())
             })
@@ -519,17 +525,18 @@ impl russh::server::Handler for GitSshHandler {
             return Ok(());
         }
         // Parse git command
-        let git_cmd = match validation::parse_command(&command) {
-            Ok(cmd) => cmd,
-            Err(_) => {
-                self.refuse_command(
-                    channel,
-                    session,
-                    "Invalid command. Only git operations are allowed.",
-                );
-                return Ok(());
-            }
-        };
+        let git_cmd =
+            match crate::backend::repositories::git_sessions::validation::parse_command(&command) {
+                Ok(cmd) => cmd,
+                Err(_) => {
+                    self.refuse_command(
+                        channel,
+                        session,
+                        "Invalid command. Only git operations are allowed.",
+                    );
+                    return Ok(());
+                }
+            };
 
         info!(
             "Git command for {}/{} (write={})",
@@ -624,13 +631,13 @@ impl russh::server::Handler for GitSshHandler {
                     _permit = wait_for_session_slot(&store, &queued).await?;
                 }
                 match credential {
-                    ReceiveCredential::DeployKey(id) => { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), deploy_keys::record_use(&pool, id)).await; }
+                    ReceiveCredential::DeployKey(id) => { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), crate::backend::repositories::deploy_keys::record_use(&pool, id)).await; }
                     ReceiveCredential::SshKey(id) => { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), crate::backend::db::users::ssh_keys::touch_ssh_key(&pool, id)).await; }
                     _ => {}
                 }
                 let (actor,_) = tokio::time::timeout(std::time::Duration::from_secs(5), credential.authorize(&pool, &repo, git_cmd.write)).await??;
-                let visitor=match credential { ReceiveCredential::DeployKey(id)=>traffic::Identity::deploy_key(id), _=>traffic::Identity::account(actor.id) };
-                let observation=traffic::clone::Observation::default();
+                let visitor=match credential { ReceiveCredential::DeployKey(id)=>crate::backend::repositories::traffic::Identity::deploy_key(id), _=>crate::backend::repositories::traffic::Identity::account(actor.id) };
+                let observation=crate::backend::repositories::traffic::clone::Observation::default();
                 let mut input=observation.input(io.input.as_mut().expect("open input"));
                 let mut output=observation.output(&mut output);
                 let execution = store.git_session(options, receive, GitStreams {
@@ -646,7 +653,7 @@ impl russh::server::Handler for GitSshHandler {
                 drop(_permit);
                 drop(_task_slot);
                 if !git_cmd.write && status.success() && observation.initial_transfer() {
-                    if let Some(visitor)=visitor { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), traffic::observe(&pool,repo.id,&visitor,&traffic::Metric::clone_transfer())).await; }
+                    if let Some(visitor)=visitor { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), crate::backend::repositories::traffic::observe(&pool,repo.id,&visitor,&crate::backend::repositories::traffic::Metric::clone_transfer())).await; }
                 }
                 Ok::<_,anyhow::Error>(status)
             }.await;
@@ -770,21 +777,44 @@ mod tests {
             ("owner/project.git.git.git", "project.git.git"),
         ] {
             for (service, write) in [("git-upload-pack", false), ("git-receive-pack", true)] {
-                let parsed = validation::parse_command(&format!("{service} '{path}'")).unwrap();
+                let parsed = crate::backend::repositories::git_sessions::validation::parse_command(
+                    &format!("{service} '{path}'"),
+                )
+                .unwrap();
                 assert_eq!(parsed.owner, "owner");
                 assert_eq!(parsed.repo, expected);
                 assert_eq!(parsed.write, write);
             }
         }
-        assert!(validation::parse_command("git-upload-pack 'owner/a/b.git'").is_err());
-        assert!(validation::parse_command("not-git 'owner/project.git'").is_err());
+        assert!(
+            crate::backend::repositories::git_sessions::validation::parse_command(
+                "git-upload-pack 'owner/a/b.git'"
+            )
+            .is_err()
+        );
+        assert!(
+            crate::backend::repositories::git_sessions::validation::parse_command(
+                "not-git 'owner/project.git'"
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn builtin_git_commands_use_the_shared_parser() {
         // The built-in server uses the OpenSSH helper's parser, which refuses extra slashes.
-        assert!(validation::parse_command("git-upload-pack //alice/repo.git").is_err());
-        assert!(validation::parse_command("git-upload-pack 'alice/repo.git'").is_ok());
+        assert!(
+            crate::backend::repositories::git_sessions::validation::parse_command(
+                "git-upload-pack //alice/repo.git"
+            )
+            .is_err()
+        );
+        assert!(
+            crate::backend::repositories::git_sessions::validation::parse_command(
+                "git-upload-pack 'alice/repo.git'"
+            )
+            .is_ok()
+        );
     }
 
     #[tokio::test]

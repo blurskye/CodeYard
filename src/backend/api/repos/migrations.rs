@@ -1,18 +1,14 @@
 //! Native migration forms share import admission and storage publication with REST.
-use super::{chrome::load_database, collection::load_choices};
-use crate::backend::{
-    api::{
-        http::{context::PageContext, session},
-        user::responses::field,
-    },
-    app::AppState,
-    db,
-    repositories::{
-        imports::{self, ImportCredential},
-        lifecycle,
-        store::repo_store,
-    },
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::repos::chrome::load_database;
+use crate::backend::api::repos::collection::load_choices;
+
+use crate::backend::api::user::responses::field;
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::imports::ImportCredential;
+
+use crate::backend::repositories::store::repo_store;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -25,13 +21,15 @@ use codeyard_webui::{
 };
 use std::{collections::HashMap, sync::Arc};
 
-fn source_credentials(form: &HashMap<String, String>) -> Option<imports::Credentials> {
+fn source_credentials(
+    form: &HashMap<String, String>,
+) -> Option<crate::backend::repositories::imports::Credentials> {
     let username = field(form, "source_username");
     let password = field(form, "source_token");
     if username.is_empty() && password.is_empty() {
         return None;
     }
-    Some(imports::Credentials {
+    Some(crate::backend::repositories::imports::Credentials {
         username: if username.is_empty() { "git" } else { username }.to_owned(),
         password: password.to_owned(),
     })
@@ -113,7 +111,7 @@ pub(super) async fn create(
         Ok(user) => user,
         Err(response) => return response,
     };
-    let source = imports::source_url(field(&input, "source_url"));
+    let source = crate::backend::repositories::imports::source_url(field(&input, "source_url"));
     let form = MigrationForm {
         name: field(&input, "name").chars().take(100).collect(),
         source_url: source
@@ -125,7 +123,9 @@ pub(super) async fn create(
         action: "/new/migration".to_owned(),
         ..Default::default()
     };
-    if let Err(error) = lifecycle::validate_name(field(&input, "name")) {
+    if let Err(error) =
+        crate::backend::repositories::lifecycle::validate_name(field(&input, "name"))
+    {
         return render(
             &ctx,
             form,
@@ -163,9 +163,11 @@ pub(super) async fn create(
         .await;
     }
     let target = match field(&input, "owner_org_id") {
-        "" => db::repositories::creation::RepositoryTarget::Personal(user.id),
+        "" => crate::backend::db::repositories::creation::RepositoryTarget::Personal(user.id),
         value => match value.parse::<i64>().ok().filter(|id| *id > 0) {
-            Some(id) => db::repositories::creation::RepositoryTarget::Organization(id),
+            Some(id) => {
+                crate::backend::db::repositories::creation::RepositoryTarget::Organization(id)
+            }
             None => {
                 return render(
                     &ctx,
@@ -179,10 +181,10 @@ pub(super) async fn create(
             }
         },
     };
-    let repo = match lifecycle::provision(
+    let repo = match crate::backend::repositories::lifecycle::provision(
         (&ctx.state.pool, ctx.state.cluster.as_ref()),
         &ctx.state.repos_path,
-        db::repositories::creation::RepositoryCreationOwner {
+        crate::backend::db::repositories::creation::RepositoryCreationOwner {
             actor_id: user.id,
             target,
         },
@@ -198,23 +200,30 @@ pub(super) async fn create(
             return render(
                 &ctx,
                 form,
-                Some((super::responses::lifecycle_status(&error), error.message)),
+                Some((
+                    crate::backend::api::repos::responses::lifecycle_status(&error),
+                    error.message,
+                )),
             )
             .await
         }
     };
-    let owner =
-        match db::repositories::records::repository_owner_name(&ctx.state.pool, repo.id).await {
-            Ok(Some(owner)) => owner,
-            _ => {
-                return ctx.error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Repository created, but its owner could not be loaded.",
-                )
-            }
-        };
+    let owner = match crate::backend::db::repositories::records::repository_owner_name(
+        &ctx.state.pool,
+        repo.id,
+    )
+    .await
+    {
+        Ok(Some(owner)) => owner,
+        _ => {
+            return ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Repository created, but its owner could not be loaded.",
+            )
+        }
+    };
     let base = view::repository_url(&owner, &repo.name);
-    let credential = match session::extract_session_id(&ctx.headers) {
+    let credential = match crate::backend::api::http::session::extract_session_id(&ctx.headers) {
         Some(id) => ImportCredential::Session(id),
         None => {
             return ctx.error(
@@ -223,7 +232,7 @@ pub(super) async fn create(
             )
         }
     };
-    match imports::start(
+    match crate::backend::repositories::imports::start(
         ctx.state.clone(),
         repo,
         credential,
@@ -257,7 +266,12 @@ pub(super) async fn page(
     if !loaded.chrome.can_admin {
         return ctx.error(StatusCode::FORBIDDEN, "Repository administration required.");
     }
-    let import = match db::source_imports::get(&ctx.state.pool, loaded.repository.id).await {
+    let import = match crate::backend::db::source_imports::get(
+        &ctx.state.pool,
+        loaded.repository.id,
+    )
+    .await
+    {
         Ok(import) => import,
         Err(_) => {
             return ctx.error(
@@ -328,12 +342,12 @@ pub(super) async fn submit(
             ),
         };
     }
-    let credential = match session::extract_session_id(&ctx.headers) {
+    let credential = match crate::backend::api::http::session::extract_session_id(&ctx.headers) {
         Some(id) => ImportCredential::Session(id),
         None => return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again."),
     };
     let credentials = source_credentials(&input);
-    let result = imports::start(
+    let result = crate::backend::repositories::imports::start(
         ctx.state.clone(),
         loaded.repository.clone(),
         credential,
@@ -345,21 +359,28 @@ pub(super) async fn submit(
         Ok(_) => ctx.redirect(&base),
         Err(error) => {
             let status = match error {
-                imports::ImportError::Source | imports::ImportError::Credentials => {
+                crate::backend::repositories::imports::ImportError::Source
+                | crate::backend::repositories::imports::ImportError::Credentials => {
                     StatusCode::UNPROCESSABLE_ENTITY
                 }
-                imports::ImportError::Running | imports::ImportError::NotEmpty => {
+                crate::backend::repositories::imports::ImportError::Running
+                | crate::backend::repositories::imports::ImportError::NotEmpty => {
                     StatusCode::CONFLICT
                 }
-                imports::ImportError::Denied => StatusCode::FORBIDDEN,
-                imports::ImportError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+                crate::backend::repositories::imports::ImportError::Denied => StatusCode::FORBIDDEN,
+                crate::backend::repositories::imports::ImportError::Unavailable => {
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
             };
             let form = MigrationForm {
                 repository_id: Some(loaded.repository.id),
                 name,
-                source_url: imports::source_url(field(&input, "source_url"))
-                    .map(|url| url.to_string())
-                    .unwrap_or_default(),
+                source_url: crate::backend::repositories::imports::source_url(field(
+                    &input,
+                    "source_url",
+                ))
+                .map(|url| url.to_string())
+                .unwrap_or_default(),
                 action: format!("{base}/migration"),
                 ..Default::default()
             };

@@ -4,13 +4,13 @@
 //! database transaction queues with the change it reports.
 pub mod config;
 pub mod links;
-mod messages;
+
 pub mod outbox;
 pub mod send;
 
-use crate::backend::api::http::config::public_origin;
-use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db;
+use codeyard_model::http_config::public_origin;
+use codeyard_support::secrets::SecretEncryptor;
+
 use codeyard_db_core::DbPool;
 use tracing::warn;
 
@@ -20,15 +20,15 @@ pub async fn notify_user(pool: &DbPool, notification: &codeyard_db_core::models:
     if !config::is_configured(pool).await {
         return;
     }
-    match db::email::notification_email_address(pool, notification.user_id).await {
+    match crate::backend::db::email::notification_email_address(pool, notification.user_id).await {
         Ok(Some(to)) => {
-            let mail = messages::notification(
+            let mail = codeyard_model::mail_messages::notification(
                 &public_origin(),
                 &notification.title,
                 notification.body.as_deref(),
                 notification.link.as_deref(),
             );
-            if let Err(error) = db::email::enqueue_notification_email(
+            if let Err(error) = crate::backend::db::email::enqueue_notification_email(
                 pool,
                 notification.id,
                 &to,
@@ -43,18 +43,6 @@ pub async fn notify_user(pool: &DbPool, notification: &codeyard_db_core::models:
         Ok(None) => {}
         Err(error) => warn!(%error, "could not look up the address for a notification email"),
     }
-}
-
-/// The offer of a seat in organization `name`. The database queues it in the transaction that
-/// saves the invitation, linked to it so exhausted SMTP retries can be reported.
-pub fn organization_invitation(name: &str) -> messages::Mail {
-    messages::organization_invitation(&public_origin(), name)
-}
-
-/// Tells the person who asked for an account that an administrator decided on the request. The
-/// database queues it in the transaction that records the decision.
-pub fn signup_decision(username: &str, approved: bool) -> messages::Mail {
-    messages::signup_decision(&public_origin(), username, approved)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -88,7 +76,7 @@ pub async fn send_test(
         .map(str::trim)
         .filter(|email| !email.is_empty())
         .ok_or(TestMailError::NoAddress)?;
-    let mail = messages::test_message();
+    let mail = codeyard_model::mail_messages::test_message();
     send::send(&config, to, &mail.subject, &mail.body)
         .await
         .map_err(TestMailError::Delivery)?;
@@ -116,9 +104,13 @@ mod tests {
         .await
         .unwrap();
         codeyard_db_core::run_migrations(&pool).await.unwrap();
-        let admin = db::users::accounts::create_user(&pool, "admin", Some("admin@example.com"))
-            .await
-            .unwrap();
+        let admin = crate::backend::db::users::accounts::create_user(
+            &pool,
+            "admin",
+            Some("admin@example.com"),
+        )
+        .await
+        .unwrap();
         let DbPool::Sqlite(raw) = &pool else {
             unreachable!()
         };
@@ -165,7 +157,7 @@ mod tests {
             Some((ciphertext.as_slice(), nonce.as_slice())),
         );
         assert!(
-            db::email::save_email_settings(&f.pool, f.admin, "live", &first)
+            crate::backend::db::email::save_email_settings(&f.pool, f.admin, "live", &first)
                 .await
                 .unwrap()
         );
@@ -182,7 +174,7 @@ mod tests {
         // Saving without a password keeps the one already stored.
         let second = settings("smtp.example.org", None);
         assert!(
-            db::email::save_email_settings(&f.pool, f.admin, "live", &second)
+            crate::backend::db::email::save_email_settings(&f.pool, f.admin, "live", &second)
                 .await
                 .unwrap()
         );
@@ -203,20 +195,20 @@ mod tests {
     async fn only_a_signed_in_administrator_can_save() {
         let f = fixture().await;
         let input = settings("mail.example.com", None);
-        assert!(
-            !db::email::save_email_settings(&f.pool, f.admin, "expired", &input)
-                .await
-                .unwrap()
-        );
-        let user = db::users::accounts::create_user(&f.pool, "bob", None)
+        assert!(!crate::backend::db::email::save_email_settings(
+            &f.pool, f.admin, "expired", &input
+        )
+        .await
+        .unwrap());
+        let user = crate::backend::db::users::accounts::create_user(&f.pool, "bob", None)
             .await
             .unwrap();
         assert!(
-            !db::email::save_email_settings(&f.pool, user.id, "live", &input)
+            !crate::backend::db::email::save_email_settings(&f.pool, user.id, "live", &input)
                 .await
                 .unwrap()
         );
-        assert!(db::email::get_email_settings(&f.pool)
+        assert!(crate::backend::db::email::get_email_settings(&f.pool)
             .await
             .unwrap()
             .is_none());
@@ -225,47 +217,51 @@ mod tests {
     #[tokio::test]
     async fn notification_mail_needs_a_verified_address_and_the_preference() {
         let f = fixture().await;
-        let unverified = db::users::accounts::create_user(&f.pool, "bob", Some("bob@example.com"))
-            .await
-            .unwrap();
+        let unverified = crate::backend::db::users::accounts::create_user(
+            &f.pool,
+            "bob",
+            Some("bob@example.com"),
+        )
+        .await
+        .unwrap();
         assert_eq!(
-            db::email::notification_email_address(&f.pool, f.admin)
+            crate::backend::db::email::notification_email_address(&f.pool, f.admin)
                 .await
                 .unwrap()
                 .as_deref(),
             Some("admin@example.com")
         );
         assert_eq!(
-            db::email::notification_email_address(&f.pool, unverified.id)
+            crate::backend::db::email::notification_email_address(&f.pool, unverified.id)
                 .await
                 .unwrap(),
             None
         );
 
-        assert!(db::email::get_email_notifications(
+        assert!(crate::backend::db::email::get_email_notifications(
             &f.pool,
             f.admin,
-            &db::users::accounts::AccountCredential::Session("live")
+            &crate::backend::db::users::accounts::AccountCredential::Session("live")
         )
         .await
         .unwrap());
-        db::email::set_email_notifications(
+        crate::backend::db::email::set_email_notifications(
             &f.pool,
             f.admin,
-            &db::users::accounts::AccountCredential::Session("live"),
+            &crate::backend::db::users::accounts::AccountCredential::Session("live"),
             false,
         )
         .await
         .unwrap();
-        assert!(!db::email::get_email_notifications(
+        assert!(!crate::backend::db::email::get_email_notifications(
             &f.pool,
             f.admin,
-            &db::users::accounts::AccountCredential::Session("live")
+            &crate::backend::db::users::accounts::AccountCredential::Session("live")
         )
         .await
         .unwrap());
         assert_eq!(
-            db::email::notification_email_address(&f.pool, f.admin)
+            crate::backend::db::email::notification_email_address(&f.pool, f.admin)
                 .await
                 .unwrap(),
             None
@@ -277,9 +273,9 @@ mod tests {
         let f = fixture().await;
         static NO_METADATA: serde_json::Value = serde_json::Value::Null;
         let notification = |body: Option<&'static str>, link: Option<&'static str>| {
-            db::notifications::records::create_notification(
+            crate::backend::db::notifications::records::create_notification(
                 &f.pool,
-                db::notifications::records::NewNotification {
+                crate::backend::db::notifications::records::NewNotification {
                     user_id: f.admin,
                     actor_id: None,
                     repo_id: None,
@@ -293,10 +289,10 @@ mod tests {
         };
         notify_user(&f.pool, &notification(None, None).await.unwrap()).await;
         // Signup review needs a finished setup and a live administrator session.
-        db::node_config::upsert_node_configuration(&f.pool, "public", true)
+        crate::backend::db::node_config::upsert_node_configuration(&f.pool, "public", true)
             .await
             .unwrap();
-        let early = db::users::signup_requests::create_signup_request(
+        let early = crate::backend::db::users::signup_requests::create_signup_request(
             &f.pool,
             "carol",
             Some("carol@example.com"),
@@ -304,25 +300,25 @@ mod tests {
         )
         .await
         .unwrap();
-        db::users::signup_requests::reject_signup_request(
+        crate::backend::db::users::signup_requests::reject_signup_request(
             &f.pool,
             early.id,
             (f.admin, "live".to_owned()),
         )
         .await
         .unwrap();
-        assert!(db::email::claim_due_email(&f.pool, 5, 600)
+        assert!(crate::backend::db::email::claim_due_email(&f.pool, 5, 600)
             .await
             .unwrap()
             .is_none());
 
         let input = settings("mail.example.com", None);
-        db::email::save_email_settings(&f.pool, f.admin, "live", &input)
+        crate::backend::db::email::save_email_settings(&f.pool, f.admin, "live", &input)
             .await
             .unwrap();
         let mail = notification(Some("Body"), Some("/x")).await.unwrap();
         notify_user(&f.pool, &mail).await;
-        let later = db::users::signup_requests::create_signup_request(
+        let later = crate::backend::db::users::signup_requests::create_signup_request(
             &f.pool,
             "dave",
             Some("dave@example.com"),
@@ -330,18 +326,18 @@ mod tests {
         )
         .await
         .unwrap();
-        db::users::signup_requests::reject_signup_request(
+        crate::backend::db::users::signup_requests::reject_signup_request(
             &f.pool,
             later.id,
             (f.admin, "live".to_owned()),
         )
         .await
         .unwrap();
-        let first = db::email::claim_due_email(&f.pool, 5, 600)
+        let first = crate::backend::db::email::claim_due_email(&f.pool, 5, 600)
             .await
             .unwrap()
             .unwrap();
-        let second = db::email::claim_due_email(&f.pool, 5, 600)
+        let second = crate::backend::db::email::claim_due_email(&f.pool, 5, 600)
             .await
             .unwrap()
             .unwrap();
@@ -351,9 +347,11 @@ mod tests {
         );
         assert_eq!(first.notification_id, Some(mail.id));
         assert!(
-            db::notifications::records::notification_email_allowed(&f.pool, mail.id)
-                .await
-                .unwrap()
+            crate::backend::db::notifications::records::notification_email_allowed(
+                &f.pool, mail.id
+            )
+            .await
+            .unwrap()
         );
         // The signup decision mail is queued with the decision once a mail server is set up.
         assert_eq!(second.to_address, "dave@example.com");
@@ -365,14 +363,14 @@ mod tests {
         let DbPool::Sqlite(raw) = &f.pool else {
             unreachable!()
         };
-        db::email::enqueue_email(&f.pool, "a@example.com", "One", "Body")
+        crate::backend::db::email::enqueue_email(&f.pool, "a@example.com", "One", "Body")
             .await
             .unwrap();
 
         // Two claims at once get the one message between them.
         let (left, right) = tokio::join!(
-            db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600),
-            db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600),
+            crate::backend::db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600),
+            crate::backend::db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600),
         );
         let claimed: Vec<_> = [left.unwrap(), right.unwrap()]
             .into_iter()
@@ -382,7 +380,7 @@ mod tests {
         assert_eq!(claimed[0].attempts, 1);
         // A claimed message is held, so it is not handed out again.
         assert!(
-            db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
+            crate::backend::db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
                 .await
                 .unwrap()
                 .is_none()
@@ -391,12 +389,20 @@ mod tests {
         // Each failure sets the next attempt; with no wait it is due again at once.
         let id = claimed[0].id;
         for attempts in 1..=outbox::MAX_ATTEMPTS {
-            db::email::mark_email_failed(&f.pool, id, attempts, "refused", 0, outbox::MAX_ATTEMPTS)
-                .await
-                .unwrap();
-            let next = db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
-                .await
-                .unwrap();
+            crate::backend::db::email::mark_email_failed(
+                &f.pool,
+                id,
+                attempts,
+                "refused",
+                0,
+                outbox::MAX_ATTEMPTS,
+            )
+            .await
+            .unwrap();
+            let next =
+                crate::backend::db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
+                    .await
+                    .unwrap();
             if attempts == outbox::MAX_ATTEMPTS {
                 assert!(
                     next.is_none(),
@@ -417,14 +423,14 @@ mod tests {
         assert_eq!(body, "", "a given-up message keeps no body");
 
         // A failure with a wait is not due yet.
-        db::email::enqueue_email(&f.pool, "b@example.com", "Two", "Body")
+        crate::backend::db::email::enqueue_email(&f.pool, "b@example.com", "Two", "Body")
             .await
             .unwrap();
-        let two = db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
+        let two = crate::backend::db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
             .await
             .unwrap()
             .unwrap();
-        db::email::mark_email_failed(
+        crate::backend::db::email::mark_email_failed(
             &f.pool,
             two.id,
             two.attempts,
@@ -435,14 +441,14 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
+            crate::backend::db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
                 .await
                 .unwrap()
                 .is_none()
         );
 
         // Sent mail and given-up mail are pruned once old; waiting mail stays.
-        db::email::enqueue_email(&f.pool, "c@example.com", "Three", "Body")
+        crate::backend::db::email::enqueue_email(&f.pool, "c@example.com", "Three", "Body")
             .await
             .unwrap();
         sqlx::query("UPDATE email_outbox SET sent_at=created_at WHERE subject='Three'")
@@ -454,7 +460,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            db::email::remove_old_email(&f.pool, outbox::MAX_ATTEMPTS, 14)
+            crate::backend::db::email::remove_old_email(&f.pool, outbox::MAX_ATTEMPTS, 14)
                 .await
                 .unwrap(),
             2
@@ -466,20 +472,23 @@ mod tests {
         assert_eq!(left, ["Two"]);
 
         // A sender that dies mid-send still uses up the attempts, and the message is given up.
-        db::email::enqueue_email(&f.pool, "d@example.com", "Four", "Body")
+        crate::backend::db::email::enqueue_email(&f.pool, "d@example.com", "Four", "Body")
             .await
             .unwrap();
         for attempt in 1..=outbox::MAX_ATTEMPTS {
-            let claimed = db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 0)
-                .await
-                .unwrap()
-                .unwrap();
+            let claimed =
+                crate::backend::db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 0)
+                    .await
+                    .unwrap()
+                    .unwrap();
             assert_eq!(claimed.attempts, attempt);
         }
-        assert!(db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 0)
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            crate::backend::db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 0)
+                .await
+                .unwrap()
+                .is_none()
+        );
         let (error, body): (String, String) =
             sqlx::query_as("SELECT last_error, body_text FROM email_outbox WHERE subject='Four'")
                 .fetch_one(raw)

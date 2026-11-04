@@ -1,13 +1,13 @@
 //! Workflow concurrency combines immutable admission inputs with transaction-assigned run identity.
-use super::admission::AdmissionError;
-use crate::backend::db::action_concurrency::Configuration;
+use crate::ci_admission::AdmissionError;
+use crate::ci_concurrency::Configuration;
 use codeyard_actions::expressions::{self, Contexts, Status};
 
-pub(crate) async fn resolve(
+pub async fn resolve(
     value: serde_yaml::Value,
     contexts: Contexts,
 ) -> Result<Configuration, AdmissionError> {
-    let permit = super::workflows::PARSING_SLOTS
+    let permit = codeyard_model::workflow_yaml::PARSING_SLOTS
         .acquire()
         .await
         .map_err(|_| AdmissionError::Unavailable)?;
@@ -19,9 +19,9 @@ pub(crate) async fn resolve(
     .map_err(|_| AdmissionError::Unavailable)?
 }
 
-pub(crate) fn run_contexts(
+pub fn run_contexts(
     mut contexts: Contexts,
-    run: &codeyard_db_core::models::CiRun,
+    run: &crate::models::CiRun,
     original_actor: Option<(i64, String)>,
 ) -> Contexts {
     use expressions::Value;

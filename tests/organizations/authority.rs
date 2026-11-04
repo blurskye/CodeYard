@@ -6,7 +6,7 @@
 use crate::support::database::wait_until_blocked;
 use crate::support::organizations::applied;
 use crate::support::production_ci;
-use codeyard::backend::db;
+
 use codeyard::backend::db::organizations::*;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Repository;
@@ -156,7 +156,7 @@ impl Database {
         (cancelled, flagged)
     }
     async fn actor(&self, name: &str) -> i64 {
-        db::users::accounts::create_user(&self.pool, name, None)
+        codeyard::backend::db::users::accounts::create_user(&self.pool, name, None)
             .await
             .unwrap()
             .id
@@ -199,7 +199,7 @@ impl Database {
         )
     }
     async fn repo(&self, owner: i64, org: Option<i64>, name: &str) -> Repository {
-        let repository = db::repositories::records::create_repository(
+        let repository = codeyard::backend::db::repositories::records::create_repository(
             &self.pool,
             owner,
             name,
@@ -212,10 +212,13 @@ impl Database {
         if let Some(org) = org {
             self.execute("UPDATE repositories SET owner_kind='org',owner_user_id=NULL,owner_org_id=$1 WHERE id=$2", &[org, repository.id]).await;
         }
-        db::repositories::records::get_repository_by_id(&self.pool, repository.id)
-            .await
-            .unwrap()
-            .unwrap()
+        codeyard::backend::db::repositories::records::get_repository_by_id(
+            &self.pool,
+            repository.id,
+        )
+        .await
+        .unwrap()
+        .unwrap()
     }
     async fn close(&mut self) {
         self.pool.close().await;
@@ -264,10 +267,14 @@ async fn profile_repository_access(pg: bool) {
         .await;
     let page = || OrganizationPage::new(0, 30).unwrap();
     assert!(
-        !db::repositories::access::get_user_repo_access(&database.pool, member, repo.id)
-            .await
-            .unwrap()
-            .can_read()
+        !codeyard::backend::db::repositories::access::get_user_repo_access(
+            &database.pool,
+            member,
+            repo.id
+        )
+        .await
+        .unwrap()
+        .can_read()
     );
     assert!(
         list_organization_profile_repositories(&database.pool, org.id, Some(member), page())
@@ -281,7 +288,7 @@ async fn profile_repository_access(pg: bool) {
             .unwrap(),
         0
     );
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         &database.pool,
         member,
         repo.id,
@@ -369,7 +376,7 @@ async fn atomic_creation_safe_metadata_namespace_and_validation(database: &Datab
         update_organization_profile(
             &database.pool,
             owner,
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard::backend::db::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&database.pool, owner).await,
             ),
             organization.id,
@@ -432,7 +439,7 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
         update_organization_profile(
             &database.pool,
             outsider,
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard::backend::db::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&database.pool, outsider).await
             ),
             org.id,
@@ -446,7 +453,7 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
         update_organization_profile(
             &database.pool,
             member,
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard::backend::db::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&database.pool, member).await
             ),
             org.id,
@@ -460,7 +467,7 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
         update_organization_profile(
             &database.pool,
             admin,
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard::backend::db::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&database.pool, admin).await,
             ),
             org.id,
@@ -520,7 +527,7 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
             update_organization_profile(
                 &database.pool,
                 admin,
-                &db::users::accounts::AccountCredential::Session(
+                &codeyard::backend::db::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(&database.pool, admin).await
                 ),
                 org.id,
@@ -554,7 +561,7 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
         update_organization_profile(
             &database.pool,
             900_000,
-            &db::users::accounts::AccountCredential::Session("missing"),
+            &codeyard::backend::db::users::accounts::AccountCredential::Session("missing"),
             org.id,
             &profile()
         )
@@ -805,9 +812,13 @@ async fn same_org_teams_secret_visibility_and_permissions(database: &Database) {
         .unwrap(),
     );
     assert_eq!(
-        db::organizations::get_organization_repo_access(&database.pool, member, &repo)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::get_organization_repo_access(
+            &database.pool,
+            member,
+            &repo
+        )
+        .await
+        .unwrap(),
         codeyard_db_core::models::AccessLevel::Write
     );
     for level in 1..=5 {
@@ -890,15 +901,23 @@ async fn same_org_teams_secret_visibility_and_permissions(database: &Database) {
             .unwrap(),
     );
     assert_eq!(
-        db::organizations::get_organization_repo_access(&database.pool, other, &repo)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::get_organization_repo_access(
+            &database.pool,
+            other,
+            &repo
+        )
+        .await
+        .unwrap(),
         codeyard_db_core::models::AccessLevel::None
     );
     assert_eq!(
-        db::organizations::get_organization_repo_access(&database.pool, owner, &repo)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::get_organization_repo_access(
+            &database.pool,
+            owner,
+            &repo
+        )
+        .await
+        .unwrap(),
         codeyard_db_core::models::AccessLevel::Owner
     );
     assert!(matches!(
@@ -1104,7 +1123,7 @@ async fn invalid_persisted_roles_levels_and_joins_fail_closed(database: &Databas
             update_organization_profile(
                 &database.pool,
                 member,
-                &db::users::accounts::AccountCredential::Session(
+                &codeyard::backend::db::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(&database.pool, member).await
                 ),
                 org.id,
@@ -1403,7 +1422,7 @@ async fn revocation_cleanup_cancellation_downgrade_and_collaborator_regrant(data
         .await
         .unwrap(),
     );
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         &database.pool,
         member,
         repo.id,
@@ -1411,7 +1430,7 @@ async fn revocation_cleanup_cancellation_downgrade_and_collaborator_regrant(data
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         &database.pool,
         member,
         other_repo.id,
@@ -1489,9 +1508,13 @@ async fn revocation_cleanup_cancellation_downgrade_and_collaborator_regrant(data
     );
     assert_eq!(database.count("SELECT COUNT(*) FROM ci_runs WHERE repo_id=$1 AND triggered_by_id=$2 AND cancel_requested", &[repo.id, foreign]).await, 0);
     assert_eq!(
-        db::repositories::access::get_user_repo_access(&database.pool, member, personal.id)
-            .await
-            .unwrap(),
+        codeyard::backend::db::repositories::access::get_user_repo_access(
+            &database.pool,
+            member,
+            personal.id
+        )
+        .await
+        .unwrap(),
         codeyard_db_core::models::AccessLevel::Owner
     );
     assert_eq!(
@@ -1501,7 +1524,7 @@ async fn revocation_cleanup_cancellation_downgrade_and_collaborator_regrant(data
         codeyard_db_core::models::AccessLevel::None
     );
     // A deliberate later independent collaborator grant remains possible.
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         &database.pool,
         member,
         repo.id,
@@ -1510,9 +1533,13 @@ async fn revocation_cleanup_cancellation_downgrade_and_collaborator_regrant(data
     .await
     .unwrap();
     assert_eq!(
-        db::repositories::access::get_user_repo_access(&database.pool, member, repo.id)
-            .await
-            .unwrap(),
+        codeyard::backend::db::repositories::access::get_user_repo_access(
+            &database.pool,
+            member,
+            repo.id
+        )
+        .await
+        .unwrap(),
         codeyard_db_core::models::AccessLevel::Read
     );
     assert_eq!(
@@ -1560,7 +1587,7 @@ async fn cancellation_failure_rolls_back_entire_membership_revocation(database: 
         .await
         .unwrap(),
     );
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         &database.pool,
         member,
         repo.id,
@@ -1723,7 +1750,7 @@ async fn numeric_user_org_collision_and_personal_owner_unchanged(database: &Data
         update_organization_profile(
             &database.pool,
             700000,
-            &db::users::accounts::AccountCredential::Session("missing"),
+            &codeyard::backend::db::users::accounts::AccountCredential::Session("missing"),
             700000,
             &profile()
         )
@@ -1744,9 +1771,13 @@ async fn numeric_user_org_collision_and_personal_owner_unchanged(database: &Data
         codeyard_db_core::models::AccessLevel::None
     );
     assert_eq!(
-        db::repositories::access::get_user_repo_access(&database.pool, 700000, personal.id)
-            .await
-            .unwrap(),
+        codeyard::backend::db::repositories::access::get_user_repo_access(
+            &database.pool,
+            700000,
+            personal.id
+        )
+        .await
+        .unwrap(),
         codeyard_db_core::models::AccessLevel::Owner
     );
     let mut malformed = repository.clone();
@@ -1850,7 +1881,7 @@ async fn visible_team_repositories_require_effective_read(database: &Database) {
             &[public.id],
         )
         .await;
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         &database.pool,
         reader,
         direct.id,
@@ -1965,7 +1996,7 @@ async fn visible_team_repositories_require_effective_read(database: &Database) {
         );
     }
     for level in 1..=5 {
-        db::repositories::access::grant_repo_access(
+        codeyard::backend::db::repositories::access::grant_repo_access(
             &database.pool,
             reader,
             hidden.id,
@@ -2476,7 +2507,7 @@ async fn scoped_cleanup_and_team_deletion(database: &Database) {
             &[team.id, foreign_repo.id],
         )
         .await;
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         &database.pool,
         member,
         foreign_repo.id,
@@ -2690,10 +2721,15 @@ async fn suspended_governance_and_explicit_audited_recovery(database: &Database)
     ));
     assert!(
         matches!(
-            db::users::transitions::change_ban(&database.pool, administrator, owner, true)
-                .await
-                .unwrap(),
-            db::users::transitions::BanChange::Updated(_)
+            codeyard::backend::db::users::transitions::change_ban(
+                &database.pool,
+                administrator,
+                owner,
+                true
+            )
+            .await
+            .unwrap(),
+            codeyard::backend::db::users::transitions::BanChange::Updated(_)
         ),
         "last tenant owner must not be immune to a justified account ban"
     );
@@ -2714,7 +2750,7 @@ async fn suspended_governance_and_explicit_audited_recovery(database: &Database)
         update_organization_profile(
             &database.pool,
             replacement,
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard::backend::db::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&database.pool, replacement).await
             ),
             org.id,
@@ -2862,9 +2898,14 @@ async fn suspended_governance_and_explicit_audited_recovery(database: &Database)
         .await
         .unwrap(),
     );
-    db::users::accounts::update_user_password(&database.pool, original, "owned-old-hash", true)
-        .await
-        .unwrap();
+    codeyard::backend::db::users::accounts::update_user_password(
+        &database.pool,
+        original,
+        "owned-old-hash",
+        true,
+    )
+    .await
+    .unwrap();
     assert!(
         applied(
             get_organization_metadata(&database.pool, observer, reset_org.id)
@@ -2873,18 +2914,20 @@ async fn suspended_governance_and_explicit_audited_recovery(database: &Database)
         )
         .governance_suspended
     );
-    assert!(db::users::transitions::compare_exchange_password(
-        &database.pool,
-        original,
-        "owned-old-hash",
-        "owned-new-hash",
-        true,
-        true,
-        None,
-    )
-    .await
-    .unwrap()
-    .is_some());
+    assert!(
+        codeyard::backend::db::users::transitions::compare_exchange_password(
+            &database.pool,
+            original,
+            "owned-old-hash",
+            "owned-new-hash",
+            true,
+            true,
+            None,
+        )
+        .await
+        .unwrap()
+        .is_some()
+    );
     assert!(
         !applied(
             get_organization_metadata(&database.pool, original, reset_org.id)
@@ -2959,7 +3002,7 @@ async fn postgres_organization_writes_finish_before_banning_non_owner_admin() {
                         update_organization_profile(
                             &pool,
                             admin,
-                            &db::users::accounts::AccountCredential::Session(
+                            &codeyard::backend::db::users::accounts::AccountCredential::Session(
                                 &crate::support::live_session(&pool, admin).await,
                             ),
                             org,
@@ -2986,7 +3029,7 @@ async fn postgres_organization_writes_finish_before_banning_non_owner_admin() {
         wait_until_blocked(&raw, holder, 1).await;
         let pool = database.pool.clone();
         let banning = tokio::spawn(async move {
-            db::users::transitions::change_ban(&pool, site, admin, true).await
+            codeyard::backend::db::users::transitions::change_ban(&pool, site, admin, true).await
         });
         // The ban must wait without locking the owner, which the write still needs.
         wait_until_blocked(&raw, holder, 2).await;
@@ -3002,13 +3045,13 @@ async fn postgres_organization_writes_finish_before_banning_non_owner_admin() {
             .unwrap();
         assert!(matches!(
             banned,
-            db::users::transitions::BanChange::Updated(user) if user.is_banned
+            codeyard::backend::db::users::transitions::BanChange::Updated(user) if user.is_banned
         ));
         assert!(matches!(
             update_organization_profile(
                 &database.pool,
                 admin,
-                &db::users::accounts::AccountCredential::Session(
+                &codeyard::backend::db::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(&database.pool, admin).await
                 ),
                 org,
@@ -3055,7 +3098,7 @@ async fn postgres_account_transition_includes_a_concurrent_owner_promotion() {
     let repository = database
         .repo(original, Some(organization.id), "promotion_repo")
         .await;
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         &database.pool,
         runner,
         repository.id,
@@ -3064,10 +3107,10 @@ async fn postgres_account_transition_includes_a_concurrent_owner_promotion() {
     .await
     .unwrap();
     assert!(matches!(
-        db::users::transitions::change_ban(&database.pool, site, original, true)
+        codeyard::backend::db::users::transitions::change_ban(&database.pool, site, original, true)
             .await
             .unwrap(),
-        db::users::transitions::BanChange::Updated(user) if user.is_banned
+        codeyard::backend::db::users::transitions::BanChange::Updated(user) if user.is_banned
     ));
     database.run(repository.id, runner, "queued").await;
 
@@ -3094,7 +3137,7 @@ async fn postgres_account_transition_includes_a_concurrent_owner_promotion() {
     wait_until_blocked(&raw, holder, 1).await;
     let pool = database.pool.clone();
     let banning = tokio::spawn(async move {
-        db::users::transitions::change_ban(&pool, site, replacement, true).await
+        codeyard::backend::db::users::transitions::change_ban(&pool, site, replacement, true).await
     });
     wait_until_blocked(&raw, holder, 2).await;
     gate.commit().await.unwrap();
@@ -3112,7 +3155,7 @@ async fn postgres_account_transition_includes_a_concurrent_owner_promotion() {
         .unwrap();
     assert!(matches!(
         banned,
-        db::users::transitions::BanChange::Updated(user) if user.is_banned
+        codeyard::backend::db::users::transitions::BanChange::Updated(user) if user.is_banned
     ));
     assert_eq!(database.stopped_runs(repository.id, runner).await, (1, 0));
     database.close().await;
@@ -3166,7 +3209,7 @@ async fn removal_and_acceptance_race_leaves_no_member(database: &Database) {
 /// Native organization writes recheck the browser session inside their transaction, so a
 /// signed-out session cannot finish a membership, team, block or invitation change.
 async fn ended_sessions_cannot_manage_the_organization(database: &Database) {
-    use db::credentials::Actor;
+    use codeyard::backend::db::credentials::Actor;
     let owner = database.actor("ended_session_owner").await;
     let member = database.actor("ended_session_member").await;
     let invitee = database.actor("ended_session_invitee").await;
@@ -3191,12 +3234,19 @@ async fn ended_sessions_cannot_manage_the_organization(database: &Database) {
         ("ended_invitee", invitee),
         ("live_owner", owner),
     ] {
-        db::users::sessions::create_session(&database.pool, id, user, None, None, expires)
-            .await
-            .unwrap();
+        codeyard::backend::db::users::sessions::create_session(
+            &database.pool,
+            id,
+            user,
+            None,
+            None,
+            expires,
+        )
+        .await
+        .unwrap();
     }
     for id in ["ended_owner", "ended_invitee"] {
-        db::users::sessions::delete_session(&database.pool, id)
+        codeyard::backend::db::users::sessions::delete_session(&database.pool, id)
             .await
             .unwrap();
     }

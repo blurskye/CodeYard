@@ -1,12 +1,13 @@
 //! Organization installation discovery and who may manage fine-grained token grants, on both
 //! engines.
 use super::request;
-use crate::support::{database::Database, http_client::Client, organizations::applied};
-use codeyard::backend::db;
-use codeyard::backend::db::organizations;
+use crate::support::{
+    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+};
+
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::OrganizationProfile;
-use codeyard::backend::identity::tokens;
+
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
@@ -22,7 +23,7 @@ async fn contract(pg: bool) {
     let mut orgs = Vec::new();
     for name in ["acme", "foreign", "empty"] {
         orgs.push(applied(
-            organizations::create_organization(
+            codeyard::backend::db::organizations::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -33,9 +34,15 @@ async fn contract(pg: bool) {
     }
     for (user, role) in [(member, OrgRole::Member), (admin, OrgRole::Admin)] {
         applied(
-            organizations::add_organization_member(f.pool(), owner, orgs[0].id, user, role)
-                .await
-                .unwrap(),
+            codeyard::backend::db::organizations::add_organization_member(
+                f.pool(),
+                owner,
+                orgs[0].id,
+                user,
+                role,
+            )
+            .await
+            .unwrap(),
         );
     }
     let root = tempfile::tempdir().unwrap();
@@ -50,7 +57,7 @@ async fn contract(pg: bool) {
         (outsider, "write"),
     ] {
         let session = Client::login(&router, f.pool(), user).await;
-        let token = tokens::create(
+        let token = codeyard::backend::identity::tokens::create(
             f.pool(),
             user,
             Some(&session.session),
@@ -79,7 +86,12 @@ async fn contract(pg: bool) {
             )
             .await;
         assert_eq!(response.status, 200, "{}", response.text());
-        apps.push(db::github_apps::app(f.pool(), slug).await.unwrap().unwrap());
+        apps.push(
+            codeyard::backend::db::github_apps::app(f.pool(), slug)
+                .await
+                .unwrap()
+                .unwrap(),
+        );
     }
     let mut installations = Vec::new();
     for (app, user, org, selected) in [
@@ -89,7 +101,7 @@ async fn contract(pg: bool) {
         (apps[1].id, None, Some(orgs[0].id), true),
     ] {
         installations.push(
-            db::github_apps::install(
+            codeyard::backend::db::github_apps::install(
                 f.pool(),
                 owner,
                 &browser.session,
@@ -103,7 +115,7 @@ async fn contract(pg: bool) {
             .unwrap(),
         );
     }
-    assert!(db::github_apps::change_installation(
+    assert!(codeyard::backend::db::github_apps::change_installation(
         f.pool(),
         apps[1].id,
         installations[3].id,
@@ -204,7 +216,7 @@ async fn contract(pg: bool) {
     )
     .await;
 
-    let before = db::users::tokens::list_tokens(
+    let before = codeyard::backend::db::users::tokens::list_tokens(
         f.pool(),
         owner,
         &crate::support::live_session(f.pool(), owner).await,
@@ -308,7 +320,7 @@ async fn contract(pg: bool) {
             }
         }
     }
-    let after = db::users::tokens::list_tokens(
+    let after = codeyard::backend::db::users::tokens::list_tokens(
         f.pool(),
         owner,
         &crate::support::live_session(f.pool(), owner).await,
@@ -322,7 +334,7 @@ async fn contract(pg: bool) {
     );
     let successor = f.actor("successor").await;
     applied(
-        organizations::add_organization_member(
+        codeyard::backend::db::organizations::add_organization_member(
             f.pool(),
             owner,
             orgs[0].id,

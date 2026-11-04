@@ -210,7 +210,10 @@ pub(super) async fn grant_repo_access_in_transaction(
     level: AccessLevel,
 ) -> Result<RepoAccess> {
     anyhow::ensure!(
-        !super::super::users::blocks::repository_interaction_blocked(tx, user_id, repo_id).await?,
+        !crate::backend::db::sqlite::users::blocks::repository_interaction_blocked(
+            tx, user_id, repo_id
+        )
+        .await?,
         crate::backend::db::users::blocks::InteractionBlocked
     );
     let previous: Option<i16> = sqlx::query_scalar(
@@ -235,7 +238,7 @@ pub(super) async fn grant_repo_access_in_transaction(
     .await?;
     sqlx::query("UPDATE repository_invitations SET state='cancelled' WHERE repo_id=?1 AND invitee_id=?2 AND state='pending'").bind(repo_id).bind(user_id).execute(&mut **tx).await?;
     if previous.is_some_and(|previous| previous > level as i16) {
-        super::super::ci::stop_actor_repo_ci_runs(tx, user_id, repo_id).await?;
+        crate::backend::db::sqlite::ci::stop_actor_repo_ci_runs(tx, user_id, repo_id).await?;
     }
     Ok(result)
 }
@@ -255,7 +258,7 @@ pub(super) async fn revoke_repo_access_in_transaction(
     if removed {
         // The collaborator's queued runs here are cancelled and running ones are
         // asked to stop, like the organization revocations do.
-        super::super::ci::stop_actor_repo_ci_runs(tx, user_id, repo_id).await?;
+        crate::backend::db::sqlite::ci::stop_actor_repo_ci_runs(tx, user_id, repo_id).await?;
     }
     Ok(removed)
 }
@@ -271,7 +274,12 @@ pub async fn change_personal_repository_collaborator(
     let actor = admission.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if let Some(credential) = admission.credential() {
-        super::super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+        crate::backend::db::sqlite::users::transitions::require_account(
+            &mut tx,
+            actor,
+            &credential,
+        )
+        .await?;
     }
     let actor_state: Option<(bool, bool)> =
         sqlx::query_as("SELECT is_banned,must_change_password FROM users WHERE id=?1")
@@ -295,7 +303,8 @@ pub async fn change_personal_repository_collaborator(
         return Ok(CollaboratorChange::NotFound);
     };
     if permission.is_some()
-        && super::super::users::blocks::interaction_blocked(&mut tx, actor, target.id).await?
+        && crate::backend::db::sqlite::users::blocks::interaction_blocked(&mut tx, actor, target.id)
+            .await?
     {
         return Ok(CollaboratorChange::NotFound);
     }

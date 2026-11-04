@@ -1,16 +1,22 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::{check_repo_read_access, readable_repository};
-use crate::backend::api::repos::chrome::{
-    branch_name, commit, default_ref, ref_names_under, resolve, root_if_missing, store_error,
-    Loaded,
-};
+use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::chrome::branch_name;
+use crate::backend::api::repos::chrome::commit;
+use crate::backend::api::repos::chrome::default_ref;
+use crate::backend::api::repos::chrome::ref_names_under;
+use crate::backend::api::repos::chrome::resolve;
+use crate::backend::api::repos::chrome::root_if_missing;
+use crate::backend::api::repos::chrome::store_error;
+use crate::backend::api::repos::chrome::Loaded;
 use crate::backend::api::repos::refs::references::resolve_references;
 use crate::backend::api::repos::responses::CommitResponse;
 use crate::backend::app::AppState;
-use crate::backend::repositories::languages as repo_languages;
-use crate::backend::repositories::releases;
-use crate::backend::repositories::store::{repo_store, RepoStore, TreeEntry};
+
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::RepoStore;
+use crate::backend::repositories::store::TreeEntry;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
@@ -142,12 +148,12 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         .and_then(|import| (import.state() != "complete").then(|| import.state().to_owned())),
         http_clone: format!(
             "{}/{}/{}.git",
-            crate::backend::api::http::config::http_clone_base().trim_end_matches('/'),
+            codeyard_model::http_config::http_clone_base().trim_end_matches('/'),
             loaded.chrome.owner,
             loaded.chrome.name
         ),
         ssh_clone: {
-            let base = crate::backend::api::http::config::ssh_clone_base();
+            let base = codeyard_model::http_config::ssh_clone_base();
             if base.is_empty() {
                 String::new()
             } else {
@@ -165,7 +171,9 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         let reference = resolved.reference.clone();
         let fail = |error| store_error(ctx, Some(&loaded.chrome), error);
         let last = store.commit(&reference).await.map_err(fail)?;
-        if !super::super::chrome::is_branch(loaded, &reference) && !reference.starts_with("refs/") {
+        if !crate::backend::api::repos::chrome::is_branch(loaded, &reference)
+            && !reference.starts_with("refs/")
+        {
             page.reference = last.sha.clone();
         }
         // The size check and blob read must refer to the same commit, even during a push.
@@ -213,9 +221,10 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
                 .path
                 .rsplit_once('/')
                 .map_or("", |(parent, _)| parent);
-            let mut folders = super::blob::folder_listings(&store, &last.sha, parent)
-                .await
-                .map_err(fail)?;
+            let mut folders =
+                crate::backend::api::repos::code::blob::folder_listings(&store, &last.sha, parent)
+                    .await
+                    .map_err(fail)?;
             folders.push(view::blob::FolderListing {
                 path: resolved.path.clone(),
                 entries: listing.clone(),
@@ -225,7 +234,7 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         page.entries = listing;
         page.permalink = format!(
             "{}{}",
-            crate::backend::api::http::config::public_origin(),
+            codeyard_model::http_config::public_origin(),
             view::ref_path::file_url(&loaded.chrome.base(), "tree", &last.sha, &resolved.path)
         );
         page.latest_commit = folder_commit.map(commit);
@@ -238,13 +247,17 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
             )
             .await;
             let viewer = ctx.user.as_ref().map(|user| user.id);
-            page.releases = releases::summary(&ctx.state.pool, viewer, &loaded.repository)
-                .await
-                .ok()
-                .map(|summary| view::releases::ReleasesSummary {
-                    count: summary.count,
-                    latest_tag: summary.latest.map(|release| release.tag_name),
-                });
+            page.releases = crate::backend::repositories::releases::summary(
+                &ctx.state.pool,
+                viewer,
+                &loaded.repository,
+            )
+            .await
+            .ok()
+            .map(|summary| view::releases::ReleasesSummary {
+                count: summary.count,
+                latest_tag: summary.latest.map(|release| release.tag_name),
+            });
         }
         page.readme = readme
             .filter(|blob| !blob.is_binary)
@@ -287,7 +300,7 @@ async fn about_languages(
     store: &RepoStore,
     branch: &str,
 ) -> Vec<LanguageShare> {
-    let languages = match repo_languages::compute_and_store(
+    let languages = match crate::backend::repositories::languages::compute_and_store(
         &state.pool,
         store,
         &loaded.repository,
@@ -317,7 +330,7 @@ pub(in crate::backend::api::repos) async fn page(
     >,
     headers: axum::http::HeaderMap,
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
-    super::GitPathParams(params): super::GitPathParams,
+    crate::backend::api::repos::code::GitPathParams(params): crate::backend::api::repos::code::GitPathParams,
 ) -> axum::response::Response {
     let ctx =
         match crate::backend::api::http::context::PageContext::load(state, headers, &uri).await {

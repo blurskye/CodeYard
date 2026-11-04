@@ -1,4 +1,5 @@
-use super::{Error, Result};
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use axum::{
     http::{header, HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
@@ -87,7 +88,7 @@ impl Cursor {
                     .finish();
                 links.push(format!(
                     "<{}{}?{query}>; rel=\"{relation}\"",
-                    crate::backend::api::http::config::link_origin(),
+                    codeyard_model::http_config::link_origin(),
                     uri.path()
                 ));
             }
@@ -210,7 +211,7 @@ impl CursorPagination {
                 .finish();
             links.push(format!(
                 "<{}{}?{query}>; rel=\"{relation}\"",
-                crate::backend::api::http::config::link_origin(),
+                codeyard_model::http_config::link_origin(),
                 uri.path()
             ));
         }
@@ -293,7 +294,7 @@ impl Pagination {
                 .finish();
             format!(
                 "<{}{}?{query}>; rel=\"{relation}\"",
-                crate::backend::api::http::config::link_origin(),
+                codeyard_model::http_config::link_origin(),
                 uri.path()
             )
         };

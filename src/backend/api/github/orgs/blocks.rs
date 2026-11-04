@@ -1,13 +1,14 @@
 //! Organization blocking is enforced by native repository and invitation authority.
-use super::{auth, outcome, target, AppState, Error, Result};
-use crate::backend::{
-    api::github::pagination::Pagination,
-    db::{
-        self,
-        organizations::{blocks, OrganizationOutcome},
-    },
-    webhooks::payloads,
-};
+use crate::backend::api::github::orgs::auth;
+use crate::backend::api::github::orgs::outcome;
+use crate::backend::api::github::orgs::target;
+use crate::backend::api::github::orgs::AppState;
+use crate::backend::api::github::orgs::Error;
+use crate::backend::api::github::orgs::Result;
+use crate::backend::api::github::pagination::Pagination;
+
+use crate::backend::db::organizations::OrganizationOutcome;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -37,7 +38,7 @@ async fn list(
     let org = target(&state, &name).await?;
     let (offset, limit) = page.window()?;
     let mut users = outcome(
-        blocks::list(
+        crate::backend::db::organizations::blocks::list(
             &state.pool,
             actor.user.id,
             org.id,
@@ -49,7 +50,14 @@ async fn list(
     )?;
     let more = users.len() > limit;
     users.truncate(limit);
-    page.response(&uri, users.iter().map(payloads::user).collect(), more)
+    page.response(
+        &uri,
+        users
+            .iter()
+            .map(crate::backend::webhooks::payloads::user)
+            .collect(),
+        more,
+    )
 }
 async fn check(
     State(state): State<Arc<AppState>>,
@@ -60,14 +68,19 @@ async fn check(
         .await?
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
-    let user = db::users::accounts::get_user_by_username(&state.pool, &username)
+    let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, &username)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     if !outcome(
-        blocks::check(&state.pool, actor.user.id, org.id, user.id)
-            .await
-            .map_err(Error::unavailable)?,
+        crate::backend::db::organizations::blocks::check(
+            &state.pool,
+            actor.user.id,
+            org.id,
+            user.id,
+        )
+        .await
+        .map_err(Error::unavailable)?,
     )? {
         return Err(Error::missing());
     }
@@ -99,11 +112,11 @@ async fn change(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(state, name).await?;
-    let user = db::users::accounts::get_user_by_username(&state.pool, username)
+    let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let result = blocks::change(
+    let result = crate::backend::db::organizations::blocks::change(
         &state.pool,
         actor.database_actor(),
         org.id,

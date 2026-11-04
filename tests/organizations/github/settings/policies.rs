@@ -1,6 +1,6 @@
 use super::*;
 use axum::{http::StatusCode, Router};
-use codeyard::backend::repositories::deploy_keys;
+
 const KEY: &str =
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
 pub(super) async fn contract(
@@ -46,7 +46,7 @@ pub(super) async fn contract(
     assert_eq!(status, StatusCode::CREATED, "{key}");
     let id = key["id"].as_i64().unwrap();
     assert_eq!(
-        deploy_keys::authorize(f.pool(), id, first, true)
+        codeyard::backend::repositories::deploy_keys::authorize(f.pool(), id, first, true)
             .await
             .unwrap()
             .1,
@@ -63,9 +63,14 @@ pub(super) async fn contract(
     )
     .await;
     for write in [false, true] {
-        assert!(deploy_keys::authorize(f.pool(), id, first, write)
-            .await
-            .is_err());
+        assert!(codeyard::backend::repositories::deploy_keys::authorize(
+            f.pool(),
+            id,
+            first,
+            write
+        )
+        .await
+        .is_err());
     }
     assert!(
         db::deploy_keys::get_deploy_key(f.pool(), id)
@@ -87,9 +92,11 @@ pub(super) async fn contract(
         200,
     )
     .await;
-    assert!(deploy_keys::authorize(f.pool(), id, first, true)
-        .await
-        .is_ok());
+    assert!(
+        codeyard::backend::repositories::deploy_keys::authorize(f.pool(), id, first, true)
+            .await
+            .is_ok()
+    );
     let target =
         data::Changes::parse(&json!({"deploy_keys_enabled_for_repositories":false})).unwrap();
     applied(
@@ -106,14 +113,16 @@ pub(super) async fn contract(
     .await
     .unwrap();
     assert!(
-        deploy_keys::authorize(f.pool(), id, first, true)
+        codeyard::backend::repositories::deploy_keys::authorize(f.pool(), id, first, true)
             .await
             .is_err(),
         "a cached old organization must not bypass the destination key policy"
     );
-    assert!(deploy_keys::authorize(f.pool(), id, &moved, true)
-        .await
-        .is_err());
+    assert!(
+        codeyard::backend::repositories::deploy_keys::authorize(f.pool(), id, &moved, true)
+            .await
+            .is_err()
+    );
     let (status, _) = browser
         .api(
             "DELETE",

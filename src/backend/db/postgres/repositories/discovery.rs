@@ -1,8 +1,9 @@
 use crate::backend::db::discussions::contains_pattern;
 use crate::backend::db::postgres::repositories::access::readable_condition;
-use crate::backend::db::repositories::discovery::{
-    repository_order_by, ItemSort, NewForkedRepository, RepositorySearch,
-};
+use crate::backend::db::repositories::discovery::repository_order_by;
+use crate::backend::db::repositories::discovery::ItemSort;
+use crate::backend::db::repositories::discovery::NewForkedRepository;
+use crate::backend::db::repositories::discovery::RepositorySearch;
 use crate::backend::db::repositories::records::RepositorySort;
 use anyhow::Result;
 use codeyard_db_core::models::Issue;

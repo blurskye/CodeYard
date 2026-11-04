@@ -1,10 +1,11 @@
 //! Concurrency reads expose live leases and retained workflow configuration separately.
-use super::run;
-use crate::backend::{
-    api::github::{repo_url, repository, Error, Result},
-    app::AppState,
-    db,
-};
+use crate::backend::api::github::actions::run;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use codeyard_model::urls::repo_url;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, Uri},
@@ -34,10 +35,13 @@ fn decode(value: &str) -> Result<String> {
         .ok_or_else(|| Error::invalid("Invalid concurrency cursor"))
 }
 fn page(
-    groups: Vec<db::action_concurrency::Group>,
+    groups: Vec<crate::backend::db::action_concurrency::Group>,
     query: &Page,
     uri: &Uri,
-) -> Result<(HeaderMap, Vec<db::action_concurrency::Group>)> {
+) -> Result<(
+    HeaderMap,
+    Vec<crate::backend::db::action_concurrency::Group>,
+)> {
     if query.after.is_some() && query.before.is_some() {
         return Err(Error::invalid("Use either before or after"));
     }
@@ -83,7 +87,7 @@ fn page(
                 .finish();
             links.push(format!(
                 "<{}{}?{}>; rel=\"{}\"",
-                crate::backend::api::http::config::link_origin(),
+                codeyard_model::http_config::link_origin(),
                 uri.path(),
                 query,
                 relation
@@ -105,10 +109,14 @@ fn group_url(owner: &str, repo: &str, group: &str) -> String {
         codeyard_webui::encode_component(group)
     )
 }
-fn member(member: &db::action_concurrency::Member, owner: &str, repo: &str) -> Value {
+fn member(
+    member: &crate::backend::db::action_concurrency::Member,
+    owner: &str,
+    repo: &str,
+) -> Value {
     let run = &member.run;
     let id = run.workflow_run_id.unwrap_or(run.id);
-    let mut value = json!({"run_id":id,"run_name":run.pipeline,"run_url":format!("{}/actions/runs/{id}",repo_url(owner,repo)),"run_html_url":format!("{}/{}/{}/actions?job={}",crate::backend::api::http::config::link_origin(),codeyard_webui::encode_component(owner),codeyard_webui::encode_component(repo),run.run_id),"status":if member.holding{"in_progress"}else{"pending"}});
+    let mut value = json!({"run_id":id,"run_name":run.pipeline,"run_url":format!("{}/actions/runs/{id}",repo_url(owner,repo)),"run_html_url":format!("{}/{}/{}/actions?job={}",codeyard_model::http_config::link_origin(),codeyard_webui::encode_component(owner),codeyard_webui::encode_component(repo),run.run_id),"status":if member.holding{"in_progress"}else{"pending"}});
     if let Some(job) = member.job_id {
         value["job_id"] = json!(job);
         value["job_name"] = json!(member.job_name);
@@ -131,7 +139,7 @@ async fn list(
             "Use after for repository concurrency groups",
         ));
     }
-    let groups = db::action_concurrency::groups(&state.pool, repo.id, None)
+    let groups = crate::backend::db::action_concurrency::groups(&state.pool, repo.id, None)
         .await
         .map_err(Error::unavailable)?;
     let total = groups.len();
@@ -155,7 +163,7 @@ async fn get_one(
     Query(query): Query<Ahead>,
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let mut members = db::action_concurrency::members(&state.pool, repo.id, &group)
+    let mut members = crate::backend::db::action_concurrency::members(&state.pool, repo.id, &group)
         .await
         .map_err(Error::unavailable)?;
     if members.is_empty() {
@@ -192,7 +200,7 @@ async fn for_run(
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let run = run(&state, repo.id, id).await?;
     let id = run.workflow_run_id.unwrap_or(run.id);
-    let groups = db::action_concurrency::groups(&state.pool, repo.id, Some(id))
+    let groups = crate::backend::db::action_concurrency::groups(&state.pool, repo.id, Some(id))
         .await
         .map_err(Error::unavailable)?;
     let total = groups.len();
@@ -200,9 +208,10 @@ async fn for_run(
     let mut values = Vec::new();
     for group in groups {
         let url = group_url(&owner, &name, &group.name);
-        let members = db::action_concurrency::members(&state.pool, repo.id, &group.name)
-            .await
-            .map_err(Error::unavailable)?;
+        let members =
+            crate::backend::db::action_concurrency::members(&state.pool, repo.id, &group.name)
+                .await
+                .map_err(Error::unavailable)?;
         let values_in_group: Vec<_> = members
             .iter()
             .enumerate()

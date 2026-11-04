@@ -1,12 +1,12 @@
-use super::NodeRoles;
-use crate::backend::ssh;
+use crate::backend::node::NodeRoles;
+
 use std::{net::SocketAddr, path::PathBuf};
 
 pub struct ServeConfig {
     pub roles: NodeRoles,
     pub repos_path: PathBuf,
     pub state_dir: PathBuf,
-    pub ssh_mode: ssh::mode::SshMode,
+    pub ssh_mode: codeyard_support::ssh_mode::SshMode,
     pub ssh_socket: PathBuf,
     pub ssh_git_user: String,
     pub ssh_install_manifest: PathBuf,

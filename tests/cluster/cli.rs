@@ -1,7 +1,7 @@
 //! The `cluster` subcommands as the executable runs them: what works without a database,
 //! what must be refused on a SQLite installation, and (the first test) what the repository
 //! commands need on PostgreSQL.
-use codeyard::backend::cluster::NodeKey;
+use codeyard_support::node_identity::NodeKey;
 use std::{
     path::Path,
     process::{Command, Output},
@@ -88,18 +88,18 @@ async fn single_node_mode_refuses_cluster_roles_until_cluster_enable() {
 #[tokio::test]
 async fn repository_cli_requires_web_or_ssh_identity_before_inserting() {
     use crate::support::native_database::PostgresDatabase;
-    use codeyard::backend::db;
+
     let database = PostgresDatabase::new().await;
     codeyard::backend::db::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    let user = db::users::accounts::create_user(&database.pool, "owner", None)
+    let user = codeyard::backend::db::users::accounts::create_user(&database.pool, "owner", None)
         .await
         .unwrap();
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join(".env"), "").unwrap();
     let key = NodeKey::generate();
-    let node = db::cluster::register_own_node(
+    let node = codeyard::backend::db::cluster::register_own_node(
         &database.pool,
         &key.public_hex(),
         "operator",
@@ -146,16 +146,20 @@ async fn repository_cli_requires_web_or_ssh_identity_before_inserting() {
             assert!(error.contains("storage node unavailable"), "{error}");
         }
         assert!(
-            db::repositories::records::list_user_repositories(&database.pool, user.id)
-                .await
-                .unwrap()
-                .is_empty()
+            codeyard::backend::db::repositories::records::list_user_repositories(
+                &database.pool,
+                user.id
+            )
+            .await
+            .unwrap()
+            .is_empty()
         );
     }
-    let stored = db::cluster::get_node_by_public_key(&database.pool, &key.public_hex())
-        .await
-        .unwrap()
-        .unwrap();
+    let stored =
+        codeyard::backend::db::cluster::get_node_by_public_key(&database.pool, &key.public_hex())
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(stored.id, node.id);
 }
 

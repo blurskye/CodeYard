@@ -1,17 +1,20 @@
 //! Workflows are discovered from the default branch; IDs and disabled state are durable.
-use crate::backend::{
-    api::github::{
-        auth, contents::store_error, pagination::Pagination, repo_url, repository, Error, Result,
-    },
-    app::AppState,
-    ci::{self, admission::AdmissionError, runs::DispatchRequest},
-    db::{
-        self,
-        action_workflows::{self as workflows, Workflow},
-    },
-    repositories::store::repo_store,
-    webhooks::payloads,
-};
+
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use codeyard_model::urls::repo_url;
+
+use crate::backend::ci::runs::DispatchRequest;
+use codeyard_db_core::ci_admission::AdmissionError;
+
+use crate::backend::db::action_workflows as workflows;
+use crate::backend::db::action_workflows::Workflow;
+use crate::backend::repositories::store::repo_store;
+
 use axum::{
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -31,10 +34,12 @@ pub(super) async fn discover(
     if store.refs().await.map_err(store_error)?.is_empty() {
         return Ok(Vec::new());
     }
-    let definitions =
-        ci::list_workflows_for_ref(&store, &format!("refs/heads/{}", repo.default_branch))
-            .await
-            .map_err(Error::unavailable)?;
+    let definitions = crate::backend::ci::list_workflows_for_ref(
+        &store,
+        &format!("refs/heads/{}", repo.default_branch),
+    )
+    .await
+    .map_err(Error::unavailable)?;
     let definitions: Vec<_> = definitions
         .into_iter()
         .map(|definition| (definition.path, definition.name))
@@ -91,7 +96,9 @@ async fn list(
         .into_iter()
         .skip(offset)
         .take(limit)
-        .map(|workflow| payloads::action_workflow(&workflow, &owner, &name))
+        .map(|workflow| {
+            crate::backend::webhooks::payloads::action_workflow(&workflow, &owner, &name)
+        })
         .collect();
     Ok((
         page.headers(&uri, offset + limit < total)?,
@@ -106,7 +113,7 @@ async fn get_one(
     Path((owner, name, key)): Path<(String, String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    Ok(Json(payloads::action_workflow(
+    Ok(Json(crate::backend::webhooks::payloads::action_workflow(
         &lookup_read(&state, &repo, &key).await?,
         &owner,
         &name,
@@ -142,7 +149,7 @@ async fn enabled(
     enable: bool,
 ) -> Result<StatusCode> {
     let (repo, authentication) = repository(state, headers, owner, name, true).await?;
-    let authentication = authentication.ok_or_else(auth::required)?;
+    let authentication = authentication.ok_or_else(crate::backend::api::github::auth::required)?;
     let workflow = lookup(state, &repo, key).await?;
     workflows::set_workflow_enabled(
         &state.pool,
@@ -154,7 +161,7 @@ async fn enabled(
     .await
     .map_err(|error| {
         if error
-            .downcast_ref::<db::repositories::records::RepositorySettingsRefusal>()
+            .downcast_ref::<crate::backend::db::repositories::records::RepositorySettingsRefusal>()
             .is_some()
         {
             Error::new(StatusCode::FORBIDDEN, "Workflow update denied")
@@ -197,7 +204,7 @@ async fn dispatch(
     input: std::result::Result<Json<Dispatch>, JsonRejection>,
 ) -> Result<Response> {
     let (repo, authentication) = repository(&state, &headers, &owner, &name, true).await?;
-    let authentication = authentication.ok_or_else(auth::required)?;
+    let authentication = authentication.ok_or_else(crate::backend::api::github::auth::required)?;
     let credential = authentication.ci_credential(&headers, "actions")?;
     let actor = authentication.workflow_actor(&state, repo.id).await?;
     let Json(input) = input.map_err(|_| Error::invalid("Invalid workflow dispatch"))?;
@@ -223,7 +230,7 @@ async fn dispatch(
         .await
         .map_err(admission_error)?;
     if input.return_run_details {
-        return Ok(Json(json!({"workflow_run_id":run.id,"run_url":format!("{}/actions/runs/{}",repo_url(&owner,&name),run.id),"html_url":format!("{}/{}/{}/actions?job={}",crate::backend::api::http::config::link_origin(),codeyard_webui::encode_component(&owner),codeyard_webui::encode_component(&name),run.run_id)})).into_response());
+        return Ok(Json(json!({"workflow_run_id":run.id,"run_url":format!("{}/actions/runs/{}",repo_url(&owner,&name),run.id),"html_url":format!("{}/{}/{}/actions?job={}",codeyard_model::http_config::link_origin(),codeyard_webui::encode_component(&owner),codeyard_webui::encode_component(&name),run.run_id)})).into_response());
     }
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -242,7 +249,9 @@ async fn badge(
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let workflow = lookup(&state, &repo, &key).await?;
-    let branch = ci::branch_name(query.branch.as_deref().unwrap_or(&repo.default_branch));
+    let branch = codeyard_db_core::ci_messages::branch_name(
+        query.branch.as_deref().unwrap_or(&repo.default_branch),
+    );
     let latest = workflows::latest_workflow_run(
         &state.pool,
         repo.id,

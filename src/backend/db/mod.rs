@@ -35,7 +35,7 @@ pub mod credentials;
 pub mod dependabot;
 pub mod dependabot_alerts;
 pub mod dependency_graph;
-pub mod dependency_inventory;
+
 pub mod deploy_keys;
 pub mod deployment_protection;
 pub mod deployment_reviews;

@@ -1,10 +1,17 @@
-use crate::backend::db::pages::{
-    Attempt, Build, Deployment, Refusal, Role, Site, Update, NO_PUBLISHER,
-};
+use crate::backend::db::pages::Attempt;
+use crate::backend::db::pages::Build;
+use crate::backend::db::pages::Deployment;
+use crate::backend::db::pages::Refusal;
+use crate::backend::db::pages::Role;
+use crate::backend::db::pages::Site;
+use crate::backend::db::pages::Update;
+use crate::backend::db::pages::NO_PUBLISHER;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
-use crate::backend::db::repositories::credentials::{repository_condition, Access, Reader};
+use crate::backend::db::repositories::credentials::repository_condition;
+use crate::backend::db::repositories::credentials::Access;
+use crate::backend::db::repositories::credentials::Reader;
 
 async fn begin_read<'a>(
     pool: &'a SqlitePool,
@@ -12,7 +19,7 @@ async fn begin_read<'a>(
     repo: i64,
 ) -> Result<sqlx::Transaction<'a, sqlx::Sqlite>> {
     let mut tx = pool.begin().await?;
-    let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}) AND ({}))", super::repositories::access::readable_condition(), repository_condition(false, "pages", Access::PublicRead, "$3", "$4", "$5")))
+    let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}) AND ({}))", crate::backend::db::sqlite::repositories::access::readable_condition(), repository_condition(false, "pages", Access::PublicRead, "$3", "$4", "$5")))
         .bind(reader.user).bind(repo).bind(reader.token()).bind(reader.session()).bind(reader.hash()).fetch_one(&mut *tx).await?;
     anyhow::ensure!(allowed, Refusal::Missing);
     Ok(tx)
@@ -26,12 +33,23 @@ async fn authorize_write(
     role: Role,
 ) -> Result<()> {
     let allowed = match role {
-        Role::Admin => super::discussions::lock_admin_authority(tx, actor, repo).await?,
-        Role::Maintain => super::discussions::lock_maintain_authority(tx, actor, repo).await?,
-        Role::Write => super::discussions::lock_write_authority(tx, actor, repo).await?,
+        Role::Admin => {
+            crate::backend::db::sqlite::discussions::lock_admin_authority(tx, actor, repo).await?
+        }
+        Role::Maintain => {
+            crate::backend::db::sqlite::discussions::lock_maintain_authority(tx, actor, repo)
+                .await?
+        }
+        Role::Write => {
+            crate::backend::db::sqlite::discussions::lock_write_authority(tx, actor, repo).await?
+        }
     };
     anyhow::ensure!(
-        allowed && super::users::transitions::credential_live(tx, actor, credential, true).await?,
+        allowed
+            && crate::backend::db::sqlite::users::transitions::credential_live(
+                tx, actor, credential, true
+            )
+            .await?,
         Refusal::Denied
     );
     Ok(())

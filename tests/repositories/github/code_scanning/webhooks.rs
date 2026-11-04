@@ -1,5 +1,4 @@
 use super::{call, db, json, sarif, Router, Value};
-use codeyard::backend::code_scanning;
 
 pub(super) async fn fixed_revision(
     router: &Router,
@@ -50,7 +49,9 @@ pub(super) async fn fixed_revision(
         202,
     )
     .await;
-    assert!(code_scanning::process_next(pool).await.unwrap());
+    assert!(codeyard::backend::code_scanning::process_next(pool)
+        .await
+        .unwrap());
     let mut delivered = false;
     // The hook's host never resolves, so each delivery is recorded after its retries (7 s),
     // and a hook's deliveries go out in order: this one waits behind the six earlier events.
@@ -94,5 +95,7 @@ pub(super) async fn fixed_revision(
         202,
     )
     .await;
-    assert!(code_scanning::process_next(pool).await.unwrap());
+    assert!(codeyard::backend::code_scanning::process_next(pool)
+        .await
+        .unwrap());
 }

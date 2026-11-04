@@ -15,10 +15,9 @@ mod remote;
 pub(crate) mod source;
 mod types;
 
-use crate::backend::cluster::rpc;
 use crate::backend::cluster::rpc::Operation;
 use crate::backend::cluster::NodeContext;
-use crate::backend::db;
+
 use crate::backend::repositories::protection::WriteVia;
 use codeyard_db_core::models::Repository;
 use codeyard_git as git;
@@ -64,7 +63,7 @@ pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore
         ))),
         Some(id) if context.is_some_and(|context| context.node_id == id) => {
             let context = context.expect("this node owns the repository");
-            match rpc::repository_uuid(&repo.disk_path) {
+            match crate::backend::cluster::rpc::repository_uuid(&repo.disk_path) {
                 Ok(uuid) => RepoStore(Backend::Local(
                     local::LocalStore::new(
                         &primary_path(&context.repos_path, uuid).to_string_lossy(),
@@ -152,7 +151,7 @@ impl RepoStore {
     fn local(&self) -> Result<&local::LocalStore, RepoError> {
         match &self.0 {
             Backend::Local(local) => Ok(local),
-            Backend::Remote(_) => Err(rpc::wire::invalid(
+            Backend::Remote(_) => Err(crate::backend::cluster::rpc::wire::invalid(
                 "fork source is not on the destination node",
             )),
         }
@@ -227,7 +226,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: impl Into<crate::backend::db::credentials::Actor>,
         reference: &str,
         sha: &str,
         force: bool,
@@ -245,7 +244,9 @@ impl RepoStore {
                         actor.user_id,
                         Operation::UpdateReference {
                             reference: reference.into(),
-                            sha: rpc::wire::PublicationText::retain(sha, actor),
+                            sha: crate::backend::cluster::rpc::wire::PublicationText::retain(
+                                sha, actor,
+                            ),
                             force,
                         },
                         b"",
@@ -468,7 +469,7 @@ impl RepoStore {
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         source_repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: impl Into<crate::backend::db::credentials::Actor>,
         source: &RepoStore,
         options: &CopyOptions,
     ) -> Result<(), RepoError> {
@@ -481,10 +482,10 @@ impl RepoStore {
                     .await
             }
             (Backend::Remote(remote), Backend::Remote(from)) if remote.node_id == from.node_id => {
-                let source = rpc::repository_uuid(&from.disk_path)?;
+                let source = crate::backend::cluster::rpc::repository_uuid(&from.disk_path)?;
                 let operation = Operation::InitializeCopy {
                     source,
-                    default_branch: rpc::wire::PublicationText::retain(
+                    default_branch: crate::backend::cluster::rpc::wire::PublicationText::retain(
                         &options.default_branch,
                         authority,
                     ),
@@ -493,7 +494,9 @@ impl RepoStore {
                 };
                 remote.call_as(actor, operation, b"").await
             }
-            _ => Err(rpc::wire::invalid("source is not on the destination node")),
+            _ => Err(crate::backend::cluster::rpc::wire::invalid(
+                "source is not on the destination node",
+            )),
         }
     }
 
@@ -519,7 +522,7 @@ impl RepoStore {
     }
 
     /// Removes a deleted repository. A local repository moves to `deleted/` under its
-    /// parent directory and stays there for [`db::files::RESTORE_WINDOW_SECONDS`], so a database
+    /// parent directory and stays there for [`crate::backend::db::files::RESTORE_WINDOW_SECONDS`], so a database
     /// restored to before the delete still finds its files. Remote storage uses the same retirement.
     pub async fn retire(&self) -> Result<(), RepoError> {
         match &self.0 {
@@ -631,7 +634,7 @@ impl RepoStore {
     ) -> Result<std::collections::HashSet<String>, RepoError> {
         match &self.0 {
             Backend::Local(local) => local.existing_commits(ids).await,
-            Backend::Remote(_) => Err(rpc::wire::invalid(
+            Backend::Remote(_) => Err(crate::backend::cluster::rpc::wire::invalid(
                 "replica commit checks run on their node",
             )),
         }
@@ -642,7 +645,9 @@ impl RepoStore {
     pub async fn mirror_refs(&self) -> Result<HashMap<String, String>, RepoError> {
         match &self.0 {
             Backend::Local(local) => local.mirror_refs().await,
-            Backend::Remote(_) => Err(rpc::wire::invalid("replica refs are listed on their node")),
+            Backend::Remote(_) => Err(crate::backend::cluster::rpc::wire::invalid(
+                "replica refs are listed on their node",
+            )),
         }
     }
 
@@ -653,7 +658,9 @@ impl RepoStore {
     ) -> Result<(HashMap<String, String>, Option<String>), RepoError> {
         match &self.0 {
             Backend::Local(local) => local.replica_listing().await,
-            Backend::Remote(_) => Err(rpc::wire::invalid("replica refs are listed on their node")),
+            Backend::Remote(_) => Err(crate::backend::cluster::rpc::wire::invalid(
+                "replica refs are listed on their node",
+            )),
         }
     }
 
@@ -766,7 +773,7 @@ impl RepoStore {
                             git_ref: if query.is_empty() {
                                 git_ref.into()
                             } else {
-                                rpc::wire::FilePathQuery::Filtered {
+                                crate::backend::cluster::rpc::wire::FilePathQuery::Filtered {
                                     reference: git_ref.into(),
                                     query: query.into(),
                                 }
@@ -1282,7 +1289,7 @@ impl RepoStore {
             (Backend::Remote(base), Backend::Remote(from)) if base.node_id == from.node_id => {
                 base.call(
                     Operation::DiffFrom {
-                        source: rpc::repository_uuid(&from.disk_path)?,
+                        source: crate::backend::cluster::rpc::repository_uuid(&from.disk_path)?,
                         base_ref: base_ref.into(),
                         head_ref: head_ref.into(),
                     },
@@ -1290,7 +1297,7 @@ impl RepoStore {
                 )
                 .await
             }
-            _ => Err(rpc::wire::invalid(
+            _ => Err(crate::backend::cluster::rpc::wire::invalid(
                 "comparison repositories are not on the same node",
             )),
         }
@@ -1316,7 +1323,7 @@ impl RepoStore {
             (Backend::Remote(base), Backend::Remote(from)) if base.node_id == from.node_id => {
                 base.call(
                     Operation::ComparisonFrom {
-                        source: rpc::repository_uuid(&from.disk_path)?,
+                        source: crate::backend::cluster::rpc::repository_uuid(&from.disk_path)?,
                         base_ref: base_ref.into(),
                         head_ref: head_ref.into(),
                         offset,
@@ -1327,7 +1334,7 @@ impl RepoStore {
                 )
                 .await
             }
-            _ => Err(rpc::wire::invalid(
+            _ => Err(crate::backend::cluster::rpc::wire::invalid(
                 "comparison repositories are not on the same node",
             )),
         }
@@ -1637,7 +1644,7 @@ impl RepoStore {
                     actor.user,
                     Operation::FetchPullHead {
                         token: actor.token,
-                        source: rpc::repository_uuid(&from.disk_path)?,
+                        source: crate::backend::cluster::rpc::repository_uuid(&from.disk_path)?,
                         number,
                         head: head.into(),
                         expected_head: expected_head.map(str::to_owned),
@@ -1646,7 +1653,7 @@ impl RepoStore {
                 )
                 .await
             }
-            _ => Err(rpc::wire::invalid(
+            _ => Err(crate::backend::cluster::rpc::wire::invalid(
                 "fork source is not on the destination node",
             )),
         }
@@ -1657,7 +1664,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: impl Into<crate::backend::db::credentials::Actor>,
         old: &str,
         new: &str,
     ) -> Result<String, RepoError> {
@@ -1674,7 +1681,9 @@ impl RepoStore {
                         authority.user_id,
                         Operation::RenameBranch {
                             old: old.into(),
-                            new: rpc::wire::PublicationText::retain(new, authority),
+                            new: crate::backend::cluster::rpc::wire::PublicationText::retain(
+                                new, authority,
+                            ),
                         },
                         b"",
                     )
@@ -1704,7 +1713,7 @@ impl RepoStore {
                     .call_as(
                         actor,
                         Operation::MergeUpstream {
-                            source: rpc::repository_uuid(&from.disk_path)?,
+                            source: crate::backend::cluster::rpc::repository_uuid(&from.disk_path)?,
                             branch: branch.into(),
                             token,
                         },
@@ -1712,7 +1721,7 @@ impl RepoStore {
                     )
                     .await
             }
-            _ => Err(rpc::wire::invalid(
+            _ => Err(crate::backend::cluster::rpc::wire::invalid(
                 "fork source is not on the destination node",
             )),
         }
@@ -1723,7 +1732,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: impl Into<crate::backend::db::credentials::Actor>,
         name: &str,
         sha: &str,
     ) -> Result<String, RepoError> {
@@ -1739,7 +1748,9 @@ impl RepoStore {
                         actor.user_id,
                         Operation::CreateBranch {
                             name: name.into(),
-                            sha: rpc::wire::PublicationText::retain(sha, actor),
+                            sha: crate::backend::cluster::rpc::wire::PublicationText::retain(
+                                sha, actor,
+                            ),
                         },
                         b"",
                     )
@@ -1752,7 +1763,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: impl Into<crate::backend::db::credentials::Actor>,
         new_owner: &str,
     ) -> Result<Repository, RepoError> {
         let actor = actor.into();
@@ -1767,7 +1778,9 @@ impl RepoStore {
                     .call_as(
                         actor.user_id,
                         Operation::TransferRepository {
-                            new_owner: rpc::wire::PublicationText::retain(new_owner, actor),
+                            new_owner: crate::backend::cluster::rpc::wire::PublicationText::retain(
+                                new_owner, actor,
+                            ),
                         },
                         b"",
                     )
@@ -1785,8 +1798,8 @@ impl RepoStore {
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
-        credential: db::users::accounts::OwnedAccountCredential,
-        feature: db::repositories::dependencies::Feature,
+        credential: crate::backend::db::users::accounts::OwnedAccountCredential,
+        feature: crate::backend::db::repositories::dependencies::Feature,
         enabled: bool,
         private_consent: bool,
     ) -> Result<(), RepoError> {
@@ -1828,7 +1841,7 @@ impl RepoStore {
         repo_id: i64,
         actor: i64,
         mutation: crate::backend::repositories::releases::immutable::Mutation,
-        attestation: Option<crate::backend::repositories::releases::integrity::Attestation>,
+        attestation: Option<codeyard_model::release_integrity::Attestation>,
     ) -> Result<(codeyard_db_core::models::Release, bool), RepoError> {
         match &self.0 {
             Backend::Local(local) => {
@@ -1856,9 +1869,9 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: impl Into<crate::backend::db::credentials::Actor>,
         name: &str,
-        changes: &db::repositories::records::RepositoryChanges<&str>,
+        changes: &crate::backend::db::repositories::records::RepositoryChanges<&str>,
     ) -> Result<Repository, RepoError> {
         if git::branch_ref(name).is_none() {
             return Err(invalid_ref("branch"));
@@ -1876,7 +1889,10 @@ impl RepoStore {
                     .call_as(
                         actor.user_id,
                         Operation::PatchRepository {
-                            default_branch: rpc::wire::PublicationText::retain(name, actor),
+                            default_branch:
+                                crate::backend::cluster::rpc::wire::PublicationText::retain(
+                                    name, actor,
+                                ),
                             changes,
                         },
                         b"",
@@ -1891,7 +1907,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: impl Into<crate::backend::db::credentials::Actor>,
         name: &str,
     ) -> Result<(), RepoError> {
         let actor = actor.into();
@@ -1905,7 +1921,9 @@ impl RepoStore {
                     .call_as(
                         actor.user_id,
                         Operation::SetDefaultBranch {
-                            name: rpc::wire::PublicationText::retain(name, actor),
+                            name: crate::backend::cluster::rpc::wire::PublicationText::retain(
+                                name, actor,
+                            ),
                         },
                         b"",
                     )
@@ -1919,7 +1937,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: impl Into<crate::backend::db::credentials::Actor>,
         name: &str,
     ) -> Result<(), RepoError> {
         let actor = actor.into();
@@ -1933,7 +1951,9 @@ impl RepoStore {
                     .call_as(
                         actor.user_id,
                         Operation::DeleteBranch {
-                            name: rpc::wire::PublicationText::retain(name, actor),
+                            name: crate::backend::cluster::rpc::wire::PublicationText::retain(
+                                name, actor,
+                            ),
                         },
                         b"",
                     )
@@ -1952,7 +1972,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: impl Into<crate::backend::db::credentials::Actor>,
         name: &str,
         sha: &str,
         message: Option<&str>,
@@ -1984,7 +2004,9 @@ impl RepoStore {
                         actor.user_id,
                         Operation::CreateTag {
                             name: name.into(),
-                            sha: rpc::wire::PublicationText::retain(sha, actor),
+                            sha: crate::backend::cluster::rpc::wire::PublicationText::retain(
+                                sha, actor,
+                            ),
                             message: message.map(str::to_owned),
                             tagger_name: tagger_name.into(),
                             tagger_email: tagger_email.into(),
@@ -2001,7 +2023,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: impl Into<crate::backend::db::credentials::Actor>,
         name: &str,
     ) -> Result<(), RepoError> {
         let actor = actor.into();
@@ -2015,7 +2037,9 @@ impl RepoStore {
                     .call_as(
                         actor.user_id,
                         Operation::DeleteTag {
-                            name: rpc::wire::PublicationText::retain(name, actor),
+                            name: crate::backend::cluster::rpc::wire::PublicationText::retain(
+                                name, actor,
+                            ),
                         },
                         b"",
                     )
@@ -2174,7 +2198,7 @@ impl RepoStore {
         repo_id: i64,
         actor: i64,
         prepared: &PreparedFile,
-        publication: &db::repositories::dependencies::Publication,
+        publication: &crate::backend::db::repositories::dependencies::Publication,
     ) -> Result<CommitInfo, RepoError> {
         match &self.0 {
             Backend::Local(local) => {
@@ -2232,14 +2256,14 @@ impl RepoStore {
                     .call_as(
                         actor,
                         Operation::UpdatePullBranch {
-                            source: rpc::repository_uuid(&from.disk_path)?,
+                            source: crate::backend::cluster::rpc::repository_uuid(&from.disk_path)?,
                             request: request.clone(),
                         },
                         b"",
                     )
                     .await
             }
-            _ => Err(rpc::wire::invalid(
+            _ => Err(crate::backend::cluster::rpc::wire::invalid(
                 "pull request source is not on the destination node",
             )),
         }
@@ -2367,7 +2391,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: impl Into<crate::backend::db::credentials::Actor>,
         head_branch: &str,
         base_branch: &str,
         head: &str,
@@ -2409,7 +2433,10 @@ impl RepoStore {
                             base: base.into(),
                             result: result.into(),
                             method,
-                            token: rpc::wire::PublicationCredential::retain(authority),
+                            token:
+                                crate::backend::cluster::rpc::wire::PublicationCredential::retain(
+                                    authority,
+                                ),
                             policy,
                         },
                         b"",
@@ -2430,7 +2457,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: impl Into<crate::backend::db::credentials::Actor>,
         heads: &[(String, String)],
         base_branch: &str,
         base: &str,
@@ -2472,7 +2499,10 @@ impl RepoStore {
                             base_branch: base_branch.into(),
                             base: base.into(),
                             result: result.into(),
-                            token: rpc::wire::PublicationCredential::retain(authority),
+                            token:
+                                crate::backend::cluster::rpc::wire::PublicationCredential::retain(
+                                    authority,
+                                ),
                             policy,
                         },
                         b"",
@@ -2522,7 +2552,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: impl Into<crate::backend::db::credentials::Actor>,
         stack_id: i64,
         versions: &[(i64, i64)],
         base_branch: &str,
@@ -2553,7 +2583,11 @@ impl RepoStore {
                         Operation::PublishRestack {
                             stack_id,
                             versions: versions.to_vec(),
-                            base_branch: rpc::wire::PublicationText::retain(base_branch, authority),
+                            base_branch:
+                                crate::backend::cluster::rpc::wire::PublicationText::retain(
+                                    base_branch,
+                                    authority,
+                                ),
                             base: base.into(),
                             moves: moves.to_vec(),
                         },
@@ -2613,7 +2647,9 @@ impl RepoStore {
     pub async fn head_target(&self) -> Result<Option<String>, RepoError> {
         match &self.0 {
             Backend::Local(local) => local.head_target().await,
-            Backend::Remote(_) => Err(rpc::wire::invalid("HEAD is read on the owning node")),
+            Backend::Remote(_) => Err(crate::backend::cluster::rpc::wire::invalid(
+                "HEAD is read on the owning node",
+            )),
         }
     }
 
@@ -2626,9 +2662,10 @@ impl RepoStore {
     ) -> anyhow::Result<std::process::ExitStatus> {
         match &self.0 {
             Backend::Local(local) => local.replica_pack(targets, have, streams).await,
-            Backend::Remote(_) => {
-                Err(rpc::wire::invalid("replica packs come from the primary").into())
-            }
+            Backend::Remote(_) => Err(crate::backend::cluster::rpc::wire::invalid(
+                "replica packs come from the primary",
+            )
+            .into()),
         }
     }
 
@@ -2636,7 +2673,9 @@ impl RepoStore {
     pub async fn index_pack(&self, pack: &Path, strict: bool) -> Result<(), RepoError> {
         match &self.0 {
             Backend::Local(local) => local.index_pack(pack, strict).await,
-            Backend::Remote(_) => Err(rpc::wire::invalid("replica copies live on this node")),
+            Backend::Remote(_) => Err(crate::backend::cluster::rpc::wire::invalid(
+                "replica copies live on this node",
+            )),
         }
     }
 
@@ -2644,7 +2683,9 @@ impl RepoStore {
     pub async fn set_refs(&self, refs: &HashMap<String, String>) -> Result<(), RepoError> {
         match &self.0 {
             Backend::Local(local) => local.set_refs(refs).await,
-            Backend::Remote(_) => Err(rpc::wire::invalid("replica copies live on this node")),
+            Backend::Remote(_) => Err(crate::backend::cluster::rpc::wire::invalid(
+                "replica copies live on this node",
+            )),
         }
     }
 
@@ -2652,7 +2693,9 @@ impl RepoStore {
     pub async fn set_head_target(&self, target: &str) -> Result<(), RepoError> {
         match &self.0 {
             Backend::Local(local) => local.set_head_target(target).await,
-            Backend::Remote(_) => Err(rpc::wire::invalid("replica copies live on this node")),
+            Backend::Remote(_) => Err(crate::backend::cluster::rpc::wire::invalid(
+                "replica copies live on this node",
+            )),
         }
     }
 
@@ -2669,7 +2712,7 @@ impl RepoStore {
     pub fn local_path_for_spawning_git(&self) -> Result<&Path, RepoError> {
         match &self.0 {
             Backend::Local(local) => Ok(local.path()),
-            Backend::Remote(_) => Err(rpc::wire::invalid(
+            Backend::Remote(_) => Err(crate::backend::cluster::rpc::wire::invalid(
                 "Host OpenSSH cannot serve remote repositories; use HTTP or built-in SSH",
             )),
         }

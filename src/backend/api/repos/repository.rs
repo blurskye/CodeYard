@@ -1,30 +1,41 @@
-use crate::backend::api::admin::actions as admin_actions;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::{repository_settings_error, ApiError};
+use crate::backend::api::http::error::repository_settings_error;
+use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
-use crate::backend::api::repos::access::{
-    access_error, check_repo_admin_access, check_repo_read_access, check_repo_write_access,
-    find_repository, readable_repository,
-};
+use crate::backend::api::repos::access::access_error;
+use crate::backend::api::repos::access::check_repo_admin_access;
+use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::check_repo_write_access;
+use crate::backend::api::repos::access::find_repository;
+use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::chrome::git_unavailable_response;
+use crate::backend::api::repos::chrome::load_metadata;
+use crate::backend::api::repos::chrome::repository_default_branch_or_db;
+use crate::backend::api::repos::chrome::unavailable;
 use crate::backend::api::repos::chrome::ApiResult;
-use crate::backend::api::repos::chrome::{
-    git_unavailable_response, load_metadata, repository_default_branch_or_db, unavailable, Loaded,
-};
-use crate::backend::api::repos::code::contents::{
-    delete_form, replaced_repository_editor, write_form,
-};
-use crate::backend::api::repos::forms::{checkbox, field, repeated, with_status};
-use crate::backend::api::repos::labels::{label_write_error, parse_label_color};
-use crate::backend::api::repos::responses::{
-    lifecycle_error, lifecycle_status, repository_fork_counts, repository_owner, repository_topics,
-    ForkParent, RepoResponse,
-};
-use crate::backend::api::repos::settings::branch_protection;
+use crate::backend::api::repos::chrome::Loaded;
+use crate::backend::api::repos::code::contents::delete_form;
+use crate::backend::api::repos::code::contents::replaced_repository_editor;
+use crate::backend::api::repos::code::contents::write_form;
+use crate::backend::api::repos::forms::checkbox;
+use crate::backend::api::repos::forms::field;
+use crate::backend::api::repos::forms::repeated;
+use crate::backend::api::repos::forms::with_status;
+use crate::backend::api::repos::labels::label_write_error;
+use crate::backend::api::repos::labels::parse_label_color;
+use crate::backend::api::repos::responses::lifecycle_error;
+use crate::backend::api::repos::responses::lifecycle_status;
+use crate::backend::api::repos::responses::repository_fork_counts;
+use crate::backend::api::repos::responses::repository_owner;
+use crate::backend::api::repos::responses::repository_topics;
+use crate::backend::api::repos::responses::ForkParent;
+use crate::backend::api::repos::responses::RepoResponse;
+
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::repositories::access::AccessError;
-use crate::backend::repositories::lifecycle;
-use crate::backend::webhooks::{panel, settings::HookError};
+
+use crate::backend::webhooks::settings::HookError;
 use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
@@ -37,7 +48,7 @@ use std::sync::Arc;
 const REPO_ADMIN_REQUIRED: &str = "Only repository administrators can manage these settings.";
 
 fn autolink_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
-    use db::repositories::autolinks::Refusal;
+    use crate::backend::db::repositories::autolinks::Refusal;
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => ApiError::failure(
             StatusCode::FORBIDDEN,
@@ -61,7 +72,7 @@ fn autolink_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
 }
 
 fn immutable_releases_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
-    use db::repositories::immutable_releases::Refusal;
+    use crate::backend::db::repositories::immutable_releases::Refusal;
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => ApiError::failure(
             StatusCode::FORBIDDEN,
@@ -135,9 +146,12 @@ async fn repository_response(
         .unwrap_or_default();
 
     let forked_from = if let Some(parent_id) = repository.forked_from_id {
-        match db::repositories::records::get_repository_by_id(&state.pool, parent_id)
-            .await
-            .map_err(|_| access_error(AccessError::Unavailable))?
+        match crate::backend::db::repositories::records::get_repository_by_id(
+            &state.pool,
+            parent_id,
+        )
+        .await
+        .map_err(|_| access_error(AccessError::Unavailable))?
         {
             Some(parent) => match check_repo_read_access(&state.pool, &parent, headers).await {
                 Ok(()) => {
@@ -177,7 +191,7 @@ pub struct RenameRepoRequest {
 pub struct UpdateRepoRequest {
     #[serde(
         default,
-        deserialize_with = "db::repositories::records::nullable_change"
+        deserialize_with = "crate::backend::db::repositories::records::nullable_change"
     )]
     pub description: Option<Option<String>>,
     pub is_private: Option<bool>,
@@ -193,13 +207,14 @@ pub async fn rename_repo(
     Json(req): Json<RenameRepoRequest>,
 ) -> Result<Json<RepoResponse>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    lifecycle::validate_name(&req.new_name).map_err(lifecycle_error)?;
+    crate::backend::repositories::lifecycle::validate_name(&req.new_name)
+        .map_err(lifecycle_error)?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
 
     // Unique owner/name reservation is authoritative. A rename only changes the
     // DB alias; stable operation-owned storage is never moved or compensated.
-    let updated = db::repositories::records::rename_repository(
+    let updated = crate::backend::db::repositories::records::rename_repository(
         &state.pool,
         crate::backend::db::credentials::Actor::from((
             user.id,
@@ -228,7 +243,7 @@ pub async fn transfer_repo(
     let user = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
-    let updated = lifecycle::transfer(
+    let updated = crate::backend::repositories::lifecycle::transfer(
         &state.pool,
         state.cluster.as_ref(),
         crate::backend::db::credentials::Actor::from((
@@ -263,13 +278,17 @@ pub async fn about_repo(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_write_access(&state.pool, &repository, &user).await?;
     let description = req.description.unwrap_or_default();
-    lifecycle::validate_description(&description).map_err(lifecycle_error)?;
-    let website =
-        db::repositories::topics::parse_website(req.website.as_deref().unwrap_or_default())
-            .map_err(repository_settings_error)?;
-    let topics = db::repositories::topics::parse_topics(req.topics.iter().map(String::as_str))
-        .map_err(repository_settings_error)?;
-    db::repositories::topics::update_about(
+    crate::backend::repositories::lifecycle::validate_description(&description)
+        .map_err(lifecycle_error)?;
+    let website = crate::backend::db::repositories::topics::parse_website(
+        req.website.as_deref().unwrap_or_default(),
+    )
+    .map_err(repository_settings_error)?;
+    let topics = crate::backend::db::repositories::topics::parse_topics(
+        req.topics.iter().map(String::as_str),
+    )
+    .map_err(repository_settings_error)?;
+    crate::backend::db::repositories::topics::update_about(
         &state.pool,
         user.id,
         repository.id,
@@ -279,15 +298,16 @@ pub async fn about_repo(
     )
     .await
     .map_err(repository_settings_error)?;
-    let updated = db::repositories::records::get_repository_by_id(&state.pool, repository.id)
-        .await
-        .map_err(repository_settings_error)?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
+    let updated =
+        crate::backend::db::repositories::records::get_repository_by_id(&state.pool, repository.id)
+            .await
+            .map_err(repository_settings_error)?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(ApiError::new("not_found", "Repository not found")),
+                )
+            })?;
     Ok(Json(repository_response(&state, &headers, &updated).await?))
 }
 
@@ -301,10 +321,11 @@ pub async fn update_repo(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
     if let Some(Some(description)) = &req.description {
-        lifecycle::validate_description(description).map_err(lifecycle_error)?;
+        crate::backend::repositories::lifecycle::validate_description(description)
+            .map_err(lifecycle_error)?;
     }
     if req.is_private == Some(false)
-        && lifecycle::visibility_locked(&state.pool, &repository)
+        && crate::backend::repositories::lifecycle::visibility_locked(&state.pool, &repository)
             .await
             .map_err(|error| {
                 (
@@ -323,17 +344,17 @@ pub async fn update_repo(
     }
     // The merge methods, description and visibility save in one transaction, so a refusal or a
     // failed write leaves all of them unchanged.
-    let updated = db::repositories::records::patch_repository(
+    let updated = crate::backend::db::repositories::records::patch_repository(
         &state.pool,
         crate::backend::db::credentials::Actor::from((
             user.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
         repository.id,
-        &db::repositories::records::RepositoryChanges {
+        &crate::backend::db::repositories::records::RepositoryChanges {
             description: req.description.as_ref().map(|value| value.as_deref()),
             is_private: req.is_private,
-            merge_methods: db::repositories::records::MergeMethodUpdate {
+            merge_methods: crate::backend::db::repositories::records::MergeMethodUpdate {
                 merge: req.allow_merge_commit,
                 squash: req.allow_squash_merge,
                 rebase: req.allow_rebase_merge,
@@ -355,7 +376,7 @@ pub async fn delete_repo(
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
-    lifecycle::delete(
+    crate::backend::repositories::lifecycle::delete(
         &state.pool,
         state.cluster.as_ref(),
         crate::backend::db::credentials::Actor::from((
@@ -401,7 +422,9 @@ pub(super) async fn settings_model(
             crate::backend::api::user::interactions::panel(
                 &ctx.state.pool,
                 viewer.id,
-                db::interactions::InteractionScope::Repository(loaded.repository.id),
+                crate::backend::db::interactions::InteractionScope::Repository(
+                    loaded.repository.id,
+                ),
                 &loaded.chrome.csrf_token,
                 true,
             )
@@ -411,34 +434,35 @@ pub(super) async fn settings_model(
     }
     // Only the branch-protection section uses rules and their user choices.
     if tab == "branches" {
-        settings.force_push_suggestions = db::repositories::access::list_write_access_users(
-            &ctx.state.pool,
-            loaded.repository.id,
-            viewer.id,
-        )
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .into_iter()
-        .map(|(username, level)| view::settings::Collaborator {
-            username,
-            access: level.as_str().into(),
-        })
-        .collect();
+        settings.force_push_suggestions =
+            crate::backend::db::repositories::access::list_write_access_users(
+                &ctx.state.pool,
+                loaded.repository.id,
+                viewer.id,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .into_iter()
+            .map(|(username, level)| view::settings::Collaborator {
+                username,
+                access: level.as_str().into(),
+            })
+            .collect();
         settings.branch_rules = branch_rules(ctx, loaded).await?;
     }
     if tab == "actions" {
         let pool = &ctx.state.pool;
         let (site, own) = tokio::try_join!(
-            db::actions::get_actions_settings(pool),
-            db::actions::get_repo_actions_settings(pool, loaded.repository.id),
+            crate::backend::db::actions::get_actions_settings(pool),
+            crate::backend::db::actions::get_repo_actions_settings(pool, loaded.repository.id),
         )
         .map_err(|_| unavailable(ctx))?;
         let text = |value: Option<i32>| value.map(|value| value.to_string()).unwrap_or_default();
         let server_minutes = ctx.state.ci_runs.config.run_timeout_seconds.div_ceil(60);
-        let oidc = db::oidc::settings(
+        let oidc = crate::backend::db::oidc::settings(
             pool,
             viewer.id,
-            db::oidc::Scope::Repository(loaded.repository.id),
+            crate::backend::db::oidc::Scope::Repository(loaded.repository.id),
         )
         .await
         .map_err(|_| unavailable(ctx))?;
@@ -475,30 +499,36 @@ pub(super) async fn settings_model(
         }));
     }
     if tab == "security" {
-        let security = db::secret_scanning::settings(&ctx.state.pool, loaded.repository.id)
-            .await
-            .map_err(|_| unavailable(ctx))?;
+        let security =
+            crate::backend::db::secret_scanning::settings(&ctx.state.pool, loaded.repository.id)
+                .await
+                .map_err(|_| unavailable(ctx))?;
         settings.secret_scanning = security.enabled;
         settings.push_protection = security.push_protection;
-        use codeyard_git::secret_detection::patterns::Owner;
+        use codeyard_support::secret_detection::patterns::Owner;
         let mut scopes = vec![(Owner::Repository(loaded.repository.id), false)];
         if let Some(org) = loaded.repository.owner_org_id {
             scopes.push((Owner::Organization(org), true));
         }
         for (scope, organization) in scopes {
-            let patterns =
-                match db::secret_scanning::list_patterns(&ctx.state.pool, viewer.id, scope).await {
-                    Ok(patterns) => patterns,
-                    Err(error)
-                        if matches!(
-                            error.downcast_ref::<db::secret_scanning::Refusal>(),
-                            Some(db::secret_scanning::Refusal::Denied)
-                        ) =>
-                    {
-                        continue
-                    }
-                    Err(_) => return Err(unavailable(ctx)),
-                };
+            let patterns = match crate::backend::db::secret_scanning::list_patterns(
+                &ctx.state.pool,
+                viewer.id,
+                scope,
+            )
+            .await
+            {
+                Ok(patterns) => patterns,
+                Err(error)
+                    if matches!(
+                        error.downcast_ref::<crate::backend::db::secret_scanning::Refusal>(),
+                        Some(crate::backend::db::secret_scanning::Refusal::Denied)
+                    ) =>
+                {
+                    continue
+                }
+                Err(_) => return Err(unavailable(ctx)),
+            };
             settings
                 .secret_patterns
                 .extend(
@@ -514,10 +544,14 @@ pub(super) async fn settings_model(
         }
     }
     if tab == "secrets" {
-        let per_page = db::environment_values::ENVIRONMENTS_PER_PAGE;
-        settings.environment_page =
-            super::paging::number(ctx, "environment_page", 1, 1..=i64::MAX as usize / per_page)?;
-        settings.environments = db::environment_values::environments(
+        let per_page = crate::backend::db::environment_values::ENVIRONMENTS_PER_PAGE;
+        settings.environment_page = crate::backend::api::repos::paging::number(
+            ctx,
+            "environment_page",
+            1,
+            1..=i64::MAX as usize / per_page,
+        )?;
+        settings.environments = crate::backend::db::environment_values::environments(
             &ctx.state.pool,
             viewer.id,
             loaded.repository.id,
@@ -528,14 +562,15 @@ pub(super) async fn settings_model(
         settings.environments_more = settings.environments.len() > per_page;
         settings.environments.truncate(per_page);
         if let Some(name) = ctx.query.get("environment").filter(|name| !name.is_empty()) {
-            let key = db::environment_values::environment_key(name).map_err(|_| {
-                ctx.repo_error(
-                    &loaded.chrome,
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "Invalid environment name.",
-                )
-            })?;
-            let name = db::environment_values::environment(
+            let key =
+                crate::backend::db::environment_values::environment_key(name).map_err(|_| {
+                    ctx.repo_error(
+                        &loaded.chrome,
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "Invalid environment name.",
+                    )
+                })?;
+            let name = crate::backend::db::environment_values::environment(
                 &ctx.state.pool,
                 viewer.id,
                 loaded.repository.id,
@@ -551,19 +586,19 @@ pub(super) async fn settings_model(
                 )
             })?;
             let (secrets, variables) = tokio::try_join!(
-                db::environment_values::list(
+                crate::backend::db::environment_values::list(
                     &ctx.state.pool,
                     viewer.id,
                     loaded.repository.id,
                     &name,
-                    db::environment_values::Kind::Secret
+                    crate::backend::db::environment_values::Kind::Secret
                 ),
-                db::environment_values::list(
+                crate::backend::db::environment_values::list(
                     &ctx.state.pool,
                     viewer.id,
                     loaded.repository.id,
                     &name,
-                    db::environment_values::Kind::Variable
+                    crate::backend::db::environment_values::Kind::Variable
                 ),
             )
             .map_err(|_| unavailable(ctx))?;
@@ -587,10 +622,10 @@ pub(super) async fn settings_model(
         }
         settings.secrets_enabled = ctx.state.secret_encryptor.is_some();
         if settings.environment.is_none() {
-            settings.variables = db::variables::list(
+            settings.variables = crate::backend::db::variables::list(
                 &ctx.state.pool,
                 viewer.id,
-                &db::users::accounts::AccountCredential::Session(
+                &crate::backend::db::users::accounts::AccountCredential::Session(
                     &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                         .unwrap_or_default(),
                 ),
@@ -604,23 +639,26 @@ pub(super) async fn settings_model(
                 value: variable.value,
             })
             .collect();
-            settings.secrets =
-                db::secrets::list_secrets(&ctx.state.pool, viewer.id, loaded.repository.id)
-                    .await
-                    .map_err(|_| unavailable(ctx))?
-                    .into_iter()
-                    .map(|secret| view::settings::secrets::Secret {
-                        name: secret.name,
-                        updated_at: secret.updated_at.to_rfc3339(),
-                    })
-                    .collect();
+            settings.secrets = crate::backend::db::secrets::list_secrets(
+                &ctx.state.pool,
+                viewer.id,
+                loaded.repository.id,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .into_iter()
+            .map(|secret| view::settings::secrets::Secret {
+                name: secret.name,
+                updated_at: secret.updated_at.to_rfc3339(),
+            })
+            .collect();
         }
     }
     if tab == "dependabot-secrets" {
         settings.secrets_enabled = ctx.state.secret_encryptor.is_some();
-        settings.dependabot_secrets = db::secrets::list_secrets_for(
+        settings.dependabot_secrets = crate::backend::db::secrets::list_secrets_for(
             &ctx.state.pool,
-            db::secrets::SecretKind::Dependabot,
+            crate::backend::db::secrets::SecretKind::Dependabot,
             viewer.id,
             loaded.repository.id,
         )
@@ -637,14 +675,14 @@ pub(super) async fn settings_model(
         && (loaded.chrome.can_manage_collaborators || loaded.chrome.can_manage_invitations)
     {
         // Team-derived access is managed on teams; invitations and direct grants are managed here.
-        let accesses = db::repositories::access::list_repo_collaborators(
+        let accesses = crate::backend::db::repositories::access::list_repo_collaborators(
             &ctx.state.pool,
             loaded.repository.id,
         )
         .await
         .map_err(|_| unavailable(ctx))?;
         let ids: Vec<_> = accesses.iter().map(|access| access.user_id).collect();
-        let users = db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
+        let users = crate::backend::db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
             .await
             .map_err(|_| unavailable(ctx))?;
         let mut users: HashMap<_, _> = users.into_iter().map(|user| (user.id, user)).collect();
@@ -676,7 +714,7 @@ pub(super) async fn settings_model(
             .iter()
             .map(|invitation| invitation.invitee_id)
             .collect::<Vec<_>>();
-        let users = db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
+        let users = crate::backend::db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
             .await
             .map_err(|_| unavailable(ctx))?
             .into_iter()
@@ -698,15 +736,17 @@ pub(super) async fn settings_model(
         }
     }
     if tab == "releases" {
-        let (opted_in, enforced) =
-            db::repositories::immutable_releases::policy(&ctx.state.pool, loaded.repository.id)
-                .await
-                .map_err(|_| unavailable(ctx))?;
+        let (opted_in, enforced) = crate::backend::db::repositories::immutable_releases::policy(
+            &ctx.state.pool,
+            loaded.repository.id,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?;
         settings.immutable_releases = Some(opted_in);
         settings.immutable_enforced = enforced;
     }
     if tab == "autolinks" {
-        settings.autolinks = db::repositories::autolinks::list(
+        settings.autolinks = crate::backend::db::repositories::autolinks::list(
             &ctx.state.pool,
             viewer.id,
             loaded.repository.id,
@@ -716,27 +756,28 @@ pub(super) async fn settings_model(
         .await
         .map_err(|_| unavailable(ctx))?
         .into_iter()
-        .map(super::refs::references::autolink)
+        .map(crate::backend::api::repos::refs::references::autolink)
         .collect();
     }
     if tab == "deploy-keys" {
-        settings.deploy_keys =
-            Some(super::deploy_keys::settings_section(ctx, loaded, viewer).await?);
+        settings.deploy_keys = Some(
+            crate::backend::api::repos::deploy_keys::settings_section(ctx, loaded, viewer).await?,
+        );
     }
     if tab == "webhooks" {
         let base = format!("{}/settings?tab=webhooks", loaded.chrome.base());
         let action_base = format!("{}/_forms", loaded.chrome.base());
-        let place = panel::Place {
-            owner: db::webhooks::HookOwner::Repository(loaded.repository.id),
+        let place = crate::backend::webhooks::panel::Place {
+            owner: crate::backend::db::webhooks::HookOwner::Repository(loaded.repository.id),
             base: &base,
             action_base: &action_base,
             csrf_token: &loaded.chrome.csrf_token,
             repository_id: Some(loaded.repository.id),
         };
-        let built = panel::build(
+        let built = crate::backend::webhooks::panel::build(
             &ctx.state.pool,
             viewer,
-            &db::users::accounts::AccountCredential::Session(
+            &crate::backend::db::users::accounts::AccountCredential::Session(
                 &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                     .unwrap_or_default(),
             ),
@@ -749,15 +790,19 @@ pub(super) async fn settings_model(
     }
     if tab == "properties" {
         settings.properties = Some(Box::new(
-            super::properties::panel(ctx, loaded, ctx.query.get("property").map(String::as_str))
-                .await?,
+            crate::backend::api::repos::properties::panel(
+                ctx,
+                loaded,
+                ctx.query.get("property").map(String::as_str),
+            )
+            .await?,
         ));
     }
     Ok(settings)
 }
 
 fn webhook_page_error(ctx: &PageContext, loaded: &Loaded, error: HookError) -> Response {
-    let (status, message) = panel::refusal(&error);
+    let (status, message) = crate::backend::webhooks::panel::refusal(&error);
     ctx.repo_error(&loaded.chrome, status, message)
 }
 
@@ -819,7 +864,7 @@ async fn branch_rules(
     ctx: &PageContext,
     loaded: &Loaded,
 ) -> Result<Vec<view::settings::BranchRule>, Response> {
-    let rules = branch_protection::authorized_rule_responses(
+    let rules = crate::backend::api::repos::settings::branch_protection::authorized_rule_responses(
         &ctx.state.pool,
         ctx.database_actor(ctx.require_user()?.id),
         loaded.repository.id,
@@ -918,7 +963,10 @@ fn submitted_rule(
 /// The JSON API request for a submitted rule.
 fn rule_request(
     rule: &view::settings::BranchRule,
-) -> Result<branch_protection::UpsertBranchProtectionRuleRequest, (StatusCode, Json<ApiError>)> {
+) -> Result<
+    crate::backend::api::repos::settings::branch_protection::UpsertBranchProtectionRuleRequest,
+    (StatusCode, Json<ApiError>),
+> {
     let required_approving_reviews = rule
         .required_approving_reviews
         .trim()
@@ -932,7 +980,7 @@ fn rule_request(
                 )),
             )
         })?;
-    Ok(branch_protection::UpsertBranchProtectionRuleRequest {
+    Ok(crate::backend::api::repos::settings::branch_protection::UpsertBranchProtectionRuleRequest {
         pattern: rule.pattern.clone(),
         require_pull_request: rule.require_pull_request,
         required_approving_reviews,
@@ -977,8 +1025,13 @@ async fn protection_form(
     if action == "protection-delete" {
         let outcome = match confirmation(form) {
             Ok(()) => {
-                branch_protection::delete_rule(pool, actor, repository.id, &field(form, "pattern"))
-                    .await
+                crate::backend::api::repos::settings::branch_protection::delete_rule(
+                    pool,
+                    actor,
+                    repository.id,
+                    &field(form, "pattern"),
+                )
+                .await
             }
             Err(message) => Err((
                 StatusCode::BAD_REQUEST,
@@ -994,9 +1047,11 @@ async fn protection_form(
     }
     let submitted = submitted_rule(form, pairs);
     let outcome = match rule_request(&submitted) {
-        Ok(request) => branch_protection::save_rule(pool, actor, repository, request)
-            .await
-            .map(|_| ()),
+        Ok(request) => crate::backend::api::repos::settings::branch_protection::save_rule(
+            pool, actor, repository, request,
+        )
+        .await
+        .map(|_| ()),
         Err(refusal) => Err(refusal),
     };
     match outcome {
@@ -1029,13 +1084,13 @@ async fn webhook_form(
         Err(response) => return response,
     };
     let pool = &ctx.state.pool;
-    let owner = db::webhooks::HookOwner::Repository(loaded.repository.id);
+    let owner = crate::backend::db::webhooks::HookOwner::Repository(loaded.repository.id);
     let base = format!("{}/settings?tab=webhooks", loaded.chrome.base());
-    let outcome = panel::apply(
+    let outcome = crate::backend::webhooks::panel::apply(
         pool,
         ctx.state.secret_encryptor.as_deref(),
         actor,
-        &db::users::accounts::AccountCredential::Session(
+        &crate::backend::db::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),
@@ -1048,7 +1103,7 @@ async fn webhook_form(
     match outcome {
         Ok(notice) => ctx.redirect(&format!("{base}&notice={notice}")),
         Err((error, draft)) => {
-            let (status, message) = panel::refusal(&error);
+            let (status, message) = crate::backend::webhooks::panel::refusal(&error);
             let mut settings = match settings_model(ctx, loaded, "webhooks").await {
                 Ok(settings) => settings,
                 Err(response) => return response,
@@ -1393,7 +1448,7 @@ pub(super) async fn post_form(
     };
     let database_only = !row.has(GIT) && action != "write-file";
     let loaded = match if database_only {
-        super::chrome::load_database(&ctx, owner, name).await
+        crate::backend::api::repos::chrome::load_database(&ctx, owner, name).await
     } else {
         load_metadata(&ctx, owner, name).await
     } {
@@ -1467,7 +1522,8 @@ pub(super) async fn post_form(
         );
     }
     if action.starts_with("repository-property-") {
-        return super::properties::form(&ctx, &loaded, action, &form, &pairs).await;
+        return crate::backend::api::repos::properties::form(&ctx, &loaded, action, &form, &pairs)
+            .await;
     }
     if action.starts_with("protection-") {
         return protection_form(&ctx, &loaded, action, &form, &pairs).await;
@@ -1476,16 +1532,21 @@ pub(super) async fn post_form(
         return webhook_form(&ctx, &loaded, action, &form, &pairs).await;
     }
     if action.starts_with("environment-") {
-        return super::settings::environment_values::form(&ctx, &loaded, action, &form).await;
+        return crate::backend::api::repos::settings::environment_values::form(
+            &ctx, &loaded, action, &form,
+        )
+        .await;
     }
     if action.starts_with("variable-") {
-        return super::settings::variables::form(&ctx, &loaded, action, &form).await;
+        return crate::backend::api::repos::settings::variables::form(&ctx, &loaded, action, &form)
+            .await;
     }
     if matches!(action.as_str(), "secret-save" | "secret-delete") {
-        return super::settings::secrets::form(&ctx, &loaded, action, &form).await;
+        return crate::backend::api::repos::settings::secrets::form(&ctx, &loaded, action, &form)
+            .await;
     }
     if action.starts_with("deploy-key-") {
-        return super::deploy_keys::form(&ctx, &loaded, action, &form).await;
+        return crate::backend::api::repos::deploy_keys::form(&ctx, &loaded, action, &form).await;
     }
     if action == "settings" && !matches!(field(&form, "visibility").as_str(), "public" | "private")
     {
@@ -1514,7 +1575,7 @@ fn label_fields(form: &HashMap<String, String>) -> ApiResult<(String, String, St
     let color = parse_label_color(&field(form, "color"));
     match color {
         Some(color)
-            if crate::backend::issues::validate_label(&name, Some(description.as_str()))
+            if codeyard_model::issue_input::validate_label(&name, Some(description.as_str()))
                 .is_ok() =>
         {
             Ok((name, color, description))
@@ -1563,7 +1624,8 @@ async fn mutate(
     let authority = || ctx.database_actor(actor.id);
     match action {
         "star" | "unstar" | "watch" | "unwatch" => {
-            use crate::backend::repositories::engagement::{change, Engagement};
+            use crate::backend::repositories::engagement::change;
+            use crate::backend::repositories::engagement::Engagement;
             let kind = if matches!(action, "star" | "unstar") {
                 Engagement::Star
             } else {
@@ -1598,7 +1660,7 @@ async fn mutate(
             Ok(base)
         }
         "fork" => {
-            let fork = lifecycle::fork(
+            let fork = crate::backend::repositories::lifecycle::fork(
                 pool,
                 cluster,
                 &ctx.state.repos_path,
@@ -1687,11 +1749,14 @@ async fn mutate(
             crate::backend::repositories::access::check_admin(pool, repository.id, actor.id)
                 .await
                 .map_err(access_error)?;
-            lifecycle::validate_description(&field(form, "description"))
-                .map_err(lifecycle_error)?;
+            crate::backend::repositories::lifecycle::validate_description(&field(
+                form,
+                "description",
+            ))
+            .map_err(lifecycle_error)?;
             let private = field(form, "visibility") == "private";
             if !private
-                && lifecycle::visibility_locked(pool, repository)
+                && crate::backend::repositories::lifecycle::visibility_locked(pool, repository)
                     .await
                     .map_err(lifecycle_error)?
             {
@@ -1703,12 +1768,12 @@ async fn mutate(
                     )),
                 ));
             }
-            db::repositories::records::update_repository(
+            crate::backend::db::repositories::records::update_repository(
                 pool,
                 authority(),
                 repository.id,
                 Some(&field(form, "description")),
-                db::repositories::records::VisibilityUpdate {
+                crate::backend::db::repositories::records::VisibilityUpdate {
                     is_private: private,
                     expected: if confirmation(form).is_ok() {
                         None
@@ -1716,7 +1781,7 @@ async fn mutate(
                         Some(repository.is_private)
                     },
                 },
-                db::repositories::records::MergeMethodUpdate {
+                crate::backend::db::repositories::records::MergeMethodUpdate {
                     merge: None,
                     squash: None,
                     rebase: None,
@@ -1727,11 +1792,11 @@ async fn mutate(
             Ok(format!("{base}/settings?tab=general&saved=general"))
         }
         "merge-methods" => {
-            db::repositories::records::set_merge_methods(
+            crate::backend::db::repositories::records::set_merge_methods(
                 pool,
                 authority(),
                 repository.id,
-                db::repositories::records::MergeMethodUpdate {
+                crate::backend::db::repositories::records::MergeMethodUpdate {
                     merge: Some(checkbox(form, "allow_merge_commit")),
                     squash: Some(checkbox(form, "allow_squash_merge")),
                     rebase: Some(checkbox(form, "allow_rebase_merge")),
@@ -1742,7 +1807,7 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "secret-pattern-publish" => {
-            use codeyard_git::secret_detection::patterns::Owner;
+            use codeyard_support::secret_detection::patterns::Owner;
             let id = field(form, "pattern_id").parse().map_err(|_| {
                 ApiError::failure(
                     StatusCode::UNPROCESSABLE_ENTITY,
@@ -1757,10 +1822,10 @@ async fn mutate(
             } else {
                 Owner::Repository(repository.id)
             };
-            db::secret_scanning::publish_pattern(
+            crate::backend::db::secret_scanning::publish_pattern(
                 pool,
                 actor.id,
-                &db::users::accounts::AccountCredential::Session(
+                &crate::backend::db::users::accounts::AccountCredential::Session(
                     &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                         .unwrap_or_default(),
                 ),
@@ -1769,7 +1834,7 @@ async fn mutate(
             )
             .await
             .map_err(|error| {
-                match error.downcast_ref::<db::secret_scanning::Refusal>() {
+                match error.downcast_ref::<crate::backend::db::secret_scanning::Refusal>() {
                     _ if error.is::<codeyard_support::credentials::AccountRestricted>() => {
                         ApiError::failure(
                             StatusCode::FORBIDDEN,
@@ -1777,12 +1842,14 @@ async fn mutate(
                             "A live unrestricted credential is required.",
                         )
                     }
-                    Some(db::secret_scanning::Refusal::Denied) => ApiError::failure(
-                        StatusCode::FORBIDDEN,
-                        "forbidden",
-                        "Pattern administration required",
-                    ),
-                    Some(db::secret_scanning::Refusal::Missing) => {
+                    Some(crate::backend::db::secret_scanning::Refusal::Denied) => {
+                        ApiError::failure(
+                            StatusCode::FORBIDDEN,
+                            "forbidden",
+                            "Pattern administration required",
+                        )
+                    }
+                    Some(crate::backend::db::secret_scanning::Refusal::Missing) => {
                         ApiError::failure(StatusCode::NOT_FOUND, "not_found", "Pattern not found")
                     }
                     _ => ApiError::failure(
@@ -1795,7 +1862,7 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "code-security" => {
-            let settings = db::secret_scanning::Settings {
+            let settings = crate::backend::db::secret_scanning::Settings {
                 enabled: checkbox(form, "secret_scanning"),
                 push_protection: checkbox(form, "push_protection"),
             };
@@ -1806,38 +1873,47 @@ async fn mutate(
                     "Secret scanning requires SECRETS_MASTER_KEY",
                 ));
             }
-            db::secret_scanning::save_settings(pool, actor.id, repository.id, &settings)
-                .await
-                .map_err(
-                    |error| match error.downcast_ref::<db::secret_scanning::Refusal>() {
-                        Some(db::secret_scanning::Refusal::Invalid) => ApiError::failure(
+            crate::backend::db::secret_scanning::save_settings(
+                pool,
+                actor.id,
+                repository.id,
+                &settings,
+            )
+            .await
+            .map_err(|error| {
+                match error.downcast_ref::<crate::backend::db::secret_scanning::Refusal>() {
+                    Some(crate::backend::db::secret_scanning::Refusal::Invalid) => {
+                        ApiError::failure(
                             StatusCode::UNPROCESSABLE_ENTITY,
                             "validation_error",
                             "Push protection requires secret scanning",
-                        ),
-                        Some(db::secret_scanning::Refusal::Denied) => ApiError::failure(
+                        )
+                    }
+                    Some(crate::backend::db::secret_scanning::Refusal::Denied) => {
+                        ApiError::failure(
                             StatusCode::FORBIDDEN,
                             "forbidden",
                             "Repository administration required",
-                        ),
-                        _ => ApiError::failure(
-                            StatusCode::SERVICE_UNAVAILABLE,
-                            "unavailable",
-                            "Secret scanning settings unavailable",
-                        ),
-                    },
-                )?;
+                        )
+                    }
+                    _ => ApiError::failure(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "unavailable",
+                        "Secret scanning settings unavailable",
+                    ),
+                }
+            })?;
             Ok(settings_section_url(&base, action))
         }
         "oidc-settings" => {
-            let settings = db::oidc::Settings::from_keys(
+            let settings = crate::backend::db::oidc::Settings::from_keys(
                 checkbox(form, "use_default"),
                 &field(form, "include_claim_keys"),
             );
-            db::oidc::save_settings(
+            crate::backend::db::oidc::save_settings(
                 pool,
                 ctx.database_actor(actor.id),
-                db::oidc::Scope::Repository(repository.id),
+                crate::backend::db::oidc::Scope::Repository(repository.id),
                 &settings,
             )
             .await
@@ -1857,17 +1933,20 @@ async fn mutate(
                     Json(ApiError::new("validation_error", &message)),
                 )
             };
-            let site = db::actions::get_actions_settings(pool).await.map_err(|_| {
-                ApiError::failure(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "unavailable",
-                    "The Actions settings are unavailable right now",
-                )
-            })?;
+            let site = crate::backend::db::actions::get_actions_settings(pool)
+                .await
+                .map_err(|_| {
+                    ApiError::failure(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "unavailable",
+                        "The Actions settings are unavailable right now",
+                    )
+                })?;
             // A limit may be lower than the site's, not higher.
             let limit = |name: &str, label: &str, max: i32, site: Option<i32>| {
                 let value =
-                    admin_actions::optional_number(form, name, label, max).map_err(invalid)?;
+                    crate::backend::api::admin::actions::optional_number(form, name, label, max)
+                        .map_err(invalid)?;
                 match (value, site) {
                     (Some(value), Some(site)) if value > site => Err(invalid(format!(
                         "{label} can be at most {site}, the site's limit."
@@ -1879,7 +1958,7 @@ async fn mutate(
             if !engine.is_empty() && !site.engine_enabled(&engine) {
                 return Err(invalid("Choose Site default or an enabled engine.".into()));
             }
-            let settings = db::actions::RepoActionsSettings {
+            let settings = crate::backend::db::actions::RepoActionsSettings {
                 org_cache_size_gib: None,
                 org_cache_retention_days: None,
                 engine: (!engine.is_empty()).then_some(engine),
@@ -1899,23 +1978,23 @@ async fn mutate(
                 run_timeout_minutes: limit(
                     "run_timeout_minutes",
                     "The timeout",
-                    admin_actions::MAX_TIMEOUT_MINUTES,
+                    crate::backend::api::admin::actions::MAX_TIMEOUT_MINUTES,
                     site.run_timeout_minutes,
                 )?,
                 job_cpus: limit(
                     "job_cpus",
                     "CPUs per job",
-                    admin_actions::MAX_CPUS,
+                    crate::backend::api::admin::actions::MAX_CPUS,
                     site.job_cpus,
                 )?,
                 job_memory_gib: limit(
                     "job_memory_gib",
                     "Memory per job",
-                    admin_actions::MAX_MEMORY_GIB,
+                    crate::backend::api::admin::actions::MAX_MEMORY_GIB,
                     site.job_memory_gib,
                 )?,
             };
-            db::actions::save_repo_actions_settings(
+            crate::backend::db::actions::save_repo_actions_settings(
                 pool,
                 ctx.database_actor(actor.id),
                 repository.id,
@@ -1927,17 +2006,19 @@ async fn mutate(
         }
         "about" => {
             let description = field(form, "description");
-            lifecycle::validate_description(&description).map_err(lifecycle_error)?;
-            let website = db::repositories::topics::parse_website(&field(form, "website"))
-                .map_err(repository_settings_error)?;
+            crate::backend::repositories::lifecycle::validate_description(&description)
+                .map_err(lifecycle_error)?;
+            let website =
+                crate::backend::db::repositories::topics::parse_website(&field(form, "website"))
+                    .map_err(repository_settings_error)?;
             // Topics are typed as a list, separated by commas or spaces.
-            let topics = db::repositories::topics::parse_topics(
+            let topics = crate::backend::db::repositories::topics::parse_topics(
                 field(form, "topics")
                     .split(|c: char| c == ',' || c.is_whitespace())
                     .collect::<Vec<_>>(),
             )
             .map_err(repository_settings_error)?;
-            db::repositories::topics::update_about(
+            crate::backend::db::repositories::topics::update_about(
                 pool,
                 actor.id,
                 repository.id,
@@ -1953,7 +2034,7 @@ async fn mutate(
             crate::backend::repositories::access::check_admin(pool, repository.id, actor.id)
                 .await
                 .map_err(access_error)?;
-            let updated = db::repositories::records::rename_repository(
+            let updated = crate::backend::db::repositories::records::rename_repository(
                 pool,
                 authority(),
                 repository.id,
@@ -1964,7 +2045,7 @@ async fn mutate(
             Ok(codeyard_webui::repository_path(owner, &updated.name))
         }
         "transfer" => {
-            let updated = lifecycle::transfer(
+            let updated = crate::backend::repositories::lifecycle::transfer(
                 pool,
                 ctx.state.cluster.as_ref(),
                 authority(),
@@ -1981,7 +2062,7 @@ async fn mutate(
                 .await
                 .map_err(access_error)?;
             // Archiving an archived repository, or the reverse, changes nothing and is not an error.
-            db::repositories::records::set_repository_archived(
+            crate::backend::db::repositories::records::set_repository_archived(
                 pool,
                 authority(),
                 repository.id,
@@ -1992,23 +2073,28 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "delete" => {
-            lifecycle::delete(pool, cluster, ctx.database_actor(actor.id), repository.id)
-                .await
-                .map_err(lifecycle_error)?;
+            crate::backend::repositories::lifecycle::delete(
+                pool,
+                cluster,
+                ctx.database_actor(actor.id),
+                repository.id,
+            )
+            .await
+            .map_err(lifecycle_error)?;
             Ok(codeyard_webui::profile_path(owner))
         }
         "template" => {
-            db::repositories::records::patch_repository(
+            crate::backend::db::repositories::records::patch_repository(
                 pool,
                 authority(),
                 repository.id,
-                &db::repositories::records::RepositoryChanges {
+                &crate::backend::db::repositories::records::RepositoryChanges {
                     is_template: Some(checkbox(form, "is_template")),
                     ..Default::default()
                 },
             )
             .await
-            .map_err(lifecycle::storage_error)
+            .map_err(crate::backend::repositories::lifecycle::storage_error)
             .map_err(lifecycle_error)?;
             Ok(settings_section_url(&base, action))
         }
@@ -2042,7 +2128,7 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "autolink-add" => {
-            let input = db::repositories::autolinks::NewAutolink::new(
+            let input = crate::backend::db::repositories::autolinks::NewAutolink::new(
                 &field(form, "key_prefix"),
                 &field(form, "url_template"),
                 checkbox(form, "is_alphanumeric"),
@@ -2054,9 +2140,14 @@ async fn mutate(
                     &error.to_string(),
                 )
             })?;
-            db::repositories::autolinks::create(pool, actor.id, repository.id, &input)
-                .await
-                .map_err(autolink_error)?;
+            crate::backend::db::repositories::autolinks::create(
+                pool,
+                actor.id,
+                repository.id,
+                &input,
+            )
+            .await
+            .map_err(autolink_error)?;
             Ok(settings_section_url(&base, action))
         }
         "autolink-delete" => {
@@ -2067,7 +2158,7 @@ async fn mutate(
                     "Invalid autolink",
                 )
             })?;
-            db::repositories::autolinks::remove(pool, actor.id, repository.id, id)
+            crate::backend::db::repositories::autolinks::remove(pool, actor.id, repository.id, id)
                 .await
                 .map_err(autolink_error)?;
             Ok(settings_section_url(&base, action))
@@ -2142,7 +2233,7 @@ async fn mutate(
         }
         "label" => {
             let (name, color, description) = label_fields(form)?;
-            db::labels::create_label(
+            crate::backend::db::labels::create_label(
                 pool,
                 ctx.database_actor(actor.id),
                 repository.id,
@@ -2157,7 +2248,7 @@ async fn mutate(
         "edit-label" => {
             let id = label_id(form)?;
             let (name, color, description) = label_fields(form)?;
-            db::labels::update_label_checked(
+            crate::backend::db::labels::update_label_checked(
                 pool,
                 ctx.database_actor(actor.id),
                 repository.id,
@@ -2177,9 +2268,14 @@ async fn mutate(
         }
         "delete-label" => {
             let id = label_id(form)?;
-            db::labels::delete_label(pool, ctx.database_actor(actor.id), repository.id, id)
-                .await
-                .map_err(label_write_error)?;
+            crate::backend::db::labels::delete_label(
+                pool,
+                ctx.database_actor(actor.id),
+                repository.id,
+                id,
+            )
+            .await
+            .map_err(label_write_error)?;
             Ok(format!("{base}/labels"))
         }
         _ => Err((
@@ -2206,7 +2302,8 @@ pub(super) async fn page(
     let loaded = match if tab == "general" || tab.is_empty() {
         load_metadata(&ctx, &params["owner"], &params["repo"]).await
     } else {
-        super::chrome::load_database(&ctx, &params["owner"], &params["repo"]).await
+        crate::backend::api::repos::chrome::load_database(&ctx, &params["owner"], &params["repo"])
+            .await
     } {
         Ok(loaded) => loaded,
         Err(response) => return response,

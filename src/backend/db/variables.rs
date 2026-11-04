@@ -78,15 +78,15 @@ pub(crate) fn ensure_room(
 
 native_operation!(crate::backend::db::postgres::variables::list,
     crate::backend::db::sqlite::variables::list,
-    fn list(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64) -> Result<Vec<Variable>, VariableError>);
+    fn list(pool: &DbPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64) -> Result<Vec<Variable>, VariableError>);
 
 native_operation!(crate::backend::db::postgres::variables::save,
     crate::backend::db::sqlite::variables::save,
-    fn save(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64, previous: Option<&str>, name: &str, value: Option<&str>) -> Result<(), VariableError>);
+    fn save(pool: &DbPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64, previous: Option<&str>, name: &str, value: Option<&str>) -> Result<(), VariableError>);
 
 native_operation!(crate::backend::db::postgres::variables::delete,
     crate::backend::db::sqlite::variables::delete,
-    fn delete(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64, name: &str) -> Result<(), VariableError>);
+    fn delete(pool: &DbPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64, name: &str) -> Result<(), VariableError>);
 
 native_operation!(crate::backend::db::postgres::variables::for_run,
     crate::backend::db::sqlite::variables::for_run,

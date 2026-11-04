@@ -1,11 +1,11 @@
-use super::super::protocol::TransactionPhase;
 use super::*;
 use crate::backend::cluster::IrohDialer;
 use crate::backend::cluster::NodeAddress;
 use crate::backend::cluster::NodeContext;
-use crate::backend::cluster::NodeKey;
 use crate::backend::cluster::Relay;
-use crate::backend::db::cluster::writes as journal;
+use crate::backend::repositories::protocol::TransactionPhase;
+use codeyard_support::node_identity::NodeKey;
+
 use crate::backend::notifications::NotificationBroadcaster;
 use base64::Engine;
 use codeyard_db_core::models::RefValue;
@@ -123,7 +123,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
     assert!(db::cluster::place_repository(&pool, repo.id, primary)
         .await
         .unwrap());
-    journal::bootstrap_writes(
+    crate::backend::db::cluster::writes::bootstrap_writes(
         &pool,
         repo.id,
         primary,
@@ -143,12 +143,16 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
     )
     .await
     .unwrap();
-    assert!(journal::mark_write_applied(&pool, repo.id, follower, 1, 0)
-        .await
-        .unwrap());
-    assert!(journal::enable_write_family(&pool, &[(repo.id, 1)])
-        .await
-        .unwrap());
+    assert!(crate::backend::db::cluster::writes::mark_write_applied(
+        &pool, repo.id, follower, 1, 0
+    )
+    .await
+    .unwrap());
+    assert!(
+        crate::backend::db::cluster::writes::enable_write_family(&pool, &[(repo.id, 1)])
+            .await
+            .unwrap()
+    );
     let context = NodeContext {
         pool: Some(pool.clone()),
         iroh: IrohDialer::new(Relay::Off, key.clone()),
@@ -216,7 +220,9 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
         !task.is_finished(),
         "prepared hook must remain held without a decision"
     );
-    let view = journal::recovery_view(&pool, repo.id).await.unwrap();
+    let view = crate::backend::db::cluster::writes::recovery_view(&pool, repo.id)
+        .await
+        .unwrap();
     let pending = view.unfinished.unwrap();
     assert_eq!(pending.decision, "pending");
     assert_eq!(pending.votes.len(), 1);
@@ -237,7 +243,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
         error.downcast_ref::<RepoError>().unwrap().message,
         "write quorum unavailable"
     );
-    let decided = journal::load_write(&pool, &pending.id)
+    let decided = crate::backend::db::cluster::writes::load_write(&pool, &pending.id)
         .await
         .unwrap()
         .unwrap();

@@ -1,7 +1,7 @@
 //! The signed-in user's own issues and pull requests, across the repositories they can read.
 //! The queries apply the repository visibility rule, so a row the viewer cannot read is never
 //! returned. Each list is capped at `LIST_LIMIT`; the counts are not.
-use crate::backend::db;
+
 use crate::backend::db::discussions::StateCounts;
 use crate::backend::db::issues::IssueRelation;
 use crate::backend::db::issues::ViewerIssueEntry;
@@ -29,8 +29,10 @@ pub async fn list_issues(
     open: bool,
 ) -> Result<IssueList> {
     // The rows carry their labels and comment counts, read in the rows' snapshot.
-    let rows = db::issues::list_viewer_issues(pool, viewer_id, relation, open, LIST_LIMIT).await?;
-    let counts = db::issues::count_viewer_issues(pool, viewer_id, relation).await?;
+    let rows =
+        crate::backend::db::issues::list_viewer_issues(pool, viewer_id, relation, open, LIST_LIMIT)
+            .await?;
+    let counts = crate::backend::db::issues::count_viewer_issues(pool, viewer_id, relation).await?;
     Ok(IssueList { rows, counts })
 }
 
@@ -40,11 +42,13 @@ pub async fn list_pull_requests(
     relation: PullRequestRelation,
     open: bool,
 ) -> Result<PullRequestList> {
-    let rows = db::pull_requests::records::list_viewer_pull_requests(
+    let rows = crate::backend::db::pull_requests::records::list_viewer_pull_requests(
         pool, viewer_id, relation, open, LIST_LIMIT,
     )
     .await?;
-    let counts =
-        db::pull_requests::records::count_viewer_pull_requests(pool, viewer_id, relation).await?;
+    let counts = crate::backend::db::pull_requests::records::count_viewer_pull_requests(
+        pool, viewer_id, relation,
+    )
+    .await?;
     Ok(PullRequestList { rows, counts })
 }

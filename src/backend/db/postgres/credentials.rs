@@ -10,7 +10,13 @@ pub(crate) async fn live(tx: &mut sqlx::PgConnection, actor: &Actor, write: bool
     match actor.credential() {
         None => Ok(true),
         Some(credential) => {
-            super::users::transitions::credential_live(tx, actor.user_id, &credential, write).await
+            crate::backend::db::postgres::users::transitions::credential_live(
+                tx,
+                actor.user_id,
+                &credential,
+                write,
+            )
+            .await
         }
     }
 }
@@ -29,8 +35,15 @@ pub(crate) async fn writes(
     }
     match actor.token_id() {
         Some(token) => {
-            super::users::tokens::permits_write(tx, actor.user_id, token, repo, org, permission)
-                .await
+            crate::backend::db::postgres::users::tokens::permits_write(
+                tx,
+                actor.user_id,
+                token,
+                repo,
+                org,
+                permission,
+            )
+            .await
         }
         None => Ok(true),
     }
@@ -43,11 +56,17 @@ pub(crate) async fn require_account(
 ) -> Result<()> {
     match actor.credential() {
         Some(credential) => {
-            super::users::transitions::require_account(tx, actor.user_id, &credential).await
+            crate::backend::db::postgres::users::transitions::require_account(
+                tx,
+                actor.user_id,
+                &credential,
+            )
+            .await
         }
         None => {
             anyhow::ensure!(
-                super::users::transitions::active_account(tx, actor.user_id).await?,
+                crate::backend::db::postgres::users::transitions::active_account(tx, actor.user_id)
+                    .await?,
                 AccountRestricted
             );
             Ok(())
@@ -79,7 +98,7 @@ pub(crate) async fn repository(
     let Some(id) = actor.token_id() else {
         return Ok(true);
     };
-    if !super::fine_grained_tokens::repository_permission(
+    if !crate::backend::db::postgres::fine_grained_tokens::repository_permission(
         tx,
         id,
         actor.user_id,
@@ -105,10 +124,11 @@ pub(crate) async fn repository(
     let job: Option<i64> = sqlx::query_scalar("SELECT g.token_id FROM actions_github_tokens g JOIN ci_runs r ON r.id=g.run_id WHERE g.token_id=$1 FOR SHARE OF g,r")
         .bind(id).fetch_optional(&mut **tx).await?;
     if job.is_some() {
-        let Some(job) = super::ci_tokens::get_in_connection(tx, id).await? else {
+        let Some(job) = crate::backend::db::postgres::ci_tokens::get_in_connection(tx, id).await?
+        else {
             return Ok(false);
         };
-        let permissions: crate::backend::ci::tokens::Permissions =
+        let permissions: codeyard_model::permissions::Permissions =
             serde_json::from_str(&job.permissions)?;
         return Ok(job.repo_id == repo && permissions.allows(&permission.replace('_', "-"), write));
     }
@@ -137,7 +157,7 @@ pub(crate) async fn repository(
                 write,
             )? && installation(tx, app, None, repo).await?);
         }
-        return Ok(crate::backend::identity::oauth_apps::allows(
+        return Ok(codeyard_model::oauth_apps::allows(
             &scopes,
             &crate::backend::db::credentials::oauth_repository_path(permission),
             write,
@@ -224,7 +244,7 @@ pub(crate) async fn organization(
             .fetch_optional(&mut **tx)
             .await?;
     let bounds: Option<crate::backend::db::fine_grained_tokens::Bounds> =
-        sqlx::query_as(super::fine_grained_tokens::BOUNDS)
+        sqlx::query_as(crate::backend::db::postgres::fine_grained_tokens::BOUNDS)
             .bind(id)
             .fetch_optional(&mut **tx)
             .await?;
@@ -233,7 +253,7 @@ pub(crate) async fn organization(
         return Ok(bounds.active()
             && bounds.user_id == actor.user_id
             && bounds.owner_org_id == Some(org)
-            && crate::backend::identity::fine_grained::allows(&permissions, permission, write));
+            && codeyard_model::fine_grained::allows(&permissions, permission, write));
     }
     // App and workflow credentials have no supported organization administration grant.
     let derived: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=$1) OR EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1) OR EXISTS(SELECT 1 FROM oauth_app_tokens t JOIN github_apps a ON a.client_id=t.client_id WHERE t.token_id=$1)")
@@ -251,7 +271,7 @@ pub(crate) async fn organization(
             .bind(&client).fetch_optional(&mut **tx).await?;
         return Ok(
             (active.is_some() || client == codeyard_model::identity::CLI_CLIENT)
-                && crate::backend::identity::oauth_apps::allows(
+                && codeyard_model::oauth_apps::allows(
                     &scopes,
                     &crate::backend::db::credentials::oauth_organization_path(permission),
                     write,

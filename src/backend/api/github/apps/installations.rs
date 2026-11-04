@@ -1,17 +1,22 @@
 //! JWT discovery and installation management, backed by native account consent.
-use super::super::{
-    api_url, auth, optional_json::OptionalJson, pagination::Pagination, repos, Error, Result,
-};
-use super::{access_token, application};
+use codeyard_model::urls::api_url;
+
+use crate::backend::api::github::optional_json::OptionalJson;
+use crate::backend::api::github::pagination::Pagination;
+
+use crate::backend::api::github::apps::access_token;
+use crate::backend::api::github::apps::application;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::db::github_apps::App;
 use crate::backend::db::github_apps::Installation;
 use crate::backend::db::github_apps::InstallationFilter;
 use crate::backend::db::github_apps::RepositoryChange;
-use crate::backend::identity::github_apps as apps;
-use crate::backend::identity::tokens::token_hash;
-use crate::backend::webhooks::payloads;
+
+use codeyard_support::token_hash::token_hash;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -23,22 +28,23 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 
 pub(super) async fn jwt(state: &AppState, headers: &HeaderMap) -> Result<App> {
-    let value = auth::credential(headers).ok_or_else(auth::required)?;
-    apps::authenticate(&state.pool, value)
+    let value = crate::backend::api::github::auth::credential(headers)
+        .ok_or_else(crate::backend::api::github::auth::required)?;
+    crate::backend::identity::github_apps::authenticate(&state.pool, value)
         .await
         .map_err(Error::unavailable)?
-        .ok_or_else(auth::required)
+        .ok_or_else(crate::backend::api::github::auth::required)
 }
 async fn account(state: &AppState, installation: &Installation) -> Result<Value> {
     if let Some(user) = installation.user_id {
-        return Ok(payloads::user(
-            &db::users::accounts::get_user_by_id(&state.pool, user)
+        return Ok(crate::backend::webhooks::payloads::user(
+            &crate::backend::db::users::accounts::get_user_by_id(&state.pool, user)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?,
         ));
     }
-    let org = db::organizations::profiles::get_public_organization_by_id(
+    let org = crate::backend::db::organizations::profiles::get_public_organization_by_id(
         &state.pool,
         installation.org_id.ok_or_else(Error::missing)?,
     )
@@ -46,14 +52,14 @@ async fn account(state: &AppState, installation: &Installation) -> Result<Value>
     .map_err(Error::unavailable)?
     .ok_or_else(Error::missing)?;
     Ok(
-        json!({"login":org.name,"id":org.id,"node_id":super::super::node_id::encode("O",org.id),"avatar_url":payloads::organization_avatar(&org),"gravatar_id":"","url":api_url(&format!("/orgs/{}",org.name)),"html_url":format!("{}{}",crate::backend::api::http::config::link_origin(),codeyard_webui::profile_path(&org.name)),"followers_url":api_url(&format!("/users/{}/followers",org.name)),"following_url":api_url(&format!("/users/{}/following{{/other_user}}",org.name)),"gists_url":api_url(&format!("/users/{}/gists{{/gist_id}}",org.name)),"starred_url":api_url(&format!("/users/{}/starred{{/owner}}{{/repo}}",org.name)),"subscriptions_url":api_url(&format!("/users/{}/subscriptions",org.name)),"organizations_url":api_url(&format!("/users/{}/orgs",org.name)),"repos_url":api_url(&format!("/orgs/{}/repos",org.name)),"events_url":api_url(&format!("/users/{}/events{{/privacy}}",org.name)),"received_events_url":api_url(&format!("/users/{}/received_events",org.name)),"type":"Organization","site_admin":false}),
+        json!({"login":org.name,"id":org.id,"node_id":crate::backend::api::github::node_id::encode("O",org.id),"avatar_url":payloads::organization_avatar(&org),"gravatar_id":"","url":api_url(&format!("/orgs/{}",org.name)),"html_url":format!("{}{}",codeyard_model::http_config::link_origin(),codeyard_webui::profile_path(&org.name)),"followers_url":api_url(&format!("/users/{}/followers",org.name)),"following_url":api_url(&format!("/users/{}/following{{/other_user}}",org.name)),"gists_url":api_url(&format!("/users/{}/gists{{/gist_id}}",org.name)),"starred_url":api_url(&format!("/users/{}/starred{{/owner}}{{/repo}}",org.name)),"subscriptions_url":api_url(&format!("/users/{}/subscriptions",org.name)),"organizations_url":api_url(&format!("/users/{}/orgs",org.name)),"repos_url":api_url(&format!("/orgs/{}/repos",org.name)),"events_url":api_url(&format!("/users/{}/events{{/privacy}}",org.name)),"received_events_url":api_url(&format!("/users/{}/received_events",org.name)),"type":"Organization","site_admin":false}),
     )
 }
 pub(in crate::backend::api::github) async fn app_document(
     state: &AppState,
     app: &App,
 ) -> Result<Value> {
-    let owner = db::users::accounts::get_user_by_id(&state.pool, app.owner_id)
+    let owner = crate::backend::db::users::accounts::get_user_by_id(&state.pool, app.owner_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -61,9 +67,10 @@ pub(in crate::backend::api::github) async fn app_document(
         app: Some(app.id),
         ..InstallationFilter::default()
     };
-    let (installations, _) = db::github_apps::installations(&state.pool, &filter, 0, 0)
-        .await
-        .map_err(Error::unavailable)?;
+    let (installations, _) =
+        crate::backend::db::github_apps::installations(&state.pool, &filter, 0, 0)
+            .await
+            .map_err(Error::unavailable)?;
     app_value(app, &owner, installations)
 }
 /// An app's document from rows already loaded, for responses that cannot read the database.
@@ -73,7 +80,7 @@ pub(in crate::backend::api::github) fn app_value(
     installations: i64,
 ) -> Result<Value> {
     Ok(
-        json!({"id":app.id,"slug":app.slug,"node_id":super::super::node_id::encode("APP",app.id),"owner":payloads::user(owner),"name":app.name,"description":app.description,"external_url":app.homepage,"html_url":format!("{}/apps/{}",crate::backend::api::http::config::link_origin(),app.slug),"created_at":app.created_at,"updated_at":app.created_at,"permissions":serde_json::from_str::<Value>(&app.permissions).map_err(Error::unavailable)?,"events":app.events.split(',').filter(|s|!s.is_empty()).collect::<Vec<_>>(),"installations_count":installations,"client_id":app.client_id}),
+        json!({"id":app.id,"slug":app.slug,"node_id":crate::backend::api::github::node_id::encode("APP",app.id),"owner":payloads::user(owner),"name":app.name,"description":app.description,"external_url":app.homepage,"html_url":format!("{}/apps/{}",codeyard_model::http_config::link_origin(),app.slug),"created_at":app.created_at,"updated_at":app.created_at,"permissions":serde_json::from_str::<Value>(&app.permissions).map_err(Error::unavailable)?,"events":app.events.split(',').filter(|s|!s.is_empty()).collect::<Vec<_>>(),"installations_count":installations,"client_id":app.client_id}),
     )
 }
 pub(in crate::backend::api::github) async fn document(
@@ -82,16 +89,16 @@ pub(in crate::backend::api::github) async fn document(
 ) -> Result<Value> {
     // The request already sees this installation, so an app whose owner is no longer
     // active is still described rather than failing the page.
-    let app = db::github_apps::app_by_id(&state.pool, installation.app_id)
+    let app = crate::backend::db::github_apps::app_by_id(&state.pool, installation.app_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     Ok(
-        json!({"id":installation.id,"account":account(state,installation).await?,"repository_selection":if installation.all_repos{"all"}else{"selected"},"access_tokens_url":api_url(&format!("/app/installations/{}/access_tokens",installation.id)),"repositories_url":api_url("/installation/repositories"),"html_url":format!("{}/settings/apps/installations",crate::backend::api::http::config::link_origin()),"app_id":app.id,"app_slug":app.slug,"target_id":installation.user_id.or(installation.org_id),"target_type":if installation.org_id.is_some(){"Organization"}else{"User"},"permissions":serde_json::from_str::<Value>(&app.permissions).map_err(Error::unavailable)?,"events":app.events.split(',').filter(|s|!s.is_empty()).collect::<Vec<_>>(),"created_at":installation.created_at,"updated_at":installation.updated_at,"single_file_name":null,"has_multiple_single_files":false,"single_file_paths":[],"suspended_at":installation.suspended_at,"suspended_by":if let Some(id)=installation.suspended_by{db::users::accounts::get_user_by_id(&state.pool,id).await.map_err(Error::unavailable)?.map(|user|payloads::user(&user))}else{None}}),
+        json!({"id":installation.id,"account":account(state,installation).await?,"repository_selection":if installation.all_repos{"all"}else{"selected"},"access_tokens_url":api_url(&format!("/app/installations/{}/access_tokens",installation.id)),"repositories_url":api_url("/installation/repositories"),"html_url":format!("{}/settings/apps/installations",codeyard_model::http_config::link_origin()),"app_id":app.id,"app_slug":app.slug,"target_id":installation.user_id.or(installation.org_id),"target_type":if installation.org_id.is_some(){"Organization"}else{"User"},"permissions":serde_json::from_str::<Value>(&app.permissions).map_err(Error::unavailable)?,"events":app.events.split(',').filter(|s|!s.is_empty()).collect::<Vec<_>>(),"created_at":installation.created_at,"updated_at":installation.updated_at,"single_file_name":null,"has_multiple_single_files":false,"single_file_paths":[],"suspended_at":installation.suspended_at,"suspended_by":if let Some(id)=installation.suspended_by{crate::backend::db::users::accounts::get_user_by_id(&state.pool,id).await.map_err(Error::unavailable)?.map(|user|crate::backend::webhooks::payloads::user(&user))}else{None}}),
     )
 }
 async fn owned(state: &AppState, app: i64, id: i64) -> Result<Installation> {
-    db::github_apps::installation(&state.pool, id)
+    crate::backend::db::github_apps::installation(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
         .filter(|i| i.app_id == app)
@@ -104,7 +111,7 @@ pub(super) async fn installation_requests(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let app = jwt(&state, &headers).await?;
-    let rows = db::github_apps::requests(&state.pool, app.id)
+    let rows = crate::backend::db::github_apps::requests(&state.pool, app.id)
         .await
         .map_err(Error::unavailable)?;
     let (offset, limit) = page.window()?;
@@ -122,11 +129,12 @@ pub(super) async fn installation_requests(
             created_at: request.created_at,
             updated_at: request.created_at,
         };
-        let requester = db::users::accounts::get_user_by_id(&state.pool, request.user_id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        values.push(json!({"id":request.id,"node_id":super::super::node_id::encode("AIR",request.id),"account":account(&state,&installation).await?,"requester":payloads::user(&requester),"created_at":request.created_at}));
+        let requester =
+            crate::backend::db::users::accounts::get_user_by_id(&state.pool, request.user_id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
+        values.push(json!({"id":request.id,"node_id":crate::backend::api::github::node_id::encode("AIR",request.id),"account":account(&state,&installation).await?,"requester":payloads::user(&requester),"created_at":request.created_at}));
     }
     page.response(&uri, values, has_next)
 }
@@ -143,7 +151,8 @@ pub(super) async fn get_by_slug(
     headers: HeaderMap,
     Path(slug): Path<String>,
 ) -> Result<Json<Value>> {
-    let is_jwt = auth::credential(&headers).is_some_and(|value| value.split('.').count() == 3);
+    let is_jwt = crate::backend::api::github::auth::credential(&headers)
+        .is_some_and(|value| value.split('.').count() == 3);
     let jwt_app = if is_jwt {
         Some(jwt(&state, &headers).await?)
     } else {
@@ -152,9 +161,9 @@ pub(super) async fn get_by_slug(
     let authenticated = if is_jwt {
         None
     } else {
-        auth::authenticate(&state, &headers, false).await?
+        crate::backend::api::github::auth::authenticate(&state, &headers, false).await?
     };
-    let app = db::github_apps::app(&state.pool, &slug)
+    let app = crate::backend::db::github_apps::app(&state.pool, &slug)
         .await
         .map_err(Error::unavailable)?
         .filter(|app| app.slug == slug)
@@ -197,7 +206,7 @@ pub(in crate::backend::api::github) async fn installation_page(
     offset: usize,
     limit: usize,
 ) -> Result<(i64, Vec<Installation>)> {
-    db::github_apps::installations(
+    crate::backend::db::github_apps::installations(
         &state.pool,
         filter,
         i64::try_from(offset).map_err(Error::unavailable)?,
@@ -227,25 +236,46 @@ pub(super) async fn find_installation(
 ) -> Result<Json<Value>> {
     let app = jwt(&state, &headers).await?;
     let found = if let (Some(owner), Some(repo)) = (params.get("owner"), params.get("repo")) {
-        let repo = db::repositories::records::get_repository(&state.pool, owner, repo)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        db::github_apps::repository_installation(&state.pool, app.id, repo.id, false, None).await
+        let repo =
+            crate::backend::db::repositories::records::get_repository(&state.pool, owner, repo)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
+        crate::backend::db::github_apps::repository_installation(
+            &state.pool,
+            app.id,
+            repo.id,
+            false,
+            None,
+        )
+        .await
     } else if let Some(org) = params.get("org") {
-        let org = db::organizations::profiles::get_public_organization(&state.pool, org)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        db::github_apps::account_installation(&state.pool, app.id, None, Some(org.id)).await
+        let org =
+            crate::backend::db::organizations::profiles::get_public_organization(&state.pool, org)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
+        crate::backend::db::github_apps::account_installation(
+            &state.pool,
+            app.id,
+            None,
+            Some(org.id),
+        )
+        .await
     } else {
         // The generated router canonicalizes this username parameter to user_id.
         let name = params.get("user_id").ok_or_else(Error::missing)?;
-        let user = db::users::accounts::get_user_by_username(&state.pool, name)
+        let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, name)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        db::github_apps::account_installation(&state.pool, app.id, Some(user.id), None).await
+        crate::backend::db::github_apps::account_installation(
+            &state.pool,
+            app.id,
+            Some(user.id),
+            None,
+        )
+        .await
     };
     let installation = found
         .map_err(Error::unavailable)?
@@ -259,7 +289,7 @@ async fn change(
     action: &str,
 ) -> Result<StatusCode> {
     let app = jwt(state, headers).await?;
-    if db::github_apps::change_installation(&state.pool, app.id, id, action)
+    if crate::backend::db::github_apps::change_installation(&state.pool, app.id, id, action)
         .await
         .map_err(Error::unavailable)?
     {
@@ -304,7 +334,7 @@ async fn issue(
     installation: &Installation,
     actor: Option<i64>,
     body: &Value,
-    parent: Option<&db::github_apps::Token>,
+    parent: Option<&crate::backend::db::github_apps::Token>,
 ) -> Result<Issued> {
     if installation.suspended_at.is_some() {
         return Err(Error::new(StatusCode::FORBIDDEN, "Installation suspended"));
@@ -316,7 +346,10 @@ async fn issue(
         .map_err(Error::unavailable)?;
     let permissions = body
         .get("permissions")
-        .map_or_else(|| Some(grant.clone()), |value| apps::subset(value, &grant))
+        .map_or_else(
+            || Some(grant.clone()),
+            |value| crate::backend::identity::github_apps::subset(value, &grant),
+        )
         .ok_or_else(|| Error::invalid("Permissions exceed the app grant"))?;
     let parent_repos = parent.map(selection).transpose()?.unwrap_or_default();
     if body.get("repository_ids").is_some() && body.get("repositories").is_some() {
@@ -335,10 +368,14 @@ async fn issue(
         let owner = owner["login"].as_str().ok_or_else(Error::missing)?;
         let mut ids = vec![];
         for name in names {
-            let repo = db::repositories::records::get_repository(&state.pool, owner, &name)
-                .await
-                .map_err(Error::unavailable)?
-                .ok_or_else(|| Error::invalid("Repository is outside this installation"))?;
+            let repo = crate::backend::db::repositories::records::get_repository(
+                &state.pool,
+                owner,
+                &name,
+            )
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(|| Error::invalid("Repository is outside this installation"))?;
             ids.push(repo.id);
         }
         ids
@@ -370,7 +407,7 @@ async fn issue(
         .get("access_token")
         .and_then(Value::as_str)
         .map(token_hash);
-    let token = db::github_apps::issue(
+    let token = crate::backend::db::github_apps::issue(
         &state.pool,
         app.id,
         installation.id,
@@ -379,7 +416,7 @@ async fn issue(
         &token_hash(&value),
         &permissions.to_string(),
         &serde_json::to_string(&ids).map_err(Error::unavailable)?,
-        apps::write(&permissions),
+        crate::backend::identity::github_apps::write(&permissions),
     )
     .await
     .map_err(Error::unavailable)?
@@ -395,7 +432,7 @@ async fn issue(
 /// The most repositories one token may select, as on GitHub.
 const MAX_SELECTED: usize = 500;
 /// The repositories a token's bounds select; empty means its whole installation.
-fn selection(token: &db::github_apps::Token) -> Result<Vec<i64>> {
+fn selection(token: &crate::backend::db::github_apps::Token) -> Result<Vec<i64>> {
     serde_json::from_str(&token.repositories).map_err(Error::unavailable)
 }
 pub(super) async fn create_token(
@@ -418,12 +455,15 @@ pub(super) async fn create_token(
     let mut response = json!({"token":issued.value,"expires_at":issued.token.expires_at,"permissions":issued.permissions,"repository_selection":if issued.all_repositories{"all"}else{"selected"}});
     if !issued.repositories.is_empty() {
         let mut repositories = vec![];
-        for repo in
-            db::repositories::records::get_repositories_by_ids(&state.pool, &issued.repositories)
-                .await
-                .map_err(Error::unavailable)?
+        for repo in crate::backend::db::repositories::records::get_repositories_by_ids(
+            &state.pool,
+            &issued.repositories,
+        )
+        .await
+        .map_err(Error::unavailable)?
         {
-            repositories.push(repos::document(&state, &repo, None).await?);
+            repositories
+                .push(crate::backend::api::github::repos::document(&state, &repo, None).await?);
         }
         response["repositories"] = json!(repositories);
     }
@@ -433,15 +473,18 @@ pub(super) async fn create_token(
 pub(super) async fn installation_token(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<(auth::Authentication, db::github_apps::Token)> {
-    let auth = auth::authenticate(state, headers, true)
+) -> Result<(
+    crate::backend::api::github::auth::Authentication,
+    crate::backend::db::github_apps::Token,
+)> {
+    let auth = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
-    let token = db::github_apps::token(&state.pool, auth.token.id)
+        .ok_or_else(crate::backend::api::github::auth::required)?;
+    let token = crate::backend::db::github_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?
         .filter(|token| !token.user_token)
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     Ok((auth, token))
 }
 pub(super) async fn list_repositories(
@@ -451,10 +494,11 @@ pub(super) async fn list_repositories(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let (auth, token) = installation_token(&state, &headers).await?;
-    let installation = db::github_apps::installation(&state.pool, token.installation_id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let installation =
+        crate::backend::db::github_apps::installation(&state.pool, token.installation_id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     repository_list(
         &state,
         &installation,
@@ -472,13 +516,13 @@ async fn repository_list(
     state: &AppState,
     installation: &Installation,
     selected: &[i64],
-    auth: &auth::Authentication,
+    auth: &crate::backend::api::github::auth::Authentication,
     viewer: Option<i64>,
     uri: &axum::http::Uri,
     page: &Pagination,
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
-    let (total, rows) = db::github_apps::installation_repositories(
+    let (total, rows) = crate::backend::db::github_apps::installation_repositories(
         &state.pool,
         installation.id,
         viewer,
@@ -490,7 +534,7 @@ async fn repository_list(
     .map_err(Error::unavailable)?;
     let mut values = vec![];
     for repo in &rows {
-        values.push(repos::document(state, repo, Some(auth)).await?);
+        values.push(crate::backend::api::github::repos::document(state, repo, Some(auth)).await?);
     }
     let all_repositories = installation.all_repos && selected.is_empty();
     Ok((page.headers(uri,more(total, offset, limit))?,Json(json!({"total_count":total,"repository_selection":if all_repositories{"all"}else{"selected"},"repositories":values}))).into_response())
@@ -500,33 +544,39 @@ pub(super) async fn revoke_token(
     headers: HeaderMap,
 ) -> Result<StatusCode> {
     let (auth, _) = installation_token(&state, &headers).await?;
-    db::github_apps::revoke(&state.pool, auth.token.id)
+    crate::backend::db::github_apps::revoke(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// The app a credential is bound to: an App token's, or a GitHub App's user token's.
-async fn user_app(state: &AppState, auth: &auth::Authentication) -> Result<Option<i64>> {
-    if let Some(token) = db::github_apps::token(&state.pool, auth.token.id)
+async fn user_app(
+    state: &AppState,
+    auth: &crate::backend::api::github::auth::Authentication,
+) -> Result<Option<i64>> {
+    if let Some(token) = crate::backend::db::github_apps::token(&state.pool, auth.token.id)
+        .await
+        .map_err(Error::unavailable)?
+    {
+        return Ok(crate::backend::db::github_apps::installation(
+            &state.pool,
+            token.installation_id,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .map(|i| i.app_id));
+    }
+    if let Some(token) = crate::backend::db::oauth_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?
     {
         return Ok(
-            db::github_apps::installation(&state.pool, token.installation_id)
+            crate::backend::db::github_apps::app(&state.pool, &token.client_id)
                 .await
                 .map_err(Error::unavailable)?
-                .map(|i| i.app_id),
+                .map(|app| app.id),
         );
-    }
-    if let Some(token) = db::oauth_apps::token(&state.pool, auth.token.id)
-        .await
-        .map_err(Error::unavailable)?
-    {
-        return Ok(db::github_apps::app(&state.pool, &token.client_id)
-            .await
-            .map_err(Error::unavailable)?
-            .map(|app| app.id));
     }
     Ok(None)
 }
@@ -536,10 +586,10 @@ pub(super) async fn user_installations(
     OriginalUri(uri): OriginalUri,
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
-    let auth = auth::authenticate(&state, &headers, true)
+    let auth = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
-    let token = db::github_apps::token(&state.pool, auth.token.id)
+        .ok_or_else(crate::backend::api::github::auth::required)?;
+    let token = crate::backend::db::github_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?;
     let filter = InstallationFilter {
@@ -567,10 +617,10 @@ pub(super) async fn user_repositories(
     OriginalUri(uri): OriginalUri,
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
-    let auth = auth::authenticate(&state, &headers, true)
+    let auth = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
-    let token = db::github_apps::token(&state.pool, auth.token.id)
+        .ok_or_else(crate::backend::api::github::auth::required)?;
+    let token = crate::backend::db::github_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?;
     if token
@@ -593,7 +643,7 @@ pub(super) async fn user_repositories(
         .ok_or_else(Error::missing)?;
     // An organization that refuses classic tokens refuses this listing of its repositories.
     if let Some(org) = installation.org_id {
-        auth::refuse_classic(&state, auth.token.id, org).await?;
+        crate::backend::api::github::auth::refuse_classic(&state, auth.token.id, org).await?;
     }
     let selected = token
         .as_ref()
@@ -618,12 +668,12 @@ async fn change_repository(
     repo: i64,
     add: bool,
 ) -> Result<StatusCode> {
-    let auth = auth::authenticate(state, headers, true)
+    let auth = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     auth.require_write()?;
     // A narrowed app token may not widen its own repository grant.
-    if db::github_apps::token(&state.pool, auth.token.id)
+    if crate::backend::db::github_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?
         .is_some()
@@ -636,9 +686,15 @@ async fn change_repository(
     if let Some(app) = user_app(state, &auth).await? {
         owned(state, app, id).await?;
     }
-    match db::github_apps::change_repository(&state.pool, auth.database_actor(), id, repo, add)
-        .await
-        .map_err(Error::unavailable)?
+    match crate::backend::db::github_apps::change_repository(
+        &state.pool,
+        auth.database_actor(),
+        id,
+        repo,
+        add,
+    )
+    .await
+    .map_err(Error::unavailable)?
     {
         RepositoryChange::Changed => Ok(StatusCode::NO_CONTENT),
         RepositoryChange::Missing => Err(Error::missing()),
@@ -685,18 +741,27 @@ async fn target_installation(state: &AppState, app: i64, body: &Value) -> Result
         })
         .transpose()?;
     let user = match (login, id) {
-        (Some(login), _) => db::users::accounts::get_user_by_username(&state.pool, login).await,
-        (None, Some(id)) => db::users::accounts::get_user_by_id(&state.pool, id).await,
+        (Some(login), _) => {
+            crate::backend::db::users::accounts::get_user_by_username(&state.pool, login).await
+        }
+        (None, Some(id)) => {
+            crate::backend::db::users::accounts::get_user_by_id(&state.pool, id).await
+        }
         (None, None) => Ok(None),
     }
     .map_err(Error::unavailable)?
     .filter(|user| id.is_none_or(|id| id == user.id));
     let org = match (login, id) {
         (Some(login), _) => {
-            db::organizations::profiles::get_public_organization(&state.pool, login).await
+            crate::backend::db::organizations::profiles::get_public_organization(&state.pool, login)
+                .await
         }
         (None, Some(id)) => {
-            db::organizations::profiles::get_public_organization_by_id(&state.pool, id).await
+            crate::backend::db::organizations::profiles::get_public_organization_by_id(
+                &state.pool,
+                id,
+            )
+            .await
         }
         (None, None) => Ok(None),
     }
@@ -705,16 +770,26 @@ async fn target_installation(state: &AppState, app: i64, body: &Value) -> Result
     let mut found = vec![];
     if let Some(user) = user {
         found.extend(
-            db::github_apps::account_installation(&state.pool, app, Some(user.id), None)
-                .await
-                .map_err(Error::unavailable)?,
+            crate::backend::db::github_apps::account_installation(
+                &state.pool,
+                app,
+                Some(user.id),
+                None,
+            )
+            .await
+            .map_err(Error::unavailable)?,
         );
     }
     if let Some(org) = org {
         found.extend(
-            db::github_apps::account_installation(&state.pool, app, None, Some(org.id))
-                .await
-                .map_err(Error::unavailable)?,
+            crate::backend::db::github_apps::account_installation(
+                &state.pool,
+                app,
+                None,
+                Some(org.id),
+            )
+            .await
+            .map_err(Error::unavailable)?,
         );
     }
     match found.len() {
@@ -732,14 +807,19 @@ pub(super) async fn scope_token(
     Json(body): Json<Value>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let oauth_app = application(&state, &headers, &client).await?;
-    let source = super::owned_token(&state, &client, &token_hash(access_token(&body)?)).await?;
-    let app = db::github_apps::app(&state.pool, &client)
+    let source = crate::backend::api::github::apps::owned_token(
+        &state,
+        &client,
+        &token_hash(access_token(&body)?),
+    )
+    .await?;
+    let app = crate::backend::db::github_apps::app(&state.pool, &client)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     // A scoped source keeps its bounds even after its installation is gone, so it can never
     // be scoped again as if it were unbounded.
-    let parent = db::github_apps::token_bounds(&state.pool, source.id)
+    let parent = crate::backend::db::github_apps::token_bounds(&state.pool, source.id)
         .await
         .map_err(Error::unavailable)?;
     let installation = target_installation(&state, app.id, &body).await?;
@@ -758,10 +838,10 @@ pub(super) async fn scope_token(
         parent.as_ref(),
     )
     .await?;
-    let details = super::authorization(&state, &issued.token).await?;
+    let details = crate::backend::api::github::apps::authorization(&state, &issued.token).await?;
     Ok((
         StatusCode::OK,
-        Json(super::document(
+        Json(crate::backend::api::github::apps::document(
             &oauth_app,
             &issued.token,
             &issued.value,

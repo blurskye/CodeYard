@@ -1,5 +1,5 @@
 //! Outside collaborators are nonmembers with explicit access to organization repositories.
-use super::OrganizationOutcome;
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::Result;
 use codeyard_db_core::models::User;
 use codeyard_db_core::native_operation;

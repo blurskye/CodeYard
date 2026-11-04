@@ -6,14 +6,13 @@ use axum::http::StatusCode;
 use codeyard::backend::api::create_router;
 use codeyard::backend::app::AppState;
 use codeyard::backend::ci::CiConfig;
-use codeyard::backend::crypto::SecretEncryptor;
-use codeyard::backend::db;
-use codeyard::backend::db::organizations as orgs;
+use codeyard_support::secrets::SecretEncryptor;
+
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::OrganizationProfile;
 use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
 use codeyard::backend::db::repositories::creation::RepositoryTarget;
-use codeyard::backend::repositories::lifecycle;
+
 use codeyard::backend::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
@@ -30,7 +29,7 @@ async fn contract(pg: bool) {
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[site])
         .await;
     let org = applied(
-        orgs::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("native_org", OrganizationProfile::new(None, None).unwrap())
@@ -40,7 +39,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let other = applied(
-        orgs::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("other_org", OrganizationProfile::new(None, None).unwrap())
@@ -50,9 +49,15 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        orgs::add_organization_member(f.pool(), owner, org.id, manager, OrgRole::Admin)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::add_organization_member(
+            f.pool(),
+            owner,
+            org.id,
+            manager,
+            OrgRole::Admin,
+        )
+        .await
+        .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let mut repos = Vec::new();
@@ -62,7 +67,7 @@ async fn contract(pg: bool) {
         ("foreign", other.id, true),
     ] {
         repos.push(
-            lifecycle::provision(
+            codeyard::backend::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 RepositoryCreationOwner {
@@ -186,10 +191,10 @@ async fn contract(pg: bool) {
                 )
                 .await;
             }
-            let stored = db::organization_values::workflow_values(
+            let stored = codeyard::backend::db::organization_values::workflow_values(
                 f.pool(),
                 repos[0].id,
-                db::organization_values::Kind::Secret,
+                codeyard::backend::db::organization_values::Kind::Secret,
             )
             .await
             .unwrap();
@@ -202,9 +207,13 @@ async fn contract(pg: bool) {
                 .windows(b"organization-private-marker".len())
                 .any(|part| part == b"organization-private-marker"));
             assert_eq!(
-                db::organization_values::secrets_for_run(f.pool(), &encryptor, repos[0].id)
-                    .await
-                    .unwrap(),
+                codeyard::backend::db::organization_values::secrets_for_run(
+                    f.pool(),
+                    &encryptor,
+                    repos[0].id
+                )
+                .await
+                .unwrap(),
                 vec![(
                     "REGION".to_owned(),
                     "organization-private-marker".to_owned()
@@ -575,18 +584,24 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
     assert_eq!(
-        db::organization_values::secrets_for_run(f.pool(), &encryptor, repos[0].id)
-            .await
-            .unwrap()[0]
+        codeyard::backend::db::organization_values::secrets_for_run(
+            f.pool(),
+            &encryptor,
+            repos[0].id
+        )
+        .await
+        .unwrap()[0]
             .1,
         "native-form-private-marker"
     );
-    assert!(
-        db::organization_values::secrets_for_run(f.pool(), &encryptor, repos[1].id)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(codeyard::backend::db::organization_values::secrets_for_run(
+        f.pool(),
+        &encryptor,
+        repos[1].id
+    )
+    .await
+    .unwrap()
+    .is_empty());
     let reply = client
         .form_reply(
             &format!("{base}/secret-save"),
@@ -620,9 +635,15 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
     applied(
-        orgs::update_organization_member_role(f.pool(), owner, org.id, manager, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::update_organization_member_role(
+            f.pool(),
+            owner,
+            org.id,
+            manager,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     request(
         &router,
@@ -635,16 +656,16 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(matches!(
-        db::organization_values::save(
+        codeyard::backend::db::organization_values::save(
             f.pool(),
             None,
             manager,
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard::backend::db::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), manager).await
             ),
             org.id,
-            &db::organization_values::Save {
-                kind: db::organization_values::Kind::Variable,
+            &codeyard::backend::db::organization_values::Save {
+                kind: codeyard::backend::db::organization_values::Kind::Variable,
                 previous: None,
                 name: "DENIED",
                 value: Some("bad"),
@@ -653,7 +674,7 @@ async fn contract(pg: bool) {
             }
         )
         .await,
-        Err(db::organization_values::ValueError::Denied)
+        Err(codeyard::backend::db::organization_values::ValueError::Denied)
     ));
     f.finish().await;
 }
@@ -668,14 +689,14 @@ async fn postgres_organization_values_contract() {
 }
 
 async fn transfer_selections(pg: bool) {
-    use db::organization_values::{self as values, Kind, Save};
+    use codeyard::backend::db::organization_values::{self as values, Kind, Save};
     let mut f = Database::new(pg).await;
     f.complete_setup().await;
     let owner = f.actor("transfer_owner").await;
     let mut organizations = Vec::new();
     for name in ["source", "target"] {
         organizations.push(applied(
-            orgs::create_organization(
+            codeyard::backend::db::organizations::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -685,7 +706,7 @@ async fn transfer_selections(pg: bool) {
         ));
     }
     let root = tempfile::tempdir().unwrap();
-    let repo = lifecycle::provision(
+    let repo = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner {
@@ -705,7 +726,7 @@ async fn transfer_selections(pg: bool) {
             f.pool(),
             Some(&encryptor),
             owner,
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard::backend::db::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), owner).await,
             ),
             organizations[0].id,
@@ -737,9 +758,15 @@ async fn transfer_selections(pg: bool) {
             1
         );
     }
-    lifecycle::transfer(f.pool(), None, owner, repo.id, &organizations[1].name)
-        .await
-        .unwrap();
+    codeyard::backend::repositories::lifecycle::transfer(
+        f.pool(),
+        None,
+        owner,
+        repo.id,
+        &organizations[1].name,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         f.scalar(
             "SELECT COUNT(*) FROM org_actions_value_repositories WHERE repo_id=$1",
@@ -767,9 +794,15 @@ async fn transfer_selections(pg: bool) {
         .1
         .is_empty());
     }
-    lifecycle::transfer(f.pool(), None, owner, repo.id, &organizations[0].name)
-        .await
-        .unwrap();
+    codeyard::backend::repositories::lifecycle::transfer(
+        f.pool(),
+        None,
+        owner,
+        repo.id,
+        &organizations[0].name,
+    )
+    .await
+    .unwrap();
     for kind in [Kind::Secret, Kind::Variable] {
         assert!(values::workflow_values(f.pool(), repo.id, kind)
             .await

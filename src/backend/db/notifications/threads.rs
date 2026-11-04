@@ -124,8 +124,12 @@ impl ThreadView {
         target: ThreadTarget,
         comment: Option<(i64, bool)>,
     ) -> Self {
-        use crate::backend::api::github::repo_url;
-        super::records::refresh_link(&mut notification, &owner, &repository.name);
+        use codeyard_model::urls::repo_url;
+        crate::backend::db::notifications::records::refresh_link(
+            &mut notification,
+            &owner,
+            &repository.name,
+        );
         let repo = repo_url(&owner, &repository.name);
         let (kind, title, url, author) = match target {
             ThreadTarget::Pull {
@@ -168,9 +172,7 @@ impl ThreadView {
                             .link
                             .as_deref()
                             .filter(|l| l.starts_with('/'))
-                            .map(|l| {
-                                format!("{}{l}", crate::backend::api::http::config::link_origin())
-                            })
+                            .map(|l| format!("{}{l}", codeyard_model::http_config::link_origin()))
                             .unwrap_or_default(),
                     ),
                     _ => ("Discussion", String::new()),
@@ -182,13 +184,13 @@ impl ThreadView {
             .as_i64()
             .filter(|_| kind == "Issue")
         {
-            let id = crate::backend::webhooks::payloads::conversation_comment_id(id, false);
+            let id = codeyard_model::webhook_ids::conversation_comment_id(id, false);
             format!("{repo}/issues/comments/{id}")
         } else if let Some((id, inline)) = comment.filter(|_| kind == "PullRequest") {
             if inline {
                 format!("{repo}/pulls/comments/{id}")
             } else {
-                let id = crate::backend::webhooks::payloads::conversation_comment_id(id, true);
+                let id = codeyard_model::webhook_ids::conversation_comment_id(id, true);
                 format!("{repo}/issues/comments/{id}")
             }
         } else if let Some(id) = notification.metadata["commit_comment_id"]
@@ -316,7 +318,7 @@ pub struct ThreadInbox {
 
 /// Account-only notices have no GitHub repository subject and remain in the web inbox.
 pub(crate) fn subject(
-    input: &super::records::NewNotification<'_>,
+    input: &crate::backend::db::notifications::records::NewNotification<'_>,
 ) -> Option<(&'static str, String)> {
     let repo = input.repo_id.filter(|id| *id > 0)?;
     if let Some(id) = input.metadata["run_id"]

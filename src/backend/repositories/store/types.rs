@@ -1,6 +1,6 @@
 //! The values that cross the store boundary: Git sessions, blob reads, merge requests and
 //! the size limits that apply to them.
-use crate::backend::db;
+
 use codeyard_db_core::models::Repository;
 use codeyard_git::{MAX_CI_WORKFLOW_BYTES, MAX_WORKFLOW_DIRECTORY_ENTRIES};
 use serde::{Deserialize, Serialize};
@@ -247,7 +247,7 @@ pub struct BranchMergePublication {
     pub head_branch: Option<String>,
     pub head: String,
     pub result: String,
-    pub authority: db::credentials::Actor,
+    pub authority: crate::backend::db::credentials::Actor,
 }
 
 /// One branch that a restack moves: the commit it must still be at, and the commit it moves to.

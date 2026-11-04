@@ -300,7 +300,7 @@ pub(super) async fn detail_model(ctx: &PageContext, id: &str) -> Result<view::De
         parent,
         git_url: format!(
             "{}/gists/{id}.git",
-            crate::backend::api::http::config::http_clone_base().trim_end_matches('/')
+            codeyard_model::http_config::http_clone_base().trim_end_matches('/')
         ),
         files,
         revisions,

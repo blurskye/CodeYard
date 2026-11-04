@@ -1,10 +1,17 @@
 //! Metadata writes call the REST lane's native, authorized operations and notification batch.
-use super::{
-    db, issue, metadata_mutations, missing,
-    mutations::{target, text},
-    node_id, repository, unavailable, RequestContext, Result, Value,
-};
-use crate::backend::{api::github, db::assignees::AssignedItem};
+use crate::backend::api::graphql::db;
+
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::mutations::target;
+use crate::backend::api::graphql::mutations::text;
+use crate::backend::api::graphql::node_id;
+
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
+
+use crate::backend::db::assignees::AssignedItem;
 use serde_json::json;
 pub(super) const FIELDS: &[&str] = &[
     "createLabel",
@@ -45,7 +52,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             "Codeyard does not support {field}.{key} yet"
         )));
     }
-    let mut payload = json!({"clientMutationId":input["clientMutationId"],"actor":super::user::actor_object(&request.auth.user,request.auth.user.id)});
+    let mut payload = json!({"clientMutationId":input["clientMutationId"],"actor":crate::backend::api::graphql::user::actor_object(&request.auth.user,request.auth.user.id)});
     let pool = &request.state.pool;
     let actor = request.actor.clone();
     if matches!(field, "createLabel" | "updateLabel" | "deleteLabel") {
@@ -59,7 +66,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                     .ok_or_else(missing)?,
             )
         };
-        let repo = repository::by_id(
+        let repo = crate::backend::api::graphql::repository::by_id(
             match &existing {
                 Some(row) => row.repo_id,
                 None => target(input, "repositoryId", "R")?,
@@ -71,20 +78,20 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         if field == "deleteLabel" {
             db::labels::delete_label(pool, actor, repo.id, existing.ok_or_else(missing)?.id)
                 .await
-                .map_err(|e| github::labels::write_error(e).graphql())?;
+                .map_err(|e| crate::backend::api::github::labels::write_error(e).graphql())?;
             return Ok(payload);
         }
         let name = input["name"]
             .as_str()
             .or_else(|| existing.as_ref().map(|r| r.name.as_str()))
             .ok_or_else(missing)?;
-        crate::backend::issues::validate_label(name, input["description"].as_str())
+        codeyard_model::issue_input::validate_label(name, input["description"].as_str())
             .map_err(async_graphql::Error::new)?;
         let color = input["color"]
             .as_str()
-            .map(github::labels::color)
+            .map(crate::backend::api::github::labels::color)
             .transpose()
-            .map_err(github::Error::graphql)?;
+            .map_err(crate::backend::api::github::Error::graphql)?;
         let row = if let Some(old) = existing {
             db::labels::update_label(
                 pool,
@@ -107,8 +114,8 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             )
             .await
         }
-        .map_err(|e| github::labels::write_error(e).graphql())?;
-        payload["label"] = repository::label(&row);
+        .map_err(|e| crate::backend::api::github::labels::write_error(e).graphql())?;
+        payload["label"] = crate::backend::api::graphql::repository::label(&row);
         return Ok(payload);
     }
     let key = if field.contains("Labelable") {
@@ -125,18 +132,28 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-            (AssignedItem::Issue(id), issue::object(&row))
+            (
+                AssignedItem::Issue(id),
+                crate::backend::api::graphql::issue::object(&row),
+            )
         }
         "PR" => {
             let row = db::pull_requests::records::get_pull_request_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-            (AssignedItem::PullRequest(id), issue::pull_object(&row))
+            (
+                AssignedItem::PullRequest(id),
+                crate::backend::api::graphql::issue::pull_object(&row),
+            )
         }
         _ => return Err(missing()),
     };
-    let repo = repository::by_id(value["_repo"].as_i64().ok_or_else(missing)?, request).await?;
+    let repo = crate::backend::api::graphql::repository::by_id(
+        value["_repo"].as_i64().ok_or_else(missing)?,
+        request,
+    )
+    .await?;
     request
         .authorize(
             repo.id,
@@ -175,12 +192,13 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             reason,
         )
         .await
-        .map_err(|e| github::locking::error(e).graphql())?;
+        .map_err(|e| crate::backend::api::github::locking::error(e).graphql())?;
     } else {
         let label = field.contains("Labelable");
         let input_key = if label { "labelIds" } else { "assigneeIds" };
         let prefix = if label { "L" } else { "U" };
-        let mut changes = metadata_mutations::ids(&input[input_key], prefix)?;
+        let mut changes =
+            crate::backend::api::graphql::metadata_mutations::ids(&input[input_key], prefix)?;
         changes.sort_unstable();
         changes.dedup();
         if changes.len()
@@ -198,13 +216,16 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         // assignees can be assigned. A removed assignee may since have lost access, so removals
         // rely on the write's own triage check instead.
         if label || !remove {
-            metadata_mutations::prepare(input, &repo, request).await?;
+            crate::backend::api::graphql::metadata_mutations::prepare(input, &repo, request)
+                .await?;
         }
         // Additions use native atomic batches; removals leave unrelated assignments intact.
         if label && !remove {
-            github::labels::save_labels(pool, authority, repo.id, item, &changes, false)
-                .await
-                .map_err(github::Error::graphql)?;
+            crate::backend::api::github::labels::save_labels(
+                pool, authority, repo.id, item, &changes, false,
+            )
+            .await
+            .map_err(crate::backend::api::github::Error::graphql)?;
         } else if label {
             for label_id in changes {
                 match item {
@@ -229,10 +250,9 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                         .await
                     }
                 }
-                .map_err(|e| github::labels::write_error(e).graphql())?;
+                .map_err(|e| crate::backend::api::github::labels::write_error(e).graphql())?;
             }
         } else {
-            use crate::backend::issues::assignments;
             let mut ids = changes;
             ids.sort_unstable();
             ids.dedup();
@@ -242,8 +262,8 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             if users.len() != ids.len() {
                 return Err(missing());
             }
-            let owner = repository::owner(&repo, request).await?;
-            let target = assignments::Target {
+            let owner = crate::backend::api::graphql::repository::owner(&repo, request).await?;
+            let target = crate::backend::issues::assignments::Target {
                 actor: &request.auth.user,
                 repository: &repo,
                 owner: &owner,
@@ -254,11 +274,13 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             };
             if remove {
                 let names: Vec<_> = users.into_iter().map(|user| user.username).collect();
-                assignments::unassign(pool, &target, authority, &names)
+                crate::backend::issues::assignments::unassign(pool, &target, authority, &names)
                     .await
-                    .map_err(|e| github::issues::assignment_error(e).graphql())?;
+                    .map_err(|e| {
+                        crate::backend::api::github::issues::assignment_error(e).graphql()
+                    })?;
             } else {
-                assignments::assign(
+                crate::backend::issues::assignments::assign(
                     pool,
                     &request.state.notification_broadcaster,
                     &target,
@@ -266,18 +288,18 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                     &users,
                 )
                 .await
-                .map_err(|e| github::issues::assignment_error(e).graphql())?;
+                .map_err(|e| crate::backend::api::github::issues::assignment_error(e).graphql())?;
             }
         }
     }
     payload[payload_key] = match item {
-        AssignedItem::Issue(id) => issue::object(
+        AssignedItem::Issue(id) => crate::backend::api::graphql::issue::object(
             &db::issues::get_issue_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?,
         ),
-        AssignedItem::PullRequest(id) => issue::pull_object(
+        AssignedItem::PullRequest(id) => crate::backend::api::graphql::issue::pull_object(
             &db::pull_requests::records::get_pull_request_by_id(pool, id)
                 .await
                 .map_err(unavailable)?

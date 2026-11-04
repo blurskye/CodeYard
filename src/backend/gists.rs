@@ -1,12 +1,12 @@
 //! Gists reuse repository placement, Git objects and transport. SQL admission precedes the ref
 //! publication; durable pending writes reconcile lost responses without claiming cross-store rollback.
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::db::gists::Gist;
 use crate::backend::db::gists::GistRefusal;
 use crate::backend::db::repositories::creation::RepositoryCreationOwner;
 use crate::backend::db::repositories::creation::RepositoryTarget;
-use crate::backend::repositories::lifecycle;
+
 use crate::backend::repositories::store::repo_store;
 use crate::backend::repositories::store::GistCredential;
 use codeyard_git::error::RepoError;
@@ -49,25 +49,29 @@ pub fn text_preview(bytes: &[u8], limit: usize) -> Option<&str> {
 }
 
 /// Database-only operations need a published gist, not an available Git storage node.
-pub async fn metadata(pool: &codeyard_db_core::DbPool, id: &str) -> Result<db::gists::Gist> {
-    db::gists::get(pool, id)
+pub async fn metadata(
+    pool: &codeyard_db_core::DbPool,
+    id: &str,
+) -> Result<crate::backend::db::gists::Gist> {
+    crate::backend::db::gists::get(pool, id)
         .await?
         .filter(|gist| gist.ready)
         .ok_or_else(|| GistRefusal::Missing.into())
 }
 
 pub async fn load(state: &AppState, id: &str, revision: Option<&str>) -> Result<LoadedGist> {
-    let gist = db::gists::get(&state.pool, id)
+    let gist = crate::backend::db::gists::get(&state.pool, id)
         .await?
         .ok_or(GistRefusal::Missing)?;
-    let repository = db::repositories::records::get_repository_by_id(&state.pool, gist.repo_id)
-        .await?
-        .filter(|repo| repo.is_gist)
-        .ok_or(GistRefusal::Missing)?;
+    let repository =
+        crate::backend::db::repositories::records::get_repository_by_id(&state.pool, gist.repo_id)
+            .await?
+            .filter(|repo| repo.is_gist)
+            .ok_or(GistRefusal::Missing)?;
     let snapshot = repo_store(&repository, state.cluster.as_ref())
         .gist_snapshot(&state.pool, repository.id, revision)
         .await?;
-    let gist = db::gists::get(&state.pool, id)
+    let gist = crate::backend::db::gists::get(&state.pool, id)
         .await?
         .filter(|gist| gist.ready)
         .ok_or(GistRefusal::Missing)?;
@@ -80,16 +84,16 @@ pub async fn load(state: &AppState, id: &str, revision: Option<&str>) -> Result<
 /// Recover accepted initial publications even if a disconnected creator never received the ID.
 /// Bound each owner-list request; storage failures remain failures, not an empty list.
 pub async fn recover_owned(state: &AppState, owner: i64) -> Result<()> {
-    for repo in db::gists::orphaned_for_owner(&state.pool, owner).await? {
+    for repo in crate::backend::db::gists::orphaned_for_owner(&state.pool, owner).await? {
         discard(state, repo, true).await?;
     }
-    for id in db::gists::unready_for_owner(&state.pool, owner).await? {
+    for id in crate::backend::db::gists::unready_for_owner(&state.pool, owner).await? {
         if let Err(error) = load(state, &id, None).await {
-            let Some(gist) = db::gists::get(&state.pool, &id).await? else {
+            let Some(gist) = crate::backend::db::gists::get(&state.pool, &id).await? else {
                 continue;
             };
             if !gist.ready
-                && db::gists::pending(&state.pool, gist.repo_id)
+                && crate::backend::db::gists::pending(&state.pool, gist.repo_id)
                     .await?
                     .is_none()
             {
@@ -127,8 +131,14 @@ async fn complete<T: Send + 'static>(
         .map_err(|_| RepoError::authority_unavailable())?
 }
 async fn discard(state: &AppState, repo: i64, orphan_only: bool) -> Result<bool> {
-    if let Some(repository) = db::gists::discard(&state.pool, repo, orphan_only).await? {
-        lifecycle::remove_deleted_repository(state.cluster.as_ref(), &repository).await?;
+    if let Some(repository) =
+        crate::backend::db::gists::discard(&state.pool, repo, orphan_only).await?
+    {
+        crate::backend::repositories::lifecycle::remove_deleted_repository(
+            state.cluster.as_ref(),
+            &repository,
+        )
+        .await?;
         Ok(true)
     } else {
         Ok(false)
@@ -172,7 +182,7 @@ pub async fn create(
     complete(&state, async move {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let name = format!("gist-{id}");
-        let repo = lifecycle::provision_gist(
+        let repo = crate::backend::repositories::lifecycle::provision_gist(
             (&work.pool, work.cluster.as_ref()),
             &work.repos_path,
             RepositoryCreationOwner {
@@ -183,11 +193,11 @@ pub async fn create(
             None,
         )
         .await?;
-        if let Err(error) = db::gists::reserve(
+        if let Err(error) = crate::backend::db::gists::reserve(
             &work.pool,
             actor,
             &credential.borrowed(),
-            &db::gists::NewGist {
+            &crate::backend::db::gists::NewGist {
                 repo_id: repo.id,
                 id: &id,
                 description: &input.description,
@@ -254,7 +264,7 @@ pub async fn fork(
         ensure!(source.gist.owner_id != actor, GistRefusal::Invalid);
         let id = uuid::Uuid::new_v4().simple().to_string();
         let name = format!("gist-{id}");
-        let repo = lifecycle::provision_gist(
+        let repo = crate::backend::repositories::lifecycle::provision_gist(
             (&work.pool, work.cluster.as_ref()),
             &work.repos_path,
             RepositoryCreationOwner {
@@ -265,11 +275,11 @@ pub async fn fork(
             Some(&source.repository),
         )
         .await?;
-        if let Err(error) = db::gists::reserve(
+        if let Err(error) = crate::backend::db::gists::reserve(
             &work.pool,
             actor,
             &credential.borrowed(),
-            &db::gists::NewGist {
+            &crate::backend::db::gists::NewGist {
                 repo_id: repo.id,
                 id: &id,
                 description: &source.gist.description,
@@ -293,14 +303,22 @@ pub async fn delete(
 ) -> Result<()> {
     let work = state.clone();
     complete(&state, async move {
-        let gist = db::gists::get(&work.pool, &id)
+        let gist = crate::backend::db::gists::get(&work.pool, &id)
             .await?
             .ok_or(GistRefusal::Missing)?;
-        let repository =
-            db::gists::delete(&work.pool, actor, &credential.borrowed(), gist.repo_id).await?;
-        lifecycle::remove_deleted_repository(work.cluster.as_ref(), &repository)
-            .await
-            .map_err(|_| GistDeleted)?;
+        let repository = crate::backend::db::gists::delete(
+            &work.pool,
+            actor,
+            &credential.borrowed(),
+            gist.repo_id,
+        )
+        .await?;
+        crate::backend::repositories::lifecycle::remove_deleted_repository(
+            work.cluster.as_ref(),
+            &repository,
+        )
+        .await
+        .map_err(|_| GistDeleted)?;
         Ok(())
     })
     .await

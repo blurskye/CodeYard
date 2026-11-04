@@ -305,7 +305,8 @@ mod tests {
 
     #[test]
     fn run_limits_take_the_stricter_setting_and_default_to_none() {
-        use crate::backend::db::actions::{ActionsSettings, RepoActionsSettings};
+        use crate::backend::db::actions::ActionsSettings;
+        use crate::backend::db::actions::RepoActionsSettings;
         let none = RunLimits::new(&ActionsSettings::default(), &RepoActionsSettings::default());
         assert_eq!(none, RunLimits::default());
         assert_eq!(none.container_options(), "");

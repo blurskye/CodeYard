@@ -560,7 +560,7 @@ fn cancelled_pack_import_keeps_its_session_permit_and_directory_lock() {
         let path = destination.clone();
         let task = tokio::spawn(async move {
             entered.send(()).unwrap();
-            super::local::LocalStore::checkout_pack(
+            crate::backend::repositories::store::local::LocalStore::checkout_pack(
                 &path,
                 &"1".repeat(40),
                 "/repository.git",
@@ -2870,7 +2870,7 @@ async fn every_ref_change_moves_the_write_version() {
     // Only a repository that a storage node holds has replicas to tell.
     let node = db::cluster::register_own_node(
         pool,
-        &crate::backend::cluster::NodeKey::generate().public_hex(),
+        &codeyard_support::node_identity::NodeKey::generate().public_hex(),
         "store-node",
         &["storage".to_owned()],
         "test",
@@ -3062,7 +3062,7 @@ async fn every_ref_change_moves_the_write_version() {
 
 /// A storage node registered in the database, to place or copy a repository on.
 async fn storage_node(pool: &codeyard_db_core::DbPool, name: &str) -> i64 {
-    let key = crate::backend::cluster::NodeKey::generate().public_hex();
+    let key = codeyard_support::node_identity::NodeKey::generate().public_hex();
     let id = db::cluster::register_own_node(pool, &key, name, &["storage".to_owned()], "test")
         .await
         .unwrap()
@@ -3504,7 +3504,8 @@ async fn a_repository_past_the_ref_limit_stays_readable_and_repairable() {
     // The API path checks the default branch before it deletes, so it runs here too.
     use crate::backend::ci::CiRuns;
     use crate::backend::notifications::NotificationBroadcaster;
-    use crate::backend::repositories::refs::{delete_branch, RefError};
+    use crate::backend::repositories::refs::delete_branch;
+    use crate::backend::repositories::refs::RefError;
     use std::sync::Arc;
     let ci = CiRuns::new(
         pool.clone(),

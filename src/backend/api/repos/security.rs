@@ -1,14 +1,13 @@
 //! Repository security pages use the same alert rows and dismissal transaction as REST.
-use super::{
-    chrome::{self, Loaded},
-    forms::authorize_post,
-};
-use crate::backend::{
-    api::http::{context::PageContext, render::redirect_response},
-    app::AppState,
-    code_scanning, db,
-    repositories::store::{repo_store, BlobRange},
-};
+
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::render::redirect_response;
+use crate::backend::api::repos::chrome::Loaded;
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::BlobRange;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -41,10 +40,10 @@ async fn open(
     name: &str,
 ) -> Result<(PageContext, Loaded), Response> {
     let ctx = PageContext::load(state, headers, uri).await?;
-    let loaded = chrome::load_database(&ctx, owner, name).await?;
+    let loaded = crate::backend::api::repos::chrome::load_database(&ctx, owner, name).await?;
     let allowed = current_authority(&ctx, loaded.repository.id)
         .await
-        .map_err(|_| chrome::unavailable(&ctx))?;
+        .map_err(|_| crate::backend::api::repos::chrome::unavailable(&ctx))?;
     if !allowed {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Security alerts not found."));
     }
@@ -57,7 +56,13 @@ async fn current_authority(ctx: &PageContext, repo: i64) -> anyhow::Result<bool>
     let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return Ok(false);
     };
-    db::code_scanning::security_read_allowed(&ctx.state.pool, user.id, &session, repo).await
+    crate::backend::db::code_scanning::security_read_allowed(
+        &ctx.state.pool,
+        user.id,
+        &session,
+        repo,
+    )
+    .await
 }
 
 async fn model(
@@ -66,7 +71,7 @@ async fn model(
     number: Option<i64>,
     page_number: usize,
 ) -> anyhow::Result<view::Page> {
-    let limit = super::paging::DEFAULT_PER_PAGE;
+    let limit = crate::backend::api::repos::paging::DEFAULT_PER_PAGE;
     let offset = (page_number - 1) * limit;
     let explicit = ctx
         .query
@@ -82,7 +87,7 @@ async fn model(
                 format!("refs/heads/{branch}")
             }
         });
-    let filters = db::code_scanning::AlertFilters {
+    let filters = crate::backend::db::code_scanning::AlertFilters {
         reference: explicit.as_deref(),
         tool_name: ctx
             .query
@@ -104,15 +109,15 @@ async fn model(
     let actor = ctx
         .user
         .as_ref()
-        .ok_or(db::code_scanning::Refusal::Denied)?;
+        .ok_or(crate::backend::db::code_scanning::Refusal::Denied)?;
     let session = crate::backend::api::http::session::extract_session_id(&ctx.headers)
-        .ok_or(db::code_scanning::Refusal::Denied)?;
+        .ok_or(crate::backend::db::code_scanning::Refusal::Denied)?;
     let category = ctx.query.get("category").map(String::as_str);
-    let snapshot = db::code_scanning::read_alert_snapshot(
+    let snapshot = crate::backend::db::code_scanning::read_alert_snapshot(
         &ctx.state.pool,
         actor.id,
         &session,
-        &db::code_scanning::AlertSelection {
+        &crate::backend::db::code_scanning::AlertSelection {
             repo: loaded.repository.id,
             number,
             filters: &filters,
@@ -125,7 +130,12 @@ async fn model(
     let rows = snapshot.rows;
     let mut instances = snapshot.instances;
     let has_next = number.is_none()
-        && super::paging::has_next_page(page_number, rows.len(), limit, super::paging::MAX_PAGE);
+        && crate::backend::api::repos::paging::has_next_page(
+            page_number,
+            rows.len(),
+            limit,
+            crate::backend::api::repos::paging::MAX_PAGE,
+        );
     let mut alerts = Vec::new();
     let mut selected = None;
     for row in rows.into_iter().take(limit) {
@@ -223,7 +233,7 @@ async fn model(
     }
     anyhow::ensure!(
         current_authority(ctx, loaded.repository.id).await?,
-        db::code_scanning::Refusal::Denied
+        crate::backend::db::code_scanning::Refusal::Denied
     );
     Ok(view::Page {
         alerts,
@@ -252,13 +262,18 @@ async fn list(
         Ok(value) => value,
         Err(response) => return response,
     };
-    let page_number = match super::paging::number(&ctx, "page", 1, 1..=super::paging::MAX_PAGE) {
+    let page_number = match crate::backend::api::repos::paging::number(
+        &ctx,
+        "page",
+        1,
+        1..=crate::backend::api::repos::paging::MAX_PAGE,
+    ) {
         Ok(number) => number,
         Err(response) => return response,
     };
     match model(&ctx, &loaded, None, page_number).await {
         Ok(page) => show(&ctx, loaded, page),
-        Err(_) => chrome::unavailable(&ctx),
+        Err(_) => crate::backend::api::repos::chrome::unavailable(&ctx),
     }
 }
 async fn detail(
@@ -274,7 +289,7 @@ async fn detail(
     match model(&ctx, &loaded, Some(number), 1).await {
         Ok(page) if page.selected.is_some() => show(&ctx, loaded, page),
         Ok(_) => ctx.error(StatusCode::NOT_FOUND, "Code scanning alert not found."),
-        Err(_) => chrome::unavailable(&ctx),
+        Err(_) => crate::backend::api::repos::chrome::unavailable(&ctx),
     }
 }
 async fn dismiss(
@@ -298,7 +313,7 @@ async fn dismiss(
     {
         return ctx.error(StatusCode::CONFLICT, "The repository changed.");
     }
-    let input = db::code_scanning::Dismissal {
+    let input = crate::backend::db::code_scanning::Dismissal {
         state: values.get("state").map_or("", String::as_str),
         reason: values.get("reason").map(String::as_str),
         comment: values.get("comment").map(String::as_str),
@@ -312,7 +327,7 @@ async fn dismiss(
     let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::FORBIDDEN, "Sign in again to change this alert.");
     };
-    match code_scanning::dismiss(
+    match crate::backend::code_scanning::dismiss(
         &ctx.state.pool,
         (ctx.user.as_ref().expect("authorized user").id, session),
         loaded.repository.id,
@@ -332,14 +347,14 @@ async fn dismiss(
                 loaded.chrome.base()
             ))
         }
-        Err(error) => match error.downcast_ref::<db::code_scanning::Refusal>() {
-            Some(db::code_scanning::Refusal::Denied) => {
+        Err(error) => match error.downcast_ref::<crate::backend::db::code_scanning::Refusal>() {
+            Some(crate::backend::db::code_scanning::Refusal::Denied) => {
                 ctx.error(StatusCode::FORBIDDEN, "Alert dismissal denied.")
             }
-            Some(db::code_scanning::Refusal::Missing) => {
+            Some(crate::backend::db::code_scanning::Refusal::Missing) => {
                 ctx.error(StatusCode::NOT_FOUND, "Alert not found.")
             }
-            _ => chrome::unavailable(&ctx),
+            _ => crate::backend::api::repos::chrome::unavailable(&ctx),
         },
     }
 }

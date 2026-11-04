@@ -1,17 +1,14 @@
 //! Log redirects are minute-long capabilities over immutable, bounded native snapshots.
-use super::id;
-use crate::backend::{
-    api::{
-        github::{api_url, auth, repository, Error, Result},
-        http::session,
-    },
-    app::AppState,
-    ci::{logs::archive, runtime},
-    db::{
-        self,
-        action_logs::{self, Target},
-    },
-};
+use crate::backend::api::github::actions::id;
+use codeyard_model::urls::api_url;
+
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+
+use crate::backend::app::AppState;
+
+use crate::backend::db::action_logs::Target;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -43,9 +40,10 @@ async fn live_logs(
         ));
     }
     let limit = limit.unwrap_or(500).clamp(1, 1000) as usize;
-    let mut rows = db::ci::list_ci_log_history(&state.pool, run.id, after, limit as i64 + 1)
-        .await
-        .map_err(Error::unavailable)?;
+    let mut rows =
+        crate::backend::db::ci::list_ci_log_history(&state.pool, run.id, after, limit as i64 + 1)
+            .await
+            .map_err(Error::unavailable)?;
     let mut has_more = rows.len() > limit;
     rows.truncate(limit);
     let mut bytes = 0_usize;
@@ -62,7 +60,7 @@ async fn live_logs(
     has_more |= count < rows.len();
     rows.truncate(count);
     let next_cursor = rows.last().map_or(after, |row| row.id);
-    let deployment = db::ci::get_ci_deployment_by_run_id(&state.pool, run.id)
+    let deployment = crate::backend::db::ci::get_ci_deployment_by_run_id(&state.pool, run.id)
         .await
         .map_err(Error::unavailable)?
         .map(|row| Deployment {
@@ -91,7 +89,9 @@ async fn live_logs(
             status: run.status,
             started_at: run.started_at.map(|time| time.timestamp()),
             completed_at: run.completed_at.map(|time| time.timestamp()),
-            error_message: crate::backend::ci::visible_run_error(run.error_message.as_deref()),
+            error_message: codeyard_db_core::ci_messages::visible_run_error(
+                run.error_message.as_deref(),
+            ),
         },
         deployment,
     })
@@ -112,15 +112,20 @@ async fn download(
             crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
                 .await
                 .ok_or_else(|| Error::unavailable(()))?;
-        let snapshot = action_logs::read(&state.pool, &runtime::token_hash(&token), resource)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        let (bytes, kind, filename) =
-            tokio::task::spawn_blocking(move || archive::encode(snapshot))
-                .await
-                .map_err(Error::unavailable)?
-                .map_err(Error::unavailable)?;
+        let snapshot = crate::backend::db::action_logs::read(
+            &state.pool,
+            &crate::backend::ci::runtime::token_hash(&token),
+            resource,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
+        let (bytes, kind, filename) = tokio::task::spawn_blocking(move || {
+            crate::backend::ci::logs::archive::encode(snapshot)
+        })
+        .await
+        .map_err(Error::unavailable)?
+        .map_err(Error::unavailable)?;
         return Ok((
             [
                 (header::CONTENT_TYPE, kind.to_owned()),
@@ -137,51 +142,59 @@ async fn download(
     let name = params.get("repo").ok_or_else(Error::missing)?;
     // Only this read-only operation accepts the same-origin browser's session. An explicit
     // Authorization header always takes precedence, including invalid or restricted tokens.
-    let (repo, actor) =
-        if !headers.contains_key(header::AUTHORIZATION) && session::has_session_cookie(&headers) {
-            let user = session::get_current_user(&state.pool, &headers)
-                .await
-                .map_err(|(status, axum::Json(error))| Error::new(status, error.message))?;
-            let repo = db::repositories::records::get_repository(&state.pool, owner, name)
+    let (repo, actor) = if !headers.contains_key(header::AUTHORIZATION)
+        && crate::backend::api::http::session::has_session_cookie(&headers)
+    {
+        let user = crate::backend::api::http::session::get_current_user(&state.pool, &headers)
+            .await
+            .map_err(|(status, axum::Json(error))| Error::new(status, error.message))?;
+        let repo =
+            crate::backend::db::repositories::records::get_repository(&state.pool, owner, name)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-            if !crate::backend::repositories::access::can_read(&state.pool, Some(&user), &repo)
-                .await
-                .map_err(Error::unavailable)?
-            {
-                return Err(Error::missing());
-            }
-            (
-                repo,
-                db::credentials::Actor::from((
-                    user.id,
-                    session::extract_session_id(&headers).unwrap_or_default(),
-                )),
-            )
-        } else {
-            let (repo, authentication) = repository(&state, &headers, owner, name, false).await?;
-            (
-                repo,
-                authentication
-                    .as_ref()
-                    .ok_or_else(auth::required)?
-                    .database_actor(),
-            )
-        };
+        if !crate::backend::repositories::access::can_read(&state.pool, Some(&user), &repo)
+            .await
+            .map_err(Error::unavailable)?
+        {
+            return Err(Error::missing());
+        }
+        (
+            repo,
+            crate::backend::db::credentials::Actor::from((
+                user.id,
+                crate::backend::api::http::session::extract_session_id(&headers)
+                    .unwrap_or_default(),
+            )),
+        )
+    } else {
+        let (repo, authentication) = repository(&state, &headers, owner, name, false).await?;
+        (
+            repo,
+            authentication
+                .as_ref()
+                .ok_or_else(crate::backend::api::github::auth::required)?
+                .database_actor(),
+        )
+    };
     if query.after.is_some() && params.contains_key("job_id") {
         return Err(Error::invalid("Live logs require a workflow run"));
     }
     let target = if params.contains_key("job_id") {
-        let job = db::action_jobs::get(&state.pool, repo.id, id(&params, "job_id")?, false)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let job = crate::backend::db::action_jobs::get(
+            &state.pool,
+            repo.id,
+            id(&params, "job_id")?,
+            false,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
         let step = if params.contains_key("step_number") {
             let position: usize = params["step_number"]
                 .parse()
                 .map_err(|_| Error::missing())?;
-            let steps = db::action_jobs::steps(&state.pool, repo.id, job.id)
+            let steps = crate::backend::db::action_jobs::steps(&state.pool, repo.id, job.id)
                 .await
                 .map_err(Error::unavailable)?;
             Some(steps.get(position).ok_or_else(Error::missing)?.number)
@@ -199,10 +212,15 @@ async fn download(
         } else {
             None
         };
-        let run = db::action_runs::get(&state.pool, repo.id, id(&params, "run_id")?, attempt)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let run = crate::backend::db::action_runs::get(
+            &state.pool,
+            repo.id,
+            id(&params, "run_id")?,
+            attempt,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
         if let Some(after) = query.after {
             return live_logs(&state, run, after, query.limit).await;
         }
@@ -212,14 +230,14 @@ async fn download(
             step: None,
         }
     };
-    let token = runtime::secret();
-    if !action_logs::issue(
+    let token = crate::backend::ci::runtime::secret();
+    if !crate::backend::db::action_logs::issue(
         &state.pool,
         actor,
         repo.id,
         resource,
         target,
-        &runtime::token_hash(&token),
+        &crate::backend::ci::runtime::token_hash(&token),
     )
     .await
     .map_err(Error::unavailable)?

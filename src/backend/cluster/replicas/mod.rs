@@ -12,10 +12,10 @@ pub use promote::{
     TAKE_OVER_AFTER,
 };
 
-use super::{rpc, NodeContext};
-use crate::backend::db;
+use crate::backend::cluster::NodeContext;
 
-use crate::backend::storage::local::{remove_stale_temporaries, STALE_AFTER};
+use crate::backend::storage::local::remove_stale_temporaries;
+use crate::backend::storage::local::STALE_AFTER;
 use anyhow::{Context, Result};
 use codeyard_db_core::models::HeldReplica;
 use codeyard_db_core::models::ReplicaSetting;
@@ -57,7 +57,7 @@ mod tests {
 
     #[tokio::test]
     async fn completed_slots_refill_from_the_pending_queue_without_a_database_scan() {
-        let key = crate::backend::cluster::NodeKey::generate();
+        let key = codeyard_support::node_identity::NodeKey::generate();
         let context = NodeContext {
             pool: None,
             iroh: crate::backend::cluster::IrohDialer::new(
@@ -107,8 +107,8 @@ mod tests {
         let mut nodes = Vec::new();
         const GIB: i64 = 1024 * 1024 * 1024;
         for (name, free) in [("a", 100 * GIB), ("b", 12 * GIB), ("c", 11 * GIB)] {
-            let key = crate::backend::cluster::NodeKey::generate();
-            let node = db::cluster::register_own_node(
+            let key = codeyard_support::node_identity::NodeKey::generate();
+            let node = crate::backend::db::cluster::register_own_node(
                 &pool,
                 &key.public_hex(),
                 name,
@@ -117,19 +117,25 @@ mod tests {
             )
             .await
             .unwrap();
-            db::cluster::record_node_heartbeat(&pool, &key.public_hex(), "test", "{}", Some(free))
-                .await
-                .unwrap();
+            crate::backend::db::cluster::record_node_heartbeat(
+                &pool,
+                &key.public_hex(),
+                "test",
+                "{}",
+                Some(free),
+            )
+            .await
+            .unwrap();
             nodes.push(node.id);
         }
-        let owner = db::users::accounts::create_user(&pool, "owner", None)
+        let owner = crate::backend::db::users::accounts::create_user(&pool, "owner", None)
             .await
             .unwrap();
         let DbPool::Sqlite(raw) = &pool else {
             unreachable!()
         };
         for index in 0..20 {
-            let repo = db::repositories::records::create_repository(
+            let repo = crate::backend::db::repositories::records::create_repository(
                 &pool,
                 owner.id,
                 &format!("repo-{index}"),
@@ -148,14 +154,16 @@ mod tests {
                 .unwrap();
         }
         let primaries = group_primaries(
-            db::cluster::list_primary_repositories(&pool, nodes[0])
+            crate::backend::db::cluster::list_primary_repositories(&pool, nodes[0])
                 .await
                 .unwrap(),
         );
         assign(&pool, nodes[0], ReplicaSetting::Copies(2), &primaries)
             .await
             .unwrap();
-        let allocations = db::cluster::pending_replica_bytes(&pool).await.unwrap();
+        let allocations = crate::backend::db::cluster::pending_replica_bytes(&pool)
+            .await
+            .unwrap();
         assert_eq!(allocations.iter().map(|row| row.1).sum::<i64>(), 22 * GIB);
         assert!(allocations
             .iter()
@@ -267,8 +275,10 @@ async fn step(
     let pool = context.database()?;
     let node = context.node_id;
     take_over(pool, node, &context.repos_path, silent, TAKE_OVER_AFTER).await?;
-    let setting = ReplicaSetting::from_str(&db::cluster::get_replicas(pool).await?)?;
-    let primaries = group_primaries(db::cluster::list_primary_repositories(pool, node).await?);
+    let setting =
+        ReplicaSetting::from_str(&crate::backend::db::cluster::get_replicas(pool).await?)?;
+    let primaries =
+        group_primaries(crate::backend::db::cluster::list_primary_repositories(pool, node).await?);
     assign(pool, node, setting, &primaries).await?;
     place_and_start(context, &primaries, retry, copying).await?;
     remove_surplus(context, pool, copying).await;
@@ -318,7 +328,7 @@ struct Primary {
 }
 
 /// The database lists one row per copy; rows of one repository are next to each other.
-fn group_primaries(rows: Vec<db::cluster::PrimaryReplicaRow>) -> Vec<Primary> {
+fn group_primaries(rows: Vec<crate::backend::db::cluster::PrimaryReplicaRow>) -> Vec<Primary> {
     let mut primaries: Vec<Primary> = Vec::new();
     for (repository_id, disk_path, _, _, _, _) in rows {
         match primaries.last_mut() {
@@ -344,8 +354,13 @@ async fn assign(
     for primary in primaries {
         if attempted.insert(primary.repository_id) {
             attempted.extend(
-                db::cluster::assign_replica_family(pool, primary.repository_id, node, setting)
-                    .await?,
+                crate::backend::db::cluster::assign_replica_family(
+                    pool,
+                    primary.repository_id,
+                    node,
+                    setting,
+                )
+                .await?,
             );
         }
     }
@@ -360,7 +375,8 @@ async fn place_and_start(
     copying: &mut Copying,
 ) -> Result<()> {
     let node = context.node_id;
-    let mut held = db::cluster::list_held_replicas(context.database()?, node).await?;
+    let mut held =
+        crate::backend::db::cluster::list_held_replicas(context.database()?, node).await?;
     copying.cancel_obsolete(&held);
     let live: HashSet<_> = held.iter().map(|row| row.repository_id).collect();
     retry
@@ -390,14 +406,14 @@ pub(crate) fn copy_path(repos: &Path, uuid: Uuid) -> PathBuf {
 /// picks it, and the copies after it are still checked. Clearing only stops it from being
 /// promoted; the copy loop rebuilds it once it can be read.
 pub(crate) async fn reconcile(pool: &DbPool, node: i64, repos: &Path) -> Result<()> {
-    for row in db::cluster::list_held_replicas(pool, node).await? {
+    for row in crate::backend::db::cluster::list_held_replicas(pool, node).await? {
         let Some(primary) = row.primary_node_id.filter(|primary| *primary != node) else {
             continue;
         };
         if row.applied_version < 0 {
             continue;
         }
-        let Ok(uuid) = rpc::repository_uuid(&row.disk_path) else {
+        let Ok(uuid) = crate::backend::cluster::rpc::repository_uuid(&row.disk_path) else {
             continue;
         };
         let usable = match connected(&copy_path(repos, uuid)).await {
@@ -408,7 +424,14 @@ pub(crate) async fn reconcile(pool: &DbPool, node: i64, repos: &Path) -> Result<
             }
         };
         if !usable {
-            db::cluster::set_applied_version(pool, row.repository_id, node, primary, -1).await?;
+            crate::backend::db::cluster::set_applied_version(
+                pool,
+                row.repository_id,
+                node,
+                primary,
+                -1,
+            )
+            .await?;
         }
     }
     Ok(())
@@ -439,7 +462,7 @@ async fn locate(
     copying: &Copying,
 ) -> HashSet<i64> {
     let mut failed = HashSet::new();
-    match db::cluster::writes::write_settings(pool).await {
+    match crate::backend::db::cluster::writes::write_settings(pool).await {
         Ok(settings) if settings.write_quorum.is_some() => return failed,
         Err(error) => {
             warn!(%error, "could not check quorum before relocating storage");
@@ -450,7 +473,7 @@ async fn locate(
         Ok(_) => {}
     }
     for primary in primaries {
-        let Ok(uuid) = rpc::repository_uuid(&primary.disk_path) else {
+        let Ok(uuid) = crate::backend::cluster::rpc::repository_uuid(&primary.disk_path) else {
             continue;
         };
         if copying.is_running(uuid) {
@@ -472,7 +495,7 @@ async fn locate(
         }
     }
     for row in held.iter().filter(|row| row.primary_node_id != Some(node)) {
-        let Ok(uuid) = rpc::repository_uuid(&row.disk_path) else {
+        let Ok(uuid) = crate::backend::cluster::rpc::repository_uuid(&row.disk_path) else {
             continue;
         };
         if copying.is_running(uuid) {
@@ -509,7 +532,7 @@ async fn move_directory(
 ) -> Result<()> {
     let (primary_path, mirror_path) = if primary { (to, from) } else { (from, to) };
     let guards = tokio::time::timeout(MOVE_WAIT, moving(primary_path, mirror_path)).await?;
-    let row = db::repositories::records::get_repository_by_id(pool, repository)
+    let row = crate::backend::db::repositories::records::get_repository_by_id(pool, repository)
         .await?
         .context("repository was deleted before relocation")?;
     anyhow::ensure!(
@@ -518,7 +541,7 @@ async fn move_directory(
     );
     if !primary {
         anyhow::ensure!(
-            db::cluster::replica_applied_version(pool, repository, node)
+            crate::backend::db::cluster::replica_applied_version(pool, repository, node)
                 .await?
                 .is_some(),
             "copy assignment changed before relocation"
@@ -666,7 +689,8 @@ impl Copying {
             .filter(|row| {
                 row.primary_node_id.is_some_and(|primary| primary != node)
                     && row.applied_version < row.write_version
-                    && rpc::repository_uuid(&row.disk_path).is_ok_and(|uuid| !self.is_running(uuid))
+                    && crate::backend::cluster::rpc::repository_uuid(&row.disk_path)
+                        .is_ok_and(|uuid| !self.is_running(uuid))
             })
             .cloned()
             .collect();
@@ -681,7 +705,7 @@ impl Copying {
             if retry.waiting(row.repository_id) {
                 continue;
             }
-            let Ok(uuid) = rpc::repository_uuid(&row.disk_path) else {
+            let Ok(uuid) = crate::backend::cluster::rpc::repository_uuid(&row.disk_path) else {
                 continue;
             };
             if self.is_running(uuid) {
@@ -722,7 +746,9 @@ async fn copy_one(
     let primary = row
         .primary_node_id
         .context("the repository has no primary")?;
-    let Some(version) = db::cluster::get_write_version(pool, row.repository_id).await? else {
+    let Some(version) =
+        crate::backend::db::cluster::get_write_version(pool, row.repository_id).await?
+    else {
         return Ok(());
     };
     if version > row.applied_version {
@@ -735,7 +761,7 @@ async fn copy_one(
         maintenance::after_copy(row.repository_id, &mirror).await;
         // Refused if the repository was promoted elsewhere during the copy; the next round
         // copies from the new primary.
-        db::cluster::set_applied_version(
+        crate::backend::db::cluster::set_applied_version(
             pool,
             row.repository_id,
             context.node_id,
@@ -786,7 +812,13 @@ async fn remove_surplus(context: &NodeContext, pool: &DbPool, copying: &Copying)
             else {
                 continue;
             };
-            match db::cluster::storage_needed(pool, &uuid.to_string(), context.node_id).await {
+            match crate::backend::db::cluster::storage_needed(
+                pool,
+                &uuid.to_string(),
+                context.node_id,
+            )
+            .await
+            {
                 Ok(true) => continue,
                 Ok(false) => {}
                 Err(error) => {
@@ -844,14 +876,16 @@ async fn keep_directories(context: &NodeContext) -> Result<HashSet<Uuid>> {
     let mut keep = HashSet::new();
     // Copies first. A promotion to this node removes its copy row and makes it primary in one
     // transaction, so the later primary list shows the repository if the copy list did not.
-    for row in db::cluster::list_held_replicas(pool, node).await? {
-        keep.insert(rpc::repository_uuid(&row.disk_path)?);
+    for row in crate::backend::db::cluster::list_held_replicas(pool, node).await? {
+        keep.insert(crate::backend::cluster::rpc::repository_uuid(
+            &row.disk_path,
+        )?);
     }
-    for (_, disk_path) in db::cluster::list_primary_paths(pool, node).await? {
-        keep.insert(rpc::repository_uuid(&disk_path)?);
+    for (_, disk_path) in crate::backend::db::cluster::list_primary_paths(pool, node).await? {
+        keep.insert(crate::backend::cluster::rpc::repository_uuid(&disk_path)?);
     }
-    for (_, disk_path) in db::cluster::list_unplaced_repositories(pool).await? {
-        if let Ok(uuid) = rpc::repository_uuid(&disk_path) {
+    for (_, disk_path) in crate::backend::db::cluster::list_unplaced_repositories(pool).await? {
+        if let Ok(uuid) = crate::backend::cluster::rpc::repository_uuid(&disk_path) {
             keep.insert(uuid);
         }
     }

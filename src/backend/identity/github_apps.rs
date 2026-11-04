@@ -1,5 +1,5 @@
 //! GitHub App public-key credentials and explicit repository permission bounds.
-use crate::backend::db;
+
 use crate::backend::db::github_apps::App;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::Utc;
@@ -25,7 +25,7 @@ pub fn valid_slug(slug: &str) -> bool {
         && slug
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        && format!("{slug}[bot]") != db::ci_tokens::BOT
+        && format!("{slug}[bot]") != crate::backend::db::ci_tokens::BOT
 }
 
 /// Bound expensive key generation, including concurrent replays of a conversion code.
@@ -55,12 +55,21 @@ pub async fn registration_key(
     pool: &DbPool,
     actor: i64,
 ) -> Result<(String, String), RegistrationKeyError> {
-    super::admission::admit_operation(pool, None, "app-register", &actor.to_string())
-        .await
-        .map_err(|error| match error {
-            super::admission::AdmissionError::Limited => RegistrationKeyError::Limited,
-            super::admission::AdmissionError::Unavailable => RegistrationKeyError::Unavailable,
-        })?;
+    crate::backend::identity::admission::admit_operation(
+        pool,
+        None,
+        "app-register",
+        &actor.to_string(),
+    )
+    .await
+    .map_err(|error| match error {
+        crate::backend::identity::admission::AdmissionError::Limited => {
+            RegistrationKeyError::Limited
+        }
+        crate::backend::identity::admission::AdmissionError::Unavailable => {
+            RegistrationKeyError::Unavailable
+        }
+    })?;
     generate_key()
         .await
         .map_err(|_| RegistrationKeyError::Unavailable)
@@ -93,7 +102,7 @@ pub fn manifest(value: &Value) -> Option<Manifest> {
     }
     let name = valid_name(object.get("name")?.as_str()?)?;
     let homepage = object.get("url")?.as_str()?;
-    if homepage.len() > 2048 || !super::oauth_apps::valid_url(homepage) {
+    if homepage.len() > 2048 || !crate::backend::identity::oauth_apps::valid_url(homepage) {
         return None;
     }
     let description = object
@@ -117,7 +126,7 @@ pub fn manifest(value: &Value) -> Option<Manifest> {
     let events = if chosen.is_empty() {
         String::new()
     } else {
-        crate::backend::webhooks::events::subscription(&chosen).ok()?
+        codeyard_model::webhook_events::subscription(&chosen).ok()?
     };
     // An app cannot subscribe to a repository category it was not granted.
     if chosen
@@ -140,7 +149,7 @@ pub fn manifest(value: &Value) -> Option<Manifest> {
     if callbacks.len() > 10
         || callbacks
             .iter()
-            .any(|url| url.len() > 2048 || !super::oauth_apps::valid_url(url))
+            .any(|url| url.len() > 2048 || !crate::backend::identity::oauth_apps::valid_url(url))
     {
         return None;
     }
@@ -188,7 +197,9 @@ pub fn manifest(value: &Value) -> Option<Manifest> {
 fn url_field(object: &Map<String, Value>, key: &str) -> Option<Option<String>> {
     match object.get(key) {
         None => Some(None),
-        Some(Value::String(url)) if url.len() <= 2048 && super::oauth_apps::valid_url(url) => {
+        Some(Value::String(url))
+            if url.len() <= 2048 && crate::backend::identity::oauth_apps::valid_url(url) =>
+        {
             Some(Some(url.clone()))
         }
         _ => None,
@@ -252,12 +263,7 @@ pub fn subset(requested: &Value, granted: &Value) -> Option<Value> {
         })
         .then_some(Value::Object(requested))
 }
-pub fn allows(permissions: &Value, key: &str, write: bool) -> bool {
-    permissions
-        .get(key)
-        .and_then(Value::as_str)
-        .is_some_and(|level| level == "admin" || level == "write" || (!write && level == "read"))
-}
+
 pub fn write(permissions: &Value) -> bool {
     permissions.as_object().is_some_and(|map| {
         map.values()
@@ -307,7 +313,7 @@ pub async fn authenticate(pool: &DbPool, value: &str) -> anyhow::Result<Option<A
         Value::Number(value) => value.to_string(),
         _ => return Ok(None),
     };
-    let Some(app) = db::github_apps::app_issuer(pool, &issuer).await? else {
+    let Some(app) = crate::backend::db::github_apps::app_issuer(pool, &issuer).await? else {
         return Ok(None);
     };
     // Slugs are discovery identifiers, not JWT issuers.
@@ -346,7 +352,7 @@ pub enum Source {
         installation: Option<i64>,
         repositories: Vec<i64>,
     },
-    Personal(super::fine_grained::Grant),
+    Personal(crate::backend::identity::fine_grained::Grant),
 }
 impl Authority {
     pub fn installation(&self) -> Option<i64> {
@@ -355,7 +361,7 @@ impl Authority {
             Source::Personal(_) => None,
         }
     }
-    pub fn personal(&self) -> Option<&super::fine_grained::Grant> {
+    pub fn personal(&self) -> Option<&crate::backend::identity::fine_grained::Grant> {
         match &self.source {
             Source::Personal(grant) => Some(grant),
             Source::App { .. } => None,
@@ -383,8 +389,10 @@ impl Authority {
         // An installation token names its installation; a user token reaches any installation
         // of its app that the user reaches.
         let actor = installation.is_none().then_some(user);
-        let covering =
-            db::github_apps::repository_installation(pool, app_id, repo, true, actor).await?;
+        let covering = crate::backend::db::github_apps::repository_installation(
+            pool, app_id, repo, true, actor,
+        )
+        .await?;
         Ok(covering
             .is_some_and(|found| installation.is_none_or(|id| id == found.id))
             .then(|| self.permissions.clone()))
@@ -405,8 +413,9 @@ impl Authority {
     }
 }
 pub async fn authority(pool: &DbPool, id: i64) -> anyhow::Result<Option<Authority>> {
-    if let Some(token) = db::github_apps::token(pool, id).await? {
-        let Some(installation) = db::github_apps::installation(pool, token.installation_id).await?
+    if let Some(token) = crate::backend::db::github_apps::token(pool, id).await? {
+        let Some(installation) =
+            crate::backend::db::github_apps::installation(pool, token.installation_id).await?
         else {
             return Ok(None);
         };
@@ -419,8 +428,8 @@ pub async fn authority(pool: &DbPool, id: i64) -> anyhow::Result<Option<Authorit
             },
         }));
     }
-    if let Some(token) = db::oauth_apps::token(pool, id).await? {
-        if let Some(app) = db::github_apps::app(pool, &token.client_id).await? {
+    if let Some(token) = crate::backend::db::oauth_apps::token(pool, id).await? {
+        if let Some(app) = crate::backend::db::github_apps::app(pool, &token.client_id).await? {
             return Ok(Some(Authority {
                 permissions: serde_json::from_str(&app.permissions)?,
                 source: Source::App {
@@ -431,9 +440,11 @@ pub async fn authority(pool: &DbPool, id: i64) -> anyhow::Result<Option<Authorit
             }));
         }
     }
-    if let Some(grant) = super::fine_grained::grant(pool, id).await? {
+    if let Some(grant) = crate::backend::identity::fine_grained::grant(pool, id).await? {
         return Ok(Some(Authority {
-            permissions: Value::Object(grant.group(super::fine_grained::Group::Repository)),
+            permissions: Value::Object(
+                grant.group(codeyard_model::fine_grained::Group::Repository),
+            ),
             source: Source::Personal(grant),
         }));
     }
@@ -590,3 +601,5 @@ mod tests {
         assert_eq!(parsed.permissions, json!({"metadata":"read"}));
     }
 }
+
+use codeyard_model::github_apps::allows;

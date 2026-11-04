@@ -1,14 +1,15 @@
 //! Deprecated security-manager team operations alias the native predefined organization role.
-use super::{outcome, target};
-use crate::backend::api::github::{auth, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        organizations::roles::{self, RoleTarget, SECURITY_MANAGER_ROLE_ID},
-        repositories::push_teams::TeamAccess,
-    },
-    webhooks::payloads,
-};
+use crate::backend::api::github::orgs::outcome;
+use crate::backend::api::github::orgs::target;
+
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::organizations::roles::RoleTarget;
+use crate::backend::db::organizations::roles::SECURITY_MANAGER_ROLE_ID;
+use crate::backend::db::repositories::push_teams::TeamAccess;
+
 use axum::{
     body::Bytes,
     extract::{Path, State},
@@ -36,9 +37,9 @@ async fn product(
     Path((name, product, enablement)): Path<(String, String, String)>,
     body: Bytes,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
     let role = outcome(
@@ -78,7 +79,7 @@ async fn product(
     let input: Value = if body.is_empty() {
         Value::Null
     } else {
-        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?
+        serde_json::from_slice(&body).map_err(crate::backend::api::github::json_parse_error)?
     };
     if !input.is_null() {
         let fields = input
@@ -103,13 +104,13 @@ async fn teams(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<Vec<Value>>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     let org = target(&state, &name).await?;
     // This legacy operation has no pagination. Refuse an oversized response, never silently truncate it.
     let teams = outcome(
-        roles::teams(
+        crate::backend::db::organizations::roles::teams(
             &state.pool,
             actor.user.id,
             org.id,
@@ -130,7 +131,7 @@ async fn teams(
         teams
             .into_iter()
             .map(|team| {
-                payloads::team(&TeamAccess {
+                crate::backend::webhooks::payloads::team(&TeamAccess {
                     team,
                     org_slug: org.name.clone(),
                     permission: 1,
@@ -146,13 +147,13 @@ async fn change(
     team: String,
     assigned: bool,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(state, headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
     let org = target(state, name).await?;
     outcome(
-        roles::change(
+        crate::backend::db::organizations::roles::change(
             &state.pool,
             actor.database_actor(),
             org.id,

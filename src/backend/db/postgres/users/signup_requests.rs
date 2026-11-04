@@ -1,7 +1,6 @@
-use crate::backend::db::users::{
-    signup_requests::{ReviewError, SignupSummary},
-    transitions::AdministratorActor,
-};
+use crate::backend::db::users::signup_requests::ReviewError;
+use crate::backend::db::users::signup_requests::SignupSummary;
+use crate::backend::db::users::transitions::AdministratorActor;
 use anyhow::Result;
 use codeyard_db_core::models::SignupRequest;
 use codeyard_db_core::models::User;
@@ -70,7 +69,11 @@ pub async fn admin_pending_page(
     requested: usize,
 ) -> Result<crate::backend::db::users::signup_requests::AdminSignupPage> {
     let mut tx = pool.begin().await?;
-    super::transitions::lock_accounts_shared(&mut tx, &[administrator.user_id]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(
+        &mut tx,
+        &[administrator.user_id],
+    )
+    .await?;
     require_reviewer(&mut tx, administrator).await?;
     let total = count_signup_requests(&mut *tx, "pending").await?;
     let limit = limit.clamp(1, 100);
@@ -126,8 +129,9 @@ pub async fn approve_signup_request(
     let reviewer = reviewer.into();
     let reviewer_user_id = reviewer.user_id;
     let mut tx = pool.begin().await?;
-    super::transitions::lock_accounts(&mut tx, &[reviewer_user_id]).await?;
-    super::transitions::lock_namespace(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts(&mut tx, &[reviewer_user_id])
+        .await?;
+    crate::backend::db::postgres::users::transitions::lock_namespace(&mut tx).await?;
     require_reviewer(&mut tx, &reviewer).await?;
 
     let signup_request = sqlx::query_as::<_, SignupRequest>(
@@ -143,11 +147,22 @@ pub async fn approve_signup_request(
     }
 
     // Leave a conflicting request pending for an explicit rejection.
-    if super::transitions::organization_name_exists(&mut tx, &signup_request.username).await? {
+    if crate::backend::db::postgres::users::transitions::organization_name_exists(
+        &mut tx,
+        &signup_request.username,
+    )
+    .await?
+    {
         return Err(ReviewError::Denied.into());
     }
 
-    if super::transitions::email_owned(&mut tx, signup_request.email.as_deref(), -1).await? {
+    if crate::backend::db::postgres::users::transitions::email_owned(
+        &mut tx,
+        signup_request.email.as_deref(),
+        -1,
+    )
+    .await?
+    {
         return Err(ReviewError::Conflict.into());
     }
     let user = sqlx::query_as::<_, User>(
@@ -190,7 +205,8 @@ pub async fn reject_signup_request(
     let reviewer = reviewer.into();
     let reviewer_user_id = reviewer.user_id;
     let mut tx = pool.begin().await?;
-    super::transitions::lock_accounts(&mut tx, &[reviewer_user_id]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts(&mut tx, &[reviewer_user_id])
+        .await?;
     require_reviewer(&mut tx, &reviewer).await?;
     let rejected = sqlx::query_as::<_, (String, Option<String>)>(
         "UPDATE signup_requests SET status = 'rejected', reviewed_by = $1, reviewed_at = NOW(), updated_at = NOW() WHERE id = $2 AND status = 'pending' RETURNING username, email",
@@ -220,7 +236,7 @@ async fn queue_decision_email(
     let Some(to) = email.map(str::trim).filter(|email| !email.is_empty()) else {
         return Ok(());
     };
-    let mail = crate::backend::email::signup_decision(username, approved);
+    let mail = codeyard_model::mail::signup_decision(username, approved);
     crate::backend::db::postgres::email::queue_email(tx, to, &mail.subject, &mail.body, None).await
 }
 
@@ -234,7 +250,10 @@ async fn require_reviewer(
     .fetch_optional(&mut **tx)
     .await?
     .unwrap_or(false);
-    if !configured || !super::transitions::active_admin_session(tx, actor).await? {
+    if !configured
+        || !crate::backend::db::postgres::users::transitions::active_admin_session(tx, actor)
+            .await?
+    {
         return Err(ReviewError::Denied.into());
     }
     Ok(())

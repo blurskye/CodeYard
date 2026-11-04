@@ -3,7 +3,9 @@ mod client;
 mod git_session;
 mod repository;
 pub mod wire;
-use crate::backend::cluster::{link::Link, transport, NodeContext};
+use crate::backend::cluster::link::Link;
+
+use crate::backend::cluster::NodeContext;
 use anyhow::Result;
 use iroh::{
     endpoint::Connection,
@@ -20,7 +22,7 @@ use tokio_util::task::{task_tracker::TrackedFuture, TaskTracker};
 use wire::invalid;
 pub use wire::{
     read_frame, unavailable, write_frame, CiRunAccess, Failure, Operation, Reply, Request,
-    MAX_BYTES, MAX_JSON, TIMEOUT,
+    MAX_BYTES, TIMEOUT,
 };
 
 /// Answers a request with a refusal and ends the stream. A peer that does not read cannot
@@ -116,7 +118,7 @@ impl RpcHandler {
     }
 
     fn header_slot(&self, peer: iroh::PublicKey) -> Result<tokio::sync::OwnedSemaphorePermit> {
-        transport::peer_header_slot(&self.headers, peer)
+        crate::backend::cluster::transport::peer_header_slot(&self.headers, peer)
     }
 
     /// Serves one request stream. An error ends the connection the stream came on.
@@ -135,7 +137,7 @@ impl RpcHandler {
         // Membership is checked before reading headers, also on reused connections.
         // A bad request gets an error reply; an oversized or broken frame ends the connection.
         let request = tokio::time::timeout_at(deadline, async {
-            if !transport::active_member(self.context.database()?, peer)
+            if !crate::backend::cluster::transport::active_member(self.context.database()?, peer)
                 .await
                 .map_err(|_| unavailable())?
             {
@@ -224,11 +226,13 @@ impl RpcHandler {
 
 impl ProtocolHandler for RpcHandler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-        let Ok(_connection) = transport::connection_slot(&connection) else {
+        let Ok(_connection) = crate::backend::cluster::transport::connection_slot(&connection)
+        else {
             return Ok(());
         };
         // Each stream the peer opens is one request, answered in turn.
-        while let Some(link) = transport::accept_stream(&connection).await {
+        while let Some(link) = crate::backend::cluster::transport::accept_stream(&connection).await
+        {
             if let Err(error) = self.serve_link(link).await {
                 tracing::warn!(%error, "repository RPC failed");
                 connection.close(500u32.into(), b"RPC request failed");
@@ -244,7 +248,7 @@ mod regression_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::SessionGate;
+    use crate::backend::cluster::rpc::SessionGate;
     use std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -300,3 +304,5 @@ mod tests {
             .expect("dropping the session releases the wait");
     }
 }
+
+use codeyard_db_core::limits::MAX_JSON;

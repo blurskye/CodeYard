@@ -1,7 +1,16 @@
-use super::{
-    arg, connection, db, issue, missing, node_id, unavailable, url, user, Arguments,
-    RequestContext, Result, Value,
-};
+use crate::backend::api::graphql::arg;
+
+use crate::backend::api::graphql::db;
+
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::node_id;
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::url;
+
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
 use async_graphql::Error;
 use serde_json::json;
 
@@ -25,7 +34,8 @@ pub(super) async fn optional_authority(
     match request.authorize(id, scope, false).await {
         Ok(()) => Ok(true),
         Err(error)
-            if super::is_not_found(&error) || super::error_kind(&error) == Some("FORBIDDEN") =>
+            if crate::backend::api::graphql::is_not_found(&error)
+                || crate::backend::api::graphql::error_kind(&error) == Some("FORBIDDEN") =>
         {
             Ok(false)
         }
@@ -89,7 +99,7 @@ pub(super) async fn query(ctx: &Arguments, request: &RequestContext) -> Result<V
     let (owner, name) = (arg(ctx, "owner")?, arg(ctx, "name")?);
     // gh matches GitHub's wording, so a hidden repository reads exactly like a missing one.
     let unresolved = || {
-        super::error(
+        crate::backend::api::graphql::error(
             format!("Could not resolve to a Repository with the name '{owner}/{name}'."),
             "NOT_FOUND",
         )
@@ -100,7 +110,7 @@ pub(super) async fn query(ctx: &Arguments, request: &RequestContext) -> Result<V
         .ok_or_else(unresolved)?;
     match check(repo, request).await {
         Ok(repo) => Ok(object(&repo)),
-        Err(error) if super::is_not_found(&error) => Err(unresolved()),
+        Err(error) if crate::backend::api::graphql::is_not_found(&error) => Err(unresolved()),
         Err(error) => Err(error),
     }
 }
@@ -140,7 +150,7 @@ pub(super) fn label_connection(
     {
         labels.reverse();
     }
-    connection::slice(
+    crate::backend::api::graphql::connection::slice(
         ctx,
         labels
             .iter()
@@ -219,14 +229,15 @@ pub(super) async fn resolve(
         .map_err(unavailable)?)),
         "owner" => {
             if repo.owner_kind == "org" {
-                user::organization_by_id(repo.owner_id(), request).await
+                crate::backend::api::graphql::user::organization_by_id(repo.owner_id(), request)
+                    .await
             } else {
-                user::by_id(repo.owner_id(), request).await
+                crate::backend::api::graphql::user::by_id(repo.owner_id(), request).await
             }
         }
         "nameWithOwner" | "url" | "sshUrl" => {
             let name = format!("{}/{}", owner(&repo, request).await?, repo.name);
-            let ssh = super::super::http::config::ssh_clone_base();
+            let ssh = codeyard_model::http_config::ssh_clone_base();
             Ok(json!(match field {
                 "nameWithOwner" => name,
                 "url" => url(&format!("/{name}")),
@@ -237,9 +248,12 @@ pub(super) async fn resolve(
             }))
         }
         "discussion" | "discussions" | "discussionCategories" | "hasDiscussionsEnabled" => {
-            super::discussions::repository_field(field, ctx, request, id).await
+            crate::backend::api::graphql::discussions::repository_field(field, ctx, request, id)
+                .await
         }
-        "issueTypes" => issue::metadata::repository(ctx, request, &repo).await,
+        "issueTypes" => {
+            crate::backend::api::graphql::issue::metadata::repository(ctx, request, &repo).await
+        }
         "parent" => match repo.forked_from_id {
             Some(id) => {
                 let Some(parent) = db::repositories::records::get_repository_by_id(pool, id)
@@ -289,7 +303,7 @@ pub(super) async fn resolve(
                 .map_err(unavailable)?
                 .remove(&id)
                 .unwrap_or_default();
-            connection::slice(
+            crate::backend::api::graphql::connection::slice(
                 ctx,
                 names
                     .iter()
@@ -298,7 +312,10 @@ pub(super) async fn resolve(
             )
         }
         "watchers" => {
-            let page = connection::Page::new(ctx, i64::from(repo.watchers_count))?;
+            let page = crate::backend::api::graphql::connection::Page::new(
+                ctx,
+                i64::from(repo.watchers_count),
+            )?;
             let watchers = db::repositories::engagement::list_repo_watchers(
                 &request.state.pool,
                 repo.id,
@@ -310,16 +327,24 @@ pub(super) async fn resolve(
             Ok(page.finish(
                 watchers
                     .iter()
-                    .map(|watcher| user::object(watcher, request.auth.user.id))
+                    .map(|watcher| {
+                        crate::backend::api::graphql::user::object(watcher, request.auth.user.id)
+                    })
                     .collect(),
             ))
         }
-        "forks" => super::repository_list::forks(ctx, request, repo.id).await,
-        "milestone" | "milestones" => super::milestone::resolve(field, ctx, &repo, request).await,
-        "release" | "releases" | "latestRelease" => {
-            super::release::resolve(field, ctx, request, &repo).await
+        "forks" => {
+            crate::backend::api::graphql::repository_list::forks(ctx, request, repo.id).await
         }
-        "ref" | "refs" | "object" => super::git_objects::resolve(field, ctx, &repo, request).await,
+        "milestone" | "milestones" => {
+            crate::backend::api::graphql::milestone::resolve(field, ctx, &repo, request).await
+        }
+        "release" | "releases" | "latestRelease" => {
+            crate::backend::api::graphql::release::resolve(field, ctx, request, &repo).await
+        }
+        "ref" | "refs" | "object" => {
+            crate::backend::api::graphql::git_objects::resolve(field, ctx, &repo, request).await
+        }
         "defaultBranchRef" => {
             let (refs, default) = crate::backend::repositories::reads::refs_and_default(
                 &repo,
@@ -335,7 +360,10 @@ pub(super) async fn resolve(
             )?;
             match refs.get(&reference) {
                 Some(oid) => {
-                    super::git_objects::reference_at(&repo, &reference, oid, request).await
+                    crate::backend::api::graphql::git_objects::reference_at(
+                        &repo, &reference, oid, request,
+                    )
+                    .await
                 }
                 None => Ok(Value::Null),
             }
@@ -347,7 +375,7 @@ pub(super) async fn resolve(
                 .map_err(unavailable)?
             {
                 request.authorize(id, "issues", false).await?;
-                return Ok(issue::object(&item));
+                return Ok(crate::backend::api::graphql::issue::object(&item));
             }
             if field == "issueOrPullRequest" {
                 request.authorize(id, "pull-requests", false).await?;
@@ -356,7 +384,7 @@ pub(super) async fn resolve(
                         .await
                         .map_err(unavailable)?
                         .as_ref()
-                        .map(issue::pull_object)
+                        .map(crate::backend::api::graphql::issue::pull_object)
                         .unwrap_or(Value::Null),
                 );
             }
@@ -368,16 +396,18 @@ pub(super) async fn resolve(
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(|| {
-                    super::error(
+                    crate::backend::api::graphql::error(
                         format!("Could not resolve to a PullRequest with the number of {number}."),
                         "NOT_FOUND",
                     )
                 })?;
-            Ok(issue::pull_object(&pull))
+            Ok(crate::backend::api::graphql::issue::pull_object(&pull))
         }
-        "issues" | "pullRequests" => issue::list(field, ctx, request, id).await,
+        "issues" | "pullRequests" => {
+            crate::backend::api::graphql::issue::list(field, ctx, request, id).await
+        }
         "labels" => {
-            connection::validate(ctx)?;
+            crate::backend::api::graphql::connection::validate(ctx)?;
             let query = ctx
                 .args
                 .get("query")
@@ -399,7 +429,7 @@ pub(super) async fn resolve(
             let count = db::labels::count_repo_labels(pool, id, query)
                 .await
                 .map_err(unavailable)?;
-            let page = connection::Page::new(ctx, count)?;
+            let page = crate::backend::api::graphql::connection::Page::new(ctx, count)?;
             let labels = if page.limit == 0 {
                 Vec::new()
             } else {
@@ -409,6 +439,9 @@ pub(super) async fn resolve(
             };
             Ok(page.finish(labels.iter().map(label).collect()))
         }
-        _ => super::repository_metadata::resolve(field, ctx, request, &repo).await,
+        _ => {
+            crate::backend::api::graphql::repository_metadata::resolve(field, ctx, request, &repo)
+                .await
+        }
     }
 }

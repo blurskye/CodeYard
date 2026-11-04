@@ -1,14 +1,16 @@
 use super::request;
-use crate::support::{database::Database, http_client::Client, organizations::applied};
+use crate::support::{
+    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+};
 use axum::{
     body::{to_bytes, Body},
     http::Request,
     Router,
 };
-use codeyard::backend::db::organizations;
+
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::OrganizationProfile;
-use codeyard::backend::identity::tokens;
+
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
@@ -52,7 +54,7 @@ async fn contract(pg: bool) {
     let writer = f.actor("writer").await;
     let reader = f.actor("reader").await;
     let org = applied(
-        organizations::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -61,9 +63,15 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        organizations::add_organization_member(f.pool(), owner, org.id, admin, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::add_organization_member(
+            f.pool(),
+            owner,
+            org.id,
+            admin,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;
@@ -76,7 +84,7 @@ async fn contract(pg: bool) {
         (admin, "read"),
     ] {
         let browser = Client::login(&router, f.pool(), user).await;
-        let token = tokens::create(
+        let token = codeyard::backend::identity::tokens::create(
             f.pool(),
             user,
             Some(&browser.session),

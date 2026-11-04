@@ -2,14 +2,22 @@
 //! which users may be assigned, so these handlers only resolve names and show the outcome.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::discussion::{
-    detail_outcome, item, kind, repository, unavailable, ApiFailure, RepositoryData, ResultPage,
-};
-use crate::backend::api::repos::forms::{authorize_post, field};
+use crate::backend::api::repos::discussion::detail_outcome;
+use crate::backend::api::repos::discussion::item;
+use crate::backend::api::repos::discussion::kind;
+use crate::backend::api::repos::discussion::repository;
+use crate::backend::api::repos::discussion::unavailable;
+use crate::backend::api::repos::discussion::ApiFailure;
+use crate::backend::api::repos::discussion::RepositoryData;
+use crate::backend::api::repos::discussion::ResultPage;
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::field;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::db::assignees::{AssignedItem, AssignmentRefusal, MAX_ASSIGNEES};
-use crate::backend::issues::assignments;
+
+use crate::backend::db::assignees::AssignedItem;
+use crate::backend::db::assignees::AssignmentRefusal;
+use crate::backend::db::assignees::MAX_ASSIGNEES;
+
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -18,7 +26,7 @@ use codeyard_webui::pages::repos::issues::Kind;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-fn authority(ctx: &PageContext) -> ResultPage<db::credentials::Actor> {
+fn authority(ctx: &PageContext) -> ResultPage<crate::backend::db::credentials::Actor> {
     Ok(ctx.database_actor(ctx.require_user()?.id))
 }
 
@@ -61,25 +69,29 @@ pub(crate) async fn assigned_item(
     number: i32,
 ) -> ResultPage<AssignedItem> {
     match kind {
-        Kind::Issue => db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .map(|issue| AssignedItem::Issue(issue.id))
-            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found.")),
-        Kind::Pull => {
-            db::pull_requests::records::get_pull_request(&ctx.state.pool, repo.record.id, number)
+        Kind::Issue => {
+            crate::backend::db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
                 .await
                 .map_err(|_| unavailable(ctx))?
-                .map(|pull| AssignedItem::PullRequest(pull.id))
-                .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))
+                .map(|issue| AssignedItem::Issue(issue.id))
+                .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))
         }
+        Kind::Pull => crate::backend::db::pull_requests::records::get_pull_request(
+            &ctx.state.pool,
+            repo.record.id,
+            number,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?
+        .map(|pull| AssignedItem::PullRequest(pull.id))
+        .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found.")),
     }
 }
 
 /// The user id of a username. A name that is no user matches nothing.
 pub(crate) async fn user_id(ctx: &PageContext, username: &str) -> ResultPage<Option<i64>> {
     Ok(
-        db::users::accounts::get_user_by_username(&ctx.state.pool, username)
+        crate::backend::db::users::accounts::get_user_by_username(&ctx.state.pool, username)
             .await
             .map_err(|_| unavailable(ctx))?
             .map(|user| user.id),
@@ -106,7 +118,7 @@ pub(crate) async fn native_assign(
     )?;
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
     let username = field(&form, "username");
-    let target = assignments::Target {
+    let target = crate::backend::issues::assignments::Target {
         actor: ctx.require_user()?,
         repository: &repo.record,
         owner: &owner,
@@ -114,11 +126,14 @@ pub(crate) async fn native_assign(
         number,
         title: &value.title,
     };
-    let outcome = match db::users::accounts::get_user_by_username(&ctx.state.pool, username.trim())
-        .await
-        .map_err(|_| unavailable(&ctx))?
+    let outcome = match crate::backend::db::users::accounts::get_user_by_username(
+        &ctx.state.pool,
+        username.trim(),
+    )
+    .await
+    .map_err(|_| unavailable(&ctx))?
     {
-        Some(assignee) => assignments::assign(
+        Some(assignee) => crate::backend::issues::assignments::assign(
             &ctx.state.pool,
             &ctx.state.notification_broadcaster,
             &target,
@@ -153,7 +168,7 @@ pub(crate) async fn native_unassign(
     )?;
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
     // A name that is no user, or is not assigned, leaves the item as it is and records nothing.
-    let target = assignments::Target {
+    let target = crate::backend::issues::assignments::Target {
         actor: ctx.require_user()?,
         repository: &repo.record,
         owner: &owner,
@@ -161,9 +176,14 @@ pub(crate) async fn native_unassign(
         number,
         title: &value.title,
     };
-    let outcome = assignments::unassign(&ctx.state.pool, &target, authority(&ctx)?, &[username])
-        .await
-        .map(|_| ())
-        .map_err(assignment_error);
+    let outcome = crate::backend::issues::assignments::unassign(
+        &ctx.state.pool,
+        &target,
+        authority(&ctx)?,
+        &[username],
+    )
+    .await
+    .map(|_| ())
+    .map_err(assignment_error);
     detail_outcome(&ctx, &repo, kind, &value, number, outcome).await
 }

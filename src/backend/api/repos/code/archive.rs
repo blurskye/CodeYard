@@ -1,9 +1,10 @@
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::{check_repo_read_access, readable_repository};
+use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::chrome::repository_default_branch;
 use crate::backend::api::repos::responses::repo_store_error;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::repositories::store::repo_store;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
@@ -128,17 +129,22 @@ pub(in crate::backend::api::repos) async fn page(
     let Some((reference, format)) = parse_archive_name(&archive) else {
         return ctx.error(StatusCode::NOT_FOUND, "Archive format not found.");
     };
-    let repository =
-        match db::repositories::records::get_repository(&ctx.state.pool, &owner, &name).await {
-            Ok(Some(repository)) => repository,
-            Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Repository not found."),
-            Err(_) => {
-                return ctx.error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Repository storage is unavailable.",
-                )
-            }
-        };
+    let repository = match crate::backend::db::repositories::records::get_repository(
+        &ctx.state.pool,
+        &owner,
+        &name,
+    )
+    .await
+    {
+        Ok(Some(repository)) => repository,
+        Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Repository not found."),
+        Err(_) => {
+            return ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Repository storage is unavailable.",
+            )
+        }
+    };
     if let Err((status, _)) =
         check_repo_read_access(&ctx.state.pool, &repository, &ctx.headers).await
     {

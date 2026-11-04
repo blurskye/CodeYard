@@ -1,5 +1,5 @@
 //! Secondary addresses share ownership checks with primary addresses, but not sign-in authority.
-use super::accounts::AccountCredential;
+use crate::backend::db::users::accounts::AccountCredential;
 use anyhow::Result;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;

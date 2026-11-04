@@ -3,15 +3,15 @@ use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::discussion::*;
 use crate::backend::api::repos::forms::with_status;
-use crate::backend::api::repos::issues::reactions;
-use crate::backend::api::repos::pulls::review_forms;
+
 use crate::backend::api::repos::refs::references::resolve_references_or_none;
 use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::repositories::code_owners::load_rules;
 use crate::backend::repositories::store::repo_store;
-use crate::backend::repositories::store::{DiffFileInfo, DiffInfo};
+use crate::backend::repositories::store::DiffFileInfo;
+use crate::backend::repositories::store::DiffInfo;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -82,16 +82,19 @@ pub async fn get_pull_request_diff(
 ) -> Result<Json<DiffInfo>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
-    let pull_request =
-        db::pull_requests::records::get_pull_request(&state.pool, repository.id, number)
-            .await
-            .map_err(|_| storage_unavailable())?
-            .ok_or_else(|| {
-                (
-                    StatusCode::NOT_FOUND,
-                    Json(ApiError::new("not_found", "Pull request not found")),
-                )
-            })?;
+    let pull_request = crate::backend::db::pull_requests::records::get_pull_request(
+        &state.pool,
+        repository.id,
+        number,
+    )
+    .await
+    .map_err(|_| storage_unavailable())?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiError::new("not_found", "Pull request not found")),
+        )
+    })?;
 
     let diff = repo_store(&repository, state.cluster.as_ref())
         .diff(pull_request.diff_base(), &pull_request.head_sha)
@@ -140,16 +143,17 @@ async fn viewed_marks(
     files: &[DiffFileInfo],
 ) -> ResultPage<pulls::Viewed> {
     let displayed: Vec<String> = files.iter().map(|file| file.filename.clone()).collect();
-    let marks: HashMap<String, String> = db::pull_requests::viewed::list_pull_request_viewed_files(
-        &ctx.state.pool,
-        pull_id,
-        user_id,
-        &displayed,
-    )
-    .await
-    .map_err(|_| unavailable(ctx))?
-    .into_iter()
-    .collect();
+    let marks: HashMap<String, String> =
+        crate::backend::db::pull_requests::viewed::list_pull_request_viewed_files(
+            &ctx.state.pool,
+            pull_id,
+            user_id,
+            &displayed,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?
+        .into_iter()
+        .collect();
     let paths: BTreeSet<String> = files
         .iter()
         .filter(|file| marks.get(&file.filename) == Some(&file.blob_sha))
@@ -224,11 +228,14 @@ pub(crate) async fn render_diff(
     error: Option<&str>,
     status: StatusCode,
 ) -> ResultPage<Response> {
-    let mut pull =
-        db::pull_requests::records::get_pull_request(&ctx.state.pool, repo.record.id, value.number)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found"))?;
+    let mut pull = crate::backend::db::pull_requests::records::get_pull_request(
+        &ctx.state.pool,
+        repo.record.id,
+        value.number,
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?
+    .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found"))?;
     // A retargeted stack layer compares against its saved fork point, so the merged lower
     // layer is not shown again. The base SHA stays for the revision checks.
     let fork = (pull.diff_base() != pull.base_sha).then(|| pull.diff_base().to_owned());
@@ -250,16 +257,24 @@ pub(crate) async fn render_diff(
                 unavailable(ctx)
             }
         })?;
-    let code_scanning =
-        super::security::checks(ctx, repo, &pull, &pull.head_sha, &pull.base_sha).await?;
-    let inline =
-        db::pull_requests::reviews::list_pull_request_inline_comments(&ctx.state.pool, pull.id)
-            .await
-            .map_err(|_| unavailable(ctx))?;
+    let code_scanning = crate::backend::api::repos::pulls::security::checks(
+        ctx,
+        repo,
+        &pull,
+        &pull.head_sha,
+        &pull.base_sha,
+    )
+    .await?;
+    let inline = crate::backend::db::pull_requests::reviews::list_pull_request_inline_comments(
+        &ctx.state.pool,
+        pull.id,
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?;
     let truncated = inline.truncated;
     // The viewer's own pending comments show here, and nobody else's do.
     let pending = match ctx.user.as_ref() {
-        Some(user) => db::pull_requests::reviews::list_pending_review_comments(
+        Some(user) => crate::backend::db::pull_requests::reviews::list_pending_review_comments(
             &ctx.state.pool,
             pull.id,
             user.id,
@@ -274,11 +289,13 @@ pub(crate) async fn render_diff(
     let pending = pending.comments;
     let pending_ids: HashSet<i64> = pending.iter().map(|entry| entry.comment.id).collect();
     let stored = match (&review, ctx.user.as_ref()) {
-        (None, Some(user)) => {
-            db::pull_requests::reviews::get_pending_review(&ctx.state.pool, pull.id, user.id)
-                .await
-                .map_err(|_| unavailable(ctx))?
-        }
+        (None, Some(user)) => crate::backend::db::pull_requests::reviews::get_pending_review(
+            &ctx.state.pool,
+            pull.id,
+            user.id,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?,
         _ => None,
     };
     // A re-rendered form keeps the pending review it was submitted with. A fresh form names the
@@ -304,8 +321,14 @@ pub(crate) async fn render_diff(
     });
     let mut entries = inline.comments;
     entries.extend(pending);
-    let mut threads = review_forms::threads(ctx, repo, &pull, entries, &pending_ids);
-    reactions::attach_threads(ctx, &mut threads).await?;
+    let mut threads = crate::backend::api::repos::pulls::review_forms::threads(
+        ctx,
+        repo,
+        &pull,
+        entries,
+        &pending_ids,
+    );
+    crate::backend::api::repos::issues::reactions::attach_threads(ctx, &mut threads).await?;
     let mut texts: Vec<&str> = threads
         .iter()
         .flat_map(|thread| {

@@ -1,14 +1,13 @@
-use crate::backend::{
-    api::{
-        http::{context::PageContext, session},
-        repos::chrome,
-    },
-    app::AppState,
-    db::{
-        self,
-        packages::{Credential, Listing, Owner, Package, Permission, Refusal},
-    },
-};
+use crate::backend::api::http::context::PageContext;
+
+use crate::backend::app::AppState;
+
+use crate::backend::db::packages::Credential;
+use crate::backend::db::packages::Listing;
+use crate::backend::db::packages::Owner;
+use crate::backend::db::packages::Package;
+use crate::backend::db::packages::Permission;
+use crate::backend::db::packages::Refusal;
 use axum::{
     extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -60,7 +59,7 @@ fn owner_view(owner: &Owner) -> view::Owner {
 }
 
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
-    let error = super::Error::db(error);
+    let error = crate::backend::api::packages::Error::db(error);
     ctx.error(error.0, error.2)
 }
 
@@ -77,7 +76,7 @@ async fn scope(
     } else {
         return Ok(None);
     };
-    db::packages::owner(&ctx.state.pool, name, kind)
+    crate::backend::db::packages::owner(&ctx.state.pool, name, kind)
         .await
         .map_err(|error| failure(ctx, error))?
         .map(Some)
@@ -86,12 +85,12 @@ async fn scope(
 
 async fn record_owner(ctx: &PageContext, package: &Package) -> Result<Owner, Response> {
     let name = if let Some(user) = package.owner_user_id {
-        db::users::accounts::get_user_by_id(&ctx.state.pool, user)
+        crate::backend::db::users::accounts::get_user_by_id(&ctx.state.pool, user)
             .await
             .map_err(|error| failure(ctx, error))?
             .map(|user| user.username)
     } else if let Some(org) = package.owner_org_id {
-        db::organizations::get_public_organization_by_id(&ctx.state.pool, org)
+        crate::backend::db::organizations::get_public_organization_by_id(&ctx.state.pool, org)
             .await
             .map_err(|error| failure(ctx, error))?
             .map(|org| org.name)
@@ -117,8 +116,8 @@ async fn card(
     let session = ctx
         .user
         .as_ref()
-        .and_then(|_| session::extract_session_id(&ctx.headers));
-    let versions = db::packages::version_count(
+        .and_then(|_| crate::backend::api::http::session::extract_session_id(&ctx.headers));
+    let versions = crate::backend::db::packages::version_count(
         &ctx.state.pool,
         package.id,
         session.as_deref().map(Credential::Session),
@@ -141,7 +140,11 @@ async fn card(
     })
 }
 
-fn version_card(base: &str, version: &db::packages::Version, tags: Vec<String>) -> view::Version {
+fn version_card(
+    base: &str,
+    version: &crate::backend::db::packages::Version,
+    tags: Vec<String>,
+) -> view::Version {
     view::Version {
         id: version.id,
         name: version.name.clone(),
@@ -184,7 +187,7 @@ async fn model(
     let session = ctx
         .user
         .as_ref()
-        .and_then(|_| session::extract_session_id(&ctx.headers));
+        .and_then(|_| crate::backend::api::http::session::extract_session_id(&ctx.headers));
     let credential = session.as_deref().map(Credential::Session);
     let page: i64 = match ctx.query.get("page") {
         Some(page) => page
@@ -200,7 +203,7 @@ async fn model(
         if !crate::backend::packages::valid_kind(kind) {
             return Err(ctx.error(StatusCode::NOT_FOUND, "Package type not found."));
         }
-        let package = db::packages::find(
+        let package = crate::backend::db::packages::find(
             &ctx.state.pool,
             owner,
             kind,
@@ -211,7 +214,7 @@ async fn model(
         )
         .await
         .map_err(|error| failure(ctx, error))?;
-        let can_admin = match db::packages::find(
+        let can_admin = match crate::backend::db::packages::find(
             &ctx.state.pool,
             owner,
             kind,
@@ -237,7 +240,7 @@ async fn model(
         if settings && !can_admin {
             return Err(ctx.error(StatusCode::NOT_FOUND, "Package settings not found."));
         }
-        let mut versions = db::packages::versions(
+        let mut versions = crate::backend::db::packages::versions(
             &ctx.state.pool,
             package.id,
             credential,
@@ -259,14 +262,19 @@ async fn model(
         };
         let selected = match selected {
             Some(id) => Some(
-                db::packages::version_by_id(&ctx.state.pool, package.id, credential, id)
-                    .await
-                    .map_err(|error| failure(ctx, error))?,
+                crate::backend::db::packages::version_by_id(
+                    &ctx.state.pool,
+                    package.id,
+                    credential,
+                    id,
+                )
+                .await
+                .map_err(|error| failure(ctx, error))?,
             ),
             None => None,
         };
         if settings {
-            let mut deleted = db::packages::versions(
+            let mut deleted = crate::backend::db::packages::versions(
                 &ctx.state.pool,
                 package.id,
                 credential,
@@ -283,16 +291,26 @@ async fn model(
         let card = card(ctx, owner, &package).await?;
         let mut rows = Vec::new();
         for version in versions {
-            let tags = db::packages::tags(&ctx.state.pool, package.id, credential, version.id)
-                .await
-                .map_err(|error| failure(ctx, error))?;
+            let tags = crate::backend::db::packages::tags(
+                &ctx.state.pool,
+                package.id,
+                credential,
+                version.id,
+            )
+            .await
+            .map_err(|error| failure(ctx, error))?;
             rows.push(version_card(&card.href, &version, tags));
         }
         let selected_view = if params.contains_key("version") {
             if let Some(version) = &selected {
-                let tags = db::packages::tags(&ctx.state.pool, package.id, credential, version.id)
-                    .await
-                    .map_err(|error| failure(ctx, error))?;
+                let tags = crate::backend::db::packages::tags(
+                    &ctx.state.pool,
+                    package.id,
+                    credential,
+                    version.id,
+                )
+                .await
+                .map_err(|error| failure(ctx, error))?;
                 Some(version_card(&card.href, version, tags))
             } else {
                 None
@@ -300,15 +318,16 @@ async fn model(
         } else {
             None
         };
-        let origin = crate::backend::api::http::config::link_origin();
+        let origin = codeyard_model::http_config::link_origin();
         let host = origin
             .strip_prefix("https://")
             .or_else(|| origin.strip_prefix("http://"))
             .unwrap_or(&origin);
         let (command, registry) = if package.package_type == "container" {
-            let namespace = db::packages::container_namespace(&ctx.state.pool, owner)
-                .await
-                .map_err(|error| failure(ctx, error))?;
+            let namespace =
+                crate::backend::db::packages::container_namespace(&ctx.state.pool, owner)
+                    .await
+                    .map_err(|error| failure(ctx, error))?;
             let reference = selected
                 .as_ref()
                 .map_or(":latest".into(), |version| format!("@{}", version.digest));
@@ -357,9 +376,11 @@ async fn model(
             (String::new(), None)
         };
         let repository = match package.repo_id {
-            Some(id) => db::repositories::records::get_repository_by_id(&ctx.state.pool, id)
-                .await
-                .map_err(|error| failure(ctx, error))?,
+            Some(id) => {
+                crate::backend::db::repositories::records::get_repository_by_id(&ctx.state.pool, id)
+                    .await
+                    .map_err(|error| failure(ctx, error))?
+            }
             None => None,
         };
         let (command, registry) = match package.package_type.as_str() {
@@ -455,12 +476,16 @@ async fn model(
         return Err(ctx.error(StatusCode::BAD_REQUEST, "Invalid package type."));
     }
     let repo = if let (Some(owner), Some(repo)) = (owner.as_ref(), params.get("repo")) {
-        Some(chrome::load_database(ctx, &owner.name, repo).await?.chrome)
+        Some(
+            crate::backend::api::repos::chrome::load_database(ctx, &owner.name, repo)
+                .await?
+                .chrome,
+        )
     } else {
         None
     };
     let explore = owner.is_none();
-    let mut packages = db::packages::list(
+    let mut packages = crate::backend::db::packages::list(
         &ctx.state.pool,
         credential,
         Listing {
@@ -484,7 +509,7 @@ async fn model(
     let base = ctx.path.clone();
     let container_namespace = match owner.as_ref() {
         Some(owner) => Some(
-            db::packages::container_namespace(&ctx.state.pool, owner)
+            crate::backend::db::packages::container_namespace(&ctx.state.pool, owner)
                 .await
                 .map_err(|error| failure(ctx, error))?,
         ),
@@ -540,7 +565,7 @@ async fn mutate(
     params: &HashMap<String, String>,
     form: &HashMap<String, String>,
 ) -> Result<String, Response> {
-    let session = session::extract_session_id(&ctx.headers)
+    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers)
         .ok_or_else(|| ctx.error(StatusCode::UNAUTHORIZED, "Sign in to change packages."))?;
     let credential = Credential::Session(&session);
     let owner = scope(ctx, params)
@@ -552,7 +577,7 @@ async fn mutate(
     let kind = params
         .get("kind")
         .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Package type not found."))?;
-    let package = db::packages::find(
+    let package = crate::backend::db::packages::find(
         &ctx.state.pool,
         &owner,
         kind,
@@ -586,17 +611,27 @@ async fn mutate(
                 .filter(|name| !name.is_empty())
             {
                 Some(name) => Some(
-                    db::repositories::records::get_repository(&ctx.state.pool, &owner.name, name)
-                        .await
-                        .map_err(|error| failure(ctx, error))?
-                        .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?
-                        .id,
+                    crate::backend::db::repositories::records::get_repository(
+                        &ctx.state.pool,
+                        &owner.name,
+                        name,
+                    )
+                    .await
+                    .map_err(|error| failure(ctx, error))?
+                    .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?
+                    .id,
                 ),
                 None => None,
             };
-            db::packages::settings(&ctx.state.pool, package.id, credential, visibility, repo)
-                .await
-                .map_err(|error| failure(ctx, error))?;
+            crate::backend::db::packages::settings(
+                &ctx.state.pool,
+                package.id,
+                credential,
+                visibility,
+                repo,
+            )
+            .await
+            .map_err(|error| failure(ctx, error))?;
         }
         Some("delete") => {
             if form.get("confirm") != Some(&package.name) {
@@ -605,9 +640,15 @@ async fn mutate(
                     "Enter the package name to confirm deletion.",
                 ));
             }
-            db::packages::set_deleted(&ctx.state.pool, package.id, None, credential, false)
-                .await
-                .map_err(|error| failure(ctx, error))?;
+            crate::backend::db::packages::set_deleted(
+                &ctx.state.pool,
+                package.id,
+                None,
+                credential,
+                false,
+            )
+            .await
+            .map_err(|error| failure(ctx, error))?;
             return Ok(owner_view(&owner).packages);
         }
         Some(action @ ("delete-version" | "restore-version")) => {
@@ -620,7 +661,7 @@ async fn mutate(
                         "Choose a package version.",
                     )
                 })?;
-            db::packages::set_deleted(
+            crate::backend::db::packages::set_deleted(
                 &ctx.state.pool,
                 package.id,
                 Some(id),

@@ -1,12 +1,14 @@
 //! The fine-grained token pages render on the server with plain forms, so they work without
 //! JavaScript, and they are only for the signed-in account and the organization's owners.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
-use crate::support::{database::Database, http_client::Client, organizations::applied};
+use crate::support::{
+    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+};
 use chrono::{Duration, Utc};
-use codeyard::backend::db::organizations;
+
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::OrganizationProfile;
-use codeyard::backend::identity::fine_grained;
+
 use codeyard::backend::identity::fine_grained::Access;
 use codeyard::backend::identity::fine_grained::Owner;
 use codeyard_db_core::models::OrgRole;
@@ -18,7 +20,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("alice").await;
     let carol = f.actor("carol").await;
     let org = applied(
-        organizations::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             alice,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -28,9 +30,15 @@ async fn contract(pg: bool) {
     )
     .id;
     applied(
-        organizations::add_organization_member(f.pool(), alice, org, carol, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::add_organization_member(
+            f.pool(),
+            alice,
+            org,
+            carol,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;
@@ -47,11 +55,11 @@ async fn contract(pg: bool) {
         assert!(reply.location.unwrap().starts_with("/login"), "{path}");
     }
 
-    let created = fine_grained::create(
+    let created = codeyard::backend::identity::fine_grained::create(
         f.pool(),
         carol,
         Some(&member.session),
-        fine_grained::Request {
+        codeyard::backend::identity::fine_grained::Request {
             name: "nightly export".into(),
             description: "Exports issues".into(),
             owner: Owner::Organization(org),

@@ -1,12 +1,19 @@
-use super::Commands;
 use crate::backend::repositories::git_sessions::private_files::connect as connect_private;
-use crate::backend::repositories::git_sessions::protocol::{
-    self, Request, CHUNK, EOF, EXIT, STDERR, STDIN, STDOUT,
-};
-use crate::backend::repositories::git_sessions::validation::{
-    canonical_key, parse_command, parse_updates, protocol as git_protocol, shell_safe_path,
-    MAX_HOOK_BYTES,
-};
+use crate::backend::ssh::openssh::Commands;
+
+use crate::backend::repositories::git_sessions::protocol::Request;
+use crate::backend::repositories::git_sessions::protocol::CHUNK;
+use crate::backend::repositories::git_sessions::protocol::EOF;
+use crate::backend::repositories::git_sessions::protocol::EXIT;
+use crate::backend::repositories::git_sessions::protocol::STDERR;
+use crate::backend::repositories::git_sessions::protocol::STDIN;
+use crate::backend::repositories::git_sessions::protocol::STDOUT;
+use crate::backend::repositories::git_sessions::validation::canonical_key;
+use crate::backend::repositories::git_sessions::validation::parse_command;
+use crate::backend::repositories::git_sessions::validation::parse_updates;
+use crate::backend::repositories::git_sessions::validation::protocol as git_protocol;
+use crate::backend::repositories::git_sessions::validation::shell_safe_path;
+use crate::backend::repositories::git_sessions::validation::MAX_HOOK_BYTES;
 use anyhow::{ensure, Result};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
@@ -89,7 +96,7 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
             repo_id,
             phase,
         } => {
-            use protocol::TransactionPhase;
+            use crate::backend::repositories::git_sessions::protocol::TransactionPhase;
             let phase = match phase.as_str() {
                 // Newer Git runs the hook once before it locks the references; only the
                 // later phases carry the final old and new values.
@@ -116,7 +123,8 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
         ),
     };
     let mut connection = connect_private(&socket).await?;
-    protocol::write_request(&mut connection, &request).await?;
+    crate::backend::repositories::git_sessions::protocol::write_request(&mut connection, &request)
+        .await?;
     let (mut reader, mut writer) = connection.into_split();
     let mut output = stdio(std::io::stdout().as_fd())?;
     let mut errors = stdio(std::io::stderr().as_fd())?;
@@ -125,7 +133,7 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
     let status = if streaming {
         let input = pump_input(stdin()?, &mut writer);
         tokio::pin!(input);
-        timeout(protocol::SESSION_TIMEOUT + Duration::from_secs(5), async {
+        timeout(crate::backend::repositories::git_sessions::protocol::SESSION_TIMEOUT + Duration::from_secs(5), async {
             tokio::select! {
                 result = &mut receive => result,
                 result = &mut input => {
@@ -149,7 +157,12 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
         })
         .await??
     } else {
-        timeout(protocol::CONTROL_TIMEOUT + Duration::from_secs(5), receive).await??
+        timeout(
+            crate::backend::repositories::git_sessions::protocol::CONTROL_TIMEOUT
+                + Duration::from_secs(5),
+            receive,
+        )
+        .await??
     };
     Ok(status)
 }
@@ -177,21 +190,25 @@ async fn refuse_unreadable_objects() -> Result<()> {
         ])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    process::read_stream_inherited(command, protocol::CONTROL_TIMEOUT, |stdout, _| async move {
-        let mut lines = BufReader::new(stdout).lines();
-        while let Some(line) = lines.next_line().await? {
-            let size = match line.split_once(' ') {
-                Some(("commit" | "tag", size)) => size.parse::<usize>().unwrap_or(usize::MAX),
-                _ => continue,
-            };
-            ensure!(
-                size <= MAX_COMMIT_OBJECT_BYTES,
-                "this push contains a commit or tag larger than {} KiB",
-                MAX_COMMIT_OBJECT_BYTES / 1024
-            );
-        }
-        Ok(process::ReadEnd::Complete(()))
-    })
+    process::read_stream_inherited(
+        command,
+        crate::backend::repositories::git_sessions::protocol::CONTROL_TIMEOUT,
+        |stdout, _| async move {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Some(line) = lines.next_line().await? {
+                let size = match line.split_once(' ') {
+                    Some(("commit" | "tag", size)) => size.parse::<usize>().unwrap_or(usize::MAX),
+                    _ => continue,
+                };
+                ensure!(
+                    size <= MAX_COMMIT_OBJECT_BYTES,
+                    "this push contains a commit or tag larger than {} KiB",
+                    MAX_COMMIT_OBJECT_BYTES / 1024
+                );
+            }
+            Ok(process::ReadEnd::Complete(()))
+        },
+    )
     .await?;
     Ok(())
 }
@@ -200,7 +217,7 @@ async fn hook_request(
     key_id: i64,
     repo_id: i64,
     post: bool,
-    phase: Option<protocol::TransactionPhase>,
+    phase: Option<crate::backend::repositories::git_sessions::protocol::TransactionPhase>,
 ) -> Result<Request> {
     ensure!(key_id > 0 && repo_id > 0, "invalid key/repository ID");
     let token = std::env::var("GITSERV_OPENSSH_OPERATION")
@@ -252,12 +269,18 @@ async fn pump_input<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     loop {
         let count = input.read(&mut bytes).await?;
         if count == 0 {
-            protocol::write_frame(writer, EOF, &[]).await?;
+            crate::backend::repositories::git_sessions::protocol::write_frame(writer, EOF, &[])
+                .await?;
             // Do not half-close: keep the socket open until the exit frame so
             // the broker can distinguish stdin EOF from a helper disconnect.
             return Ok(());
         }
-        protocol::write_frame(writer, STDIN, &bytes[..count]).await?;
+        crate::backend::repositories::git_sessions::protocol::write_frame(
+            writer,
+            STDIN,
+            &bytes[..count],
+        )
+        .await?;
     }
 }
 
@@ -267,7 +290,8 @@ async fn receive_output<R: AsyncRead + Unpin, W: AsyncWrite + Unpin, E: AsyncWri
     errors: &mut E,
 ) -> Result<i32> {
     loop {
-        let (tag, bytes) = protocol::read_frame(reader).await?;
+        let (tag, bytes) =
+            crate::backend::repositories::git_sessions::protocol::read_frame(reader).await?;
         match tag {
             STDOUT => {
                 output.write_all(&bytes).await?;

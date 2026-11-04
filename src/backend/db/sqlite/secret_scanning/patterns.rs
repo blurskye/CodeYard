@@ -1,6 +1,8 @@
-use crate::backend::db::secret_scanning::{ConfigUpdate, PatternConfig, Refusal};
+use crate::backend::db::secret_scanning::ConfigUpdate;
+use crate::backend::db::secret_scanning::PatternConfig;
+use crate::backend::db::secret_scanning::Refusal;
 use anyhow::{ensure, Result};
-use codeyard_git::secret_detection::{
+use codeyard_support::secret_detection::{
     patterns::{Create, Delete, Owner, Pattern, Update},
     secret_types,
 };
@@ -14,12 +16,16 @@ async fn authority(
     write: bool,
 ) -> Result<()> {
     match owner {
-        Owner::Organization(org) => super::org_authority(tx, actor, org).await,
+        Owner::Organization(org) => {
+            crate::backend::db::sqlite::secret_scanning::org_authority(tx, actor, org).await
+        }
         Owner::Repository(repo) => {
             let allowed = if write {
-                super::super::discussions::lock_admin_authority(tx, actor, repo).await?
+                crate::backend::db::sqlite::discussions::lock_admin_authority(tx, actor, repo)
+                    .await?
             } else {
-                super::super::discussions::lock_archive_authority(tx, actor, repo).await?
+                crate::backend::db::sqlite::discussions::lock_archive_authority(tx, actor, repo)
+                    .await?
             };
             ensure!(allowed, Refusal::Denied);
             Ok(())
@@ -90,18 +96,26 @@ pub async fn create(
     let mut admission = pool.begin().await?;
     authority(&mut admission, actor, owner, true).await?;
     ensure!(
-        super::super::users::transitions::credential_live(&mut admission, actor, credential, true)
-            .await?,
+        crate::backend::db::sqlite::users::transitions::credential_live(
+            &mut admission,
+            actor,
+            credential,
+            true
+        )
+        .await?,
         Refusal::Denied
     );
     admission.commit().await?;
-    codeyard_git::secret_detection::patterns::validate_batch(input)
+    codeyard_support::secret_detection::patterns::validate_batch(input)
         .await
         .map_err(|_| Refusal::Invalid)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authority(&mut tx, actor, owner, true).await?;
     ensure!(
-        super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        crate::backend::db::sqlite::users::transitions::credential_live(
+            &mut tx, actor, credential, true
+        )
+        .await?,
         Refusal::Denied
     );
     let (repo, org) = owner.ids();
@@ -138,7 +152,10 @@ pub async fn update(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authority(&mut tx, actor, owner, true).await?;
     ensure!(
-        super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        crate::backend::db::sqlite::users::transitions::credential_live(
+            &mut tx, actor, credential, true
+        )
+        .await?,
         Refusal::Denied
     );
     let mut pattern = read_one(&mut tx, owner, id).await?;
@@ -168,7 +185,10 @@ pub async fn publish(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authority(&mut tx, actor, owner, true).await?;
     ensure!(
-        super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        crate::backend::db::sqlite::users::transitions::credential_live(
+            &mut tx, actor, credential, true
+        )
+        .await?,
         Refusal::Denied
     );
     let mut pattern = read_one(&mut tx, owner, id).await?;
@@ -205,7 +225,10 @@ pub async fn delete(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authority(&mut tx, actor, owner, true).await?;
     ensure!(
-        super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        crate::backend::db::sqlite::users::transitions::credential_live(
+            &mut tx, actor, credential, true
+        )
+        .await?,
         Refusal::Denied
     );
     let patterns = read(&mut tx, owner).await?;
@@ -305,7 +328,10 @@ pub async fn configure(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authority(&mut tx, actor, Owner::Organization(org), true).await?;
     ensure!(
-        super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        crate::backend::db::sqlite::users::transitions::credential_live(
+            &mut tx, actor, credential, true
+        )
+        .await?,
         Refusal::Denied
     );
     let mut config = config(&mut tx, org).await?;

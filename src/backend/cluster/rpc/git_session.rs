@@ -1,15 +1,17 @@
-use super::{
-    client::{attempt_deadline, cannot_serve, log_failover},
-    wire::*,
-    RpcHandler,
-};
-use crate::backend::db;
-use crate::backend::db::cluster::writes as journal;
-use crate::backend::{
-    ci::{CiConfig, CiRuns},
-    cluster::{link::Link, transport, NodeContext},
-    repositories::store::{GitService, GitStreams, RepoStore},
-};
+use crate::backend::cluster::rpc::client::attempt_deadline;
+use crate::backend::cluster::rpc::client::cannot_serve;
+use crate::backend::cluster::rpc::client::log_failover;
+use crate::backend::cluster::rpc::wire::*;
+use crate::backend::cluster::rpc::RpcHandler;
+
+use crate::backend::ci::CiConfig;
+use crate::backend::ci::CiRuns;
+use crate::backend::cluster::link::Link;
+
+use crate::backend::cluster::NodeContext;
+use crate::backend::repositories::store::GitService;
+use crate::backend::repositories::store::GitStreams;
+use crate::backend::repositories::store::RepoStore;
 use anyhow::{ensure, Context, Result};
 use codeyard_db_core::models::WriteRecord;
 use codeyard_git::error::RepoError;
@@ -196,7 +198,9 @@ impl NodeContext {
         deadline: tokio::time::Instant,
     ) -> Result<Opened, RepoError> {
         let opened = tokio::time::timeout_at(deadline, async {
-            let mut link = self.dial(node_id, transport::ALPN_RPC).await?;
+            let mut link = self
+                .dial(node_id, crate::backend::cluster::transport::ALPN_RPC)
+                .await?;
             write_frame(&mut link.writer, &serde_json::to_vec(request)?, MAX_JSON).await?;
             let reply: Reply =
                 serde_json::from_slice(&read_frame(&mut link.reader, MAX_JSON).await?)?;
@@ -218,8 +222,11 @@ pub(super) struct WriteLimits {
 
 impl WriteLimits {
     pub(super) async fn load(pool: &codeyard_db_core::DbPool) -> Result<Self> {
-        let settings =
-            tokio::time::timeout(Duration::from_secs(5), journal::write_settings(pool)).await??;
+        let settings = tokio::time::timeout(
+            Duration::from_secs(5),
+            crate::backend::db::cluster::writes::write_settings(pool),
+        )
+        .await??;
         ensure!(settings.write_quorum.is_some(), "write quorum is disabled");
         let pack_bytes = match std::env::var("WRITE_QUORUM_MAX_PACK_BYTES") {
             Ok(value) => value
@@ -289,7 +296,7 @@ impl tokio::io::AsyncWrite for LimitedWriter<'_> {
 }
 
 fn write_targets(write: &WriteRecord) -> Result<Vec<String>> {
-    journal::validate_changes(&write.changes)?;
+    crate::backend::db::cluster::writes::validate_changes(&write.changes)?;
     ensure!(
         write
             .changes
@@ -313,14 +320,14 @@ fn write_targets(write: &WriteRecord) -> Result<Vec<String>> {
 }
 
 fn preparation_path(path: &Path, write: &WriteRecord) -> Result<PathBuf> {
-    journal::validate_id(&write.id)?;
+    crate::backend::db::cluster::writes::validate_id(&write.id)?;
     Ok(path.join("codeyard-writes").join(&write.id))
 }
 
 async fn create_preparation(path: &Path, write: &WriteRecord) -> Result<PathBuf> {
     let directory = preparation_path(path, write)?;
     let created = directory.clone();
-    tokio::task::spawn_blocking(move || crate::backend::fs::private_dir(&created)).await??;
+    tokio::task::spawn_blocking(move || codeyard_support::fs::private_dir(&created)).await??;
     Ok(directory)
 }
 
@@ -599,12 +606,13 @@ impl NodeContext {
     }
 
     async fn current_write(&self, id: &str) -> Result<WriteRecord> {
-        journal::validate_id(id)?;
+        crate::backend::db::cluster::writes::validate_id(id)?;
         let pool = self.database()?;
-        let write = journal::load_write(pool, id)
+        let write = crate::backend::db::cluster::writes::load_write(pool, id)
             .await?
             .context("write disappeared")?;
-        let view = journal::recovery_view(pool, write.repository_id).await?;
+        let view =
+            crate::backend::db::cluster::writes::recovery_view(pool, write.repository_id).await?;
         ensure!(
             view.term == write.term
                 && view.primary_id == write.primary_id
@@ -615,7 +623,7 @@ impl NodeContext {
             "write term changed"
         );
         ensure!(
-            db::cluster::get_node_by_id(pool, self.node_id)
+            crate::backend::db::cluster::get_node_by_id(pool, self.node_id)
                 .await?
                 .is_some_and(|node| node.status == "active"
                     && node.public_key == self.key.public_hex()
@@ -627,8 +635,14 @@ impl NodeContext {
     }
 
     async fn vote_prepared_write(&self, write: &WriteRecord) -> Result<()> {
-        journal::vote_write(self.database()?, &write.id, self.node_id, write.term).await?;
-        let voted = journal::load_write(self.database()?, &write.id)
+        crate::backend::db::cluster::writes::vote_write(
+            self.database()?,
+            &write.id,
+            self.node_id,
+            write.term,
+        )
+        .await?;
+        let voted = crate::backend::db::cluster::writes::load_write(self.database()?, &write.id)
             .await?
             .context("write disappeared")?;
         ensure!(
@@ -711,7 +725,7 @@ impl NodeContext {
         )
         .await?;
         ensure!(
-            journal::mark_write_applied(
+            crate::backend::db::cluster::writes::mark_write_applied(
                 self.database()?,
                 write.repository_id,
                 self.node_id,
@@ -795,13 +809,14 @@ impl RpcHandler {
                 return self.context.vote_prepared_write(&write).await;
             }
             let mut pack = tokio::fs::File::create(directory.join("objects.pack")).await?;
-            let repo = db::repositories::records::get_repository_by_id(
+            let repo = crate::backend::db::repositories::records::get_repository_by_id(
                 self.context.database()?,
                 write.repository_id,
             )
             .await?
             .context("repository disappeared")?;
-            let repository = super::repository::repository_uuid(&repo.disk_path)?;
+            let repository =
+                crate::backend::cluster::rpc::repository::repository_uuid(&repo.disk_path)?;
             let mut output = LimitedWriter::new(&mut pack, limits.pack_bytes);
             let (_, status) = self
                 .context
@@ -847,8 +862,11 @@ impl RpcHandler {
                     .await;
             }
             ensure!(write.decision == "commit", "write is not committed");
-            let view =
-                journal::recovery_view(self.context.database()?, write.repository_id).await?;
+            let view = crate::backend::db::cluster::writes::recovery_view(
+                self.context.database()?,
+                write.repository_id,
+            )
+            .await?;
             let version = write.committed_version.context("write has no version")?;
             let applied = view
                 .voters
@@ -1034,7 +1052,7 @@ impl RpcHandler {
                 // The copy learns HEAD and every ref now. The pack covers exactly these
                 // refs, so a copy never points a ref at objects it does not have.
                 Operation::WritePack { id } => {
-                    let write = journal::load_write(self.context.database()?, id).await.map_err(RepoError::from)?.ok_or_else(unavailable)?;
+                    let write = crate::backend::db::cluster::writes::load_write(self.context.database()?, id).await.map_err(RepoError::from)?.ok_or_else(unavailable)?;
                     (Value::Null, write_targets(&write).map_err(RepoError::from)?)
                 }
                 Operation::ReplicaPack { .. } => {
@@ -1072,7 +1090,7 @@ impl RpcHandler {
             match prepared {
                 Ok(prepared) => prepared,
                 Err(error) => {
-                    super::refuse(&mut link, error).await?;
+                    crate::backend::cluster::rpc::refuse(&mut link, error).await?;
                     return Ok(());
                 }
             };

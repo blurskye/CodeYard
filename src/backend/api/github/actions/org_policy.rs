@@ -1,14 +1,13 @@
 //! Organization ceilings are enforced by the same cache transactions as repository limits.
-use super::cache_policy::Input;
-use crate::backend::{
-    api::github::{auth, Error, Result},
-    app::AppState,
-    db::{
-        self,
-        actions::{CacheLimit, CachePolicyError},
-        organizations::OrganizationOutcome,
-    },
-};
+use crate::backend::api::github::actions::cache_policy::Input;
+
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::actions::CacheLimit;
+use crate::backend::db::actions::CachePolicyError;
+use crate::backend::db::organizations::OrganizationOutcome;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -38,17 +37,17 @@ async fn get_policy(
     name: &str,
     kind: CacheLimit,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(state, headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?
+        .ok_or_else(crate::backend::api::github::auth::required)?
         .user
         .id;
     let own = outcome(
-        db::actions::get_org_cache_settings(&state.pool, actor, name)
+        crate::backend::db::actions::get_org_cache_settings(&state.pool, actor, name)
             .await
             .map_err(Error::unavailable)?,
     )?;
-    let site = db::actions::get_actions_settings(&state.pool)
+    let site = crate::backend::db::actions::get_actions_settings(&state.pool)
         .await
         .map_err(Error::unavailable)?;
     Ok(Json(match kind {
@@ -68,21 +67,27 @@ async fn set_policy(
     kind: CacheLimit,
     input: Input,
 ) -> Result<StatusCode> {
-    let authentication = auth::authenticate(state, headers, true)
+    let authentication = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     authentication.require_write()?;
     let value = input.value(kind)?;
     outcome(
-        db::actions::set_org_cache_limit(&state.pool, authentication.user.id, name, kind, value)
-            .await
-            .map_err(|error| match error.downcast_ref::<CachePolicyError>() {
-                Some(CachePolicyError::Limit) => Error::new(
-                    StatusCode::BAD_REQUEST,
-                    "Cache limit must be positive and no greater than the site limit",
-                ),
-                _ => Error::unavailable(error),
-            })?,
+        crate::backend::db::actions::set_org_cache_limit(
+            &state.pool,
+            authentication.user.id,
+            name,
+            kind,
+            value,
+        )
+        .await
+        .map_err(|error| match error.downcast_ref::<CachePolicyError>() {
+            Some(CachePolicyError::Limit) => Error::new(
+                StatusCode::BAD_REQUEST,
+                "Cache limit must be positive and no greater than the site limit",
+            ),
+            _ => Error::unavailable(error),
+        })?,
     )?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -1,7 +1,6 @@
 //! Payloads in the shape GitHub documents for each event, as far as this data model has the
 //! fields. Fields without a Codeyard counterpart are left out rather than invented.
-use crate::backend::api::github::{node_id, repo_url};
-use crate::backend::api::http::config::{http_clone_base, link_origin};
+
 use crate::backend::repositories::store::CommitInfo;
 use codeyard_db_core::models::CommitComment;
 use codeyard_db_core::models::DeployKey;
@@ -14,6 +13,9 @@ use codeyard_db_core::models::Release;
 use codeyard_db_core::models::ReleaseAsset;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
+use codeyard_model::http_config::http_clone_base;
+use codeyard_model::http_config::link_origin;
+use codeyard_model::urls::repo_url;
 use serde_json::{json, Value};
 use std::path::Path;
 mod code_scanning;
@@ -62,7 +64,7 @@ pub fn team(access: &crate::backend::db::repositories::push_teams::TeamAccess) -
 pub fn team_document(team: &codeyard_db_core::models::Team, org: &str, permission: i16) -> Value {
     let org = codeyard_webui::encode_component(org);
     let slug = codeyard_webui::encode_component(&team.slug);
-    let url = crate::backend::api::github::api_url(&format!("/teams/{}", team.id));
+    let url = codeyard_model::urls::api_url(&format!("/teams/{}", team.id));
     let permission = match permission {
         1 => "pull",
         2 => "triage",
@@ -71,7 +73,7 @@ pub fn team_document(team: &codeyard_db_core::models::Team, org: &str, permissio
         5 => "admin",
         _ => "none",
     };
-    json!({"id": team.id, "node_id": node_id::encode("T", team.id), "name": team.name,
+    json!({"id": team.id, "node_id": crate::backend::api::github::node_id::encode("T", team.id), "name": team.name,
         "slug": team.slug, "description": team.description, "privacy": if team.privacy == "secret" { "secret" } else { "closed" },
         "permission": permission, "type": "organization", "organization_id": team.org_id, "url": url,
         "notification_setting": if team.notifications_enabled { "notifications_enabled" } else { "notifications_disabled" },
@@ -85,7 +87,7 @@ pub fn repository_property(
 ) -> Value {
     let mut value = json!(definition.fields);
     value["source_type"] = json!("organization");
-    value["url"] = json!(crate::backend::api::github::api_url(&format!(
+    value["url"] = json!(codeyard_model::urls::api_url(&format!(
         "/orgs/{}/properties/schema/{}",
         codeyard_webui::encode_component(org),
         codeyard_webui::encode_component(&definition.fields.property_name)
@@ -164,9 +166,9 @@ pub fn organization_avatar(org: &codeyard_db_core::models::Organization) -> Stri
 /// Organization links are shared by membership responses and organization events.
 pub fn organization(org: &codeyard_db_core::models::Organization) -> Value {
     let name = codeyard_webui::encode_component(&org.name);
-    let url = crate::backend::api::github::api_url(&format!("/orgs/{name}"));
+    let url = codeyard_model::urls::api_url(&format!("/orgs/{name}"));
     let avatar = organization_avatar(org);
-    json!({"login": org.name, "id": org.id, "node_id": node_id::encode("O", org.id),
+    json!({"login": org.name, "id": org.id, "node_id": crate::backend::api::github::node_id::encode("O", org.id),
         "url": url, "repos_url": format!("{url}/repos"), "events_url": format!("{url}/events"),
         "hooks_url": format!("{url}/hooks"), "issues_url": format!("{url}/issues"),
         "members_url": format!("{url}/members{{/member}}"),
@@ -186,12 +188,12 @@ pub fn organization_invitation(
         id: 0,
         site_admin: false,
     });
-    json!({"id": invitation.id, "node_id": node_id::encode("OI", invitation.id),
+    json!({"id": invitation.id, "node_id": crate::backend::api::github::node_id::encode("OI", invitation.id),
         "login": recipient.map(|user| &user.username), "email": invitation.email,
         "role": if invitation.role == "owner" { "admin" } else { "direct_member" },
         "created_at": time(invitation.created_at), "failed_at": optional_time(invitation.failed_at), "failed_reason": invitation.failed_reason,
         "inviter": person(&inviter), "team_count": team_count, "invitation_source": "member",
-        "invitation_teams_url": crate::backend::api::github::api_url(&format!("/orgs/{}/invitations/{}/teams", codeyard_webui::encode_component(&org.name), invitation.id))})
+        "invitation_teams_url": codeyard_model::urls::api_url(&format!("/orgs/{}/invitations/{}/teams", codeyard_webui::encode_component(&org.name), invitation.id))})
 }
 
 pub fn repository_traffic(
@@ -250,11 +252,12 @@ pub fn community_file(file: Option<&crate::backend::repositories::community::Fil
         encode(&file.owner),
         encode(&file.repository)
     );
-    json!({"url":crate::backend::api::github::api_url(&format!("{base}/contents/{path}?ref={}",file.reference)),"html_url":format!("{}{}",link_origin(),codeyard_webui::pages::repos::ref_path::file_url(&format!("/{}/{}",encode(&file.owner),encode(&file.repository)),"blob",&file.reference,&file.path))})
+    json!({"url":codeyard_model::urls::api_url(&format!("{base}/contents/{path}?ref={}",file.reference)),"html_url":format!("{}{}",link_origin(),codeyard_webui::pages::repos::ref_path::file_url(&format!("/{}/{}",encode(&file.owner),encode(&file.repository)),"blob",&file.reference,&file.path))})
 }
 
 pub fn community_profile(profile: &crate::backend::repositories::community::Profile) -> Value {
-    use crate::backend::api::github::{api_url, node_id};
+    use codeyard_model::urls::api_url;
+
     let conduct = community_file(profile.conduct.as_ref());
     let license = match (profile.license_info, profile.license.as_ref()) {
         (Some(info), Some(file)) => {
@@ -285,7 +288,7 @@ pub fn repository_invitation(
     invitee: &Person,
 ) -> Value {
     json!({"id":invitation.id, "node_id":crate::backend::api::github::node_id::encode("RI",invitation.id),
-        "url":crate::backend::api::github::api_url(&format!("/user/repository_invitations/{}",invitation.id)),
+        "url":codeyard_model::urls::api_url(&format!("/user/repository_invitations/{}",invitation.id)),
         "html_url":format!("{}/invitations", repo["html_url"].as_str().unwrap_or("")),
         "repository":repo, "inviter":simple_person(inviter), "invitee":simple_person(invitee),
         "permissions":codeyard_db_core::models::AccessLevel::from(invitation.permission).as_str(), "created_at":invitation.created_at, "expired":false})
@@ -293,7 +296,7 @@ pub fn repository_invitation(
 
 pub fn deploy_key(key: &DeployKey, owner: &str, name: &str, added_by: Option<&str>) -> Value {
     json!({"id": key.id, "key": key.public_key, "title": key.title,
-        "url": format!("{}/keys/{}", crate::backend::api::github::repo_url(owner, name), key.id),
+        "url": format!("{}/keys/{}", codeyard_model::urls::repo_url(owner, name), key.id),
         "verified": true, "created_at": key.created_at, "read_only": !key.can_write,
         "added_by": added_by, "last_used": key.last_used_at})
 }
@@ -375,7 +378,7 @@ pub fn deployment(
 ) -> Value {
     let base = repo_url(owner, repo);
     let url = format!("{base}/deployments/{}", deployment.id);
-    json!({"id": deployment.id, "node_id": node_id::encode("DE", deployment.id), "url": url,
+    json!({"id": deployment.id, "node_id": crate::backend::api::github::node_id::encode("DE", deployment.id), "url": url,
         "sha": deployment.sha, "ref": deployment.reference, "task": deployment.task, "payload": payload,
         "original_environment": deployment.original_environment, "environment": deployment.environment,
         "description": deployment.description, "creator": creator, "created_at": time(deployment.created_at),
@@ -398,7 +401,7 @@ pub fn deployment_status(
     } else {
         &status.log_url
     };
-    let mut value = json!({"id": status.id, "node_id": node_id::encode("DES", status.id), "state": status.state,
+    let mut value = json!({"id": status.id, "node_id": crate::backend::api::github::node_id::encode("DES", status.id), "state": status.state,
         "url": format!("{deployment}/statuses/{}", status.id), "creator": creator, "description": status.description,
         "environment": status.environment, "target_url": target,
         "created_at": time(status.created_at), "updated_at": time(status.created_at),
@@ -418,7 +421,7 @@ pub fn team_organization(
     has_organization_projects: bool,
 ) -> Value {
     let slug = codeyard_webui::encode_component(&org.name);
-    let url = crate::backend::api::github::api_url(&format!("/orgs/{slug}"));
+    let url = codeyard_model::urls::api_url(&format!("/orgs/{slug}"));
     json!({"id":org.id,"node_id":node_id::encode("O",org.id),"login":org.name,
         "name":org.display_name.as_deref().unwrap_or(&org.name),"description":org.description,"url":url,
         "html_url":format!("{}{}",link_origin(),codeyard_webui::profile_path(&org.name)),"avatar_url":organization_avatar(org),
@@ -438,7 +441,7 @@ pub fn environment(
 ) -> Value {
     let name = codeyard_webui::encode_component(&environment.name);
     let mut rules = Vec::new();
-    let rule = |kind: &str| json!({"id": environment.id, "node_id": node_id::encode("G", environment.id), "type": kind});
+    let rule = |kind: &str| json!({"id": environment.id, "node_id": crate::backend::api::github::node_id::encode("G", environment.id), "type": kind});
     if environment.wait_timer > 0 {
         let mut value = rule("wait_timer");
         value["wait_timer"] = json!(environment.wait_timer);
@@ -457,7 +460,7 @@ pub fn environment(
     if environment.branch_policy.is_some() {
         rules.push(rule("branch_policy"));
     }
-    json!({"id": environment.id, "node_id": node_id::encode("EN", environment.id), "name": environment.name,
+    json!({"id": environment.id, "node_id": crate::backend::api::github::node_id::encode("EN", environment.id), "name": environment.name,
         "url": format!("{}/environments/{name}", repo_url(owner, repo)),
         "html_url": format!("{}/settings?tab=secrets&environment={name}", repository_url(owner, repo)),
         "created_at": time(environment.created_at), "updated_at": time(environment.updated_at),
@@ -503,7 +506,7 @@ pub fn public_user(
     public_gists: i64,
     statistics: Option<&crate::backend::db::users::profiles::AccountStatistics>,
 ) -> Value {
-    let mut value = self::user(user);
+    let mut value = crate::backend::webhooks::payloads::user(user);
     value["name"] = json!(user.display_name);
     value["bio"] = json!(user.bio);
     value["location"] = json!(user.location);
@@ -560,7 +563,7 @@ pub fn package(
     };
     json!({"id":package.id,"name":package.name,"package_type":package.package_type,
         "visibility":package.visibility,"owner":account,"repository":repository,
-        "url":crate::backend::api::github::api_url(&path),"html_url":format!("{}{path}",link_origin()),
+        "url":codeyard_model::urls::api_url(&path),"html_url":format!("{}{path}",link_origin()),
         "version_count":version_count,"created_at":package_time(package.created_at),"updated_at":package_time(package.updated_at)})
 }
 
@@ -582,7 +585,7 @@ pub fn package_version(
         metadata["container"] = json!({"tags":tags});
     }
     let mut value = json!({"id":version.id,"name":version.name,
-        "url":crate::backend::api::github::api_url(&format!("{path}/versions/{}",version.id)),
+        "url":codeyard_model::urls::api_url(&format!("{path}/versions/{}",version.id)),
         "package_html_url":format!("{}{path}",link_origin()),"html_url":format!("{}{path}/versions/{}",link_origin(),version.id),
         "created_at":package_time(version.created_at),"updated_at":package_time(version.updated_at),"metadata":metadata});
     if let Some(deleted) = version.deleted_at {
@@ -635,7 +638,7 @@ pub fn project(
     creator: Value,
 ) -> Value {
     json!({
-        "id": project.id, "node_id": node_id::encode("PVT", project.id),
+        "id": project.id, "node_id": crate::backend::api::github::node_id::encode("PVT", project.id),
         "owner": owner, "creator": creator, "number": project.number,
         "title": project.title, "description": project.description,
         "short_description": project.description, "public": project.public,
@@ -656,7 +659,7 @@ pub fn project_field(
         "iteration" => "PVTIF",
         _ => "PVTF",
     };
-    let mut value = json!({"id": field.id, "node_id": node_id::encode(prefix, field.id),
+    let mut value = json!({"id": field.id, "node_id": crate::backend::api::github::node_id::encode(prefix, field.id),
         "name": field.name, "data_type": field.data_type, "project_url": project_url,
         "created_at": time(field.created_at), "updated_at": time(field.updated_at)});
     let rich_text =
@@ -687,7 +690,7 @@ pub fn project_item(
     creator: Value,
     content: Value,
 ) -> Value {
-    json!({"id": item.id, "node_id": node_id::encode("PVTI",item.id),
+    json!({"id": item.id, "node_id": crate::backend::api::github::node_id::encode("PVTI",item.id),
         "project_url": project_url, "item_url": format!("{project_url}/items/{}", item.id),
         "content_type": item.content_type(), "content": content, "creator": creator,
         "created_at": time(item.created_at), "updated_at": time(item.updated_at),
@@ -695,7 +698,7 @@ pub fn project_item(
 }
 
 pub fn project_draft(item: &crate::backend::db::projects::Item, creator: Value) -> Value {
-    json!({"id": item.id, "node_id": node_id::encode("DI",item.id), "title": item.draft_title,
+    json!({"id": item.id, "node_id": crate::backend::api::github::node_id::encode("DI",item.id), "title": item.draft_title,
         "body": item.draft_body, "user": creator, "created_at": time(item.created_at), "updated_at": time(item.updated_at)})
 }
 
@@ -709,7 +712,7 @@ pub fn project_view(
     let mut value = serde_json::to_value(config)?;
     let map = value.as_object_mut().expect("view configuration object");
     map.extend(
-        json!({"id": view.id, "number": view.number, "node_id": node_id::encode("PVTV",view.id),
+        json!({"id": view.id, "number": view.number, "node_id": crate::backend::api::github::node_id::encode("PVTV",view.id),
         "project_url": project_url, "html_url": html_url, "creator": creator,
         "created_at": time(view.created_at), "updated_at": time(view.updated_at)})
         .as_object()
@@ -726,8 +729,8 @@ pub fn organization_person(id: i64, name: &str) -> Value {
         site_admin: false,
     });
     value["type"] = json!("Organization");
-    value["node_id"] = json!(node_id::encode("O", id));
-    value["repos_url"] = json!(crate::backend::api::github::api_url(&format!(
+    value["node_id"] = json!(crate::backend::api::github::node_id::encode("O", id));
+    value["repos_url"] = json!(codeyard_model::urls::api_url(&format!(
         "/orgs/{}/repos",
         codeyard_webui::encode_component(name)
     )));
@@ -810,8 +813,8 @@ pub fn visibility(repo: &Repository) -> &'static str {
 pub fn repository(repo: &Repository, owner: &str) -> Value {
     let full_name = format!("{owner}/{}", repo.name);
     let html_url = repository_url(owner, &repo.name);
-    let api = crate::backend::api::github::repo_url(owner, &repo.name);
-    let ssh = crate::backend::api::http::config::ssh_clone_base();
+    let api = codeyard_model::urls::repo_url(owner, &repo.name);
+    let ssh = codeyard_model::http_config::ssh_clone_base();
     let ssh_url = (!ssh.trim().is_empty())
         .then(|| format!("{}/{owner}/{}.git", ssh.trim_end_matches('/'), repo.name));
     let mut value = json!({
@@ -907,7 +910,7 @@ pub fn commit_comment(
 ) -> Value {
     let url = repo_url(owner, &repo.name);
     json!({
-        "id": comment.id, "node_id": node_id::encode("CC", comment.id), "body": comment.body,
+        "id": comment.id, "node_id": crate::backend::api::github::node_id::encode("CC", comment.id), "body": comment.body,
         "user": author.map(person), "author_association": association,
         "url": format!("{url}/comments/{}", comment.id),
         "html_url": format!("{}{}", link_origin(), crate::backend::repositories::commit_comments::comment_link(owner, &repo.name, comment)),
@@ -979,7 +982,7 @@ pub fn git_commit(commit: &CommitInfo, owner: &str, repo: &str, repo_id: i64) ->
     let html = repository_url(owner, repo);
     let signature = |name: &str, email: &str, timestamp: i64| json!({"name": name, "email": email, "date": chrono::DateTime::from_timestamp(timestamp, 0)});
     json!({
-        "sha": commit.sha, "node_id": node_id::git_object("C", repo_id, &commit.sha),
+        "sha": commit.sha, "node_id": crate::backend::api::github::node_id::git_object("C", repo_id, &commit.sha),
         "url": format!("{url}/git/commits/{}", commit.sha),
         "html_url": format!("{html}/commit/{}", commit.sha),
         "message": commit.message,
@@ -1017,7 +1020,7 @@ pub fn commit(
         "sha": sha, "url": format!("{url}/commits/{sha}"), "html_url": format!("{html}/commit/{sha}")
     })).collect();
     json!({
-        "sha": commit.sha, "node_id": node_id::git_object("C", repo_id, &commit.sha),
+        "sha": commit.sha, "node_id": crate::backend::api::github::node_id::git_object("C", repo_id, &commit.sha),
         "url": format!("{url}/commits/{}", commit.sha),
         "html_url": detail["html_url"],
         "comments_url": format!("{url}/commits/{}/comments", commit.sha),
@@ -1206,8 +1209,8 @@ pub fn issue_event(
     owner: &str,
 ) -> Value {
     let mut value = json!({
-        "id": event.id, "node_id": node_id::encode("IE", event.id),
-        "url": format!("{}/issues/events/{}", crate::backend::api::github::repo_url(owner, &repo.name), event.id),
+        "id": event.id, "node_id": crate::backend::api::github::node_id::encode("IE", event.id),
+        "url": format!("{}/issues/events/{}", codeyard_model::urls::repo_url(owner, &repo.name), event.id),
         "actor": actor.map(user), "event": event.kind,
         "commit_id": null, "commit_url": null, "created_at": time(event.created_at),
         "performed_via_github_app": null,
@@ -1226,11 +1229,6 @@ pub fn issue_event(
         value["prev_issue_type"] = serde_json::from_str(&event.previous).unwrap_or(Value::Null);
     }
     value
-}
-
-/// The native comment tables have separate sequences; REST IDs keep them distinct.
-pub fn conversation_comment_id(id: i64, pull_request: bool) -> i64 {
-    id * 2 + i64::from(pull_request)
 }
 
 pub fn conversation_comment(
@@ -1378,7 +1376,7 @@ pub fn pull_request_issue(
         "diff_url": value["diff_url"], "patch_url": value["patch_url"], "merged_at": value["merged_at"],
     });
     value["url"] = url;
-    value["repository_url"] = json!(crate::backend::api::github::repo_url(owner, &repo.name));
+    value["repository_url"] = json!(codeyard_model::urls::repo_url(owner, &repo.name));
     value["labels_url"] = json!(format!(
         "{}/labels{{/name}}",
         value["url"].as_str().expect("issue URL")
@@ -1402,7 +1400,7 @@ pub fn pull_request_json(
     let url = format!("{repo_url}/pulls/{}", pull.number);
     let html_url = format!("{}/pull/{}", repository_url(owner, &repo.name), pull.number);
     let mut value = json!({
-        "url": url, "node_id": node_id::encode("PR", pull.id),"maintainer_can_modify":pull.maintainer_can_modify,
+        "url": url, "node_id": crate::backend::api::github::node_id::encode("PR", pull.id),"maintainer_can_modify":pull.maintainer_can_modify,
         "locked": pull.locked, "active_lock_reason": pull.lock_reason, "assignee": null, "assignees": [], "labels": [], "milestone": null,
         "requested_reviewers": [], "requested_teams": [], "auto_merge": null, "maintainer_can_modify": false,
         "author_association": if repo.personal_owner_id() == Some(author.id) { "OWNER" } else { "NONE" },
@@ -1480,7 +1478,7 @@ pub fn pull_request_review_json(
         id = review.id
     );
     let mut value = json!({
-        "id": review.id, "node_id": node_id::encode("PRR", review.id), "user": person(reviewer),
+        "id": review.id, "node_id": crate::backend::api::github::node_id::encode("PRR", review.id), "user": person(reviewer),
         "body": review.body.as_deref().unwrap_or(""), "state": review.state.to_ascii_uppercase(),
         "commit_id": review.commit_sha, "html_url": html_url, "pull_request_url": url,
         "author_association": if repo.is_personal_owner(reviewer.id) { "OWNER" } else { "NONE" },
@@ -1726,7 +1724,7 @@ pub fn release_asset(
     uploader: Option<Value>,
     digest: &str,
 ) -> Value {
-    let base = crate::backend::api::github::repo_url(owner, name);
+    let base = codeyard_model::urls::repo_url(owner, name);
     json!({
         "id": asset.id, "node_id": crate::backend::api::github::node_id::encode("RA", asset.id),
         "url": format!("{base}/releases/assets/{}", asset.id),
@@ -1747,7 +1745,7 @@ pub fn release_json(
     name: &str,
     assets: Option<Vec<Value>>,
 ) -> Value {
-    let base = crate::backend::api::github::repo_url(owner, name);
+    let base = codeyard_model::urls::repo_url(owner, name);
     let id = release.id;
     let mut value = json!({
         "id": id, "node_id": crate::backend::api::github::node_id::encode("RE", id),
@@ -1806,16 +1804,14 @@ pub fn release(action: &str, release: &Release, author: &Person, scope: Scope) -
 pub fn notification_thread_json(
     view: &crate::backend::db::notifications::threads::ThreadView,
 ) -> Value {
-    let url =
-        crate::backend::api::github::api_url(&format!("/notifications/threads/{}", view.thread.id));
+    let url = codeyard_model::urls::api_url(&format!("/notifications/threads/{}", view.thread.id));
     json!({"id":view.thread.id.to_string(),"repository":repository(&view.repository,&view.owner),"subject":{"title":view.title,"url":view.subject_url,"latest_comment_url":view.latest_comment_url,"type":view.subject_type},"reason":view.reason,"unread":view.unread,"updated_at":view.updated_at,"last_read_at":view.last_read_at,"url":url,"subscription_url":format!("{url}/subscription")})
 }
 pub fn notification_subscription_json(
     thread: &crate::backend::db::notifications::threads::NotificationThread,
     subscription: &crate::backend::db::notifications::threads::ThreadSubscription,
 ) -> Value {
-    let url =
-        crate::backend::api::github::api_url(&format!("/notifications/threads/{}", thread.id));
+    let url = codeyard_model::urls::api_url(&format!("/notifications/threads/{}", thread.id));
     json!({"subscribed":subscription.subscribed,"ignored":subscription.ignored,"reason":null,"created_at":subscription.created_at,"url":format!("{url}/subscription"),"thread_url":url})
 }
 
@@ -1850,7 +1846,7 @@ pub fn event_json(
             object.remove("after");
         }
     }
-    let mut value = json!({"id":event.id.to_string(),"type":event.kind,"actor":actor,"repo":{"id":repo.id,"name":format!("{owner}/{}",repo.name),"url":crate::backend::api::github::repo_url(owner,&repo.name)},"payload":payload,"public":event.is_public && !repo.is_private,"created_at":event.created_at});
+    let mut value = json!({"id":event.id.to_string(),"type":event.kind,"actor":actor,"repo":{"id":repo.id,"name":format!("{owner}/{}",repo.name),"url":codeyard_model::urls::repo_url(owner,&repo.name)},"payload":payload,"public":event.is_public && !repo.is_private,"created_at":event.created_at});
     if repo.owner_org_id.is_some() {
         value["org"] = repository_owner(repo, owner);
     }
@@ -2294,7 +2290,7 @@ pub fn action_run(
         "created_at":time(run.created_at),"updated_at":time(run.updated_at),
         "head_commit":head_commit,"head_repository":head_repository,"repository":repository,
         "jobs_url":format!("{url}/jobs"),"logs_url":format!("{url}/logs"),
-        "check_suite_id":suite,"check_suite_node_id":suite.map(|id|node_id::encode("CSU",id)),
+        "check_suite_id":suite,"check_suite_node_id":suite.map(|id|crate::backend::api::github::node_id::encode("CSU",id)),
         "check_suite_url":suite.map(|id|format!("{api}/check-suites/{id}")),
         "cancel_url":format!("{url}/cancel"),"rerun_url":format!("{url}/rerun"),"artifacts_url":format!("{url}/artifacts"),
         "workflow_url":format!("{api}/actions/workflows/{workflow_id}"),"pull_requests":pull_requests,
@@ -2363,16 +2359,16 @@ pub fn secret_scanning_alert(
     bypass: Option<&crate::backend::db::secret_scanning::Bypass>,
     bypassed_by: Option<&User>,
 ) -> Value {
-    let base = crate::backend::api::github::repo_url(owner, repo);
+    let base = codeyard_model::urls::repo_url(owner, repo);
     let url = format!("{base}/secret-scanning/alerts/{}", alert.number);
     json!({
         "number": alert.number, "created_at": alert.created_at, "updated_at": alert.updated_at,
-        "url": url, "html_url": format!("{}/{}/{}/security/secret-scanning/{}", crate::backend::api::http::config::link_origin(), codeyard_webui::encode_component(owner), codeyard_webui::encode_component(repo), alert.number),
+        "url": url, "html_url": format!("{}/{}/{}/security/secret-scanning/{}", codeyard_model::http_config::link_origin(), codeyard_webui::encode_component(owner), codeyard_webui::encode_component(repo), alert.number),
         "locations_url": format!("{url}/locations"), "state": alert.state,
         "resolution": alert.resolution, "resolution_comment": alert.resolution_comment,
         "resolved_at": alert.resolved_at, "resolved_by": resolved_by.map(user),
         "secret_type": alert.secret_type,
-        "provider_slug": codeyard_git::secret_detection::provider(&alert.secret_type), "secret_type_display_name": alert.display_name,
+        "provider_slug": codeyard_support::secret_detection::provider(&alert.secret_type), "secret_type_display_name": alert.display_name,
         "secret": secret, "validity": alert.validity.as_deref().unwrap_or("unknown"), "push_protection_bypassed": bypass.is_some(),
         "push_protection_bypassed_by": bypassed_by.map(user), "push_protection_bypassed_at": bypass.and_then(|bypass|bypass.used_at),
         "publicly_leaked": null, "multi_repo": null, "is_base64_encoded": false
@@ -2384,7 +2380,7 @@ pub fn secret_scanning_location(
     owner: &str,
     repo: &str,
 ) -> Value {
-    let base = crate::backend::api::github::repo_url(owner, repo);
+    let base = codeyard_model::urls::repo_url(owner, repo);
     json!({"type": "commit", "details": {
         "path": location.path, "start_line": location.start_line, "end_line": location.end_line,
         "start_column": location.start_column, "end_column": location.end_column,
@@ -2554,3 +2550,5 @@ mod tests {
         assert_eq!(value["head_commit"], Value::Null);
     }
 }
+
+use codeyard_model::webhook_ids::conversation_comment_id;

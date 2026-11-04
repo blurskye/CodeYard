@@ -1,17 +1,16 @@
-use crate::backend::{
-    api::{
-        http::context::PageContext,
-        repos::{
-            discussion::{repository, unavailable, ResultPage},
-            forms::{authorize_post, field},
-        },
-    },
-    app::AppState,
-    db::{
-        self,
-        issue_attributes::{Attribute, Definition, OptionInput, Refusal, ValueInput},
-    },
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::repos::discussion::repository;
+use crate::backend::api::repos::discussion::unavailable;
+use crate::backend::api::repos::discussion::ResultPage;
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::field;
+use crate::backend::app::AppState;
+
+use crate::backend::db::issue_attributes::Attribute;
+use crate::backend::db::issue_attributes::Definition;
+use crate::backend::db::issue_attributes::OptionInput;
+use crate::backend::db::issue_attributes::Refusal;
+use crate::backend::db::issue_attributes::ValueInput;
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -22,7 +21,7 @@ use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 fn view(a: Attribute, value: Option<Value>) -> IssueAttribute {
     IssueAttribute {
-        revision: db::issue_attributes::revision(&a).unwrap_or_default(),
+        revision: crate::backend::db::issue_attributes::revision(&a).unwrap_or_default(),
         id: a.id,
         updated: a.updated_at.to_rfc3339(),
         kind: a.kind,
@@ -53,32 +52,38 @@ pub(crate) async fn load(
     organization: bool,
 ) -> ResultPage<Box<IssueAttributes>> {
     let actor = ctx.user.as_ref().map(|u| u.id);
-    let types = db::issue_attributes::catalog(&ctx.state.pool, repo, actor, "type")
+    let types = crate::backend::db::issue_attributes::catalog(&ctx.state.pool, repo, actor, "type")
         .await
         .map_err(|_| unavailable(ctx))?;
-    let fields = db::issue_attributes::catalog(&ctx.state.pool, repo, actor, "field")
+    let fields =
+        crate::backend::db::issue_attributes::catalog(&ctx.state.pool, repo, actor, "field")
+            .await
+            .map_err(|_| unavailable(ctx))?;
+    let values = crate::backend::db::issue_attributes::values(&ctx.state.pool, repo, issue, actor)
         .await
         .map_err(|_| unavailable(ctx))?;
-    let values = db::issue_attributes::values(&ctx.state.pool, repo, issue, actor)
-        .await
-        .map_err(|_| unavailable(ctx))?;
-    let selected_type = db::issue_attributes::assigned_type(&ctx.state.pool, repo, issue)
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .map(|a| a.id);
+    let selected_type =
+        crate::backend::db::issue_attributes::assigned_type(&ctx.state.pool, repo, issue)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .map(|a| a.id);
     let can_configure = if let Some(actor) = actor {
-        db::issue_attributes::owner_can_configure(&ctx.state.pool, repo, actor)
+        crate::backend::db::issue_attributes::owner_can_configure(&ctx.state.pool, repo, actor)
             .await
             .map_err(|_| unavailable(ctx))?
     } else {
         false
     };
-    let owner = db::repositories::records::get_repository_by_id(&ctx.state.pool, repo)
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .ok_or_else(|| unavailable(ctx))?;
+    let owner =
+        crate::backend::db::repositories::records::get_repository_by_id(&ctx.state.pool, repo)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .ok_or_else(|| unavailable(ctx))?;
     Ok(Box::new(IssueAttributes {
-        owner_key: db::issue_attributes::owner_key(owner.owner_user_id, owner.owner_org_id),
+        owner_key: crate::backend::db::issue_attributes::owner_key(
+            owner.owner_user_id,
+            owner.owner_org_id,
+        ),
         types: types.into_iter().map(|a| view(a, None)).collect(),
         fields: fields
             .into_iter()
@@ -139,7 +144,7 @@ pub(crate) async fn native_change(
     let repo = repository(&ctx, &owner, &name).await?;
     let actor = ctx.require_user()?.id;
     let authority = || ctx.database_actor(actor);
-    let issue = db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
+    let issue = crate::backend::db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
         .await
         .map_err(|_| unavailable(&ctx))?
         .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
@@ -172,10 +177,14 @@ pub(crate) async fn native_change(
             } else {
                 None
             };
-            let catalog =
-                db::issue_attributes::catalog(&ctx.state.pool, repo.record.id, Some(actor), &kind)
-                    .await
-                    .map_err(|_| unavailable(&ctx))?;
+            let catalog = crate::backend::db::issue_attributes::catalog(
+                &ctx.state.pool,
+                repo.record.id,
+                Some(actor),
+                &kind,
+            )
+            .await
+            .map_err(|_| unavailable(&ctx))?;
             let parse_priority = |name: &str| {
                 let text = field(&form, name);
                 if text.trim().is_empty() {
@@ -245,7 +254,7 @@ pub(crate) async fn native_change(
                 color: Some(field(&form, "color")).filter(|s| !s.is_empty()),
                 options,
             };
-            db::issue_attributes::configure_checked(
+            crate::backend::db::issue_attributes::configure_checked(
                 &ctx.state.pool,
                 repo.record.id,
                 authority(),
@@ -265,7 +274,7 @@ pub(crate) async fn native_change(
                     "Confirm deletion of this attribute and its assignments.",
                 ));
             }
-            db::issue_attributes::delete_definition(
+            crate::backend::db::issue_attributes::delete_definition(
                 &ctx.state.pool,
                 repo.record.id,
                 authority(),
@@ -283,7 +292,7 @@ pub(crate) async fn native_change(
                     ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid issue type.")
                 })?)
             };
-            db::issue_attributes::set_type(
+            crate::backend::db::issue_attributes::set_type(
                 &ctx.state.pool,
                 repo.record.id,
                 authority(),
@@ -294,7 +303,7 @@ pub(crate) async fn native_change(
             .map_err(|e| failure(&ctx, e))?;
         }
         "delete_value" => {
-            db::issue_attributes::delete_value(
+            crate::backend::db::issue_attributes::delete_value(
                 &ctx.state.pool,
                 repo.record.id,
                 authority(),
@@ -306,7 +315,7 @@ pub(crate) async fn native_change(
         }
         "set_value" => {
             let id = id()?;
-            let fields = db::issue_attributes::catalog(
+            let fields = crate::backend::db::issue_attributes::catalog(
                 &ctx.state.pool,
                 repo.record.id,
                 Some(actor),
@@ -352,7 +361,7 @@ pub(crate) async fn native_change(
             } else {
                 Value::String(field(&form, "value"))
             };
-            db::issue_attributes::set_values(
+            crate::backend::db::issue_attributes::set_values(
                 &ctx.state.pool,
                 repo.record.id,
                 authority(),

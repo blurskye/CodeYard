@@ -1,9 +1,12 @@
-use super::{api_url, auth, pagination::Pagination, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::users::{accounts::AccountCredential, signing_keys},
-    identity::keys::{self, KeyError},
-};
+use codeyard_model::urls::api_url;
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use crate::backend::db::users::accounts::AccountCredential;
+
+use crate::backend::identity::keys::KeyError;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -42,9 +45,9 @@ async fn own(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     list(&state, actor.user.id, page, uri).await
 }
 async fn public(
@@ -54,8 +57,8 @@ async fn public(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    auth::authenticate(&state, &headers, false).await?;
-    let user = super::users::target(&state, &username).await?;
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
+    let user = crate::backend::api::github::users::target(&state, &username).await?;
     list(&state, user.id, page, uri).await
 }
 async fn list(
@@ -65,10 +68,14 @@ async fn list(
     uri: axum::http::Uri,
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
-    let keys =
-        signing_keys::list_signing_keys(&state.pool, user, (limit + 1) as i64, offset as i64)
-            .await
-            .map_err(Error::unavailable)?;
+    let keys = crate::backend::db::users::signing_keys::list_signing_keys(
+        &state.pool,
+        user,
+        (limit + 1) as i64,
+        offset as i64,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     let more = keys.len() > limit;
     page.response(&uri, keys.into_iter().map(|key| json!(key)).collect(), more)
 }
@@ -76,12 +83,12 @@ async fn get_key(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
-) -> Result<Json<signing_keys::SigningKey>> {
-    let actor = auth::authenticate(&state, &headers, true)
+) -> Result<Json<crate::backend::db::users::signing_keys::SigningKey>> {
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     Ok(Json(
-        signing_keys::get_signing_key(&state.pool, actor.user.id, id)
+        crate::backend::db::users::signing_keys::get_signing_key(&state.pool, actor.user.id, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?,
@@ -109,12 +116,12 @@ async fn create(
     headers: HeaderMap,
     input: std::result::Result<Json<Input>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
-    let Json(input) = input.map_err(super::json_error)?;
-    let key = keys::enroll_signing(
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
+    let key = crate::backend::identity::keys::enroll_signing(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
@@ -142,11 +149,11 @@ async fn remove(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
-    keys::delete_signing(
+    crate::backend::identity::keys::delete_signing(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),

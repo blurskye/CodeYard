@@ -1,4 +1,4 @@
-use super::Definition;
+use crate::backend::db::rulesets::Definition;
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -14,9 +14,12 @@ pub struct Page {
     pub(in crate::backend::db) limit: i64,
 }
 impl Page {
-    pub fn new(offset: i64, limit: i64) -> Result<Self, super::Invalid> {
+    pub fn new(offset: i64, limit: i64) -> Result<Self, crate::backend::db::rulesets::Invalid> {
         if !(0..=1_000_000).contains(&offset) || !(1..=101).contains(&limit) {
-            return Err(super::invalid("page", "Use bounded pagination"));
+            return Err(crate::backend::db::rulesets::invalid(
+                "page",
+                "Use bounded pagination",
+            ));
         }
         Ok(Self { offset, limit })
     }
@@ -38,7 +41,7 @@ impl Owner {
 #[derive(Clone, Debug, Default)]
 pub struct ListFilter {
     pub includes_parents: bool,
-    pub targets: Option<Vec<super::Target>>,
+    pub targets: Option<Vec<crate::backend::db::rulesets::Target>>,
 }
 #[derive(Clone, Debug)]
 pub struct Ruleset {

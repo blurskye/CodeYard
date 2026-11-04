@@ -1,7 +1,7 @@
-use crate::backend::db::repositories::protection::{
-    server_owned_status_context, BranchProtectionRuleUpsert, CommitStatusUpsert,
-    ProtectionWriteRefusal,
-};
+use crate::backend::db::repositories::protection::server_owned_status_context;
+use crate::backend::db::repositories::protection::BranchProtectionRuleUpsert;
+use crate::backend::db::repositories::protection::CommitStatusUpsert;
+use crate::backend::db::repositories::protection::ProtectionWriteRefusal;
 use anyhow::Result;
 use codeyard_db_core::models::BranchProtectionRule;
 use codeyard_db_core::models::CommitStatus;
@@ -15,7 +15,7 @@ pub async fn read_protection_snapshot(
     let actor = actor.into();
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::super::discussions::lock_settings_read_authority(
+        crate::backend::db::sqlite::discussions::lock_settings_read_authority(
             &mut tx,
             actor.user_id,
             repo_id,
@@ -25,8 +25,12 @@ pub async fn read_protection_snapshot(
         ProtectionWriteRefusal::Denied
     );
     if let Some(credential) = actor.credential() {
-        super::super::users::transitions::require_read_account(&mut tx, actor.user_id, &credential)
-            .await?;
+        crate::backend::db::sqlite::users::transitions::require_read_account(
+            &mut tx,
+            actor.user_id,
+            &credential,
+        )
+        .await?;
     }
     let rules: Vec<BranchProtectionRule> =
         sqlx::query_as("SELECT * FROM branch_protection_rules WHERE repo_id=?1 ORDER BY pattern")
@@ -106,7 +110,7 @@ pub async fn upsert_branch_protection_rule(
     if let Some(credential) = input.credential.as_ref() {
         let authority = crate::backend::db::credentials::Actor::from((input.actor_id, credential));
         anyhow::ensure!(
-            super::super::credentials::repository(
+            crate::backend::db::sqlite::credentials::repository(
                 &mut tx,
                 &authority,
                 input.repo_id,
@@ -157,16 +161,22 @@ pub async fn upsert_branch_protection_rule(
     )?;
     input.push_team_allowances.sort_unstable();
     input.push_team_allowances.dedup();
-    let allowed =
-        super::push_teams::eligible_ids_on(&mut tx, input.repo_id, &input.push_team_allowances)
-            .await?;
+    let allowed = crate::backend::db::sqlite::repositories::push_teams::eligible_ids_on(
+        &mut tx,
+        input.repo_id,
+        &input.push_team_allowances,
+    )
+    .await?;
     anyhow::ensure!(
         allowed.len() == input.push_team_allowances.len(),
         ProtectionWriteRefusal::InvalidPushTeams
     );
-    let allowed =
-        super::access::write_access_user_ids_on(&mut tx, input.repo_id, &input.push_allowances)
-            .await?;
+    let allowed = crate::backend::db::sqlite::repositories::access::write_access_user_ids_on(
+        &mut tx,
+        input.repo_id,
+        &input.push_allowances,
+    )
+    .await?;
     anyhow::ensure!(
         allowed.len() == input.push_allowances.len(),
         ProtectionWriteRefusal::InvalidPushAllowances
@@ -262,8 +272,14 @@ pub async fn delete_branch_protection_rule(
         ProtectionWriteRefusal::Denied
     );
     anyhow::ensure!(
-        super::super::credentials::repository(&mut tx, &authority, repo_id, "administration", true)
-            .await?,
+        crate::backend::db::sqlite::credentials::repository(
+            &mut tx,
+            &authority,
+            repo_id,
+            "administration",
+            true
+        )
+        .await?,
         ProtectionWriteRefusal::Denied
     );
     let result =
@@ -293,8 +309,14 @@ pub async fn update_branch_protection_rule(
         ProtectionWriteRefusal::Denied
     );
     anyhow::ensure!(
-        super::super::credentials::repository(&mut tx, &authority, repo_id, "administration", true)
-            .await?,
+        crate::backend::db::sqlite::credentials::repository(
+            &mut tx,
+            &authority,
+            repo_id,
+            "administration",
+            true
+        )
+        .await?,
         ProtectionWriteRefusal::Denied
     );
     let mut rule = sqlx::query_as::<_, BranchProtectionRule>(
@@ -306,14 +328,20 @@ pub async fn update_branch_protection_rule(
     .await?
     .ok_or(ProtectionWriteRefusal::NotFound)?;
     if let Some(ids) = update.new_push_users()? {
-        let allowed = super::access::write_access_user_ids_on(&mut tx, repo_id, &ids).await?;
+        let allowed = crate::backend::db::sqlite::repositories::access::write_access_user_ids_on(
+            &mut tx, repo_id, &ids,
+        )
+        .await?;
         anyhow::ensure!(
             allowed.len() == ids.len(),
             ProtectionWriteRefusal::InvalidPushAllowances
         );
     }
     if let Some(ids) = update.new_push_teams()? {
-        let allowed = super::push_teams::eligible_ids_on(&mut tx, repo_id, &ids).await?;
+        let allowed = crate::backend::db::sqlite::repositories::push_teams::eligible_ids_on(
+            &mut tx, repo_id, &ids,
+        )
+        .await?;
         anyhow::ensure!(
             allowed.len() == ids.len(),
             ProtectionWriteRefusal::InvalidPushTeams
@@ -515,7 +543,7 @@ pub async fn commit_status_page(
         "Invalid status page"
     );
     let mut tx = pool.begin().await?;
-    let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({})>=1))", super::access::USER_REPO_ACCESS_SQL))
+    let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({})>=1))", crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL))
         .bind(repo).bind(viewer).fetch_one(&mut *tx).await?;
     if !visible {
         return Ok(None);

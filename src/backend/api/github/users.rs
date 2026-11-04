@@ -1,12 +1,11 @@
 //! Accounts and follow edges use the same identity operations as the profile pages.
-use super::{api_url, auth, pagination::Pagination, Error, Result};
+use codeyard_model::urls::api_url;
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::db::users::accounts;
-use crate::backend::db::users::ssh_keys;
-use crate::backend::identity::following;
-use crate::backend::identity::keys;
-use crate::backend::webhooks::payloads;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -62,36 +61,39 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 }
 
 pub(super) async fn target(state: &AppState, username: &str) -> Result<User> {
-    accounts::get_user_by_username(&state.pool, username)
+    crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)
 }
 
 pub(super) async fn document(state: &AppState, user: &User, token: Option<i64>) -> Result<Value> {
-    let repos = db::repositories::count_user_repositories(&state.pool, user.id, None)
+    let repos =
+        crate::backend::db::repositories::count_user_repositories(&state.pool, user.id, None)
+            .await
+            .map_err(Error::unavailable)?;
+    let status = crate::backend::identity::following::status(&state.pool, user.id, None)
         .await
         .map_err(Error::unavailable)?;
-    let status = following::status(&state.pool, user.id, None)
-        .await
-        .map_err(Error::unavailable)?;
-    let profile = db::users::profiles::get_profile_settings(&state.pool, user.id)
+    let profile = crate::backend::db::users::profiles::get_profile_settings(&state.pool, user.id)
         .await
         .map_err(Error::unavailable)?;
     // Eligibility and the private aggregates are one statement snapshot, shared by GET and PATCH.
     let statistics = match token {
-        Some(token) => db::users::profiles::account_statistics(&state.pool, user.id, token)
-            .await
-            .map_err(Error::unavailable)?,
+        Some(token) => {
+            crate::backend::db::users::profiles::account_statistics(&state.pool, user.id, token)
+                .await
+                .map_err(Error::unavailable)?
+        }
         None => None,
     };
     let public_gists = match &statistics {
         Some(statistics) => statistics.public_gists,
-        None => db::gists::count_owned(&state.pool, user.id, false, None)
+        None => crate::backend::db::gists::count_owned(&state.pool, user.id, false, None)
             .await
             .map_err(Error::unavailable)?,
     };
-    Ok(payloads::public_user(
+    Ok(crate::backend::webhooks::payloads::public_user(
         user,
         &profile,
         repos,
@@ -106,9 +108,9 @@ async fn authenticated(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     Ok(Json(
         document(&state, &actor.user, Some(actor.token.id)).await?,
     ))
@@ -119,12 +121,14 @@ async fn update(
     headers: HeaderMap,
     input: std::result::Result<Json<Value>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>> {
-    use db::users::{accounts::AccountCredential, profiles::ProfilePatch};
-    let actor = auth::authenticate(&state, &headers, true)
+    use crate::backend::db::users::{
+        crate::backend::db::users::accounts::AccountCredential, profiles::ProfilePatch,
+    };
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
-    let Json(input) = input.map_err(super::json_error)?;
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     let object = input
         .as_object()
         .ok_or_else(|| Error::validation("User", "body", "invalid"))?;
@@ -179,16 +183,17 @@ async fn by_username(
     headers: HeaderMap,
     Path(username): Path<String>,
 ) -> Result<Json<Value>> {
-    auth::authenticate(&state, &headers, false).await?;
-    if let Some(user) = accounts::get_user_by_username(&state.pool, &username)
-        .await
-        .map_err(Error::unavailable)?
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
+    if let Some(user) =
+        crate::backend::db::users::accounts::get_user_by_username(&state.pool, &username)
+            .await
+            .map_err(Error::unavailable)?
     {
         return Ok(Json(document(&state, &user, None).await?));
     }
     // GitHub's user lookup also resolves organization accounts for clients such as gh.
-    let org = super::orgs::target(&state, &username).await?;
-    let mut value = super::orgs::document(&state, &org).await?;
+    let org = crate::backend::api::github::orgs::target(&state, &username).await?;
+    let mut value = crate::backend::api::github::orgs::document(&state, &org).await?;
     for field in [
         "archived_at",
         "description",
@@ -232,8 +237,8 @@ async fn by_id(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    auth::authenticate(&state, &headers, false).await?;
-    let user = accounts::get_user_by_id(&state.pool, id)
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
+    let user = crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -251,9 +256,9 @@ async fn list(
     headers: HeaderMap,
     Query(query): Query<UserList>,
 ) -> Result<Response> {
-    auth::authenticate(&state, &headers, false).await?;
-    let limit = super::pagination::page_size(query.per_page);
-    let mut users = accounts::list_users_since(
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
+    let limit = crate::backend::api::github::pagination::page_size(query.per_page);
+    let mut users = crate::backend::db::users::accounts::list_users_since(
         &state.pool,
         query.since.unwrap_or(0).max(0),
         (limit + 1) as i64,
@@ -280,7 +285,11 @@ async fn list(
         Json(
             users
                 .iter()
-                .map(|user| payloads::person(&payloads::Person::of(user)))
+                .map(|user| {
+                    crate::backend::webhooks::payloads::person(
+                        &crate::backend::webhooks::payloads::Person::of(user),
+                    )
+                })
                 .collect::<Vec<_>>(),
         ),
     )
@@ -295,7 +304,7 @@ async fn connections(
     uri: axum::http::Uri,
 ) -> Result<Response> {
     let (offset, limit) = pagination.window()?;
-    let users = db::following::list_connections(
+    let users = crate::backend::db::following::list_connections(
         &state.pool,
         user,
         followers,
@@ -309,7 +318,11 @@ async fn connections(
         &uri,
         users
             .iter()
-            .map(|user| payloads::person(&payloads::Person::of(user)))
+            .map(|user| {
+                crate::backend::webhooks::payloads::person(
+                    &crate::backend::webhooks::payloads::Person::of(user),
+                )
+            })
             .collect(),
         has_next,
     )
@@ -322,7 +335,7 @@ async fn followers(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    auth::authenticate(&state, &headers, false).await?;
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     connections(&state, target(&state, &username).await?.id, true, page, uri).await
 }
 
@@ -333,7 +346,7 @@ async fn following(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    auth::authenticate(&state, &headers, false).await?;
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     connections(
         &state,
         target(&state, &username).await?.id,
@@ -350,9 +363,9 @@ async fn own_followers(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     connections(&state, actor.user.id, true, page, uri).await
 }
 
@@ -362,20 +375,21 @@ async fn own_following(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     connections(&state, actor.user.id, false, page, uri).await
 }
 
 async fn check(state: &AppState, actor: i64, username: &str) -> Result<StatusCode> {
-    let Some(user) = accounts::get_user_by_username(&state.pool, username)
-        .await
-        .map_err(Error::unavailable)?
+    let Some(user) =
+        crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
+            .await
+            .map_err(Error::unavailable)?
     else {
         return Ok(StatusCode::NOT_FOUND);
     };
-    if db::following::is_user_following(&state.pool, actor, user.id)
+    if crate::backend::db::following::is_user_following(&state.pool, actor, user.id)
         .await
         .map_err(Error::unavailable)?
     {
@@ -390,10 +404,11 @@ async fn check_following(
     headers: HeaderMap,
     Path((username, target_user)): Path<(String, String)>,
 ) -> Result<StatusCode> {
-    auth::authenticate(&state, &headers, false).await?;
-    let Some(user) = accounts::get_user_by_username(&state.pool, &username)
-        .await
-        .map_err(Error::unavailable)?
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
+    let Some(user) =
+        crate::backend::db::users::accounts::get_user_by_username(&state.pool, &username)
+            .await
+            .map_err(Error::unavailable)?
     else {
         return Ok(StatusCode::NOT_FOUND);
     };
@@ -405,9 +420,9 @@ async fn check_own_following(
     headers: HeaderMap,
     Path(username): Path<String>,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     check(&state, actor.user.id, &username).await
 }
 
@@ -417,14 +432,14 @@ async fn change_follow(
     username: &str,
     follow: bool,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(state, headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
     if !follow && actor.user.username == username {
         return Ok(StatusCode::NO_CONTENT);
     }
-    following::change(
+    crate::backend::identity::following::change(
         &state.pool,
         &state.notification_broadcaster,
         actor.user.id,
@@ -434,11 +449,12 @@ async fn change_follow(
     )
     .await
     .map_err(|error| match error {
-        following::FollowError::Missing => Error::missing(),
-        following::FollowError::SelfFollow | following::FollowError::SelfUnfollow => {
+        crate::backend::identity::following::FollowError::Missing => Error::missing(),
+        crate::backend::identity::following::FollowError::SelfFollow
+        | crate::backend::identity::following::FollowError::SelfUnfollow => {
             Error::validation("User", "login", "invalid")
         }
-        following::FollowError::Restricted => {
+        crate::backend::identity::following::FollowError::Restricted => {
             Error::new(StatusCode::FORBIDDEN, "Account is restricted")
         }
         _ => Error::unavailable(error),
@@ -472,9 +488,9 @@ async fn hovercard(
     Path(username): Path<String>,
     Query(query): Query<Context>,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     let user = target(&state, &username).await?;
     let subject = match (query.subject_type.as_deref(), query.subject_id.as_deref()) {
         (None, None) => None,
@@ -489,32 +505,33 @@ async fn hovercard(
         }
         _ => return Err(Error::validation("Hovercard", "subject_type", "invalid")),
     };
-    let mut contexts = if db::following::is_user_following(&state.pool, user.id, actor.user.id)
-        .await
-        .map_err(Error::unavailable)?
-    {
-        vec![json!({"message":"Follows you", "octicon":"person"})]
-    } else {
-        Vec::new()
-    };
+    let mut contexts =
+        if crate::backend::db::following::is_user_following(&state.pool, user.id, actor.user.id)
+            .await
+            .map_err(Error::unavailable)?
+        {
+            vec![json!({"message":"Follows you", "octicon":"person"})]
+        } else {
+            Vec::new()
+        };
     if let Some((kind, id)) = subject {
         if let Some(context) = hovercard_subject(&state, &actor, user.id, kind, id).await? {
             contexts.push(context);
         }
     }
-    if db::users::tokens::token_user(&state.pool, actor.token.id, false)
+    if crate::backend::db::users::tokens::token_user(&state.pool, actor.token.id, false)
         .await
         .map_err(Error::unavailable)?
         .is_none_or(|user| user.id != actor.user.id)
     {
-        return Err(auth::required());
+        return Err(crate::backend::api::github::auth::required());
     }
     Ok(Json(json!({"contexts":contexts})))
 }
 
 async fn hovercard_subject(
     state: &AppState,
-    auth: &auth::Authentication,
+    auth: &crate::backend::api::github::auth::Authentication,
     user: i64,
     kind: &str,
     id: i64,
@@ -522,14 +539,19 @@ async fn hovercard_subject(
     let pool = &state.pool;
     let (related, message, icon) = match kind {
         "repository" => {
-            let repo = db::repositories::records::get_repository_by_id(pool, id)
+            let repo = crate::backend::db::repositories::records::get_repository_by_id(pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .filter(|repo| !repo.is_gist)
                 .ok_or_else(Error::missing)?;
-            if !auth::readable_repositories(state, Some(auth), &[id], "metadata")
-                .await?
-                .contains(&id)
+            if !crate::backend::api::github::auth::readable_repositories(
+                state,
+                Some(auth),
+                &[id],
+                "metadata",
+            )
+            .await?
+            .contains(&id)
             {
                 return Err(Error::missing());
             }
@@ -540,13 +562,13 @@ async fn hovercard_subject(
             )
         }
         "organization" => {
-            db::organizations::profiles::get_public_organization_by_id(pool, id)
+            crate::backend::db::organizations::profiles::get_public_organization_by_id(pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-            auth::refuse_classic(state, auth.token.id, id).await?;
+            crate::backend::api::github::auth::refuse_classic(state, auth.token.id, id).await?;
             // Hovercards may reveal public membership, not a profile token's owner's private roster.
-            let rows = db::organizations::discovery::list_organizations(
+            let rows = crate::backend::db::organizations::discovery::list_organizations(
                 pool,
                 Some(user),
                 false,
@@ -569,32 +591,43 @@ async fn hovercard_subject(
                 "pull-requests"
             };
             let code = if kind == "issue" { "I" } else { "PR" };
-            let repo = db::graphql::node_repository(pool, code, id)
+            let repo = crate::backend::db::graphql::node_repository(pool, code, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-            if !auth::readable_repositories(state, Some(auth), &[repo], scope)
-                .await?
-                .contains(&repo)
+            if !crate::backend::api::github::auth::readable_repositories(
+                state,
+                Some(auth),
+                &[repo],
+                scope,
+            )
+            .await?
+            .contains(&repo)
             {
                 return Err(Error::missing());
             }
             let (repo, author) = if kind == "issue" {
-                let row = db::issues::get_issue_by_id(pool, id)
+                let row = crate::backend::db::issues::get_issue_by_id(pool, id)
                     .await
                     .map_err(Error::unavailable)?
                     .ok_or_else(Error::missing)?;
                 (row.repo_id, row.author_id)
             } else {
-                let row = db::pull_requests::records::get_pull_request_by_id(pool, id)
-                    .await
-                    .map_err(Error::unavailable)?
-                    .ok_or_else(Error::missing)?;
+                let row =
+                    crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, id)
+                        .await
+                        .map_err(Error::unavailable)?
+                        .ok_or_else(Error::missing)?;
                 (row.repo_id, row.author_id)
             };
-            if !auth::readable_repositories(state, Some(auth), &[repo], scope)
-                .await?
-                .contains(&repo)
+            if !crate::backend::api::github::auth::readable_repositories(
+                state,
+                Some(auth),
+                &[repo],
+                scope,
+            )
+            .await?
+            .contains(&repo)
             {
                 return Err(Error::missing());
             }
@@ -637,7 +670,7 @@ async fn public_keys(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    auth::authenticate(&state, &headers, false).await?;
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     let user = target(&state, &username).await?;
     key_list(&state, user.id, page, uri, false).await
 }
@@ -647,9 +680,9 @@ async fn own_keys(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     key_list(&state, actor.user.id, page, uri, true).await
 }
 async fn key_list(
@@ -661,9 +694,14 @@ async fn key_list(
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
     // One row past the page says whether another page follows.
-    let keys = ssh_keys::user_keys_page(&state.pool, user, offset as i64, limit as i64 + 1)
-        .await
-        .map_err(Error::unavailable)?;
+    let keys = crate::backend::db::users::ssh_keys::user_keys_page(
+        &state.pool,
+        user,
+        offset as i64,
+        limit as i64 + 1,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     let has_next = keys.len() > limit;
     let values = keys.iter().take(limit).map(|key| if own {key_document(key)} else {json!({"id":key.id,"key":key_text(key),"created_at":key.created_at,"last_used":key.last_used_at})}).collect();
     page.response(&uri, values, has_next)
@@ -673,10 +711,10 @@ async fn key(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
-    let key = ssh_keys::get_user_key(&state.pool, actor.user.id, id)
+        .ok_or_else(crate::backend::api::github::auth::required)?;
+    let key = crate::backend::db::users::ssh_keys::get_user_key(&state.pool, actor.user.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -692,18 +730,19 @@ async fn create_key(
     headers: HeaderMap,
     input: std::result::Result<Json<KeyInput>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
-    let Json(input) = input.map_err(super::json_error)?;
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     let title = input
         .title
         .as_deref()
         .filter(|title| !title.is_empty())
         .unwrap_or("SSH key");
-    keys::validate_name(title).map_err(|_| Error::validation("Key", "title", "invalid"))?;
-    let key = ssh_keys::add_ssh_key_for_token(
+    crate::backend::identity::keys::validate_name(title)
+        .map_err(|_| Error::validation("Key", "title", "invalid"))?;
+    let key = crate::backend::db::users::ssh_keys::add_ssh_key_for_token(
         &state.pool,
         actor.user.id,
         actor.token.id,
@@ -736,11 +775,11 @@ async fn delete_key(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
-    let deleted = ssh_keys::delete_user_ssh_key_for_token(
+    let deleted = crate::backend::db::users::ssh_keys::delete_user_ssh_key_for_token(
         &state.pool,
         actor.user.id,
         actor.token.id,

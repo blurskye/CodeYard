@@ -1,10 +1,10 @@
-use crate::backend::crypto::SecretEncryptor;
 use crate::backend::db::credentials::Actor;
 use crate::backend::db::dependabot::OrganizationSecret;
 use crate::backend::db::dependabot::OrganizationSecretInput;
 use crate::backend::db::dependabot::RepositorySelection;
 use crate::backend::db::organizations::OrganizationOutcome;
-use crate::backend::db::secrets;
+use codeyard_support::secrets::SecretEncryptor;
+
 use crate::backend::db::secrets::SecretsError;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Repository;
@@ -18,12 +18,16 @@ pub(super) async fn authorized(
 ) -> Result<Transaction<'_, Postgres>, SecretsError> {
     let actor = actor.into();
     let mut tx = pool.begin().await?;
-    match super::organizations::authority::authority(&mut tx, actor.user_id, org)
-        .await
-        .map_err(SecretsError::authority)?
+    match crate::backend::db::postgres::organizations::authority::authority(
+        &mut tx,
+        actor.user_id,
+        org,
+    )
+    .await
+    .map_err(SecretsError::authority)?
     {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {
-            if !super::credentials::organization(
+            if !crate::backend::db::postgres::credentials::organization(
                 &mut tx,
                 &actor,
                 org,
@@ -134,7 +138,7 @@ pub async fn save_organization_secret(
     if let Some(value) = input.value {
         let (others, stored): (i64, i64) = sqlx::query_as("SELECT COUNT(*),COALESCE(SUM(octet_length(name)+octet_length(encrypted_value)),0)::BIGINT FROM org_dependabot_secrets WHERE org_id=$1 AND name<>$2")
             .bind(org).bind(input.name).fetch_one(&mut *tx).await?;
-        secrets::ensure_room_for_secret(others, stored, input.name, value)?;
+        crate::backend::db::secrets::ensure_room_for_secret(others, stored, input.name, value)?;
         let (encrypted, nonce) = encryptor.encrypt(value.as_bytes())?;
         sqlx::query("INSERT INTO org_dependabot_secrets(org_id,name,visibility,encrypted_value,nonce) VALUES($1,$2,$3,$4,$5) ON CONFLICT(org_id,name) DO UPDATE SET visibility=EXCLUDED.visibility,encrypted_value=EXCLUDED.encrypted_value,nonce=EXCLUDED.nonce,updated_at=clock_timestamp()")
             .bind(org).bind(input.name).bind(input.visibility).bind(encrypted).bind(nonce.as_slice()).execute(&mut *tx).await?;

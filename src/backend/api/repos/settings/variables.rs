@@ -1,10 +1,7 @@
-use crate::backend::{
-    api::{
-        http::context::PageContext,
-        repos::{chrome::Loaded, forms::field},
-    },
-    db,
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::repos::chrome::Loaded;
+use crate::backend::api::repos::forms::field;
+
 use axum::{http::StatusCode, response::Response};
 use std::collections::HashMap;
 
@@ -20,10 +17,10 @@ pub(crate) async fn form(
     let name = field(form, "name").to_ascii_uppercase();
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let credential = db::users::accounts::AccountCredential::Session(&session);
+    let credential = crate::backend::db::users::accounts::AccountCredential::Session(&session);
     let result = if action == "variable-save" {
         let previous = field(form, "previous").to_ascii_uppercase();
-        db::variables::save(
+        crate::backend::db::variables::save(
             &ctx.state.pool,
             actor.id,
             &credential,
@@ -34,7 +31,7 @@ pub(crate) async fn form(
         )
         .await
     } else {
-        db::variables::delete(
+        crate::backend::db::variables::delete(
             &ctx.state.pool,
             actor.id,
             &credential,
@@ -46,7 +43,7 @@ pub(crate) async fn form(
     match result {
         Ok(()) => ctx.redirect(&format!("{}/settings?tab=secrets", loaded.chrome.base())),
         Err(error) => {
-            use db::variables::VariableError;
+            use crate::backend::db::variables::VariableError;
             let (status, message) = match error {
                 VariableError::Denied => (
                     StatusCode::FORBIDDEN,

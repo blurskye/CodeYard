@@ -1,15 +1,15 @@
 //! Adding pull requests to a stack and taking them out, from the JSON API and from the pull
 //! request page.
 
-use super::pull::{detail_response, PullRequestDetailResponse};
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::discussion::*;
 use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::pulls::pull::detail_response;
+use crate::backend::api::repos::pulls::pull::PullRequestDetailResponse;
 use crate::backend::app::AppState;
-use crate::backend::repositories::pull_requests::mutations;
-use crate::backend::repositories::pull_requests::restack;
+
 use axum::extract::Form;
 use axum::extract::Path;
 use axum::extract::State;
@@ -29,7 +29,7 @@ pub async fn post_stack(
     Path((owner, repo, number)): Path<(String, String, i32)>,
 ) -> Result<Json<PullRequestDetailResponse>, (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    let pull_request = mutations::join_stack(
+    let pull_request = crate::backend::repositories::pull_requests::mutations::join_stack(
         &state.pool,
         &state.ci_runs,
         current_actor.id,
@@ -38,7 +38,7 @@ pub async fn post_stack(
         number,
     )
     .await
-    .map_err(super::operation_error)?;
+    .map_err(crate::backend::api::repos::pulls::operation_error)?;
     Ok(Json(detail_response(&state.pool, pull_request).await?))
 }
 
@@ -48,16 +48,17 @@ pub async fn delete_stack(
     Path((owner, repo, number)): Path<(String, String, i32)>,
 ) -> Result<Json<PullRequestDetailResponse>, (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    let pull_request = mutations::unstack_pull_request(
-        &state.pool,
-        &state.ci_runs,
-        current_actor.id,
-        owner,
-        repo,
-        number,
-    )
-    .await
-    .map_err(super::operation_error)?;
+    let pull_request =
+        crate::backend::repositories::pull_requests::mutations::unstack_pull_request(
+            &state.pool,
+            &state.ci_runs,
+            current_actor.id,
+            owner,
+            repo,
+            number,
+        )
+        .await
+        .map_err(crate::backend::api::repos::pulls::operation_error)?;
     Ok(Json(detail_response(&state.pool, pull_request).await?))
 }
 
@@ -65,9 +66,12 @@ pub async fn post_rebase(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, repo, number)): Path<(String, String, i32)>,
-) -> Result<Json<restack::RestackResponse>, (StatusCode, Json<ApiError>)> {
+) -> Result<
+    Json<crate::backend::repositories::pull_requests::restack::RestackResponse>,
+    (StatusCode, Json<ApiError>),
+> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    restack::rebase_stack(
+    crate::backend::repositories::pull_requests::restack::rebase_stack(
         &state.pool,
         &state.ci_runs,
         crate::backend::db::credentials::Actor::from((
@@ -78,7 +82,7 @@ pub async fn post_rebase(
     )
     .await
     .map(Json)
-    .map_err(super::operation_error)
+    .map_err(crate::backend::api::repos::pulls::operation_error)
 }
 
 /// The page answer for a stack change: back to the pull request, or the page with the refusal.
@@ -118,7 +122,7 @@ pub(crate) async fn native_join(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let result = mutations::join_stack(
+    let result = crate::backend::repositories::pull_requests::mutations::join_stack(
         &ctx.state.pool,
         &ctx.state.ci_runs,
         ctx.require_user()?.id,
@@ -142,7 +146,7 @@ pub(crate) async fn native_unstack(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let result = mutations::unstack_pull_request(
+    let result = crate::backend::repositories::pull_requests::mutations::unstack_pull_request(
         &ctx.state.pool,
         &ctx.state.ci_runs,
         ctx.require_user()?.id,
@@ -166,7 +170,7 @@ pub(crate) async fn native_rebase(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let result = restack::rebase_stack(
+    let result = crate::backend::repositories::pull_requests::restack::rebase_stack(
         &ctx.state.pool,
         &ctx.state.ci_runs,
         ctx.database_actor(ctx.require_user()?.id),
@@ -174,6 +178,6 @@ pub(crate) async fn native_rebase(
     )
     .await
     .map(|_| ())
-    .map_err(super::operation_error);
+    .map_err(crate::backend::api::repos::pulls::operation_error);
     page_answer(&ctx, &repo, number, result).await
 }

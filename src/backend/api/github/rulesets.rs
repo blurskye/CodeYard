@@ -1,17 +1,21 @@
 //! Organization and repository rule documents share validation, storage and history.
-use super::{
-    api_url, auth,
-    orgs::{outcome, target},
-    pagination::Pagination,
-    repository, Error, Result,
-};
-use crate::backend::{
-    app::AppState,
-    db::{
-        organizations::profiles,
-        rulesets::{self, Definition, Invalid, ListFilter, Owner, Page, Ruleset, Version},
-    },
-};
+use codeyard_model::urls::api_url;
+
+use crate::backend::api::github::orgs::outcome;
+use crate::backend::api::github::orgs::target;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::rulesets::Definition;
+use crate::backend::db::rulesets::Invalid;
+use crate::backend::db::rulesets::ListFilter;
+use crate::backend::db::rulesets::Owner;
+use crate::backend::db::rulesets::Page;
+use crate::backend::db::rulesets::Ruleset;
+use crate::backend::db::rulesets::Version;
 use axum::{
     body::Bytes,
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
@@ -73,9 +77,9 @@ impl Scope {
         write: bool,
     ) -> Result<Self> {
         if let Some(name) = params.get("org") {
-            let actor = auth::authenticate(state, headers, true)
+            let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
                 .await?
-                .ok_or_else(auth::required)?;
+                .ok_or_else(crate::backend::api::github::auth::required)?;
             if write {
                 actor.require_write()?;
             }
@@ -103,7 +107,8 @@ impl Scope {
         }
     }
     fn actor(&self) -> Result<i64> {
-        self.actor.ok_or_else(auth::required)
+        self.actor
+            .ok_or_else(crate::backend::api::github::auth::required)
     }
     async fn source_for(&self, state: &AppState, owner: Owner) -> Result<(String, String)> {
         if owner == self.owner {
@@ -112,10 +117,13 @@ impl Scope {
         let Owner::Organization(org) = owner else {
             return Err(Error::missing());
         };
-        let org = profiles::get_public_organization_by_id(&state.pool, org)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let org = crate::backend::db::organizations::profiles::get_public_organization_by_id(
+            &state.pool,
+            org,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
         Ok((
             org.name.clone(),
             format!("/orgs/{}", codeyard_webui::encode_component(&org.name)),
@@ -169,9 +177,9 @@ impl List {
         let mut targets = Vec::new();
         for target in self.targets.iter().flat_map(|s| s.split(',')) {
             match target {
-                "branch" => targets.push(rulesets::Target::Branch),
-                "tag" => targets.push(rulesets::Target::Tag),
-                "push" => targets.push(rulesets::Target::Push),
+                "branch" => targets.push(crate::backend::db::rulesets::Target::Branch),
+                "tag" => targets.push(crate::backend::db::rulesets::Target::Tag),
+                "push" => targets.push(crate::backend::db::rulesets::Target::Push),
                 // The documented repository target has no native policy type yet.
                 "repository" => {}
                 _ => return Err(Error::validation("RepositoryRuleset", "targets", "invalid")),
@@ -197,7 +205,7 @@ async fn list(
         per_page: query.per_page,
     };
     let rows = outcome(
-        rulesets::list_rulesets(
+        crate::backend::db::rulesets::list_rulesets(
             &state.pool,
             scope.actor,
             scope.owner,
@@ -233,7 +241,7 @@ async fn get_one(
 ) -> Result<Json<Value>> {
     let scope = Scope::resolve(&state, &headers, &params, false).await?;
     let row = outcome(
-        rulesets::get_ruleset(
+        crate::backend::db::rulesets::get_ruleset(
             &state.pool,
             scope.actor,
             scope.owner,
@@ -254,12 +262,17 @@ async fn create(
     input: std::result::Result<Json<Value>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let scope = Scope::resolve(&state, &headers, &params, true).await?;
-    let Json(input) = input.map_err(super::json_error)?;
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     let input = Definition::parse(&input).map_err(|e| error(e.into()))?;
     let row = outcome(
-        rulesets::create_ruleset(&state.pool, scope.actor()?, scope.owner, &input)
-            .await
-            .map_err(error)?,
+        crate::backend::db::rulesets::create_ruleset(
+            &state.pool,
+            scope.actor()?,
+            scope.owner,
+            &input,
+        )
+        .await
+        .map_err(error)?,
     )?;
     Ok((
         StatusCode::CREATED,
@@ -276,10 +289,10 @@ async fn update(
     let input = if body.is_empty() {
         json!({})
     } else {
-        serde_json::from_slice(&body).map_err(super::json_parse_error)?
+        serde_json::from_slice(&body).map_err(crate::backend::api::github::json_parse_error)?
     };
     let row = outcome(
-        rulesets::change_ruleset(
+        crate::backend::db::rulesets::change_ruleset(
             &state.pool,
             scope.actor()?,
             scope.owner,
@@ -298,7 +311,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let scope = Scope::resolve(&state, &headers, &params, true).await?;
     outcome(
-        rulesets::remove_ruleset(
+        crate::backend::db::rulesets::remove_ruleset(
             &state.pool,
             scope.actor()?,
             scope.owner,
@@ -318,7 +331,7 @@ async fn history(
 ) -> Result<Response> {
     let scope = Scope::resolve(&state, &headers, &params, false).await?;
     let rows = outcome(
-        rulesets::ruleset_versions(
+        crate::backend::db::rulesets::ruleset_versions(
             &state.pool,
             scope.actor,
             scope.owner,
@@ -344,7 +357,7 @@ async fn version(
     let scope = Scope::resolve(&state, &headers, &params, false).await?;
     let ruleset = id(&params, "ruleset_id")?;
     let row = outcome(
-        rulesets::ruleset_version(
+        crate::backend::db::rulesets::ruleset_version(
             &state.pool,
             scope.actor,
             scope.owner,

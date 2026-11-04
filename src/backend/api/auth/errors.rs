@@ -1,19 +1,23 @@
 //! HTTP projection of concrete identity operation failures. No driver text escapes.
 
-use crate::backend::api::http::error::{ApiError, ApiFailure};
-use crate::backend::identity::accounts::{
-    BanError, EmailChangeError, ManagedAccountError, PasswordChangeError, RoleError,
-    SignupReviewError,
-};
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::ApiFailure;
+use crate::backend::identity::accounts::BanError;
+use crate::backend::identity::accounts::EmailChangeError;
+use crate::backend::identity::accounts::ManagedAccountError;
+use crate::backend::identity::accounts::PasswordChangeError;
+use crate::backend::identity::accounts::RoleError;
+use crate::backend::identity::accounts::SignupReviewError;
 use crate::backend::identity::admission::AdmissionError;
-use crate::backend::identity::credentials::AccountInputError;
 use crate::backend::identity::login::LoginError;
 use crate::backend::identity::passwords::PasswordError;
 use crate::backend::identity::registration::RegistrationError;
-use crate::backend::identity::sessions::{AccountAuthorityError, SessionIssueError};
+use crate::backend::identity::sessions::AccountAuthorityError;
+use crate::backend::identity::sessions::SessionIssueError;
 use crate::backend::identity::setup::SetupError;
 use crate::backend::identity::two_factor::TwoFactorError;
 use axum::http::StatusCode;
+use codeyard_model::account_input::AccountInputError;
 
 pub(crate) fn database_failure() -> ApiFailure {
     ApiError::failure(

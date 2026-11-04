@@ -138,7 +138,10 @@ pub(crate) fn git(kind: &str, key: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode, decode_review_request, encode, review_request};
+    use crate::backend::api::github::node_id::decode;
+    use crate::backend::api::github::node_id::decode_review_request;
+    use crate::backend::api::github::node_id::encode;
+    use crate::backend::api::github::node_id::review_request;
 
     #[test]
     fn node_ids_round_trip_without_changing_rest_ids() {
@@ -177,6 +180,12 @@ mod tests {
             assert_eq!(decode(value), None);
         }
         assert_eq!(decode(&encode("R", -1)), None);
-        assert_eq!(decode(&super::git("T", &"a".repeat(40))), None);
+        assert_eq!(
+            decode(&crate::backend::api::github::node_id::git(
+                "T",
+                &"a".repeat(40)
+            )),
+            None
+        );
     }
 }

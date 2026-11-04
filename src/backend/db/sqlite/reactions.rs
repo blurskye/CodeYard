@@ -1,4 +1,8 @@
-use crate::backend::db::reactions::{Reaction, ReactionCount, ReactionRefusal, Subject, Target};
+use crate::backend::db::reactions::Reaction;
+use crate::backend::db::reactions::ReactionCount;
+use crate::backend::db::reactions::ReactionRefusal;
+use crate::backend::db::reactions::Subject;
+use crate::backend::db::reactions::Target;
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
@@ -68,7 +72,12 @@ async fn begin_write<'a>(
     target: Target,
 ) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::discussions::require_contribution_authority(&mut tx, actor_id, target.repo_id).await?;
+    crate::backend::db::sqlite::discussions::require_contribution_authority(
+        &mut tx,
+        actor_id,
+        target.repo_id,
+    )
+    .await?;
     let table = match target.subject {
         Subject::Issue | Subject::IssueComment => "issues",
         Subject::Release => "releases",
@@ -94,14 +103,21 @@ async fn begin_write<'a>(
             .await?;
         anyhow::ensure!(
             !draft
-                || super::discussions::lock_write_authority(&mut tx, actor_id, target.repo_id)
-                    .await?,
+                || crate::backend::db::sqlite::discussions::lock_write_authority(
+                    &mut tx,
+                    actor_id,
+                    target.repo_id
+                )
+                .await?,
             ReactionRefusal::NotFound
         );
     }
     anyhow::ensure!(
-        super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await?,
-        super::discussions::AUTHORITY_DENIED
+        crate::backend::db::sqlite::users::transitions::credential_live(
+            &mut tx, actor_id, credential, true
+        )
+        .await?,
+        crate::backend::db::sqlite::discussions::AUTHORITY_DENIED
     );
     Ok(tx)
 }

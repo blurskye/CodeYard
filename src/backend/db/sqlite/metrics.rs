@@ -1,4 +1,7 @@
-use crate::backend::db::metrics::{CiQueue, NodeCount, StorageNode, MAX_STORAGE_NODES};
+use crate::backend::db::metrics::CiQueue;
+use crate::backend::db::metrics::NodeCount;
+use crate::backend::db::metrics::StorageNode;
+use crate::backend::db::metrics::MAX_STORAGE_NODES;
 use anyhow::{ensure, Result};
 use sqlx::SqlitePool;
 

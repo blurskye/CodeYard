@@ -1,7 +1,11 @@
-use crate::backend::db::code_scanning::{
-    Alert, AlertFilters, AlertScope, AnalysisEntry, AnalysisFilters, BranchAlert, ANALYSIS_COLUMNS,
-    ANALYSIS_DELETABLE,
-};
+use crate::backend::db::code_scanning::Alert;
+use crate::backend::db::code_scanning::AlertFilters;
+use crate::backend::db::code_scanning::AlertScope;
+use crate::backend::db::code_scanning::AnalysisEntry;
+use crate::backend::db::code_scanning::AnalysisFilters;
+use crate::backend::db::code_scanning::BranchAlert;
+use crate::backend::db::code_scanning::ANALYSIS_COLUMNS;
+use crate::backend::db::code_scanning::ANALYSIS_DELETABLE;
 use anyhow::{ensure, Result};
 use sqlx::PgPool;
 

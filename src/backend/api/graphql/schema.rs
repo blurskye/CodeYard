@@ -1,5 +1,6 @@
 //! The derive schema is compiled in its own crate and instantiated once.
-use super::{bindings::Object, RequestContext};
+use crate::backend::api::graphql::bindings::Object;
+use crate::backend::api::graphql::RequestContext;
 use async_graphql::{
     extensions::{Extension, ExtensionContext, ExtensionFactory, NextResolve, ResolveInfo},
     ServerError, ServerResult, Value,

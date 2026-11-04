@@ -1,12 +1,13 @@
 //! OIDC settings share the issuer's stored templates and native administration checks.
-use crate::backend::{
-    api::github::{auth, repository, Error, Result},
-    app::AppState,
-    db::{
-        self,
-        oidc::{Refusal, Scope, Settings},
-    },
-};
+
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::oidc::Refusal;
+use crate::backend::db::oidc::Scope;
+use crate::backend::db::oidc::Settings;
 use axum::{
     extract::{Path, Request, State},
     http::{HeaderMap, Method, StatusCode},
@@ -36,24 +37,25 @@ async fn scope(
     headers: &HeaderMap,
     params: &Params,
     write: bool,
-) -> Result<(auth::Authentication, Scope)> {
+) -> Result<(crate::backend::api::github::auth::Authentication, Scope)> {
     if let Some(org) = params.get("org") {
-        let authentication = auth::authenticate(state, headers, write)
+        let authentication = crate::backend::api::github::auth::authenticate(state, headers, write)
             .await?
-            .ok_or_else(auth::required)?;
+            .ok_or_else(crate::backend::api::github::auth::required)?;
         if write {
             authentication.require_write()?;
         }
-        let org = db::organizations::profiles::get_public_organization(&state.pool, org)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let org =
+            crate::backend::db::organizations::profiles::get_public_organization(&state.pool, org)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
         Ok((authentication, Scope::Organization(org.id)))
     } else {
         let (repo, authentication) =
             repository(state, headers, &params["owner"], &params["repo"], write).await?;
         Ok((
-            authentication.ok_or_else(auth::required)?,
+            authentication.ok_or_else(crate::backend::api::github::auth::required)?,
             Scope::Repository(repo.id),
         ))
     }
@@ -73,10 +75,10 @@ async fn template(
     Path(params): Path<Params>,
     request: Request,
 ) -> Result<Response> {
-    let read = auth::read_method(request.method());
+    let read = crate::backend::api::github::auth::read_method(request.method());
     let (actor, scope) = scope(&state, &headers, &params, !read).await?;
     if read {
-        let settings = db::oidc::settings(&state.pool, actor.user.id, scope)
+        let settings = crate::backend::db::oidc::settings(&state.pool, actor.user.id, scope)
             .await
             .map_err(error)?;
         let document = match scope {
@@ -110,7 +112,7 @@ async fn template(
             false
         }
     };
-    db::oidc::save_settings(
+    crate::backend::db::oidc::save_settings(
         &state.pool,
         actor.database_actor(),
         scope,
@@ -145,13 +147,13 @@ async fn properties(
     Path(params): Path<Params>,
     request: Request,
 ) -> Result<Response> {
-    let read = auth::read_method(request.method());
+    let read = crate::backend::api::github::auth::read_method(request.method());
     let (actor, Scope::Organization(org)) = scope(&state, &headers, &params, !read).await? else {
         return Err(Error::missing());
     };
     if read {
         return Ok(Json(
-            db::oidc::inclusions(&state.pool, actor.user.id, org)
+            crate::backend::db::oidc::inclusions(&state.pool, actor.user.id, org)
                 .await
                 .map_err(error)?,
         )
@@ -168,9 +170,15 @@ async fn properties(
             .map_err(|_| Error::invalid("Invalid property inclusion"))?
             .custom_property_name
     };
-    db::oidc::change_inclusion(&state.pool, actor.database_actor(), org, &name, remove)
-        .await
-        .map_err(error)?;
+    crate::backend::db::oidc::change_inclusion(
+        &state.pool,
+        actor.database_actor(),
+        org,
+        &name,
+        remove,
+    )
+    .await
+    .map_err(error)?;
     if remove {
         Ok(StatusCode::NO_CONTENT.into_response())
     } else {

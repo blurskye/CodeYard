@@ -1,12 +1,16 @@
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::http::session::{get_current_user, get_optional_user};
-use crate::backend::api::repos::access::{access_error, find_repository, readable_repository};
+use crate::backend::api::http::session::get_current_user;
+use crate::backend::api::http::session::get_optional_user;
+use crate::backend::api::repos::access::access_error;
+use crate::backend::api::repos::access::find_repository;
+use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::chrome::ApiResult;
 use crate::backend::api::repos::responses::engagement_error;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::repositories::access::AccessError;
-use crate::backend::repositories::engagement::{change, Engagement};
+use crate::backend::repositories::engagement::change;
+use crate::backend::repositories::engagement::Engagement;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
@@ -64,10 +68,20 @@ async fn viewer_engagement(
     };
     let engaged = match kind {
         Engagement::Star => {
-            db::repositories::engagement::is_repo_starred(&state.pool, user.id, repository.id).await
+            crate::backend::db::repositories::engagement::is_repo_starred(
+                &state.pool,
+                user.id,
+                repository.id,
+            )
+            .await
         }
         Engagement::Watch => {
-            db::repositories::engagement::is_repo_watched(&state.pool, user.id, repository.id).await
+            crate::backend::db::repositories::engagement::is_repo_watched(
+                &state.pool,
+                user.id,
+                repository.id,
+            )
+            .await
         }
     }
     .map_err(|_| access_error(AccessError::Unavailable))?;

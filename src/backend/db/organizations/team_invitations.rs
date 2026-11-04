@@ -1,5 +1,7 @@
 //! A team invitation joins the organization's existing acceptance and cancellation flow.
-use super::{OrganizationOutcome, OrganizationPage, TeamRole};
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::organizations::OrganizationPage;
+use crate::backend::db::organizations::TeamRole;
 use anyhow::Result;
 use codeyard_db_core::models::OrgInvitation;
 use codeyard_db_core::native_operation;

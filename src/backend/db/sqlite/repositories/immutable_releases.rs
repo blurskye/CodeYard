@@ -2,9 +2,9 @@ use crate::backend::db::releases::ReleaseRefusal;
 use crate::backend::db::repositories::immutable_releases::Publication;
 use crate::backend::db::repositories::immutable_releases::Refusal;
 use crate::backend::db::repositories::immutable_releases::Reservation;
-use crate::backend::repositories::releases::integrity::Artifact;
 use anyhow::{ensure, Result};
 use codeyard_db_core::models::Release;
+use codeyard_model::release_integrity::Artifact;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 // Enforced when the repository opts in or its organization enforces it for all or selected
 // repositories. A repository setting never removes an organization's enforcement.
@@ -121,7 +121,7 @@ pub(crate) async fn freeze(
         release.repo_id,
         &release.tag_name,
         &assets,
-        &crate::backend::repositories::releases::immutable::namespace_url(&owner, &name),
+        &codeyard_model::urls::namespace_url(&owner, &name),
     )?;
     let inactive:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM release_assets a JOIN files f ON f.id=a.file_id WHERE a.release_id=?1 AND NOT f.is_active)").bind(release.id).fetch_one(&mut **tx).await?;
     ensure!(!inactive, ReleaseRefusal::Conflict);

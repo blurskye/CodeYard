@@ -81,8 +81,8 @@ Findings that decide the order:
 
 ## Stages
 
-Each stage is one move, one script that rewrites the paths, and one `cargo check
---workspace --all-targets --locked` on the builder. No behaviour change, no new
+Complete and commit every source stage before compiling. Then run one workspace
+check on the builder and batch corrections from its log, followed by Clippy and WASM. No behaviour change, no new
 re-export layers (callers switch to the new paths in the same stage), and the test count
 and results stay the same. A stage can be the last one.
 
@@ -95,16 +95,12 @@ and results stay the same. A stage can be the last one.
 2. **`webui`.** Check also `--target wasm32-unknown-unknown` with the `web` feature.
 3. **`support` and `git`.** Moved to `backend/support/` and `backend/git/`; server
    dependencies cut. Integration build and tests are pending.
-4. **`model` and `db/core` (partial).** `codeyard-db-core` now owns the pool,
-   connections, both engines' migrations, record types and `native_operation!` with
-   `$crate` paths. `codeyard-model` owns independent shared types and limits; all
-   per-domain queries remain in the server crate. The remaining cuts are not just
-   data: CI `Permissions` calls workflow parsing, vulnerability `Advisory` methods
-   call database advisory validation, and custom secret patterns own scanner state.
-   Database domains also still call identity permission/validation helpers, CI
-   concurrency/log/workflow helpers, email, issue, webhook and package helpers.
-   Repository-secret encryption remains in the server; generic random-token/HMAC
-   helpers moved to support. These dependencies must be cut before stage 5.
+4. **`model` and `db/core`.** Shared permissions, bounded YAML parsing and glob
+   matching, advisory records and validation, snapshots, credential policies, mail
+   configuration/texts and URL helpers now live in `model`. Native CI record/log
+   helpers live in `db/core`; encryption, SSH selection, node identity and custom
+   secret scanning live in `support`. Database domains no longer call server helpers.
+   Source moves are complete; validation waits until the whole split is committed.
 5. **`db` domains**, lowest first: identity, orgs, repos (with pull requests and issues),
    then actions, security, cluster. Each domain crate keeps its own PostgreSQL and SQLite
    code.

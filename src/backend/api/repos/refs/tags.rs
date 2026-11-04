@@ -66,7 +66,7 @@ pub async fn create_tag(
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
         &owner,
-        super::repository_id(&state, &owner, &repo).await?,
+        crate::backend::api::repos::refs::repository_id(&state, &owner, &repo).await?,
         &req.name,
         &req.sha,
         req.message.as_deref(),
@@ -93,7 +93,7 @@ pub async fn delete_tag(
             actor.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
-        super::repository_id(&state, &owner, &repo).await?,
+        crate::backend::api::repos::refs::repository_id(&state, &owner, &repo).await?,
         &name,
     )
     .await

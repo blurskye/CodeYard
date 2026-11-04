@@ -1,13 +1,15 @@
 //! Native runner settings and credential redemption; the REST adapter shares the same DAOs.
-use crate::backend::{
-    api::{http::context::PageContext, user::responses::field},
-    app::AppState,
-    ci::runner_credentials as credentials,
-    db::{
-        self,
-        runners::{self as native, GroupInput, Labels, Refusal, Registration, Scope, Selection},
-    },
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::user::responses::field;
+use crate::backend::app::AppState;
+
+use crate::backend::db::runners as native;
+use crate::backend::db::runners::GroupInput;
+use crate::backend::db::runners::Labels;
+use crate::backend::db::runners::Refusal;
+use crate::backend::db::runners::Registration;
+use crate::backend::db::runners::Scope;
+use crate::backend::db::runners::Selection;
 use axum::{
     body::Body,
     extract::{DefaultBodyLimit, Path, State},
@@ -50,19 +52,21 @@ async fn scope(ctx: &PageContext) -> Result<Scope, Response> {
     match (org, repo) {
         (Some(id), None) => Ok(Scope::Organization(id)),
         (None, Some(id)) => {
-            let repository =
-                match db::repositories::records::get_repository_by_id(&ctx.state.pool, id).await {
-                    Ok(Some(repo)) => repo,
-                    Ok(None) => {
-                        return Err(ctx.error(StatusCode::NOT_FOUND, "Repository not found."))
-                    }
-                    Err(_) => {
-                        return Err(ctx.error(
-                            StatusCode::SERVICE_UNAVAILABLE,
-                            "Repository settings unavailable.",
-                        ))
-                    }
-                };
+            let repository = match crate::backend::db::repositories::records::get_repository_by_id(
+                &ctx.state.pool,
+                id,
+            )
+            .await
+            {
+                Ok(Some(repo)) => repo,
+                Ok(None) => return Err(ctx.error(StatusCode::NOT_FOUND, "Repository not found.")),
+                Err(_) => {
+                    return Err(ctx.error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "Repository settings unavailable.",
+                    ))
+                }
+            };
             match crate::backend::repositories::access::can_read(
                 &ctx.state.pool,
                 ctx.user.as_ref(),
@@ -155,8 +159,11 @@ async fn render(
     };
     let (title, back, groups) = match scope {
         Scope::Organization(org) => {
-            let org = match db::organizations::get_public_organization_by_id(&ctx.state.pool, org)
-                .await
+            let org = match crate::backend::db::organizations::get_public_organization_by_id(
+                &ctx.state.pool,
+                org,
+            )
+            .await
             {
                 Ok(Some(org)) => org,
                 _ => return ctx.error(StatusCode::NOT_FOUND, "Organization not found."),
@@ -182,21 +189,25 @@ async fn render(
             )
         }
         Scope::Repository(repo) => {
-            let repo = match db::repositories::records::get_repository_by_id(&ctx.state.pool, repo)
-                .await
+            let repo = match crate::backend::db::repositories::records::get_repository_by_id(
+                &ctx.state.pool,
+                repo,
+            )
+            .await
             {
                 Ok(Some(repo)) => repo,
                 _ => return ctx.error(StatusCode::NOT_FOUND, "Repository not found."),
             };
-            let owner = match db::ci::ci_repository_owner(&ctx.state.pool, repo.id).await {
-                Ok(Some(owner)) => owner,
-                _ => {
-                    return ctx.error(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "Repository settings unavailable.",
-                    )
-                }
-            };
+            let owner =
+                match crate::backend::db::ci::ci_repository_owner(&ctx.state.pool, repo.id).await {
+                    Ok(Some(owner)) => owner,
+                    _ => {
+                        return ctx.error(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "Repository settings unavailable.",
+                        )
+                    }
+                };
             (
                 format!("{owner}/{} runners", repo.name),
                 format!(
@@ -509,13 +520,15 @@ async fn mutate(
         }
         "registration-token" | "jit" => {
             native::authorize_scope(pool, actor, scope).await?;
-            let ticket = credentials::ticket(pool, ctx.state.cluster.as_ref()).await?;
+            let ticket =
+                crate::backend::ci::runner_credentials::ticket(pool, ctx.state.cluster.as_ref())
+                    .await?;
             let expires = chrono::Utc::now() + chrono::Duration::hours(1);
             let jit = field(form, "action") == "jit";
             let work_folder = field(form, "work_folder");
             if jit {
                 anyhow::ensure!(
-                    credentials::valid_work_folder(work_folder),
+                    crate::backend::ci::runner_credentials::valid_work_folder(work_folder),
                     Refusal::Invalid("work_folder")
                 );
             }
@@ -543,7 +556,7 @@ async fn mutate(
             )
             .await?;
             if let Some(row) = row {
-                let config = credentials::JitConfig {
+                let config = crate::backend::ci::runner_credentials::JitConfig {
                     ticket: ticket.encode(),
                     node_name: native::jit_node_name(row.id, &ticket.secret_hash()),
                     work_folder: work_folder.to_owned(),
@@ -555,13 +568,13 @@ async fn mutate(
             return Ok(Some(json!({"token":ticket.encode(),"expires_at":expires})));
         }
         "remove-token" => {
-            let token = credentials::new_remove_token();
+            let token = crate::backend::ci::runner_credentials::new_remove_token();
             let expires = chrono::Utc::now() + chrono::Duration::hours(1);
             native::remove_token(
                 pool,
                 actor,
                 scope,
-                &credentials::remove_hash(&token),
+                &crate::backend::ci::runner_credentials::remove_hash(&token),
                 expires,
             )
             .await?;
@@ -580,7 +593,13 @@ async fn remove(
     Path(id): Path<i64>,
     Json(input): Json<Remove>,
 ) -> Response {
-    match native::remove_with_token(&s.pool, id, &credentials::remove_hash(&input.token)).await {
+    match native::remove_with_token(
+        &s.pool,
+        id,
+        &crate::backend::ci::runner_credentials::remove_hash(&input.token),
+    )
+    .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => {
             let status = match error.downcast_ref::<Refusal>() {

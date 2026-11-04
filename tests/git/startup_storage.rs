@@ -1,5 +1,5 @@
 use crate::support::{fake_s3::FakeS3, native_database};
-use codeyard::backend::db;
+
 use codeyard::backend::storage::s3::{create_client, S3Store};
 use reqwest::StatusCode;
 use std::time::Duration;
@@ -11,7 +11,9 @@ async fn fake_s3_is_only_started_for_cluster_databases() {
     sqlite.close().await;
     let mut postgres = native_database::PostgresDatabase::new().await;
     assert!(FakeS3::for_database(&postgres.pool).await.is_none());
-    db::cluster::enable_cluster(&postgres.pool).await.unwrap();
+    codeyard::backend::db::cluster::enable_cluster(&postgres.pool)
+        .await
+        .unwrap();
     let s3 = FakeS3::for_database(&postgres.pool).await.unwrap();
     let environment = s3.environment();
     assert_eq!(environment[0], ("S3_ENDPOINT", s3.config.endpoint.as_str()));

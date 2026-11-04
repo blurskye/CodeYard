@@ -1,10 +1,13 @@
-use crate::backend::db::{
-    action_settings::{
-        policy_update, ListedPolicy, Policy, PolicySelector, Refusal, Scope, Setting,
-    },
-    credentials::Actor,
-    organizations::{self, OrganizationOutcome},
-};
+use crate::backend::db::action_settings::policy_update;
+use crate::backend::db::action_settings::ListedPolicy;
+use crate::backend::db::action_settings::Policy;
+use crate::backend::db::action_settings::PolicySelector;
+use crate::backend::db::action_settings::Refusal;
+use crate::backend::db::action_settings::Scope;
+use crate::backend::db::action_settings::Setting;
+use crate::backend::db::credentials::Actor;
+
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::{ensure, Result};
 use serde_json::{json, Value};
 use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
@@ -19,14 +22,31 @@ async fn authority(
     match scope {
         Scope::Repository(repo) => {
             let allowed = if write {
-                super::discussions::lock_admin_authority(tx, actor.user_id, *repo).await?
+                crate::backend::db::sqlite::discussions::lock_admin_authority(
+                    tx,
+                    actor.user_id,
+                    *repo,
+                )
+                .await?
             } else {
-                super::discussions::lock_policy_authority(tx, actor.user_id, *repo, false).await?
+                crate::backend::db::sqlite::discussions::lock_policy_authority(
+                    tx,
+                    actor.user_id,
+                    *repo,
+                    false,
+                )
+                .await?
             };
             ensure!(
                 allowed
-                    && super::credentials::repository(tx, actor, *repo, "administration", write)
-                        .await?,
+                    && crate::backend::db::sqlite::credentials::repository(
+                        tx,
+                        actor,
+                        *repo,
+                        "administration",
+                        write
+                    )
+                    .await?,
                 Refusal::Denied
             );
             Ok(("repo_actions_settings", "repo_id", *repo))
@@ -38,13 +58,23 @@ async fn authority(
                 .await?
                 .ok_or(Refusal::Missing)?;
             let role = if write {
-                super::organizations::authority::authority(tx, actor.user_id, org).await?
+                crate::backend::db::sqlite::organizations::authority::authority(
+                    tx,
+                    actor.user_id,
+                    org,
+                )
+                .await?
             } else {
-                super::organizations::authority::read_authority(tx, actor.user_id, org).await?
+                crate::backend::db::sqlite::organizations::authority::read_authority(
+                    tx,
+                    actor.user_id,
+                    org,
+                )
+                .await?
             };
             ensure!(
-                matches!(role, OrganizationOutcome::Applied(role) if organizations::administers(role))
-                    && super::credentials::organization(
+                matches!(role, OrganizationOutcome::Applied(role) if crate::backend::db::organizations::administers(role))
+                    && crate::backend::db::sqlite::credentials::organization(
                         tx,
                         actor,
                         org,
@@ -118,7 +148,7 @@ pub async fn settings(
     .fetch_optional(&mut *tx)
     .await?;
     let mut stored: Value = serde_json::from_str(stored.as_deref().unwrap_or("{}"))?;
-    let site = super::actions::get_actions_settings(&mut *tx).await?;
+    let site = crate::backend::db::sqlite::actions::get_actions_settings(&mut *tx).await?;
     let mut maximum = i64::from(site.artifact_retention_days.unwrap_or(365));
     let mut parent = json!({});
     let mut private = true;
@@ -229,10 +259,15 @@ pub async fn policies_page(
         .filter(|repo| repo.owner_kind == "org" && repo.owner_org_id.is_some())
     {
         let org = repository.owner_org_id.ok_or(Refusal::Missing)?;
-        let definitions = super::organizations::properties::definitions_on(&mut tx, org).await?;
-        let values =
-            super::organizations::properties::values_on(&mut tx, repository.id, &definitions)
+        let definitions =
+            crate::backend::db::sqlite::organizations::properties::definitions_on(&mut tx, org)
                 .await?;
+        let values = crate::backend::db::sqlite::organizations::properties::values_on(
+            &mut tx,
+            repository.id,
+            &definitions,
+        )
+        .await?;
         let properties = values.into_iter().filter_map(|value| value.value.map(|stored| (value.property_name, match stored { crate::backend::db::organizations::properties::PropertyValue::String(value) => vec![value], crate::backend::db::organizations::properties::PropertyValue::Strings(values) => values }))).collect();
         let context = crate::backend::db::rulesets::RepositoryContext {
             id: repository.id,
@@ -243,7 +278,7 @@ pub async fn policies_page(
             is_fork: repository.is_fork,
             properties: &properties,
         };
-        let mut budget = crate::backend::ci::workflows::WorkflowMatchBudget::new();
+        let mut budget = codeyard_model::workflow_glob::WorkflowMatchBudget::new();
         let (mut after, mut total, mut ids) = (0_i64, 0_i64, Vec::new());
         loop {
             let selectors: Vec<PolicySelector> = sqlx::query_as(&format!("SELECT p.id,COALESCE(p.{column}=?1,FALSE) AS own,CASE WHEN p.{column}=?1 THEN NULL ELSE json_extract(p.data,'$.conditions') END AS conditions FROM actions_policies p WHERE (p.{column}=?1 OR p.org_id=?2) AND p.id>?3 ORDER BY p.id LIMIT 100")).bind(scope_id).bind(org).bind(after).fetch_all(&mut *tx).await?;

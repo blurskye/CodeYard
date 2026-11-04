@@ -26,7 +26,6 @@ pub(crate) mod repos;
 pub mod user;
 pub(crate) mod users;
 
-use self::http::{config, middleware, render, static_files};
 use crate::backend::app::AppState;
 use anyhow::Result;
 use axum::{
@@ -46,7 +45,7 @@ use tracing::info;
 
 pub fn create_router(state: AppState) -> Router {
     let state = Arc::new(state);
-    let config = Arc::new(config::WebConfig::from_env());
+    let config = Arc::new(codeyard_model::http_config::WebConfig::from_env());
     let origins = config
         .cors_origins
         .iter()
@@ -106,7 +105,9 @@ pub fn create_router(state: AppState) -> Router {
         .merge(dashboard::router())
         .merge(attestations::router())
         .merge(packages::browser_router())
-        .layer(axum::middleware::from_fn(middleware::bounded_form_body))
+        .layer(axum::middleware::from_fn(
+            crate::backend::api::http::middleware::bounded_form_body,
+        ))
         // Git owns token-only auth, outside browser/session/CSRF and request-body layers.
         .merge(git_http::router())
         .merge(github::router())
@@ -115,9 +116,15 @@ pub fn create_router(state: AppState) -> Router {
         .merge(ci::results::router())
         .merge(ci::oidc::router())
         .merge(graphql::router())
-        .route("/assets/*path", get(static_files::asset))
-        .route("/wasm/*path", get(static_files::asset))
-        .fallback(render::not_found)
+        .route(
+            "/assets/*path",
+            get(crate::backend::api::http::static_files::asset),
+        )
+        .route(
+            "/wasm/*path",
+            get(crate::backend::api::http::static_files::asset),
+        )
+        .fallback(crate::backend::api::http::render::not_found)
         // GitHub-style Maven URLs share the repository prefix; only repository-layout artifacts intercept it.
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -125,11 +132,17 @@ pub fn create_router(state: AppState) -> Router {
         ))
         .with_state(state.clone())
         // Sees every response, including errors. It reads the state, so it sits inside the Extension layer.
-        .layer(axum::middleware::from_fn(render::render_page))
-        .layer(axum::middleware::from_fn(middleware::no_ai_html))
+        .layer(axum::middleware::from_fn(
+            crate::backend::api::http::render::render_page,
+        ))
+        .layer(axum::middleware::from_fn(
+            crate::backend::api::http::middleware::no_ai_html,
+        ))
         .layer(axum::middleware::from_fn(http::traffic::record_views))
         // Outside every handler, so no request keeps a client address that it sent itself.
-        .layer(axum::middleware::from_fn(middleware::stamp_client_address))
+        .layer(axum::middleware::from_fn(
+            crate::backend::api::http::middleware::stamp_client_address,
+        ))
         // Resource middleware extracts this before handlers extract router state.
         .layer(Extension(state))
         .layer(Extension(config))

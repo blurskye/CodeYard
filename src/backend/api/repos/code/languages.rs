@@ -3,7 +3,7 @@ use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::chrome::repository_default_branch;
 use crate::backend::api::repos::responses::repo_store_error;
 use crate::backend::app::AppState;
-use crate::backend::repositories::languages as repo_languages;
+
 use crate::backend::repositories::store::repo_store;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -25,7 +25,7 @@ pub async fn get_repo_languages(
 ) -> Result<Json<Vec<LanguageStatResponse>>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let default_branch = repository_default_branch(&state, &repository).await?;
-    let languages = repo_languages::compute_and_store(
+    let languages = crate::backend::repositories::languages::compute_and_store(
         &state.pool,
         &repo_store(&repository, state.cluster.as_ref()),
         &repository,

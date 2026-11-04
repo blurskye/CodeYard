@@ -1,4 +1,5 @@
-use crate::backend::db::pull_requests::auto_merge::{AutoMerge, AutoMergeRequest};
+use crate::backend::db::pull_requests::auto_merge::AutoMerge;
+use crate::backend::db::pull_requests::auto_merge::AutoMergeRequest;
 use anyhow::Result;
 use sqlx::PgPool;
 
@@ -15,7 +16,7 @@ pub async fn enable(
         .await?
         .ok_or(Refusal::Denied)?;
     anyhow::ensure!(
-        super::super::discussions::lock_exclusive_write_authority(
+        crate::backend::db::postgres::discussions::lock_exclusive_write_authority(
             &mut tx,
             request.enabled_by,
             repo
@@ -26,7 +27,7 @@ pub async fn enable(
     if let Some(token) = request.token_id {
         for scope in ["contents", "pull-requests"] {
             anyhow::ensure!(
-                super::super::users::tokens::repository_write_on(
+                crate::backend::db::postgres::users::tokens::repository_write_on(
                     &mut tx,
                     token,
                     request.enabled_by,

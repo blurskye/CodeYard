@@ -1,6 +1,5 @@
-use super::NotificationEvent;
-use crate::backend::db;
-use crate::backend::db::notifications::events;
+use crate::backend::notifications::NotificationEvent;
+
 use crate::backend::db::notifications::events::EventCursor;
 use serde::Deserialize;
 use serde::Serialize;
@@ -123,11 +122,16 @@ impl NotificationBroadcaster {
     /// as ordinary creation delivers its own: the announcement and the email.
     pub async fn send_created(&self, notifications: &[(i64, i64)]) {
         for &(user_id, notification_id) in notifications {
-            match db::notifications::records::get_notification(&self.pool, user_id, notification_id)
-                .await
+            match crate::backend::db::notifications::records::get_notification(
+                &self.pool,
+                user_id,
+                notification_id,
+            )
+            .await
             {
                 Ok(Some(notification)) => {
-                    super::create::deliver(&self.pool, self, &notification).await;
+                    crate::backend::notifications::create::deliver(&self.pool, self, &notification)
+                        .await;
                 }
                 Ok(None) => {}
                 Err(error) => {
@@ -150,7 +154,11 @@ impl NotificationBroadcaster {
             return;
         };
         if !matches!(
-            tokio::time::timeout(ANNOUNCE_TIMEOUT, events::announce(&self.pool, &payload)).await,
+            tokio::time::timeout(
+                ANNOUNCE_TIMEOUT,
+                crate::backend::db::notifications::events::announce(&self.pool, &payload)
+            )
+            .await,
             Ok(Ok(()))
         ) {
             tracing::warn!("Notification announcement unavailable");
@@ -204,7 +212,7 @@ async fn poll(
         };
         let full = match received {
             Ok(Ok(payloads)) => {
-                let full = payloads.len() == events::BATCH_SIZE;
+                let full = payloads.len() == crate::backend::db::notifications::events::BATCH_SIZE;
                 wait = if payloads.is_empty() {
                     (wait * 2).min(Duration::from_millis(500))
                 } else {
@@ -251,7 +259,7 @@ async fn poll(
         if tokio::time::Instant::now() >= prune_at {
             tokio::select! {
                 _ = stop.changed() => return,
-                result = tokio::time::timeout(Duration::from_secs(5), events::prune(&pool)) => {
+                result = tokio::time::timeout(Duration::from_secs(5), crate::backend::db::notifications::events::prune(&pool)) => {
                     prune_at = match result {
                         Ok(Ok(1024)) => tokio::time::Instant::now(),
                         result => {

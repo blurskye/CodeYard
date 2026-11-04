@@ -1,4 +1,5 @@
-use crate::backend::db::actions::{ActionsSettings, RepoActionsSettings};
+use crate::backend::db::actions::ActionsSettings;
+use crate::backend::db::actions::RepoActionsSettings;
 use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
 use anyhow::Result;
 use sqlx::SqlitePool;
@@ -10,10 +11,11 @@ pub async fn set_cache_limit(
     kind: crate::backend::db::actions::CacheLimit,
     value: i32,
 ) -> Result<()> {
-    use crate::backend::db::actions::{CacheLimit, CachePolicyError};
+    use crate::backend::db::actions::CacheLimit;
+    use crate::backend::db::actions::CachePolicyError;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
         CachePolicyError::Denied
     );
     let column = kind.column();
@@ -29,7 +31,7 @@ pub async fn set_cache_limit(
         .bind(repo).bind(value).execute(&mut *tx).await?;
     match kind {
         CacheLimit::Storage => {
-            super::action_objects::enforce_cache_limit(
+            crate::backend::db::sqlite::action_objects::enforce_cache_limit(
                 &mut tx,
                 repo,
                 i64::from(value) * 1024 * 1024 * 1024,
@@ -75,8 +77,9 @@ pub async fn save_actions_settings(
 ) -> Result<bool> {
     settings.validate_engines()?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::users::transitions::active_admin(&mut tx, actor).await?
-        || !super::users::transitions::live_session(&mut tx, actor, session).await?
+    if !crate::backend::db::sqlite::users::transitions::active_admin(&mut tx, actor).await?
+        || !crate::backend::db::sqlite::users::transitions::live_session(&mut tx, actor, session)
+            .await?
     {
         return Ok(false);
     }
@@ -123,7 +126,7 @@ pub async fn save_actions_settings(
                 .fetch_all(&mut *tx)
                 .await?;
         for repo in cached {
-            super::action_objects::apply_cache_policy(&mut tx, repo).await?;
+            crate::backend::db::sqlite::action_objects::apply_cache_policy(&mut tx, repo).await?;
         }
     }
     sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES(?1,'node.actions_settings','actions_settings',1,?2)")
@@ -158,9 +161,16 @@ pub async fn set_repo_enabled(
     let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor.user_id, repo).await?
-            && super::credentials::repository(&mut tx, &actor, repo, "administration", true)
-                .await?,
+        crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor.user_id, repo)
+            .await?
+            && crate::backend::db::sqlite::credentials::repository(
+                &mut tx,
+                &actor,
+                repo,
+                "administration",
+                true
+            )
+            .await?,
         Refusal::Denied
     );
     sqlx::query("INSERT INTO repo_actions_settings(repo_id,enabled) VALUES($1,$2) ON CONFLICT(repo_id) DO UPDATE SET enabled=EXCLUDED.enabled,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
@@ -181,9 +191,20 @@ pub async fn save_repo_actions_settings(
     let actor = actor_id.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor.user_id, repo_id).await?
-            && super::credentials::repository(&mut tx, &actor, repo_id, "administration", true)
-                .await?,
+        crate::backend::db::sqlite::discussions::lock_admin_authority(
+            &mut tx,
+            actor.user_id,
+            repo_id
+        )
+        .await?
+            && crate::backend::db::sqlite::credentials::repository(
+                &mut tx,
+                &actor,
+                repo_id,
+                "administration",
+                true
+            )
+            .await?,
         Refusal::Denied
     );
     let result = sqlx::query(
@@ -218,7 +239,7 @@ pub async fn save_repo_actions_settings(
         .execute(&mut *tx)
         .await?;
     // New cache limits apply to the caches already stored, as the cache-policy endpoints do.
-    super::action_objects::apply_cache_policy(&mut tx, repo_id).await?;
+    crate::backend::db::sqlite::action_objects::apply_cache_policy(&mut tx, repo_id).await?;
     tx.commit().await?;
     Ok(())
 }

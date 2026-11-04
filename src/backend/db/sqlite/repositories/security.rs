@@ -1,5 +1,9 @@
-use crate::backend::db::repositories::security::{NewReport, Refusal, Reply, Report, Thread};
+use crate::backend::db::repositories::security::Reply;
+use crate::backend::db::repositories::security::Report;
+use crate::backend::db::repositories::security::Thread;
 use anyhow::Result;
+use codeyard_model::security_reports::NewReport;
+use codeyard_model::security_reports::Refusal;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
 async fn authority(
@@ -17,7 +21,10 @@ async fn authority(
     }
     let administrator =
         crate::backend::db::sqlite::discussions::lock_archive_authority(tx, actor, repo).await?;
-    let access = super::access::user_repo_access_in_transaction(tx, actor, repo).await?;
+    let access = crate::backend::db::sqlite::repositories::access::user_repo_access_in_transaction(
+        tx, actor, repo,
+    )
+    .await?;
     anyhow::ensure!(administrator || access.can_read(), Refusal::Denied);
     Ok(administrator)
 }
@@ -52,12 +59,18 @@ pub async fn set_enabled(
         Refusal::Denied
     );
     anyhow::ensure!(
-        super::super::credentials::repository(&mut tx, &authority, repo, "administration", true)
-            .await?,
+        crate::backend::db::sqlite::credentials::repository(
+            &mut tx,
+            &authority,
+            repo,
+            "administration",
+            true
+        )
+        .await?,
         Refusal::Denied
     );
     if let Some(configuration) =
-        super::super::code_security::repository_configuration(&mut *tx, repo).await?
+        crate::backend::db::sqlite::code_security::repository_configuration(&mut *tx, repo).await?
     {
         if let Some(fixed) =
             crate::backend::db::code_security::private_reporting(&configuration.settings, true)?
@@ -174,7 +187,7 @@ pub async fn reply(
     id: i64,
     body: &str,
 ) -> Result<i64> {
-    crate::backend::db::repositories::security::validate_body(body)?;
+    codeyard_model::security_reports::validate_body(body)?;
     let retained = actor.into();
     let actor = retained.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;

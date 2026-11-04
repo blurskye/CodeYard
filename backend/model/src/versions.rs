@@ -183,7 +183,7 @@ fn maven_items(raw: &str) -> Option<Vec<MavenItem>> {
             MavenItem::Word(s.to_owned())
         })
     }
-    if raw.len() > crate::backend::db::dependency_inventory::MAX_VERSION_BYTES {
+    if raw.len() > crate::dependency_inventory::MAX_VERSION_BYTES {
         return None;
     }
     let raw = raw.to_ascii_lowercase();
@@ -333,8 +333,8 @@ fn prerelease(a: &str, b: &str) -> Ordering {
     a.len().cmp(&b.len())
 }
 pub fn compare(ecosystem: &str, a: &str, b: &str) -> Option<Ordering> {
-    if a.len() > crate::backend::db::dependency_inventory::MAX_VERSION_BYTES
-        || b.len() > crate::backend::db::dependency_inventory::MAX_VERSION_BYTES
+    if a.len() > crate::dependency_inventory::MAX_VERSION_BYTES
+        || b.len() > crate::dependency_inventory::MAX_VERSION_BYTES
     {
         return None;
     }

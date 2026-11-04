@@ -1,4 +1,4 @@
-use crate::backend::db::postgres::discussions::{self, AUTHORITY_DENIED};
+use crate::backend::db::postgres::discussions::AUTHORITY_DENIED;
 use crate::backend::db::pull_requests::reviews::DiscussionItem;
 use crate::backend::db::pull_requests::reviews::DiscussionRef;
 use crate::backend::db::pull_requests::reviews::NewPullRequestComment;
@@ -51,7 +51,12 @@ pub async fn insert_comment(
     expected_review: Option<i64>,
 ) -> Result<(PullRequestComment, bool)> {
     let mut tx = pool.begin().await?;
-    discussions::lock_pull_request_contribution(&mut tx, input.author_id, input.pr_id).await?;
+    crate::backend::db::postgres::discussions::lock_pull_request_contribution(
+        &mut tx,
+        input.author_id,
+        input.pr_id,
+    )
+    .await?;
     if let Some((head, base)) = input.expected_revisions {
         let current: (String, String) =
             sqlx::query_as("SELECT head_sha, base_sha FROM pull_requests WHERE id=$1")
@@ -254,9 +259,9 @@ pub async fn list_pull_request_inline_comments(
     pool: &PgPool,
     pr_id: i64,
 ) -> Result<PullRequestInlineComments> {
-    use crate::backend::db::pull_requests::reviews::{
-        budgeted_comment_ids, MAX_INLINE_COMMENTS, MAX_INLINE_COMMENT_BYTES,
-    };
+    use crate::backend::db::pull_requests::reviews::budgeted_comment_ids;
+    use crate::backend::db::pull_requests::reviews::MAX_INLINE_COMMENTS;
+    use crate::backend::db::pull_requests::reviews::MAX_INLINE_COMMENT_BYTES;
     let mut tx = pool
         .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ")
         .await?;
@@ -280,9 +285,8 @@ pub async fn list_pending_review_comments(
     pr_id: i64,
     author_id: i64,
 ) -> Result<PullRequestInlineComments> {
-    use crate::backend::db::pull_requests::reviews::{
-        budgeted_comment_ids, MAX_REVIEW_COMMENT_PAGE_BYTES,
-    };
+    use crate::backend::db::pull_requests::reviews::budgeted_comment_ids;
+    use crate::backend::db::pull_requests::reviews::MAX_REVIEW_COMMENT_PAGE_BYTES;
     let mut tx = pool
         .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ")
         .await?;
@@ -328,10 +332,10 @@ pub async fn list_review_comments_page(
     review_ids: &[i64],
     offset: i64,
 ) -> Result<crate::backend::db::pull_requests::reviews::ReviewCommentPage> {
-    use crate::backend::db::pull_requests::reviews::{
-        budgeted_comment_ids, ReviewCommentPage, MAX_REVIEW_COMMENTS_PAGE,
-        MAX_REVIEW_COMMENT_PAGE_BYTES,
-    };
+    use crate::backend::db::pull_requests::reviews::budgeted_comment_ids;
+    use crate::backend::db::pull_requests::reviews::ReviewCommentPage;
+    use crate::backend::db::pull_requests::reviews::MAX_REVIEW_COMMENTS_PAGE;
+    use crate::backend::db::pull_requests::reviews::MAX_REVIEW_COMMENT_PAGE_BYTES;
     let mut tx = pool
         .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ")
         .await?;
@@ -502,7 +506,10 @@ pub async fn get_pending_review(
 /// moves only when there was a review to delete.
 pub async fn discard_pending_review(pool: &PgPool, pr_id: i64, author_id: i64) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    discussions::lock_pull_request_contribution(&mut tx, author_id, pr_id).await?;
+    crate::backend::db::postgres::discussions::lock_pull_request_contribution(
+        &mut tx, author_id, pr_id,
+    )
+    .await?;
     let result = sqlx::query(
         "DELETE FROM pr_reviews WHERE pull_request_id = $1 AND author_id = $2 AND state = 'pending'",
     )
@@ -638,7 +645,12 @@ pub async fn set_pull_request_comment_resolved(
     resolver_id: i64,
 ) -> Result<Option<PullRequestComment>> {
     let mut tx = pool.begin().await?;
-    discussions::lock_comment_resolution_authority(&mut tx, resolver_id, pr_id).await?;
+    crate::backend::db::postgres::discussions::lock_comment_resolution_authority(
+        &mut tx,
+        resolver_id,
+        pr_id,
+    )
+    .await?;
     let comment = sqlx::query_as::<_, PullRequestComment>(
         "UPDATE pr_comments SET resolved_at = CASE WHEN $3 THEN NOW() END, resolved_by_id = CASE WHEN $3 THEN $4 END
          WHERE id = $1 AND pull_request_id = $2
@@ -719,11 +731,15 @@ pub async fn save_review_batch(
     let commit_sha = commit_sha.map(str::to_ascii_lowercase);
     let mut tx = pool.begin().await?;
     // Any reader may review; the merge gate counts only writers' approvals.
-    discussions::lock_pull_request_contribution(&mut tx, author_id, pr_id).await?;
+    crate::backend::db::postgres::discussions::lock_pull_request_contribution(
+        &mut tx, author_id, pr_id,
+    )
+    .await?;
     let (author, current_state, current_head) =
-        discussions::read_pull_request_review_state(&mut tx, pr_id).await?;
+        crate::backend::db::postgres::discussions::read_pull_request_review_state(&mut tx, pr_id)
+            .await?;
     anyhow::ensure!(
-        super::super::users::transitions::credential_live(
+        crate::backend::db::postgres::users::transitions::credential_live(
             &mut tx,
             author_id,
             input.credential,
@@ -784,7 +800,7 @@ pub async fn save_review_batch(
             .await?;
     if let Some(token) = input.token {
         anyhow::ensure!(
-            super::super::users::tokens::repository_write_on(
+            crate::backend::db::postgres::users::tokens::repository_write_on(
                 &mut tx,
                 token,
                 author_id,
@@ -908,8 +924,13 @@ pub async fn create_pending_review(
     commit_sha: &str,
 ) -> Result<PullRequestReview> {
     let mut tx = pool.begin().await?;
-    discussions::lock_pull_request_contribution(&mut tx, author_id, pr_id).await?;
-    let (_, state, head) = discussions::read_pull_request_review_state(&mut tx, pr_id).await?;
+    crate::backend::db::postgres::discussions::lock_pull_request_contribution(
+        &mut tx, author_id, pr_id,
+    )
+    .await?;
+    let (_, state, head) =
+        crate::backend::db::postgres::discussions::read_pull_request_review_state(&mut tx, pr_id)
+            .await?;
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews WHERE pull_request_id=$1 AND author_id=$2 AND state='pending')").bind(pr_id).bind(author_id).fetch_one(&mut *tx).await?;
     anyhow::ensure!(
         state == "open" && head.eq_ignore_ascii_case(commit_sha) && !exists,
@@ -930,7 +951,10 @@ pub async fn edit_review_body(
     body: &str,
 ) -> Result<Option<PullRequestReview>> {
     let mut tx = pool.begin().await?;
-    discussions::lock_pull_request_contribution(&mut tx, author_id, pr_id).await?;
+    crate::backend::db::postgres::discussions::lock_pull_request_contribution(
+        &mut tx, author_id, pr_id,
+    )
+    .await?;
     let review = sqlx::query_as("UPDATE pr_reviews SET body=$4 WHERE id=$1 AND pull_request_id=$2 AND author_id=$3 RETURNING *")
         .bind(review_id).bind(pr_id).bind(author_id).bind(body).fetch_optional(&mut *tx).await?;
     if review.is_some() {
@@ -947,7 +971,10 @@ pub async fn delete_pending_review_by_id(
     review_id: i64,
 ) -> Result<Option<PullRequestReview>> {
     let mut tx = pool.begin().await?;
-    discussions::lock_pull_request_contribution(&mut tx, author_id, pr_id).await?;
+    crate::backend::db::postgres::discussions::lock_pull_request_contribution(
+        &mut tx, author_id, pr_id,
+    )
+    .await?;
     let review = sqlx::query_as("DELETE FROM pr_reviews WHERE id=$1 AND pull_request_id=$2 AND author_id=$3 AND state='pending' RETURNING *")
         .bind(review_id).bind(pr_id).bind(author_id).fetch_optional(&mut *tx).await?;
     if review.is_some() {
@@ -1113,8 +1140,12 @@ pub async fn dismiss_pull_request_review(
     reason: Option<&str>,
 ) -> Result<PullRequestReview> {
     let mut tx = pool.begin().await?;
-    let pr_id =
-        discussions::lock_review_dismissal_authority(&mut tx, dismissed_by_id, review_id).await?;
+    let pr_id = crate::backend::db::postgres::discussions::lock_review_dismissal_authority(
+        &mut tx,
+        dismissed_by_id,
+        review_id,
+    )
+    .await?;
     let review = sqlx::query_as::<_, PullRequestReview>(
         r#"
         UPDATE pr_reviews
@@ -1143,7 +1174,10 @@ pub async fn request_pull_request_reviewer(
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
     let (author, state, _) =
-        discussions::lock_pull_request_review_authority(&mut tx, actor_id, pr_id).await?;
+        crate::backend::db::postgres::discussions::lock_pull_request_review_authority(
+            &mut tx, actor_id, pr_id,
+        )
+        .await?;
     anyhow::ensure!(
         state == "open",
         crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview
@@ -1154,7 +1188,11 @@ pub async fn request_pull_request_reviewer(
         .await?;
     // A request must not disclose a private discussion to an ineligible target.
     anyhow::ensure!(
-        user_id != author && discussions::lock_write_authority(&mut tx, user_id, repo_id).await?,
+        user_id != author
+            && crate::backend::db::postgres::discussions::lock_write_authority(
+                &mut tx, user_id, repo_id
+            )
+            .await?,
         AUTHORITY_DENIED
     );
     let result = sqlx::query(
@@ -1176,7 +1214,12 @@ pub async fn request_code_owner_reviews(
     owners: &[i64],
 ) -> Result<Vec<User>> {
     let mut tx = pool.begin().await?;
-    discussions::require_contribution_authority(&mut tx, actor_id, pull.repo_id).await?;
+    crate::backend::db::postgres::discussions::require_contribution_authority(
+        &mut tx,
+        actor_id,
+        pull.repo_id,
+    )
+    .await?;
     anyhow::ensure!(
         owners.len() <= codeyard_model::repositories::MAX_REVIEWERS,
         "Too many code owners"
@@ -1226,7 +1269,10 @@ pub async fn remove_pull_request_reviewer(
     user_id: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    discussions::lock_pull_request_review_authority(&mut tx, actor_id, pr_id).await?;
+    crate::backend::db::postgres::discussions::lock_pull_request_review_authority(
+        &mut tx, actor_id, pr_id,
+    )
+    .await?;
     let result =
         sqlx::query("DELETE FROM pr_reviewers WHERE pull_request_id = $1 AND user_id = $2")
             .bind(pr_id)
@@ -1342,10 +1388,16 @@ pub async fn edit_pull_request_comment(
 ) -> Result<Option<PullRequestComment>> {
     let mut tx = pool.begin().await?;
     // Repository authority before the comment row, as in edit_issue_comment.
-    if !discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? {
+    if !crate::backend::db::postgres::discussions::lock_contribution_authority(
+        &mut tx, actor_id, repo_id,
+    )
+    .await?
+    {
         return Ok(None);
     }
-    let writer = discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
+    let writer =
+        crate::backend::db::postgres::discussions::lock_write_authority(&mut tx, actor_id, repo_id)
+            .await?;
     let author = scoped_comment_author(&mut tx, repo_id, pr_id, comment_id, writer).await?;
     if author.is_none()
         || (author != Some(actor_id) && !writer)
@@ -1377,10 +1429,16 @@ pub async fn delete_pull_request_comment(
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
     // Repository authority first, then the comment, as in edit_pull_request_comment.
-    if !discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? {
+    if !crate::backend::db::postgres::discussions::lock_contribution_authority(
+        &mut tx, actor_id, repo_id,
+    )
+    .await?
+    {
         return Ok(false);
     }
-    let writer = discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
+    let writer =
+        crate::backend::db::postgres::discussions::lock_write_authority(&mut tx, actor_id, repo_id)
+            .await?;
     let Some(author) = scoped_comment_author(&mut tx, repo_id, pr_id, comment_id, writer).await?
     else {
         return Ok(false);

@@ -1,7 +1,7 @@
-use super::inbox::json_action;
-use super::inbox::native_action;
-use super::inbox::BulkUpdateResponse;
 use crate::backend::api::http::error::ApiError;
+use crate::backend::api::notifications::inbox::json_action;
+use crate::backend::api::notifications::inbox::native_action;
+use crate::backend::api::notifications::inbox::BulkUpdateResponse;
 use crate::backend::app::AppState;
 use crate::backend::db::notifications::records::NotificationInboxAction;
 use axum::extract::OriginalUri;

@@ -18,8 +18,10 @@ mod workflows;
 pub(super) use jobs::annotations as job_annotations;
 pub(super) use workflows::admission_error;
 
-use super::{Error, Result};
-use crate::backend::{app::AppState, db};
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
 use axum::{routing::MethodRouter, Router};
 use std::{collections::HashMap, sync::Arc};
 
@@ -32,7 +34,7 @@ fn id(params: &HashMap<String, String>, key: &str) -> Result<i64> {
 }
 
 async fn run(state: &AppState, repo: i64, id: i64) -> Result<codeyard_db_core::models::CiRun> {
-    db::action_runs::get(&state.pool, repo, id, None)
+    crate::backend::db::action_runs::get(&state.pool, repo, id, None)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)

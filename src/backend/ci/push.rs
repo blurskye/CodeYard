@@ -1,12 +1,16 @@
 //! `push` runs for refs the server moves itself: web editor and file API saves,
 //! merges, and new branches and tags. Receive hooks share the same filtering policy.
-use super::{
-    infer_pipeline_from_workflow_path, list_workflows_for_ref,
-    workflows::{should_skip_run_from_message, WorkflowMatchBudget},
-    CiRunRequest, CiRuns, WorkflowDefinition,
-};
-use crate::backend::repositories::store::{repo_store, RepoStore, MAX_COMMIT_PAGE_SIZE};
-use crate::backend::webhooks::payloads;
+use crate::backend::ci::infer_pipeline_from_workflow_path;
+use crate::backend::ci::list_workflows_for_ref;
+use crate::backend::ci::workflows::should_skip_run_from_message;
+use crate::backend::ci::CiRunRequest;
+use crate::backend::ci::CiRuns;
+use crate::backend::ci::WorkflowDefinition;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::RepoStore;
+use crate::backend::repositories::store::MAX_COMMIT_PAGE_SIZE;
+use codeyard_model::workflow_glob::WorkflowMatchBudget;
+
 use anyhow::{Context, Result};
 use codeyard_db_core::models::Repository;
 use codeyard_git::CommitInfo;
@@ -30,13 +34,13 @@ pub(crate) async fn push_document(
     let sender = crate::backend::db::users::accounts::get_user_by_id(pool, actor_id)
         .await?
         .context("push sender is unavailable")?;
-    let sender = payloads::Person::of(&sender);
+    let sender = crate::backend::webhooks::payloads::Person::of(&sender);
     if is_zero_oid(&update.new) {
-        return Ok(payloads::push(
+        return Ok(crate::backend::webhooks::payloads::push(
             &update.reference,
             update.old.as_deref().unwrap_or(ZERO_OID),
             ZERO_OID,
-            &payloads::PushedCommits {
+            &crate::backend::webhooks::payloads::PushedCommits {
                 commits: Vec::new(),
                 head: None,
                 forced: false,
@@ -67,30 +71,36 @@ pub(crate) async fn push_document(
         ),
     };
     // Bounded as in the push webhook, so a huge message cannot outgrow the run's claim.
-    let pushed = |commit: &CommitInfo| payloads::PushedCommit {
+    let pushed = |commit: &CommitInfo| crate::backend::webhooks::payloads::PushedCommit {
         id: commit.sha.clone(),
         tree_id: commit.tree_sha.clone(),
-        message: payloads::bounded_text(&commit.message, 4096),
+        message: crate::backend::webhooks::payloads::bounded_text(&commit.message, 4096),
         time: commit.timestamp,
-        author_name: payloads::bounded_text(&commit.author_name, 256),
-        author_email: payloads::bounded_text(&commit.author_email, 256),
-        committer_name: payloads::bounded_text(&commit.committer_name, 256),
-        committer_email: payloads::bounded_text(&commit.committer_email, 256),
+        author_name: crate::backend::webhooks::payloads::bounded_text(&commit.author_name, 256),
+        author_email: crate::backend::webhooks::payloads::bounded_text(&commit.author_email, 256),
+        committer_name: crate::backend::webhooks::payloads::bounded_text(
+            &commit.committer_name,
+            256,
+        ),
+        committer_email: crate::backend::webhooks::payloads::bounded_text(
+            &commit.committer_email,
+            256,
+        ),
         committer_time: commit.committer_timestamp,
         distinct: true,
         files: None,
     };
-    let head_commit = payloads::PushedCommit {
+    let head_commit = crate::backend::webhooks::payloads::PushedCommit {
         distinct: commits.iter().any(|commit| commit.sha == head.sha),
         ..pushed(&head)
     };
-    let commits = payloads::PushedCommits {
+    let commits = crate::backend::webhooks::payloads::PushedCommits {
         commits: commits.iter().map(pushed).collect(),
         head: Some(head_commit),
         forced,
     };
     let old = update.old.clone().unwrap_or_else(|| ZERO_OID.to_owned());
-    Ok(payloads::push(
+    Ok(crate::backend::webhooks::payloads::push(
         &update.reference,
         &old,
         &update.new,
@@ -320,16 +330,4 @@ fn filters_paths(workflow: &WorkflowDefinition) -> bool {
         .push
         .as_ref()
         .is_some_and(|filter| !filter.paths.is_empty() || !filter.paths_ignore.is_empty())
-}
-
-/// The branch name a run is stored and shown with. A push arrives as the full ref
-/// (`refs/heads/main`) and is stored as `main`, like a manual run. A tag keeps its
-/// full ref so it cannot be mistaken for a branch of the same name. Branches whose
-/// short names start with `refs/` also keep their full ref to preserve their kind.
-pub fn branch_name(reference: &str) -> &str {
-    match reference.strip_prefix("refs/heads/") {
-        // Keep the kind of branches whose short name looks like a canonical ref.
-        Some(name) if !name.starts_with("refs/") => name,
-        _ => reference,
-    }
 }

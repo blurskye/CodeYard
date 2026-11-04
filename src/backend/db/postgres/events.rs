@@ -1,4 +1,6 @@
-use crate::backend::db::events::{EventEntry, EventScope, EventViewer};
+use crate::backend::db::events::EventEntry;
+use crate::backend::db::events::EventScope;
+use crate::backend::db::events::EventViewer;
 use anyhow::Result;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -40,7 +42,7 @@ pub async fn list_events(
         None => (None, None, None),
     };
     let offset = offset.max(0);
-    let readable = super::repositories::access::readable_condition();
+    let readable = crate::backend::db::postgres::repositories::access::readable_condition();
     let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "$9");
     Ok(sqlx::query_as(&format!("WITH RECURSIVE ancestors(id,parent) AS (
         SELECT id,forked_from_id FROM repositories WHERE $2='network' AND id=$3

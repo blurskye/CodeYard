@@ -3,7 +3,7 @@ use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::repositories::pull_requests::reviews::RequestReviewerRequest;
 use axum::extract::Path;
 use axum::extract::State;
@@ -29,7 +29,7 @@ pub async fn request_reviewer(
         req,
     )
     .await
-    .map_err(super::operation_error)?;
+    .map_err(crate::backend::api::repos::pulls::operation_error)?;
 
     let status = if result.created {
         StatusCode::CREATED
@@ -64,7 +64,7 @@ pub async fn remove_requested_reviewer(
         username,
     )
     .await
-    .map_err(super::operation_error)?;
+    .map_err(crate::backend::api::repos::pulls::operation_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -101,25 +101,30 @@ pub async fn list_requested_reviewers(
     headers: HeaderMap,
 ) -> Result<Json<Vec<RequestedReviewer>>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
-    let pull_request =
-        db::pull_requests::records::get_pull_request(&state.pool, repository.id, number)
-            .await
-            .map_err(|_| storage_unavailable())?
-            .ok_or_else(|| {
-                (
-                    StatusCode::NOT_FOUND,
-                    Json(ApiError::new("not_found", "Pull request not found")),
-                )
-            })?;
+    let pull_request = crate::backend::db::pull_requests::records::get_pull_request(
+        &state.pool,
+        repository.id,
+        number,
+    )
+    .await
+    .map_err(|_| storage_unavailable())?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiError::new("not_found", "Pull request not found")),
+        )
+    })?;
 
-    let users =
-        db::pull_requests::reviews::list_pull_request_reviewers(&state.pool, pull_request.id)
-            .await
-            .map_err(|_| storage_unavailable())?;
+    let users = crate::backend::db::pull_requests::reviews::list_pull_request_reviewers(
+        &state.pool,
+        pull_request.id,
+    )
+    .await
+    .map_err(|_| storage_unavailable())?;
 
     let viewer =
         crate::backend::api::http::session::get_optional_user(&state.pool, &headers).await?;
-    let teams = db::pull_requests::team_reviewers::list(
+    let teams = crate::backend::db::pull_requests::team_reviewers::list(
         &state.pool,
         repository.id,
         Some(pull_request.id),

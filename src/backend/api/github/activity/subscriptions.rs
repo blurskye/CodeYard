@@ -1,5 +1,11 @@
-use super::{auth, engagement_error, repository, Error, Pagination, Result};
-use crate::backend::{app::AppState, db, repositories::engagement, webhooks::payloads};
+use crate::backend::api::github::activity::auth;
+use crate::backend::api::github::activity::engagement_error;
+use crate::backend::api::github::activity::repository;
+use crate::backend::api::github::activity::Error;
+use crate::backend::api::github::activity::Pagination;
+use crate::backend::api::github::activity::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     body::Bytes,
     extract::{OriginalUri, Path, Query, State},
@@ -13,10 +19,10 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 fn document(owner: &str, name: &str, watch: &codeyard_db_core::models::Watch) -> Value {
-    let url = super::super::repo_url(owner, name);
+    let url = codeyard_model::urls::repo_url(owner, name);
     json!({"subscribed":matches!(watch.level.as_str(),"watching"|"custom"),"ignored":watch.level=="ignoring","reason":null,"created_at":watch.created_at,"url":format!("{url}/subscription"),"repository_url":url})
 }
-use super::super::empty;
+use crate::backend::api::github::empty;
 
 async fn read(
     State(state): State<Arc<AppState>>,
@@ -40,10 +46,14 @@ async fn read_value(
         .ok_or_else(auth::required)?
         .user;
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let watch = db::repositories::engagement::get_repo_watch(&state.pool, actor.id, repo.id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let watch = crate::backend::db::repositories::engagement::get_repo_watch(
+        &state.pool,
+        actor.id,
+        repo.id,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .ok_or_else(Error::missing)?;
     Ok(Json(document(&owner, &name, &watch)))
 }
 #[derive(Default, Deserialize)]
@@ -72,7 +82,7 @@ async fn set_value(
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer.ok_or_else(auth::required)?;
-    let input: Subscription = super::super::optional_json::decode(&body)
+    let input: Subscription = crate::backend::api::github::optional_json::decode(&body)
         .map_err(|_| Error::invalid("Invalid subscription"))?
         .unwrap_or_default();
     let subscribed = input.subscribed.unwrap_or(false);
@@ -82,7 +92,7 @@ async fn set_value(
             "A subscription cannot be both subscribed and ignored",
         ));
     }
-    engagement::set_subscription(
+    crate::backend::repositories::engagement::set_subscription(
         &state.pool,
         &state.notification_broadcaster,
         actor.database_actor(),
@@ -92,10 +102,14 @@ async fn set_value(
     )
     .await
     .map_err(engagement_error)?;
-    let watch = db::repositories::engagement::get_repo_watch(&state.pool, actor.user.id, repo.id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(|| Error::unavailable(()))?;
+    let watch = crate::backend::db::repositories::engagement::get_repo_watch(
+        &state.pool,
+        actor.user.id,
+        repo.id,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .ok_or_else(|| Error::unavailable(()))?;
     Ok(Json(document(&owner, &name, &watch)))
 }
 async fn remove(
@@ -105,7 +119,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer.ok_or_else(auth::required)?;
-    engagement::set_level(
+    crate::backend::repositories::engagement::set_level(
         &state.pool,
         actor.database_actor(),
         repo.id,
@@ -125,7 +139,7 @@ async fn watchers(
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let (offset, limit) = page.window()?;
-    let users = db::repositories::engagement::list_repo_watchers(
+    let users = crate::backend::db::repositories::engagement::list_repo_watchers(
         &state.pool,
         repo.id,
         (limit + 1) as i64,
@@ -134,7 +148,11 @@ async fn watchers(
     .await
     .map_err(Error::unavailable)?;
     let has_next = users.len() > limit;
-    let values = users.iter().take(limit).map(payloads::user).collect();
+    let values = users
+        .iter()
+        .take(limit)
+        .map(crate::backend::webhooks::payloads::user)
+        .collect();
     page.response(&uri, values, has_next)
 }
 async fn collection(
@@ -146,14 +164,14 @@ async fn collection(
 ) -> Result<Response> {
     let viewer = auth::authenticate(&state, &headers, username.is_none()).await?;
     let user = match username {
-        Some(name) => db::users::accounts::get_user_by_username(&state.pool, &name)
+        Some(name) => crate::backend::db::users::accounts::get_user_by_username(&state.pool, &name)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?,
         None => viewer.as_ref().ok_or_else(auth::required)?.user.clone(),
     };
     let (offset, limit) = page.window()?;
-    let rows = db::repositories::engagement::list_watched_repositories(
+    let rows = crate::backend::db::repositories::engagement::list_watched_repositories(
         &state.pool,
         user.id,
         viewer.as_ref().map(|a| a.user.id),
@@ -176,7 +194,9 @@ async fn collection(
         .take(limit)
         .filter(|repo| readable.contains(&repo.id))
     {
-        items.push(super::super::repos::document(&state, repo, viewer.as_ref()).await?);
+        items.push(
+            crate::backend::api::github::repos::document(&state, repo, viewer.as_ref()).await?,
+        );
     }
     page.response(&uri, items, has_next)
 }

@@ -1,8 +1,8 @@
 //! Leased proposals consume the inventory and alerts maintained by the vulnerability worker.
-use super::{npm, registry::Client};
+
 use crate::backend::ci::CiRuns;
-use crate::backend::db;
-use crate::backend::db::repositories::dependencies as records;
+use crate::backend::repositories::dependencies::registry::Client;
+
 use crate::backend::db::repositories::dependencies::Feature;
 use crate::backend::db::repositories::dependencies::Job;
 use crate::backend::db::repositories::dependencies::Refusal;
@@ -58,33 +58,52 @@ async fn process(
     client: &Client,
     job: &Job,
 ) -> Result<()> {
-    records::check_job(pool, job, Feature::Alerts).await?;
-    let repository = db::repositories::records::get_repository_by_id(pool, job.repo_id)
-        .await?
-        .ok_or(Refusal::Missing)?;
+    crate::backend::db::repositories::dependencies::check_job(pool, job, Feature::Alerts).await?;
+    let repository =
+        crate::backend::db::repositories::records::get_repository_by_id(pool, job.repo_id)
+            .await?
+            .ok_or(Refusal::Missing)?;
     let store = repo_store(&repository, ci.cluster.as_ref());
     let refs = store.refs_from_primary().await?;
     if refs.is_empty() {
         return Err(Unsupported("No default commit exists yet").into());
     }
     let stored = store.info().await?.default_branch;
-    let branch = super::super::reads::default_branch(&refs, &stored, &repository.default_branch);
+    let branch = crate::backend::repositories::reads::default_branch(
+        &refs,
+        &stored,
+        &repository.default_branch,
+    );
     let sha = refs
         .get(&format!("refs/heads/{branch}"))
         .context("The default branch is missing")?
         .clone();
     // A proposal must use the shared scanner's current pinned inventory, never its own scan.
-    records::complete_scan(pool, job, &sha).await?;
+    crate::backend::db::repositories::dependencies::complete_scan(pool, job, &sha).await?;
     if job.updates_actor_id.is_some() {
         // Only proposals need an npm lockfile. Without a usable one they are skipped, and the
         // alerts from the shared scan stay active. A storage failure is still retried.
         let (manifest, lock) = match (
-            file(&store, &sha, "package.json", npm::MAX_MANIFEST).await,
-            file(&store, &sha, "package-lock.json", npm::MAX_LOCK_BYTES).await,
+            file(
+                &store,
+                &sha,
+                "package.json",
+                crate::backend::repositories::dependencies::npm::MAX_MANIFEST,
+            )
+            .await,
+            file(
+                &store,
+                &sha,
+                "package-lock.json",
+                crate::backend::repositories::dependencies::npm::MAX_LOCK_BYTES,
+            )
+            .await,
         ) {
             (Ok(manifest), Ok(lock))
-                if npm::Lockfile::parse(&manifest, &lock)
-                    .is_ok_and(|parsed| parsed.unsupported == 0) =>
+                if crate::backend::repositories::dependencies::npm::Lockfile::parse(
+                    &manifest, &lock,
+                )
+                .is_ok_and(|parsed| parsed.unsupported == 0) =>
             {
                 (manifest, lock)
             }
@@ -97,9 +116,11 @@ async fn process(
                 return Ok(());
             }
         };
-        match records::check_job(pool, job, Feature::Updates).await {
+        match crate::backend::db::repositories::dependencies::check_job(pool, job, Feature::Updates)
+            .await
+        {
             Ok(()) => {
-                super::updates::propose(
+                crate::backend::repositories::dependencies::updates::propose(
                     pool,
                     ci,
                     broadcaster,
@@ -127,7 +148,12 @@ pub async fn run_once(
     broadcaster: &NotificationBroadcaster,
     client: &Client,
 ) -> Result<bool> {
-    let Some(job) = records::claim(pool, &uuid::Uuid::new_v4().to_string()).await? else {
+    let Some(job) = crate::backend::db::repositories::dependencies::claim(
+        pool,
+        &uuid::Uuid::new_v4().to_string(),
+    )
+    .await?
+    else {
         return Ok(false);
     };
     let result = tokio::time::timeout(
@@ -160,7 +186,7 @@ pub async fn run_once(
             "Dependency security job did not complete; its private status was retained"
         );
     }
-    records::release(pool, &job, status, message).await?;
+    crate::backend::db::repositories::dependencies::release(pool, &job, status, message).await?;
     Ok(true)
 }
 /// Pinned to the web-server lifetime; no detached scanner or unbounded per-repository task set.

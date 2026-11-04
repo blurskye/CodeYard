@@ -7,13 +7,21 @@ fn value(value: Value) -> async_graphql::Value {
         Value::Bool(value) => async_graphql::Value::Boolean(value),
         Value::Number(value) => async_graphql::Value::Number(value),
         Value::String(value) => async_graphql::Value::String(value),
-        Value::Array(values) => {
-            async_graphql::Value::List(values.into_iter().map(self::value).collect())
-        }
+        Value::Array(values) => async_graphql::Value::List(
+            values
+                .into_iter()
+                .map(crate::backend::api::graphql::request::value)
+                .collect(),
+        ),
         Value::Object(values) => async_graphql::Value::Object(
             values
                 .into_iter()
-                .map(|(key, value)| (async_graphql::Name::new(key), self::value(value)))
+                .map(|(key, value)| {
+                    (
+                        async_graphql::Name::new(key),
+                        crate::backend::api::graphql::request::value(value),
+                    )
+                })
                 .collect(),
         ),
     }

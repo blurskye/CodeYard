@@ -1,13 +1,16 @@
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::readable_repository;
-use crate::backend::api::repos::paging::{json_page, PageQuery};
-use crate::backend::api::repos::responses::{
-    repository_fork_counts, repository_owners, repository_topics, repository_unavailable,
-    ForkParent, RepoResponse,
-};
+use crate::backend::api::repos::paging::json_page;
+use crate::backend::api::repos::paging::PageQuery;
+use crate::backend::api::repos::responses::repository_fork_counts;
+use crate::backend::api::repos::responses::repository_owners;
+use crate::backend::api::repos::responses::repository_topics;
+use crate::backend::api::repos::responses::repository_unavailable;
+use crate::backend::api::repos::responses::ForkParent;
+use crate::backend::api::repos::responses::RepoResponse;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
@@ -99,15 +102,17 @@ pub async fn check_fork(
     if let Some(user) =
         crate::backend::api::http::session::get_optional_user(&state.pool, &headers).await?
     {
-        if let Some(fork) =
-            db::repositories::discovery::get_user_fork(&state.pool, user.id, repository.id)
-                .await
-                .map_err(|_| {
-                    crate::backend::api::repos::access::access_error(
-                        crate::backend::repositories::access::AccessError::Unavailable,
-                    )
-                })?
-        {
+        if let Some(fork) = crate::backend::db::repositories::discovery::get_user_fork(
+            &state.pool,
+            user.id,
+            repository.id,
+        )
+        .await
+        .map_err(|_| {
+            crate::backend::api::repos::access::access_error(
+                crate::backend::repositories::access::AccessError::Unavailable,
+            )
+        })? {
             return Ok(Json(CheckForkResponse {
                 has_fork: true,
                 fork: Some(ForkInfo {
@@ -133,7 +138,7 @@ pub(crate) async fn visible_forks(
     limit: i64,
     offset: i64,
 ) -> anyhow::Result<(Vec<Repository>, bool)> {
-    let mut forks = db::repositories::discovery::list_visible_forks(
+    let mut forks = crate::backend::db::repositories::discovery::list_visible_forks(
         pool,
         viewer,
         Some(session),
@@ -180,7 +185,7 @@ pub async fn list_forks(
     let mut readable = std::collections::HashSet::new();
     for ids in ids.chunks(100) {
         readable.extend(
-            db::repositories::access::readable_repository_ids(
+            crate::backend::db::repositories::access::readable_repository_ids(
                 &state.pool,
                 viewer.as_ref().map(|user| user.id),
                 ids,

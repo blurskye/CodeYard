@@ -1,11 +1,11 @@
 //! Stored alerts and durable scan work. Alert reads require live repository administration.
-use super::users::accounts::AccountCredential;
+use crate::backend::db::users::accounts::AccountCredential;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
-use codeyard_git::secret_detection::patterns::{Create, Delete, Owner, Pattern, Update};
 use codeyard_git::secret_scanning::Location;
+use codeyard_support::secret_detection::patterns::{Create, Delete, Owner, Pattern, Update};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -29,21 +29,21 @@ pub struct ConfigUpdate {
     pub custom_pattern_settings: Vec<PatternSetting>,
 }
 
-native_operation!(super::postgres::secret_scanning::patterns::list,super::sqlite::secret_scanning::patterns::list,
+native_operation!(crate::backend::db::postgres::secret_scanning::patterns::list,crate::backend::db::sqlite::secret_scanning::patterns::list,
     fn list_patterns(pool:&DbPool,actor:i64,owner:Owner)->Result<Vec<Pattern>>);
-native_operation!(super::postgres::secret_scanning::patterns::create,super::sqlite::secret_scanning::patterns::create,
+native_operation!(crate::backend::db::postgres::secret_scanning::patterns::create,crate::backend::db::sqlite::secret_scanning::patterns::create,
     fn create_patterns(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,owner:Owner,input:&[Create])->Result<Vec<Pattern>>);
-native_operation!(super::postgres::secret_scanning::patterns::update,super::sqlite::secret_scanning::patterns::update,
+native_operation!(crate::backend::db::postgres::secret_scanning::patterns::update,crate::backend::db::sqlite::secret_scanning::patterns::update,
     fn update_pattern(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,owner:Owner,id:i64,input:&Update)->Result<Pattern>);
-native_operation!(super::postgres::secret_scanning::patterns::delete,super::sqlite::secret_scanning::patterns::delete,
+native_operation!(crate::backend::db::postgres::secret_scanning::patterns::delete,crate::backend::db::sqlite::secret_scanning::patterns::delete,
     fn delete_patterns(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,owner:Owner,input:&[Delete],resolve:bool)->Result<()>);
-native_operation!(super::postgres::secret_scanning::patterns::publish,super::sqlite::secret_scanning::patterns::publish,
+native_operation!(crate::backend::db::postgres::secret_scanning::patterns::publish,crate::backend::db::sqlite::secret_scanning::patterns::publish,
     fn publish_pattern(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,owner:Owner,id:i64)->Result<()>);
-native_operation!(super::postgres::secret_scanning::patterns::effective,super::sqlite::secret_scanning::patterns::effective,
+native_operation!(crate::backend::db::postgres::secret_scanning::patterns::effective,crate::backend::db::sqlite::secret_scanning::patterns::effective,
     fn effective_patterns(pool:&DbPool,repo:i64)->Result<(Vec<Pattern>,Vec<String>)>);
-native_operation!(super::postgres::secret_scanning::patterns::configs,super::sqlite::secret_scanning::patterns::configs,
+native_operation!(crate::backend::db::postgres::secret_scanning::patterns::configs,crate::backend::db::sqlite::secret_scanning::patterns::configs,
     fn pattern_configs(pool:&DbPool,actor:i64,org:i64)->Result<serde_json::Value>);
-native_operation!(super::postgres::secret_scanning::patterns::configure,super::sqlite::secret_scanning::patterns::configure,
+native_operation!(crate::backend::db::postgres::secret_scanning::patterns::configure,crate::backend::db::sqlite::secret_scanning::patterns::configure,
     fn configure_patterns(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,org:i64,input:&ConfigUpdate)->Result<String>);
 
 #[derive(Debug, thiserror::Error)]
@@ -104,7 +104,7 @@ pub struct Filter {
     pub limit: i64,
 }
 
-native_operation!(super::postgres::secret_scanning::org_alerts, super::sqlite::secret_scanning::org_alerts,
+native_operation!(crate::backend::db::postgres::secret_scanning::org_alerts, crate::backend::db::sqlite::secret_scanning::org_alerts,
     fn org_alerts(pool: &DbPool, actor: i64, org: i64, filter: &Filter) -> Result<Vec<Alert>>);
 
 #[derive(Default)]
@@ -148,17 +148,17 @@ pub struct Bypass {
     pub used_at: Option<DateTime<Utc>>,
 }
 
-native_operation!(super::postgres::secret_scanning::prune_expired_bypasses, super::sqlite::secret_scanning::prune_expired_bypasses,
+native_operation!(crate::backend::db::postgres::secret_scanning::prune_expired_bypasses, crate::backend::db::sqlite::secret_scanning::prune_expired_bypasses,
     fn prune_expired_bypasses(pool: &DbPool) -> Result<u64>);
 
-native_operation!(super::postgres::secret_scanning::protection, super::sqlite::secret_scanning::protection,
+native_operation!(crate::backend::db::postgres::secret_scanning::protection, crate::backend::db::sqlite::secret_scanning::protection,
     fn protection(pool: &DbPool, actor: i64, repo: i64, hash: &str, kind: &str) -> Result<Option<Bypass>>);
-native_operation!(super::postgres::secret_scanning::bypass, super::sqlite::secret_scanning::bypass,
+native_operation!(crate::backend::db::postgres::secret_scanning::bypass, crate::backend::db::sqlite::secret_scanning::bypass,
     fn bypass(pool: &DbPool, actor: i64, repo: i64, id: &str, reason: Option<&str>) -> Result<Bypass>);
 
-native_operation!(super::postgres::secret_scanning::use_bypass,super::sqlite::secret_scanning::use_bypass,
+native_operation!(crate::backend::db::postgres::secret_scanning::use_bypass,crate::backend::db::sqlite::secret_scanning::use_bypass,
     fn use_bypass(pool:&DbPool,repo:i64,actor:i64,hash:&str,accepted:DateTime<Utc>)->Result<()>);
-native_operation!(super::postgres::secret_scanning::alert_bypasses,super::sqlite::secret_scanning::alert_bypasses,
+native_operation!(crate::backend::db::postgres::secret_scanning::alert_bypasses,crate::backend::db::sqlite::secret_scanning::alert_bypasses,
     fn alert_bypasses(pool:&DbPool,keys:&[(i64,String)])->Result<Vec<Bypass>>);
 
 #[derive(Clone, sqlx::FromRow)]
@@ -177,21 +177,21 @@ pub struct ScanJob {
     pub completed_at: Option<DateTime<Utc>>,
 }
 
-native_operation!(super::postgres::secret_scanning::settings, super::sqlite::secret_scanning::settings,
+native_operation!(crate::backend::db::postgres::secret_scanning::settings, crate::backend::db::sqlite::secret_scanning::settings,
     fn settings(pool: &DbPool, repo: i64) -> Result<Settings>);
-native_operation!(super::postgres::secret_scanning::save_settings, super::sqlite::secret_scanning::save_settings,
+native_operation!(crate::backend::db::postgres::secret_scanning::save_settings, crate::backend::db::sqlite::secret_scanning::save_settings,
     fn save_settings(pool: &DbPool, actor: i64, repo: i64, settings: &Settings) -> Result<()>);
-native_operation!(super::postgres::secret_scanning::alerts, super::sqlite::secret_scanning::alerts,
+native_operation!(crate::backend::db::postgres::secret_scanning::alerts, crate::backend::db::sqlite::secret_scanning::alerts,
     fn alerts(pool: &DbPool, actor: i64, repo: i64, filter: &Filter) -> Result<Vec<Alert>>);
-native_operation!(super::postgres::secret_scanning::locations, super::sqlite::secret_scanning::locations,
+native_operation!(crate::backend::db::postgres::secret_scanning::locations, crate::backend::db::sqlite::secret_scanning::locations,
     fn locations(pool: &DbPool, actor: i64, repo: i64, number: i64, offset: i64, limit: i64) -> Result<Vec<Location>>);
-native_operation!(super::postgres::secret_scanning::update_alert, super::sqlite::secret_scanning::update_alert,
+native_operation!(crate::backend::db::postgres::secret_scanning::update_alert, crate::backend::db::sqlite::secret_scanning::update_alert,
     fn update_alert(pool: &DbPool, actor: i64, repo: i64, number: i64, input: &AlertUpdate<'_>) -> Result<Alert>);
-native_operation!(super::postgres::secret_scanning::record, super::sqlite::secret_scanning::record,
+native_operation!(crate::backend::db::postgres::secret_scanning::record, crate::backend::db::sqlite::secret_scanning::record,
     fn record(pool: &DbPool, repo: i64, input: &Finding<'_>) -> Result<Option<(Alert, bool, bool)>>);
-native_operation!(super::postgres::secret_scanning::enqueue, super::sqlite::secret_scanning::enqueue,
+native_operation!(crate::backend::db::postgres::secret_scanning::enqueue, crate::backend::db::sqlite::secret_scanning::enqueue,
     fn enqueue(pool: &DbPool, repo: i64, head: &str, actor: i64) -> Result<()>);
-native_operation!(super::postgres::secret_scanning::claim, super::sqlite::secret_scanning::claim,
+native_operation!(crate::backend::db::postgres::secret_scanning::claim, crate::backend::db::sqlite::secret_scanning::claim,
     fn claim(pool: &DbPool) -> Result<Option<ScanJob>>);
 #[derive(Clone, Copy)]
 pub enum ScanCompletion {
@@ -209,14 +209,14 @@ impl ScanCompletion {
     }
 }
 
-native_operation!(super::postgres::secret_scanning::finish, super::sqlite::secret_scanning::finish,
+native_operation!(crate::backend::db::postgres::secret_scanning::finish, crate::backend::db::sqlite::secret_scanning::finish,
     fn finish(pool: &DbPool, id: i64, attempt: i64, completion: ScanCompletion) -> Result<()>);
-native_operation!(super::postgres::secret_scanning::history, super::sqlite::secret_scanning::history,
+native_operation!(crate::backend::db::postgres::secret_scanning::history, crate::backend::db::sqlite::secret_scanning::history,
     fn history(pool: &DbPool, actor: i64, repo: i64) -> Result<Vec<ScanJob>>);
-native_operation!(super::postgres::secret_scanning::scanned, super::sqlite::secret_scanning::scanned,
+native_operation!(crate::backend::db::postgres::secret_scanning::scanned, crate::backend::db::sqlite::secret_scanning::scanned,
     fn scanned(pool: &DbPool, repo: i64, commit: &str) -> Result<bool>);
 // Keeps a claim alive and records `scanned` as scanned. False once another worker took the job over.
-native_operation!(super::postgres::secret_scanning::heartbeat, super::sqlite::secret_scanning::heartbeat,
+native_operation!(crate::backend::db::postgres::secret_scanning::heartbeat, crate::backend::db::sqlite::secret_scanning::heartbeat,
     fn heartbeat(pool: &DbPool, repo: i64, job: i64, attempt: i64, scanned: Option<&str>) -> Result<bool>);
 
 /// SHA-256 of a location's path, the key that stands in for the path in the uniqueness index.

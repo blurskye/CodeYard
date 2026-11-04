@@ -3,7 +3,6 @@
 use crate::support::native_database as native;
 use crate::support::server::spawn_on_free_ports;
 
-use codeyard::backend::db;
 use reqwest::{Client, StatusCode};
 use russh::keys::{ssh_key::private::Ed25519Keypair, ssh_key::LineEnding, PrivateKey};
 use std::{
@@ -143,11 +142,11 @@ async fn bundle_recovery(url: &str) {
 
 async fn rejected_commands(pool: &codeyard_db_core::DbPool, url: &str) {
     let root = tempfile::tempdir().unwrap();
-    let user = db::users::accounts::create_user(pool, "loguser", None)
+    let user = codeyard::backend::db::users::accounts::create_user(pool, "loguser", None)
         .await
         .unwrap();
     let key = PrivateKey::from(Ed25519Keypair::from_seed(&[42; 32]));
-    db::users::ssh_keys::add_ssh_key(
+    codeyard::backend::db::users::ssh_keys::add_ssh_key(
         pool,
         user.id,
         "log fixture",

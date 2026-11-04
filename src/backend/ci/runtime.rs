@@ -1,9 +1,9 @@
 //! Credentials shared by today's act worker and future runners.
-use crate::backend::db;
-pub use crate::backend::identity::tokens::token_hash;
+
 use anyhow::Result;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use codeyard_db_core::DbPool;
+pub use codeyard_support::token_hash::token_hash;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
@@ -22,15 +22,15 @@ pub fn secret() -> String {
 pub fn oidc_url() -> String {
     format!(
         "{}/api/ci/oidc/token?",
-        crate::backend::api::http::config::link_origin().trim_end_matches('/')
+        codeyard_model::http_config::link_origin().trim_end_matches('/')
     )
 }
 
-pub fn results_url(settings: &db::actions::ActionsSettings) -> String {
+pub fn results_url(settings: &crate::backend::db::actions::ActionsSettings) -> String {
     settings
         .results_url
         .clone()
-        .unwrap_or_else(crate::backend::api::http::config::link_origin)
+        .unwrap_or_else(codeyard_model::http_config::link_origin)
         .trim_end_matches('/')
         .to_owned()
 }
@@ -38,7 +38,7 @@ pub fn results_url(settings: &db::actions::ActionsSettings) -> String {
 pub async fn issue(
     pool: &DbPool,
     run: &codeyard_db_core::models::CiRun,
-    settings: &db::actions::ActionsSettings,
+    settings: &crate::backend::db::actions::ActionsSettings,
 ) -> Result<RuntimeCredentials> {
     let backend = run.run_id.to_string();
     // The artifact toolkit decodes this claim locally. Authentication is the hash of the
@@ -49,7 +49,7 @@ pub async fn issue(
         "jti": secret()
     }))?);
     let token = format!("{header}.{payload}.{}", secret());
-    db::action_objects::issue_token(
+    crate::backend::db::action_objects::issue_token(
         pool,
         run.id,
         run.worker.as_deref().unwrap_or(""),

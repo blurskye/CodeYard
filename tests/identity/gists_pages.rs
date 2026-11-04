@@ -7,7 +7,7 @@ use axum::{
     body::{to_bytes, Body},
     http::Request,
 };
-use codeyard::backend::db;
+
 use codeyard_webui::{app::Page, pages::gists};
 use tower::ServiceExt;
 
@@ -61,7 +61,10 @@ async fn pages(pg: bool) {
     assert_eq!(saved.status, 303, "{}", saved.text());
     let path = saved.location.unwrap();
     let id = path.strip_prefix("/gists/").unwrap();
-    let record = db::gists::get(f.pool(), id).await.unwrap().unwrap();
+    let record = codeyard::backend::db::gists::get(f.pool(), id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(record.owner_id, alice);
     assert!(!record.is_public);
     let response = router
@@ -138,9 +141,11 @@ async fn pages(pg: bool) {
         )
         .await;
     assert_eq!(no_csrf.status, 403);
-    assert!(!db::gists::starred(f.pool(), alice, record.repo_id)
-        .await
-        .unwrap());
+    assert!(
+        !codeyard::backend::db::gists::starred(f.pool(), alice, record.repo_id)
+            .await
+            .unwrap()
+    );
     let changed = a
         .form_reply(
             &format!("{path}/edit"),
@@ -200,15 +205,17 @@ async fn pages(pg: bool) {
         .form_reply(&format!("{path}/star"), &[("add", "yes")])
         .await;
     assert_eq!(starred.status, 303);
-    assert!(db::gists::starred(f.pool(), bob, record.repo_id)
-        .await
-        .unwrap());
+    assert!(
+        codeyard::backend::db::gists::starred(f.pool(), bob, record.repo_id)
+            .await
+            .unwrap()
+    );
     assert!(b.page_ok("/gists?tab=starred").await.contains(id));
     let commented = b
         .form_reply(&format!("{path}/comments"), &[("body", "**Useful** notes")])
         .await;
     assert_eq!(commented.status, 303, "{}", commented.text());
-    let comments = db::gists::comments(f.pool(), record.repo_id, 30, 0)
+    let comments = codeyard::backend::db::gists::comments(f.pool(), record.repo_id, 30, 0)
         .await
         .unwrap();
     let comment = comments[0].id;
@@ -233,7 +240,7 @@ async fn pages(pg: bool) {
         .await;
     assert_eq!(updated.status, 303);
     assert_eq!(
-        db::gists::comment(f.pool(), record.repo_id, comment)
+        codeyard::backend::db::gists::comment(f.pool(), record.repo_id, comment)
             .await
             .unwrap()
             .unwrap()
@@ -254,16 +261,18 @@ async fn pages(pg: bool) {
         .form_reply(&format!("{path}/comments/{comment}/delete"), &[])
         .await;
     assert_eq!(removed.status, 303);
-    assert!(db::gists::comment(f.pool(), record.repo_id, comment)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        codeyard::backend::db::gists::comment(f.pool(), record.repo_id, comment)
+            .await
+            .unwrap()
+            .is_none()
+    );
     let mut last = 0;
     for index in 0..31 {
-        last = db::gists::create_comment(
+        last = codeyard::backend::db::gists::create_comment(
             f.pool(),
             bob,
-            &db::users::accounts::AccountCredential::Session(&b.session),
+            &codeyard::backend::db::users::accounts::AccountCredential::Session(&b.session),
             record.repo_id,
             &format!("Page comment {index}"),
         )
@@ -309,7 +318,10 @@ async fn pages(pg: bool) {
     };
     assert!(fork.parent.is_none());
     assert_eq!(fork.files[0].content.as_deref(), Some("# Revised\n"));
-    assert!(db::gists::get(f.pool(), fork_id).await.unwrap().is_some());
+    assert!(codeyard::backend::db::gists::get(f.pool(), fork_id)
+        .await
+        .unwrap()
+        .is_some());
     f.finish().await;
 }
 #[tokio::test]

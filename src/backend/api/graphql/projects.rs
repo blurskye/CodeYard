@@ -1,20 +1,31 @@
 //! `gh project` resolvers over the shared owner-scoped project domain.
-use super::{
-    arg, bindings::boxed, connection, db, issue, missing, node_id, repository, unavailable, url,
-    user, Arguments, RequestContext, Result, Value,
-};
-use crate::backend::{db::projects as store, projects as domain};
+use crate::backend::api::graphql::arg;
+use crate::backend::api::graphql::bindings::boxed;
+
+use crate::backend::api::graphql::db;
+
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::node_id;
+
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::url;
+
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
+
 use async_graphql::{Error, ErrorExtensions};
 use chrono::Datelike;
 use serde_json::json;
 
 fn operation(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<store::Refusal>() {
-        Some(store::Refusal::Missing) => missing(),
+    match error.downcast_ref::<codeyard_model::project_query::Refusal>() {
+        Some(codeyard_model::project_query::Refusal::Missing) => missing(),
         Some(refusal) => Error::new(refusal.to_string()).extend_with(|_, ext| {
             ext.set(
                 "type",
-                if matches!(refusal, store::Refusal::Denied) {
+                if matches!(refusal, codeyard_model::project_query::Refusal::Denied) {
                     "FORBIDDEN"
                 } else {
                     "UNPROCESSABLE"
@@ -41,28 +52,30 @@ fn id(value: &Value, kinds: &[&str]) -> Result<i64> {
     }
     Ok(id)
 }
-fn owner(value: &Value) -> Result<store::Owner> {
+fn owner(value: &Value) -> Result<crate::backend::db::projects::Owner> {
     let id = id(value, &["U", "O"])?;
     Ok(
         if node_id::decode(value.as_str().unwrap()).unwrap().0 == "O" {
-            store::Owner::Organization(id)
+            crate::backend::db::projects::Owner::Organization(id)
         } else {
-            store::Owner::User(id)
+            crate::backend::db::projects::Owner::User(id)
         },
     )
 }
-fn project_owner(project: &store::Project) -> store::Owner {
+fn project_owner(
+    project: &crate::backend::db::projects::Project,
+) -> crate::backend::db::projects::Owner {
     if project.owner_kind == "org" {
-        store::Owner::Organization(project.owner_id)
+        crate::backend::db::projects::Owner::Organization(project.owner_id)
     } else {
-        store::Owner::User(project.owner_id)
+        crate::backend::db::projects::Owner::User(project.owner_id)
     }
 }
-fn project_object(p: &store::Project) -> Value {
+fn project_object(p: &crate::backend::db::projects::Project) -> Value {
     json!({"__typename":"ProjectV2","id":node_id::encode("PVT",p.id),"databaseId":p.id,"number":p.number,"title":p.title,"shortDescription":p.description,"readme":p.readme,"public":p.public,"closed":p.closed_at.is_some(),"closedAt":p.closed_at,"template":p.template,"createdAt":p.created_at,"updatedAt":p.updated_at,"_project":p.id,"_ownerKind":p.owner_kind,"_owner":p.owner_id,"_creator":p.creator_id})
 }
-fn field_object(f: &store::Field) -> Result<Value> {
-    let config = store::field_configuration(f).map_err(operation)?;
+fn field_object(f: &crate::backend::db::projects::Field) -> Result<Value> {
+    let config = crate::backend::db::projects::field_configuration(f).map_err(operation)?;
     let (ty, prefix) = match f.data_type.as_str() {
         "single_select" => ("ProjectV2SingleSelectField", "PVTSSF"),
         "iteration" => ("ProjectV2IterationField", "PVTIF"),
@@ -101,18 +114,34 @@ fn field_object(f: &store::Field) -> Result<Value> {
 /// GitHub's built-in fields whose values come from an item's issue or pull request: the
 /// name, the data type and the content field that holds the value. They follow the stored
 /// fields and cannot be edited or deleted.
-const BUILT_IN_FIELDS: [(store::BuiltInField, &str, &str); 6] = [
-    (store::BuiltInField::Assignees, "ASSIGNEES", "assignees"),
-    (store::BuiltInField::Labels, "LABELS", "labels"),
+const BUILT_IN_FIELDS: [(crate::backend::db::projects::BuiltInField, &str, &str); 6] = [
     (
-        store::BuiltInField::LinkedPullRequests,
+        crate::backend::db::projects::BuiltInField::Assignees,
+        "ASSIGNEES",
+        "assignees",
+    ),
+    (
+        crate::backend::db::projects::BuiltInField::Labels,
+        "LABELS",
+        "labels",
+    ),
+    (
+        crate::backend::db::projects::BuiltInField::LinkedPullRequests,
         "LINKED_PULL_REQUESTS",
         "closedByPullRequestsReferences",
     ),
-    (store::BuiltInField::Milestone, "MILESTONE", "milestone"),
-    (store::BuiltInField::Repository, "REPOSITORY", "repository"),
     (
-        store::BuiltInField::Reviewers,
+        crate::backend::db::projects::BuiltInField::Milestone,
+        "MILESTONE",
+        "milestone",
+    ),
+    (
+        crate::backend::db::projects::BuiltInField::Repository,
+        "REPOSITORY",
+        "repository",
+    ),
+    (
+        crate::backend::db::projects::BuiltInField::Reviewers,
         "REVIEWERS",
         "reviewRequests",
     ),
@@ -143,7 +172,10 @@ fn order_fields(ctx: &Arguments, values: &mut [Value]) -> Result<()> {
 }
 
 /// A project's stored fields followed by the built-in ones.
-fn project_fields(project: &Value, fields: &[store::Field]) -> Result<Vec<Value>> {
+fn project_fields(
+    project: &Value,
+    fields: &[crate::backend::db::projects::Field],
+) -> Result<Vec<Value>> {
     let mut values: Vec<_> = fields.iter().map(field_object).collect::<Result<_>>()?;
     values.extend(
         BUILT_IN_FIELDS
@@ -155,7 +187,7 @@ fn project_fields(project: &Value, fields: &[store::Field]) -> Result<Vec<Value>
 /// The built-in field values of an issue or pull request item. Empty values are left out,
 /// as GitHub leaves them out.
 async fn built_in_values(
-    item: &store::Item,
+    item: &crate::backend::db::projects::Item,
     request: &RequestContext,
     selected: Option<&str>,
     include_deleted: bool,
@@ -172,7 +204,7 @@ async fn built_in_values(
         return Ok(Vec::new());
     }
     let project = project_object(
-        &store::by_id_at(
+        &crate::backend::db::projects::by_id_at(
             &request.state.pool,
             Some(request.auth.user.id),
             item.project_id,
@@ -211,12 +243,15 @@ async fn built_in_values(
         }
         if data_type == "REVIEWERS" {
             let pull = content["databaseId"].as_i64().ok_or_else(missing)?;
-            if super::review_requests::count(pull, request).await? > 0 {
+            if crate::backend::api::graphql::review_requests::count(pull, request).await? > 0 {
                 values.push(json!({"__typename":"ProjectV2ItemFieldReviewerValue","_project":item.project_id,"_reviewPull":pull,"field":built_in_field(&project, name, data_type)}));
             }
             continue;
         }
-        let resolved = boxed(|| issue::resolve(ty, source, &all, request, &content)).await?;
+        let resolved = boxed(|| {
+            crate::backend::api::graphql::issue::resolve(ty, source, &all, request, &content)
+        })
+        .await?;
         let (suffix, mut entry) = match data_type {
             "MILESTONE" if resolved.is_null() => continue,
             "MILESTONE" => ("Milestone", json!({ "milestone": resolved })),
@@ -246,10 +281,10 @@ async fn built_in_values(
     }
     Ok(values)
 }
-fn draft_object(item: &store::Item) -> Value {
+fn draft_object(item: &crate::backend::db::projects::Item) -> Value {
     json!({"__typename":"DraftIssue","id":node_id::encode("DI",item.id),"title":item.draft_title,"body":item.draft_body.as_deref().unwrap_or(""),"createdAt":item.created_at,"updatedAt":item.updated_at,"_creator":item.creator_id,"_project":item.project_id})
 }
-fn charge_item(item: &store::Item, request: &RequestContext) -> Result<()> {
+fn charge_item(item: &crate::backend::db::projects::Item, request: &RequestContext) -> Result<()> {
     request.charge(
         item.field_values.len()
             + item.title.len()
@@ -258,7 +293,10 @@ fn charge_item(item: &store::Item, request: &RequestContext) -> Result<()> {
             + 256,
     )
 }
-fn charge_fields(fields: &[store::Field], request: &RequestContext) -> Result<()> {
+fn charge_fields(
+    fields: &[crate::backend::db::projects::Field],
+    request: &RequestContext,
+) -> Result<()> {
     request.charge(
         fields
             .iter()
@@ -267,28 +305,31 @@ fn charge_fields(fields: &[store::Field], request: &RequestContext) -> Result<()
     )
 }
 
-async fn item_object(item: &store::Item, request: &RequestContext) -> Result<Value> {
+async fn item_object(
+    item: &crate::backend::db::projects::Item,
+    request: &RequestContext,
+) -> Result<Value> {
     charge_item(item, request)?;
     let content = if let Some(id) = item.issue_id {
         let issue = db::issues::get_issue_by_id(&request.state.pool, id)
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
-        repository::by_id(issue.repo_id, request).await?;
+        crate::backend::api::graphql::repository::by_id(issue.repo_id, request).await?;
         request.authorize(issue.repo_id, "issues", false).await?;
         request.charge(issue.body.len() + issue.title.len())?;
-        issue::object(&issue)
+        crate::backend::api::graphql::issue::object(&issue)
     } else if let Some(id) = item.pull_request_id {
         let pull = db::pull_requests::records::get_pull_request_by_id(&request.state.pool, id)
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
-        repository::by_id(pull.repo_id, request).await?;
+        crate::backend::api::graphql::repository::by_id(pull.repo_id, request).await?;
         request
             .authorize(pull.repo_id, "pull-requests", false)
             .await?;
         request.charge(pull.body.len() + pull.title.len())?;
-        issue::pull_object(&pull)
+        crate::backend::api::graphql::issue::pull_object(&pull)
     } else {
         draft_object(item)
     };
@@ -300,7 +341,7 @@ async fn item_object(item: &store::Item, request: &RequestContext) -> Result<Val
 /// Projects belong to accounts. Job tokens share one bot identity, so they never reach them.
 fn authorize_account(request: &RequestContext) -> Result<()> {
     if request.bounded() {
-        return Err(super::token_denied());
+        return Err(crate::backend::api::graphql::token_denied());
     }
     request.require_oauth_scope("repo")
 }
@@ -311,11 +352,13 @@ pub(super) async fn node(kind: &str, id: i64, request: &RequestContext) -> Resul
     let viewer = Some(request.auth.user.id);
     match kind {
         "PVT" => Ok(project_object(
-            &store::by_id(pool, viewer, id).await.map_err(operation)?,
+            &crate::backend::db::projects::by_id(pool, viewer, id)
+                .await
+                .map_err(operation)?,
         )),
         "PVTF" | "PVTSSF" | "PVTIF" => {
             let object = field_object(
-                &store::field_by_id(pool, viewer, id)
+                &crate::backend::db::projects::field_by_id(pool, viewer, id)
                     .await
                     .map_err(operation)?,
             )?;
@@ -325,7 +368,7 @@ pub(super) async fn node(kind: &str, id: i64, request: &RequestContext) -> Resul
             Ok(object)
         }
         "PVTI" | "DI" => {
-            let item = store::item_by_id(pool, viewer, id)
+            let item = crate::backend::db::projects::item_by_id(pool, viewer, id)
                 .await
                 .map_err(operation)?;
             if kind == "DI" {
@@ -351,9 +394,9 @@ pub(super) async fn content_items(
     let pool = &request.state.pool;
     let viewer = Some(request.auth.user.id);
     let content = if ty == "Issue" {
-        store::Content::Issue(id)
+        crate::backend::db::projects::Content::Issue(id)
     } else {
-        store::Content::PullRequest(id)
+        crate::backend::db::projects::Content::PullRequest(id)
     };
     let include_archived = ctx
         .args
@@ -362,16 +405,24 @@ pub(super) async fn content_items(
         .map(|v| v.deserialize::<bool>())
         .transpose()?
         .unwrap_or(true);
-    connection::validate(ctx)?;
-    let total = store::content_items(pool, viewer, &content, include_archived, 0, 0, true)
-        .await
-        .map_err(operation)?
-        .0;
-    let page = connection::Page::new(ctx, total)?;
+    crate::backend::api::graphql::connection::validate(ctx)?;
+    let total = crate::backend::db::projects::content_items(
+        pool,
+        viewer,
+        &content,
+        include_archived,
+        0,
+        0,
+        true,
+    )
+    .await
+    .map_err(operation)?
+    .0;
+    let page = crate::backend::api::graphql::connection::Page::new(ctx, total)?;
     let rows = if page.limit == 0 {
         Vec::new()
     } else {
-        store::content_items(
+        crate::backend::db::projects::content_items(
             pool,
             viewer,
             &content,
@@ -392,7 +443,9 @@ pub(super) async fn content_items(
 }
 
 /// What a project deleted in this request held, kept in its answer since deletion purges it.
-fn removed_contents(parent: &Value) -> Result<Option<store::ProjectContents>> {
+fn removed_contents(
+    parent: &Value,
+) -> Result<Option<crate::backend::db::projects::ProjectContents>> {
     parent
         .get("_removed")
         .map(|removed| serde_json::from_value(removed.clone()).map_err(unavailable))
@@ -400,7 +453,7 @@ fn removed_contents(parent: &Value) -> Result<Option<store::ProjectContents>> {
 }
 
 async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value) -> Result<Value> {
-    connection::validate(ctx)?;
+    crate::backend::api::graphql::connection::validate(ctx)?;
     let pool = &request.state.pool;
     let viewer = Some(request.auth.user.id);
     let project = parent["_project"].as_i64().ok_or_else(missing)?;
@@ -420,7 +473,11 @@ async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value
             (true, true) => None,
             (true, false) => Some(true),
             (false, true) => Some(false),
-            (false, false) => return Ok(connection::Page::new(ctx, 0)?.finish(Vec::new())),
+            (false, false) => {
+                return Ok(
+                    crate::backend::api::graphql::connection::Page::new(ctx, 0)?.finish(Vec::new())
+                )
+            }
         },
     };
     let query = ctx
@@ -437,7 +494,7 @@ async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value
     };
     let removed = removed_contents(parent)?;
     let (page, rows) = if query.trim().is_empty() && removed.is_none() {
-        let mut window = store::ItemWindow {
+        let mut window = crate::backend::db::projects::ItemWindow {
             project,
             include_deleted,
             archived,
@@ -446,18 +503,18 @@ async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value
             limit: 0,
             count: true,
         };
-        let total = store::items_window(pool, viewer, &window)
+        let total = crate::backend::db::projects::items_window(pool, viewer, &window)
             .await
             .map_err(operation)?
             .0;
-        let page = connection::Page::new(ctx, total)?;
+        let page = crate::backend::api::graphql::connection::Page::new(ctx, total)?;
         window.offset = page.offset;
         window.limit = page.limit;
         window.count = false;
         let rows = if page.limit == 0 {
             Vec::new()
         } else {
-            store::items_window(pool, viewer, &window)
+            crate::backend::db::projects::items_window(pool, viewer, &window)
                 .await
                 .map_err(operation)?
                 .1
@@ -467,10 +524,10 @@ async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value
         let (fields, rows) = match removed {
             Some(removed) => (removed.fields, removed.items),
             None => (
-                store::fields_at(pool, viewer, project, include_deleted)
+                crate::backend::db::projects::fields_at(pool, viewer, project, include_deleted)
                     .await
                     .map_err(operation)?,
-                store::items_at(pool, viewer, project, include_deleted)
+                crate::backend::db::projects::items_at(pool, viewer, project, include_deleted)
                     .await
                     .map_err(operation)?,
             ),
@@ -483,11 +540,12 @@ async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value
             .into_iter()
             .filter(|item| archived.is_none_or(|value| value == item.archived))
             .collect();
-        let mut rows = domain::filter_items(rows, &fields, query, None).map_err(operation)?;
+        let mut rows = crate::backend::projects::filter_items(rows, &fields, query, None)
+            .map_err(operation)?;
         if descending {
             rows.reverse();
         }
-        let page = connection::Page::new(ctx, rows.len() as i64)?;
+        let page = crate::backend::api::graphql::connection::Page::new(ctx, rows.len() as i64)?;
         let rows = rows
             .into_iter()
             .skip(page.offset as usize)
@@ -505,7 +563,7 @@ async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value
 async fn project_connection(
     ctx: &Arguments,
     request: &RequestContext,
-    mut filter: store::ListFilter,
+    mut filter: crate::backend::db::projects::ListFilter,
 ) -> Result<Value> {
     let query = ctx
         .args
@@ -514,7 +572,7 @@ async fn project_connection(
         .map(|q| q.string())
         .transpose()?
         .unwrap_or("");
-    connection::validate(ctx)?;
+    crate::backend::api::graphql::connection::validate(ctx)?;
     let mut terms = Vec::new();
     for term in query.split_whitespace() {
         match term.to_ascii_lowercase().as_str() {
@@ -532,23 +590,24 @@ async fn project_connection(
     if let Some(order) = ctx.args.get("orderBy").filter(|o| !o.is_null()) {
         let order: Value = order.deserialize()?;
         filter.order = match order["field"].as_str() {
-            Some("TITLE") => store::ListOrder::Title,
-            Some("UPDATED_AT") => store::ListOrder::Updated,
-            Some("CREATED_AT") => store::ListOrder::Created,
-            Some("NUMBER") => store::ListOrder::Number,
+            Some("TITLE") => crate::backend::db::projects::ListOrder::Title,
+            Some("UPDATED_AT") => crate::backend::db::projects::ListOrder::Updated,
+            Some("CREATED_AT") => crate::backend::db::projects::ListOrder::Created,
+            Some("NUMBER") => crate::backend::db::projects::ListOrder::Number,
             _ => return Err(Error::new("Unsupported project order")),
         };
         filter.descending = order["direction"] == "DESC";
     }
     let pool = &request.state.pool;
     let viewer = Some(request.auth.user.id);
-    let (count, _) = store::list(pool, viewer, &filter, 0, 0)
+    let (count, _) = crate::backend::db::projects::list(pool, viewer, &filter, 0, 0)
         .await
         .map_err(operation)?;
-    let page = connection::Page::new(ctx, count)?;
-    let (_, projects) = store::list(pool, viewer, &filter, page.offset, page.limit)
-        .await
-        .map_err(operation)?;
+    let page = crate::backend::api::graphql::connection::Page::new(ctx, count)?;
+    let (_, projects) =
+        crate::backend::db::projects::list(pool, viewer, &filter, page.offset, page.limit)
+            .await
+            .map_err(operation)?;
     let nodes = projects
         .iter()
         .map(|project| {
@@ -565,7 +624,7 @@ pub(super) async fn resource(ctx: &Arguments, request: &RequestContext) -> Resul
     let raw: String = ctx.args.try_get("url")?.deserialize()?;
     let parsed = reqwest::Url::parse(&raw).map_err(|_| missing())?;
     let origin =
-        reqwest::Url::parse(&super::super::http::config::link_origin()).map_err(unavailable)?;
+        reqwest::Url::parse(&codeyard_model::http_config::link_origin()).map_err(unavailable)?;
     if parsed.origin() != origin.origin() {
         return Err(missing());
     }
@@ -577,21 +636,21 @@ pub(super) async fn resource(ctx: &Arguments, request: &RequestContext) -> Resul
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;
-    repository::by_id(repo.id, request).await?;
+    crate::backend::api::graphql::repository::by_id(repo.id, request).await?;
     let number = parts[3].parse().map_err(|_| missing())?;
     if parts[2] == "issues" {
         let entry = db::issues::get_issue(&request.state.pool, repo.id, number)
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
-        Ok(issue::object(&entry))
+        Ok(crate::backend::api::graphql::issue::object(&entry))
     } else {
         let entry =
             db::pull_requests::records::get_pull_request(&request.state.pool, repo.id, number)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-        Ok(issue::pull_object(&entry))
+        Ok(crate::backend::api::graphql::issue::pull_object(&entry))
     }
 }
 
@@ -637,7 +696,7 @@ async fn resolve_at(
 ) -> Result<Value> {
     authorize_account(request)?;
     if let Some(id) = parent["_project"].as_i64() {
-        let project = store::by_id_at(
+        let project = crate::backend::db::projects::by_id_at(
             &request.state.pool,
             Some(request.auth.user.id),
             id,
@@ -663,18 +722,22 @@ async fn resolve_at(
     let viewer = Some(actor);
     if field == "projects" && matches!(ty, "Repository" | "Organization") {
         if ty == "Repository" {
-            repository::by_id(parent["databaseId"].as_i64().ok_or_else(missing)?, request).await?;
+            crate::backend::api::graphql::repository::by_id(
+                parent["databaseId"].as_i64().ok_or_else(missing)?,
+                request,
+            )
+            .await?;
         }
         // Classic projects are retired; gh still asks for them before its v2 lookup.
-        return connection::slice(ctx, Vec::new());
+        return crate::backend::api::graphql::connection::slice(ctx, Vec::new());
     }
     if ty == "Repository" && field == "projectsV2" {
         let repo = parent["databaseId"].as_i64().ok_or_else(missing)?;
-        repository::by_id(repo, request).await?;
+        crate::backend::api::graphql::repository::by_id(repo, request).await?;
         return project_connection(
             ctx,
             request,
-            store::ListFilter {
+            crate::backend::db::projects::ListFilter {
                 repo: Some(repo),
                 ..Default::default()
             },
@@ -684,33 +747,41 @@ async fn resolve_at(
     if matches!(ty, "User" | "Organization") {
         let target = parent["databaseId"].as_i64().ok_or_else(missing)?;
         let owner = if ty == "User" {
-            store::Owner::User(target)
+            crate::backend::db::projects::Owner::User(target)
         } else {
-            store::Owner::Organization(target)
+            crate::backend::db::projects::Owner::Organization(target)
         };
         return match field {
             "team" if ty == "Organization" => {
-                super::team::by_slug(target, &arg(ctx, "slug")?, request).await
+                crate::backend::api::graphql::team::by_slug(target, &arg(ctx, "slug")?, request)
+                    .await
             }
             "projectV2" => Ok(project_object(
-                &store::get(pool, viewer, owner, ctx.args.try_get("number")?.i64()?)
-                    .await
-                    .map_err(operation)?,
+                &crate::backend::db::projects::get(
+                    pool,
+                    viewer,
+                    owner,
+                    ctx.args.try_get("number")?.i64()?,
+                )
+                .await
+                .map_err(operation)?,
             )),
             "projectsV2" => {
                 project_connection(
                     ctx,
                     request,
-                    store::ListFilter {
+                    crate::backend::db::projects::ListFilter {
                         owner: Some(owner),
                         ..Default::default()
                     },
                 )
                 .await
             }
-            "viewerCanCreateProjects" => Ok(json!(store::can_write(pool, actor, owner)
-                .await
-                .map_err(operation)?)),
+            "viewerCanCreateProjects" => Ok(json!(crate::backend::db::projects::can_write(
+                pool, actor, owner
+            )
+            .await
+            .map_err(operation)?)),
             "organizations" if target == actor => {
                 let mut after = 0;
                 let mut nodes = Vec::new();
@@ -728,21 +799,24 @@ async fn resolve_at(
                         break;
                     }
                     for org in &orgs {
-                        nodes.push(user::organization_by_id(org.id, request).await?);
+                        nodes.push(
+                            crate::backend::api::graphql::user::organization_by_id(org.id, request)
+                                .await?,
+                        );
                         after = org.id;
                     }
                     if orgs.len() < 100 {
                         break;
                     }
                 }
-                connection::slice(ctx, nodes)
+                crate::backend::api::graphql::connection::slice(ctx, nodes)
             }
             _ => Err(Error::new("Unsupported project owner field")),
         };
     }
     match (ty, field) {
         ("ProjectV2", "readme") => {
-            let project = store::by_id_at(
+            let project = crate::backend::db::projects::by_id_at(
                 pool,
                 viewer,
                 parent["databaseId"].as_i64().ok_or_else(missing)?,
@@ -753,7 +827,7 @@ async fn resolve_at(
             Ok(json!(project.readme))
         }
         (_, "project") if parent["_deleted"] == true => Ok(project_object(
-            &store::by_id_at(
+            &crate::backend::db::projects::by_id_at(
                 pool,
                 viewer,
                 parent["_project"].as_i64().ok_or_else(missing)?,
@@ -771,22 +845,40 @@ async fn resolve_at(
             .await
         }
         (_, "creator") => {
-            user::by_id(parent["_creator"].as_i64().ok_or_else(missing)?, request).await
+            crate::backend::api::graphql::user::by_id(
+                parent["_creator"].as_i64().ok_or_else(missing)?,
+                request,
+            )
+            .await
         }
         ("ProjectV2", "owner") => {
             if parent["_ownerKind"] == "org" {
-                user::organization_by_id(parent["_owner"].as_i64().ok_or_else(missing)?, request)
-                    .await
+                crate::backend::api::graphql::user::organization_by_id(
+                    parent["_owner"].as_i64().ok_or_else(missing)?,
+                    request,
+                )
+                .await
             } else {
-                user::by_id(parent["_owner"].as_i64().ok_or_else(missing)?, request).await
+                crate::backend::api::graphql::user::by_id(
+                    parent["_owner"].as_i64().ok_or_else(missing)?,
+                    request,
+                )
+                .await
             }
         }
         ("ProjectV2", "url" | "resourcePath") => {
             let owner = if parent["_ownerKind"] == "org" {
-                user::organization_by_id(parent["_owner"].as_i64().ok_or_else(missing)?, request)
-                    .await?
+                crate::backend::api::graphql::user::organization_by_id(
+                    parent["_owner"].as_i64().ok_or_else(missing)?,
+                    request,
+                )
+                .await?
             } else {
-                user::by_id(parent["_owner"].as_i64().ok_or_else(missing)?, request).await?
+                crate::backend::api::graphql::user::by_id(
+                    parent["_owner"].as_i64().ok_or_else(missing)?,
+                    request,
+                )
+                .await?
             };
             let path = format!(
                 "/{}/{}/projects/{}",
@@ -806,14 +898,14 @@ async fn resolve_at(
             Ok(json!(false))
         }
         ("ProjectV2", "viewerCanUpdate" | "viewerCanClose" | "viewerCanReopen") => {
-            let project = store::by_id(
+            let project = crate::backend::db::projects::by_id(
                 pool,
                 viewer,
                 parent["_project"].as_i64().ok_or_else(missing)?,
             )
             .await
             .map_err(operation)?;
-            Ok(json!(store::can_write(
+            Ok(json!(crate::backend::db::projects::can_write(
                 pool,
                 actor,
                 project_owner(&project)
@@ -824,7 +916,7 @@ async fn resolve_at(
         ("ProjectV2", "fields" | "field") => {
             let fields = match removed_contents(parent)? {
                 Some(removed) => removed.fields,
-                None => store::fields_at(
+                None => crate::backend::db::projects::fields_at(
                     pool,
                     viewer,
                     parent["_project"].as_i64().ok_or_else(missing)?,
@@ -843,11 +935,11 @@ async fn resolve_at(
                     .unwrap_or(Value::Null));
             }
             order_fields(ctx, &mut values)?;
-            connection::slice(ctx, values)
+            crate::backend::api::graphql::connection::slice(ctx, values)
         }
         ("ProjectV2", "items") => project_items(ctx, request, parent).await,
         ("ProjectV2Item", "fieldValues" | "fieldValueByName") => {
-            let item = store::item_by_id_at(
+            let item = crate::backend::db::projects::item_by_id_at(
                 pool,
                 viewer,
                 parent["_item"].as_i64().ok_or_else(missing)?,
@@ -856,10 +948,14 @@ async fn resolve_at(
             .await
             .map_err(operation)?;
             charge_item(&item, request)?;
-            let fields =
-                store::fields_at(pool, viewer, item.project_id, parent["_deleted"] == true)
-                    .await
-                    .map_err(operation)?;
+            let fields = crate::backend::db::projects::fields_at(
+                pool,
+                viewer,
+                item.project_id,
+                parent["_deleted"] == true,
+            )
+            .await
+            .map_err(operation)?;
             charge_fields(&fields, request)?;
             let selected = if field == "fieldValueByName" {
                 Some(arg(ctx, "name")?)
@@ -890,13 +986,14 @@ async fn resolve_at(
                         "Date"
                     }
                     "single_select" => {
-                        entry["name"] =
-                            json!(domain::display_value(&f, &value).map_err(operation)?);
+                        entry["name"] = json!(crate::backend::projects::display_value(&f, &value)
+                            .map_err(operation)?);
                         entry["optionId"] = value;
                         "SingleSelect"
                     }
                     "iteration" => {
-                        let config = store::field_configuration(&f).map_err(operation)?;
+                        let config = crate::backend::db::projects::field_configuration(&f)
+                            .map_err(operation)?;
                         let iteration = config["iterations"]
                             .as_array()
                             .and_then(|xs| xs.iter().find(|i| i["id"] == value))
@@ -935,10 +1032,10 @@ async fn resolve_at(
                     values.reverse();
                 }
             }
-            connection::slice(ctx, values)
+            crate::backend::api::graphql::connection::slice(ctx, values)
         }
         ("ProjectV2ItemFieldReviewerValue", "reviewers") => {
-            super::review_requests::reviewers(
+            crate::backend::api::graphql::review_requests::reviewers(
                 ctx,
                 request,
                 parent["_reviewPull"].as_i64().ok_or_else(missing)?,
@@ -950,7 +1047,7 @@ async fn resolve_at(
             | "ProjectV2ItemFieldPullRequestValue"
             | "ProjectV2ItemFieldUserValue",
             "labels" | "pullRequests" | "users",
-        ) => connection::slice(
+        ) => crate::backend::api::graphql::connection::slice(
             ctx,
             parent["_nodes"].as_array().cloned().unwrap_or_default(),
         ),
@@ -998,7 +1095,7 @@ pub(super) async fn mutation(
                 "Create the project first, then link its repository or team",
             ));
         }
-        let project = store::create(
+        let project = crate::backend::db::projects::create(
             pool,
             actor,
             &request.auth.credential(),
@@ -1019,7 +1116,7 @@ pub(super) async fn mutation(
         {
             return Err(Error::new("Draft assignees are not supported"));
         }
-        let item = store::edit_draft(
+        let item = crate::backend::db::projects::edit_draft(
             pool,
             actor,
             &request.auth.credential(),
@@ -1033,7 +1130,7 @@ pub(super) async fn mutation(
         return Ok(payload);
     }
     if field == "deleteProjectV2Field" {
-        let f = store::field_by_id(
+        let f = crate::backend::db::projects::field_by_id(
             pool,
             viewer,
             id(&input["fieldId"], &["PVTF", "PVTSSF", "PVTIF"])?,
@@ -1041,27 +1138,34 @@ pub(super) async fn mutation(
         .await
         .map_err(operation)?;
         let object = field_object(&f)?;
-        store::delete_field(pool, actor, &request.auth.credential(), f.project_id, f.id)
-            .await
-            .map_err(operation)?;
+        crate::backend::db::projects::delete_field(
+            pool,
+            actor,
+            &request.auth.credential(),
+            f.project_id,
+            f.id,
+        )
+        .await
+        .map_err(operation)?;
         payload["projectV2Field"] = object;
         return Ok(payload);
     }
-    let project = store::by_id(pool, viewer, id(&input["projectId"], &["PVT"])?)
-        .await
-        .map_err(operation)?;
+    let project =
+        crate::backend::db::projects::by_id(pool, viewer, id(&input["projectId"], &["PVT"])?)
+            .await
+            .map_err(operation)?;
     match field {
         "updateProjectV2" => {
             if let Some(readme) = input["readme"].as_str() {
-                crate::backend::issues::validate_body(readme, false).map_err(Error::new)?;
+                codeyard_model::issue_input::validate_body(readme, false).map_err(Error::new)?;
             }
-            let settings = store::Settings {
+            let settings = crate::backend::db::projects::Settings {
                 title: input["title"].as_str().map(str::to_owned),
                 description: input["shortDescription"].as_str().map(str::to_owned),
                 public: input["public"].as_bool(),
                 closed: input["closed"].as_bool(),
             };
-            let mut updated = store::save(
+            let mut updated = crate::backend::db::projects::save(
                 pool,
                 actor,
                 &request.auth.credential(),
@@ -1071,7 +1175,7 @@ pub(super) async fn mutation(
             .await
             .map_err(operation)?;
             if let Some(readme) = input["readme"].as_str() {
-                updated = store::metadata(
+                updated = crate::backend::db::projects::metadata(
                     pool,
                     actor,
                     &request.auth.credential(),
@@ -1086,7 +1190,7 @@ pub(super) async fn mutation(
         }
         "markProjectV2AsTemplate" | "unmarkProjectV2AsTemplate" => {
             payload["projectV2"] = project_object(
-                &store::metadata(
+                &crate::backend::db::projects::metadata(
                     pool,
                     actor,
                     &request.auth.credential(),
@@ -1099,9 +1203,14 @@ pub(super) async fn mutation(
             );
         }
         "deleteProjectV2" => {
-            let removed = store::delete(pool, actor, &request.auth.credential(), project.id)
-                .await
-                .map_err(operation)?;
+            let removed = crate::backend::db::projects::delete(
+                pool,
+                actor,
+                &request.auth.credential(),
+                project.id,
+            )
+            .await
+            .map_err(operation)?;
             let mut object = project_object(&project);
             // Deletion purges the fields and items, so the answer keeps what it removed.
             object["_removed"] = serde_json::to_value(&removed).map_err(unavailable)?;
@@ -1110,7 +1219,7 @@ pub(super) async fn mutation(
         }
         "copyProjectV2" => {
             payload["projectV2"] = project_object(
-                &store::copy(
+                &crate::backend::db::projects::copy(
                     pool,
                     actor,
                     &request.auth.credential(),
@@ -1128,9 +1237,9 @@ pub(super) async fn mutation(
                 .get("singleSelectOptions")
                 .filter(|value| !value.is_null())
                 .map(|value| {
-                    super::metadata_mutations::list(value)
+                    crate::backend::api::graphql::metadata_mutations::list(value)
                         .iter()
-                        .map(|o| store::SelectOption {
+                        .map(|o| crate::backend::db::projects::SelectOption {
                             name: o["name"].as_str().unwrap_or("").into(),
                             color: o["color"].as_str().map(str::to_owned),
                             description: o["description"].as_str().map(str::to_owned),
@@ -1141,39 +1250,47 @@ pub(super) async fn mutation(
             let iteration = if config.is_null() {
                 None
             } else {
-                Some(store::IterationConfiguration {
+                Some(crate::backend::db::projects::IterationConfiguration {
                     start_date: date(&config["startDate"])?,
                     duration: config["duration"]
                         .as_i64()
                         .ok_or_else(missing)?
                         .try_into()
                         .map_err(unavailable)?,
-                    iterations: super::metadata_mutations::list(&config["iterations"])
-                        .iter()
-                        .map(|item| {
-                            Ok(store::Iteration {
-                                title: item["title"].as_str().ok_or_else(missing)?.to_owned(),
-                                start_date: date(&item["startDate"])?,
-                                duration: item["duration"]
-                                    .as_i64()
-                                    .ok_or_else(missing)?
-                                    .try_into()
-                                    .map_err(unavailable)?,
-                            })
+                    iterations: crate::backend::api::graphql::metadata_mutations::list(
+                        &config["iterations"],
+                    )
+                    .iter()
+                    .map(|item| {
+                        Ok(crate::backend::db::projects::Iteration {
+                            title: item["title"].as_str().ok_or_else(missing)?.to_owned(),
+                            start_date: date(&item["startDate"])?,
+                            duration: item["duration"]
+                                .as_i64()
+                                .ok_or_else(missing)?
+                                .try_into()
+                                .map_err(unavailable)?,
                         })
-                        .collect::<std::result::Result<Vec<_>, Error>>()?,
+                    })
+                    .collect::<std::result::Result<Vec<_>, Error>>()?,
                 })
             };
-            let new = store::NewField {
+            let new = crate::backend::db::projects::NewField {
                 name: input["name"].as_str().unwrap_or("").into(),
                 data_type: input["dataType"].as_str().unwrap_or("").to_lowercase(),
                 single_select_options: options,
                 iteration_configuration: iteration,
             };
             payload["projectV2Field"] = field_object(
-                &store::add_field(pool, actor, &request.auth.credential(), project.id, &new)
-                    .await
-                    .map_err(operation)?,
+                &crate::backend::db::projects::add_field(
+                    pool,
+                    actor,
+                    &request.auth.credential(),
+                    project.id,
+                    &new,
+                )
+                .await
+                .map_err(operation)?,
             )?;
         }
         "addProjectV2ItemById" | "addProjectV2DraftIssue" => {
@@ -1184,7 +1301,7 @@ pub(super) async fn mutation(
                 {
                     return Err(Error::new("Draft assignees are not supported"));
                 }
-                store::Content::Draft {
+                crate::backend::db::projects::Content::Draft {
                     title: input["title"].as_str().unwrap_or("").into(),
                     body: input["body"].as_str().map(str::to_owned),
                 }
@@ -1195,12 +1312,12 @@ pub(super) async fn mutation(
                     .0
                     == "I"
                 {
-                    store::Content::Issue(target)
+                    crate::backend::db::projects::Content::Issue(target)
                 } else {
-                    store::Content::PullRequest(target)
+                    crate::backend::db::projects::Content::PullRequest(target)
                 }
             };
-            let item = store::add_item(
+            let item = crate::backend::db::projects::add_item(
                 pool,
                 actor,
                 &request.auth.credential(),
@@ -1235,13 +1352,13 @@ pub(super) async fn mutation(
                     values[0].1.clone()
                 }
             };
-            let item = store::update_item(
+            let item = crate::backend::db::projects::update_item(
                 pool,
                 actor,
                 &request.auth.credential(),
                 project.id,
                 id(&input["itemId"], &["PVTI"])?,
-                &[store::FieldUpdate {
+                &[crate::backend::db::projects::FieldUpdate {
                     id: field_id,
                     value,
                 }],
@@ -1251,7 +1368,7 @@ pub(super) async fn mutation(
             payload["projectV2Item"] = item_object(&item, request).await?;
         }
         "archiveProjectV2Item" | "unarchiveProjectV2Item" => {
-            let item = store::archive_item(
+            let item = crate::backend::db::projects::archive_item(
                 pool,
                 actor,
                 &request.auth.credential(),
@@ -1264,7 +1381,7 @@ pub(super) async fn mutation(
             payload["item"] = item_object(&item, request).await?;
         }
         "deleteProjectV2Item" => {
-            store::delete_item(
+            crate::backend::db::projects::delete_item(
                 pool,
                 actor,
                 &request.auth.credential(),
@@ -1281,7 +1398,7 @@ pub(super) async fn mutation(
             } else {
                 Some(id(&input["afterId"], &["PVTI"])?)
             };
-            store::reorder_item(
+            crate::backend::db::projects::reorder_item(
                 pool,
                 actor,
                 &request.auth.credential(),
@@ -1294,7 +1411,7 @@ pub(super) async fn mutation(
             payload["_project"] = json!(project.id);
         }
         "linkProjectV2ToTeam" | "unlinkProjectV2FromTeam" => {
-            store::link_team(
+            crate::backend::db::projects::link_team(
                 pool,
                 actor,
                 &request.auth.credential(),
@@ -1306,8 +1423,12 @@ pub(super) async fn mutation(
             .map_err(operation)?;
         }
         "linkProjectV2ToRepository" | "unlinkProjectV2FromRepository" => {
-            let repo = repository::by_id(id(&input["repositoryId"], &["R"])?, request).await?;
-            store::link_repository(
+            let repo = crate::backend::api::graphql::repository::by_id(
+                id(&input["repositoryId"], &["R"])?,
+                request,
+            )
+            .await?;
+            crate::backend::db::projects::link_repository(
                 pool,
                 actor,
                 &request.auth.credential(),
@@ -1317,7 +1438,7 @@ pub(super) async fn mutation(
             )
             .await
             .map_err(operation)?;
-            payload["repository"] = repository::object(&repo);
+            payload["repository"] = crate::backend::api::graphql::repository::object(&repo);
         }
         _ => {
             return Err(Error::new(format!(

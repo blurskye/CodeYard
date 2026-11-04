@@ -1,14 +1,15 @@
 //! Branch comparison: the compare page, and the comparison that pull request forms share with it.
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::repos::discussion::branches;
+use crate::backend::api::repos::discussion::page;
+use crate::backend::api::repos::discussion::repository;
+use crate::backend::api::repos::discussion::RepositoryData;
+use crate::backend::api::repos::discussion::ResultPage;
 use crate::backend::api::repos::pulls::diff::diff_model;
-use crate::backend::{
-    api::{
-        http::context::PageContext,
-        repos::discussion::{branches, page, repository, RepositoryData, ResultPage},
-    },
-    app::AppState,
-    db,
-    repositories::{reads::same_fork_network, store::repo_store},
-};
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::reads::same_fork_network;
+use crate::backend::repositories::store::repo_store;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -207,7 +208,7 @@ pub(crate) async fn native_compare_page(
     let open_pull = if !branch_pair || base == head {
         None
     } else {
-        db::pull_requests::records::find_open_pull_request_from_branches(
+        crate::backend::db::pull_requests::records::find_open_pull_request_from_branches(
             &ctx.state.pool,
             repo.record.id,
             &base,

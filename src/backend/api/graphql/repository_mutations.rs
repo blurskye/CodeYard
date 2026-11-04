@@ -1,10 +1,16 @@
 //! Repository creation and edits use native provisioning and settings transactions.
-use super::{
-    db, missing,
-    mutations::{target, text},
-    node_id, repository, token_denied, unavailable, RequestContext, Result, Value,
-};
-use crate::backend::{api::github, repositories::lifecycle};
+use crate::backend::api::graphql::db;
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::mutations::target;
+use crate::backend::api::graphql::mutations::text;
+use crate::backend::api::graphql::node_id;
+
+use crate::backend::api::graphql::token_denied;
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
+
 use async_graphql::Error;
 use db::repositories::{
     creation::{RepositoryCreationOwner, RepositoryTarget},
@@ -17,10 +23,10 @@ pub(super) const FIELDS: &[&str] = &[
     "updateRepository",
 ];
 fn settings(error: anyhow::Error) -> Error {
-    github::repos::settings_error(error).graphql()
+    crate::backend::api::github::repos::settings_error(error).graphql()
 }
-fn provision(error: lifecycle::StorageError) -> Error {
-    github::repos::lifecycle_error(error).graphql()
+fn provision(error: crate::backend::repositories::lifecycle::StorageError) -> Error {
+    crate::backend::api::github::repos::lifecycle_error(error).graphql()
 }
 fn partial(message: &str) -> Error {
     use async_graphql::ErrorExtensions;
@@ -100,10 +106,10 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         .map_err(settings)?;
     let description = input.get("description").map(|v| v.as_str().unwrap_or(""));
     if let Some(value) = description {
-        lifecycle::validate_description(value).map_err(provision)?;
+        crate::backend::repositories::lifecycle::validate_description(value).map_err(provision)?;
     }
     if let Some(name) = input["name"].as_str() {
-        lifecycle::validate_name(name).map_err(provision)?;
+        crate::backend::repositories::lifecycle::validate_name(name).map_err(provision)?;
     }
     let saved = if matches!(field, "createRepository" | "cloneTemplateRepository") {
         if request.auth.is_job() {
@@ -132,12 +138,15 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             ));
         }
         if request.personal.is_some() {
-            use crate::backend::identity::fine_grained;
             let owner = match owner {
-                RepositoryTarget::Personal(id) => fine_grained::Owner::User(id),
-                RepositoryTarget::Organization(id) => fine_grained::Owner::Organization(id),
+                RepositoryTarget::Personal(id) => {
+                    crate::backend::identity::fine_grained::Owner::User(id)
+                }
+                RepositoryTarget::Organization(id) => {
+                    crate::backend::identity::fine_grained::Owner::Organization(id)
+                }
             };
-            let grant = fine_grained::grant(pool, request.auth.token.id)
+            let grant = crate::backend::identity::fine_grained::grant(pool, request.auth.token.id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(token_denied)?;
@@ -184,14 +193,18 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             target: owner,
         };
         let row = if field == "cloneTemplateRepository" {
-            let source = repository::by_id(target(input, "repositoryId", "R")?, request).await?;
+            let source = crate::backend::api::graphql::repository::by_id(
+                target(input, "repositoryId", "R")?,
+                request,
+            )
+            .await?;
             request.authorize(source.id, "contents", false).await?;
-            lifecycle::generate(
+            crate::backend::repositories::lifecycle::generate(
                 (pool, request.state.cluster.as_ref()),
                 &request.state.repos_path,
                 creation,
                 source.id,
-                lifecycle::TemplateOptions {
+                crate::backend::repositories::lifecycle::TemplateOptions {
                     name: text(input, "name")?,
                     description,
                     private,
@@ -202,10 +215,10 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             )
             .await
         } else {
-            lifecycle::provision_with_properties(
+            crate::backend::repositories::lifecycle::provision_with_properties(
                 (pool, request.state.cluster.as_ref()),
                 &request.state.repos_path,
-                lifecycle::CreationInput {
+                crate::backend::repositories::lifecycle::CreationInput {
                     owner: creation,
                     properties: &[],
                     admission: db::repositories::creation::CreationAdmission {
@@ -256,9 +269,13 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 return Err(partial("Repository created; team grant was not confirmed"));
             }
         }
-        repository::by_id(row.id, request).await?
+        crate::backend::api::graphql::repository::by_id(row.id, request).await?
     } else {
-        let row = repository::by_id(target(input, "repositoryId", "R")?, request).await?;
+        let row = crate::backend::api::graphql::repository::by_id(
+            target(input, "repositoryId", "R")?,
+            request,
+        )
+        .await?;
         request.authorize(row.id, "administration", true).await?;
         records::patch_repository(
             pool,

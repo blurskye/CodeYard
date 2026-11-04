@@ -2,11 +2,17 @@
 //! password with the mailed code or link, and confirming an address. A link only opens a page;
 //! its form must be sent to use it, so a mail scanner that fetches the link changes nothing.
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::session;
-use crate::backend::api::user::responses::{field, safe_redirect, within_bounds, Fields};
+
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::safe_redirect;
+use crate::backend::api::user::responses::within_bounds;
+use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
-use crate::backend::email::links::{self, LinkError, Purpose};
-use crate::backend::identity::{self, accounts::PasswordResetError};
+
+use crate::backend::email::links::LinkError;
+use crate::backend::email::links::Purpose;
+
+use crate::backend::identity::accounts::PasswordResetError;
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -94,9 +100,9 @@ pub(crate) async fn forgot_post(
         )
         .await;
     }
-    let sent = links::send_password_reset(
+    let sent = crate::backend::email::links::send_password_reset(
         &ctx.state.pool,
-        session::client_address(&ctx.headers),
+        crate::backend::api::http::session::client_address(&ctx.headers),
         address,
     )
     .await;
@@ -177,7 +183,8 @@ pub(crate) async fn reset_code_post(
     }
     // The code is the token from the link, so a pasted code works the same way.
     let code = field(&form, "code").trim();
-    match identity::accounts::reset_password(&ctx.state.pool, code, password).await {
+    match crate::backend::identity::accounts::reset_password(&ctx.state.pool, code, password).await
+    {
         Ok(()) => {
             let target = if redirect == "/" {
                 "/login?reset=done".to_owned()
@@ -229,7 +236,7 @@ async fn link_state<'a>(
     status: StatusCode,
     message: Option<&'a str>,
 ) -> Result<(bool, StatusCode, Option<&'a str>), Response> {
-    let valid = links::is_valid(&ctx.state.pool, purpose, token)
+    let valid = crate::backend::email::links::is_valid(&ctx.state.pool, purpose, token)
         .await
         .map_err(|error| {
             let (status, message) = link_failure(&error);
@@ -302,7 +309,8 @@ pub(crate) async fn reset_post(
         )
         .await;
     }
-    match identity::accounts::reset_password(&ctx.state.pool, token, password).await {
+    match crate::backend::identity::accounts::reset_password(&ctx.state.pool, token, password).await
+    {
         Ok(()) => ctx.redirect("/login?reset=done"),
         Err(PasswordResetError::Input(_)) => {
             reset_page(
@@ -388,7 +396,7 @@ pub(crate) async fn verify_post(
         return response;
     }
     let token = field(&form, "token");
-    match links::verify_address(&ctx.state.pool, token).await {
+    match crate::backend::email::links::verify_address(&ctx.state.pool, token).await {
         Ok(true) => {
             verify_page(
                 &ctx,

@@ -76,7 +76,7 @@ native_operation!(crate::backend::db::postgres::users::signup_requests::approve_
     fn approve_signup_request(
     pool: &DbPool,
     request_id: i64,
-    reviewer_user_id: impl Into<super::transitions::AdministratorActor>,
+    reviewer_user_id: impl Into<crate::backend::db::users::transitions::AdministratorActor>,
 ) -> Result<User>);
 
 native_operation!(crate::backend::db::postgres::users::signup_requests::reject_signup_request,
@@ -85,5 +85,5 @@ native_operation!(crate::backend::db::postgres::users::signup_requests::reject_s
     fn reject_signup_request(
     pool: &DbPool,
     request_id: i64,
-    reviewer_user_id: impl Into<super::transitions::AdministratorActor>,
+    reviewer_user_id: impl Into<crate::backend::db::users::transitions::AdministratorActor>,
 ) -> Result<(String, Option<String>)>);

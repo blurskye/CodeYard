@@ -1,10 +1,9 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::access::check_repo_read_access;
 use crate::backend::api::repos::responses::rfc3339;
-use crate::backend::db;
-use crate::backend::repositories::access;
-use crate::backend::repositories::lifecycle;
-use crate::backend::repositories::store::{repo_store, CommitInfo};
+
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::CommitInfo;
 use axum::http::StatusCode;
 use axum::response::Response;
 use codeyard_git::error::{ErrorKind, RepoError};
@@ -104,22 +103,26 @@ pub(crate) async fn load_database(
     owner: &str,
     name: &str,
 ) -> Result<Loaded, Response> {
-    let repository = db::repositories::records::get_repository(&ctx.state.pool, owner, name)
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
+    let repository =
+        crate::backend::db::repositories::records::get_repository(&ctx.state.pool, owner, name)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
     from_api(
         ctx,
         check_repo_read_access(&ctx.state.pool, &repository, &ctx.headers).await,
     )?;
-    let topics = db::repositories::topics::repository_topics(&ctx.state.pool, &[repository.id])
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .remove(&repository.id)
-        .unwrap_or_default();
+    let topics = crate::backend::db::repositories::topics::repository_topics(
+        &ctx.state.pool,
+        &[repository.id],
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?
+    .remove(&repository.id)
+    .unwrap_or_default();
     let forks = from_api(
         ctx,
-        super::responses::repository_fork_counts(
+        crate::backend::api::repos::responses::repository_fork_counts(
             &ctx.state.pool,
             Some(&ctx.headers),
             &[repository.id],
@@ -157,22 +160,25 @@ pub(crate) async fn load_database(
         .user
         .as_ref()
         .and_then(|_| crate::backend::api::http::session::extract_session_id(&ctx.headers));
-    chrome.packages = db::packages::count_linked(
+    chrome.packages = crate::backend::db::packages::count_linked(
         &ctx.state.pool,
         package_session
             .as_deref()
-            .map(db::packages::Credential::Session),
+            .map(crate::backend::db::packages::Credential::Session),
         repository.id,
     )
     .await
     .map_err(|_| unavailable(ctx))?;
     // The Issues and Pull requests tabs show open counts, and every reader of the repository sees them.
-    chrome.open_issues =
-        db::issues::count_repo_issues(&ctx.state.pool, repository.id, &Default::default())
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .open;
-    chrome.open_pulls = db::pull_requests::records::count_repo_pull_requests(
+    chrome.open_issues = crate::backend::db::issues::count_repo_issues(
+        &ctx.state.pool,
+        repository.id,
+        &Default::default(),
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?
+    .open;
+    chrome.open_pulls = crate::backend::db::pull_requests::records::count_repo_pull_requests(
         &ctx.state.pool,
         repository.id,
         &Default::default(),
@@ -184,9 +190,10 @@ pub(crate) async fn load_database(
         chrome.is_owner = repository.is_personal_owner(user.id);
         chrome.can_manage_collaborators = chrome.is_owner;
         chrome.fork_refusal =
-            lifecycle::fork_refusal(&repository, user.id).map(|error| error.message.to_owned());
+            crate::backend::repositories::lifecycle::fork_refusal(&repository, user.id)
+                .map(|error| error.message.to_owned());
         if !chrome.is_owner {
-            chrome.is_owner = db::repositories::access::get_user_repo_access(
+            chrome.is_owner = crate::backend::db::repositories::access::get_user_repo_access(
                 &ctx.state.pool,
                 user.id,
                 repository.id,
@@ -195,51 +202,66 @@ pub(crate) async fn load_database(
             .map_err(|_| unavailable(ctx))?
             .is_owner();
         }
-        let effective_access = access::user_access(&ctx.state.pool, user, &repository)
-            .await
-            .map_err(|_| unavailable(ctx))?;
-        chrome.can_write = access::can_write(&ctx.state.pool, user, &repository)
-            .await
-            .map_err(|_| unavailable(ctx))?;
+        let effective_access =
+            crate::backend::repositories::access::user_access(&ctx.state.pool, user, &repository)
+                .await
+                .map_err(|_| unavailable(ctx))?;
+        chrome.can_write =
+            crate::backend::repositories::access::can_write(&ctx.state.pool, user, &repository)
+                .await
+                .map_err(|_| unavailable(ctx))?;
         chrome.can_admin = effective_access.can_admin();
         chrome.can_view_traffic = effective_access.can_write();
         chrome.can_manage_invitations = chrome.can_admin;
-        chrome.starred =
-            db::repositories::engagement::is_repo_starred(&ctx.state.pool, user.id, repository.id)
-                .await
-                .map_err(|_| unavailable(ctx))?;
+        chrome.starred = crate::backend::db::repositories::engagement::is_repo_starred(
+            &ctx.state.pool,
+            user.id,
+            repository.id,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?;
         if let Some((level, events)) =
-            db::repositories::engagement::get_watch_level(&ctx.state.pool, user.id, repository.id)
-                .await
-                .map_err(|_| unavailable(ctx))?
+            crate::backend::db::repositories::engagement::get_watch_level(
+                &ctx.state.pool,
+                user.id,
+                repository.id,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?
         {
             chrome.watch_level = level;
             chrome.watch_events = events;
         }
-        if let Some(fork) =
-            db::repositories::discovery::get_user_fork(&ctx.state.pool, user.id, repository.id)
-                .await
-                .map_err(|_| unavailable(ctx))?
+        if let Some(fork) = crate::backend::db::repositories::discovery::get_user_fork(
+            &ctx.state.pool,
+            user.id,
+            repository.id,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?
         {
             // Only the actor's own fork is disclosed.
             chrome.fork_url = Some(codeyard_webui::repository_path(&user.username, &fork.name));
         }
     }
     if let Some(parent_id) = repository.forked_from_id {
-        if let Some(parent) =
-            db::repositories::records::get_repository_by_id(&ctx.state.pool, parent_id)
-                .await
-                .map_err(|_| unavailable(ctx))?
+        if let Some(parent) = crate::backend::db::repositories::records::get_repository_by_id(
+            &ctx.state.pool,
+            parent_id,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?
         {
             match check_repo_read_access(&ctx.state.pool, &parent, &ctx.headers).await {
                 Ok(()) => {
-                    let parent_owner = db::repositories::records::repository_owner_name(
-                        &ctx.state.pool,
-                        parent.id,
-                    )
-                    .await
-                    .map_err(|_| unavailable(ctx))?
-                    .ok_or_else(|| unavailable(ctx))?;
+                    let parent_owner =
+                        crate::backend::db::repositories::records::repository_owner_name(
+                            &ctx.state.pool,
+                            parent.id,
+                        )
+                        .await
+                        .map_err(|_| unavailable(ctx))?
+                        .ok_or_else(|| unavailable(ctx))?;
                     chrome.parent_name = Some(format!("{}/{}", parent_owner, parent.name));
                     chrome.parent_url =
                         Some(codeyard_webui::repository_path(&parent_owner, &parent.name));

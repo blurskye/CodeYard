@@ -1,12 +1,20 @@
-use crate::backend::db::discussions::{
-    contains_pattern, ListFilter, StateCounts, SHOWN_PR_COMMENT,
-};
+use crate::backend::db::discussions::contains_pattern;
+use crate::backend::db::discussions::ListFilter;
+use crate::backend::db::discussions::StateCounts;
+use crate::backend::db::discussions::SHOWN_PR_COMMENT;
+use crate::backend::db::pull_requests::records::can_grant_maintainer_edit;
+use crate::backend::db::pull_requests::records::decide_join;
+use crate::backend::db::pull_requests::records::DuplicateOpenPullRequest;
+use crate::backend::db::pull_requests::records::JoinCheck;
+use crate::backend::db::pull_requests::records::NewPullRequest;
 use crate::backend::db::pull_requests::records::PullRequestListEntry;
-use crate::backend::db::pull_requests::records::{
-    can_grant_maintainer_edit, decide_join, DuplicateOpenPullRequest, JoinCheck, NewPullRequest,
-    PullRequestRevisions, PullRequestUpdate, ReadyOutcome, StackJoin, StackRefusal,
-};
-use crate::backend::db::pull_requests::records::{PullRequestRelation, ViewerPullRequestEntry};
+use crate::backend::db::pull_requests::records::PullRequestRelation;
+use crate::backend::db::pull_requests::records::PullRequestRevisions;
+use crate::backend::db::pull_requests::records::PullRequestUpdate;
+use crate::backend::db::pull_requests::records::ReadyOutcome;
+use crate::backend::db::pull_requests::records::StackJoin;
+use crate::backend::db::pull_requests::records::StackRefusal;
+use crate::backend::db::pull_requests::records::ViewerPullRequestEntry;
 use anyhow::Result;
 use codeyard_db_core::models::PullRequest;
 use sqlx::PgPool;
@@ -114,7 +122,7 @@ pub async fn move_open_pull_request_head(
     pusher: Option<i64>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    super::super::users::transitions::lock_accounts_shared(
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &pusher.into_iter().collect::<Vec<_>>(),
     )
@@ -131,7 +139,7 @@ pub async fn move_open_pull_request_head(
     .await?
     .rows_affected();
     if changed == 1 && old_head != new_head {
-        let access = super::super::repositories::access::USER_REPO_ACCESS_SQL;
+        let access = crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL;
         sqlx::query(&format!("DELETE FROM pull_request_auto_merges WHERE pull_request_id=$1 AND NOT EXISTS(SELECT 1 FROM pull_requests p JOIN repositories r ON r.id=p.repo_id JOIN users u ON u.id=$2 WHERE p.id=$1 AND ({access})>=3)"))
             .bind(pull_request_id).bind(pusher).execute(&mut *tx).await?;
     }
@@ -205,7 +213,9 @@ pub async fn approve_pull_request_workflows(
     .bind(pr_id)
     .fetch_one(&mut *tx)
     .await?;
-    if fork && !super::super::action_settings::fork_runs_allowed(&mut tx, repo).await? {
+    if fork
+        && !crate::backend::db::postgres::action_settings::fork_runs_allowed(&mut tx, repo).await?
+    {
         return Ok(false);
     }
     let changed = sqlx::query("UPDATE pull_requests SET workflows_approved_sha = $2 WHERE id = $1 AND head_sha = $2 AND state = 'open' AND NOT is_draft")
@@ -241,7 +251,7 @@ pub async fn set_pull_request_draft(
     let Some((repo, author)) = scope else {
         return Ok(ReadyOutcome::Missing);
     };
-    super::super::pull_caps::lock_author(&mut tx, author).await?;
+    crate::backend::db::postgres::pull_caps::lock_author(&mut tx, author).await?;
     let writer =
         crate::backend::db::postgres::discussions::lock_write_authority(&mut tx, actor_id, repo)
             .await?;
@@ -276,7 +286,15 @@ pub async fn set_pull_request_draft(
     }
     // Converting to a draft never adds to a cap, so only a return to ready is checked.
     if !is_draft {
-        super::super::pull_caps::check(&mut tx, author, repo, false, true, Some(pr_id)).await?;
+        crate::backend::db::postgres::pull_caps::check(
+            &mut tx,
+            author,
+            repo,
+            false,
+            true,
+            Some(pr_id),
+        )
+        .await?;
     }
     let pr = sqlx::query_as::<_, PullRequest>(
         "UPDATE pull_requests SET is_draft = $2, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') WHERE id = $1 RETURNING *",
@@ -302,7 +320,7 @@ pub async fn create_pull_request(pool: &PgPool, input: NewPullRequest<'_>) -> Re
     } else {
         input.author_id
     };
-    super::super::pull_caps::lock_author(&mut tx, cap_author).await?;
+    crate::backend::db::postgres::pull_caps::lock_author(&mut tx, cap_author).await?;
     // Serialize duplicate detection while retaining the parent-to-child
     // organization/account/repository authority lock order.
     crate::backend::db::postgres::discussions::require_exclusive_contribution_authority(
@@ -313,7 +331,13 @@ pub async fn create_pull_request(pool: &PgPool, input: NewPullRequest<'_>) -> Re
     .await?;
     let source = match input.issue {
         Some(number) => Some(
-            super::conversion::read_source(&mut tx, input.author_id, input.repo_id, number).await?,
+            crate::backend::db::postgres::pull_requests::conversion::read_source(
+                &mut tx,
+                input.author_id,
+                input.repo_id,
+                number,
+            )
+            .await?,
         ),
         None => None,
     };
@@ -365,7 +389,7 @@ pub async fn create_pull_request(pool: &PgPool, input: NewPullRequest<'_>) -> Re
     if let Some(number) = duplicate {
         return Err(DuplicateOpenPullRequest { number }.into());
     }
-    super::super::pull_caps::check(
+    crate::backend::db::postgres::pull_caps::check(
         &mut tx,
         cap_author,
         input.repo_id,
@@ -410,7 +434,13 @@ pub async fn create_pull_request(pool: &PgPool, input: NewPullRequest<'_>) -> Re
     .fetch_one(&mut *tx)
     .await?;
     if let Some(issue) = source.as_ref() {
-        super::conversion::move_source(&mut tx, issue, &pr, input.author_id).await?;
+        crate::backend::db::postgres::pull_requests::conversion::move_source(
+            &mut tx,
+            issue,
+            &pr,
+            input.author_id,
+        )
+        .await?;
     }
     tx.commit().await?;
     Ok(pr)
@@ -480,7 +510,7 @@ pub async fn list_filtered_pull_requests(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<PullRequest>> {
-    let readable = super::super::repositories::access::readable_condition();
+    let readable = crate::backend::db::postgres::repositories::access::readable_condition();
     let rows = sqlx::query_as::<_, PullRequest>(&format!(
         "SELECT p.* FROM pull_requests p LEFT JOIN repositories h ON h.id = p.head_repo_id
          LEFT JOIN users u ON u.id = h.owner_user_id LEFT JOIN organizations o ON o.id = h.owner_org_id
@@ -506,7 +536,7 @@ pub async fn list_repo_pull_requests(
     let columns = crate::backend::db::postgres::users::accounts::AUTHOR_DISPLAY_COLUMNS;
     let (assignee_mode, assignee_id) = filter.assignee.binding();
     let (milestone_mode, milestone_id) = filter.milestone.binding();
-    let labels = super::super::discussions::label_names_array(filter.labels);
+    let labels = crate::backend::db::postgres::discussions::label_names_array(filter.labels);
     let order = filter
         .sort
         .order_by("pr_comments", "pull_request_id", SHOWN_PR_COMMENT);
@@ -642,7 +672,7 @@ pub async fn count_repo_pull_requests_by_state(
 ) -> Result<Vec<(String, i64)>> {
     let (assignee_mode, assignee_id) = filter.assignee.binding();
     let (milestone_mode, milestone_id) = filter.milestone.binding();
-    let labels = super::super::discussions::label_names_array(filter.labels);
+    let labels = crate::backend::db::postgres::discussions::label_names_array(filter.labels);
     let rows = sqlx::query_as::<_, (String, i64)>(
         r#"SELECT i.state AS bucket, COUNT(*) FROM pull_requests i WHERE i.repo_id = $1
             AND ($2::TEXT IS NULL OR i.title ILIKE $2::TEXT ESCAPE '\' OR i.body ILIKE $2::TEXT ESCAPE '\')
@@ -694,7 +724,7 @@ pub async fn update_pull_request(
     };
     let reopening = edit.expected_state == "closed" && edit.state == Some("open");
     if reopening {
-        super::super::pull_caps::lock_author(&mut tx, author).await?;
+        crate::backend::db::postgres::pull_caps::lock_author(&mut tx, author).await?;
     }
     // Reopening, or moving the base, checks for another open pull request on the same branches,
     // so it takes the repository exclusively, as creating one does.
@@ -789,7 +819,15 @@ pub async fn update_pull_request(
         return Ok(None);
     }
     if reopening {
-        super::super::pull_caps::check(&mut tx, author, repo, draft, false, Some(pr_id)).await?;
+        crate::backend::db::postgres::pull_caps::check(
+            &mut tx,
+            author,
+            repo,
+            draft,
+            false,
+            Some(pr_id),
+        )
+        .await?;
     }
     if checks_duplicates {
         let duplicate: Option<i32> = sqlx::query_scalar(
@@ -831,7 +869,7 @@ pub async fn update_pull_request(
         for (kind, detail, previous) in
             crate::backend::db::timeline::edit_events(&old_title, &state, &pr.title, &pr.state)
         {
-            super::super::timeline::append(
+            crate::backend::db::postgres::timeline::append(
                 &mut tx,
                 repo,
                 "pull_request",
@@ -899,7 +937,7 @@ pub async fn mark_pull_requests_merged(
         if changed != 1 {
             return Ok(false);
         }
-        super::super::timeline::append(
+        crate::backend::db::postgres::timeline::append(
             &mut tx,
             pull.repo_id,
             "pull_request",

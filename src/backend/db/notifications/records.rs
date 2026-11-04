@@ -220,7 +220,7 @@ pub enum NotificationCredential<'a> {
 /// native transaction, including final expiry verification before commit.
 #[derive(Clone)]
 pub enum NotificationInboxAction {
-    Threads(super::threads::ThreadAction),
+    Threads(crate::backend::db::notifications::threads::ThreadAction),
     List {
         filter: NotificationFilter,
         limit: i64,
@@ -254,7 +254,7 @@ impl NotificationInboxAction {
 }
 
 pub struct NotificationInbox {
-    pub threads: Option<super::threads::ThreadInbox>,
+    pub threads: Option<crate::backend::db::notifications::threads::ThreadInbox>,
     pub notifications: Vec<Notification>,
     pub next_cursor: Option<NotificationCursor>,
     /// Unread notifications in the inbox: the count the unread badge shows.

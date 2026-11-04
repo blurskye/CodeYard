@@ -1,5 +1,5 @@
-use super::authority::*;
 use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::sqlite::organizations::authority::*;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::User;
@@ -68,7 +68,7 @@ pub async fn change(
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
-    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+    if !crate::backend::db::sqlite::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1)")

@@ -7,7 +7,7 @@ use crate::support::http_client as requests;
 use crate::support::native_database as native;
 use crate::support::production_ci as production;
 use codeyard::backend::ci::{CiConfig, CiPipelineKind, CiRunRequest, CiRuns};
-use codeyard::backend::db;
+
 use std::collections::BTreeSet;
 
 #[tokio::test]
@@ -24,9 +24,16 @@ async fn long_account_names_can_list_and_dispatch_workflows_on_both_engines() {
     let postgres = native::PostgresDatabase::new().await;
     let sqlite = native::NativeDatabase::new().await;
     for pool in [&postgres.pool, &sqlite.pool] {
-        db::users::transitions::complete_setup(pool, "root_admin", None, "fixture", "public", None)
-            .await
-            .unwrap();
+        codeyard::backend::db::users::transitions::complete_setup(
+            pool,
+            "root_admin",
+            None,
+            "fixture",
+            "public",
+            None,
+        )
+        .await
+        .unwrap();
         for username in [
             "a".repeat(101),
             "a".repeat(255),
@@ -34,14 +41,16 @@ async fn long_account_names_can_list_and_dispatch_workflows_on_both_engines() {
             "é".repeat(255),
             "𐐀".repeat(255),
         ] {
-            let owner = db::users::accounts::create_user(pool, &username, None)
+            let owner = codeyard::backend::db::users::accounts::create_user(pool, &username, None)
                 .await
                 .unwrap();
             let root = tempfile::tempdir().unwrap();
             let repo = lifecycle::provision(
                 (pool, None),
                 root.path(),
-                db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+                codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+                    owner.id,
+                ),
                 "project",
                 None,
                 false,
@@ -95,7 +104,7 @@ async fn long_account_names_can_list_and_dispatch_workflows_on_both_engines() {
                 .await;
             assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
             assert_eq!(
-                db::ci::list_ci_runs_for_repo(pool, repo.id, 10)
+                codeyard::backend::db::ci::list_ci_runs_for_repo(pool, repo.id, 10)
                     .await
                     .unwrap()
                     .len(),
@@ -109,10 +118,11 @@ async fn long_account_names_can_list_and_dispatch_workflows_on_both_engines() {
         ] {
             let root = tempfile::tempdir().unwrap();
             let router = crate::support::database::router(pool, root.path()).await;
-            let admin = db::users::accounts::get_user_by_username(pool, "root_admin")
-                .await
-                .unwrap()
-                .unwrap();
+            let admin =
+                codeyard::backend::db::users::accounts::get_user_by_username(pool, "root_admin")
+                    .await
+                    .unwrap()
+                    .unwrap();
             let client = requests::Client::login(&router, pool, admin.id).await;
             let query = url::form_urlencoded::Serializer::new(String::new())
                 .append_pair("owner", &owner)
@@ -166,17 +176,26 @@ jobs:
       - run: echo deploy
 ";
     for pool in [&postgres.pool, &sqlite.pool] {
-        db::users::transitions::complete_setup(pool, "root_admin", None, "fixture", "public", None)
-            .await
-            .unwrap();
-        let owner = db::users::accounts::create_user(pool, "inputs_owner", None)
+        codeyard::backend::db::users::transitions::complete_setup(
+            pool,
+            "root_admin",
+            None,
+            "fixture",
+            "public",
+            None,
+        )
+        .await
+        .unwrap();
+        let owner = codeyard::backend::db::users::accounts::create_user(pool, "inputs_owner", None)
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
         let repo = lifecycle::provision(
             (pool, None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+            codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+                owner.id,
+            ),
             "project",
             None,
             false,
@@ -340,12 +359,13 @@ jobs:
             "{}",
             malformed.text()
         );
-        let stored: Vec<Value> = db::ci::list_ci_runs_for_repo(pool, repo.id, 20)
-            .await
-            .unwrap()
-            .into_iter()
-            .filter_map(|run| run.workflow_inputs)
-            .collect();
+        let stored: Vec<Value> =
+            codeyard::backend::db::ci::list_ci_runs_for_repo(pool, repo.id, 20)
+                .await
+                .unwrap()
+                .into_iter()
+                .filter_map(|run| run.workflow_inputs)
+                .collect();
         assert_eq!(stored.len(), 4, "{stored:?}");
         assert!(stored.contains(&json!({"target": "production", "debug": "true", "retries": "4"})));
         assert!(stored.contains(&json!({"target": "production", "debug": "true", "retries": "3"})));
@@ -367,17 +387,26 @@ async fn pull_request_base_names_that_look_like_refs_keep_their_branch_kind() {
     let postgres = native::PostgresDatabase::new().await;
     let sqlite = native::NativeDatabase::new().await;
     for pool in [&postgres.pool, &sqlite.pool] {
-        db::users::transitions::complete_setup(pool, "root_admin", None, "fixture", "public", None)
-            .await
-            .unwrap();
-        let owner = db::users::accounts::create_user(pool, "alice", None)
+        codeyard::backend::db::users::transitions::complete_setup(
+            pool,
+            "root_admin",
+            None,
+            "fixture",
+            "public",
+            None,
+        )
+        .await
+        .unwrap();
+        let owner = codeyard::backend::db::users::accounts::create_user(pool, "alice", None)
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
         let repo = lifecycle::provision(
             (pool, None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+            codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+                owner.id,
+            ),
             "proj",
             None,
             false,
@@ -420,7 +449,7 @@ async fn pull_request_base_names_that_look_like_refs_keep_their_branch_kind() {
                 .save(&topic, &format!("topic-{index}.txt"), sha)
                 .await;
             client.open_pull("Review", &topic, base).await;
-            let runs = db::ci::list_ci_runs_for_repo(pool, repo.id, 10)
+            let runs = codeyard::backend::db::ci::list_ci_runs_for_repo(pool, repo.id, 10)
                 .await
                 .unwrap();
             let run = runs
@@ -445,7 +474,7 @@ async fn pull_request_base_names_that_look_like_refs_keep_their_branch_kind() {
 
 #[test]
 fn only_branches_lose_their_ref_prefix() {
-    use codeyard::backend::ci::branch_name;
+    use codeyard_db_core::ci_messages::branch_name;
     assert_eq!(branch_name("refs/heads/main"), "main");
     assert_eq!(branch_name("refs/heads/feature/x"), "feature/x");
     assert_eq!(branch_name("main"), "main");
@@ -575,9 +604,15 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
     );
     // A push is recorded under its full ref. After a force-push moves the branch, a rerun of
     // that push still runs the commit it pushed.
-    db::ci::record_ci_accepted_push(&f.pool, f.repo.id, f.owner.id, "refs/heads/main", &f.sha)
-        .await
-        .unwrap();
+    codeyard::backend::db::ci::record_ci_accepted_push(
+        &f.pool,
+        f.repo.id,
+        f.owner.id,
+        "refs/heads/main",
+        &f.sha,
+    )
+    .await
+    .unwrap();
     let git = git2::Repository::open_bare(f.temp.path().join("repo.git")).unwrap();
     production::commit(&git, "refs/heads/main", None, "force-pushed", None);
     drop(git);

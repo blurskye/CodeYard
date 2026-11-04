@@ -1,11 +1,8 @@
-use super::organization::{self, Fields};
-use crate::backend::{
-    api::http::context::PageContext,
-    db::organizations::{
-        roles::{self, RoleTarget},
-        OrganizationOutcome,
-    },
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::organizations::organization::Fields;
+
+use crate::backend::db::organizations::roles::RoleTarget;
+use crate::backend::db::organizations::OrganizationOutcome;
 use axum::{http::StatusCode, response::Response};
 use codeyard_webui::pages::orgs as view;
 
@@ -16,9 +13,11 @@ pub(super) struct Command {
 }
 impl Command {
     pub(super) fn parse(form: &Fields) -> Result<Self, &'static str> {
-        let action = organization::field(form, "action");
+        let action = crate::backend::api::organizations::organization::field(form, "action");
         let assigned = action.starts_with("assign-");
-        if !assigned && organization::field(form, "confirm") != "true" {
+        if !assigned
+            && crate::backend::api::organizations::organization::field(form, "confirm") != "true"
+        {
             return Err("Confirm removing the directly assigned organization roles.");
         }
         let target = if matches!(
@@ -26,14 +25,17 @@ impl Command {
             "assign-user-role" | "revoke-user-role" | "revoke-all-user-roles"
         ) {
             RoleTarget::User(
-                organization::username(form).map_err(|_| "Enter an existing account username.")?,
+                crate::backend::api::organizations::organization::username(form)
+                    .map_err(|_| "Enter an existing account username.")?,
             )
         } else if matches!(action, "revoke-team-role" | "revoke-all-team-roles") {
             RoleTarget::TeamId(
-                organization::id(form, "team_id").map_err(|_| "Choose an assigned team.")?,
+                crate::backend::api::organizations::organization::id(form, "team_id")
+                    .map_err(|_| "Choose an assigned team.")?,
             )
         } else if action == "assign-team-role" {
-            let slug = organization::field(form, "team_slug").trim();
+            let slug =
+                crate::backend::api::organizations::organization::field(form, "team_slug").trim();
             // Team handles allow 255 characters in up to 1024 bytes.
             if slug.is_empty() || slug.len() > 1024 || slug.chars().count() > 255 {
                 return Err("Enter an existing team handle.");
@@ -45,7 +47,10 @@ impl Command {
         let role = if action.starts_with("revoke-all-") {
             None
         } else {
-            Some(organization::id(form, "role_id").map_err(|_| "Choose an organization role.")?)
+            Some(
+                crate::backend::api::organizations::organization::id(form, "role_id")
+                    .map_err(|_| "Choose an organization role.")?,
+            )
         };
         Ok(Self {
             target,
@@ -60,11 +65,13 @@ fn project<T>(
 ) -> Result<T, Response> {
     match result {
         Ok(OrganizationOutcome::Applied(value)) => Ok(value),
-        Ok(OrganizationOutcome::Missing) => Err(organization::not_found(ctx)),
+        Ok(OrganizationOutcome::Missing) => Err(
+            crate::backend::api::organizations::organization::not_found(ctx),
+        ),
         Ok(OrganizationOutcome::Denied) => {
             Err(ctx.error(StatusCode::FORBIDDEN, "Organization role access denied."))
         }
-        _ => Err(organization::unavailable(ctx)),
+        _ => Err(crate::backend::api::organizations::organization::unavailable(ctx)),
     }
 }
 fn team_view(team: codeyard_db_core::models::Team) -> view::RoleTeam {
@@ -79,30 +86,37 @@ pub(super) async fn panel(
     actor: i64,
     org: i64,
 ) -> Result<view::RolePanel, Response> {
-    let definitions = project(ctx, roles::catalog(&ctx.state.pool, actor, org).await)?;
+    let definitions = project(
+        ctx,
+        crate::backend::db::organizations::roles::catalog(&ctx.state.pool, actor, org).await,
+    )?;
     let selected = if let Some(value) = ctx.query.get("role") {
         value
             .parse::<i64>()
             .ok()
             .filter(|id| *id > 0)
-            .ok_or_else(|| organization::invalid(ctx))?
+            .ok_or_else(|| crate::backend::api::organizations::organization::invalid(ctx))?
     } else {
         definitions
             .first()
             .map(|role| role.id)
-            .ok_or_else(|| organization::unavailable(ctx))?
+            .ok_or_else(|| crate::backend::api::organizations::organization::unavailable(ctx))?
     };
     if !definitions.iter().any(|role| role.id == selected) {
-        return Err(organization::not_found(ctx));
+        return Err(crate::backend::api::organizations::organization::not_found(
+            ctx,
+        ));
     }
     let (user_after, _) =
-        organization::cursor(ctx, "role_users_after").ok_or_else(|| organization::invalid(ctx))?;
+        crate::backend::api::organizations::organization::cursor(ctx, "role_users_after")
+            .ok_or_else(|| crate::backend::api::organizations::organization::invalid(ctx))?;
     let (team_after, _) =
-        organization::cursor(ctx, "role_teams_after").ok_or_else(|| organization::invalid(ctx))?;
-    let limit = organization::PAGE_LIMIT;
+        crate::backend::api::organizations::organization::cursor(ctx, "role_teams_after")
+            .ok_or_else(|| crate::backend::api::organizations::organization::invalid(ctx))?;
+    let limit = crate::backend::api::organizations::organization::PAGE_LIMIT;
     let mut users = project(
         ctx,
-        roles::users(
+        crate::backend::db::organizations::roles::users(
             &ctx.state.pool,
             actor,
             org,
@@ -116,7 +130,7 @@ pub(super) async fn panel(
     users.truncate(limit as usize);
     let mut teams = project(
         ctx,
-        roles::teams(
+        crate::backend::db::organizations::roles::teams(
             &ctx.state.pool,
             actor,
             org,
@@ -179,7 +193,7 @@ pub(super) async fn apply(
     org: i64,
     command: Command,
 ) -> anyhow::Result<OrganizationOutcome<()>> {
-    roles::change(
+    crate::backend::db::organizations::roles::change(
         &ctx.state.pool,
         ctx.database_actor(actor),
         org,

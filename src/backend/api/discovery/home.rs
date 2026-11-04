@@ -1,5 +1,8 @@
-use super::{dashboard_cards, unavailable};
-use crate::backend::{api::http::context::PageContext, app::AppState, db};
+use crate::backend::api::discovery::dashboard_cards;
+use crate::backend::api::discovery::unavailable;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::State,
     http::{HeaderMap, Uri},
@@ -42,36 +45,38 @@ pub(super) async fn home(
         .clamp(1, 10_000);
     let offset = i64::try_from(page.saturating_sub(1).saturating_mul(PAGE_SIZE as usize))
         .unwrap_or(i64::MAX);
-    let (own, repository_count) = match db::repositories::records::list_user_repository_page(
-        &ctx.state.pool,
-        user.id,
-        ctx.session_id.as_deref(),
-        &find,
-        true,
-        PAGE_SIZE,
-        offset,
-    )
-    .await
-    {
-        Ok(repos) => repos,
-        Err(_) => return unavailable(&ctx, "home_repositories"),
-    };
-    let (shared, shared_count) = match db::repositories::records::list_shared_repository_page(
-        &ctx.state.pool,
-        user.id,
-        &find,
-        true,
-        PAGE_SIZE,
-        offset,
-    )
-    .await
-    {
-        Ok(rows) => rows,
-        Err(_) => return unavailable(&ctx, "home_shared_repositories"),
-    };
+    let (own, repository_count) =
+        match crate::backend::db::repositories::records::list_user_repository_page(
+            &ctx.state.pool,
+            user.id,
+            ctx.session_id.as_deref(),
+            &find,
+            true,
+            PAGE_SIZE,
+            offset,
+        )
+        .await
+        {
+            Ok(repos) => repos,
+            Err(_) => return unavailable(&ctx, "home_repositories"),
+        };
+    let (shared, shared_count) =
+        match crate::backend::db::repositories::records::list_shared_repository_page(
+            &ctx.state.pool,
+            user.id,
+            &find,
+            true,
+            PAGE_SIZE,
+            offset,
+        )
+        .await
+        {
+            Ok(rows) => rows,
+            Err(_) => return unavailable(&ctx, "home_shared_repositories"),
+        };
     // Trending is for other people's repositories, so the viewer's own are left out. The filter
     // narrows every repository list on the dashboard, Trending included.
-    let public = match db::repositories::records::list_trending_repositories(
+    let public = match crate::backend::db::repositories::records::list_trending_repositories(
         &ctx.state.pool,
         user.id,
         &find,

@@ -1,8 +1,12 @@
 use crate::backend::db::credentials::Actor;
-use crate::backend::db::issue_attributes::{
-    AssignedType, Attribute, Definition, FieldChanges, FieldValue, Refusal, SelectOption,
-    ValueInput,
-};
+use crate::backend::db::issue_attributes::AssignedType;
+use crate::backend::db::issue_attributes::Attribute;
+use crate::backend::db::issue_attributes::Definition;
+use crate::backend::db::issue_attributes::FieldChanges;
+use crate::backend::db::issue_attributes::FieldValue;
+use crate::backend::db::issue_attributes::Refusal;
+use crate::backend::db::issue_attributes::SelectOption;
+use crate::backend::db::issue_attributes::ValueInput;
 use anyhow::Result;
 use codeyard_support::credentials::AccountRestricted;
 use serde_json::{json, Value};
@@ -92,7 +96,7 @@ pub async fn values(
         .execute(&mut *tx)
         .await?;
     // Repository privacy can change after the caller's access check; read it in this snapshot.
-    let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND {})", super::repositories::access::readable_condition()))
+    let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND {})", crate::backend::db::postgres::repositories::access::readable_condition()))
         .bind(repo)
         .bind(viewer)
         .fetch_one(&mut *tx)
@@ -127,15 +131,19 @@ pub async fn owner_can_configure(pool: &PgPool, repo: i64, actor: i64) -> Result
 }
 async fn require_actor(tx: &mut Transaction<'_, Postgres>, actor: &Actor) -> Result<()> {
     if let Some(credential) = actor.credential() {
-        super::users::transitions::require_account(tx, actor.user_id, &credential)
-            .await
-            .map_err(|error| {
-                if error.is::<AccountRestricted>() {
-                    Refusal::Denied.into()
-                } else {
-                    error
-                }
-            })?;
+        crate::backend::db::postgres::users::transitions::require_account(
+            tx,
+            actor.user_id,
+            &credential,
+        )
+        .await
+        .map_err(|error| {
+            if error.is::<AccountRestricted>() {
+                Refusal::Denied.into()
+            } else {
+                error
+            }
+        })?;
     }
     Ok(())
 }
@@ -150,13 +158,17 @@ async fn begin_write<'a>(
     let actor = authority.user_id;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::postgres::discussions::lock_write_authority(&mut tx, actor, repo)
+            .await?,
         Refusal::Denied
     );
     require_actor(&mut tx, authority).await?;
     lock_metadata(&mut tx).await?;
     anyhow::ensure!(
-        super::credentials::repository(&mut tx, authority, repo, "issues", true).await?,
+        crate::backend::db::postgres::credentials::repository(
+            &mut tx, authority, repo, "issues", true
+        )
+        .await?,
         Refusal::Denied
     );
     if owner {
@@ -393,7 +405,11 @@ pub async fn organization_catalog(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    match super::organizations::authority::read_authority(&mut tx, actor, org).await? {
+    match crate::backend::db::postgres::organizations::authority::read_authority(
+        &mut tx, actor, org,
+    )
+    .await?
+    {
         OrganizationOutcome::Applied(_) => {}
         OrganizationOutcome::Missing => return Err(Refusal::Missing.into()),
         _ => return Err(Refusal::Denied.into()),
@@ -411,7 +427,9 @@ async fn begin_organization_write<'a>(
 
     let actor = authority.user_id;
     let mut tx = pool.begin().await?;
-    match super::organizations::authority::authority(&mut tx, actor, org).await? {
+    match crate::backend::db::postgres::organizations::authority::authority(&mut tx, actor, org)
+        .await?
+    {
         OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Owner) => {}
         OrganizationOutcome::Missing => return Err(Refusal::Missing.into()),
         _ => return Err(Refusal::Denied.into()),
@@ -419,7 +437,7 @@ async fn begin_organization_write<'a>(
     require_actor(&mut tx, authority).await?;
     lock_metadata(&mut tx).await?;
     anyhow::ensure!(
-        super::credentials::organization(
+        crate::backend::db::postgres::credentials::organization(
             &mut tx,
             authority,
             org,
@@ -700,7 +718,10 @@ pub(crate) async fn event(
     detail: &str,
     previous: &str,
 ) -> Result<i64> {
-    super::timeline::append(tx, repo, "issue", issue, actor, kind, detail, previous).await
+    crate::backend::db::postgres::timeline::append(
+        tx, repo, "issue", issue, actor, kind, detail, previous,
+    )
+    .await
 }
 pub(crate) async fn touch(tx: &mut Transaction<'_, Postgres>, issue: i64) -> Result<()> {
     sqlx::query("UPDATE issues SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1").bind(issue).execute(&mut **tx).await?;

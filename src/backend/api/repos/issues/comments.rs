@@ -4,11 +4,12 @@ use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::discussion::*;
 use crate::backend::api::repos::forms::authorize_post;
-use crate::backend::api::repos::paging::{json_page, PageQuery};
+use crate::backend::api::repos::paging::json_page;
+use crate::backend::api::repos::paging::PageQuery;
 use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::issues::comment_link;
 use crate::backend::issues::comments::CreateCommentRequest;
 use axum::extract::Form;
@@ -37,14 +38,14 @@ pub async fn create_issue_comment(
         &state.pool,
         &state.notification_broadcaster,
         current_actor.id,
-        &db::users::accounts::AccountCredential::Session(&session),
+        &crate::backend::db::users::accounts::AccountCredential::Session(&session),
         owner,
         repo,
         number,
         req,
     )
     .await
-    .map_err(super::operation_error)?;
+    .map_err(crate::backend::api::repos::issues::operation_error)?;
 
     Ok((
         StatusCode::CREATED,
@@ -89,7 +90,7 @@ pub async fn list_issue_comments(
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let (offset, limit) = json_page(query.page, query.per_page)?;
 
-    let issue = db::issues::get_issue(&state.pool, repository.id, number)
+    let issue = crate::backend::db::issues::get_issue(&state.pool, repository.id, number)
         .await
         .map_err(|_| storage_unavailable())?
         .ok_or_else(|| {
@@ -99,10 +100,14 @@ pub async fn list_issue_comments(
             )
         })?;
 
-    let comments =
-        db::issues::list_issue_comments(&state.pool, issue.id, limit as i64, offset as i64)
-            .await
-            .map_err(|_| storage_unavailable())?;
+    let comments = crate::backend::db::issues::list_issue_comments(
+        &state.pool,
+        issue.id,
+        limit as i64,
+        offset as i64,
+    )
+    .await
+    .map_err(|_| storage_unavailable())?;
 
     let mut responses = Vec::with_capacity(comments.len());
     for entry in comments {
@@ -110,7 +115,7 @@ pub async fn list_issue_comments(
         responses.push(CommentResponse::new(entry.comment, author));
     }
 
-    db::issues::get_issue_by_id(&state.pool, issue.id)
+    crate::backend::db::issues::get_issue_by_id(&state.pool, issue.id)
         .await
         .map_err(|_| storage_unavailable())?
         .filter(|issue| issue.repo_id == repository.id)
@@ -155,7 +160,7 @@ pub(crate) async fn native_comment(
         )
         .await;
     }
-    if let Err(message) = crate::backend::issues::validate_body(&draft.comment, true) {
+    if let Err(message) = codeyard_model::issue_input::validate_body(&draft.comment, true) {
         return render_detail(
             &ctx,
             &repo,
@@ -174,7 +179,7 @@ pub(crate) async fn native_comment(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         ctx.require_user()?.id,
-        &db::users::accounts::AccountCredential::Session(
+        &crate::backend::db::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),
@@ -192,7 +197,8 @@ pub(crate) async fn native_comment(
     .map(|c| c.id);
     match result {
         Ok(id) => {
-            let position = db::issues::issue_comment_position(&ctx.state.pool, id).await;
+            let position =
+                crate::backend::db::issues::issue_comment_position(&ctx.state.pool, id).await;
             let base = format!("{}/{}", repo.view.family_url(kind), number);
             let location = comment_link(&base, id, position);
             Ok(ctx.redirect(&location))
@@ -248,7 +254,7 @@ pub(crate) async fn native_edit_comment(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         ctx.require_user()?.id,
-        &db::users::accounts::AccountCredential::Session(
+        &crate::backend::db::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),
@@ -269,7 +275,8 @@ pub(crate) async fn native_edit_comment(
     .map(|c| c.id);
     match result {
         Ok(id) => {
-            let position = db::issues::issue_comment_position(&ctx.state.pool, id).await;
+            let position =
+                crate::backend::db::issues::issue_comment_position(&ctx.state.pool, id).await;
             let base = format!("{}/{}", repo.view.family_url(kind), number);
             Ok(ctx.redirect(&comment_link(&base, id, position)))
         }
@@ -304,7 +311,7 @@ pub(crate) async fn native_delete_comment(
     let result = crate::backend::issues::comments::delete_issue_comment(
         &ctx.state.pool,
         ctx.require_user()?.id,
-        &db::users::accounts::AccountCredential::Session(
+        &crate::backend::db::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),

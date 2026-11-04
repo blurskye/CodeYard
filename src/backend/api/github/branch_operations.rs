@@ -1,10 +1,11 @@
 //! Branch renames and upstream synchronization use the owning repository store.
-use super::{contents::store_error, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db,
-    repositories::{access, pull_requests, store::repo_store},
-};
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::store::repo_store;
 use axum::{
     extract::{FromRequest, Path, Request, State},
     http::{HeaderMap, StatusCode},
@@ -27,14 +28,14 @@ async fn rename(
     Json(input): Json<Rename>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = auth.user.id;
     let authority = auth.database_actor();
     repo_store(&repo, state.cluster.as_ref())
         .rename_branch_as(&state.pool, repo.id, authority, &branch, &input.new_name)
         .await
         .map_err(store_error)?;
-    pull_requests::refresh_open_pull_requests(
+    crate::backend::repositories::pull_requests::refresh_open_pull_requests(
         &state.pool,
         &repo,
         Some(&[&branch, &input.new_name]),
@@ -51,7 +52,16 @@ async fn rename(
     })?;
     Ok((
         StatusCode::CREATED,
-        Json(super::branches::document(&state, &repo, &owner, &name, &input.new_name).await?),
+        Json(
+            crate::backend::api::github::branches::document(
+                &state,
+                &repo,
+                &owner,
+                &name,
+                &input.new_name,
+            )
+            .await?,
+        ),
     ))
 }
 
@@ -67,7 +77,7 @@ async fn upstream(
     request: Request,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = &auth.user;
     let Json(input) = Json::<Upstream>::from_request(request, &state)
         .await
@@ -79,21 +89,25 @@ async fn upstream(
         .forked_from_id
         .filter(|_| repo.is_fork)
         .ok_or_else(|| Error::invalid("Repository is not a fork"))?;
-    let parent = access::check_read(&state.pool, parent, Some(actor.id))
-        .await
-        .map_err(|error| match error {
-            access::AccessError::Unavailable => Error::unavailable(()),
-            _ => Error::missing(),
-        })?;
+    let parent =
+        crate::backend::repositories::access::check_read(&state.pool, parent, Some(actor.id))
+            .await
+            .map_err(|error| match error {
+                crate::backend::repositories::access::AccessError::Unavailable => {
+                    Error::unavailable(())
+                }
+                _ => Error::missing(),
+            })?;
     // The upstream's commits become readable through the fork, so the credential must reach
     // the upstream too, not only the fork the request names.
     auth.repository_scope(&state.pool, parent.id, "contents", false)
         .await
-        .map_err(super::auth::scope_error)?;
-    let parent_owner = db::repositories::records::repository_owner_name(&state.pool, parent.id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+        .map_err(crate::backend::api::github::auth::scope_error)?;
+    let parent_owner =
+        crate::backend::db::repositories::records::repository_owner_name(&state.pool, parent.id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     let base_branch = format!("{parent_owner}:{}", input.branch);
     let tasks = state.git_tasks.clone();
     let (send, receive) = tokio::sync::oneshot::channel();
@@ -119,7 +133,7 @@ async fn complete_upstream(
     input: Upstream,
     owner: String,
     base_branch: String,
-    auth: super::auth::Authentication,
+    auth: crate::backend::api::github::auth::Authentication,
 ) -> Result<Json<Value>> {
     let actor = &auth.user;
     let source = repo_store(&parent, state.cluster.as_ref());
@@ -151,7 +165,7 @@ async fn complete_upstream(
             )
             .await;
     }
-    pull_requests::refresh_open_pull_requests(
+    crate::backend::repositories::pull_requests::refresh_open_pull_requests(
         &state.pool,
         &repo,
         Some(&[&input.branch]),

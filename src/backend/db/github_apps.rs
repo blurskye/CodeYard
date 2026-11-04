@@ -121,7 +121,7 @@ pub enum RepositoryChange {
     LastRepository,
 }
 native_operation!(crate::backend::db::postgres::github_apps::change_repository, crate::backend::db::sqlite::github_apps::change_repository,
-    fn change_repository(pool: &DbPool, actor: impl Into<super::credentials::Actor>, id: i64, repo: i64, add: bool) -> Result<RepositoryChange>);
+    fn change_repository(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, id: i64, repo: i64, add: bool) -> Result<RepositoryChange>);
 native_operation!(crate::backend::db::postgres::github_apps::issue, crate::backend::db::sqlite::github_apps::issue,
     fn issue(pool: &DbPool, app: i64, installation: i64, actor: Option<i64>, source: Option<&str>, hash: &str, permissions: &str, repos: &str, write: bool) -> Result<Option<PersonalAccessToken>>);
 native_operation!(crate::backend::db::postgres::github_apps::token, crate::backend::db::sqlite::github_apps::token,

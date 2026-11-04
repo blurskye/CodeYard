@@ -35,7 +35,7 @@ pub(in crate::backend::db) fn request_roster_sql(
 }
 native_operation!(crate::backend::db::postgres::pull_requests::team_reviewers::request_page,
     crate::backend::db::sqlite::pull_requests::team_reviewers::request_page,
-    fn request_page(pool: &DbPool, window: &RequestWindow) -> Result<(i64, Vec<super::reviews::ReviewRequestOrigin>)>);
+    fn request_page(pool: &DbPool, window: &RequestWindow) -> Result<(i64, Vec<crate::backend::db::pull_requests::reviews::ReviewRequestOrigin>)>);
 native_operation!(crate::backend::db::postgres::pull_requests::team_reviewers::by_ids,
     crate::backend::db::sqlite::pull_requests::team_reviewers::by_ids,
     fn by_ids(pool: &DbPool, repo: i64, viewer: Option<i64>, ids: &[i64]) -> Result<Vec<Team>>);

@@ -44,7 +44,8 @@ async fn lock_accounts(connection: &mut PgConnection, actor: i64, repo: i64) -> 
     let mut accounts: Vec<i64> = sqlx::query_scalar("SELECT owner_user_id FROM repositories WHERE (id=$1 OR id=(SELECT forked_from_id FROM repositories WHERE id=$1)) AND owner_user_id IS NOT NULL")
         .bind(repo).fetch_all(&mut *connection).await?;
     accounts.push(actor);
-    super::users::transitions::lock_accounts_shared(connection, &accounts).await
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(connection, &accounts)
+        .await
 }
 
 /// Callers retain the name reservation through insertion or rename.
@@ -101,7 +102,7 @@ pub async fn list_for_session(pool: &PgPool, input: &GistList, session: &str) ->
         _ => return list(pool, input).await,
     };
     let mut tx = pool.begin().await?;
-    super::users::transitions::require_account(
+    crate::backend::db::postgres::users::transitions::require_account(
         &mut tx,
         actor,
         &AccountCredential::Session(session),
@@ -177,8 +178,12 @@ async fn authority(
     }
     if interact {
         anyhow::ensure!(
-            !super::users::blocks::repository_interaction_blocked(&mut *connection, actor, repo)
-                .await?,
+            !crate::backend::db::postgres::users::blocks::repository_interaction_blocked(
+                &mut *connection,
+                actor,
+                repo
+            )
+            .await?,
             GistRefusal::Denied
         );
     }
@@ -203,7 +208,8 @@ pub async fn reserve(
     let mut tx = pool.begin().await?;
     lock_name(&mut tx, input.id).await?;
     lock_accounts(&mut tx, actor, input.repo_id).await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     let repo = authority(&mut tx, actor, input.repo_id, true, false).await?;
     if let Some(source) = repo.forked_from_id {
         let public: bool = sqlx::query_scalar(&format!(
@@ -215,8 +221,10 @@ pub async fn reserve(
         .ok_or(GistRefusal::Missing)?;
         anyhow::ensure!(
             public == input.is_public
-                && !super::users::blocks::repository_interaction_blocked(&mut tx, actor, source)
-                    .await?,
+                && !crate::backend::db::postgres::users::blocks::repository_interaction_blocked(
+                    &mut tx, actor, source
+                )
+                .await?,
             GistRefusal::Denied
         );
     }
@@ -248,7 +256,8 @@ pub async fn admit(
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
     lock_accounts(&mut tx, actor, input.repo_id).await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     let repo = authority(&mut tx, actor, input.repo_id, true, false).await?;
     anyhow::ensure!(
         repo.disk_path == input.disk_path
@@ -270,7 +279,8 @@ pub async fn check_write(
 ) -> Result<Repository> {
     let mut tx = pool.begin().await?;
     lock_accounts(&mut tx, actor, repo).await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     let repository = authority(&mut tx, actor, repo, true, false).await?;
     tx.commit().await?;
     Ok(repository)
@@ -336,7 +346,8 @@ pub async fn delete(
 ) -> Result<Repository> {
     let mut tx = pool.begin().await?;
     lock_accounts(&mut tx, actor, repo).await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     let repo = authority(&mut tx, actor, repo, true, false).await?;
     sqlx::query("DELETE FROM repositories WHERE id=$1")
         .bind(repo.id)
@@ -369,7 +380,8 @@ pub async fn star(
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
     lock_accounts(&mut tx, actor, repo).await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     authority(&mut tx, actor, repo, false, adding).await?;
     if adding {
         sqlx::query("INSERT INTO gist_stars(repo_id,user_id) SELECT repo_id,$2 FROM gists WHERE repo_id=$1 AND ready ON CONFLICT DO NOTHING").bind(repo).bind(actor).execute(&mut *tx).await?;
@@ -422,7 +434,8 @@ pub async fn create_comment(
     validate_comment(body)?;
     let mut tx = pool.begin().await?;
     lock_accounts(&mut tx, actor, repo).await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     authority(&mut tx, actor, repo, false, true).await?;
     let comment=sqlx::query_as("INSERT INTO gist_comments(repo_id,user_id,body) SELECT repo_id,$2,$3 FROM gists WHERE repo_id=$1 AND ready RETURNING *").bind(repo).bind(actor).bind(body).fetch_optional(&mut *tx).await?.ok_or(GistRefusal::Missing)?;
     tx.commit().await?;
@@ -441,7 +454,8 @@ pub async fn change_comment(
     }
     let mut tx = pool.begin().await?;
     lock_accounts(&mut tx, actor, repo).await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     let repository = authority(&mut tx, actor, repo, false, body.is_some()).await?;
     let comment: Comment =
         sqlx::query_as("SELECT * FROM gist_comments WHERE repo_id=$1 AND id=$2 FOR UPDATE")

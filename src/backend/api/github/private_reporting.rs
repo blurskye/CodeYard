@@ -1,6 +1,10 @@
 //! Private vulnerability reporting is backed by the native private-report workflow.
-use super::{auth, repository, Error, Result};
-use crate::backend::{app::AppState, db::repositories::security};
+
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -10,14 +14,16 @@ use axum::{
 use std::sync::Arc;
 
 fn failure(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<security::Refusal>() {
-        Some(security::Refusal::Denied) => Error::new(
+    match error.downcast_ref::<codeyard_model::security_reports::Refusal>() {
+        Some(codeyard_model::security_reports::Refusal::Denied) => Error::new(
             StatusCode::FORBIDDEN,
             "Private vulnerability reporting mutation denied",
         ),
-        Some(security::Refusal::Missing) => Error::missing(),
-        Some(security::Refusal::Invalid(message)) => Error::invalid(*message),
-        Some(security::Refusal::Limit) => Error::new(
+        Some(codeyard_model::security_reports::Refusal::Missing) => Error::missing(),
+        Some(codeyard_model::security_reports::Refusal::Invalid(message)) => {
+            Error::invalid(*message)
+        }
+        Some(codeyard_model::security_reports::Refusal::Limit) => Error::new(
             StatusCode::TOO_MANY_REQUESTS,
             "Security reporting limit reached",
         ),
@@ -30,7 +36,7 @@ async fn check(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let enabled = security::enabled(&state.pool, repo.id)
+    let enabled = crate::backend::db::repositories::security::enabled(&state.pool, repo.id)
         .await
         .map_err(failure)?;
     Ok(Json(serde_json::json!({"enabled": enabled})))
@@ -43,10 +49,15 @@ async fn set(
     enabled: bool,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(state, headers, owner, name, true).await?;
-    let actor = actor.ok_or_else(auth::required)?;
-    security::set_enabled(&state.pool, actor.database_actor(), repo.id, enabled)
-        .await
-        .map_err(failure)?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
+    crate::backend::db::repositories::security::set_enabled(
+        &state.pool,
+        actor.database_actor(),
+        repo.id,
+        enabled,
+    )
+    .await
+    .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)
 }
 async fn enable(

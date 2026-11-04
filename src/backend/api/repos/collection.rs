@@ -2,19 +2,24 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::access_error;
-use crate::backend::api::repos::paging::{json_page, PageQuery};
-use crate::backend::api::repos::responses::{
-    repository_fork_counts, repository_owners, repository_topics, RepoResponse,
-};
+use crate::backend::api::repos::paging::json_page;
+use crate::backend::api::repos::paging::PageQuery;
+use crate::backend::api::repos::responses::repository_fork_counts;
+use crate::backend::api::repos::responses::repository_owners;
+use crate::backend::api::repos::responses::repository_topics;
+use crate::backend::api::repos::responses::RepoResponse;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::db::organizations::{self as orgs, OrganizationOutcome, OrganizationPage};
-use crate::backend::db::repositories::records::{RepositoryFilter, RepositorySort};
-use crate::backend::repositories::{
-    access::AccessError,
-    lifecycle::{self, InitialFiles},
-    templates::{self, Template},
-};
+
+use crate::backend::db::organizations as orgs;
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::organizations::OrganizationPage;
+use crate::backend::db::repositories::records::RepositoryFilter;
+use crate::backend::db::repositories::records::RepositorySort;
+use crate::backend::repositories::access::AccessError;
+
+use crate::backend::repositories::lifecycle::InitialFiles;
+
+use crate::backend::repositories::templates::Template;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -32,7 +37,7 @@ pub async fn list_repos(
     Query(query): Query<PageQuery>,
 ) -> Result<Json<Vec<RepoResponse>>, (StatusCode, Json<ApiError>)> {
     let (offset, limit) = json_page(query.page, Some(query.per_page.unwrap_or(100)))?;
-    let repos = db::repositories::records::search_public_repositories(
+    let repos = crate::backend::db::repositories::records::search_public_repositories(
         &state.pool,
         "",
         RepositoryFilter::default(),
@@ -47,9 +52,10 @@ pub async fn list_repos(
     let mut owners = repository_owners(&state.pool, &ids).await?;
     let mut topics = repository_topics(&state.pool, &ids).await?;
     let mut fork_counts = repository_fork_counts(&state.pool, None, &ids).await?;
-    let readable = db::repositories::access::readable_repository_ids(&state.pool, None, &ids)
-        .await
-        .map_err(|_| access_error(AccessError::Unavailable))?;
+    let readable =
+        crate::backend::db::repositories::access::readable_repository_ids(&state.pool, None, &ids)
+            .await
+            .map_err(|_| access_error(AccessError::Unavailable))?;
     let mut responses = Vec::with_capacity(repos.len());
     for repository in repos {
         if !readable.contains(&repository.id) {
@@ -77,8 +83,9 @@ pub struct CreateRepoRequest {
     pub is_private: bool,
     /// Select an organization target, never an arbitrary personal owner.
     pub owner_org_id: Option<i64>,
-    pub custom_properties:
-        Option<HashMap<String, Option<db::organizations::properties::PropertyValue>>>,
+    pub custom_properties: Option<
+        HashMap<String, Option<crate::backend::db::organizations::properties::PropertyValue>>,
+    >,
 }
 
 pub async fn create_repo(
@@ -93,11 +100,13 @@ pub async fn create_repo(
         crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
     ));
 
-    let creation_owner = db::repositories::creation::RepositoryCreationOwner {
+    let creation_owner = crate::backend::db::repositories::creation::RepositoryCreationOwner {
         actor_id: user.id,
         target: match req.owner_org_id {
-            Some(id) if id > 0 => db::repositories::creation::RepositoryTarget::Organization(id),
-            None => db::repositories::creation::RepositoryTarget::Personal(user.id),
+            Some(id) if id > 0 => {
+                crate::backend::db::repositories::creation::RepositoryTarget::Organization(id)
+            }
+            None => crate::backend::db::repositories::creation::RepositoryTarget::Personal(user.id),
             _ => {
                 return Err((
                     StatusCode::BAD_REQUEST,
@@ -109,26 +118,28 @@ pub async fn create_repo(
             }
         },
     };
-    lifecycle::validate_description(req.description.as_deref().unwrap_or(""))
-        .map_err(crate::backend::api::repos::responses::lifecycle_error)?;
+    crate::backend::repositories::lifecycle::validate_description(
+        req.description.as_deref().unwrap_or(""),
+    )
+    .map_err(crate::backend::api::repos::responses::lifecycle_error)?;
     let properties = req
         .custom_properties
         .unwrap_or_default()
         .into_iter()
         .map(
-            |(property_name, value)| db::organizations::properties::ValueInput {
+            |(property_name, value)| crate::backend::db::organizations::properties::ValueInput {
                 property_name,
                 value,
             },
         )
         .collect::<Vec<_>>();
-    let repo = lifecycle::provision_with_properties(
+    let repo = crate::backend::repositories::lifecycle::provision_with_properties(
         (&pool, state.cluster.as_ref()),
         &state.repos_path,
-        lifecycle::CreationInput {
+        crate::backend::repositories::lifecycle::CreationInput {
             owner: creation_owner,
             properties: &properties,
-            admission: db::repositories::creation::CreationAdmission {
+            admission: crate::backend::db::repositories::creation::CreationAdmission {
                 authority: Some(&authority),
                 advisory: None,
             },
@@ -141,7 +152,7 @@ pub async fn create_repo(
     .await
     .map_err(crate::backend::api::repos::responses::lifecycle_error)?;
 
-    let owner = db::repositories::records::repository_owner_name(&pool, repo.id)
+    let owner = crate::backend::db::repositories::records::repository_owner_name(&pool, repo.id)
         .await
         .map_err(|_| {
             (
@@ -279,9 +290,12 @@ fn decode_creation(
         if name.is_empty() {
             return Err((Some("name"), "Repository name is required"));
         }
-        lifecycle::validate_name(name).map_err(|error| (Some("name"), error.message))?;
-        lifecycle::validate_description(form.get("description").map(String::as_str).unwrap_or(""))
-            .map_err(|error| (None, error.message))?;
+        crate::backend::repositories::lifecycle::validate_name(name)
+            .map_err(|error| (Some("name"), error.message))?;
+        crate::backend::repositories::lifecycle::validate_description(
+            form.get("description").map(String::as_str).unwrap_or(""),
+        )
+        .map_err(|error| (None, error.message))?;
         if !matches!(
             form.get("visibility").map(String::as_str),
             Some("public" | "private")
@@ -295,12 +309,12 @@ fn decode_creation(
             readme: values.readme,
             gitignore: template_choice(
                 form.get("gitignore").map(String::as_str).unwrap_or(""),
-                templates::gitignore,
+                crate::backend::repositories::templates::gitignore,
                 "Choose a .gitignore template from the list.",
             )?,
             license: template_choice(
                 form.get("license").map(String::as_str).unwrap_or(""),
-                templates::license,
+                crate::backend::repositories::templates::license,
                 "Choose a license from the list.",
             )?,
         };
@@ -396,7 +410,7 @@ pub(crate) async fn new_repository(
     if let Some(org) =
         target.filter(|id| choices.organizations.iter().any(|choice| choice.id == *id))
     {
-        match db::organizations::settings::get(&ctx.state.pool, org).await {
+        match crate::backend::db::organizations::settings::get(&ctx.state.pool, org).await {
             Ok(Some(settings)) => {
                 form.is_private = settings.members_can_create_private_repositories
                     && !settings.members_can_create_public_repositories
@@ -557,11 +571,13 @@ pub(crate) async fn create_repository(
         }
     };
     let authority = ctx.database_actor(user.id);
-    let creation_owner = db::repositories::creation::RepositoryCreationOwner {
+    let creation_owner = crate::backend::db::repositories::creation::RepositoryCreationOwner {
         actor_id: user.id,
         target: match target {
-            Some(id) => db::repositories::creation::RepositoryTarget::Organization(id),
-            None => db::repositories::creation::RepositoryTarget::Personal(user.id),
+            Some(id) => {
+                crate::backend::db::repositories::creation::RepositoryTarget::Organization(id)
+            }
+            None => crate::backend::db::repositories::creation::RepositoryTarget::Personal(user.id),
         },
     };
     let result = if !values.source.is_empty() {
@@ -575,13 +591,13 @@ pub(crate) async fn create_repository(
         )
         .await
     } else {
-        lifecycle::provision_with_initial_properties(
+        crate::backend::repositories::lifecycle::provision_with_initial_properties(
             (&ctx.state.pool, ctx.state.cluster.as_ref()),
             &ctx.state.repos_path,
-            lifecycle::CreationInput {
+            crate::backend::repositories::lifecycle::CreationInput {
                 owner: creation_owner,
                 properties: &property_values,
-                admission: db::repositories::creation::CreationAdmission {
+                admission: crate::backend::db::repositories::creation::CreationAdmission {
                     authority: Some(&authority),
                     advisory: None,
                 },
@@ -597,7 +613,7 @@ pub(crate) async fn create_repository(
     };
     match result {
         Ok(repo) => {
-            match db::repositories::records::repository_owner_name(&ctx.state.pool, repo.id).await {
+            match crate::backend::db::repositories::records::repository_owner_name(&ctx.state.pool, repo.id).await {
                 Ok(Some(owner)) => ctx.redirect(&view::repository_url(&owner, &repo.name)),
                 _ => creation_error(&ctx, values, page, StatusCode::SERVICE_UNAVAILABLE, None, "The repository was created, but its owner could not be loaded. Check your repositories before retrying.").await,
             }
@@ -625,36 +641,44 @@ pub(crate) async fn create_repository(
 
 async fn create_selection(
     ctx: &PageContext,
-    owner: db::repositories::creation::RepositoryCreationOwner,
+    owner: crate::backend::db::repositories::creation::RepositoryCreationOwner,
     values: &NewRepositoryForm,
     files: InitialFiles,
-    properties: &[db::organizations::properties::ValueInput],
-    authority: &db::credentials::Actor,
-) -> Result<codeyard_db_core::models::Repository, lifecycle::StorageError> {
+    properties: &[crate::backend::db::organizations::properties::ValueInput],
+    authority: &crate::backend::db::credentials::Actor,
+) -> Result<
+    codeyard_db_core::models::Repository,
+    crate::backend::repositories::lifecycle::StorageError,
+> {
     let description = Some(values.description.as_str()).filter(|value| !value.is_empty());
-    let source = source_name(&values.source).map_err(|(_, message)| lifecycle::StorageError {
-        kind: lifecycle::LifecycleFailure::Invalid,
-        message,
+    let source = source_name(&values.source).map_err(|(_, message)| {
+        crate::backend::repositories::lifecycle::StorageError {
+            kind: crate::backend::repositories::lifecycle::LifecycleFailure::Invalid,
+            message,
+        }
     })?;
     if let Some((source_owner, source_name)) = source {
-        let source =
-            db::repositories::records::get_repository(&ctx.state.pool, source_owner, source_name)
-                .await
-                .map_err(|_| lifecycle::StorageError {
-                    kind: lifecycle::LifecycleFailure::Unavailable,
-                    message: "Source repository is unavailable.",
-                })?
-                .ok_or(lifecycle::StorageError {
-                    kind: lifecycle::LifecycleFailure::Denied,
-                    message: "Source repository is unavailable.",
-                })?;
+        let source = crate::backend::db::repositories::records::get_repository(
+            &ctx.state.pool,
+            source_owner,
+            source_name,
+        )
+        .await
+        .map_err(|_| crate::backend::repositories::lifecycle::StorageError {
+            kind: crate::backend::repositories::lifecycle::LifecycleFailure::Unavailable,
+            message: "Source repository is unavailable.",
+        })?
+        .ok_or(crate::backend::repositories::lifecycle::StorageError {
+            kind: crate::backend::repositories::lifecycle::LifecycleFailure::Denied,
+            message: "Source repository is unavailable.",
+        })?;
         if values.fork_source {
-            lifecycle::fork_into(
+            crate::backend::repositories::lifecycle::fork_into(
                 &ctx.state.pool,
                 ctx.state.cluster.as_ref(),
                 &ctx.state.repos_path,
                 &ctx.state.notification_broadcaster,
-                lifecycle::ForkOptions {
+                crate::backend::repositories::lifecycle::ForkOptions {
                     owner,
                     name: Some(&values.name),
                     default_branch_only: !values.all_branches,
@@ -666,12 +690,12 @@ async fn create_selection(
             )
             .await
         } else {
-            lifecycle::generate(
+            crate::backend::repositories::lifecycle::generate(
                 (&ctx.state.pool, ctx.state.cluster.as_ref()),
                 &ctx.state.repos_path,
                 owner,
                 source.id,
-                lifecycle::TemplateOptions {
+                crate::backend::repositories::lifecycle::TemplateOptions {
                     name: &values.name,
                     description,
                     private: values.is_private,
@@ -683,13 +707,13 @@ async fn create_selection(
             .await
         }
     } else {
-        lifecycle::provision_with_initial_properties(
+        crate::backend::repositories::lifecycle::provision_with_initial_properties(
             (&ctx.state.pool, ctx.state.cluster.as_ref()),
             &ctx.state.repos_path,
-            lifecycle::CreationInput {
+            crate::backend::repositories::lifecycle::CreationInput {
                 owner,
                 properties,
-                admission: db::repositories::creation::CreationAdmission {
+                admission: crate::backend::db::repositories::creation::CreationAdmission {
                     authority: Some(authority),
                     advisory: None,
                 },
@@ -728,10 +752,13 @@ mod creation_tests {
             "x?y",
             "x#y",
         ] {
-            assert!(lifecycle::validate_name(invalid).is_err(), "{invalid:?}");
+            assert!(
+                crate::backend::repositories::lifecycle::validate_name(invalid).is_err(),
+                "{invalid:?}"
+            );
         }
         for valid in ["alice", "my-repo", "a.b_c-1", "répo"] {
-            assert!(lifecycle::validate_name(valid).is_ok());
+            assert!(crate::backend::repositories::lifecycle::validate_name(valid).is_ok());
         }
     }
     #[test]

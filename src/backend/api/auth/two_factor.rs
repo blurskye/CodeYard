@@ -1,13 +1,17 @@
 //! The second step of password sign-in: `/login/two-factor`. The password step hands over a sealed
 //! pending token and this page; the session is created only once a code checks out.
 
-use crate::backend::api::auth::{errors, login::append_auth_cookie};
-use crate::backend::api::http::{context::PageContext, render::redirect_response, session};
-use crate::backend::api::user::responses::{
-    field, public_api_message, safe_redirect, within_bounds, Fields,
-};
+use crate::backend::api::auth::login::append_auth_cookie;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::render::redirect_response;
+
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::public_api_message;
+use crate::backend::api::user::responses::safe_redirect;
+use crate::backend::api::user::responses::within_bounds;
+use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
-use crate::backend::identity;
+
 use crate::backend::identity::login::LoginError;
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -64,7 +68,7 @@ pub(crate) async fn sign_in_post(
     }
     let session_request =
         crate::backend::api::auth::session::LoginSessionRequest::from_headers(&ctx.headers);
-    let result = identity::login::second_factor_login(
+    let result = crate::backend::identity::login::second_factor_login(
         &ctx.state.pool,
         ctx.state.secret_encryptor.as_deref(),
         pending,
@@ -77,9 +81,9 @@ pub(crate) async fn sign_in_post(
             let redirect_target = ctx.redirect(&redirect);
             append_auth_cookie(
                 redirect_target,
-                &session::build_session_cookie(
+                &crate::backend::api::http::session::build_session_cookie(
                     &authenticated.session_id,
-                    session::session_duration_days(),
+                    crate::backend::api::http::session::session_duration_days(),
                 ),
             )
             .unwrap_or_else(|_| {
@@ -91,7 +95,7 @@ pub(crate) async fn sign_in_post(
         }
         Err(LoginError::PendingLoginExpired) => errors_expired(&ctx, &form).await,
         Err(error) => {
-            let (status, body) = errors::login_failure(error);
+            let (status, body) = crate::backend::api::auth::errors::login_failure(error);
             challenge(
                 &ctx,
                 &redirect,
@@ -104,7 +108,8 @@ pub(crate) async fn sign_in_post(
 }
 
 async fn errors_expired(ctx: &PageContext, form: &Fields) -> Response {
-    let (status, body) = errors::login_failure(LoginError::PendingLoginExpired);
+    let (status, body) =
+        crate::backend::api::auth::errors::login_failure(LoginError::PendingLoginExpired);
     crate::backend::api::auth::login::auth_failure(
         ctx,
         AuthMode::Login,

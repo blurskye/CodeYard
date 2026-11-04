@@ -1,12 +1,12 @@
 //! Browser cookies and redirects for the shared OAuth operation.
 
-use crate::backend::api::auth::errors;
 use crate::backend::api::auth::session::LoginSessionRequest;
 use crate::backend::api::http::render::public_error;
-use crate::backend::api::http::session;
+
 use crate::backend::app::AppState;
-use crate::backend::identity::oauth::{providers, OAuthError};
-use crate::backend::identity::{admission, oauth};
+
+use crate::backend::identity::oauth::OAuthError;
+
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -19,7 +19,7 @@ pub fn configured_public_origin() -> Option<String> {
 }
 
 pub(crate) fn validated_public_origin(value: &str) -> Option<String> {
-    let url = crate::backend::api::http::config::parse_public_url(value).ok()?;
+    let url = codeyard_model::http_config::parse_public_url(value).ok()?;
     let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
     if !(url.scheme() == "https" || (url.scheme() == "http" && loopback)) {
         return None;
@@ -77,7 +77,7 @@ fn failure(error: OAuthError, provider: &str) -> Response {
             "Account is suspended or requires a password change.".to_owned(),
         ),
         OAuthError::AccountAdmittedSessionFailed(error) => {
-            let (status, _) = errors::session_issue_failure(error);
+            let (status, _) = crate::backend::api::auth::errors::session_issue_failure(error);
             return public_error(status, "Account admission completed, but no session was issued. Check your session cookies and start signing in again.");
         }
     };
@@ -98,10 +98,10 @@ pub async fn oauth_redirect(
     Query(query): Query<std::collections::HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    if providers::provider_meta(&provider).is_none() {
+    if crate::backend::identity::oauth::providers::provider_meta(&provider).is_none() {
         return failure(OAuthError::UnknownProvider, &provider);
     }
-    if providers::provider_credentials(&provider).is_none() {
+    if crate::backend::identity::oauth::providers::provider_credentials(&provider).is_none() {
         return failure(OAuthError::Disabled, &provider);
     }
     let Some(origin) = configured_public_origin() else {
@@ -110,26 +110,31 @@ pub async fn oauth_redirect(
             "Configure PUBLIC_URL with the public OAuth origin.",
         );
     };
-    match admission::admit_oauth_start(&state.pool, session::client_address(&headers)).await {
+    match crate::backend::identity::admission::admit_oauth_start(
+        &state.pool,
+        crate::backend::api::http::session::client_address(&headers),
+    )
+    .await
+    {
         Ok(_) => {}
-        Err(admission::AdmissionError::Limited) => {
+        Err(crate::backend::identity::admission::AdmissionError::Limited) => {
             return public_error(StatusCode::TOO_MANY_REQUESTS, "Too many sign-in attempts")
         }
-        Err(admission::AdmissionError::Unavailable) => {
+        Err(crate::backend::identity::admission::AdmissionError::Unavailable) => {
             return public_error(StatusCode::SERVICE_UNAVAILABLE, "Sign-in unavailable")
         }
     }
     // Always replace the browser nonce; only the latest flow in this browser completes.
-    let nonce = session::generate_session_id();
-    let token = session::generate_session_id();
-    let verifier = if providers::supports_pkce(&provider) {
-        session::generate_session_id()
+    let nonce = crate::backend::api::http::session::generate_session_id();
+    let token = crate::backend::api::http::session::generate_session_id();
+    let verifier = if crate::backend::identity::oauth::providers::supports_pkce(&provider) {
+        crate::backend::api::http::session::generate_session_id()
     } else {
         String::new()
     };
     let redirect = format!("{origin}/login/oauth/{provider}/callback");
     let return_to = local_return_to(query.get("redirect").map(String::as_str).unwrap_or("/"));
-    match oauth::begin(
+    match crate::backend::identity::oauth::begin(
         &state.pool,
         &provider,
         &redirect,
@@ -146,7 +151,7 @@ pub async fn oauth_redirect(
                 (header::LOCATION, location),
                 (
                     header::SET_COOKIE,
-                    session::build_oauth_browser_cookie(&nonce),
+                    crate::backend::api::http::session::build_oauth_browser_cookie(&nonce),
                 ),
             ],
         )
@@ -167,23 +172,26 @@ pub async fn oauth_callback(
     Query(query): Query<OAuthCallbackQuery>,
     headers: HeaderMap,
 ) -> Response {
-    if providers::provider_meta(&provider).is_none() {
+    if crate::backend::identity::oauth::providers::provider_meta(&provider).is_none() {
         return failure(OAuthError::UnknownProvider, &provider);
     }
     let (Some(code), Some(token)) = (query.code, query.state) else {
         return public_error(StatusCode::BAD_REQUEST, "Missing code or state.");
     };
-    if providers::provider_credentials(&provider).is_none() {
+    if crate::backend::identity::oauth::providers::provider_credentials(&provider).is_none() {
         return failure(OAuthError::Disabled, &provider);
     }
-    if let Err(error) = oauth::validate_callback(&code, &token) {
+    if let Err(error) = crate::backend::identity::oauth::validate_callback(&code, &token) {
         return failure(error, &provider);
     }
     // Preserve setup's precedence over missing browser binding.
-    if let Err(error) = oauth::require_setup(&state.pool).await {
+    if let Err(error) = crate::backend::identity::oauth::require_setup(&state.pool).await {
         return failure(error, &provider);
     }
-    let Some(nonce) = session::random_cookie(&headers, session::oauth_browser_cookie_name()) else {
+    let Some(nonce) = crate::backend::api::http::session::random_cookie(
+        &headers,
+        crate::backend::api::http::session::oauth_browser_cookie_name(),
+    ) else {
         return public_error(
             StatusCode::BAD_REQUEST,
             "OAuth must complete in its initiating browser.",
@@ -197,9 +205,9 @@ pub async fn oauth_callback(
     };
     let redirect = format!("{origin}/login/oauth/{provider}/callback");
     let initiating = LoginSessionRequest::from_headers(&headers);
-    match oauth::complete(
+    match crate::backend::identity::oauth::complete(
         &state.pool,
-        oauth::Callback {
+        crate::backend::identity::oauth::Callback {
             provider: &provider,
             code: &code,
             token: &token,
@@ -215,9 +223,9 @@ pub async fn oauth_callback(
             [
                 (
                     header::SET_COOKIE,
-                    session::build_session_cookie(
+                    crate::backend::api::http::session::build_session_cookie(
                         &authenticated.session_id,
-                        session::session_duration_days(),
+                        crate::backend::api::http::session::session_duration_days(),
                     ),
                 ),
                 (header::LOCATION, local_return_to(&return_to).to_owned()),

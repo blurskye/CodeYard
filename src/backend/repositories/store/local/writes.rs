@@ -78,7 +78,7 @@ impl LocalStore {
             authorize.await?;
             return Ok(true);
         }
-        let uuid = super::super::rpc::repository_uuid(&self.disk_path)?;
+        let uuid = crate::backend::repositories::store::rpc::repository_uuid(&self.disk_path)?;
         context
             .publish_ref_changes(uuid, self.path(), repo, term, &changes, async {
                 authorize.await.map_err(anyhow::Error::from)

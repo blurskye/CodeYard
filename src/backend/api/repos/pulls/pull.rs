@@ -6,9 +6,9 @@ use crate::backend::api::repos::discussion::ApiFailure;
 use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::repositories::pull_requests::mutations::UpdatePullRequestRequest;
-use crate::backend::repositories::pull_requests::stacks;
+
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -40,7 +40,7 @@ pub async fn update_pull_request(
         req,
     )
     .await
-    .map_err(super::operation_error)?;
+    .map_err(crate::backend::api::repos::pulls::operation_error)?;
     Ok(Json(detail_response(&state.pool, pull_request).await?))
 }
 
@@ -133,10 +133,10 @@ pub(crate) async fn detail_response(
     pool: &codeyard_db_core::DbPool,
     pull_request: codeyard_db_core::models::PullRequest,
 ) -> Result<PullRequestDetailResponse, ApiFailure> {
-    let author = db::users::accounts::get_user_by_id(pool, pull_request.author_id)
+    let author = crate::backend::db::users::accounts::get_user_by_id(pool, pull_request.author_id)
         .await
         .map_err(|_| storage_unavailable())?;
-    let stack = stacks::stack_of(pool, &pull_request)
+    let stack = crate::backend::repositories::pull_requests::stacks::stack_of(pool, &pull_request)
         .await
         .map_err(|_| storage_unavailable())?;
     let stack = stack.map(|stack| {
@@ -178,16 +178,19 @@ pub async fn get_pull_request(
 ) -> Result<Json<PullRequestDetailResponse>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
-    let pull_request =
-        db::pull_requests::records::get_pull_request(&state.pool, repository.id, number)
-            .await
-            .map_err(|_| storage_unavailable())?
-            .ok_or_else(|| {
-                (
-                    StatusCode::NOT_FOUND,
-                    Json(ApiError::new("not_found", "Pull request not found")),
-                )
-            })?;
+    let pull_request = crate::backend::db::pull_requests::records::get_pull_request(
+        &state.pool,
+        repository.id,
+        number,
+    )
+    .await
+    .map_err(|_| storage_unavailable())?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiError::new("not_found", "Pull request not found")),
+        )
+    })?;
 
     Ok(Json(detail_response(&state.pool, pull_request).await?))
 }

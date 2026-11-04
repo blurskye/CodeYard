@@ -141,27 +141,36 @@ pub fn refusal(error: &anyhow::Error) -> Option<Refusal> {
     if let Some(reason) = error.downcast_ref::<Refusal>() {
         return Some(*reason);
     }
-    if let Some(reason) = error.downcast_ref::<super::issue_attributes::Refusal>() {
+    if let Some(reason) = error.downcast_ref::<crate::backend::db::issue_attributes::Refusal>() {
         return Some(
-            if matches!(reason, super::issue_attributes::Refusal::Denied) {
+            if matches!(
+                reason,
+                crate::backend::db::issue_attributes::Refusal::Denied
+            ) {
                 Refusal::Denied
             } else {
                 Refusal::Invalid
             },
         );
     }
-    if let Some(reason) = error.downcast_ref::<super::labels::LabelWriteRefusal>() {
+    if let Some(reason) = error.downcast_ref::<crate::backend::db::labels::LabelWriteRefusal>() {
         return Some(
-            if matches!(reason, super::labels::LabelWriteRefusal::Denied) {
+            if matches!(
+                reason,
+                crate::backend::db::labels::LabelWriteRefusal::Denied
+            ) {
                 Refusal::Denied
             } else {
                 Refusal::Invalid
             },
         );
     }
-    if let Some(reason) = error.downcast_ref::<super::assignees::AssignmentRefusal>() {
+    if let Some(reason) = error.downcast_ref::<crate::backend::db::assignees::AssignmentRefusal>() {
         return Some(
-            if matches!(reason, super::assignees::AssignmentRefusal::Denied) {
+            if matches!(
+                reason,
+                crate::backend::db::assignees::AssignmentRefusal::Denied
+            ) {
                 Refusal::Denied
             } else {
                 Refusal::Invalid
@@ -169,7 +178,7 @@ pub fn refusal(error: &anyhow::Error) -> Option<Refusal> {
         );
     }
     if error
-        .downcast_ref::<super::discussions::DiscussionWriteRefusal>()
+        .downcast_ref::<crate::backend::db::discussions::DiscussionWriteRefusal>()
         .is_some()
     {
         return Some(Refusal::Denied);
@@ -182,10 +191,10 @@ native_operation!(crate::backend::db::postgres::suggestions::enabled,crate::back
 native_operation!(crate::backend::db::postgres::suggestions::can_triage,crate::backend::db::sqlite::suggestions::can_triage,
     fn can_triage(pool:&DbPool,repo:i64,actor:i64)->Result<bool>);
 native_operation!(crate::backend::db::postgres::suggestions::set_enabled,crate::backend::db::sqlite::suggestions::set_enabled,
-    fn set_enabled(pool:&DbPool,repo:i64,actor:i64,credential:&super::users::accounts::AccountCredential<'_>,enabled:bool)->Result<()>);
+    fn set_enabled(pool:&DbPool,repo:i64,actor:i64,credential:&crate::backend::db::users::accounts::AccountCredential<'_>,enabled:bool)->Result<()>);
 native_operation!(crate::backend::db::postgres::suggestions::list,crate::backend::db::sqlite::suggestions::list,
     fn list(pool:&DbPool,repo:i64,actor:i64,issue:i64,filter:&ListFilter<'_>)->Result<Vec<Suggestion>>);
 native_operation!(crate::backend::db::postgres::suggestions::propose,crate::backend::db::sqlite::suggestions::propose,
-    fn propose(pool:&DbPool,repo:i64,actor:i64,credential:&super::users::accounts::AccountCredential<'_>,issue:i64,proposal:&Proposal,target_repository:Option<i64>)->Result<Suggestion>);
+    fn propose(pool:&DbPool,repo:i64,actor:i64,credential:&crate::backend::db::users::accounts::AccountCredential<'_>,issue:i64,proposal:&Proposal,target_repository:Option<i64>)->Result<Suggestion>);
 native_operation!(crate::backend::db::postgres::suggestions::resolve,crate::backend::db::sqlite::suggestions::resolve,
-    fn resolve(pool:&DbPool,repo:i64,actor:i64,credential:&super::users::accounts::AccountCredential<'_>,issue:i64,id:i64,approve:bool)->Result<Resolution>);
+    fn resolve(pool:&DbPool,repo:i64,actor:i64,credential:&crate::backend::db::users::accounts::AccountCredential<'_>,issue:i64,id:i64,approve:bool)->Result<Resolution>);

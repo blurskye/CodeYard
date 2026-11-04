@@ -1,12 +1,10 @@
-use super::chrome;
-use crate::backend::api::github;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::session;
+
 use crate::backend::app::AppState;
-use crate::backend::db::checks;
+
 use crate::backend::db::checks::Credential;
 use crate::backend::db::checks::ANNOTATIONS_PER_PAGE;
-use crate::backend::repositories::access;
+
 use axum::{
     extract::{Form, OriginalUri, Path, State},
     http::{HeaderMap, StatusCode},
@@ -31,7 +29,7 @@ pub fn router() -> Router<Arc<AppState>> {
 
 async fn writable(ctx: &PageContext, repo: &Repository) -> bool {
     if let Some(user) = &ctx.user {
-        access::can_write(&ctx.state.pool, user, repo)
+        crate::backend::repositories::access::can_write(&ctx.state.pool, user, repo)
             .await
             .unwrap_or(false)
     } else {
@@ -48,7 +46,8 @@ async fn page(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let loaded = match chrome::load_database(&ctx, &owner, &name).await {
+    let loaded = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await
+    {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
@@ -65,13 +64,13 @@ async fn page(
         }
         _ => return ctx.error(StatusCode::BAD_REQUEST, "Invalid annotation page."),
     };
-    let session = session::extract_session_id(&ctx.headers);
-    let checks::PageSnapshot {
+    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers);
+    let crate::backend::db::checks::PageSnapshot {
         run,
         suite,
         annotations,
         total,
-    } = match checks::page_snapshot(
+    } = match crate::backend::db::checks::page_snapshot(
         &ctx.state.pool,
         ctx.user.as_ref().map(|user| user.id),
         session.as_deref(),
@@ -82,10 +81,10 @@ async fn page(
     .await
     {
         Ok(snapshot) => snapshot,
-        Err(error) if error.is::<checks::Refusal>() => {
+        Err(error) if error.is::<crate::backend::db::checks::Refusal>() => {
             return ctx.error(StatusCode::NOT_FOUND, "Check not found.")
         }
-        Err(_) => return chrome::unavailable(&ctx),
+        Err(_) => return crate::backend::api::repos::chrome::unavailable(&ctx),
     };
     let can_rerequest = writable(&ctx, &loaded.repository).await;
     let data = run.data.0;
@@ -130,9 +129,12 @@ async fn page(
             })
             .collect(),
     };
-    if let Err((status, _)) =
-        super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
-            .await
+    if let Err((status, _)) = crate::backend::api::repos::access::check_repo_read_access(
+        &ctx.state.pool,
+        &loaded.repository,
+        &ctx.headers,
+    )
+    .await
     {
         return ctx.error(status, "Repository not found.");
     }
@@ -162,7 +164,8 @@ async fn submit(
         Ok(user) => user.id,
         Err(response) => return response,
     };
-    let loaded = match chrome::load_database(&ctx, &owner, &name).await {
+    let loaded = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await
+    {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
@@ -176,16 +179,17 @@ async fn submit(
             "The repository changed. Reload the check.",
         );
     }
-    let Some(session) = session::extract_session_id(&ctx.headers) else {
+    let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to re-run checks.");
     };
-    let run = match checks::run(&ctx.state.pool, loaded.repository.id, id).await {
+    let run = match crate::backend::db::checks::run(&ctx.state.pool, loaded.repository.id, id).await
+    {
         Ok(Some(run)) => run,
         Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Check not found."),
-        Err(_) => return chrome::unavailable(&ctx),
+        Err(_) => return crate::backend::api::repos::chrome::unavailable(&ctx),
     };
     let result = if uri.path().ends_with("/action") {
-        github::checks::request_action(
+        crate::backend::api::github::checks::request_action(
             &ctx.state,
             &loaded.repository,
             &owner,
@@ -196,7 +200,7 @@ async fn submit(
         )
         .await
     } else {
-        github::checks::request_again(
+        crate::backend::api::github::checks::request_again(
             &ctx.state,
             &loaded.repository,
             &owner,
@@ -210,6 +214,8 @@ async fn submit(
     };
     match result {
         Ok(()) => ctx.redirect(&format!("{}/runs/{id}", loaded.chrome.base())),
-        Err(error) => chrome::api_failure(&ctx, error.into_response().status()),
+        Err(error) => {
+            crate::backend::api::repos::chrome::api_failure(&ctx, error.into_response().status())
+        }
     }
 }

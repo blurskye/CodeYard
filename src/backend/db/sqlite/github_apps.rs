@@ -53,7 +53,7 @@ pub(super) async fn register_in_connection(
     app: &App,
     secret_hash: &str,
 ) -> Result<Option<App>> {
-    if !super::users::transitions::active_session(tx, actor, session).await? {
+    if !crate::backend::db::sqlite::users::transitions::active_session(tx, actor, session).await? {
         return Ok(None);
     }
     sqlx::query("INSERT INTO oauth_applications(owner_id,client_id,secret_hash,name,homepage,redirect_uri,is_github_app) VALUES($1,$2,$3,$4,$5,$5,TRUE)").bind(actor).bind(&app.client_id).bind(secret_hash).bind(&app.name).bind(&app.homepage).execute(&mut *tx).await?;
@@ -122,7 +122,9 @@ pub async fn install(
 ) -> Result<Option<Installation>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
-    if !super::users::transitions::active_session(&mut tx, actor, session).await? {
+    if !crate::backend::db::sqlite::users::transitions::active_session(&mut tx, actor, session)
+        .await?
+    {
         return Ok(None);
     }
     let allowed: bool=sqlx::query_scalar("SELECT COALESCE(($2=$1 AND $3 IS NULL) OR ($2 IS NULL AND EXISTS(SELECT 1 FROM org_memberships WHERE org_id=$3 AND user_id=$1 AND role='owner')),FALSE)").bind(actor).bind(user).bind(org).fetch_one(&mut *tx).await?;
@@ -262,7 +264,7 @@ pub async fn rotate_credentials(
     secret_hash: &str,
 ) -> Result<Option<String>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::users::transitions::require_account(
+    crate::backend::db::sqlite::users::transitions::require_account(
         &mut tx,
         actor,
         &crate::backend::db::users::accounts::AccountCredential::Session(session),
@@ -308,7 +310,9 @@ pub async fn rotate_credentials(
 
 pub async fn uninstall(pool: &SqlitePool, actor: i64, session: &str, id: i64) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::users::transitions::active_session_read(&mut tx, actor, session).await? {
+    if !crate::backend::db::sqlite::users::transitions::active_session_read(&mut tx, actor, session)
+        .await?
+    {
         return Ok(false);
     }
     let app:Option<i64>=sqlx::query_scalar("SELECT i.app_id FROM github_app_installations i WHERE i.id=$2 AND (i.user_id=$1 OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=i.org_id AND m.user_id=$1 AND m.role='owner'))").bind(actor).bind(id).fetch_optional(&mut *tx).await?;
@@ -377,11 +381,18 @@ pub async fn change_repository(
     let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
-    let installation: Option<(bool, Option<i64>)> = sqlx::query_as(&format!("SELECT i.all_repos,i.org_id FROM github_app_installations i JOIN users u ON u.id=$1 JOIN repositories r ON r.id=$3 WHERE i.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND ({})>=5", super::repositories::access::USER_REPO_ACCESS_SQL)).bind(actor).bind(id).bind(repo).fetch_optional(&mut *tx).await?;
+    let installation: Option<(bool, Option<i64>)> = sqlx::query_as(&format!("SELECT i.all_repos,i.org_id FROM github_app_installations i JOIN users u ON u.id=$1 JOIN repositories r ON r.id=$3 WHERE i.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND ({})>=5", crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL)).bind(actor).bind(id).bind(repo).fetch_optional(&mut *tx).await?;
     let Some((all_repos, org)) = installation else {
         return Ok(RepositoryChange::Missing);
     };
-    if !super::credentials::writes(&mut tx, &credential, Some(repo), None, "administration").await?
+    if !crate::backend::db::sqlite::credentials::writes(
+        &mut tx,
+        &credential,
+        Some(repo),
+        None,
+        "administration",
+    )
+    .await?
     {
         return Ok(RepositoryChange::Missing);
     }
@@ -497,7 +508,9 @@ pub async fn request_installation(
     org: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::users::transitions::active_session(&mut tx, actor, session).await? {
+    if !crate::backend::db::sqlite::users::transitions::active_session(&mut tx, actor, session)
+        .await?
+    {
         return Ok(false);
     }
     let live:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN github_apps a ON a.id=$3 AND a.is_public WHERE m.user_id=$1 AND m.org_id=$2 AND m.role IN ('member','admin') AND NOT EXISTS(SELECT 1 FROM github_app_installations WHERE app_id=$3 AND org_id=$2))").bind(actor).bind(org).bind(app).fetch_one(&mut *tx).await?;

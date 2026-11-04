@@ -12,14 +12,17 @@ use codeyard_db_core::models::Issue;
 use serde_json::Value;
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 async fn permission(c: &mut PgConnection, repo: i64, actor: i64, triage: bool) -> Result<bool> {
-    let allowed:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$2 WHERE r.id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND ((NOT $3 AND ({})) OR (({})>=2) OR (r.owner_kind='user' AND u.is_admin)))",super::repositories::access::readable_condition(),super::repositories::access::USER_REPO_ACCESS_SQL)).bind(repo).bind(actor).bind(triage).fetch_one(&mut *c).await?;
+    let allowed:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$2 WHERE r.id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND ((NOT $3 AND ({})) OR (({})>=2) OR (r.owner_kind='user' AND u.is_admin)))",crate::backend::db::postgres::repositories::access::readable_condition(),crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL)).bind(repo).bind(actor).bind(triage).fetch_one(&mut *c).await?;
     if !allowed {
         return Ok(false);
     }
     let (admin,private):(bool,bool)=sqlx::query_as("SELECT u.is_admin,r.is_private FROM users u CROSS JOIN repositories r WHERE u.id=$1 AND r.id=$2").bind(actor).bind(repo).fetch_one(&mut *c).await?;
     Ok(admin
         || !(triage || private)
-        || !super::users::blocks::repository_interaction_blocked(c, actor, repo).await?)
+        || !crate::backend::db::postgres::users::blocks::repository_interaction_blocked(
+            c, actor, repo,
+        )
+        .await?)
 }
 pub async fn can_triage(pool: &PgPool, repo: i64, actor: i64) -> Result<bool> {
     permission(&mut *pool.acquire().await?, repo, actor, true).await
@@ -36,14 +39,18 @@ pub async fn set_enabled(
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::postgres::discussions::lock_admin_authority(&mut tx, actor, repo)
+            .await?,
         Refusal::Denied
     );
     anyhow::ensure!(
-        super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        crate::backend::db::postgres::users::transitions::credential_live(
+            &mut tx, actor, credential, true
+        )
+        .await?,
         Refusal::Denied
     );
-    super::issue_attributes::lock_metadata(&mut tx).await?;
+    crate::backend::db::postgres::issue_attributes::lock_metadata(&mut tx).await?;
     sqlx::query("INSERT INTO repository_issue_suggestions(repo_id,enabled) VALUES ($1,$2) ON CONFLICT(repo_id) DO UPDATE SET enabled=excluded.enabled").bind(repo).bind(enabled).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
@@ -70,10 +77,15 @@ pub async fn list(
         permission(&mut tx, repo, actor, !filter.own).await?,
         Refusal::Denied
     );
-    let fields =
-        super::issue_attributes::catalog_connection(&mut tx, repo, Some(actor), "field").await?;
+    let fields = crate::backend::db::postgres::issue_attributes::catalog_connection(
+        &mut tx,
+        repo,
+        Some(actor),
+        "field",
+    )
+    .await?;
     let ids = serde_json::to_string(&fields.iter().map(|f| f.id).collect::<Vec<_>>())?;
-    let rows=sqlx::query_as(&format!("SELECT s.* FROM issue_suggestions s WHERE s.issue_id=$1 AND ($3='all' OR s.state=$3) AND ($4::TEXT IS NULL OR s.action=$4) AND (NOT $5 OR s.actor_id=$2) AND (s.action<>'add_field' OR s.target_id IN(SELECT CAST(value AS BIGINT) FROM jsonb_array_elements_text($6::jsonb))) AND (s.action<>'close_issue' OR s.target_id IS NULL OR EXISTS(SELECT 1 FROM issues target JOIN repositories r ON r.id=target.repo_id LEFT JOIN users u ON u.id=$2 WHERE target.id=s.target_id AND ({}) AND (COALESCE(u.username,'')<>$10 OR r.id=$9))) ORDER BY s.created_at {order},s.id {order} LIMIT $7 OFFSET $8",super::repositories::access::readable_condition(),order=if filter.descending{"DESC"}else{"ASC"})).bind(issue).bind(actor).bind(filter.state).bind(filter.action).bind(filter.own).bind(ids).bind(filter.limit).bind(filter.offset).bind(repo).bind(crate::backend::db::ci_tokens::BOT).fetch_all(&mut *tx).await?;
+    let rows=sqlx::query_as(&format!("SELECT s.* FROM issue_suggestions s WHERE s.issue_id=$1 AND ($3='all' OR s.state=$3) AND ($4::TEXT IS NULL OR s.action=$4) AND (NOT $5 OR s.actor_id=$2) AND (s.action<>'add_field' OR s.target_id IN(SELECT CAST(value AS BIGINT) FROM jsonb_array_elements_text($6::jsonb))) AND (s.action<>'close_issue' OR s.target_id IS NULL OR EXISTS(SELECT 1 FROM issues target JOIN repositories r ON r.id=target.repo_id LEFT JOIN users u ON u.id=$2 WHERE target.id=s.target_id AND ({}) AND (COALESCE(u.username,'')<>$10 OR r.id=$9))) ORDER BY s.created_at {order},s.id {order} LIMIT $7 OFFSET $8",crate::backend::db::postgres::repositories::access::readable_condition(),order=if filter.descending{"DESC"}else{"ASC"})).bind(issue).bind(actor).bind(filter.state).bind(filter.action).bind(filter.own).bind(ids).bind(filter.limit).bind(filter.offset).bind(repo).bind(crate::backend::db::ci_tokens::BOT).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
 }
@@ -94,13 +106,21 @@ async fn prepare(
     let (value, name, current) = match p.action {
         Action::SetType => {
             anyhow::ensure!(p.value.is_null() || p.value.is_string(), Refusal::Invalid);
-            let old = super::issue_attributes::assigned_connection(tx, repo, issue.id).await?;
+            let old = crate::backend::db::postgres::issue_attributes::assigned_connection(
+                tx, repo, issue.id,
+            )
+            .await?;
             if let Some(id) = target {
-                let a = super::issue_attributes::catalog_connection(tx, repo, Some(actor), "type")
-                    .await?
-                    .into_iter()
-                    .find(|a| a.id == id && a.is_enabled)
-                    .ok_or(Refusal::Invalid)?;
+                let a = crate::backend::db::postgres::issue_attributes::catalog_connection(
+                    tx,
+                    repo,
+                    Some(actor),
+                    "type",
+                )
+                .await?
+                .into_iter()
+                .find(|a| a.id == id && a.is_enabled)
+                .ok_or(Refusal::Invalid)?;
                 (
                     Value::String(a.name.clone()),
                     a.name,
@@ -113,7 +133,14 @@ async fn prepare(
         Action::AddLabel => {
             anyhow::ensure!(p.value.is_null() || p.value.is_string(), Refusal::Invalid);
             let id = target.ok_or(Refusal::Invalid)?;
-            super::labels::lock_item_labels(tx, repo, LabelTarget::Issue, issue.id, &[id]).await?;
+            crate::backend::db::postgres::labels::lock_item_labels(
+                tx,
+                repo,
+                LabelTarget::Issue,
+                issue.id,
+                &[id],
+            )
+            .await?;
             let name: String =
                 sqlx::query_scalar("SELECT name FROM labels WHERE id=$1 AND repo_id=$2")
                     .bind(id)
@@ -131,11 +158,16 @@ async fn prepare(
         }
         Action::AddField => {
             let id = target.ok_or(Refusal::Invalid)?;
-            let a = super::issue_attributes::catalog_connection(tx, repo, Some(actor), "field")
-                .await?
-                .into_iter()
-                .find(|a| a.id == id)
-                .ok_or(Refusal::Invalid)?;
+            let a = crate::backend::db::postgres::issue_attributes::catalog_connection(
+                tx,
+                repo,
+                Some(actor),
+                "field",
+            )
+            .await?
+            .into_iter()
+            .find(|a| a.id == id)
+            .ok_or(Refusal::Invalid)?;
             let canonical = a.canonical(&p.value)?;
             let old: Option<String> = sqlx::query_scalar(
                 "SELECT value_json FROM issue_field_values WHERE issue_id=$1 AND attribute_id=$2",
@@ -154,7 +186,7 @@ async fn prepare(
         Action::AddAssignee => {
             anyhow::ensure!(p.value.is_null() || p.value.is_string(), Refusal::Invalid);
             let id = target.ok_or(Refusal::Invalid)?;
-            super::assignees::candidate(tx, repo, id).await?;
+            crate::backend::db::postgres::assignees::candidate(tx, repo, id).await?;
             let name: String = sqlx::query_scalar("SELECT username FROM users WHERE id=$1")
                 .bind(id)
                 .fetch_one(&mut **tx)
@@ -185,7 +217,7 @@ async fn prepare(
             );
             let name = if let Some(id) = target {
                 anyhow::ensure!(id != issue.id, Refusal::Invalid);
-                let title:Option<String>=sqlx::query_scalar(&format!("SELECT i.title FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$1 WHERE i.id=$2 AND ({}) AND (COALESCE(u.username,'')<>$4 OR r.id=$3)",super::repositories::access::readable_condition())).bind(actor).bind(id).bind(repo).bind(crate::backend::db::ci_tokens::BOT).fetch_optional(&mut **tx).await?;
+                let title:Option<String>=sqlx::query_scalar(&format!("SELECT i.title FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$1 WHERE i.id=$2 AND ({}) AND (COALESCE(u.username,'')<>$4 OR r.id=$3)",crate::backend::db::postgres::repositories::access::readable_condition())).bind(actor).bind(id).bind(repo).bind(crate::backend::db::ci_tokens::BOT).fetch_optional(&mut **tx).await?;
                 title.ok_or(Refusal::Invalid)?
             } else {
                 reason.into()
@@ -228,11 +260,16 @@ pub async fn propose(
 ) -> Result<Suggestion> {
     p.validate()?;
     let mut tx = pool.begin().await?;
-    super::discussions::require_contribution_authority(&mut tx, actor, repo).await?;
-    super::issue_attributes::lock_metadata(&mut tx).await?;
-    super::discussions::lock_issue_contribution(&mut tx, actor, repo, issue).await?;
+    crate::backend::db::postgres::discussions::require_contribution_authority(&mut tx, actor, repo)
+        .await?;
+    crate::backend::db::postgres::issue_attributes::lock_metadata(&mut tx).await?;
+    crate::backend::db::postgres::discussions::lock_issue_contribution(&mut tx, actor, repo, issue)
+        .await?;
     anyhow::ensure!(
-        super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        crate::backend::db::postgres::users::transitions::credential_live(
+            &mut tx, actor, credential, true
+        )
+        .await?,
         Refusal::Denied
     );
     issue_scope(&mut tx, repo, issue).await?;
@@ -301,12 +338,19 @@ async fn effect(
     let id = issue.id;
     match p.action {
         Action::SetType => Ok((
-            super::issue_attributes::type_in_transaction(tx, repo, actor, id, p.target_id).await?,
+            crate::backend::db::postgres::issue_attributes::type_in_transaction(
+                tx,
+                repo,
+                actor,
+                id,
+                p.target_id,
+            )
+            .await?,
             None,
             None,
         )),
         Action::AddField => Ok((
-            super::issue_attributes::fields_in_transaction(
+            crate::backend::db::postgres::issue_attributes::fields_in_transaction(
                 tx,
                 repo,
                 actor,
@@ -322,7 +366,7 @@ async fn effect(
             None,
         )),
         Action::AddLabel => {
-            super::labels::write_item_labels_transaction(
+            crate::backend::db::postgres::labels::write_item_labels_transaction(
                 tx,
                 None,
                 repo,
@@ -332,7 +376,7 @@ async fn effect(
                 false,
             )
             .await?;
-            super::issue_attributes::touch(tx, id).await?;
+            crate::backend::db::postgres::issue_attributes::touch(tx, id).await?;
             let (name, color): (String, String) =
                 sqlx::query_as("SELECT name,color FROM labels WHERE id=$1")
                     .bind(p.target_id)
@@ -340,8 +384,14 @@ async fn effect(
                     .await?;
             Ok((
                 Some(
-                    super::issue_attributes::event(tx, (repo, id, actor), "labeled", &name, &color)
-                        .await?,
+                    crate::backend::db::postgres::issue_attributes::event(
+                        tx,
+                        (repo, id, actor),
+                        "labeled",
+                        &name,
+                        &color,
+                    )
+                    .await?,
                 ),
                 None,
                 None,
@@ -349,7 +399,7 @@ async fn effect(
         }
         Action::AddAssignee => {
             let assignee = p.target_id.ok_or(Refusal::Invalid)?;
-            let changed = super::assignees::assign_in_transaction(
+            let changed = crate::backend::db::postgres::assignees::assign_in_transaction(
                 tx,
                 actor,
                 repo,
@@ -360,7 +410,7 @@ async fn effect(
             if !changed {
                 return Ok((None, None, None));
             }
-            super::issue_attributes::touch(tx, id).await?;
+            crate::backend::db::postgres::issue_attributes::touch(tx, id).await?;
             Ok((
                 Some(
                     sqlx::query_scalar("SELECT id FROM timeline_events WHERE repo_id=$1 AND subject_kind='issue' AND subject_id=$2 AND actor_id=$3 AND kind='assigned' ORDER BY id DESC LIMIT 1")
@@ -371,7 +421,7 @@ async fn effect(
             ))
         }
         Action::CloseIssue => {
-            let closed = super::issues::update_issue_in_transaction(
+            let closed = crate::backend::db::postgres::issues::update_issue_in_transaction(
                 tx,
                 repo,
                 id,
@@ -402,7 +452,7 @@ async fn effect(
             }
             let event = if issue.state == "closed" {
                 // A reason/duplicate correction is a new action, never a historical close.
-                super::timeline::append(
+                crate::backend::db::postgres::timeline::append(
                     tx,
                     repo,
                     "issue",
@@ -431,14 +481,18 @@ pub async fn resolve(
 ) -> Result<Resolution> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_triage_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::postgres::discussions::lock_triage_authority(&mut tx, actor, repo)
+            .await?,
         Refusal::Denied
     );
     anyhow::ensure!(
-        super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        crate::backend::db::postgres::users::transitions::credential_live(
+            &mut tx, actor, credential, true
+        )
+        .await?,
         Refusal::Denied
     );
-    super::issue_attributes::lock_metadata(&mut tx).await?;
+    crate::backend::db::postgres::issue_attributes::lock_metadata(&mut tx).await?;
     issue_scope(&mut tx, repo, issue).await?;
     let record: Issue =
         sqlx::query_as("SELECT * FROM issues WHERE id=$1 AND repo_id=$2 FOR UPDATE")
@@ -455,16 +509,20 @@ pub async fn resolve(
             .await?
             .ok_or(Refusal::Missing)?;
     if s.action == "add_field" {
-        let fields =
-            super::issue_attributes::catalog_connection(&mut tx, repo, Some(actor), "field")
-                .await?;
+        let fields = crate::backend::db::postgres::issue_attributes::catalog_connection(
+            &mut tx,
+            repo,
+            Some(actor),
+            "field",
+        )
+        .await?;
         anyhow::ensure!(
             fields.iter().any(|f| Some(f.id) == s.target_id),
             Refusal::Missing
         );
     }
     if s.action == "close_issue" && s.target_id.is_some() {
-        let visible:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$1 WHERE i.id=$2 AND ({}) AND (COALESCE(u.username,'')<>$4 OR r.id=$3))",super::repositories::access::readable_condition())).bind(actor).bind(s.target_id).bind(repo).bind(crate::backend::db::ci_tokens::BOT).fetch_one(&mut *tx).await?;
+        let visible:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$1 WHERE i.id=$2 AND ({}) AND (COALESCE(u.username,'')<>$4 OR r.id=$3))",crate::backend::db::postgres::repositories::access::readable_condition())).bind(actor).bind(s.target_id).bind(repo).bind(crate::backend::db::ci_tokens::BOT).fetch_one(&mut *tx).await?;
         anyhow::ensure!(visible, Refusal::Missing);
     }
     anyhow::ensure!(s.state == "pending", Refusal::NotPending);
@@ -475,7 +533,10 @@ pub async fn resolve(
     if approve {
         if s.action == "add_field" {
             anyhow::ensure!(
-                super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+                crate::backend::db::postgres::discussions::lock_write_authority(
+                    &mut tx, actor, repo
+                )
+                .await?,
                 Refusal::Denied
             );
         }

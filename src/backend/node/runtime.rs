@@ -1,18 +1,17 @@
 //! `codeyard serve`: starts the HTTP server, the selected SSH transport and the
 //! CI service, then waits for a shutdown signal.
-use super::{config::ServeConfig, NodeRole};
-use crate::backend::api;
-use crate::backend::cluster;
-use crate::backend::fs::lock_state_dir;
-use crate::backend::ssh;
-use crate::backend::{
-    app::AppState,
-    ci::CiConfig,
-    crypto::SecretEncryptor,
-    storage::{s3::S3Config, ObjectStore},
-};
+use crate::backend::node::config::ServeConfig;
+use crate::backend::node::NodeRole;
+
+use codeyard_support::fs::lock_state_dir;
+
+use crate::backend::app::AppState;
+use crate::backend::ci::CiConfig;
+use crate::backend::storage::s3::S3Config;
+use crate::backend::storage::ObjectStore;
 use anyhow::{Context, Result};
 use codeyard_db_core::DbPool;
+use codeyard_support::secrets::SecretEncryptor;
 use std::path::PathBuf;
 use std::{path::Path, sync::Arc};
 use tracing::{info, warn};
@@ -47,7 +46,7 @@ async fn drain_worker<T>(task: Option<tokio::task::JoinHandle<T>>, deadline: tok
 }
 
 fn prepare_repository_root(path: &Path) -> Result<PathBuf> {
-    crate::backend::fs::private_dir(path)?;
+    codeyard_support::fs::private_dir(path)?;
     Ok(path.canonicalize()?)
 }
 
@@ -56,7 +55,7 @@ async fn prepare_application(
     pool: DbPool,
     repos_path: PathBuf,
     state_dir: &Path,
-    roles: &super::NodeRoles,
+    roles: &crate::backend::node::NodeRoles,
     cluster: Option<crate::backend::cluster::NodeContext>,
     s3: Option<S3Config>,
 ) -> Result<AppState> {
@@ -68,7 +67,7 @@ async fn prepare_application(
         Err(std::env::VarError::NotPresent) => 1024 * 1024 * 1024,
         Err(_) => anyhow::bail!("STORAGE_MIN_FREE_BYTES must be an unsigned byte count"),
     };
-    crate::backend::api::http::config::public_url()?;
+    codeyard_model::http_config::public_url()?;
     if cluster.is_none() {
         let (state_dir, repos) = (state_dir.to_owned(), repos_path.clone());
         tokio::task::spawn_blocking(move || {
@@ -249,17 +248,17 @@ async fn remove_expired_web_rows(pool: &DbPool, storage: &crate::backend::storag
     }
 }
 
-fn select_transport(config: &ServeConfig) -> Result<ssh::mode::Selection> {
+fn select_transport(config: &ServeConfig) -> Result<codeyard_support::ssh_mode::Selection> {
     if !config.roles.contains(NodeRole::Ssh) {
-        return Ok(ssh::mode::Selection {
-            mode: ssh::mode::SshMode::Disabled,
+        return Ok(codeyard_support::ssh_mode::Selection {
+            mode: codeyard_support::ssh_mode::SshMode::Disabled,
             setup_required: false,
             git_user: "git".into(),
-            socket: PathBuf::from(ssh::mode::DEFAULT_SOCKET),
+            socket: PathBuf::from(codeyard_support::ssh_mode::DEFAULT_SOCKET),
             builtin_port: config.ssh_addr.port(),
         });
     }
-    ssh::mode::select(
+    codeyard_support::ssh_mode::select(
         config.ssh_mode,
         config.ssh_socket.clone(),
         config.ssh_git_user.clone(),
@@ -271,7 +270,7 @@ fn select_transport(config: &ServeConfig) -> Result<ssh::mode::Selection> {
 /// A worker-only process has no application state, database or inbound listeners.
 pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
     let _state_dir_lock = lock_state_dir(state_dir)?;
-    let settings = cluster::Settings::from_lookup(&|key| {
+    let settings = crate::backend::cluster::Settings::from_lookup(&|key| {
         // Empty counts as unset, as in `Settings::from_lookup`, so the fallback below applies.
         std::env::var(key)
             .ok()
@@ -286,7 +285,7 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
     let (context, peers) = tokio::select! {
         biased;
         result = &mut signal => return result,
-        result = cluster::worker_context(state_dir, settings) => result?,
+        result = crate::backend::cluster::worker_context(state_dir, settings) => result?,
     };
     let config = std::sync::Arc::new(crate::backend::ci::CiConfig::from_env()?);
     let workers = crate::backend::ci::CiWorkers::new(
@@ -331,7 +330,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     };
     if !config.roles.single_node() && !clustered {
         pool.close().await;
-        anyhow::bail!(super::SINGLE_NODE_ROLES);
+        anyhow::bail!(crate::backend::node::SINGLE_NODE_ROLES);
     }
     let s3 = S3Config::optional_from_env()?;
     anyhow::ensure!(
@@ -352,11 +351,11 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     };
     // The cluster transport is opt-in. Without cluster settings no cluster socket is
     // opened. With them, single-node mode still admits only runners.
-    let member = match cluster::Settings::from_env()? {
+    let member = match crate::backend::cluster::Settings::from_env()? {
         Some(settings) => Some(tokio::select! {
             biased;
             result = &mut signal => { pool.close().await; return result; }
-            result = cluster::start(&pool, &config.state_dir, &repos_path, &config.roles, settings) => result?,
+            result = crate::backend::cluster::start(&pool, &config.state_dir, &repos_path, &config.roles, settings) => result?,
         }),
         None => None,
     };
@@ -379,7 +378,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         "A node without web or ssh only serves other nodes: join a cluster first (see `codeyard cluster join`)"
     );
         let transport = select_transport(&config)?;
-        ssh::mode::publish(transport.clone())?;
+        codeyard_support::ssh_mode::publish(transport.clone())?;
         info!(ssh_mode = transport.mode.as_str(), roles = ?config.roles, "starting codeyard");
         if transport.setup_required {
             warn!("SSH setup required: no SSH listener will be opened. Run the OpenSSH installer, or set SSH_MODE=builtin or SSH_MODE=disabled.");
@@ -537,15 +536,20 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     let replicas = member
         .as_ref()
         .filter(|_| config.roles.contains(NodeRole::Storage))
-        .map(|member| tokio::spawn(cluster::replicas::run(member.context.clone(), replica_stop)));
+        .map(|member| {
+            tokio::spawn(crate::backend::cluster::replicas::run(
+                member.context.clone(),
+                replica_stop,
+            ))
+        });
 
     // Listeners stop accepting when `stop_listeners` is set, then finish what is in progress.
     let (stop_listeners, stop) = tokio::sync::watch::channel(false);
     let web_server = async {
         if config.roles.contains(NodeRole::Web) {
-            api::run_web_server(config.http_addr, state, stop.clone()).await
+            crate::backend::api::run_web_server(config.http_addr, state, stop.clone()).await
         } else if config.roles.contains(NodeRole::Storage) {
-            api::health::run_server(config.http_addr, state, stop.clone()).await
+            crate::backend::api::health::run_server(config.http_addr, state, stop.clone()).await
         } else {
             // Without an HTTP listener, this future ends with the shutdown signal.
             let _ = stop.clone().wait_for(|stopped| *stopped).await;
@@ -554,18 +558,22 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     };
     let servers = async {
         match transport.mode {
-            ssh::mode::SshMode::Builtin => {
+            codeyard_support::ssh_mode::SshMode::Builtin => {
                 let host_key = config
                     .host_key
                     .to_str()
                     .context("host key path is not UTF-8")?;
-                let mut server =
-                    ssh::SshServer::new(pool.clone(), Some(host_key), ci_runs.clone()).await?;
+                let mut server = crate::backend::ssh::SshServer::new(
+                    pool.clone(),
+                    Some(host_key),
+                    ci_runs.clone(),
+                )
+                .await?;
                 info!(address = %config.ssh_addr, "built-in SSH listening");
                 tokio::try_join!(server.run(config.ssh_addr, stop.clone()), web_server).map(|_| ())
             }
             #[cfg(unix)]
-            ssh::mode::SshMode::Openssh if !transport.setup_required => {
+            codeyard_support::ssh_mode::SshMode::Openssh if !transport.setup_required => {
                 info!("using host OpenSSH for Git over SSH");
                 let gateway = crate::backend::repositories::git_sessions::run_gateway(
                     transport.socket,
@@ -674,8 +682,6 @@ mod tests {
 
     #[tokio::test]
     async fn expiry_sweep_reclaims_transfer_accounting() {
-        use crate::backend::db;
-
         let directory = tempfile::tempdir().unwrap();
         let pool = codeyard_db_core::init_db(&format!(
             "sqlite://{}",
@@ -684,7 +690,7 @@ mod tests {
         .await
         .unwrap();
         codeyard_db_core::run_migrations(&pool).await.unwrap();
-        let owner = db::users::accounts::create_user(&pool, "owner", None)
+        let owner = crate::backend::db::users::accounts::create_user(&pool, "owner", None)
             .await
             .unwrap();
         let DbPool::Sqlite(raw) = &pool else {

@@ -1,18 +1,22 @@
-use super::{wire::*, RpcHandler};
-use crate::backend::{
-    cluster::replicas::{copy_path, moving, MOVE_WAIT},
-    db,
-    repositories::{
-        access,
-        protection::{
-            check_branch_write, matching_rules, BranchWrite, History, Refusal, WriteVia, ANY_TIP,
-        },
-        store::{
-            BlobMetadata, GitService, RepoStore, WorkflowPayloadEntry, MAX_CI_WORKFLOW_BYTES,
-            MAX_WORKFLOW_PAYLOAD_BYTES,
-        },
-    },
-};
+use crate::backend::cluster::replicas::copy_path;
+use crate::backend::cluster::replicas::moving;
+use crate::backend::cluster::replicas::MOVE_WAIT;
+use crate::backend::cluster::rpc::wire::*;
+use crate::backend::cluster::rpc::RpcHandler;
+
+use crate::backend::repositories::protection::check_branch_write;
+use crate::backend::repositories::protection::matching_rules;
+use crate::backend::repositories::protection::BranchWrite;
+use crate::backend::repositories::protection::History;
+use crate::backend::repositories::protection::Refusal;
+use crate::backend::repositories::protection::WriteVia;
+use crate::backend::repositories::protection::ANY_TIP;
+use crate::backend::repositories::store::BlobMetadata;
+use crate::backend::repositories::store::GitService;
+use crate::backend::repositories::store::RepoStore;
+use crate::backend::repositories::store::WorkflowPayloadEntry;
+use crate::backend::repositories::store::MAX_CI_WORKFLOW_BYTES;
+use crate::backend::repositories::store::MAX_WORKFLOW_PAYLOAD_BYTES;
 use anyhow::Result;
 use codeyard_git::error::RepoError;
 use serde_json::Value;
@@ -239,12 +243,13 @@ impl RpcHandler {
     ) -> Result<RepoStore, RepoError> {
         let pool = self.context.database()?;
         if let Some(id) = repo_id {
-            let repository = db::repositories::records::get_repository_by_id(pool, id)
-                .await
-                .map_err(|_| unavailable())?
-                .ok_or_else(unavailable)?;
+            let repository =
+                crate::backend::db::repositories::records::get_repository_by_id(pool, id)
+                    .await
+                    .map_err(|_| unavailable())?
+                    .ok_or_else(unavailable)?;
             if repository.storage_node_id.is_some()
-                && db::cluster::writes::write_settings(pool)
+                && crate::backend::db::cluster::writes::write_settings(pool)
                     .await
                     .map_err(|_| unavailable())?
                     .write_quorum
@@ -295,9 +300,10 @@ impl RpcHandler {
         read_only: bool,
     ) -> Result<(Option<i64>, PathBuf), RepoError> {
         let pool = self.context.database()?;
-        let repository = db::cluster::get_repository_by_uuid(pool, &uuid.to_string())
-            .await
-            .map_err(|_| unavailable())?;
+        let repository =
+            crate::backend::db::cluster::get_repository_by_uuid(pool, &uuid.to_string())
+                .await
+                .map_err(|_| unavailable())?;
         let primary =
             crate::backend::repositories::store::primary_path(&self.context.repos_path, uuid);
         let Some(repo) = repository else {
@@ -308,7 +314,7 @@ impl RpcHandler {
             return Err(RepoError::storage_node_unavailable());
         };
         if repo.storage_node_id.is_some()
-            && db::cluster::writes::write_settings(pool)
+            && crate::backend::db::cluster::writes::write_settings(pool)
                 .await
                 .map_err(|_| unavailable())?
                 .write_quorum
@@ -334,10 +340,11 @@ impl RpcHandler {
                 let guards = tokio::time::timeout(MOVE_WAIT, moving(&primary, &copy))
                     .await
                     .map_err(|_| unavailable())?;
-                let current = db::repositories::records::get_repository_by_id(pool, repo.id)
-                    .await
-                    .map_err(|_| unavailable())?
-                    .ok_or_else(unavailable)?;
+                let current =
+                    crate::backend::db::repositories::records::get_repository_by_id(pool, repo.id)
+                        .await
+                        .map_err(|_| unavailable())?
+                        .ok_or_else(unavailable)?;
                 if current.storage_node_id != Some(self.context.node_id) {
                     return Err(RepoError::storage_node_unavailable());
                 }
@@ -356,10 +363,14 @@ impl RpcHandler {
             return Ok((Some(repo.id), primary));
         }
         if read_only
-            && db::cluster::replica_applied_version(pool, repo.id, self.context.node_id)
-                .await
-                .map_err(|_| unavailable())?
-                .is_some_and(|version| version >= 0)
+            && crate::backend::db::cluster::replica_applied_version(
+                pool,
+                repo.id,
+                self.context.node_id,
+            )
+            .await
+            .map_err(|_| unavailable())?
+            .is_some_and(|version| version >= 0)
         {
             let copy = copy_path(&self.context.repos_path, uuid);
             if !copy.exists() {
@@ -385,7 +396,7 @@ impl RpcHandler {
         {
             return Ok(false);
         }
-        db::ci::ci_run_allows_repository_read(
+        crate::backend::db::ci::ci_run_allows_repository_read(
             self.context.database()?,
             run.id,
             repo_id,
@@ -402,7 +413,7 @@ impl RpcHandler {
         caller: iroh::PublicKey,
     ) -> Result<(RepoStore, Option<i64>), RepoError> {
         let pool = self.context.database()?;
-        let serving = db::cluster::get_node_by_id(pool, self.context.node_id)
+        let serving = crate::backend::db::cluster::get_node_by_id(pool, self.context.node_id)
             .await
             .map_err(|_| unavailable())?
             .is_some_and(|node| {
@@ -413,7 +424,7 @@ impl RpcHandler {
         if !serving {
             return Err(unavailable());
         }
-        let node = db::cluster::get_node_by_public_key(pool, &caller.to_string())
+        let node = crate::backend::db::cluster::get_node_by_public_key(pool, &caller.to_string())
             .await
             .map_err(|_| unavailable())?
             .filter(|node| node.status == "active")
@@ -445,7 +456,7 @@ impl RpcHandler {
         // have completed while the request was waiting for a connection or read guard.
         if request.operation.is_read_only()
             && directory == copy_path(&self.context.repos_path, request.repository)
-            && !db::cluster::replica_is_current(
+            && !crate::backend::db::cluster::replica_is_current(
                 pool,
                 repo_id.ok_or_else(unavailable)?,
                 self.context.node_id,
@@ -457,10 +468,12 @@ impl RpcHandler {
         }
         if matches!(request.operation, Operation::ReplicaPack { .. }) {
             let copy_held = match repo_id {
-                Some(repo_id) => db::cluster::replica_applied_version(pool, repo_id, node.id)
-                    .await
-                    .map_err(|_| unavailable())?
-                    .is_some(),
+                Some(repo_id) => {
+                    crate::backend::db::cluster::replica_applied_version(pool, repo_id, node.id)
+                        .await
+                        .map_err(|_| unavailable())?
+                        .is_some()
+                }
                 None => false,
             };
             if !copy_held {
@@ -469,15 +482,17 @@ impl RpcHandler {
             }
         } else if !node.roles.iter().any(|role| role == "web" || role == "ssh") {
             let claimed = match (repo_id, request.ci_run.as_ref()) {
-                (Some(repo_id), Some(run)) => db::ci::ci_run_allows_repository_read(
-                    pool,
-                    run.id,
-                    repo_id,
-                    &run.worker,
-                    &node.public_key,
-                )
-                .await
-                .map_err(|_| unavailable())?,
+                (Some(repo_id), Some(run)) => {
+                    crate::backend::db::ci::ci_run_allows_repository_read(
+                        pool,
+                        run.id,
+                        repo_id,
+                        &run.worker,
+                        &node.public_key,
+                    )
+                    .await
+                    .map_err(|_| unavailable())?
+                }
                 _ => false,
             };
             if !claimed {
@@ -486,7 +501,7 @@ impl RpcHandler {
             }
         }
         if let Operation::GitSession(session) = &request.operation {
-            let repo = db::repositories::records::get_repository_by_id(
+            let repo = crate::backend::db::repositories::records::get_repository_by_id(
                 pool,
                 repo_id.ok_or_else(unavailable)?,
             )
@@ -524,7 +539,7 @@ impl RpcHandler {
         request: &Request,
         caller: i64,
     ) -> Result<(RepoStore, Option<i64>), RepoError> {
-        use db::cluster::writes as journal;
+        use crate::backend::db::cluster::writes as journal;
         let pool = self.context.database()?;
         let id = match &request.operation {
             Operation::PrepareWrite { id }
@@ -537,10 +552,13 @@ impl RpcHandler {
             .await
             .map_err(|_| unavailable())?
             .ok_or_else(unavailable)?;
-        let repo = db::cluster::get_repository_by_uuid(pool, &request.repository.to_string())
-            .await
-            .map_err(|_| unavailable())?
-            .ok_or_else(unavailable)?;
+        let repo = crate::backend::db::cluster::get_repository_by_uuid(
+            pool,
+            &request.repository.to_string(),
+        )
+        .await
+        .map_err(|_| unavailable())?
+        .ok_or_else(unavailable)?;
         let view = journal::recovery_view(pool, repo.id)
             .await
             .map_err(|_| unavailable())?;
@@ -580,7 +598,7 @@ impl RpcHandler {
         }
         // Write RPCs must reach a voter whose applied version is still the batch's base.
         // Ordinary serving admission correctly refuses that copy after the SQL decision.
-        let local = db::cluster::get_node_by_id(pool, self.context.node_id)
+        let local = crate::backend::db::cluster::get_node_by_id(pool, self.context.node_id)
             .await
             .map_err(|_| unavailable())?
             .ok_or_else(unavailable)?;
@@ -620,14 +638,16 @@ impl RpcHandler {
             .actor
             .ok_or_else(|| invalid("repository mutation requires an actor"))?;
         let pool = self.context.database()?;
-        let (repository, user) = access::check_write(
+        let (repository, user) = crate::backend::repositories::access::check_write(
             pool,
             repo_id.ok_or_else(|| invalid("repository unavailable"))?,
             actor,
         )
         .await
         .map_err(|error| match error {
-            access::AccessError::Unavailable => RepoError::authority_unavailable(),
+            crate::backend::repositories::access::AccessError::Unavailable => {
+                RepoError::authority_unavailable()
+            }
             _ => RepoError::write_denied(),
         })?;
         let Operation::SaveFile { write, .. } = &request.operation else {
@@ -1119,7 +1139,7 @@ impl RpcHandler {
                 Value::Null
             }
             Operation::Languages { git_ref } | Operation::PrimaryLanguages { git_ref } => {
-                let repository = db::repositories::records::get_repository_by_id(
+                let repository = crate::backend::db::repositories::records::get_repository_by_id(
                     pool,
                     repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                 )
@@ -1382,10 +1402,11 @@ impl RpcHandler {
                     Failure::Merge(crate::backend::repositories::store::MergeFailure::CannotMerge)
                 })?;
                 let repo_id = repo_id.ok_or_else(|| invalid("repository unavailable"))?;
-                let repository = db::repositories::records::get_repository_by_id(pool, repo_id)
-                    .await
-                    .map_err(|_| RepoError::authority_unavailable())?
-                    .ok_or_else(|| invalid("repository unavailable"))?;
+                let repository =
+                    crate::backend::db::repositories::records::get_repository_by_id(pool, repo_id)
+                        .await
+                        .map_err(|_| RepoError::authority_unavailable())?
+                        .ok_or_else(|| invalid("repository unavailable"))?;
                 // Merging on a node is refused for any protected branch: the reviews and
                 // checks that a merge needs are only judged where the pull request lives.
                 if !matching_rules(pool, &repository, &request.base_branch)
@@ -1528,7 +1549,7 @@ impl RpcHandler {
                 return Err(invalid("Git session requires streaming").into())
             }
             Operation::PrepareWrite { id } => {
-                let limits = super::git_session::WriteLimits::load(pool)
+                let limits = crate::backend::cluster::rpc::git_session::WriteLimits::load(pool)
                     .await
                     .map_err(RepoError::from)?;
                 tokio::time::timeout(limits.timeout, self.prepare_write(&store, &id, limits))
@@ -1538,7 +1559,7 @@ impl RpcHandler {
                 Value::Null
             }
             Operation::ApplyWrite { id } => {
-                let limits = super::git_session::WriteLimits::load(pool)
+                let limits = crate::backend::cluster::rpc::git_session::WriteLimits::load(pool)
                     .await
                     .map_err(RepoError::from)?;
                 tokio::time::timeout(limits.timeout, self.apply_write(&store, &id, limits))

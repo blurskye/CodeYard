@@ -1,10 +1,10 @@
-use super::{auth, pagination::Pagination, users, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::users::{accounts::AccountCredential, blocks},
-    identity,
-    webhooks::payloads,
-};
+use crate::backend::api::github::pagination::Pagination;
+
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use crate::backend::db::users::accounts::AccountCredential;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -27,11 +27,11 @@ async fn list(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     let (offset, limit) = page.window()?;
-    let mut users = blocks::list_blocks(
+    let mut users = crate::backend::db::users::blocks::list_blocks(
         &state.pool,
         actor.user.id,
         (limit + 1) as i64,
@@ -41,19 +41,26 @@ async fn list(
     .map_err(Error::unavailable)?;
     let more = users.len() > limit;
     users.truncate(limit);
-    page.response(&uri, users.iter().map(payloads::user).collect(), more)
+    page.response(
+        &uri,
+        users
+            .iter()
+            .map(crate::backend::webhooks::payloads::user)
+            .collect(),
+        more,
+    )
 }
 async fn check(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(username): Path<String>,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
-    let target = users::target(&state, &username).await?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
+    let target = crate::backend::api::github::users::target(&state, &username).await?;
     if target.is_banned
-        || !blocks::is_blocked(&state.pool, actor.user.id, target.id)
+        || !crate::backend::db::users::blocks::is_blocked(&state.pool, actor.user.id, target.id)
             .await
             .map_err(Error::unavailable)?
     {
@@ -81,11 +88,11 @@ async fn change(
     username: &str,
     blocked: bool,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(state, headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
-    identity::blocks::change(
+    crate::backend::identity::blocks::change(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
@@ -94,12 +101,14 @@ async fn change(
     )
     .await
     .map_err(|error| match error {
-        identity::blocks::BlockError::Missing => Error::missing(),
-        identity::blocks::BlockError::SelfBlock => Error::validation("User", "username", "invalid"),
-        identity::blocks::BlockError::Denied => {
+        crate::backend::identity::blocks::BlockError::Missing => Error::missing(),
+        crate::backend::identity::blocks::BlockError::SelfBlock => {
+            Error::validation("User", "username", "invalid")
+        }
+        crate::backend::identity::blocks::BlockError::Denied => {
             Error::new(StatusCode::FORBIDDEN, "Account is restricted")
         }
-        identity::blocks::BlockError::Unavailable => Error::unavailable(error),
+        crate::backend::identity::blocks::BlockError::Unavailable => Error::unavailable(error),
     })?;
     Ok(StatusCode::NO_CONTENT)
 }

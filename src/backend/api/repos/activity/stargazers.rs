@@ -1,10 +1,11 @@
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::access::readable_repository;
-use crate::backend::api::repos::paging::{json_page, PageQuery};
+use crate::backend::api::repos::paging::json_page;
+use crate::backend::api::repos::paging::PageQuery;
 use crate::backend::api::repos::responses::repository_unavailable;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -17,7 +18,7 @@ pub async fn list_stargazers(
 ) -> Result<Json<Vec<UserResponse>>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let (offset, limit) = json_page(query.page, query.per_page)?;
-    let users = db::repositories::engagement::list_repo_stargazers(
+    let users = crate::backend::db::repositories::engagement::list_repo_stargazers(
         &state.pool,
         repository.id,
         limit as i64,

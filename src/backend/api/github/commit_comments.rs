@@ -1,13 +1,15 @@
-use super::{
-    auth, contents::store_error, pagination::Pagination, repo_url, repository, Error, Result,
-};
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db::repositories::commit_comments as records;
-use crate::backend::repositories::commit_comments as comments;
+use codeyard_model::urls::repo_url;
+
 use crate::backend::repositories::commit_comments::CommentDetails;
 use crate::backend::repositories::commit_comments::CommentError;
 use crate::backend::repositories::store::repo_store;
-use crate::backend::webhooks::payloads;
+
 use axum::{
     extract::{FromRequest, OriginalUri, Path, Query, Request, State},
     http::{header, HeaderMap, Method, StatusCode},
@@ -44,7 +46,7 @@ fn document(
         .filter(|count| count.subject_id == entry.comment.id)
         .cloned()
         .collect::<Vec<_>>();
-    payloads::commit_comment(
+    crate::backend::webhooks::payloads::commit_comment(
         &entry.comment,
         entry.author.as_ref(),
         &entry.association,
@@ -78,7 +80,7 @@ async fn writer(
 ) -> Result<(Repository, crate::backend::db::credentials::Actor)> {
     // Comment participation needs read access, not permission to push to the repository.
     let (repo, auth) = repository(state, headers, owner, name, false).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     auth.require_write()?;
     Ok((repo, auth.database_actor()))
 }
@@ -101,14 +103,14 @@ async fn create(
     let Json(input) = Json::<Create>::from_request(request, &state)
         .await
         .map_err(|error| Error::new(error.status(), "Invalid commit comment"))?;
-    let entry = comments::create(
+    let entry = crate::backend::repositories::commit_comments::create(
         &state.pool,
         state.cluster.as_ref(),
         &state.notification_broadcaster,
         actor,
         repo.id,
         &reference,
-        comments::CreateComment {
+        crate::backend::repositories::commit_comments::CreateComment {
             body: input.body,
             path: input.path,
             position: input.position,
@@ -141,43 +143,54 @@ async fn item(
     request: Request,
 ) -> Result<Response> {
     let method = request.method().clone();
-    let reading = auth::read_method(&method);
+    let reading = crate::backend::api::github::auth::read_method(&method);
     let (repo, authentication) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = if reading {
         None
     } else {
-        let auth = authentication.ok_or_else(auth::required)?;
+        let auth = authentication.ok_or_else(crate::backend::api::github::auth::required)?;
         auth.require_write()?;
         Some(auth.database_actor())
     };
-    let comment = records::get_comment(&state.pool, repo.id, id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let comment =
+        crate::backend::db::repositories::commit_comments::get_comment(&state.pool, repo.id, id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     if reading {
-        let entry =
-            comments::comment_details(&state.pool, state.cluster.as_ref(), &repo, vec![comment])
-                .await
-                .map_err(operation_error)?
-                .pop()
-                .ok_or_else(|| Error::unavailable(()))?;
+        let entry = crate::backend::repositories::commit_comments::comment_details(
+            &state.pool,
+            state.cluster.as_ref(),
+            &repo,
+            vec![comment],
+        )
+        .await
+        .map_err(operation_error)?
+        .pop()
+        .ok_or_else(|| Error::unavailable(()))?;
         return Ok(Json(document_one(&state.pool, &entry, &repo, &owner).await?).into_response());
     }
-    let actor = actor.ok_or_else(auth::required)?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     if method == Method::DELETE {
-        comments::delete(&state.pool, actor, repo.id, id, None)
-            .await
-            .map_err(operation_error)?;
+        crate::backend::repositories::commit_comments::delete(
+            &state.pool,
+            actor,
+            repo.id,
+            id,
+            None,
+        )
+        .await
+        .map_err(operation_error)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
     let Json(input) = Json::<Update>::from_request(request, &state)
         .await
         .map_err(|error| Error::new(error.status(), "Invalid commit comment"))?;
-    let entry = comments::edit(
+    let entry = crate::backend::repositories::commit_comments::edit(
         &state.pool,
         state.cluster.as_ref(),
         &state.notification_broadcaster,
-        records::CommentEdit {
+        crate::backend::db::repositories::commit_comments::CommentEdit {
             actor,
             repo_id: repo.id,
             id,
@@ -211,7 +224,7 @@ async fn list(
         None
     };
     let (offset, limit) = page.window()?;
-    let rows = records::list_comments(
+    let rows = crate::backend::db::repositories::commit_comments::list_comments(
         &state.pool,
         repo.id,
         sha.as_deref(),
@@ -222,7 +235,7 @@ async fn list(
     .map_err(Error::unavailable)?;
     let has_next = rows.len() == limit
         && offset + limit <= 1_000_000
-        && !records::list_comments(
+        && !crate::backend::db::repositories::commit_comments::list_comments(
             &state.pool,
             repo.id,
             sha.as_deref(),
@@ -232,9 +245,14 @@ async fn list(
         .await
         .map_err(Error::unavailable)?
         .is_empty();
-    let entries = comments::comment_details(&state.pool, state.cluster.as_ref(), &repo, rows)
-        .await
-        .map_err(operation_error)?;
+    let entries = crate::backend::repositories::commit_comments::comment_details(
+        &state.pool,
+        state.cluster.as_ref(),
+        &repo,
+        rows,
+    )
+    .await
+    .map_err(operation_error)?;
     let ids = entries
         .iter()
         .map(|entry| entry.comment.id)

@@ -1,6 +1,6 @@
 //! Safe HTML, authorized page-model and error response construction.
-use super::context::PageContext;
-use super::origin::safe_redirect_path;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::origin::safe_redirect_path;
 use crate::backend::app::AppState;
 use axum::{
     body::Body,
@@ -71,7 +71,7 @@ impl PageContext {
         title: &str,
         page: codeyard_webui::app::Page,
     ) -> Response {
-        let observation = super::traffic::page(self, title, &page);
+        let observation = crate::backend::api::http::traffic::page(self, title, &page);
         let mut envelope = codeyard_webui::app::PageEnvelope {
             title: title.to_string(),
             location: self.location.clone(),
@@ -111,7 +111,7 @@ impl PageContext {
             }
             return response;
         }
-        let runtime_module = match super::static_files::runtime_module() {
+        let runtime_module = match crate::backend::api::http::static_files::runtime_module() {
             Ok(module) => module,
             Err(()) => return self.error(StatusCode::SERVICE_UNAVAILABLE, "The interactive application assets are unavailable. Please try again after the server bundle is repaired."),
         };
@@ -220,7 +220,7 @@ async fn render_slot(waiters: usize) -> Option<tokio::sync::SemaphorePermit<'sta
 }
 
 pub(crate) async fn render_page(
-    axum::Extension(config): axum::Extension<Arc<super::config::WebConfig>>,
+    axum::Extension(config): axum::Extension<Arc<codeyard_model::http_config::WebConfig>>,
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
@@ -405,8 +405,10 @@ mod tests {
     use super::*;
     use tower::ServiceExt;
 
-    fn config(page_render_waiters: usize) -> axum::Extension<Arc<super::super::config::WebConfig>> {
-        axum::Extension(Arc::new(super::super::config::WebConfig {
+    fn config(
+        page_render_waiters: usize,
+    ) -> axum::Extension<Arc<codeyard_model::http_config::WebConfig>> {
+        axum::Extension(Arc::new(codeyard_model::http_config::WebConfig {
             cors_origins: Vec::new(),
             trusted_proxies: Default::default(),
             page_render_waiters,

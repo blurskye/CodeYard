@@ -1,8 +1,8 @@
-use super::authority::*;
 use crate::backend::db::organizations::settings::Changes;
 use crate::backend::db::organizations::settings::Settings;
 use crate::backend::db::organizations::settings::Updated;
 use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::postgres::organizations::authority::*;
 use anyhow::{Context, Result};
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Organization;
@@ -66,9 +66,9 @@ pub async fn change(
     let organization=sqlx::query_as::<_,Organization>("UPDATE organizations SET display_name=CASE WHEN $2 THEN $3 ELSE display_name END,description=CASE WHEN $4 THEN $5 ELSE description END,billing_email=CASE WHEN $6 THEN $7 ELSE billing_email END,updated_at=NOW() WHERE id=$1 RETURNING *")
         .bind(org).bind(input.profile.display_name.is_some()).bind(input.profile.display_name.clone().flatten()).bind(input.profile.description.is_some()).bind(input.profile.description.clone().flatten()).bind(input.billing_email.is_some()).bind(input.billing_email.clone().flatten()).fetch_one(&mut *tx).await?;
     if settings.default_repository_permission < previous {
-        let access = super::super::repositories::access::USER_REPO_ACCESS_SQL;
+        let access = crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL;
         let runs:Vec<i64>=sqlx::query_scalar(&format!("SELECT c.id FROM ci_runs c JOIN repositories r ON r.id=c.repo_id JOIN users u ON u.id=c.triggered_by_id JOIN org_memberships m ON m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role='member' WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL AND (c.status IN ('queued','running') OR c.completed_at > NOW() - INTERVAL '1 hour') AND ({access}) < CASE WHEN c.pipeline IN ('cd','full') OR c.environment IS NOT NULL THEN 5 ELSE 3 END ORDER BY c.id")).bind(org).fetch_all(&mut *tx).await?;
-        super::super::ci::stop_ci_runs(&mut tx, &runs).await?;
+        crate::backend::db::postgres::ci::stop_ci_runs(&mut tx, &runs).await?;
     }
     tx.commit().await?;
     Ok(Applied(Updated {

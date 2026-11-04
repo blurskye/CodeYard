@@ -1,0 +1,1 @@
+pub const MAX_OBJECT_BYTES: i64 = 100 * 1024 * 1024;

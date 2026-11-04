@@ -1,10 +1,20 @@
-use super::protocol::{self, Request, CHUNK, EOF, STDERR, STDIN, STDOUT};
-use super::validation::{self, RefUpdate};
-use super::{private_files, ReceiveCredential};
+use crate::backend::repositories::git_sessions::protocol::Request;
+use crate::backend::repositories::git_sessions::protocol::CHUNK;
+use crate::backend::repositories::git_sessions::protocol::EOF;
+use crate::backend::repositories::git_sessions::protocol::STDERR;
+use crate::backend::repositories::git_sessions::protocol::STDIN;
+use crate::backend::repositories::git_sessions::protocol::STDOUT;
+
+use crate::backend::repositories::git_sessions::validation::RefUpdate;
+
 use crate::backend::ci::CiRuns;
-use crate::backend::db;
-use crate::backend::repositories::store::{repo_store, GitService, GitSession, GitStreams};
-use crate::backend::repositories::traffic;
+use crate::backend::repositories::git_sessions::ReceiveCredential;
+
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::GitService;
+use crate::backend::repositories::store::GitSession;
+use crate::backend::repositories::store::GitStreams;
+
 use anyhow::{ensure, Context, Result};
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
@@ -94,7 +104,7 @@ pub(super) async fn run(
     git_user: String,
     stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let uid = private_files::effective_uid();
+    let uid = crate::backend::repositories::git_sessions::private_files::effective_uid();
     ensure!(
         !git_user.is_empty()
             && git_user.len() <= 64
@@ -103,12 +113,15 @@ pub(super) async fn run(
                 .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-')),
         "invalid Git system user"
     );
-    let executable =
-        private_files::trusted_executable(&std::fs::canonicalize(std::env::current_exe()?)?, uid)?;
-    let git = private_files::git_executable(uid)?;
+    let executable = crate::backend::repositories::git_sessions::private_files::trusted_executable(
+        &std::fs::canonicalize(std::env::current_exe()?)?,
+        uid,
+    )?;
+    let git = crate::backend::repositories::git_sessions::private_files::git_executable(uid)?;
     let repos_root = std::fs::canonicalize(repos_root).context("repository root must exist")?;
     ensure!(repos_root.is_dir(), "repository root must be a directory");
-    let (listener, _socket_guard) = private_files::bind(&socket, uid).await?;
+    let (listener, _socket_guard) =
+        crate::backend::repositories::git_sessions::private_files::bind(&socket, uid).await?;
     let gateway = Arc::new(Gateway {
         socket,
         repos_root,
@@ -130,14 +143,16 @@ pub(super) async fn run(
 pub(super) async fn receive_session(
     pool: DbPool,
     ci: Arc<CiRuns>,
-    receive: super::ReceiveSession<'_>,
+    receive: crate::backend::repositories::git_sessions::ReceiveSession<'_>,
     streams: GitStreams<'_>,
 ) -> Result<std::process::ExitStatus> {
     let directory = codeyard_actions::fs::private_tempdir("git-receive-", None)?;
     let socket = directory.path().join("broker.sock");
-    let uid = private_files::effective_uid();
-    let executable =
-        private_files::trusted_executable(&std::fs::canonicalize(&receive.executable)?, uid)?;
+    let uid = crate::backend::repositories::git_sessions::private_files::effective_uid();
+    let executable = crate::backend::repositories::git_sessions::private_files::trusted_executable(
+        &std::fs::canonicalize(&receive.executable)?,
+        uid,
+    )?;
     let path = std::fs::canonicalize(receive.path)?;
     let gateway = Arc::new(Gateway {
         socket: socket.clone(),
@@ -146,7 +161,7 @@ pub(super) async fn receive_session(
             .context("repository parent unavailable")?
             .to_owned(),
         executable,
-        git: private_files::git_executable(uid)?,
+        git: crate::backend::repositories::git_sessions::private_files::git_executable(uid)?,
         pool,
         ci,
         git_user: "git".into(),
@@ -155,10 +170,14 @@ pub(super) async fn receive_session(
         controls: Semaphore::new(2),
         operations: Mutex::new(HashMap::new()),
     });
-    let (listener, _socket_guard) = private_files::bind(&socket, uid).await?;
-    let repo = db::repositories::records::get_repository_by_id(&gateway.pool, receive.repo_id)
-        .await?
-        .context("repository unavailable")?;
+    let (listener, _socket_guard) =
+        crate::backend::repositories::git_sessions::private_files::bind(&socket, uid).await?;
+    let repo = crate::backend::db::repositories::records::get_repository_by_id(
+        &gateway.pool,
+        receive.repo_id,
+    )
+    .await?
+    .context("repository unavailable")?;
     ensure!(
         gateway.bare_path(&repo).await? == path,
         "repository location changed"
@@ -175,16 +194,16 @@ pub(super) async fn receive_session(
                 let gateway = gateway.clone();
                 hooks.spawn(async move {
                     let result = async {
-                        let request = protocol::read_request(&mut stream).await?;
+                        let request = crate::backend::repositories::git_sessions::protocol::read_request(&mut stream).await?;
                         ensure!(matches!(&request, Request::Hook { .. } | Request::ReferenceTransaction { .. }), "hook request required");
                         gateway.handle(&mut stream, request).await
                     }.await;
                     if let Err(error) = &result {
                         tracing::warn!(error = %format!("{error:#}"), "receive hook failed");
                         if let Some(message) = refusal_message(error) {
-                            let _ = protocol::write_frame(&mut stream, STDERR, &message).await;
+                            let _ = crate::backend::repositories::git_sessions::protocol::write_frame(&mut stream, STDERR, &message).await;
                         }
-                        let _ = protocol::finish(&mut stream, 1).await;
+                        let _ = crate::backend::repositories::git_sessions::protocol::finish(&mut stream, 1).await;
                     }
                 });
             }
@@ -264,7 +283,7 @@ async fn listen(
                 tasks.spawn(async move {
                     let _connection_slot = connection_slot;
                     let mut stream = stream;
-                    let request = protocol::read_request(&mut stream).await;
+                    let request = crate::backend::repositories::git_sessions::protocol::read_request(&mut stream).await;
                     drop(header_slot);
                     if let Ok(request) = request {
                         // Serve waiters cannot consume the reserve needed by running pushes'
@@ -273,7 +292,7 @@ async fn listen(
                             match serves.try_acquire_owned() {
                                 Ok(slot) => Some(slot),
                                 Err(_) => {
-                                    let _ = protocol::finish(&mut stream, 1).await;
+                                    let _ = crate::backend::repositories::git_sessions::protocol::finish(&mut stream, 1).await;
                                     return;
                                 }
                             }
@@ -296,16 +315,16 @@ async fn listen(
                                 "OpenSSH broker operation denied or failed"
                             );
                             if let Some(message) = refusal_message(error) {
-                                let _ = protocol::write_frame(&mut stream, STDERR, &message).await;
+                                let _ = crate::backend::repositories::git_sessions::protocol::write_frame(&mut stream, STDERR, &message).await;
                             } else {
                                 let message = if post {
                                     b"Post-push metadata/CI dispatch failed; any already accepted Git writes remain accepted.\n".as_slice()
                                 } else {
                                     b"OpenSSH Git operation denied or failed.\n".as_slice()
                                 };
-                                let _ = protocol::write_frame(&mut stream, STDERR, message).await;
+                                let _ = crate::backend::repositories::git_sessions::protocol::write_frame(&mut stream, STDERR, message).await;
                             }
-                            let _ = protocol::finish(&mut stream, 1).await;
+                            let _ = crate::backend::repositories::git_sessions::protocol::finish(&mut stream, 1).await;
                         }
                     }
                 });
@@ -418,7 +437,7 @@ mod admission_tests {
         let mut gate = ReceiveOutput {
             output: &mut output,
             operation: operation.clone(),
-            held: vec![0; crate::backend::cluster::rpc::MAX_JSON],
+            held: vec![0; codeyard_db_core::limits::MAX_JSON],
         };
         assert!(gate.write_all(b"x").await.is_err());
         assert!(operation.state.lock().unwrap().quorum_unknown);
@@ -480,10 +499,17 @@ impl Gateway {
                                 || "OpenSSH Git operation denied or failed.\n".to_owned(),
                                 |error| format!("{}\n", error.message),
                             );
-                        let _ =
-                            protocol::write_frame(&mut owned_stream, STDERR, message.as_bytes())
-                                .await;
-                        let _ = protocol::finish(&mut owned_stream, 1).await;
+                        let _ = crate::backend::repositories::git_sessions::protocol::write_frame(
+                            &mut owned_stream,
+                            STDERR,
+                            message.as_bytes(),
+                        )
+                        .await;
+                        let _ = crate::backend::repositories::git_sessions::protocol::finish(
+                            &mut owned_stream,
+                            1,
+                        )
+                        .await;
                     }
                 });
                 let _cancel_on_shutdown = AbortSession(task.abort_handle());
@@ -499,7 +525,7 @@ impl Gateway {
                     let _ = session_write.shutdown().await;
                     std::future::pending::<()>().await
                 };
-                timeout(protocol::SESSION_TIMEOUT, async {
+                timeout(crate::backend::repositories::git_sessions::protocol::SESSION_TIMEOUT, async {
                     let forwarded = tokio::select! {
                         result = tokio::io::copy(&mut session_read, &mut client_write) => result,
                         _ = inbound => Ok(0),
@@ -520,7 +546,8 @@ impl Gateway {
                 base64_key,
                 serve_command,
             } => {
-                let deadline = tokio::time::Instant::now() + protocol::CONTROL_TIMEOUT;
+                let deadline = tokio::time::Instant::now()
+                    + crate::backend::repositories::git_sessions::protocol::CONTROL_TIMEOUT;
                 let _slot = tokio::time::timeout_at(deadline, self.controls.acquire())
                     .await?
                     .context("control requests busy")?;
@@ -530,9 +557,14 @@ impl Gateway {
                 )
                 .await??;
                 if let Some(line) = line {
-                    protocol::write_frame(stream, STDOUT, line.as_bytes()).await?;
+                    crate::backend::repositories::git_sessions::protocol::write_frame(
+                        stream,
+                        STDOUT,
+                        line.as_bytes(),
+                    )
+                    .await?;
                 }
-                protocol::finish(stream, 0).await?;
+                crate::backend::repositories::git_sessions::protocol::finish(stream, 0).await?;
             }
             Request::ReferenceTransaction {
                 key_id,
@@ -553,11 +585,11 @@ impl Gateway {
                     "hook identity mismatch"
                 );
                 timeout(
-                    protocol::CONTROL_TIMEOUT,
+                    crate::backend::repositories::git_sessions::protocol::CONTROL_TIMEOUT,
                     self.reference_transaction(&operation, phase, &updates),
                 )
                 .await??;
-                protocol::finish(stream, 0).await?;
+                crate::backend::repositories::git_sessions::protocol::finish(stream, 0).await?;
             }
             Request::Hook {
                 key_id,
@@ -579,7 +611,9 @@ impl Gateway {
                     "hook identity mismatch"
                 );
                 if post {
-                    validation::validate_updates(&updates)?;
+                    crate::backend::repositories::git_sessions::validation::validate_updates(
+                        &updates,
+                    )?;
                     let mut state = operation
                         .state
                         .lock()
@@ -605,7 +639,8 @@ impl Gateway {
                         .published()?;
                     state.publication.take();
                 }
-                let deadline = tokio::time::Instant::now() + protocol::CONTROL_TIMEOUT;
+                let deadline = tokio::time::Instant::now()
+                    + crate::backend::repositories::git_sessions::protocol::CONTROL_TIMEOUT;
                 let _slot = tokio::time::timeout_at(deadline, self.controls.acquire())
                     .await?
                     .context("control requests busy")?;
@@ -622,7 +657,7 @@ impl Gateway {
                         .dispatch_failed = !matches!(&result, Ok(Ok(())));
                 }
                 result??;
-                protocol::finish(stream, 0).await?;
+                crate::backend::repositories::git_sessions::protocol::finish(stream, 0).await?;
             }
         }
         Ok(())
@@ -638,19 +673,29 @@ impl Gateway {
         if user != self.git_user {
             return Ok(None);
         }
-        let supplied = validation::canonical_key(key_type, blob)?;
-        let fingerprint = db::users::ssh_keys::calculate_fingerprint(&supplied)?;
-        let account =
-            db::users::ssh_keys::get_user_by_key_fingerprint(&self.pool, &fingerprint).await?;
-        let deploy =
-            db::deploy_keys::get_deploy_key_by_fingerprint(&self.pool, &fingerprint).await?;
+        let supplied =
+            crate::backend::repositories::git_sessions::validation::canonical_key(key_type, blob)?;
+        let fingerprint = crate::backend::db::users::ssh_keys::calculate_fingerprint(&supplied)?;
+        let account = crate::backend::db::users::ssh_keys::get_user_by_key_fingerprint(
+            &self.pool,
+            &fingerprint,
+        )
+        .await?;
+        let deploy = crate::backend::db::deploy_keys::get_deploy_key_by_fingerprint(
+            &self.pool,
+            &fingerprint,
+        )
+        .await?;
         if account.is_some() && deploy.is_some() {
             return Ok(None);
         }
         if let Some(key) = deploy {
-            let repo = db::repositories::records::get_repository_by_id(&self.pool, key.repo_id)
-                .await?
-                .context("repository unavailable")?;
+            let repo = crate::backend::db::repositories::records::get_repository_by_id(
+                &self.pool,
+                key.repo_id,
+            )
+            .await?
+            .context("repository unavailable")?;
             if ReceiveCredential::DeployKey(key.id)
                 .authorize(&self.pool, &repo, false)
                 .await
@@ -658,13 +703,21 @@ impl Gateway {
             {
                 return Ok(None);
             }
-            let canonical = validation::canonical_db_key(&key.public_key, key_type)?;
+            let canonical =
+                crate::backend::repositories::git_sessions::validation::canonical_db_key(
+                    &key.public_key,
+                    key_type,
+                )?;
             ensure!(
                 canonical == supplied
-                    && db::users::ssh_keys::calculate_fingerprint(&canonical)? == key.fingerprint,
+                    && crate::backend::db::users::ssh_keys::calculate_fingerprint(&canonical)?
+                        == key.fingerprint,
                 "stored key mismatch"
             );
-            private_files::trusted_executable(Path::new(helper), self.uid)?;
+            crate::backend::repositories::git_sessions::private_files::trusted_executable(
+                Path::new(helper),
+                self.uid,
+            )?;
             return Ok(Some(format!(
                 "restrict,command=\"{helper} deploy:{}\" {supplied}\n",
                 key.id
@@ -676,18 +729,23 @@ impl Gateway {
         if identity.user.is_banned || identity.user.must_change_password {
             return Ok(None);
         }
-        let canonical =
-            validation::canonical_db_key(&identity.key.public_key, &identity.key.key_type)?;
+        let canonical = crate::backend::repositories::git_sessions::validation::canonical_db_key(
+            &identity.key.public_key,
+            &identity.key.key_type,
+        )?;
         ensure!(
             canonical == supplied
-                && db::users::ssh_keys::calculate_fingerprint(&canonical)?
+                && crate::backend::db::users::ssh_keys::calculate_fingerprint(&canonical)?
                     == identity.key.fingerprint
                 && identity.key.id > 0,
             "stored key mismatch"
         );
         // This installer-owned wrapper receives the key ID as its sole argument;
         // it embeds the socket and calls this executable's `ssh serve` command.
-        private_files::trusted_executable(Path::new(helper), self.uid)?;
+        crate::backend::repositories::git_sessions::private_files::trusted_executable(
+            Path::new(helper),
+            self.uid,
+        )?;
         Ok(Some(format!(
             "restrict,command=\"{helper} {}\" {canonical}\n",
             identity.key.id
@@ -732,9 +790,11 @@ impl Gateway {
         git_protocol: Option<&str>,
         slot: OwnedSemaphorePermit,
     ) -> Result<()> {
-        let command = validation::parse_command(raw_command)?;
-        let git_protocol = validation::protocol(git_protocol)?;
-        let repo = db::repositories::records::get_git_repository(
+        let command =
+            crate::backend::repositories::git_sessions::validation::parse_command(raw_command)?;
+        let git_protocol =
+            crate::backend::repositories::git_sessions::validation::protocol(git_protocol)?;
+        let repo = crate::backend::db::repositories::records::get_git_repository(
             &self.pool,
             &command.owner,
             &command.repo,
@@ -752,8 +812,10 @@ impl Gateway {
             .authorize(&self.pool, &repo, command.write)
             .await?;
         let visitor = match credential {
-            ReceiveCredential::DeployKey(id) => traffic::Identity::deploy_key(id),
-            _ => traffic::Identity::account(actor.id),
+            ReceiveCredential::DeployKey(id) => {
+                crate::backend::repositories::traffic::Identity::deploy_key(id)
+            }
+            _ => crate::backend::repositories::traffic::Identity::account(actor.id),
         };
         match credential {
             ReceiveCredential::DeployKey(id) => {
@@ -766,7 +828,7 @@ impl Gateway {
             ReceiveCredential::SshKey(id) => {
                 let _ = timeout(
                     Duration::from_secs(1),
-                    db::users::ssh_keys::touch_ssh_key(&self.pool, id),
+                    crate::backend::db::users::ssh_keys::touch_ssh_key(&self.pool, id),
                 )
                 .await;
             }
@@ -805,7 +867,7 @@ impl Gateway {
         };
         let repo_id = repo.id;
         let write = command.write;
-        let observation = traffic::clone::Observation::default();
+        let observation = crate::backend::repositories::traffic::clone::Observation::default();
         let observed = observation.clone();
         let session = async move {
             let mut child_input = observed.input(child_input);
@@ -841,16 +903,20 @@ impl Gateway {
         };
         if !write && status.success() && delivered && observation.initial_transfer() {
             if let Some(visitor) = visitor {
-                traffic::observe(
+                crate::backend::repositories::traffic::observe(
                     &self.pool,
                     repo_id,
                     &visitor,
-                    &traffic::Metric::clone_transfer(),
+                    &crate::backend::repositories::traffic::Metric::clone_transfer(),
                 )
                 .await;
             }
         }
-        protocol::finish(&mut writer, status.code().unwrap_or(1).clamp(0, 255)).await
+        crate::backend::repositories::git_sessions::protocol::finish(
+            &mut writer,
+            status.code().unwrap_or(1).clamp(0, 255),
+        )
+        .await
     }
 
     async fn session(
@@ -880,7 +946,7 @@ impl Gateway {
         let quorum = if write && self.ci.cluster.is_some() {
             timeout(
                 Duration::from_secs(5),
-                db::cluster::writes::write_settings(&self.pool),
+                crate::backend::db::cluster::writes::write_settings(&self.pool),
             )
             .await??
             .write_quorum
@@ -921,7 +987,9 @@ impl Gateway {
             None => self.git_command(&operation, &token, write, options.stateless)?,
         };
         drop(publication_lease);
-        if let Some(protocol) = validation::protocol(options.git_protocol.as_deref())? {
+        if let Some(protocol) = crate::backend::repositories::git_sessions::validation::protocol(
+            options.git_protocol.as_deref(),
+        )? {
             command_process.env("GIT_PROTOCOL", protocol);
         }
         let mut output = ReceiveOutput {
@@ -985,7 +1053,7 @@ impl Gateway {
                     b"Git writes were accepted; post-push dispatch was not fully successful.\n",
                 )
                 .await;
-            return Err(super::PostReceiveFailed.into());
+            return Err(crate::backend::repositories::git_sessions::PostReceiveFailed.into());
         }
         Ok(status)
     }
@@ -1004,7 +1072,9 @@ impl Gateway {
             .arg("-c")
             .arg(format!(
                 "core.hooksPath={}",
-                validation::shell_safe_path(operation.hooks.path())?
+                crate::backend::repositories::git_sessions::validation::shell_safe_path(
+                    operation.hooks.path()
+                )?
             ))
             .arg(if write { "receive-pack" } else { "upload-pack" });
         if stateless {
@@ -1020,7 +1090,7 @@ impl Gateway {
         let directory = tempfile::Builder::new()
             .prefix("receive-hooks-")
             .tempdir_in(self.socket.parent().context("socket parent required")?)?;
-        validation::shell_safe_path(directory.path())?;
+        crate::backend::repositories::git_sessions::validation::shell_safe_path(directory.path())?;
         if write {
             for name in ["pre-receive", "post-receive", "reference-transaction"] {
                 let path = directory.path().join(name);
@@ -1032,9 +1102,13 @@ impl Gateway {
                 writeln!(
                     file,
                     "#!/bin/sh\nexec {} ssh {} --socket {} --key-id {} --repo-id {}{}",
-                    validation::shell_safe_path(&self.executable)?,
+                    crate::backend::repositories::git_sessions::validation::shell_safe_path(
+                        &self.executable
+                    )?,
                     name,
-                    validation::shell_safe_path(&self.socket)?,
+                    crate::backend::repositories::git_sessions::validation::shell_safe_path(
+                        &self.socket
+                    )?,
                     key_id,
                     repo_id,
                     if name == "reference-transaction" {
@@ -1100,8 +1174,7 @@ impl AsyncWrite for ReceiveOutput<'_> {
             .unwrap_or_else(|error| error.into_inner())
             .quorum_started;
         if hold {
-            if bytes.len() > crate::backend::cluster::rpc::MAX_JSON.saturating_sub(self.held.len())
-            {
+            if bytes.len() > codeyard_db_core::limits::MAX_JSON.saturating_sub(self.held.len()) {
                 // Receive-pack drains after output errors. Do not release a truncated status
                 // merely because that draining process later exits successfully.
                 self.operation
@@ -1143,7 +1216,8 @@ fn published_updates(path: &Path, updates: &[RefUpdate]) -> Result<bool> {
             Ok(id) if id.to_string() == update.new => return Ok(true),
             Err(error)
                 if error.code() == git2::ErrorCode::NotFound
-                    && update.new == validation::ZERO_SHA =>
+                    && update.new
+                        == crate::backend::repositories::git_sessions::validation::ZERO_SHA =>
             {
                 return Ok(true)
             }
@@ -1159,7 +1233,8 @@ async fn framed_input<R: AsyncRead + Unpin>(
     mut input: impl AsyncWrite + Unpin,
 ) -> Result<()> {
     loop {
-        let (tag, bytes) = protocol::read_frame(&mut reader).await?;
+        let (tag, bytes) =
+            crate::backend::repositories::git_sessions::protocol::read_frame(&mut reader).await?;
         match tag {
             STDIN => input.write_all(&bytes).await?,
             EOF => {
@@ -1184,11 +1259,11 @@ async fn framed_output<R: AsyncRead + Unpin, E: AsyncRead + Unpin, W: AsyncWrite
         tokio::select! {
             count = output.read(&mut out), if out_open => {
                 let count = count?;
-                if count == 0 { out_open = false; } else { protocol::write_frame(writer, STDOUT, &out[..count]).await?; }
+                if count == 0 { out_open = false; } else { crate::backend::repositories::git_sessions::protocol::write_frame(writer, STDOUT, &out[..count]).await?; }
             }
             count = errors.read(&mut err), if err_open => {
                 let count = count?;
-                if count == 0 { err_open = false; } else { protocol::write_frame(writer, STDERR, &err[..count]).await?; }
+                if count == 0 { err_open = false; } else { crate::backend::repositories::git_sessions::protocol::write_frame(writer, STDERR, &err[..count]).await?; }
             }
         }
     }

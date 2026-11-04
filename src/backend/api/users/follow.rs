@@ -1,9 +1,12 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::user::responses::{field, mutation_guard, public_api_message, Fields};
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::public_api_message;
+use crate::backend::api::user::responses::Fields;
 use crate::backend::api::users::profile::profile_response;
 use crate::backend::app::AppState;
-use crate::backend::identity::following;
+
 use crate::backend::identity::following::FollowError;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -61,7 +64,7 @@ pub(crate) async fn follow_post(
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let credential = crate::backend::db::users::accounts::AccountCredential::Session(&session);
-    let result = following::change(
+    let result = crate::backend::identity::following::change(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         actor,

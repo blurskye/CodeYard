@@ -1,10 +1,19 @@
 //! Pull review requests project the native user/team records and use the same mutations as REST.
-use super::mutations::pull_error as operation;
-use super::{
-    connection, db, issue, missing, node_id, repository, unavailable, url, user, Arguments,
-    RequestContext, Result, Value,
-};
-use crate::backend::repositories::{access, pull_requests::team_reviewers};
+use crate::backend::api::graphql::mutations::pull_error as operation;
+
+use crate::backend::api::graphql::db;
+
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::node_id;
+
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::url;
+
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
+
 use async_graphql::Error;
 use serde_json::json;
 
@@ -12,7 +21,8 @@ pub(super) async fn team_object(
     team: &codeyard_db_core::models::Team,
     request: &RequestContext,
 ) -> Result<Value> {
-    let organization = user::organization_by_id(team.org_id, request).await?;
+    let organization =
+        crate::backend::api::graphql::user::organization_by_id(team.org_id, request).await?;
     let org = organization["login"]
         .as_str()
         .ok_or_else(missing)?
@@ -32,7 +42,7 @@ async fn pull(id: i64, request: &RequestContext) -> Result<codeyard_db_core::mod
         .map_err(unavailable)?
         .ok_or_else(missing)?;
     // Reviewer requests belong to the base repository, which stays readable after its fork is deleted.
-    repository::by_id(pull.repo_id, request).await?;
+    crate::backend::api::graphql::repository::by_id(pull.repo_id, request).await?;
     request
         .authorize(pull.repo_id, "pull-requests", false)
         .await?;
@@ -97,7 +107,7 @@ async fn objects(
                     .get(&id)
                     .filter(|user| !user.is_banned)
                     .map_or(Value::Null, |user| {
-                        user::actor_object(user, request.auth.user.id)
+                        crate::backend::api::graphql::user::actor_object(user, request.auth.user.id)
                     }),
             ),
             (None, Some(id)) => (
@@ -143,14 +153,14 @@ pub(super) async fn count(id: i64, request: &RequestContext) -> Result<i64> {
 }
 
 pub(super) async fn list(ctx: &Arguments, request: &RequestContext, id: i64) -> Result<Value> {
-    connection::validate(ctx)?;
+    crate::backend::api::graphql::connection::validate(ctx)?;
     let pull = pull(id, request).await?;
     let mut window = window(&pull, request).await?;
     let total = db::pull_requests::team_reviewers::request_page(&request.state.pool, &window)
         .await
         .map_err(unavailable)?
         .0;
-    let page = connection::Page::new(ctx, total)?;
+    let page = crate::backend::api::graphql::connection::Page::new(ctx, total)?;
     window.offset = page.offset;
     window.limit = page.limit;
     window.count = false;
@@ -184,7 +194,9 @@ pub(super) async fn node(id: &str, request: &RequestContext) -> Result<Value> {
 }
 
 pub(super) async fn pull_projection(id: i64, request: &RequestContext) -> Result<Value> {
-    Ok(issue::pull_object(&pull(id, request).await?))
+    Ok(crate::backend::api::graphql::issue::pull_object(
+        &pull(id, request).await?,
+    ))
 }
 
 pub(super) async fn reviewers(ctx: &Arguments, request: &RequestContext, id: i64) -> Result<Value> {
@@ -204,7 +216,7 @@ pub(super) async fn reviewers(ctx: &Arguments, request: &RequestContext, id: i64
 
 fn ids(input: &Value, field: &str, kind: &str) -> Result<Vec<i64>> {
     // A single ID is a valid list input in GraphQL.
-    let mut ids = super::metadata_mutations::ids(&input[field], kind)?;
+    let mut ids = crate::backend::api::graphql::metadata_mutations::ids(&input[field], kind)?;
     ids.sort_unstable();
     ids.dedup();
     Ok(ids)
@@ -233,11 +245,11 @@ pub(super) async fn mutation(
         .filter(|(kind, _)| *kind == "PR")
         .ok_or_else(missing)?;
     let pull = pull(id, request).await?;
-    let repo = repository::by_id(pull.repo_id, request).await?;
+    let repo = crate::backend::api::graphql::repository::by_id(pull.repo_id, request).await?;
     request.authorize(repo.id, "pull-requests", true).await?;
     let pool = &request.state.pool;
     let actor = &request.auth.user;
-    if !access::can_write(pool, actor, &repo)
+    if !crate::backend::repositories::access::can_write(pool, actor, &repo)
         .await
         .map_err(unavailable)?
     {
@@ -251,7 +263,7 @@ pub(super) async fn mutation(
     if user_ids.len() + team_ids.len() > 100 {
         return Err(Error::new("At most 100 reviewers are allowed"));
     }
-    team_reviewers::set_requests(
+    crate::backend::repositories::pull_requests::team_reviewers::set_requests(
         pool,
         &request.state.notification_broadcaster,
         actor,

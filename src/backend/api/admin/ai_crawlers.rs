@@ -1,9 +1,13 @@
 //! The site settings page: the sign-up mode and the site-wide AI crawler setting.
-use crate::backend::api::crawlers::{self, BLOCK};
+
+use crate::backend::api::crawlers::BLOCK;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::user::responses::{field, mutation_guard, require_account, Fields};
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::require_account;
+use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -24,16 +28,17 @@ async fn settings_response(
     if let Err(response) = require_account(ctx, true) {
         return response;
     }
-    let config = match db::node_config::get_node_configuration(&ctx.state.pool).await {
-        Ok(config) => config,
-        Err(_) => {
-            return ctx.error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Unable to load the site settings.",
-            )
-        }
-    };
-    let osv = match db::vulnerabilities::settings(&ctx.state.pool).await {
+    let config =
+        match crate::backend::db::node_config::get_node_configuration(&ctx.state.pool).await {
+            Ok(config) => config,
+            Err(_) => {
+                return ctx.error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Unable to load the site settings.",
+                )
+            }
+        };
+    let osv = match crate::backend::db::vulnerabilities::settings(&ctx.state.pool).await {
         Ok(value) => value,
         Err(_) => {
             return ctx.error(
@@ -110,22 +115,29 @@ pub(crate) async fn settings_post(
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>();
-        let settings = db::vulnerabilities::Settings {
+        let settings = crate::backend::db::vulnerabilities::Settings {
             base_url: field(&form, "osv_base_url").into(),
             ecosystems: serde_json::json!(ecosystems).to_string(),
         };
-        return match db::vulnerabilities::save_settings(&ctx.state.pool, actor, &session, &settings)
-            .await
+        return match crate::backend::db::vulnerabilities::save_settings(
+            &ctx.state.pool,
+            actor,
+            &session,
+            &settings,
+        )
+        .await
         {
             Ok(()) => ctx.redirect("/admin/settings?saved=vulnerabilities"),
             Err(error) => {
                 settings_response(
                     &ctx,
-                    match error.downcast_ref::<db::vulnerabilities::Refusal>() {
-                        Some(db::vulnerabilities::Refusal::Invalid) => {
+                    match error.downcast_ref::<crate::backend::db::vulnerabilities::Refusal>() {
+                        Some(crate::backend::db::vulnerabilities::Refusal::Invalid) => {
                             StatusCode::UNPROCESSABLE_ENTITY
                         }
-                        Some(db::vulnerabilities::Refusal::Denied) => StatusCode::FORBIDDEN,
+                        Some(crate::backend::db::vulnerabilities::Refusal::Denied) => {
+                            StatusCode::FORBIDDEN
+                        }
                         None => StatusCode::SERVICE_UNAVAILABLE,
                     },
                     Some(
@@ -150,12 +162,14 @@ pub(crate) async fn settings_post(
             .await;
         };
         (
-            db::node_config::set_node_mode(&ctx.state.pool, actor, &session, mode).await,
+            crate::backend::db::node_config::set_node_mode(&ctx.state.pool, actor, &session, mode)
+                .await,
             "signup",
             "Unable to save the sign-up setting.",
         )
     } else {
-        let Some(value) = crawlers::setting_value(field(&form, "ai_crawlers")) else {
+        let Some(value) = crate::backend::api::crawlers::setting_value(field(&form, "ai_crawlers"))
+        else {
             return settings_response(
                 &ctx,
                 StatusCode::BAD_REQUEST,
@@ -165,7 +179,13 @@ pub(crate) async fn settings_post(
             .await;
         };
         (
-            db::node_config::set_ai_crawlers(&ctx.state.pool, actor, &session, value).await,
+            crate::backend::db::node_config::set_ai_crawlers(
+                &ctx.state.pool,
+                actor,
+                &session,
+                value,
+            )
+            .await,
             "crawlers",
             "Unable to save the AI crawler setting.",
         )

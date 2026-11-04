@@ -1,7 +1,5 @@
 //! Shared profile updates; account records never double as public response models.
 
-use crate::backend::db::repositories;
-use crate::backend::db::users::accounts;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
 use codeyard_db_core::DbPool;
@@ -103,22 +101,23 @@ pub async fn repositories_on_profile(
     text: &str,
     page: usize,
 ) -> Result<(User, Vec<Repository>, usize), ProfileReadError> {
-    let user = accounts::get_user_by_username(pool, username)
+    let user = crate::backend::db::users::accounts::get_user_by_username(pool, username)
         .await
         .map_err(|_| ProfileReadError::UserUnavailable)?
         .ok_or(ProfileReadError::Missing)?;
     let offset = i64::try_from(page.saturating_sub(1).saturating_mul(30)).unwrap_or(i64::MAX);
-    let (repositories, count) = repositories::records::list_user_repository_page(
-        pool,
-        user.id,
-        owner_session,
-        text,
-        true,
-        30,
-        offset,
-    )
-    .await
-    .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
+    let (repositories, count) =
+        crate::backend::db::repositories::records::list_user_repository_page(
+            pool,
+            user.id,
+            owner_session,
+            text,
+            true,
+            30,
+            offset,
+        )
+        .await
+        .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
     Ok((
         user,
         repositories,
@@ -133,20 +132,21 @@ pub async fn repository_count_on_profile(
     username: &str,
     owner_session: Option<&str>,
 ) -> Result<(User, usize), ProfileReadError> {
-    let user = accounts::get_user_by_username(pool, username)
+    let user = crate::backend::db::users::accounts::get_user_by_username(pool, username)
         .await
         .map_err(|_| ProfileReadError::UserUnavailable)?
         .ok_or(ProfileReadError::Missing)?;
-    let count = repositories::count_user_repositories(pool, user.id, owner_session)
-        .await
-        .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
+    let count =
+        crate::backend::db::repositories::count_user_repositories(pool, user.id, owner_session)
+            .await
+            .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
     Ok((user, usize::try_from(count).unwrap_or(usize::MAX)))
 }
 
 pub async fn save(
     pool: &DbPool,
     actor: i64,
-    credential: &accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     input: &crate::backend::db::users::profiles::ProfilePatch<'_>,
 ) -> Result<User, ProfileError> {
     validate(&ProfileUpdate {
@@ -198,7 +198,7 @@ pub async fn update(
 ) -> Result<User, ProfileError> {
     validate(&input)?;
     let normalized = input.website.map(website).transpose()?.flatten();
-    accounts::update_user_profile(
+    crate::backend::db::users::accounts::update_user_profile(
         pool,
         actor,
         session,

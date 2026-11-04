@@ -8,16 +8,15 @@ use crate::support::http_client::{visible_text, Client};
 use crate::support::PASSWORD_WORK as SERIAL;
 use axum::http::StatusCode;
 use chrono::{Duration, Utc};
-use codeyard::backend::db;
+
 use codeyard::backend::db::email::NewEmailSettings;
-use codeyard::backend::email::links;
+
 use codeyard::backend::email::links::LinkError;
 use codeyard::backend::email::links::Purpose;
-use codeyard::backend::identity;
+
 use codeyard::backend::identity::accounts::PasswordChange;
 use codeyard::backend::identity::accounts::PasswordResetError;
-use codeyard::backend::identity::admission;
-use codeyard::backend::identity::passwords;
+
 use codeyard_db_core::models::OutboxMessage;
 use codeyard_db_core::models::User;
 use codeyard_db_core::DbPool;
@@ -28,7 +27,7 @@ pub(super) async fn set_up_mail(f: &Database) {
     let admin = f.actor("mail_admin").await;
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[admin])
         .await;
-    db::users::sessions::create_session(
+    codeyard::backend::db::users::sessions::create_session(
         f.pool(),
         "mail-admin-session",
         admin,
@@ -48,16 +47,22 @@ pub(super) async fn set_up_mail(f: &Database) {
         from_address: "noreply@example.test",
         reply_to: "",
     };
-    assert!(
-        db::email::save_email_settings(f.pool(), admin, "mail-admin-session", &settings)
-            .await
-            .unwrap()
-    );
+    assert!(codeyard::backend::db::email::save_email_settings(
+        f.pool(),
+        admin,
+        "mail-admin-session",
+        &settings
+    )
+    .await
+    .unwrap());
 }
 
 pub(super) async fn queued(pool: &DbPool) -> Vec<OutboxMessage> {
     let mut mail = Vec::new();
-    while let Some(message) = db::email::claim_due_email(pool, 5, 600).await.unwrap() {
+    while let Some(message) = codeyard::backend::db::email::claim_due_email(pool, 5, 600)
+        .await
+        .unwrap()
+    {
         mail.push(message);
     }
     mail
@@ -87,7 +92,7 @@ async fn age_links(f: &Database, user: i64) {
 }
 
 async fn user_named(pool: &DbPool, name: &str) -> User {
-    db::users::accounts::get_user_by_username(pool, name)
+    codeyard::backend::db::users::accounts::get_user_by_username(pool, name)
         .await
         .unwrap()
         .unwrap()
@@ -105,14 +110,20 @@ async fn verification_links(pg: bool) {
     let _serial = SERIAL.lock().await;
     let mut f = Database::new(pg).await;
     let pool = f.pool();
-    let hash = passwords::hash_password("correct-password").await.unwrap();
-
-    // Without a mail server nothing is queued.
-    let carol = db::users::accounts::create_user(pool, "carol", Some("carol@example.test"))
+    let hash = codeyard::backend::identity::passwords::hash_password("correct-password")
         .await
         .unwrap();
+
+    // Without a mail server nothing is queued.
+    let carol = codeyard::backend::db::users::accounts::create_user(
+        pool,
+        "carol",
+        Some("carol@example.test"),
+    )
+    .await
+    .unwrap();
     assert_eq!(
-        links::send_verification(pool, &carol).await,
+        codeyard::backend::email::links::send_verification(pool, &carol).await,
         Err(LinkError::NotConfigured)
     );
     assert!(queued(pool).await.is_empty());
@@ -120,43 +131,83 @@ async fn verification_links(pg: bool) {
     set_up_mail(&f).await;
 
     // The link confirms the address once; the same token does not work as a reset link.
-    links::send_verification(pool, &carol).await.unwrap();
+    codeyard::backend::email::links::send_verification(pool, &carol)
+        .await
+        .unwrap();
     let mail = queued(pool).await;
     assert_eq!(mail.len(), 1);
     assert_eq!(mail[0].to_address, "carol@example.test");
     let token = token_in(&mail[0]);
-    assert!(links::is_valid(pool, Purpose::Verify, &token)
-        .await
-        .unwrap());
-    assert!(!links::is_valid(pool, Purpose::Reset, &token).await.unwrap());
+    assert!(
+        codeyard::backend::email::links::is_valid(pool, Purpose::Verify, &token)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !codeyard::backend::email::links::is_valid(pool, Purpose::Reset, &token)
+            .await
+            .unwrap()
+    );
     assert!(!user_named(pool, "carol").await.email_verified);
-    assert!(links::verify_address(pool, &token).await.unwrap());
+    assert!(
+        codeyard::backend::email::links::verify_address(pool, &token)
+            .await
+            .unwrap()
+    );
     assert!(user_named(pool, "carol").await.email_verified);
-    assert!(!links::verify_address(pool, &token).await.unwrap());
+    assert!(
+        !codeyard::backend::email::links::verify_address(pool, &token)
+            .await
+            .unwrap()
+    );
 
     // A resend within a minute mails nothing; a later one replaces the earlier link and code.
-    let dave = db::users::accounts::create_user(pool, "dave", Some("dave@example.test"))
+    let dave = codeyard::backend::db::users::accounts::create_user(
+        pool,
+        "dave",
+        Some("dave@example.test"),
+    )
+    .await
+    .unwrap();
+    codeyard::backend::email::links::send_verification(pool, &dave)
         .await
         .unwrap();
-    links::send_verification(pool, &dave).await.unwrap();
-    links::send_verification(pool, &dave).await.unwrap();
+    codeyard::backend::email::links::send_verification(pool, &dave)
+        .await
+        .unwrap();
     let mail = queued(pool).await;
     assert_eq!(mail.len(), 1, "a resend within a minute mails nothing");
     let first = token_in(&mail[0]);
     age_links(&f, dave.id).await;
-    links::send_verification(pool, &dave).await.unwrap();
+    codeyard::backend::email::links::send_verification(pool, &dave)
+        .await
+        .unwrap();
     let mail = queued(pool).await;
     assert_eq!(mail.len(), 1);
     let second = token_in(&mail[0]);
     assert_ne!(first, second);
-    assert!(!links::verify_address(pool, &first).await.unwrap());
-    assert!(links::verify_address(pool, &second).await.unwrap());
+    assert!(
+        !codeyard::backend::email::links::verify_address(pool, &first)
+            .await
+            .unwrap()
+    );
+    assert!(
+        codeyard::backend::email::links::verify_address(pool, &second)
+            .await
+            .unwrap()
+    );
 
     // Without PUBLIC_URL the mail carries only the code, and pasting it confirms the address.
-    let hana = db::users::accounts::create_user(pool, "hana", Some("hana@example.test"))
+    let hana = codeyard::backend::db::users::accounts::create_user(
+        pool,
+        "hana",
+        Some("hana@example.test"),
+    )
+    .await
+    .unwrap();
+    codeyard::backend::email::links::send_verification(pool, &hana)
         .await
         .unwrap();
-    links::send_verification(pool, &hana).await.unwrap();
     let mail = queued(pool).await;
     if std::env::var_os("PUBLIC_URL").is_none() {
         assert!(
@@ -166,26 +217,44 @@ async fn verification_links(pg: bool) {
         );
     }
     let code = token_in(&mail[0]);
-    assert!(links::verify_address(pool, &code).await.unwrap());
+    assert!(codeyard::backend::email::links::verify_address(pool, &code)
+        .await
+        .unwrap());
     assert!(user_named(pool, "hana").await.email_verified);
-    assert!(!links::verify_address(pool, &code).await.unwrap());
+    assert!(
+        !codeyard::backend::email::links::verify_address(pool, &code)
+            .await
+            .unwrap()
+    );
 
     // An expired link confirms nothing.
-    let erin = db::users::accounts::create_user(pool, "erin", Some("erin@example.test"))
+    let erin = codeyard::backend::db::users::accounts::create_user(
+        pool,
+        "erin",
+        Some("erin@example.test"),
+    )
+    .await
+    .unwrap();
+    codeyard::backend::email::links::send_verification(pool, &erin)
         .await
         .unwrap();
-    links::send_verification(pool, &erin).await.unwrap();
     let mail = queued(pool).await;
     let token = token_in(&mail[0]);
     expire_links(&f, erin.id).await;
-    assert!(!links::is_valid(pool, Purpose::Verify, &token)
-        .await
-        .unwrap());
-    assert!(!links::verify_address(pool, &token).await.unwrap());
+    assert!(
+        !codeyard::backend::email::links::is_valid(pool, Purpose::Verify, &token)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !codeyard::backend::email::links::verify_address(pool, &token)
+            .await
+            .unwrap()
+    );
     assert!(!user_named(pool, "erin").await.email_verified);
 
     // A link sent to an address the user has since left confirms nothing.
-    let frank = db::users::accounts::create_user_with_password(
+    let frank = codeyard::backend::db::users::accounts::create_user_with_password(
         pool,
         "frank",
         Some("frank@example.test"),
@@ -193,7 +262,7 @@ async fn verification_links(pg: bool) {
     )
     .await
     .unwrap();
-    db::users::sessions::create_session(
+    codeyard::backend::db::users::sessions::create_session(
         pool,
         "frank-session",
         frank.id,
@@ -203,9 +272,11 @@ async fn verification_links(pg: bool) {
     )
     .await
     .unwrap();
-    links::send_verification(pool, &frank).await.unwrap();
+    codeyard::backend::email::links::send_verification(pool, &frank)
+        .await
+        .unwrap();
     let token = token_in(&queued(pool).await[0]);
-    db::users::transitions::change_email(
+    codeyard::backend::db::users::transitions::change_email(
         pool,
         frank.id,
         "frank-new@example.test",
@@ -214,10 +285,16 @@ async fn verification_links(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(!links::is_valid(pool, Purpose::Verify, &token)
-        .await
-        .unwrap());
-    assert!(!links::verify_address(pool, &token).await.unwrap());
+    assert!(
+        !codeyard::backend::email::links::is_valid(pool, Purpose::Verify, &token)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !codeyard::backend::email::links::verify_address(pool, &token)
+            .await
+            .unwrap()
+    );
     assert!(!user_named(pool, "frank").await.email_verified);
 
     // Changing the address clears the flag and mails a link to the new address.
@@ -226,7 +303,7 @@ async fn verification_links(pg: bool) {
         &[frank.id],
     )
     .await;
-    identity::accounts::change_email(
+    codeyard::backend::identity::accounts::change_email(
         pool,
         Some("frank-session"),
         "correct-password",
@@ -238,29 +315,37 @@ async fn verification_links(pg: bool) {
     let mail = queued(pool).await;
     assert_eq!(mail.len(), 1);
     assert_eq!(mail[0].to_address, "frank-third@example.test");
-    assert!(links::verify_address(pool, &token_in(&mail[0]))
-        .await
-        .unwrap());
+    assert!(
+        codeyard::backend::email::links::verify_address(pool, &token_in(&mail[0]))
+            .await
+            .unwrap()
+    );
     assert!(user_named(pool, "frank").await.email_verified);
 
     // Requests are limited per user.
-    let gina = db::users::accounts::create_user(pool, "gina", Some("gina@example.test"))
-        .await
-        .unwrap();
+    let gina = codeyard::backend::db::users::accounts::create_user(
+        pool,
+        "gina",
+        Some("gina@example.test"),
+    )
+    .await
+    .unwrap();
     for _ in 0..10 {
-        links::send_verification(pool, &gina).await.unwrap();
+        codeyard::backend::email::links::send_verification(pool, &gina)
+            .await
+            .unwrap();
     }
     assert_eq!(
-        links::send_verification(pool, &gina).await,
+        codeyard::backend::email::links::send_verification(pool, &gina).await,
         Err(LinkError::Limited)
     );
 
     // An account without an address has nothing to confirm.
-    let none = db::users::accounts::create_user(pool, "no_address", None)
+    let none = codeyard::backend::db::users::accounts::create_user(pool, "no_address", None)
         .await
         .unwrap();
     assert_eq!(
-        links::send_verification(pool, &none).await,
+        codeyard::backend::email::links::send_verification(pool, &none).await,
         Err(LinkError::NoAddress)
     );
 
@@ -271,9 +356,11 @@ async fn reset_links(pg: bool) {
     let _serial = SERIAL.lock().await;
     let mut f = Database::new(pg).await;
     let pool = f.pool();
-    let hash = passwords::hash_password("old-password-1").await.unwrap();
+    let hash = codeyard::backend::identity::passwords::hash_password("old-password-1")
+        .await
+        .unwrap();
     set_up_mail(&f).await;
-    let ivan = db::users::accounts::create_user_with_password(
+    let ivan = codeyard::backend::db::users::accounts::create_user_with_password(
         pool,
         "ivan",
         Some("ivan@example.test"),
@@ -283,24 +370,28 @@ async fn reset_links(pg: bool) {
     .unwrap();
 
     // An unverified address gets no link, and the answer is the same as for a stranger.
-    links::send_password_reset(pool, None, "ivan@example.test")
+    codeyard::backend::email::links::send_password_reset(pool, None, "ivan@example.test")
         .await
         .unwrap();
-    links::send_password_reset(pool, None, "nobody@example.test")
+    codeyard::backend::email::links::send_password_reset(pool, None, "nobody@example.test")
         .await
         .unwrap();
     assert!(queued(pool).await.is_empty());
 
     // An account with no password has nothing to reset.
-    let oauth = db::users::accounts::create_user(pool, "oauth_only", Some("oauth@example.test"))
-        .await
-        .unwrap();
+    let oauth = codeyard::backend::db::users::accounts::create_user(
+        pool,
+        "oauth_only",
+        Some("oauth@example.test"),
+    )
+    .await
+    .unwrap();
     f.execute(
         "UPDATE users SET email_verified=TRUE WHERE id=$1",
         &[oauth.id],
     )
     .await;
-    links::send_password_reset(pool, None, "oauth@example.test")
+    codeyard::backend::email::links::send_password_reset(pool, None, "oauth@example.test")
         .await
         .unwrap();
     assert!(queued(pool).await.is_empty());
@@ -310,7 +401,7 @@ async fn reset_links(pg: bool) {
         &[ivan.id],
     )
     .await;
-    db::users::sessions::create_session(
+    codeyard::backend::db::users::sessions::create_session(
         pool,
         "ivan-session",
         ivan.id,
@@ -320,7 +411,7 @@ async fn reset_links(pg: bool) {
     )
     .await
     .unwrap();
-    links::send_password_reset(pool, None, "ivan@example.test")
+    codeyard::backend::email::links::send_password_reset(pool, None, "ivan@example.test")
         .await
         .unwrap();
     let mail = queued(pool).await;
@@ -329,17 +420,25 @@ async fn reset_links(pg: bool) {
     assert!(mail[0].subject.contains("Reset"));
     let token = token_in(&mail[0]);
     // A reset link does not confirm the address.
-    assert!(!links::verify_address(pool, &token).await.unwrap());
+    assert!(
+        !codeyard::backend::email::links::verify_address(pool, &token)
+            .await
+            .unwrap()
+    );
 
     // A second request within a minute mails nothing, and the first link keeps working.
-    links::send_password_reset(pool, None, "ivan@example.test")
+    codeyard::backend::email::links::send_password_reset(pool, None, "ivan@example.test")
         .await
         .unwrap();
     assert!(queued(pool).await.is_empty());
-    assert!(links::is_valid(pool, Purpose::Reset, &token).await.unwrap());
+    assert!(
+        codeyard::backend::email::links::is_valid(pool, Purpose::Reset, &token)
+            .await
+            .unwrap()
+    );
 
     // Sent mail keeps no body, so the link is not left in the outbox.
-    db::email::mark_email_sent(pool, mail[0].id, mail[0].attempts)
+    codeyard::backend::db::email::mark_email_sent(pool, mail[0].id, mail[0].attempts)
         .await
         .unwrap();
     assert_eq!(
@@ -353,20 +452,27 @@ async fn reset_links(pg: bool) {
 
     // A password that is too short leaves the link usable.
     assert!(matches!(
-        identity::accounts::reset_password(pool, &token, "short").await,
+        codeyard::backend::identity::accounts::reset_password(pool, &token, "short").await,
         Err(PasswordResetError::Input(_))
     ));
-    assert!(links::is_valid(pool, Purpose::Reset, &token).await.unwrap());
+    assert!(
+        codeyard::backend::email::links::is_valid(pool, Purpose::Reset, &token)
+            .await
+            .unwrap()
+    );
 
-    identity::accounts::reset_password(pool, &token, "brand-new-password")
+    codeyard::backend::identity::accounts::reset_password(pool, &token, "brand-new-password")
         .await
         .unwrap();
     let ivan = user_named(pool, "ivan").await;
     assert!(
-        passwords::verify_password("brand-new-password", ivan.password_hash.as_deref())
-            .await
-            .unwrap()
-            .valid
+        codeyard::backend::identity::passwords::verify_password(
+            "brand-new-password",
+            ivan.password_hash.as_deref()
+        )
+        .await
+        .unwrap()
+        .valid
     );
     assert_eq!(
         f.scalar("SELECT COUNT(*) FROM sessions WHERE user_id=$1", &[ivan.id])
@@ -377,47 +483,52 @@ async fn reset_links(pg: bool) {
 
     // The link works once.
     assert_eq!(
-        identity::accounts::reset_password(pool, &token, "another-password").await,
+        codeyard::backend::identity::accounts::reset_password(pool, &token, "another-password")
+            .await,
         Err(PasswordResetError::InvalidLink)
     );
 
     // An expired code does nothing.
-    links::send_password_reset(pool, None, "ivan@example.test")
+    codeyard::backend::email::links::send_password_reset(pool, None, "ivan@example.test")
         .await
         .unwrap();
     let code = token_in(&queued(pool).await[0]);
     expire_links(&f, ivan.id).await;
     assert_eq!(
-        identity::accounts::reset_password(pool, &code, "another-password").await,
+        codeyard::backend::identity::accounts::reset_password(pool, &code, "another-password")
+            .await,
         Err(PasswordResetError::InvalidLink)
     );
 
     // The pasted code sets a new password once, like the link.
-    links::send_password_reset(pool, None, "ivan@example.test")
+    codeyard::backend::email::links::send_password_reset(pool, None, "ivan@example.test")
         .await
         .unwrap();
     let code = token_in(&queued(pool).await[0]);
-    identity::accounts::reset_password(pool, &code, "code-password")
+    codeyard::backend::identity::accounts::reset_password(pool, &code, "code-password")
         .await
         .unwrap();
     let ivan = user_named(pool, "ivan").await;
     assert!(
-        passwords::verify_password("code-password", ivan.password_hash.as_deref())
-            .await
-            .unwrap()
-            .valid
+        codeyard::backend::identity::passwords::verify_password(
+            "code-password",
+            ivan.password_hash.as_deref()
+        )
+        .await
+        .unwrap()
+        .valid
     );
     assert_eq!(
-        identity::accounts::reset_password(pool, &code, "other-password").await,
+        codeyard::backend::identity::accounts::reset_password(pool, &code, "other-password").await,
         Err(PasswordResetError::InvalidLink)
     );
 
     // Changing the password in Settings cancels a reset link that is still in the mailbox.
-    links::send_password_reset(pool, None, "ivan@example.test")
+    codeyard::backend::email::links::send_password_reset(pool, None, "ivan@example.test")
         .await
         .unwrap();
     let token = token_in(&queued(pool).await[0]);
-    db::users::sessions::create_session(
+    codeyard::backend::db::users::sessions::create_session(
         pool,
         "ivan-session-2",
         ivan.id,
@@ -427,7 +538,7 @@ async fn reset_links(pg: bool) {
     )
     .await
     .unwrap();
-    identity::accounts::change_password(
+    codeyard::backend::identity::accounts::change_password(
         pool,
         Some("ivan-session-2"),
         PasswordChange {
@@ -437,32 +548,42 @@ async fn reset_links(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(!links::is_valid(pool, Purpose::Reset, &token).await.unwrap());
+    assert!(
+        !codeyard::backend::email::links::is_valid(pool, Purpose::Reset, &token)
+            .await
+            .unwrap()
+    );
 
     // Mail requests from one client address have their own budget, so they cannot lock that
     // address out of signing in.
     let client = Some("203.0.113.50");
     for n in 0..30 {
-        links::send_password_reset(pool, client, &format!("stranger{n}@example.test"))
-            .await
-            .unwrap();
+        codeyard::backend::email::links::send_password_reset(
+            pool,
+            client,
+            &format!("stranger{n}@example.test"),
+        )
+        .await
+        .unwrap();
     }
     assert_eq!(
-        links::send_password_reset(pool, client, "stranger@example.test").await,
+        codeyard::backend::email::links::send_password_reset(pool, client, "stranger@example.test")
+            .await,
         Err(LinkError::Limited)
     );
-    admission::admit_login(pool, client, Some(ivan.id), "ivan")
+    codeyard::backend::identity::admission::admit_login(pool, client, Some(ivan.id), "ivan")
         .await
         .unwrap();
 
     // Requests for one address are limited, whether or not the address exists.
     for _ in 0..9 {
-        links::send_password_reset(pool, None, "nobody@example.test")
+        codeyard::backend::email::links::send_password_reset(pool, None, "nobody@example.test")
             .await
             .unwrap();
     }
     assert_eq!(
-        links::send_password_reset(pool, None, "nobody@example.test").await,
+        codeyard::backend::email::links::send_password_reset(pool, None, "nobody@example.test")
+            .await,
         Err(LinkError::Limited)
     );
 
@@ -475,10 +596,12 @@ async fn email_link_pages(pg: bool) {
     let mut f = Database::new(pg).await;
     f.complete_setup().await;
     let pool = f.pool();
-    let hash = passwords::hash_password("old-password-1").await.unwrap();
+    let hash = codeyard::backend::identity::passwords::hash_password("old-password-1")
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;
-    let kate = db::users::accounts::create_user_with_password(
+    let kate = codeyard::backend::db::users::accounts::create_user_with_password(
         pool,
         "kate",
         Some("kate@example.test"),
@@ -560,7 +683,7 @@ async fn email_link_pages(pg: bool) {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     // The code pasted into Settings with spaces around it confirms the address.
-    let lena = db::users::accounts::create_user_with_password(
+    let lena = codeyard::backend::db::users::accounts::create_user_with_password(
         pool,
         "lena",
         Some("lena@example.test"),
@@ -631,10 +754,13 @@ async fn email_link_pages(pg: bool) {
     assert_eq!(reply.location.as_deref(), Some("/login?reset=done"));
     let kate = user_named(pool, "kate").await;
     assert!(
-        passwords::verify_password("brand-new-password", kate.password_hash.as_deref())
-            .await
-            .unwrap()
-            .valid
+        codeyard::backend::identity::passwords::verify_password(
+            "brand-new-password",
+            kate.password_hash.as_deref()
+        )
+        .await
+        .unwrap()
+        .valid
     );
     let (status, page) = client.page(&reset_path).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -671,10 +797,13 @@ async fn email_link_pages(pg: bool) {
     assert_eq!(reply.location.as_deref(), Some("/login?reset=done"));
     let kate = user_named(pool, "kate").await;
     assert!(
-        passwords::verify_password("code-password-1", kate.password_hash.as_deref())
-            .await
-            .unwrap()
-            .valid
+        codeyard::backend::identity::passwords::verify_password(
+            "code-password-1",
+            kate.password_hash.as_deref()
+        )
+        .await
+        .unwrap()
+        .valid
     );
 
     f.finish().await;

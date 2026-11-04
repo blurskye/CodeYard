@@ -120,15 +120,20 @@ mod tests {
 
     #[test]
     fn entry_count_is_bounded_before_reading() {
-        assert_eq!(super::open(archive(3), 3).unwrap().len(), 3);
-        assert!(super::open(archive(4), 3).is_err());
-        assert!(super::open(b"not a zip".to_vec(), 3).is_err());
+        assert_eq!(
+            crate::backend::zip_archives::open(archive(3), 3)
+                .unwrap()
+                .len(),
+            3
+        );
+        assert!(crate::backend::zip_archives::open(archive(4), 3).is_err());
+        assert!(crate::backend::zip_archives::open(b"not a zip".to_vec(), 3).is_err());
         let mut forged = archive(1);
         let footer = forged
             .windows(4)
             .rposition(|bytes| bytes == b"PK\x05\x06")
             .unwrap();
         forged[footer + 10..footer + 12].copy_from_slice(&60_000u16.to_le_bytes());
-        assert!(super::open(forged, 3).is_err());
+        assert!(crate::backend::zip_archives::open(forged, 3).is_err());
     }
 }

@@ -9,11 +9,15 @@ use sqlx::{PgConnection, PgPool};
 async fn authority(connection: &mut PgConnection, actor: i64, org: Option<i64>) -> Result<bool> {
     if let Some(org) = org {
         return Ok(matches!(
-            super::organizations::authority::authority(connection, actor, org).await?,
+            crate::backend::db::postgres::organizations::authority::authority(
+                connection, actor, org
+            )
+            .await?,
             OrganizationOutcome::Applied(OrgRole::Owner)
         ));
     }
-    super::users::transitions::lock_accounts_shared(connection, &[actor]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(connection, &[actor])
+        .await?;
     Ok(sqlx::query_scalar::<_, i64>(
         "SELECT id FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password FOR SHARE",
     )

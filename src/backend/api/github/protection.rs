@@ -1,12 +1,16 @@
 //! Classic branch protection shares the rules enforced by Git pushes and merges.
-use super::{auth::read_method, contents::store_error, repo_url, repository, Error, Result};
+use crate::backend::api::github::auth::read_method;
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::db::repositories::protection;
+use codeyard_model::urls::repo_url;
+
 use crate::backend::db::repositories::protection::ProtectionUpdate;
-use crate::backend::repositories::access;
+
 use crate::backend::repositories::store::repo_store;
-use crate::backend::webhooks::payloads;
+
 use axum::{
     extract::{FromRequest, Path, Request, State},
     http::{HeaderMap, Method, StatusCode},
@@ -20,11 +24,15 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 pub(super) fn write_error(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<protection::ProtectionWriteRefusal>() {
-        Some(protection::ProtectionWriteRefusal::Denied) => {
+    match error
+        .downcast_ref::<crate::backend::db::repositories::protection::ProtectionWriteRefusal>()
+    {
+        Some(crate::backend::db::repositories::protection::ProtectionWriteRefusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Branch protection write denied")
         }
-        Some(protection::ProtectionWriteRefusal::NotFound) => Error::missing(),
+        Some(crate::backend::db::repositories::protection::ProtectionWriteRefusal::NotFound) => {
+            Error::missing()
+        }
         Some(_) => Error::invalid("Invalid branch protection"),
         None => Error::unavailable(()),
     }
@@ -43,9 +51,9 @@ pub(super) async fn protected(
     String,
 )> {
     let (repo, auth) = repository(state, headers, owner, name, write).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = &auth.user;
-    if !access::can_admin(&state.pool, actor, &repo)
+    if !crate::backend::repositories::access::can_admin(&state.pool, actor, &repo)
         .await
         .map_err(Error::unavailable)?
     {
@@ -63,12 +71,15 @@ pub(super) async fn protected(
     }
     let rule = if write {
         // A concrete-branch edit must not silently modify a wildcard that protects other branches.
-        protection::list_branch_protection_rules(&state.pool, repo.id)
-            .await
-            .map_err(Error::unavailable)?
-            .into_iter()
-            .find(|rule| rule.pattern == branch)
-            .ok_or_else(Error::missing)?
+        crate::backend::db::repositories::protection::list_branch_protection_rules(
+            &state.pool,
+            repo.id,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .into_iter()
+        .find(|rule| rule.pattern == branch)
+        .ok_or_else(Error::missing)?
     } else {
         let mut matching =
             crate::backend::repositories::protection::matching_rules(&state.pool, &repo, branch)
@@ -142,13 +153,14 @@ async fn restriction_document(
     url: &str,
     actor: i64,
 ) -> Result<Value> {
-    let users = db::users::accounts::get_users_by_ids(&state.pool, &rule.push_allowances)
-        .await
-        .map_err(Error::unavailable)?;
-    let teams = super::push_teams::documents(state, rule, actor).await?;
+    let users =
+        crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &rule.push_allowances)
+            .await
+            .map_err(Error::unavailable)?;
+    let teams = crate::backend::api::github::push_teams::documents(state, rule, actor).await?;
     Ok(json!({"url": format!("{url}/restrictions"),
         "users_url": format!("{url}/restrictions/users"), "teams_url": format!("{url}/restrictions/teams"), "apps_url": format!("{url}/restrictions/apps"),
-        "users": users.iter().map(|user| payloads::person(&payloads::Person::of(user))).collect::<Vec<_>>(), "teams": teams, "apps": super::protection_operations::app_documents(state, &rule.github_settings.push_apps).await?}))
+        "users": users.iter().map(|user| crate::backend::webhooks::payloads::person(&crate::backend::webhooks::payloads::Person::of(user))).collect::<Vec<_>>(), "teams": teams, "apps": crate::backend::api::github::protection_operations::app_documents(state, &rule.github_settings.push_apps).await?}))
 }
 
 pub(super) async fn document(
@@ -169,7 +181,7 @@ pub(super) async fn document(
     if rule.require_status_checks {
         value["required_status_checks"] = checks(rule, url);
     }
-    if protection::has_review_requirements(rule) {
+    if crate::backend::db::repositories::protection::has_review_requirements(rule) {
         value["required_pull_request_reviews"] = review_document(rule, url);
     }
     if rule.restrict_pushes {
@@ -194,7 +206,7 @@ async fn branch(
     )
     .await?;
     if method == Method::DELETE {
-        if !protection::delete_branch_protection_rule(
+        if !crate::backend::db::repositories::protection::delete_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,
@@ -226,7 +238,7 @@ async fn admin(
     )
     .await?;
     if !read_method(&method) {
-        rule = protection::update_branch_protection_rule(
+        rule = crate::backend::db::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,
@@ -246,7 +258,7 @@ async fn admin(
 struct StatusChecks {
     strict: Option<bool>,
     contexts: Option<Vec<String>>,
-    checks: Option<Vec<super::protection_operations::Check>>,
+    checks: Option<Vec<crate::backend::api::github::protection_operations::Check>>,
 }
 
 async fn status_checks(
@@ -271,10 +283,10 @@ async fn status_checks(
     if method == Method::PATCH {
         let Json(input) = Json::<StatusChecks>::from_request(request, &state)
             .await
-            .map_err(super::json_error)?;
+            .map_err(crate::backend::api::github::json_error)?;
         let mut contexts = input.contexts;
         let checks = input.checks.unwrap_or_default();
-        let bindings = super::protection_operations::check_bindings(
+        let bindings = crate::backend::api::github::protection_operations::check_bindings(
             &state,
             rule.repo_id,
             contexts.as_deref().unwrap_or_default(),
@@ -287,7 +299,7 @@ async fn status_checks(
                 .get_or_insert_with(Vec::new)
                 .extend(checks.into_iter().map(|check| check.context));
         }
-        rule = protection::update_branch_protection_rule(
+        rule = crate::backend::db::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,
@@ -301,7 +313,7 @@ async fn status_checks(
         .await
         .map_err(write_error)?;
     } else if method == Method::DELETE {
-        protection::update_branch_protection_rule(
+        crate::backend::db::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,
@@ -344,14 +356,14 @@ async fn contexts(
     if !read_method(&method) {
         let Json(input) = Json::<Contexts>::from_request(request, &state)
             .await
-            .map_err(super::json_error)?;
+            .map_err(crate::backend::api::github::json_error)?;
         let values = match input {
             Contexts::Array(values) | Contexts::Object { contexts: values } => values,
         };
         let bindings = if method == Method::DELETE {
             Vec::new()
         } else {
-            super::protection_operations::check_bindings(
+            crate::backend::api::github::protection_operations::check_bindings(
                 &state,
                 rule.repo_id,
                 &values,
@@ -371,7 +383,7 @@ async fn contexts(
             },
             _ => ProtectionUpdate::RemoveContexts(values),
         };
-        rule = protection::update_branch_protection_rule(
+        rule = crate::backend::db::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,
@@ -399,11 +411,11 @@ async fn review_requirements(
         !read_method(&method),
     )
     .await?;
-    if !protection::has_review_requirements(&rule) {
+    if !crate::backend::db::repositories::protection::has_review_requirements(&rule) {
         return Err(Error::missing());
     }
     if method == Method::DELETE {
-        protection::update_branch_protection_rule(
+        crate::backend::db::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,
@@ -436,7 +448,7 @@ async fn restrictions(
         return Err(Error::missing());
     }
     if method == Method::DELETE {
-        protection::update_branch_protection_rule(
+        crate::backend::db::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,
@@ -479,19 +491,20 @@ async fn users(
     if !read_method(&method) {
         let Json(input) = Json::<Users>::from_request(request, &state)
             .await
-            .map_err(super::json_error)?;
+            .map_err(crate::backend::api::github::json_error)?;
         let names = match input {
             Users::Array(names) | Users::Object { users: names } => names,
         };
-        let ids = super::protection_operations::user_ids(&state, &names).await?;
-        use protection::ActorListUpdate;
+        let ids =
+            crate::backend::api::github::protection_operations::user_ids(&state, &names).await?;
+        use crate::backend::db::repositories::protection::ActorListUpdate;
         let update = match method {
             Method::POST => ActorListUpdate::Add(ids),
             Method::PUT => ActorListUpdate::Set(ids),
             Method::DELETE => ActorListUpdate::Remove(ids),
             _ => unreachable!(),
         };
-        rule = protection::update_branch_protection_rule(
+        rule = crate::backend::db::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,

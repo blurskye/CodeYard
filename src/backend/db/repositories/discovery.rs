@@ -27,7 +27,7 @@ native_operation!(crate::backend::db::postgres::repositories::discovery::create_
 
 native_operation!(crate::backend::db::postgres::repositories::discovery::get_owner_fork,
     crate::backend::db::sqlite::repositories::discovery::get_owner_fork,
-    fn get_owner_fork(pool: &DbPool, owner: super::creation::RepositoryTarget, forked_from: i64) -> Result<Option<Repository>>);
+    fn get_owner_fork(pool: &DbPool, owner: crate::backend::db::repositories::creation::RepositoryTarget, forked_from: i64) -> Result<Option<Repository>>);
 
 native_operation!(crate::backend::db::postgres::repositories::discovery::get_user_fork,
     crate::backend::db::sqlite::repositories::discovery::get_user_fork,

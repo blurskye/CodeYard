@@ -1,9 +1,9 @@
 //! Branch creation uses the normal ref publication checks before recording the link.
-use super::{db, OperationError};
-use crate::backend::{
-    app::AppState,
-    repositories::{access, refs, store::repo_store},
-};
+use crate::backend::app::AppState;
+use crate::backend::issues::db;
+use crate::backend::issues::OperationError;
+
+use crate::backend::repositories::store::repo_store;
 use codeyard_git::error::ErrorKind;
 
 pub fn default_name(issue: &codeyard_db_core::models::Issue) -> String {
@@ -43,20 +43,24 @@ pub async fn create(
     oid: &str,
 ) -> Result<db::issues::management::LinkedBranch, OperationError> {
     let authority = actor.into();
-    access::check_write(&state.pool, issue.repo_id, authority.user_id)
-        .await
-        .map_err(|_| OperationError::Denied {
-            code: "forbidden",
-            message: "Write access is required".into(),
-        })?;
+    crate::backend::repositories::access::check_write(
+        &state.pool,
+        issue.repo_id,
+        authority.user_id,
+    )
+    .await
+    .map_err(|_| OperationError::Denied {
+        code: "forbidden",
+        message: "Write access is required".into(),
+    })?;
     let owner = db::repositories::records::repository_owner_name(&state.pool, target.id)
         .await
-        .map_err(super::database_error)?
+        .map_err(crate::backend::issues::database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".into(),
         })?;
-    let created = refs::create_branch(
+    let created = crate::backend::repositories::refs::create_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -74,20 +78,23 @@ pub async fn create(
     match created {
         // The branch exists; only refreshing open pull requests after it failed, so the
         // issue still gets its link.
-        Ok(_) | Err(refs::RefError::AppliedFollowupFailed) => {}
-        Err(refs::RefError::Invalid(message) | refs::RefError::Protected(message)) => {
+        Ok(_) | Err(crate::backend::repositories::refs::RefError::AppliedFollowupFailed) => {}
+        Err(
+            crate::backend::repositories::refs::RefError::Invalid(message)
+            | crate::backend::repositories::refs::RefError::Protected(message),
+        ) => {
             return Err(OperationError::Invalid {
                 code: "invalid_branch",
                 message: message.into(),
             })
         }
-        Err(refs::RefError::Access(_)) => {
+        Err(crate::backend::repositories::refs::RefError::Access(_)) => {
             return Err(OperationError::Denied {
                 code: "forbidden",
                 message: "Write access is required".into(),
             })
         }
-        Err(refs::RefError::Git(error)) => match error.kind {
+        Err(crate::backend::repositories::refs::RefError::Git(error)) => match error.kind {
             ErrorKind::Invalid | ErrorKind::NotFound | ErrorKind::MissingPath => {
                 return Err(OperationError::Invalid {
                     code: "invalid_branch",
@@ -111,7 +118,7 @@ pub async fn create(
             }
             ErrorKind::Unavailable => return Err(unconfirmed()),
         },
-        Err(refs::RefError::Unavailable) => return Err(unconfirmed()),
+        Err(crate::backend::repositories::refs::RefError::Unavailable) => return Err(unconfirmed()),
     }
     db::issues::management::link_branch(
         &state.pool,

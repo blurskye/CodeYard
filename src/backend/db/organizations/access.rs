@@ -1,4 +1,5 @@
-use super::{OrganizationOutcome, OrganizationPage};
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::organizations::OrganizationPage;
 use anyhow::Result;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Repository;

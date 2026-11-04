@@ -6,7 +6,7 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::db;
+
 use database::Database;
 use pulls::{visible_text, Client};
 use serde_json::{json, Value};
@@ -37,7 +37,7 @@ async fn topics_save_validate_and_filter(pg: bool) {
     codeyard::backend::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -103,7 +103,7 @@ async fn topics_save_validate_and_filter(pg: bool) {
     assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.text());
 
     // A collaborator with write access saves the About text, through JSON and the native form.
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         database.pool(),
         bob_id,
         id,
@@ -197,9 +197,10 @@ async fn topics_save_validate_and_filter(pg: bool) {
     database
         .execute(&format!("DELETE FROM repositories WHERE id={id}"), &[])
         .await;
-    let topics = db::repositories::topics::repository_topics(database.pool(), &[id])
-        .await
-        .unwrap();
+    let topics =
+        codeyard::backend::db::repositories::topics::repository_topics(database.pool(), &[id])
+            .await
+            .unwrap();
     assert!(topics.is_empty());
     database.finish().await;
 }

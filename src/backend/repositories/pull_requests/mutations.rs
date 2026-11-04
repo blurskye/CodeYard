@@ -1,10 +1,14 @@
-use super::{database_error, OperationError};
 use crate::backend::ci::CiRuns;
-use crate::backend::db;
+use crate::backend::repositories::pull_requests::database_error;
+use crate::backend::repositories::pull_requests::OperationError;
+
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
-use crate::backend::notifications::mentions::{notify_mentions, MentionSource};
-use crate::backend::notifications::watchers::{notify_watchers, WatchEvent, WatchedItem};
+use crate::backend::notifications::mentions::notify_mentions;
+use crate::backend::notifications::mentions::MentionSource;
+use crate::backend::notifications::watchers::notify_watchers;
+use crate::backend::notifications::watchers::WatchEvent;
+use crate::backend::notifications::watchers::WatchedItem;
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::pull_requests::queue_pull_request_ci;
 use crate::backend::repositories::store::repo_store;
@@ -73,7 +77,9 @@ fn validate_maintainer_edit(
     head: &codeyard_db_core::models::Repository,
     enabled: bool,
 ) -> Result<(), OperationError> {
-    if enabled && !db::pull_requests::records::can_grant_maintainer_edit(actor, base, head) {
+    if enabled
+        && !crate::backend::db::pull_requests::records::can_grant_maintainer_edit(actor, base, head)
+    {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: "Only the personal fork owner can allow maintainer edits".into(),
@@ -126,7 +132,7 @@ pub(crate) async fn repair_open_pull(
         )
         .await
         .map_err(|error| head_publish_error(number, error))?;
-    super::branches::refresh_open_pull_request(
+    crate::backend::repositories::pull_requests::branches::refresh_open_pull_request(
         pool,
         repository,
         ci,
@@ -136,10 +142,11 @@ pub(crate) async fn repair_open_pull(
     )
     .await
     .map_err(|_| OperationError::Opened { number })?;
-    let current = db::pull_requests::records::get_pull_request_by_id(pool, existing.id)
-        .await
-        .map_err(|_| OperationError::Opened { number })?
-        .ok_or(OperationError::Opened { number })?;
+    let current =
+        crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, existing.id)
+            .await
+            .map_err(|_| OperationError::Opened { number })?
+            .ok_or(OperationError::Opened { number })?;
     if !suppress_ci {
         let _ = queue_pull_request_ci(
             pool,
@@ -152,7 +159,10 @@ pub(crate) async fn repair_open_pull(
         )
         .await;
     }
-    super::code_owners::request_code_owner_reviews(pool, ci, repository, &current, actor_id).await;
+    crate::backend::repositories::pull_requests::code_owners::request_code_owner_reviews(
+        pool, ci, repository, &current, actor_id,
+    )
+    .await;
     Ok(())
 }
 
@@ -167,8 +177,8 @@ pub async fn create_pull_request(
 ) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
     let credential = actor_id.into();
     let actor_id = credential.user;
-    let user = super::actor(pool, actor_id).await?;
-    let repository = db::repositories::records::get_repository(pool, &owner, &repo)
+    let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
+    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -176,7 +186,7 @@ pub async fn create_pull_request(
             message: "Repository not found".to_owned(),
         })?;
 
-    super::require_read(pool, &user, &repository).await?;
+    crate::backend::repositories::pull_requests::require_read(pool, &user, &repository).await?;
     let mut converted_retry = None;
     let (source_issue, title, body) = match req.source {
         PullRequestSource::Issue { issue } => {
@@ -189,13 +199,13 @@ pub async fn create_pull_request(
                     message: "Converting an issue requires repository write access".into(),
                 });
             }
-            if let Some(source) = db::issues::get_issue(pool, repository.id, issue)
+            if let Some(source) = crate::backend::db::issues::get_issue(pool, repository.id, issue)
                 .await
                 .map_err(database_error)?
             {
                 (Some(issue), source.title, source.body)
             } else {
-                let converted = db::pull_requests::records::get_converted_pull_request(
+                let converted = crate::backend::db::pull_requests::records::get_converted_pull_request(
                     pool,
                     repository.id,
                     issue,
@@ -203,8 +213,8 @@ pub async fn create_pull_request(
                 .await
                 .map_err(database_error)?
                 .ok_or_else(|| {
-                    super::write_error(
-                        db::pull_requests::records::IssueConversionRefusal::Missing.into(),
+                    crate::backend::repositories::pull_requests::write_error(
+                        crate::backend::db::pull_requests::records::IssueConversionRefusal::Missing.into(),
                     )
                 })?;
                 let content = (Some(issue), converted.title.clone(), converted.body.clone());
@@ -214,8 +224,8 @@ pub async fn create_pull_request(
         }
         PullRequestSource::New { title, body } => (None, title, body.unwrap_or_default()),
     };
-    let checked = crate::backend::issues::validate_title(&title)
-        .and_then(|_| crate::backend::issues::validate_body(&body, false));
+    let checked = codeyard_model::issue_input::validate_title(&title)
+        .and_then(|_| codeyard_model::issue_input::validate_body(&body, false));
     if let Err(message) = checked {
         return Err(OperationError::Invalid {
             code: "validation_error",
@@ -232,18 +242,22 @@ pub async fn create_pull_request(
     )
     .await
     .map_err(|error| match error {
-        super::branches::HeadError::Unavailable => OperationError::Unavailable {
-            code: "database_error",
-            message: "Head repository lookup is unavailable".into(),
-        },
-        super::branches::HeadError::Missing | super::branches::HeadError::OutsideFork => {
+        crate::backend::repositories::pull_requests::branches::HeadError::Unavailable => {
+            OperationError::Unavailable {
+                code: "database_error",
+                message: "Head repository lookup is unavailable".into(),
+            }
+        }
+        crate::backend::repositories::pull_requests::branches::HeadError::Missing
+        | crate::backend::repositories::pull_requests::branches::HeadError::OutsideFork => {
             OperationError::Invalid {
                 code: "invalid_head",
                 message: "Head must be this repository or one of its forks".into(),
             }
         }
     })?;
-    super::require_read(pool, &user, &head_repository).await?;
+    crate::backend::repositories::pull_requests::require_read(pool, &user, &head_repository)
+        .await?;
     validate_maintainer_edit(
         user.id,
         repository.id,
@@ -298,8 +312,8 @@ pub async fn create_pull_request(
             || existing.head_branch != req.head_branch
             || existing.base_branch != req.base_branch
         {
-            return Err(super::write_error(
-                db::pull_requests::records::IssueConversionRefusal::Missing.into(),
+            return Err(crate::backend::repositories::pull_requests::write_error(
+                crate::backend::db::pull_requests::records::IssueConversionRefusal::Missing.into(),
             ));
         }
         repair_open_pull(
@@ -359,9 +373,9 @@ pub async fn create_pull_request(
             ),
         });
     }
-    let created = db::pull_requests::records::create_pull_request(
+    let created = crate::backend::db::pull_requests::records::create_pull_request(
         pool,
-        db::pull_requests::records::NewPullRequest {
+        crate::backend::db::pull_requests::records::NewPullRequest {
             repo_id: repository.id,
             head_repo_id: Some(head_repository.id),
             author_id: user.id,
@@ -381,22 +395,31 @@ pub async fn create_pull_request(
         Ok(pull_request) => pull_request,
         Err(error) => {
             if source_issue.is_some()
-                && error.is::<db::pull_requests::records::DuplicateOpenPullRequest>()
+                && error
+                    .is::<crate::backend::db::pull_requests::records::DuplicateOpenPullRequest>()
             {
                 return Err(OperationError::Conflict {
                     code: "conflict",
                     message: "A pull request is already open for these branches".into(),
                 });
             }
-            let number =
-                match error.downcast::<db::pull_requests::records::DuplicateOpenPullRequest>() {
-                    Ok(duplicate) => duplicate.number,
-                    Err(error) => return Err(super::write_error(error)),
-                };
-            let existing =
-                db::pull_requests::records::get_pull_request(pool, repository.id, number)
-                    .await
-                    .map_err(database_error)?;
+            let number = match error
+                .downcast::<crate::backend::db::pull_requests::records::DuplicateOpenPullRequest>(
+            ) {
+                Ok(duplicate) => duplicate.number,
+                Err(error) => {
+                    return Err(crate::backend::repositories::pull_requests::write_error(
+                        error,
+                    ))
+                }
+            };
+            let existing = crate::backend::db::pull_requests::records::get_pull_request(
+                pool,
+                repository.id,
+                number,
+            )
+            .await
+            .map_err(database_error)?;
             let Some(existing) = existing.filter(|pull| pull.state == "open") else {
                 return Err(OperationError::Conflict {
                     code: "revision_conflict",
@@ -438,7 +461,7 @@ pub async fn create_pull_request(
             .map_err(|error| head_publish_error(pull_request.number, error))?;
     }
 
-    super::branches::refresh_open_pull_request(
+    crate::backend::repositories::pull_requests::branches::refresh_open_pull_request(
         pool,
         &repository,
         ci,
@@ -450,14 +473,15 @@ pub async fn create_pull_request(
     .map_err(|_| OperationError::Opened {
         number: pull_request.number,
     })?;
-    let pull_request = db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
-        .await
-        .map_err(|_| OperationError::Opened {
-            number: pull_request.number,
-        })?
-        .ok_or(OperationError::Opened {
-            number: pull_request.number,
-        })?;
+    let pull_request =
+        crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
+            .await
+            .map_err(|_| OperationError::Opened {
+                number: pull_request.number,
+            })?
+            .ok_or(OperationError::Opened {
+                number: pull_request.number,
+            })?;
 
     let mut direct_recipients: Vec<_> = repository.personal_owner_id().into_iter().collect();
     if !direct_recipients.contains(&pull_request.author_id) {
@@ -534,10 +558,16 @@ pub async fn create_pull_request(
     )
     .await;
 
-    super::code_owners::request_code_owner_reviews(pool, ci, &repository, &pull_request, user.id)
-        .await;
+    crate::backend::repositories::pull_requests::code_owners::request_code_owner_reviews(
+        pool,
+        ci,
+        &repository,
+        &pull_request,
+        user.id,
+    )
+    .await;
 
-    let payload = super::emit_pull_request_event(
+    let payload = crate::backend::repositories::pull_requests::emit_pull_request_event(
         pool,
         ci.cluster.as_ref(),
         &repository,
@@ -548,7 +578,7 @@ pub async fn create_pull_request(
     )
     .await;
     if !req.suppress_ci {
-        super::workflows::queue_pull_request_event_ci(
+        crate::backend::repositories::pull_requests::workflows::queue_pull_request_event_ci(
             pool,
             ci,
             &repository,
@@ -571,25 +601,27 @@ pub async fn update_pull_request(
     (repository_id, number): (i64, i32),
     req: UpdatePullRequestRequest,
 ) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
-    let (repository, owner) = super::repository(pool, repository_id).await?;
+    let (repository, owner) =
+        crate::backend::repositories::pull_requests::repository(pool, repository_id).await?;
     let repo = repository.name.clone();
 
-    let user = super::actor(pool, actor_id).await?;
-    super::require_read(pool, &user, &repository).await?;
-    let existing = db::pull_requests::records::get_pull_request(pool, repository.id, number)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".to_owned(),
-        })?;
+    let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
+    crate::backend::repositories::pull_requests::require_read(pool, &user, &repository).await?;
+    let existing =
+        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".to_owned(),
+            })?;
 
     let writer = crate::backend::repositories::access::can_write(pool, &user, &repository)
         .await
         .map_err(database_error)?;
     let head = if req.maintainer_can_modify.is_some() {
         match existing.head_repo_id {
-            Some(id) => db::repositories::records::get_repository_by_id(pool, id)
+            Some(id) => crate::backend::db::repositories::records::get_repository_by_id(pool, id)
                 .await
                 .map_err(database_error)?,
             None => None,
@@ -655,11 +687,11 @@ pub async fn update_pull_request(
     if req
         .title
         .as_ref()
-        .is_some_and(|title| crate::backend::issues::validate_title(title).is_err())
+        .is_some_and(|title| codeyard_model::issue_input::validate_title(title).is_err())
         || req
             .body
             .as_ref()
-            .is_some_and(|body| crate::backend::issues::validate_body(body, false).is_err())
+            .is_some_and(|body| codeyard_model::issue_input::validate_body(body, false).is_err())
         || !matches!(req.expected_state.as_str(), "open" | "closed" | "merged")
     {
         return Err(OperationError::Invalid {
@@ -676,11 +708,14 @@ pub async fn update_pull_request(
     let reopening = requested_state == Some("open") && existing.state == "closed";
     let reopened_base = if reopening {
         if let Some(stack) = existing.stack_id {
-            let members =
-                db::pull_requests::records::list_stack_members(pool, repository.id, stack)
-                    .await
-                    .map_err(super::write_error)?;
-            db::pull_requests::records::reopened_stack_base(&existing, &members)
+            let members = crate::backend::db::pull_requests::records::list_stack_members(
+                pool,
+                repository.id,
+                stack,
+            )
+            .await
+            .map_err(crate::backend::repositories::pull_requests::write_error)?;
+            crate::backend::db::pull_requests::records::reopened_stack_base(&existing, &members)
         } else {
             None
         }
@@ -699,17 +734,17 @@ pub async fn update_pull_request(
         None => None,
     };
     let base_changed = base_commit.is_some();
-    let new_base = base_commit
-        .as_ref()
-        .map(|(branch, sha)| db::pull_requests::records::NewBase {
+    let new_base = base_commit.as_ref().map(|(branch, sha)| {
+        crate::backend::db::pull_requests::records::NewBase {
             branch: branch.as_str(),
             sha: sha.as_str(),
             automatic_reopen: req.base.is_none() && reopened_base.is_some(),
-        });
-    let pull_request = db::pull_requests::records::update_pull_request(
+        }
+    });
+    let pull_request = crate::backend::db::pull_requests::records::update_pull_request(
         pool,
         existing.id,
-        db::discussions::DiscussionEdit {
+        crate::backend::db::discussions::DiscussionEdit {
             actor_id: user.id,
             expected_state: &req.expected_state,
             expected_updated,
@@ -717,17 +752,17 @@ pub async fn update_pull_request(
             body: req.body.as_deref(),
             state: requested_state,
         },
-        db::pull_requests::records::PullRequestUpdate {
+        crate::backend::db::pull_requests::records::PullRequestUpdate {
             base: new_base,
             maintainer_can_modify: req.maintainer_can_modify,
         },
-    ).await.map_err(|error| match error.downcast::<db::pull_requests::records::DuplicateOpenPullRequest>() {
+    ).await.map_err(|error| match error.downcast::<crate::backend::db::pull_requests::records::DuplicateOpenPullRequest>() {
         Ok(duplicate) => OperationError::Conflict {
             code: "conflict",
             message: format!("Pull request #{} is already open for these branches", duplicate.number),
         },
         Err(error) => {
-            if error.is::<db::pull_caps::PullCapReached>() {return super::write_error(error);}
+            if error.is::<crate::backend::db::pull_caps::PullCapReached>() {return crate::backend::repositories::pull_requests::write_error(error);}
             tracing::error!(pull_request_id = existing.id, "conditional pull request update failed");
             OperationError::Unavailable { code: "database_error", message: "Unable to save this entry; your submission was not confirmed".to_owned() }
         }
@@ -758,7 +793,7 @@ pub async fn update_pull_request(
     // Branches may have moved while the pull request was closed. Catch up now that
     // it is open again, and answer with what it is after that.
     let pull_request = if requested_state == Some("open") || base_changed {
-        super::branches::refresh_open_pull_request(
+        crate::backend::repositories::pull_requests::branches::refresh_open_pull_request(
             pool,
             &repository,
             ci,
@@ -768,7 +803,7 @@ pub async fn update_pull_request(
         )
         .await
         .map_err(|_| OperationError::Updated { number })?;
-        db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
+        crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
             .await
             .map_err(|_| OperationError::Updated { number })?
             .ok_or(OperationError::Updated { number })?
@@ -776,7 +811,7 @@ pub async fn update_pull_request(
         pull_request
     };
     if base_changed {
-        super::code_owners::request_code_owner_reviews(
+        crate::backend::repositories::pull_requests::code_owners::request_code_owner_reviews(
             pool,
             ci,
             &repository,
@@ -786,7 +821,7 @@ pub async fn update_pull_request(
         .await;
         // A new base can make workflows eligible that the old one did not, so queue them for it.
         // The `edited` event below does not start default pull request workflows.
-        super::workflows::queue_moved_pull_requests_ci(
+        crate::backend::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
             pool,
             ci,
             &repository,
@@ -808,7 +843,7 @@ pub async fn update_pull_request(
     } else {
         "reopened"
     };
-    let payload = super::emit_pull_request_event(
+    let payload = crate::backend::repositories::pull_requests::emit_pull_request_event(
         pool,
         ci.cluster.as_ref(),
         &repository,
@@ -818,7 +853,7 @@ pub async fn update_pull_request(
         extra,
     )
     .await;
-    super::workflows::queue_pull_request_event_ci(
+    crate::backend::repositories::pull_requests::workflows::queue_pull_request_event_ci(
         pool,
         ci,
         &repository,
@@ -870,9 +905,10 @@ pub async fn update_pull_request_latest(
                 Err(error @ OperationError::Conflict { .. }) => error,
                 result => return result,
             };
-        let latest = db::pull_requests::records::get_pull_request(pool, target.0, target.1)
-            .await
-            .map_err(database_error)?;
+        let latest =
+            crate::backend::db::pull_requests::records::get_pull_request(pool, target.0, target.1)
+                .await
+                .map_err(database_error)?;
         match latest {
             Some(latest)
                 if latest.state != req.expected_state
@@ -939,22 +975,23 @@ async fn stack_change_target(
     ),
     OperationError,
 > {
-    let repository = db::repositories::records::get_repository(pool, owner, repo)
+    let repository = crate::backend::db::repositories::records::get_repository(pool, owner, repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
         })?;
-    let user = super::actor(pool, actor_id).await?;
-    super::require_write(pool, &user, &repository).await?;
-    let existing = db::pull_requests::records::get_pull_request(pool, repository.id, number)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".to_owned(),
-        })?;
+    let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
+    crate::backend::repositories::pull_requests::require_write(pool, &user, &repository).await?;
+    let existing =
+        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".to_owned(),
+            })?;
     Ok((repository, user, existing))
 }
 
@@ -971,12 +1008,16 @@ pub async fn unstack_pull_request(
 ) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
     let (repository, user, existing) =
         stack_change_target(pool, actor_id, &owner, &repo, number).await?;
-    let unstacked = db::pull_requests::records::unstack_pull_requests(pool, user.id, existing.id)
-        .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Unable to save this change; it was not confirmed".to_owned(),
-        })?;
+    let unstacked = crate::backend::db::pull_requests::records::unstack_pull_requests(
+        pool,
+        user.id,
+        existing.id,
+    )
+    .await
+    .map_err(|_| OperationError::Unavailable {
+        code: "database_error",
+        message: "Unable to save this change; it was not confirmed".to_owned(),
+    })?;
     let Some(members) = unstacked else {
         return Err(OperationError::Denied {
             code: "forbidden",
@@ -988,16 +1029,31 @@ pub async fn unstack_pull_request(
     let mut open = Vec::new();
     for member in members.iter().filter(|pull| pull.state == "open") {
         if let Ok(Some(pull)) =
-            db::pull_requests::records::get_pull_request_by_id(pool, member.id).await
+            crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, member.id)
+                .await
         {
             open.push(pull);
         }
     }
-    super::workflows::queue_moved_pull_requests_ci(pool, ci, &repository, &open, user.id).await;
+    crate::backend::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
+        pool,
+        ci,
+        &repository,
+        &open,
+        user.id,
+    )
+    .await;
     for pull in &open {
-        super::code_owners::request_code_owner_reviews(pool, ci, &repository, pull, user.id).await;
+        crate::backend::repositories::pull_requests::code_owners::request_code_owner_reviews(
+            pool,
+            ci,
+            &repository,
+            pull,
+            user.id,
+        )
+        .await;
     }
-    db::pull_requests::records::get_pull_request_by_id(pool, existing.id)
+    crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, existing.id)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -1015,35 +1071,55 @@ pub async fn unstack_named_stack(
     namespace: (String, String),
     stack_id: i64,
 ) -> Result<usize, OperationError> {
-    let user = super::actor(pool, actor_id).await?;
-    let repository = db::repositories::records::get_repository(pool, &namespace.0, &namespace.1)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Repository not found".into(),
-        })?;
-    super::require_write(pool, &user, &repository).await?;
-    let rows =
-        db::pull_requests::records::unstack_named_stack(pool, user.id, repository.id, stack_id)
+    let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
+    let repository =
+        crate::backend::db::repositories::records::get_repository(pool, &namespace.0, &namespace.1)
             .await
             .map_err(database_error)?
-            .ok_or_else(|| OperationError::Denied {
-                code: "forbidden",
-                message: "Stack write denied".into(),
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Repository not found".into(),
             })?;
+    crate::backend::repositories::pull_requests::require_write(pool, &user, &repository).await?;
+    let rows = crate::backend::db::pull_requests::records::unstack_named_stack(
+        pool,
+        user.id,
+        repository.id,
+        stack_id,
+    )
+    .await
+    .map_err(database_error)?
+    .ok_or_else(|| OperationError::Denied {
+        code: "forbidden",
+        message: "Stack write denied".into(),
+    })?;
     let count = rows.len();
     let mut open = Vec::new();
     for member in rows.iter().filter(|p| p.state == "open") {
         if let Ok(Some(pull)) =
-            db::pull_requests::records::get_pull_request_by_id(pool, member.id).await
+            crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, member.id)
+                .await
         {
             open.push(pull);
         }
     }
-    super::workflows::queue_moved_pull_requests_ci(pool, ci, &repository, &open, user.id).await;
+    crate::backend::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
+        pool,
+        ci,
+        &repository,
+        &open,
+        user.id,
+    )
+    .await;
     for pull in &open {
-        super::code_owners::request_code_owner_reviews(pool, ci, &repository, pull, user.id).await;
+        crate::backend::repositories::pull_requests::code_owners::request_code_owner_reviews(
+            pool,
+            ci,
+            &repository,
+            pull,
+            user.id,
+        )
+        .await;
     }
     Ok(count)
 }
@@ -1057,16 +1133,17 @@ pub async fn join_stack_batch(
     ids: &[i64],
     creating: bool,
 ) -> Result<(), OperationError> {
-    let user = super::actor(pool, actor_id).await?;
-    let repository = db::repositories::records::get_repository(pool, &namespace.0, &namespace.1)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Repository not found".into(),
-        })?;
-    super::require_write(pool, &user, &repository).await?;
-    let result = db::pull_requests::records::join_pull_request_stack_batch(
+    let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
+    let repository =
+        crate::backend::db::repositories::records::get_repository(pool, &namespace.0, &namespace.1)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Repository not found".into(),
+            })?;
+    crate::backend::repositories::pull_requests::require_write(pool, &user, &repository).await?;
+    let result = crate::backend::db::pull_requests::records::join_pull_request_stack_batch(
         pool,
         user.id,
         repository.id,
@@ -1077,8 +1154,10 @@ pub async fn join_stack_batch(
     .await
     .map_err(database_error)?;
     match result {
-        db::pull_requests::records::StackJoin::Joined(id) if id == root => {}
-        db::pull_requests::records::StackJoin::Refused(reason) => return Err(join_refusal(reason)),
+        crate::backend::db::pull_requests::records::StackJoin::Joined(id) if id == root => {}
+        crate::backend::db::pull_requests::records::StackJoin::Refused(reason) => {
+            return Err(join_refusal(reason))
+        }
         _ => {
             return Err(OperationError::Conflict {
                 code: "conflict",
@@ -1087,15 +1166,22 @@ pub async fn join_stack_batch(
         }
     }
     for id in ids.iter().skip(if creating { 1 } else { 0 }) {
-        let pull = db::pull_requests::records::get_pull_request_by_id(pool, *id)
+        let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, *id)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Unavailable {
                 code: "database_error",
                 message: "Saved stack member could not be loaded".into(),
             })?;
-        super::code_owners::request_code_owner_reviews(pool, ci, &repository, &pull, user.id).await;
-        super::workflows::queue_moved_pull_requests_ci(
+        crate::backend::repositories::pull_requests::code_owners::request_code_owner_reviews(
+            pool,
+            ci,
+            &repository,
+            &pull,
+            user.id,
+        )
+        .await;
+        crate::backend::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
             pool,
             ci,
             &repository,
@@ -1117,25 +1203,37 @@ pub async fn join_stack(
 ) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
     let (repository, user, existing) =
         stack_change_target(pool, actor_id, &owner, &repo, number).await?;
-    let joined = db::pull_requests::records::join_pull_request_stack(pool, user.id, existing.id)
-        .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Unable to save this change; it was not confirmed".to_owned(),
-        })?;
-    if let db::pull_requests::records::StackJoin::Refused(reason) = joined {
+    let joined = crate::backend::db::pull_requests::records::join_pull_request_stack(
+        pool,
+        user.id,
+        existing.id,
+    )
+    .await
+    .map_err(|_| OperationError::Unavailable {
+        code: "database_error",
+        message: "Unable to save this change; it was not confirmed".to_owned(),
+    })?;
+    if let crate::backend::db::pull_requests::records::StackJoin::Refused(reason) = joined {
         return Err(join_refusal(reason));
     }
-    let pull = db::pull_requests::records::get_pull_request_by_id(pool, existing.id)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".to_owned(),
-        })?;
-    super::code_owners::request_code_owner_reviews(pool, ci, &repository, &pull, user.id).await;
+    let pull =
+        crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, existing.id)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".to_owned(),
+            })?;
+    crate::backend::repositories::pull_requests::code_owners::request_code_owner_reviews(
+        pool,
+        ci,
+        &repository,
+        &pull,
+        user.id,
+    )
+    .await;
     // The layer now merges into its stack's trunk, so workflows for that trunk may now apply.
-    super::workflows::queue_moved_pull_requests_ci(
+    crate::backend::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
         pool,
         ci,
         &repository,
@@ -1147,8 +1245,10 @@ pub async fn join_stack(
 }
 
 /// The answer for a pull request that cannot join a stack.
-fn join_refusal(reason: db::pull_requests::records::StackRefusal) -> OperationError {
-    use db::pull_requests::records::{StackRefusal, MAX_STACK_LAYERS};
+fn join_refusal(
+    reason: crate::backend::db::pull_requests::records::StackRefusal,
+) -> OperationError {
+    use crate::backend::db::pull_requests::records::{StackRefusal, MAX_STACK_LAYERS};
     match reason {
         StackRefusal::Missing => OperationError::Missing {
             code: "not_found",
@@ -1217,24 +1317,25 @@ pub async fn set_pull_request_draft(
     expected: Option<&str>,
     is_draft: bool,
 ) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
-    let user = super::actor(pool, actor_id).await?;
-    let repository = db::repositories::records::get_repository(pool, &owner, &repo)
+    let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
+    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
         })?;
-    super::require_read(pool, &user, &repository).await?;
-    let existing = db::pull_requests::records::get_pull_request(pool, repository.id, number)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".to_owned(),
-        })?;
+    crate::backend::repositories::pull_requests::require_read(pool, &user, &repository).await?;
+    let existing =
+        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".to_owned(),
+            })?;
 
-    let outcome = db::pull_requests::records::set_pull_request_draft(
+    let outcome = crate::backend::db::pull_requests::records::set_pull_request_draft(
         pool,
         existing.id,
         user.id,
@@ -1243,8 +1344,8 @@ pub async fn set_pull_request_draft(
     )
     .await
     .map_err(|error| {
-        if error.is::<db::pull_caps::PullCapReached>() {
-            return super::write_error(error);
+        if error.is::<crate::backend::db::pull_caps::PullCapReached>() {
+            return crate::backend::repositories::pull_requests::write_error(error);
         }
         tracing::error!(
             pull_request_id = existing.id,
@@ -1256,26 +1357,26 @@ pub async fn set_pull_request_draft(
         }
     })?;
     let pull_request = match outcome {
-        db::pull_requests::records::ReadyOutcome::Changed => {
+        crate::backend::db::pull_requests::records::ReadyOutcome::Changed => {
             return Err(OperationError::Conflict { code: "stale_revision", message: "This pull request changed after the form was opened. Reload before trying again.".to_owned() })
         }
-        db::pull_requests::records::ReadyOutcome::Ready(pull_request) => *pull_request,
-        db::pull_requests::records::ReadyOutcome::Missing => {
+        crate::backend::db::pull_requests::records::ReadyOutcome::Ready(pull_request) => *pull_request,
+        crate::backend::db::pull_requests::records::ReadyOutcome::Missing => {
             return Err(OperationError::Missing { code: "not_found", message: "Pull request not found".to_owned() })
         }
-        db::pull_requests::records::ReadyOutcome::Denied => {
+        crate::backend::db::pull_requests::records::ReadyOutcome::Denied => {
             return Err(OperationError::Denied { code: "forbidden", message: "Only the author and people with write access can change draft status".to_owned() })
         }
-        db::pull_requests::records::ReadyOutcome::NotOpen => {
+        crate::backend::db::pull_requests::records::ReadyOutcome::NotOpen => {
             return Err(OperationError::Invalid { code: "invalid_state", message: "Pull request is not open".to_owned() })
         }
-        db::pull_requests::records::ReadyOutcome::NotDraft => {
+        crate::backend::db::pull_requests::records::ReadyOutcome::NotDraft => {
             return Err(OperationError::Conflict { code: "invalid_state", message: "Pull request already has this draft status".to_owned() })
         }
     };
 
     if is_draft {
-        let payload = super::emit_pull_request_event(
+        let payload = crate::backend::repositories::pull_requests::emit_pull_request_event(
             pool,
             ci.cluster.as_ref(),
             &repository,
@@ -1285,7 +1386,7 @@ pub async fn set_pull_request_draft(
             serde_json::Map::new(),
         )
         .await;
-        super::workflows::queue_pull_request_event_ci(
+        crate::backend::repositories::pull_requests::workflows::queue_pull_request_event_ci(
             pool,
             ci,
             &repository,
@@ -1301,28 +1402,36 @@ pub async fn set_pull_request_draft(
     // a new pull request does. The pull request is ready already, so a retry would be refused:
     // the event and its workflows go out even when the catch-up fails, and the failure is
     // reported after them.
-    let refreshed = super::branches::refresh_open_pull_request(
-        pool,
-        &repository,
-        ci,
-        user.id,
-        pull_request.id,
-        Some(codeyard_db_core::models::AccessLevel::Owner),
-    )
-    .await;
+    let refreshed =
+        crate::backend::repositories::pull_requests::branches::refresh_open_pull_request(
+            pool,
+            &repository,
+            ci,
+            user.id,
+            pull_request.id,
+            Some(codeyard_db_core::models::AccessLevel::Owner),
+        )
+        .await;
     if let Err(error) = &refreshed {
         tracing::warn!(pull_request_id = pull_request.id, %error, "ready pull request revisions were not refreshed");
     }
-    let current = db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
-        .await
-        .ok()
-        .flatten();
+    let current =
+        crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
+            .await
+            .ok()
+            .flatten();
     let complete = refreshed.is_ok() && current.is_some();
     let pull_request = current.unwrap_or(pull_request);
-    super::code_owners::request_code_owner_reviews(pool, ci, &repository, &pull_request, user.id)
-        .await;
+    crate::backend::repositories::pull_requests::code_owners::request_code_owner_reviews(
+        pool,
+        ci,
+        &repository,
+        &pull_request,
+        user.id,
+    )
+    .await;
 
-    let payload = super::emit_pull_request_event(
+    let payload = crate::backend::repositories::pull_requests::emit_pull_request_event(
         pool,
         ci.cluster.as_ref(),
         &repository,
@@ -1332,7 +1441,7 @@ pub async fn set_pull_request_draft(
         serde_json::Map::new(),
     )
     .await;
-    super::workflows::queue_pull_request_event_ci(
+    crate::backend::repositories::pull_requests::workflows::queue_pull_request_event_ci(
         pool,
         ci,
         &repository,

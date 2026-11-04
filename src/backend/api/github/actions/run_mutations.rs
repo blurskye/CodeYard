@@ -1,10 +1,13 @@
 //! Cancellation and deletion retain the worker's authority, cleanup, and notification paths.
-use super::{run, workflows::admission_error};
-use crate::backend::{
-    api::github::{auth, repository, Error, Result},
-    app::AppState,
-    db::{self, ci::CiRunDeletion},
-};
+use crate::backend::api::github::actions::run;
+use crate::backend::api::github::actions::workflows::admission_error;
+
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::ci::CiRunDeletion;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -21,7 +24,7 @@ async fn cancel(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Response> {
     let (repo, authentication) = repository(&state, &headers, &owner, &name, true).await?;
-    let authentication = authentication.ok_or_else(auth::required)?;
+    let authentication = authentication.ok_or_else(crate::backend::api::github::auth::required)?;
     let run = run(&state, repo.id, id).await?;
     // Both engines use bounded process-group termination, rather than leaving always() jobs running.
     if !state
@@ -51,8 +54,8 @@ async fn remove(
     kind: CiRunDeletion,
 ) -> Result<StatusCode> {
     let (repo, authentication) = repository(state, headers, owner, name, true).await?;
-    let authentication = authentication.ok_or_else(auth::required)?;
-    if !db::ci::delete_ci_run_data(
+    let authentication = authentication.ok_or_else(crate::backend::api::github::auth::required)?;
+    if !crate::backend::db::ci::delete_ci_run_data(
         &state.pool,
         authentication.database_actor(),
         repo.id,

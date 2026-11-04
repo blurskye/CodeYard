@@ -1,14 +1,13 @@
 //! Organization settings, bounded native commands and authorized page projections.
 
-use super::INDEX;
 use crate::backend::api::http::context::PageContext;
+use crate::backend::api::organizations::INDEX;
 use crate::backend::app::AppState;
 use crate::backend::db::interactions::InteractionScope;
-use crate::backend::db::organizations;
+
 use crate::backend::db::organizations::OrganizationOutcome::*;
 use crate::backend::db::organizations::*;
-use crate::backend::repositories::lifecycle;
-use crate::backend::webhooks;
+
 use axum::extract::rejection::FormRejection;
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -32,9 +31,9 @@ const DELETED_NOTICE: &str = "organization-deleted";
 pub(super) enum Command {
     Create(NewOrganization),
     Profile(OrganizationProfile),
-    Membership(super::membership::Command),
-    Role(super::roles::Command),
-    Team(super::teams::Command),
+    Membership(crate::backend::api::organizations::membership::Command),
+    Role(crate::backend::api::organizations::roles::Command),
+    Team(crate::backend::api::organizations::teams::Command),
     Delete,
 }
 
@@ -187,19 +186,24 @@ impl Command {
             | "unblock-user"
             | "cancel-invitation"
             | "membership-visibility" => Self::Membership(
-                super::membership::Command::parse(form).map_err(|()| INVALID_FORM)?,
+                crate::backend::api::organizations::membership::Command::parse(form)
+                    .map_err(|()| INVALID_FORM)?,
             ),
             "assign-user-role"
             | "assign-team-role"
             | "revoke-user-role"
             | "revoke-team-role"
             | "revoke-all-user-roles"
-            | "revoke-all-team-roles" => Self::Role(super::roles::Command::parse(form)?),
+            | "revoke-all-team-roles" => Self::Role(
+                crate::backend::api::organizations::roles::Command::parse(form)?,
+            ),
             "delete-organization" => match current {
                 Some(org) if field(form, "confirm") == org.name => Self::Delete,
                 _ => return Err("Type the organization name to confirm deletion."),
             },
-            _ => Self::Team(super::teams::Command::parse(form)?),
+            _ => Self::Team(crate::backend::api::organizations::teams::Command::parse(
+                form,
+            )?),
         };
         if current.is_none() && !matches!(command, Self::Create(_)) {
             return Err(INVALID_FORM);
@@ -270,7 +274,9 @@ pub(super) async fn selected(
     actor: i64,
     org: i64,
 ) -> Result<OrganizationMetadata, Response> {
-    match organizations::get_organization_metadata(&ctx.state.pool, actor, org).await {
+    match crate::backend::db::organizations::get_organization_metadata(&ctx.state.pool, actor, org)
+        .await
+    {
         Ok(Applied(value)) => Ok(value),
         Ok(_) => Err(not_found(ctx)),
         Err(_) => Err(unavailable(ctx)),
@@ -346,7 +352,13 @@ pub(super) async fn respond_with_hook_draft(
     let can_recover = ctx.administrator().is_some();
     let (can_manage, is_owner) = match org {
         Some(org) => {
-            match organizations::get_organization_role(&ctx.state.pool, actor, org).await {
+            match crate::backend::db::organizations::get_organization_role(
+                &ctx.state.pool,
+                actor,
+                org,
+            )
+            .await
+            {
                 Ok(Applied(role)) => (administers(role), role == OrgRole::Owner),
                 Ok(_) => return not_found(ctx),
                 Err(_) => return unavailable(ctx),
@@ -394,7 +406,12 @@ pub(super) async fn respond_with_hook_draft(
     // Only the overview offers organization deletion.
     let owned_repositories = match org {
         Some(org) if is_owner && tab == "overview" => {
-            match organizations::count_organization_repositories(&ctx.state.pool, actor, org).await
+            match crate::backend::db::organizations::count_organization_repositories(
+                &ctx.state.pool,
+                actor,
+                org,
+            )
+            .await
             {
                 Ok(Applied(count)) => count,
                 _ => return unavailable(ctx),
@@ -418,8 +435,12 @@ pub(super) async fn respond_with_hook_draft(
     // The picker needs names only, so profile text stays out of refusal pages.
     let mut ownerless_next = None;
     let ownerless_organizations = if org.is_none() && can_recover {
-        match organizations::list_ownerless_organizations(&ctx.state.pool, actor, ownerless_page)
-            .await
+        match crate::backend::db::organizations::list_ownerless_organizations(
+            &ctx.state.pool,
+            actor,
+            ownerless_page,
+        )
+        .await
         {
             Ok(Applied(values)) => {
                 if values.len() as i64 == PAGE_LIMIT {
@@ -466,7 +487,7 @@ pub(super) async fn respond_with_hook_draft(
         None
     };
     let membership_public = if let Some(org) = org {
-        match organizations::discovery::list_organizations(
+        match crate::backend::db::organizations::discovery::list_organizations(
             &ctx.state.pool,
             Some(actor),
             false,
@@ -545,7 +566,7 @@ pub(super) async fn respond_with_hook_draft(
         model.members_cursor = member_after;
         model.teams_cursor = team_after;
         if model.tab == "members" {
-            model.members = match organizations::list_organization_members(
+            model.members = match crate::backend::db::organizations::list_organization_members(
                 &ctx.state.pool,
                 actor,
                 org,
@@ -556,7 +577,7 @@ pub(super) async fn respond_with_hook_draft(
                 Ok(Applied(values)) => {
                     model.members_after = values.last().map(|v| v.id).unwrap_or(member_after);
                     model.more_members = values.len() as i64 == PAGE_LIMIT;
-                    match super::membership::project(
+                    match crate::backend::api::organizations::membership::project(
                         ctx,
                         values.into_iter().map(|v| (v.user_id, v.role)).collect(),
                     )
@@ -571,11 +592,12 @@ pub(super) async fn respond_with_hook_draft(
             };
         }
         if model.tab == "teams" {
-            model.selected_team = match super::teams::detail(ctx, actor, org).await {
-                Ok(value) => value,
-                Err(response) => return response,
-            };
-            model.teams = match organizations::list_organization_teams(
+            model.selected_team =
+                match crate::backend::api::organizations::teams::detail(ctx, actor, org).await {
+                    Ok(value) => value,
+                    Err(response) => return response,
+                };
+            model.teams = match crate::backend::db::organizations::list_organization_teams(
                 &ctx.state.pool,
                 actor,
                 org,
@@ -595,7 +617,9 @@ pub(super) async fn respond_with_hook_draft(
                 Err(_) => return unavailable(ctx),
             };
             let (repositories, more_repositories) =
-                match super::teams::repository_choices(ctx, actor, org).await {
+                match crate::backend::api::organizations::teams::repository_choices(ctx, actor, org)
+                    .await
+                {
                     Ok(choices) => choices,
                     Err(response) => return response,
                 };
@@ -661,7 +685,7 @@ pub(super) async fn respond_with_hook_draft(
             };
             let registries = match registries
                 .into_iter()
-                .map(super::private_registries::project)
+                .map(crate::backend::api::organizations::private_registries::project)
                 .collect::<Result<Vec<_>, _>>()
             {
                 Ok(registries) => registries,
@@ -695,7 +719,7 @@ pub(super) async fn respond_with_hook_draft(
             }));
         }
         if model.tab == "actions" {
-            match super::action_values::build(ctx, actor, org).await {
+            match crate::backend::api::organizations::action_values::build(ctx, actor, org).await {
                 Ok(panel) => model.actions = Some(Box::new(panel)),
                 Err(
                     crate::backend::db::organization_values::ValueError::Denied
@@ -705,25 +729,32 @@ pub(super) async fn respond_with_hook_draft(
             }
         }
         if model.tab == "roles" {
-            model.roles = match super::roles::panel(ctx, actor, org).await {
-                Ok(panel) => Some(Box::new(panel)),
-                Err(response) => return response,
-            };
+            model.roles =
+                match crate::backend::api::organizations::roles::panel(ctx, actor, org).await {
+                    Ok(panel) => Some(Box::new(panel)),
+                    Err(response) => return response,
+                };
         }
         if model.tab == "settings" {
-            model.settings = match super::settings::panel(ctx, actor, org).await {
-                Ok(panel) => Some(Box::new(panel)),
-                Err(response) => return response,
-            };
+            model.settings =
+                match crate::backend::api::organizations::settings::panel(ctx, actor, org).await {
+                    Ok(panel) => Some(Box::new(panel)),
+                    Err(response) => return response,
+                };
         }
         if model.tab == "personal-access-tokens" {
-            model.tokens = match super::tokens::panel(ctx, actor, org).await {
-                Ok(panel) => Some(Box::new(panel)),
-                Err(response) => return response,
-            };
+            model.tokens =
+                match crate::backend::api::organizations::tokens::panel(ctx, actor, org).await {
+                    Ok(panel) => Some(Box::new(panel)),
+                    Err(response) => return response,
+                };
         }
         if model.tab == "properties" {
-            model.properties = match super::properties::panel(ctx, actor, org).await {
+            model.properties = match crate::backend::api::organizations::properties::panel(
+                ctx, actor, org,
+            )
+            .await
+            {
                 Ok(panel) => Some(Box::new(panel)),
                 Err(response) => return response,
             };
@@ -731,7 +762,7 @@ pub(super) async fn respond_with_hook_draft(
         if model.tab == "webhooks" {
             let base = format!("{INDEX}/{org}?tab=webhooks");
             let action_base = format!("{INDEX}/{org}/webhooks?tab=webhooks");
-            let place = webhooks::panel::Place {
+            let place = crate::backend::webhooks::panel::Place {
                 owner: crate::backend::db::webhooks::HookOwner::Organization(org),
                 base: &base,
                 action_base: &action_base,
@@ -741,7 +772,7 @@ pub(super) async fn respond_with_hook_draft(
             let viewer = ctx.require_user().ok();
             let built = match viewer {
                 Some(viewer) => {
-                    webhooks::panel::build(
+                    crate::backend::webhooks::panel::build(
                         &ctx.state.pool,
                         viewer,
                         &crate::backend::db::users::accounts::AccountCredential::Session(
@@ -753,7 +784,7 @@ pub(super) async fn respond_with_hook_draft(
                     )
                     .await
                 }
-                None => Err(webhooks::settings::HookError::Denied),
+                None => Err(crate::backend::webhooks::settings::HookError::Denied),
             };
             match built {
                 Ok(mut panel) => {
@@ -766,7 +797,8 @@ pub(super) async fn respond_with_hook_draft(
                     model.webhooks = Some(Box::new(panel));
                 }
                 Err(
-                    webhooks::settings::HookError::Denied | webhooks::settings::HookError::NotFound,
+                    crate::backend::webhooks::settings::HookError::Denied
+                    | crate::backend::webhooks::settings::HookError::NotFound,
                 ) => return not_found(ctx),
                 Err(_) => return unavailable(ctx),
             }
@@ -782,30 +814,35 @@ pub(super) async fn respond_with_hook_draft(
             let Some((outside_after, _)) = cursor(ctx, "outside_after") else {
                 return invalid(ctx);
             };
-            model.pending_invitations = match organizations::list_organization_invitations(
-                &ctx.state.pool,
-                actor,
-                org,
-                invitations_page,
-            )
-            .await
-            {
-                Ok(Applied(values)) => {
-                    if values.len() as i64 == PAGE_LIMIT {
-                        model.pending_invitations_next = values.last().map(|v|format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&failed_invitations_after={failed_after}&invitations_after={}",v.id));
+            model.pending_invitations =
+                match crate::backend::db::organizations::list_organization_invitations(
+                    &ctx.state.pool,
+                    actor,
+                    org,
+                    invitations_page,
+                )
+                .await
+                {
+                    Ok(Applied(values)) => {
+                        if values.len() as i64 == PAGE_LIMIT {
+                            model.pending_invitations_next = values.last().map(|v|format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&failed_invitations_after={failed_after}&invitations_after={}",v.id));
+                        }
+                        match crate::backend::api::organizations::membership::project_invitations(
+                            ctx, values,
+                        )
+                        .await
+                        {
+                            Ok(invitations) => invitations,
+                            Err(response) => return response,
+                        }
                     }
-                    match super::membership::project_invitations(ctx, values).await {
-                        Ok(invitations) => invitations,
-                        Err(response) => return response,
-                    }
-                }
-                _ => return unavailable(ctx),
-            };
+                    _ => return unavailable(ctx),
+                };
             if is_owner {
                 let Some((blocks_after, _)) = cursor(ctx, "blocks_after") else {
                     return invalid(ctx);
                 };
-                model.blocked_users = match organizations::blocks::list(
+                model.blocked_users = match crate::backend::db::organizations::blocks::list(
                     &ctx.state.pool,
                     actor,
                     org,
@@ -828,37 +865,38 @@ pub(super) async fn respond_with_hook_draft(
                     }
                     _ => return unavailable(ctx),
                 };
-                model.outside_collaborators = match organizations::outside::list(
-                    &ctx.state.pool,
-                    actor,
-                    org,
-                    "all",
-                    outside_after,
-                    (0, PAGE_LIMIT),
-                )
-                .await
-                {
-                    Ok(Applied(users)) => {
-                        if users.len() as i64 == PAGE_LIMIT {
-                            model.outside_next = users.last().map(|user| format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&invitations_after={invitations_after}&failed_invitations_after={failed_after}&outside_after={}",user.id));
+                model.outside_collaborators =
+                    match crate::backend::db::organizations::outside::list(
+                        &ctx.state.pool,
+                        actor,
+                        org,
+                        "all",
+                        outside_after,
+                        (0, PAGE_LIMIT),
+                    )
+                    .await
+                    {
+                        Ok(Applied(users)) => {
+                            if users.len() as i64 == PAGE_LIMIT {
+                                model.outside_next = users.last().map(|user| format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&invitations_after={invitations_after}&failed_invitations_after={failed_after}&outside_after={}",user.id));
+                            }
+                            users
+                                .into_iter()
+                                .map(|user| view::OutsideCollaborator {
+                                    user_id: user.id,
+                                    username: user.username,
+                                })
+                                .collect()
                         }
-                        users
-                            .into_iter()
-                            .map(|user| view::OutsideCollaborator {
-                                user_id: user.id,
-                                username: user.username,
-                            })
-                            .collect()
-                    }
-                    _ => return unavailable(ctx),
-                };
+                        _ => return unavailable(ctx),
+                    };
             }
-            let filter = organizations::InvitationFilter {
+            let filter = crate::backend::db::organizations::InvitationFilter {
                 failed: true,
                 after: failed_after,
                 ..Default::default()
             };
-            model.failed_invitations = match organizations::invitation_page(
+            model.failed_invitations = match crate::backend::db::organizations::invitation_page(
                 &ctx.state.pool,
                 actor,
                 org,
@@ -871,7 +909,11 @@ pub(super) async fn respond_with_hook_draft(
                     if values.len() as i64 == PAGE_LIMIT {
                         model.failed_invitations_next = values.last().map(|v| format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&invitations_after={invitations_after}&failed_invitations_after={}", v.id));
                     }
-                    match super::membership::project_invitations(ctx, values).await {
+                    match crate::backend::api::organizations::membership::project_invitations(
+                        ctx, values,
+                    )
+                    .await
+                    {
                         Ok(invitations) => invitations,
                         Err(response) => return response,
                     }
@@ -880,51 +922,57 @@ pub(super) async fn respond_with_hook_draft(
             };
         }
     } else {
-        model.invitations = match organizations::list_received_organization_invitations(
-            &ctx.state.pool,
-            actor,
-            invitations_page,
-        )
-        .await
-        {
-            Ok(values) => {
-                if values.len() as i64 == PAGE_LIMIT {
-                    model.invitations_next = values.last().map(|v|format!("{INDEX}?after={after}&ownerless_after={ownerless_after}&invitations_after={}",v.id));
+        model.invitations =
+            match crate::backend::db::organizations::list_received_organization_invitations(
+                &ctx.state.pool,
+                actor,
+                invitations_page,
+            )
+            .await
+            {
+                Ok(values) => {
+                    if values.len() as i64 == PAGE_LIMIT {
+                        model.invitations_next = values.last().map(|v|format!("{INDEX}?after={after}&ownerless_after={ownerless_after}&invitations_after={}",v.id));
+                    }
+                    values
+                        .into_iter()
+                        .map(|invite| view::Invitation {
+                            id: invite.id,
+                            org_id: invite.org_id,
+                            name: invite.org_name,
+                            display_name: invite.org_display_name,
+                            role: invite.role,
+                        })
+                        .collect()
                 }
-                values
-                    .into_iter()
-                    .map(|invite| view::Invitation {
-                        id: invite.id,
-                        org_id: invite.org_id,
-                        name: invite.org_name,
-                        display_name: invite.org_display_name,
-                        role: invite.role,
-                    })
-                    .collect()
-            }
-            Err(_) => return unavailable(ctx),
-        };
+                Err(_) => return unavailable(ctx),
+            };
         if ["team", "team_members_after", "team_repositories_after"]
             .iter()
             .any(|key| ctx.query.contains_key(*key))
         {
             return invalid(ctx);
         }
-        model.organizations =
-            match organizations::list_actor_organizations(&ctx.state.pool, actor, page).await {
-                Ok(Applied(values)) => {
-                    model.after = values.last().map(|v| v.id).unwrap_or(after);
-                    model.more_organizations = values.len() as i64 == PAGE_LIMIT;
-                    values.into_iter().map(metadata).collect()
-                }
-                Ok(_) => {
-                    return ctx.error(
-                        StatusCode::FORBIDDEN,
-                        "This organization operation is not permitted.",
-                    )
-                }
-                Err(_) => return unavailable(ctx),
-            };
+        model.organizations = match crate::backend::db::organizations::list_actor_organizations(
+            &ctx.state.pool,
+            actor,
+            page,
+        )
+        .await
+        {
+            Ok(Applied(values)) => {
+                model.after = values.last().map(|v| v.id).unwrap_or(after);
+                model.more_organizations = values.len() as i64 == PAGE_LIMIT;
+                values.into_iter().map(metadata).collect()
+            }
+            Ok(_) => {
+                return ctx.error(
+                    StatusCode::FORBIDDEN,
+                    "This organization operation is not permitted.",
+                )
+            }
+            Err(_) => return unavailable(ctx),
+        };
     }
     // An organization's settings are titled for the organization, not the personal account.
     let title = match &model.selected {
@@ -1010,7 +1058,7 @@ pub(super) fn destination(ctx: &PageContext, org: Option<i64>, keep_team: bool) 
         if let Some(property) = ctx
             .query
             .get("property")
-            .filter(|property| organizations::properties::valid_name(property))
+            .filter(|property| crate::backend::db::organizations::properties::valid_name(property))
         {
             query.append_pair("property", property);
         }
@@ -1059,7 +1107,9 @@ async fn delete_with_repositories(
     )
     .await
     .map_err(|error| {
-        if let Some(error) = error.downcast_ref::<lifecycle::StorageError>() {
+        if let Some(error) =
+            error.downcast_ref::<crate::backend::repositories::lifecycle::StorageError>()
+        {
             ctx.error(StatusCode::CONFLICT, error.message)
         } else {
             unavailable(ctx)
@@ -1084,14 +1134,23 @@ async fn apply(
             let credential = crate::backend::db::users::accounts::AccountCredential::Session(
                 ctx.session_id.as_deref().unwrap_or(""),
             );
-            organizations::update_organization_profile(pool, actor, &credential, org, &profile)
-                .await
-                .map(unit)
+            crate::backend::db::organizations::update_organization_profile(
+                pool,
+                actor,
+                &credential,
+                org,
+                &profile,
+            )
+            .await
+            .map(unit)
         }
         Command::Membership(command) => {
             // An unknown username is the one Missing that the form reports by name.
-            let add = matches!(command, super::membership::Command::Invite { .. });
-            return super::membership::apply(ctx, actor, org, command)
+            let add = matches!(
+                command,
+                crate::backend::api::organizations::membership::Command::Invite { .. }
+            );
+            return crate::backend::api::organizations::membership::apply(ctx, actor, org, command)
                 .await
                 .map(|outcome| match outcome {
                     Missing if !add => Denied,
@@ -1099,7 +1158,7 @@ async fn apply(
                 });
         }
         Command::Role(command) => {
-            return super::roles::apply(ctx, actor, org, command)
+            return crate::backend::api::organizations::roles::apply(ctx, actor, org, command)
                 .await
                 .map_err(|_| unavailable(ctx))
                 .map(|outcome| {
@@ -1111,7 +1170,7 @@ async fn apply(
                 });
         }
         Command::Team(command) => {
-            return super::teams::apply(ctx, actor, org, command)
+            return crate::backend::api::organizations::teams::apply(ctx, actor, org, command)
                 .await
                 .map(|outcome| {
                     if matches!(outcome, Missing) {
@@ -1201,15 +1260,18 @@ pub(super) async fn mutate(
             .await
         }
     };
-    let self_removal = matches!(&command, Command::Membership(super::membership::Command::Remove { user } | super::membership::Command::ConvertOutside { user }) if *user == actor);
+    let self_removal = matches!(&command, Command::Membership(crate::backend::api::organizations::membership::Command::Remove { user } | crate::backend::api::organizations::membership::Command::ConvertOutside { user }) if *user == actor);
     // Every removal needs the removed account's username typed in that row's confirmation field.
     let removed = match &command {
         Command::Membership(
-            super::membership::Command::Remove { user }
-            | super::membership::Command::ConvertOutside { user }
-            | super::membership::Command::RemoveOutside { user },
+            crate::backend::api::organizations::membership::Command::Remove { user }
+            | crate::backend::api::organizations::membership::Command::ConvertOutside { user }
+            | crate::backend::api::organizations::membership::Command::RemoveOutside { user },
         )
-        | Command::Team(super::teams::Command::RemoveMember { user, .. }) => Some(*user),
+        | Command::Team(crate::backend::api::organizations::teams::Command::RemoveMember {
+            user,
+            ..
+        }) => Some(*user),
         _ => None,
     };
     if let Some(user) = removed {
@@ -1240,19 +1302,19 @@ pub(super) async fn mutate(
     let membership_change = matches!(
         &command,
         Command::Membership(
-            super::membership::Command::ChangeRole { .. }
-                | super::membership::Command::Remove { .. }
-                | super::membership::Command::ConvertOutside { .. }
+            crate::backend::api::organizations::membership::Command::ChangeRole { .. }
+                | crate::backend::api::organizations::membership::Command::Remove { .. }
+                | crate::backend::api::organizations::membership::Command::ConvertOutside { .. }
         )
     );
     let team_deleted = matches!(
         &command,
-        Command::Team(super::teams::Command::Delete { .. })
+        Command::Team(crate::backend::api::organizations::teams::Command::Delete { .. })
     );
     let organization_deleted = matches!(&command, Command::Delete);
     let outcome = match command {
         Command::Create(input) => {
-            organizations::create_organization(&ctx.state.pool, actor, &input)
+            crate::backend::db::organizations::create_organization(&ctx.state.pool, actor, &input)
                 .await
                 .map(unit)
                 .map_err(|_| unavailable(&ctx))

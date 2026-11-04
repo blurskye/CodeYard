@@ -1,5 +1,7 @@
 use super::*;
-use crate::backend::{ci::CiConfig, repositories::store::RepoStore, storage::ObjectStore};
+use crate::backend::ci::CiConfig;
+use crate::backend::repositories::store::RepoStore;
+use crate::backend::storage::ObjectStore;
 use base64::{engine::general_purpose::STANDARD, Engine};
 
 async fn fixture() -> (tempfile::TempDir, Arc<AppState>, Repository, i64) {

@@ -1,10 +1,13 @@
 //! Team ingress and authorized detail projections; DAO policy remains authoritative.
 
-use super::organization;
-use super::organization::{invalid, not_found, unavailable, Fields, INVALID_FORM};
 use crate::backend::api::http::context::PageContext;
+use crate::backend::api::organizations::organization::invalid;
+use crate::backend::api::organizations::organization::not_found;
+use crate::backend::api::organizations::organization::unavailable;
+use crate::backend::api::organizations::organization::Fields;
+use crate::backend::api::organizations::organization::INVALID_FORM;
 use crate::backend::app::AppState;
-use crate::backend::db::organizations;
+
 use crate::backend::db::organizations::*;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -56,12 +59,19 @@ pub(super) enum Command {
 }
 impl Command {
     pub(super) fn parse(form: &Fields) -> Result<Self, &'static str> {
-        let team = || organization::id(form, "team_id").map_err(|()| INVALID_FORM);
-        let privacy =
-            || TeamPrivacy::parse(organization::field(form, "privacy")).map_err(|_| PRIVACY_RULE);
+        let team = || {
+            crate::backend::api::organizations::organization::id(form, "team_id")
+                .map_err(|()| INVALID_FORM)
+        };
+        let privacy = || {
+            TeamPrivacy::parse(crate::backend::api::organizations::organization::field(
+                form, "privacy",
+            ))
+            .map_err(|_| PRIVACY_RULE)
+        };
         let parent = if form.contains_key("parent_team_id") {
             Some(
-                organization::optional(form, "parent_team_id")
+                crate::backend::api::organizations::organization::optional(form, "parent_team_id")
                     .map(str::parse::<i64>)
                     .transpose()
                     .map_err(|_| INVALID_FORM)?,
@@ -73,7 +83,7 @@ impl Command {
         let profile = |name: &str, name_rule: &'static str| -> Result<TeamProfile, &'static str> {
             TeamProfile::new(
                 name,
-                organization::optional(form, "description"),
+                crate::backend::api::organizations::organization::optional(form, "description"),
                 privacy()?,
             )
             .and_then(|profile| profile.with_parent(parent))
@@ -82,59 +92,76 @@ impl Command {
                 _ => INVALID_FORM,
             })
         };
-        Ok(match organization::field(form, "action") {
-            "team" => {
-                let slug = organization::field(form, "slug");
-                // A blank display name shows the team name, so a bad team name is reported as one.
-                let display =
-                    organization::optional(form, "name").filter(|name| !name.trim().is_empty());
-                let (name, name_rule) = match display {
-                    Some(name) => (name, DISPLAY_NAME_RULE),
-                    None => (slug, TEAM_NAME_RULE),
-                };
-                Self::Create(
-                    NewTeam::new(slug, profile(name, name_rule)?).map_err(|error| match error {
-                        OrganizationInputError::Slug => TEAM_NAME_RULE,
-                        _ => INVALID_FORM,
-                    })?,
-                )
-            }
-            "team-edit" => Self::Edit {
-                team: team()?,
-                profile: profile(organization::field(form, "name"), EDIT_NAME_RULE)?,
-            },
-            "team-delete" => {
-                let team = team()?;
-                if organization::field(form, "confirmation").trim() != team.to_string() {
-                    return Err("Type the displayed team ID to confirm deletion.");
+        Ok(
+            match crate::backend::api::organizations::organization::field(form, "action") {
+                "team" => {
+                    let slug =
+                        crate::backend::api::organizations::organization::field(form, "slug");
+                    // A blank display name shows the team name, so a bad team name is reported as one.
+                    let display =
+                        crate::backend::api::organizations::organization::optional(form, "name")
+                            .filter(|name| !name.trim().is_empty());
+                    let (name, name_rule) = match display {
+                        Some(name) => (name, DISPLAY_NAME_RULE),
+                        None => (slug, TEAM_NAME_RULE),
+                    };
+                    Self::Create(NewTeam::new(slug, profile(name, name_rule)?).map_err(
+                        |error| match error {
+                            OrganizationInputError::Slug => TEAM_NAME_RULE,
+                            _ => INVALID_FORM,
+                        },
+                    )?)
                 }
-                Self::Delete { team }
-            }
-            "team-member" => Self::AddMember {
-                team: team()?,
-                username: organization::username(form).map_err(|()| INVALID_FORM)?,
-                role: TeamRole::parse(organization::field(form, "role")).map_err(|_| ROLE_RULE)?,
+                "team-edit" => Self::Edit {
+                    team: team()?,
+                    profile: profile(
+                        crate::backend::api::organizations::organization::field(form, "name"),
+                        EDIT_NAME_RULE,
+                    )?,
+                },
+                "team-delete" => {
+                    let team = team()?;
+                    if crate::backend::api::organizations::organization::field(form, "confirmation")
+                        .trim()
+                        != team.to_string()
+                    {
+                        return Err("Type the displayed team ID to confirm deletion.");
+                    }
+                    Self::Delete { team }
+                }
+                "team-member" => Self::AddMember {
+                    team: team()?,
+                    username: crate::backend::api::organizations::organization::username(form)
+                        .map_err(|()| INVALID_FORM)?,
+                    role: TeamRole::parse(crate::backend::api::organizations::organization::field(
+                        form, "role",
+                    ))
+                    .map_err(|_| ROLE_RULE)?,
+                },
+                "remove-team-member" => Self::RemoveMember {
+                    team: team()?,
+                    user: crate::backend::api::organizations::organization::id(form, "user_id")
+                        .map_err(|()| INVALID_FORM)?,
+                },
+                "grant" => Self::Grant {
+                    team: team()?,
+                    repo: crate::backend::api::organizations::organization::id(form, "repo_id")
+                        .map_err(|()| REPOSITORY_RULE)?,
+                    permission: TeamRepositoryPermission::new(
+                        crate::backend::api::organizations::organization::field(form, "permission")
+                            .parse()
+                            .map_err(|_| ACCESS_RULE)?,
+                    )
+                    .map_err(|_| ACCESS_RULE)?,
+                },
+                "revoke" => Self::Revoke {
+                    team: team()?,
+                    repo: crate::backend::api::organizations::organization::id(form, "repo_id")
+                        .map_err(|()| INVALID_FORM)?,
+                },
+                _ => return Err(INVALID_FORM),
             },
-            "remove-team-member" => Self::RemoveMember {
-                team: team()?,
-                user: organization::id(form, "user_id").map_err(|()| INVALID_FORM)?,
-            },
-            "grant" => Self::Grant {
-                team: team()?,
-                repo: organization::id(form, "repo_id").map_err(|()| REPOSITORY_RULE)?,
-                permission: TeamRepositoryPermission::new(
-                    organization::field(form, "permission")
-                        .parse()
-                        .map_err(|_| ACCESS_RULE)?,
-                )
-                .map_err(|_| ACCESS_RULE)?,
-            },
-            "revoke" => Self::Revoke {
-                team: team()?,
-                repo: organization::id(form, "repo_id").map_err(|()| INVALID_FORM)?,
-            },
-            _ => return Err(INVALID_FORM),
-        })
+        )
     }
 }
 
@@ -144,26 +171,37 @@ pub(super) async fn apply(
     org: i64,
     command: Command,
 ) -> Result<OrganizationOutcome<()>, Response> {
-    use super::{membership::target, organization::unit};
+    use crate::backend::api::organizations::membership::target;
+    use crate::backend::api::organizations::organization::unit;
     let pool = &ctx.state.pool;
     let result = match command {
-        Command::Create(input) => {
-            organizations::create_organization_team(pool, ctx.database_actor(actor), org, &input)
-                .await
-                .map(unit)
-        }
-        Command::Edit { team, profile } => organizations::update_organization_team(
+        Command::Create(input) => crate::backend::db::organizations::create_organization_team(
             pool,
             ctx.database_actor(actor),
             org,
-            team,
-            &profile,
+            &input,
         )
         .await
         .map(unit),
+        Command::Edit { team, profile } => {
+            crate::backend::db::organizations::update_organization_team(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                team,
+                &profile,
+            )
+            .await
+            .map(unit)
+        }
         Command::Delete { team } => {
-            organizations::delete_organization_team(pool, ctx.database_actor(actor), org, team)
-                .await
+            crate::backend::db::organizations::delete_organization_team(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                team,
+            )
+            .await
         }
         Command::AddMember {
             team,
@@ -173,19 +211,21 @@ pub(super) async fn apply(
             let Some(user) = target(ctx, &username).await? else {
                 return Ok(OrganizationOutcome::Denied);
             };
-            match organizations::get_organization_role(pool, user, org).await {
-                Ok(OrganizationOutcome::Applied(_)) => organizations::add_organization_team_member(
-                    pool,
-                    ctx.database_actor(actor),
-                    org,
-                    team,
-                    user,
-                    role,
-                )
-                .await
-                .map(unit),
+            match crate::backend::db::organizations::get_organization_role(pool, user, org).await {
+                Ok(OrganizationOutcome::Applied(_)) => {
+                    crate::backend::db::organizations::add_organization_team_member(
+                        pool,
+                        ctx.database_actor(actor),
+                        org,
+                        team,
+                        user,
+                        role,
+                    )
+                    .await
+                    .map(unit)
+                }
                 Ok(_) => {
-                    let result = organizations::invite_team_member(
+                    let result = crate::backend::db::organizations::invite_team_member(
                         pool,
                         ctx.database_actor(actor),
                         org,
@@ -209,7 +249,7 @@ pub(super) async fn apply(
             }
         }
         Command::RemoveMember { team, user } => {
-            organizations::remove_organization_team_member(
+            crate::backend::db::organizations::remove_organization_team_member(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -222,7 +262,7 @@ pub(super) async fn apply(
             team,
             repo,
             permission,
-        } => organizations::grant_organization_team_repository(
+        } => crate::backend::db::organizations::grant_organization_team_repository(
             pool,
             ctx.database_actor(actor),
             org,
@@ -233,7 +273,7 @@ pub(super) async fn apply(
         .await
         .map(unit),
         Command::Revoke { team, repo } => {
-            organizations::revoke_organization_team_repository(
+            crate::backend::db::organizations::revoke_organization_team_repository(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -287,7 +327,14 @@ async fn repository_rows(
     org: i64,
     page: OrganizationPage,
 ) -> Result<Vec<OrganizationRepository>, Response> {
-    match organizations::list_organization_repositories(&ctx.state.pool, actor, org, page).await {
+    match crate::backend::db::organizations::list_organization_repositories(
+        &ctx.state.pool,
+        actor,
+        org,
+        page,
+    )
+    .await
+    {
         Ok(OrganizationOutcome::Applied(rows)) => Ok(rows),
         Ok(_) => Err(not_found(ctx)),
         Err(_) => Err(unavailable(ctx)),
@@ -315,7 +362,7 @@ pub(super) async fn detail(
         .ok_or_else(|| invalid(ctx))?;
     // A one-row scoped seek works independently of the teams-list cursor. Never
     // scan/truncate all teams or use an unscoped persistence read for this ID.
-    let selected = match organizations::list_organization_teams(
+    let selected = match crate::backend::db::organizations::list_organization_teams(
         &ctx.state.pool,
         actor,
         org,
@@ -331,10 +378,12 @@ pub(super) async fn detail(
     }
     .ok_or_else(|| not_found(ctx))?;
     let (members_cursor, member_page) =
-        organization::cursor(ctx, "team_members_after").ok_or_else(|| invalid(ctx))?;
+        crate::backend::api::organizations::organization::cursor(ctx, "team_members_after")
+            .ok_or_else(|| invalid(ctx))?;
     let (repositories_cursor, repo_page) =
-        organization::cursor(ctx, "team_repositories_after").ok_or_else(|| invalid(ctx))?;
-    let members = match organizations::list_organization_team_members(
+        crate::backend::api::organizations::organization::cursor(ctx, "team_repositories_after")
+            .ok_or_else(|| invalid(ctx))?;
+    let members = match crate::backend::db::organizations::list_organization_team_members(
         &ctx.state.pool,
         actor,
         org,
@@ -349,7 +398,7 @@ pub(super) async fn detail(
     };
     // This operation filters foreign/inactive/private repositories by effective
     // actor READ before LIMIT; team visibility alone never reveals grant IDs.
-    let repositories = match organizations::list_organization_team_repositories(
+    let repositories = match crate::backend::db::organizations::list_organization_team_repositories(
         &ctx.state.pool,
         actor,
         org,
@@ -363,9 +412,14 @@ pub(super) async fn detail(
         Err(_) => return Err(unavailable(ctx)),
     };
     Ok(Some(view::TeamDetail {
-        team: organization::team_view(selected.team, selected.member_count),
-        more_members: members.len() as i64 == organization::PAGE_LIMIT,
-        more_repositories: repositories.len() as i64 == organization::PAGE_LIMIT,
+        team: crate::backend::api::organizations::organization::team_view(
+            selected.team,
+            selected.member_count,
+        ),
+        more_members: members.len() as i64
+            == crate::backend::api::organizations::organization::PAGE_LIMIT,
+        more_repositories: repositories.len() as i64
+            == crate::backend::api::organizations::organization::PAGE_LIMIT,
         members_after: members.last().map(|v| v.id).unwrap_or(members_cursor),
         repositories_after: repositories
             .last()
@@ -373,7 +427,7 @@ pub(super) async fn detail(
             .unwrap_or(repositories_cursor),
         members_cursor,
         repositories_cursor,
-        members: super::membership::project(
+        members: crate::backend::api::organizations::membership::project(
             ctx,
             members.into_iter().map(|v| (v.user_id, v.role)).collect(),
         )
@@ -414,12 +468,16 @@ pub(super) async fn public_show(
         return public_team_not_found(&ctx);
     };
     let pool = &ctx.state.pool;
-    let org = match organizations::get_public_organization(pool, &name).await {
+    let org = match crate::backend::db::organizations::get_public_organization(pool, &name).await {
         Ok(Some(org)) => org,
         Ok(None) => return public_team_not_found(&ctx),
         Err(_) => return unavailable(&ctx),
     };
-    let public = match organizations::get_public_team(pool, actor, org.id, &slug).await {
+    let public = match crate::backend::db::organizations::get_public_team(
+        pool, actor, org.id, &slug,
+    )
+    .await
+    {
         Ok(Some(public)) => public,
         Ok(None) => return public_team_not_found(&ctx),
         Err(_) => return unavailable(&ctx),
@@ -428,21 +486,24 @@ pub(super) async fn public_show(
         .query
         .get("tab")
         .is_some_and(|tab| tab == "repositories");
-    let (after, page) = match organization::cursor(&ctx, "after") {
-        Some(value) => value,
-        None => return invalid(&ctx),
-    };
+    let (after, page) =
+        match crate::backend::api::organizations::organization::cursor(&ctx, "after") {
+            Some(value) => value,
+            None => return invalid(&ctx),
+        };
     let team_id = public.team.id;
     let (members, repositories, more, after) = if show_repositories {
-        let rows =
-            match organizations::list_public_team_repositories(pool, actor, org.id, team_id, page)
-                .await
-            {
-                Ok(Some(rows)) => rows,
-                Ok(None) => return public_team_not_found(&ctx),
-                Err(_) => return unavailable(&ctx),
-            };
-        let more = rows.len() as i64 == organization::PAGE_LIMIT;
+        let rows = match crate::backend::db::organizations::list_public_team_repositories(
+            pool, actor, org.id, team_id, page,
+        )
+        .await
+        {
+            Ok(Some(rows)) => rows,
+            Ok(None) => return public_team_not_found(&ctx),
+            Err(_) => return unavailable(&ctx),
+        };
+        let more =
+            rows.len() as i64 == crate::backend::api::organizations::organization::PAGE_LIMIT;
         let after = rows.last().map_or(after, |row| row.id);
         let repositories: Vec<view::RepositoryGrant> = rows
             .into_iter()
@@ -455,16 +516,19 @@ pub(super) async fn public_show(
             .collect();
         (Vec::new(), repositories, more, after)
     } else {
-        let rows = match organizations::list_public_team_members(pool, actor, org.id, team_id, page)
-            .await
+        let rows = match crate::backend::db::organizations::list_public_team_members(
+            pool, actor, org.id, team_id, page,
+        )
+        .await
         {
             Ok(Some(rows)) => rows,
             Ok(None) => return public_team_not_found(&ctx),
             Err(_) => return unavailable(&ctx),
         };
-        let more = rows.len() as i64 == organization::PAGE_LIMIT;
+        let more =
+            rows.len() as i64 == crate::backend::api::organizations::organization::PAGE_LIMIT;
         let after = rows.last().map_or(after, |row| row.id);
-        let members = match super::membership::project(
+        let members = match crate::backend::api::organizations::membership::project(
             &ctx,
             rows.into_iter()
                 .map(|row| (row.user_id, row.role))
@@ -486,8 +550,8 @@ pub(super) async fn public_show(
     } = public;
     let title = format!("{} / {}", org.name, team.name);
     let model = view::TeamPage {
-        organization: organization::public_view(org),
-        team: organization::team_view(team, member_count),
+        organization: crate::backend::api::organizations::organization::public_view(org),
+        team: crate::backend::api::organizations::organization::team_view(team, member_count),
         repository_count,
         manage,
         show_repositories,

@@ -1,10 +1,12 @@
 //! Archive redirects pin the revision, and the download repeats the normal read authorization.
-use super::{contents::store_error, repo_url, repository, Error, Result};
-use crate::backend::{
-    api::{http::middleware::wait_for_slot, repos::code::archive::archive_response},
-    app::AppState,
-    repositories::store::repo_store,
-};
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::api::http::middleware::wait_for_slot;
+use crate::backend::api::repos::code::archive::archive_response;
+use crate::backend::app::AppState;
+use crate::backend::repositories::store::repo_store;
 use axum::{
     extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -13,6 +15,7 @@ use axum::{
     Router,
 };
 use codeyard_git::ArchiveFormat;
+use codeyard_model::urls::repo_url;
 use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
 
@@ -64,7 +67,10 @@ async fn archive(
         .archive(&commit.sha, &prefix, format)
         .await
         .map_err(store_error)?;
-    super::auth::recheck_repository_read(&state, &headers, repo.id, "contents").await?;
+    crate::backend::api::github::auth::recheck_repository_read(
+        &state, &headers, repo.id, "contents",
+    )
+    .await?;
     Ok(archive_response(
         bytes,
         &format!("{prefix}.{extension}"),

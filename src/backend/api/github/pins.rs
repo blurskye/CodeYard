@@ -1,5 +1,8 @@
-use super::{auth, comments, repository, Error, Result};
-use crate::backend::{app::AppState, db};
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -9,13 +12,13 @@ use axum::{
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 fn error(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<db::pins::PinRefusal>() {
-        Some(db::pins::PinRefusal::Denied) => Error::new(
+    match error.downcast_ref::<crate::backend::db::pins::PinRefusal>() {
+        Some(crate::backend::db::pins::PinRefusal::Denied) => Error::new(
             StatusCode::FORBIDDEN,
             "Pinning comments requires write access",
         ),
-        Some(db::pins::PinRefusal::Missing) => Error::missing(),
-        Some(db::pins::PinRefusal::Occupied) => {
+        Some(crate::backend::db::pins::PinRefusal::Missing) => Error::missing(),
+        Some(crate::backend::db::pins::PinRefusal::Occupied) => {
             Error::invalid("Unpin the current comment before pinning another")
         }
         None => Error::unavailable(error),
@@ -26,12 +29,15 @@ async fn change(
     headers: &HeaderMap,
     p: &HashMap<String, String>,
     pinned: bool,
-) -> Result<(codeyard_db_core::models::Repository, comments::Comment)> {
+) -> Result<(
+    codeyard_db_core::models::Repository,
+    crate::backend::api::github::comments::Comment,
+)> {
     let (repo, auth) = repository(state, headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?;
+    let actor = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let id = p["comment_id"].parse().map_err(|_| Error::missing())?;
-    let comment = comments::find(&state.pool, repo.id, id).await?;
-    db::pins::set_pin(
+    let comment = crate::backend::api::github::comments::find(&state.pool, repo.id, id).await?;
+    crate::backend::db::pins::set_pin(
         &state.pool,
         actor.user.id,
         &actor.credential(),
@@ -51,7 +57,8 @@ async fn pin(
 ) -> Result<Json<Value>> {
     let (repo, comment) = change(&state, &headers, &p, true).await?;
     Ok(Json(
-        comments::document(&state.pool, &repo, &p["owner"], &comment).await?,
+        crate::backend::api::github::comments::document(&state.pool, &repo, &p["owner"], &comment)
+            .await?,
     ))
 }
 async fn unpin(

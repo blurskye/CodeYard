@@ -1,5 +1,6 @@
-use super::config::CiPipelineKind;
-use crate::backend::repositories::store::{RepoStore, MAX_CI_WORKFLOW_BYTES};
+use crate::backend::ci::config::CiPipelineKind;
+use crate::backend::repositories::store::RepoStore;
+use crate::backend::repositories::store::MAX_CI_WORKFLOW_BYTES;
 use anyhow::{ensure, Context, Result};
 pub use codeyard_actions::workflow::events::{WorkflowEventFilter, WorkflowTriggers};
 #[cfg(test)]
@@ -8,6 +9,7 @@ use codeyard_actions::workflow::{
     events::{MAX_WORKFLOW_FILTER_PATTERNS, MAX_WORKFLOW_PATTERN_BYTES},
 };
 use codeyard_git::error::{ErrorKind, RepoError};
+use codeyard_model::workflow_yaml::{parse_yaml, parse_yaml_with_limit};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::{
@@ -18,22 +20,6 @@ use std::{
 use tokio::sync::Semaphore;
 use tracing::warn;
 
-pub(super) static PARSING_SLOTS: Semaphore = Semaphore::const_new(2);
-
-pub(super) async fn parse_definitions(
-    definitions: &BTreeMap<String, Vec<u8>>,
-) -> Result<BTreeMap<String, Value>> {
-    let permit = PARSING_SLOTS.acquire().await?;
-    let definitions = definitions.clone();
-    tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        definitions
-            .into_iter()
-            .map(|(path, bytes)| Ok((path, parse_yaml(&bytes)?)))
-            .collect()
-    })
-    .await?
-}
 static DISCOVERY_SLOTS: Semaphore = Semaphore::const_new(2);
 static DISCOVERY_PAYLOADS: Semaphore = Semaphore::const_new(4);
 // Let the store finish its address and replica fallback before discovery gives up.
@@ -72,52 +58,6 @@ pub struct JobPlan {
 const MAX_PLANNED_JOBS: usize = 32;
 const MAX_PLANNED_STEPS: usize = 64;
 const MAX_STEP_NAME_BYTES: usize = 128;
-
-pub const MAX_WORKFLOW_MATCH_WORK: u64 = 32 * 1024 * 1024;
-
-#[derive(Debug, thiserror::Error)]
-#[error("workflow filters exceed the match-work limit")]
-pub struct WorkflowMatchLimit;
-
-/// One deterministic CPU budget shared by every workflow considered for an event.
-pub struct WorkflowMatchBudget {
-    remaining: u64,
-}
-
-impl WorkflowMatchBudget {
-    pub fn new() -> Self {
-        Self {
-            remaining: MAX_WORKFLOW_MATCH_WORK,
-        }
-    }
-
-    pub(crate) fn charge(
-        &mut self,
-        pattern_bytes: usize,
-        value_bytes: usize,
-    ) -> Result<(), WorkflowMatchLimit> {
-        let work = (pattern_bytes as u64)
-            .checked_add(1)
-            .and_then(|pattern| {
-                (value_bytes as u64)
-                    .checked_add(1)
-                    .and_then(|value| pattern.checked_mul(value))
-            })
-            .ok_or(WorkflowMatchLimit)?;
-        if work > self.remaining {
-            self.remaining = 0;
-            return Err(WorkflowMatchLimit);
-        }
-        self.remaining -= work;
-        Ok(())
-    }
-}
-
-impl Default for WorkflowMatchBudget {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl WorkflowDefinition {
     pub fn pull_request_filter(&self, event: &str) -> Option<&WorkflowEventFilter> {
@@ -443,90 +383,9 @@ fn parse_workflow_yaml(content: &str) -> Result<Value> {
     parse_yaml(content.as_bytes())
 }
 
-/// Parses workflow YAML. Reading a document copies every alias, so a small file could
-/// expand to gigabytes. The expanded size is counted first, without building anything.
-pub(crate) fn parse_yaml(content: &[u8]) -> Result<Value> {
-    parse_yaml_with_limit(content, 8 * MAX_CI_WORKFLOW_BYTES)
-}
-
-pub(crate) fn parse_yaml_with_limit(content: &[u8], max_expanded_bytes: usize) -> Result<Value> {
-    use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess};
-    use std::cell::Cell;
-
-    #[derive(Clone, Copy)]
-    struct Measure<'a>(&'a Cell<usize>, usize);
-
-    impl Measure<'_> {
-        fn add<E: de::Error>(self, bytes: usize) -> Result<(), E> {
-            let total = self.0.get().saturating_add(bytes + 16);
-            self.0.set(total);
-            if total > self.1 {
-                return Err(E::custom("the workflow is too large once aliases expand"));
-            }
-            Ok(())
-        }
-    }
-
-    impl<'de> DeserializeSeed<'de> for Measure<'_> {
-        type Value = ();
-        fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<(), D::Error> {
-            deserializer.deserialize_any(self)
-        }
-    }
-
-    impl<'de> de::Visitor<'de> for Measure<'_> {
-        type Value = ();
-        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.write_str("a YAML value")
-        }
-        fn visit_bool<E: de::Error>(self, _: bool) -> Result<(), E> {
-            self.add(1)
-        }
-        fn visit_i64<E: de::Error>(self, _: i64) -> Result<(), E> {
-            self.add(8)
-        }
-        fn visit_u64<E: de::Error>(self, _: u64) -> Result<(), E> {
-            self.add(8)
-        }
-        fn visit_f64<E: de::Error>(self, _: f64) -> Result<(), E> {
-            self.add(8)
-        }
-        fn visit_str<E: de::Error>(self, text: &str) -> Result<(), E> {
-            self.add(text.len())
-        }
-        fn visit_unit<E: de::Error>(self) -> Result<(), E> {
-            self.add(0)
-        }
-        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
-            self.add(0)?;
-            while seq.next_element_seed(self)?.is_some() {}
-            Ok(())
-        }
-        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
-            self.add(0)?;
-            while map.next_key_seed(self)?.is_some() {
-                map.next_value_seed(self)?;
-            }
-            Ok(())
-        }
-        fn visit_enum<A: de::EnumAccess<'de>>(self, data: A) -> Result<(), A::Error> {
-            use de::VariantAccess;
-            // The tag name is copied into the value with every alias, so it counts too.
-            let (name, variant): (String, _) = data.variant()?;
-            self.add(name.len())?;
-            variant.newtype_variant_seed(self)
-        }
-    }
-
-    let used = Cell::new(0);
-    Measure(&used, max_expanded_bytes)
-        .deserialize(serde_yaml::Deserializer::from_slice(content))?;
-    Ok(serde_yaml::from_slice(content)?)
-}
-
 pub(crate) fn parse_workflow_definition(path: &str, content: &str) -> Result<WorkflowDefinition> {
     ensure!(
-        super::admission::is_safe_workflow_path(path),
+        crate::backend::ci::admission::is_safe_workflow_path(path),
         "invalid CI workflow path"
     );
     let yaml = parse_workflow_yaml(content)
@@ -542,7 +401,7 @@ pub(super) fn workflow_definition_from_yaml(
     let name = workflow_name(yaml, path)?;
     let triggers = codeyard_actions::workflow::events::parse(yaml.get("on"))?;
     for cron in &triggers.schedules {
-        super::schedule::parse(cron)?;
+        crate::backend::ci::schedule::parse(cron)?;
     }
 
     Ok(WorkflowDefinition {
@@ -801,138 +660,6 @@ fn matches_any_pattern(
     Ok(false)
 }
 
-/// GitHub's filter glob: `*` and `?` stop at `/`, `**` crosses it, and `**/` also matches
-/// no directory, so `**/README.md` matches a root README.md. Branch protection patterns use
-/// this too.
-pub(crate) fn github_glob_matches(pattern: &str, value: &str) -> bool {
-    glob_matches(pattern, value, false, false)
-}
-
-fn glob_matches(pattern: &str, value: &str, escapes: bool, workflow: bool) -> bool {
-    let pattern: Vec<char> = pattern.chars().collect();
-    let value: Vec<char> = value.chars().collect();
-    // Each row records which value prefixes match the pattern consumed so far.
-    // O(pattern.len() * value.len()) work avoids exponential wildcard backtracking.
-    let mut previous = vec![false; value.len() + 1];
-    let mut current = vec![false; value.len() + 1];
-    previous[0] = true;
-    let mut index = 0;
-    let mut next_class_end = pattern.iter().position(|&ch| ch == ']');
-    while index < pattern.len() {
-        current.fill(false);
-        let escaped = escapes && pattern[index] == '\\' && index + 1 < pattern.len();
-        if escaped {
-            index += 1;
-        }
-        let ch = pattern[index];
-        let double = !escaped && ch == '*' && pattern.get(index + 1) == Some(&'*');
-        if double
-            && pattern.get(index + 2) == Some(&'/')
-            && (index == 0 || pattern[index - 1] == '/')
-        {
-            // `**/` crosses any directories and then needs a `/`, as in `a/**/b`. It can also
-            // match no directory at all, so the rows from before it carry over.
-            let mut reached = false;
-            for (offset, &letter) in value.iter().enumerate() {
-                reached |= previous[offset];
-                current[offset + 1] = reached && letter == '/';
-            }
-            for (offset, &matched) in previous.iter().enumerate() {
-                current[offset] |= matched;
-            }
-            index += 3;
-        } else if ch == '*' && !escaped {
-            current[0] = previous[0];
-            for (offset, &letter) in value.iter().enumerate() {
-                current[offset + 1] =
-                    previous[offset + 1] || (current[offset] && (double || letter != '/'));
-            }
-            index += if double { 2 } else { 1 };
-        } else {
-            let class_end = if ch == '[' && !escaped {
-                // Advance the closing-bracket search only forwards, including for malformed
-                // classes, so repeated `[` characters cannot make parsing quadratic.
-                if next_class_end.is_some_and(|end| end <= index) {
-                    next_class_end = pattern[index + 1..]
-                        .iter()
-                        .position(|&ch| ch == ']')
-                        .map(|offset| index + 1 + offset);
-                }
-                next_class_end.filter(|&end| end > index + 1)
-            } else {
-                None
-            };
-            let end = class_end.map_or(index + 1, |end| end + 1);
-            let quantifier = workflow.then(|| pattern.get(end)).flatten().copied();
-            let repeated = quantifier == Some('+');
-            let optional = quantifier == Some('?');
-            current[0] = optional && previous[0];
-            for (offset, &letter) in value.iter().enumerate() {
-                let matches = if let Some(end) = class_end {
-                    letter != '/' && glob_class_matches(&pattern[index + 1..end], letter)
-                } else if ch == '?' && !escaped {
-                    letter != '/'
-                } else {
-                    ch == letter
-                };
-                current[offset + 1] = (matches
-                    && (previous[offset] || (repeated && current[offset])))
-                    || (optional && previous[offset + 1]);
-            }
-            index = end + usize::from(repeated || optional);
-        }
-        std::mem::swap(&mut previous, &mut current);
-    }
-    previous[value.len()]
-}
-
-fn glob_class_matches(mut class: &[char], letter: char) -> bool {
-    let negated = matches!(class.first(), Some('!' | '^'));
-    if negated {
-        class = &class[1..];
-    }
-    let mut matched = false;
-    while !class.is_empty() {
-        if class.len() >= 3 && class[1] == '-' {
-            matched |= class[0] <= letter && letter <= class[2];
-            class = &class[3..];
-        } else {
-            matched |= class[0] == letter;
-            class = &class[1..];
-        }
-    }
-    matched != negated
-}
-
-/// Charges `budget` for the work before matching, so one budget bounds a caller's total.
-pub(crate) fn github_glob_matches_bounded(
-    pattern: &str,
-    value: &str,
-    budget: &mut WorkflowMatchBudget,
-) -> std::result::Result<bool, WorkflowMatchLimit> {
-    budget.charge(pattern.len(), value.len())?;
-    Ok(github_glob_matches(pattern, value))
-}
-
-fn workflow_glob_matches_bounded(
-    pattern: &str,
-    value: &str,
-    budget: &mut WorkflowMatchBudget,
-) -> std::result::Result<bool, WorkflowMatchLimit> {
-    budget.charge(pattern.len(), value.len())?;
-    Ok(glob_matches(pattern, value, true, true))
-}
-
-/// CODEOWNERS uses backslashes to quote whitespace and wildcard characters.
-pub(crate) fn code_owner_glob_matches_bounded(
-    pattern: &str,
-    value: &str,
-    budget: &mut WorkflowMatchBudget,
-) -> std::result::Result<bool, WorkflowMatchLimit> {
-    budget.charge(pattern.len(), value.len())?;
-    Ok(glob_matches(pattern, value, true, false))
-}
-
 fn is_missing_workflow_tree_error(error: &RepoError) -> bool {
     // Only an absent workflow directory inside a resolved commit is empty.
     // Missing repositories/refs/objects and unrelated errors remain outages;
@@ -1108,12 +835,12 @@ mod tests {
             ".github/workflows/build linux.yml",
             ".github/workflows/雪.yaml",
         ] {
-            assert!(super::super::admission::is_safe_workflow_path(path));
+            assert!(crate::backend::ci::admission::is_safe_workflow_path(path));
             assert!(parse_workflow_definition(path, "on: workflow_dispatch").is_ok());
             assert!(parse_workflow_definition(path, "on: push").is_ok());
         }
         let path = format!(".github/workflows/{}.yml", "x".repeat(238));
-        assert!(!super::super::admission::is_safe_workflow_path(&path));
+        assert!(!crate::backend::ci::admission::is_safe_workflow_path(&path));
         assert!(parse_workflow_definition(&path, "on: workflow_dispatch").is_err());
         assert!(parse_workflow_definition(&path, "on: push").is_err());
         let path = format!(".github/workflows/{}.yml", "x".repeat(233));
@@ -1836,3 +1563,13 @@ mod push_parser_tests {
         .is_err());
     }
 }
+
+use codeyard_model::workflow_glob::WorkflowMatchBudget;
+
+use codeyard_model::workflow_glob::WorkflowMatchLimit;
+
+use codeyard_model::workflow_glob::code_owner_glob_matches_bounded;
+
+use codeyard_model::workflow_glob::github_glob_matches;
+
+use codeyard_model::workflow_glob::workflow_glob_matches_bounded;

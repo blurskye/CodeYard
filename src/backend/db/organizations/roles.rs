@@ -1,5 +1,5 @@
 //! Predefined organization roles grant repository or security authority, never organization ownership.
-use super::OrganizationOutcome;
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::models::Team;

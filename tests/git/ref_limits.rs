@@ -5,8 +5,6 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::git_server;
 use crate::support::native_database as native;
 
-use codeyard::backend::db;
-use codeyard::backend::repositories::lifecycle;
 use codeyard::backend::repositories::store::MAX_REPOSITORY_REFS;
 use git_server::{git, success, write_token, Server};
 use reqwest::{Client, StatusCode};
@@ -26,17 +24,17 @@ struct Hosted {
 impl Hosted {
     async fn start(pool: &codeyard_db_core::DbPool, url: &str, name: &str) -> Self {
         bundle::install();
-        db::node_config::upsert_node_configuration(pool, "public", true)
+        codeyard::backend::db::node_config::upsert_node_configuration(pool, "public", true)
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
-        let owner = db::users::accounts::create_user(pool, "http_owner", None)
+        let owner = codeyard::backend::db::users::accounts::create_user(pool, "http_owner", None)
             .await
             .unwrap();
-        let repository = lifecycle::provision(
+        let repository = codeyard::backend::repositories::lifecycle::provision(
             (pool, None),
             &root.path().join("repos"),
-            db::repositories::RepositoryCreationOwner::personal(owner.id),
+            codeyard::backend::db::repositories::RepositoryCreationOwner::personal(owner.id),
             name,
             None,
             false,

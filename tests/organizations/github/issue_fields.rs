@@ -1,18 +1,17 @@
 use super::request;
 use crate::support::{
+    codeyard::backend::db::organizations::applied,
     database::Database,
     http_client::{field_value, hidden_value, Client},
-    organizations::applied,
 };
 use axum::http::StatusCode;
-use codeyard::backend::db;
-use codeyard::backend::db::organizations;
+
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::OrganizationProfile;
 use codeyard::backend::db::repositories::creation::NewRepository;
 use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
 use codeyard::backend::db::repositories::creation::RepositoryTarget;
-use codeyard::backend::identity::tokens;
+
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
@@ -28,7 +27,7 @@ async fn contract(pg: bool) {
     let mut orgs = Vec::new();
     for name in ["acme", "other"] {
         orgs.push(applied(
-            organizations::create_organization(
+            codeyard::backend::db::organizations::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -39,15 +38,21 @@ async fn contract(pg: bool) {
     }
     for (user, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
         applied(
-            organizations::add_organization_member(f.pool(), owner, orgs[0].id, user, role)
-                .await
-                .unwrap(),
+            codeyard::backend::db::organizations::add_organization_member(
+                f.pool(),
+                owner,
+                orgs[0].id,
+                user,
+                role,
+            )
+            .await
+            .unwrap(),
         );
     }
     let root = tempfile::tempdir().unwrap();
     let disk = uuid::Uuid::new_v4().to_string();
     git2::Repository::init_bare(root.path().join(&disk)).unwrap();
-    db::repositories::creation::insert_repository(
+    codeyard::backend::db::repositories::creation::insert_repository(
         f.pool(),
         NewRepository {
             owner: RepositoryCreationOwner {
@@ -76,7 +81,7 @@ async fn contract(pg: bool) {
         (outsider, "write"),
     ] {
         let session = Client::login(&router, f.pool(), user).await;
-        let token = tokens::create(
+        let token = codeyard::backend::identity::tokens::create(
             f.pool(),
             user,
             Some(&session.session),

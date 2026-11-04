@@ -1,4 +1,3 @@
-use crate::backend::db::files as files_db;
 use crate::backend::storage::Download;
 use crate::backend::storage::ObjectStore;
 use codeyard_db_core::models::File;
@@ -57,16 +56,22 @@ pub enum DownloadError {
 pub async fn download_for_user(
     pool: &DbPool,
     store: &ObjectStore,
-    actor: impl Into<files_db::FileAuthority>,
+    actor: impl Into<crate::backend::db::files::FileAuthority>,
     file_id: Uuid,
 ) -> Result<SignedDownload, DownloadError> {
     let actor = actor.into();
     let actor_id = actor.user_id.ok_or(DownloadError::NotFound)?;
     let file = authorize(pool, actor, file_id).await?;
     let (url, capability) = capability(store, &file).await?;
-    files_db::record_download(pool, actor_id, file.id, file.reason.as_deref(), None)
-        .await
-        .map_err(|_| DownloadError::AccountingUnavailable)?;
+    crate::backend::db::files::record_download(
+        pool,
+        actor_id,
+        file.id,
+        file.reason.as_deref(),
+        None,
+    )
+    .await
+    .map_err(|_| DownloadError::AccountingUnavailable)?;
     Ok(download_result(file, url, capability))
 }
 
@@ -74,7 +79,7 @@ pub async fn download_for_user(
 pub async fn download_asset(
     pool: &DbPool,
     store: &ObjectStore,
-    actor: impl Into<files_db::FileAuthority>,
+    actor: impl Into<crate::backend::db::files::FileAuthority>,
     file_id: Uuid,
 ) -> Result<SignedDownload, DownloadError> {
     let file = authorize(pool, actor.into(), file_id).await?;
@@ -84,10 +89,10 @@ pub async fn download_asset(
 
 async fn authorize(
     pool: &DbPool,
-    actor: files_db::FileAuthority,
+    actor: crate::backend::db::files::FileAuthority,
     file_id: Uuid,
 ) -> Result<File, DownloadError> {
-    files_db::get_downloadable_file(pool, file_id, actor)
+    crate::backend::db::files::get_downloadable_file(pool, file_id, actor)
         .await
         .map_err(|_| DownloadError::MetadataUnavailable)?
         .ok_or(DownloadError::NotFound)
@@ -124,7 +129,7 @@ async fn capability(
 pub async fn open_asset_download(
     pool: &DbPool,
     store: &ObjectStore,
-    actor: impl Into<files_db::FileAuthority>,
+    actor: impl Into<crate::backend::db::files::FileAuthority>,
     file_id: Uuid,
 ) -> Result<AssetDownload, DownloadError> {
     let file = authorize(pool, actor.into(), file_id).await?;

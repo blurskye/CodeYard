@@ -1,10 +1,10 @@
 //! Session-bound property controls. The larger body budget is isolated from other organization forms.
-use super::organization::{self, Fields};
-use crate::backend::{
-    api::http::context::PageContext,
-    app::AppState,
-    db::organizations::{properties as data, OrganizationOutcome},
-};
+
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::organizations::organization::Fields;
+use crate::backend::app::AppState;
+
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::{ensure, Result};
 use axum::{
     extract::{DefaultBodyLimit, Form, Path, State},
@@ -27,21 +27,43 @@ pub(super) async fn panel(
     actor: i64,
     org: i64,
 ) -> std::result::Result<view::PropertyPanel, Response> {
-    let definitions = match data::summaries(&ctx.state.pool, actor, org).await {
-        Ok(Applied(definitions)) => definitions,
-        Ok(_) => return Err(organization::not_found(ctx)),
-        Err(_) => return Err(organization::unavailable(ctx)),
-    };
+    let definitions =
+        match crate::backend::db::organizations::properties::summaries(&ctx.state.pool, actor, org)
+            .await
+        {
+            Ok(Applied(definitions)) => definitions,
+            Ok(_) => {
+                return Err(crate::backend::api::organizations::organization::not_found(
+                    ctx,
+                ))
+            }
+            Err(_) => {
+                return Err(crate::backend::api::organizations::organization::unavailable(ctx))
+            }
+        };
     let selected = if let Some(name) = ctx.query.get("property").filter(|name| !name.is_empty()) {
         let missing = || ctx.error(StatusCode::NOT_FOUND, "Repository property not found.");
-        if !data::valid_name(name) {
+        if !crate::backend::db::organizations::properties::valid_name(name) {
             return Err(missing());
         }
-        let definition = match data::definition(&ctx.state.pool, actor, org, name).await {
+        let definition = match crate::backend::db::organizations::properties::definition(
+            &ctx.state.pool,
+            actor,
+            org,
+            name,
+        )
+        .await
+        {
             Ok(Applied(Some(definition))) => definition,
             Ok(Applied(None)) => return Err(missing()),
-            Ok(_) => return Err(organization::not_found(ctx)),
-            Err(_) => return Err(organization::unavailable(ctx)),
+            Ok(_) => {
+                return Err(crate::backend::api::organizations::organization::not_found(
+                    ctx,
+                ))
+            }
+            Err(_) => {
+                return Err(crate::backend::api::organizations::organization::unavailable(ctx))
+            }
         };
         let input = &definition.fields;
         Some(view::PropertyDefinition {
@@ -55,7 +77,7 @@ pub(super) async fn panel(
             default_value: input
                 .default_value
                 .as_ref()
-                .map(data::PropertyValue::form_value)
+                .map(crate::backend::db::organizations::properties::PropertyValue::form_value)
                 .unwrap_or_default(),
             allowed_values: input
                 .allowed_values
@@ -101,7 +123,8 @@ fn allowed(action: &str) -> &'static [&'static str] {
 fn bound(key: &str) -> usize {
     match key {
         "allowed_values" | "default_value" | "value" => {
-            data::MAX_ALLOWED_VALUES * (data::MAX_VALUE_BYTES + 1)
+            crate::backend::db::organizations::properties::MAX_ALLOWED_VALUES
+                * (crate::backend::db::organizations::properties::MAX_VALUE_BYTES + 1)
         }
         "description" => 4096,
         "repository_names" => 8192,
@@ -111,7 +134,9 @@ fn bound(key: &str) -> usize {
     }
 }
 fn valid_form(form: &Fields) -> bool {
-    let keys = allowed(organization::field(form, "action"));
+    let keys = allowed(crate::backend::api::organizations::organization::field(
+        form, "action",
+    ));
     !keys.is_empty()
         && form.len() <= keys.len() + 2
         && form.iter().all(|(key, value)| {
@@ -123,7 +148,11 @@ fn flag(form: &Fields, key: &str) -> Result<bool> {
     match form.get(key).map(String::as_str) {
         None | Some("false") => Ok(false),
         Some("true") => Ok(true),
-        _ => Err(data::invalid(key_name(key), "Invalid property checkbox value").into()),
+        _ => Err(crate::backend::db::organizations::properties::invalid(
+            key_name(key),
+            "Invalid property checkbox value",
+        )
+        .into()),
     }
 }
 fn key_name(key: &str) -> &'static str {
@@ -141,29 +170,41 @@ async fn apply(
     org: i64,
     form: &Fields,
 ) -> Result<OrganizationOutcome<()>> {
-    let name = organization::field(form, "property_name");
+    let name = crate::backend::api::organizations::organization::field(form, "property_name");
     ensure!(
-        data::valid_name(name),
-        data::invalid(
+        crate::backend::db::organizations::properties::valid_name(name),
+        crate::backend::db::organizations::properties::invalid(
             "property_name",
             "Property names must contain 1-75 ASCII letters, numbers, hyphens or underscores"
         )
     );
-    match organization::field(form, "action") {
+    match crate::backend::api::organizations::organization::field(form, "action") {
         "save-property" => {
-            let kind = data::ValueType::parse(organization::field(form, "value_type"))?;
-            let choices = organization::field(form, "allowed_values");
-            let input = data::DefinitionInput {
+            let kind = crate::backend::db::organizations::properties::ValueType::parse(
+                crate::backend::api::organizations::organization::field(form, "value_type"),
+            )?;
+            let choices =
+                crate::backend::api::organizations::organization::field(form, "allowed_values");
+            let input = crate::backend::db::organizations::properties::DefinitionInput {
                 property_name: name.into(),
                 value_type: kind,
-                description: organization::optional(form, "description").map(str::to_owned),
+                description: crate::backend::api::organizations::organization::optional(
+                    form,
+                    "description",
+                )
+                .map(str::to_owned),
                 required: flag(form, "required")?,
                 require_explicit_values: flag(form, "require_explicit_values")?,
                 default_value: if flag(form, "use_default")? {
-                    Some(data::PropertyValue::from_form(
-                        kind,
-                        organization::field(form, "default_value"),
-                    ))
+                    Some(
+                        crate::backend::db::organizations::properties::PropertyValue::from_form(
+                            kind,
+                            crate::backend::api::organizations::organization::field(
+                                form,
+                                "default_value",
+                            ),
+                        ),
+                    )
                 } else {
                     None
                 },
@@ -178,22 +219,35 @@ async fn apply(
                 } else {
                     None
                 },
-                values_editable_by: data::EditableBy::parse(
-                    organization::optional(form, "values_editable_by").unwrap_or("org_actors"),
-                )?,
+                values_editable_by:
+                    crate::backend::db::organizations::properties::EditableBy::parse(
+                        crate::backend::api::organizations::organization::optional(
+                            form,
+                            "values_editable_by",
+                        )
+                        .unwrap_or("org_actors"),
+                    )?,
             };
-            Ok(
-                data::define(&ctx.state.pool, ctx.database_actor(actor), org, &[input])
-                    .await?
-                    .map(|_| ()),
+            Ok(crate::backend::db::organizations::properties::define(
+                &ctx.state.pool,
+                ctx.database_actor(actor),
+                org,
+                &[input],
             )
+            .await?
+            .map(|_| ()))
         }
         "delete-property" => {
-            ensure!(organization::field(form,"confirm")==name,data::invalid("confirm","Type the property name to confirm deleting its definition and every repository value"));
-            let definition = organization::id(form, "definition_id").map_err(|()| {
-                data::invalid("definition_id", "Reload the property and try again")
-            })?;
-            data::remove(
+            ensure!(crate::backend::api::organizations::organization::field(form,"confirm")==name,crate::backend::db::organizations::properties::invalid("confirm","Type the property name to confirm deleting its definition and every repository value"));
+            let definition =
+                crate::backend::api::organizations::organization::id(form, "definition_id")
+                    .map_err(|()| {
+                        crate::backend::db::organizations::properties::invalid(
+                            "definition_id",
+                            "Reload the property and try again",
+                        )
+                    })?;
+            crate::backend::db::organizations::properties::remove(
                 &ctx.state.pool,
                 ctx.database_actor(actor),
                 org,
@@ -203,38 +257,56 @@ async fn apply(
             .await
         }
         "set-property-value" => {
-            let definition = match data::definition(&ctx.state.pool, actor, org, name).await? {
+            let definition = match crate::backend::db::organizations::properties::definition(
+                &ctx.state.pool,
+                actor,
+                org,
+                name,
+            )
+            .await?
+            {
                 Applied(Some(definition)) => definition,
-                Applied(None) => return Err(data::Refusal::Missing.into()),
+                Applied(None) => {
+                    return Err(
+                        crate::backend::db::organizations::properties::Refusal::Missing.into(),
+                    )
+                }
                 other => return Ok(other.map(|_| ())),
             };
-            let repositories = organization::field(form, "repository_names")
-                .lines()
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(str::to_owned)
-                .collect::<Vec<_>>();
+            let repositories =
+                crate::backend::api::organizations::organization::field(form, "repository_names")
+                    .lines()
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
             let value = if flag(form, "unset")? {
                 None
             } else {
-                Some(data::PropertyValue::from_form(
-                    definition.fields.value_type,
-                    organization::field(form, "value"),
-                ))
+                Some(
+                    crate::backend::db::organizations::properties::PropertyValue::from_form(
+                        definition.fields.value_type,
+                        crate::backend::api::organizations::organization::field(form, "value"),
+                    ),
+                )
             };
-            data::set_values(
+            crate::backend::db::organizations::properties::set_values(
                 &ctx.state.pool,
                 ctx.database_actor(actor),
                 org,
                 &repositories,
-                &[data::ValueInput {
+                &[crate::backend::db::organizations::properties::ValueInput {
                     property_name: name.into(),
                     value,
                 }],
             )
             .await
         }
-        _ => Err(data::invalid("action", "Invalid repository property operation").into()),
+        _ => Err(crate::backend::db::organizations::properties::invalid(
+            "action",
+            "Invalid repository property operation",
+        )
+        .into()),
     }
 }
 async fn mutate(
@@ -258,7 +330,7 @@ async fn mutate(
     };
     let mut seen = HashSet::new();
     if pairs.len() > 16 || pairs.iter().any(|(key, _)| !seen.insert(key)) {
-        return organization::invalid(&ctx);
+        return crate::backend::api::organizations::organization::invalid(&ctx);
     }
     let form: Fields = pairs.into_iter().collect();
     if let Err(response) = ctx.check_csrf(&form) {
@@ -269,9 +341,11 @@ async fn mutate(
         Err(response) => return response,
     };
     if !valid_form(&form) {
-        return organization::invalid(&ctx);
+        return crate::backend::api::organizations::organization::invalid(&ctx);
     }
-    if let Err(response) = organization::selected(&ctx, actor, org).await {
+    if let Err(response) =
+        crate::backend::api::organizations::organization::selected(&ctx, actor, org).await
+    {
         return response;
     }
     let draft = form
@@ -281,15 +355,26 @@ async fn mutate(
         .collect();
     let (status, message) = match apply(&ctx, actor, org, &form).await {
         Ok(Applied(())) => {
-            let property = if organization::field(&form, "action") == "delete-property" {
-                String::new()
-            } else {
-                format!(
-                    "&property={}",
-                    codeyard_webui::encode_component(organization::field(&form, "property_name"))
-                )
-            };
-            return ctx.redirect(&format!("{}/{org}?tab=properties{property}", super::INDEX));
+            let property =
+                if crate::backend::api::organizations::organization::field(&form, "action")
+                    == "delete-property"
+                {
+                    String::new()
+                } else {
+                    format!(
+                        "&property={}",
+                        codeyard_webui::encode_component(
+                            crate::backend::api::organizations::organization::field(
+                                &form,
+                                "property_name"
+                            )
+                        )
+                    )
+                };
+            return ctx.redirect(&format!(
+                "{}/{org}?tab=properties{property}",
+                crate::backend::api::organizations::INDEX
+            ));
         }
         Ok(Denied) => (
             StatusCode::FORBIDDEN,
@@ -307,30 +392,46 @@ async fn mutate(
             StatusCode::CONFLICT,
             "Repository properties changed. Reload and try again.".to_owned(),
         ),
-        Err(error) => match error.downcast_ref::<data::Refusal>() {
-            Some(data::Refusal::Invalid { message, .. }) => {
-                (StatusCode::BAD_REQUEST, (*message).to_owned())
+        Err(error) => {
+            match error.downcast_ref::<crate::backend::db::organizations::properties::Refusal>() {
+                Some(crate::backend::db::organizations::properties::Refusal::Invalid {
+                    message,
+                    ..
+                }) => (StatusCode::BAD_REQUEST, (*message).to_owned()),
+                Some(crate::backend::db::organizations::properties::Refusal::Denied) => (
+                    StatusCode::FORBIDDEN,
+                    "Repository property access denied.".to_owned(),
+                ),
+                Some(crate::backend::db::organizations::properties::Refusal::Missing) => (
+                    StatusCode::NOT_FOUND,
+                    "Repository property not found.".to_owned(),
+                ),
+                _ => return crate::backend::api::organizations::organization::unavailable(&ctx),
             }
-            Some(data::Refusal::Denied) => (
-                StatusCode::FORBIDDEN,
-                "Repository property access denied.".to_owned(),
-            ),
-            Some(data::Refusal::Missing) => (
-                StatusCode::NOT_FOUND,
-                "Repository property not found.".to_owned(),
-            ),
-            _ => return organization::unavailable(&ctx),
-        },
+        }
     };
     ctx.query.remove("property");
-    let name = organization::field(&form, "property_name");
-    if data::valid_name(name) {
+    let name = crate::backend::api::organizations::organization::field(&form, "property_name");
+    if crate::backend::db::organizations::properties::valid_name(name) {
         if let Ok(Applied(Some(definition))) =
-            data::definition(&ctx.state.pool, actor, org, name).await
+            crate::backend::db::organizations::properties::definition(
+                &ctx.state.pool,
+                actor,
+                org,
+                name,
+            )
+            .await
         {
             ctx.query
                 .insert("property".into(), definition.fields.property_name);
         }
     }
-    organization::respond(&ctx, Some(org), status, Some(message), draft).await
+    crate::backend::api::organizations::organization::respond(
+        &ctx,
+        Some(org),
+        status,
+        Some(message),
+        draft,
+    )
+    .await
 }

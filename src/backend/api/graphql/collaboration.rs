@@ -1,8 +1,16 @@
 //! Shared issue/PR metadata; all rows come from the REST lane's named operations.
-use super::{
-    connection, db, missing, node_id, repository, unavailable, url, user, Arguments,
-    RequestContext, Result, Value,
-};
+
+use crate::backend::api::graphql::db;
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::node_id;
+
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::url;
+
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
 use serde_json::json;
 
 pub(super) async fn milestone(
@@ -10,14 +18,14 @@ pub(super) async fn milestone(
     request: &RequestContext,
 ) -> Result<Value> {
     let row = summary.milestone;
-    let repo = repository::by_id(row.repo_id, request).await?;
+    let repo = crate::backend::api::graphql::repository::by_id(row.repo_id, request).await?;
     Ok(
         json!({"__typename":"Milestone","_repo":row.repo_id,"id":node_id::encode("M",row.id),"databaseId":row.id,
         "closed":row.state=="closed","progressPercentage":if summary.open_items+summary.closed_items==0 {0.0} else {100.0*summary.closed_items as f64/(summary.open_items+summary.closed_items) as f64},
-        "creator":match row.creator_id {Some(id)=>user::actor_by_id(id,request).await?,None=>Value::Null},
+        "creator":match row.creator_id {Some(id)=>crate::backend::api::graphql::user::actor_by_id(id,request).await?,None=>Value::Null},
         "number":row.number,"title":row.title,"description":row.description,"state":row.state.to_uppercase(),
         "createdAt":row.created_at,"updatedAt":row.updated_at,"closedAt":row.closed_at,"dueOn":row.due_on,
-        "url":url(&format!("/{}/{}/milestones/{}",repository::owner(&repo,request).await?,repo.name,row.number))}),
+        "url":url(&format!("/{}/{}/milestones/{}",crate::backend::api::graphql::repository::owner(&repo,request).await?,repo.name,row.number))}),
     )
 }
 
@@ -32,7 +40,7 @@ pub(super) async fn resolve(
     let id = parent["databaseId"].as_i64().ok_or_else(missing)?;
     let pool = &request.state.pool;
     match field {
-        "repository" => Ok(repository::object(repo)),
+        "repository" => Ok(crate::backend::api::graphql::repository::object(repo)),
         "authorAssociation" => Ok(json!(
             crate::backend::repositories::access::author_association(
                 pool,
@@ -50,7 +58,9 @@ pub(super) async fn resolve(
                     .map_err(unavailable)?
                 {
                     Some(value) => {
-                        let mut value = self::milestone(value, request).await?;
+                        let mut value =
+                            crate::backend::api::graphql::collaboration::milestone(value, request)
+                                .await?;
                         value["_scope"] = json!(if ty == "PullRequest" {
                             "pull-requests"
                         } else {
@@ -78,10 +88,13 @@ pub(super) async fn resolve(
                     .await
                     .map_err(unavailable)?
                 {
-                    values.push(user::object(&row, request.auth.user.id));
+                    values.push(crate::backend::api::graphql::user::object(
+                        &row,
+                        request.auth.user.id,
+                    ));
                 }
             }
-            connection::slice(args, values)
+            crate::backend::api::graphql::connection::slice(args, values)
         }
         "reactionGroups" => {
             reactions(
@@ -96,9 +109,9 @@ pub(super) async fn resolve(
             .await
         }
         "closingIssuesReferences" => {
-            connection::validate(args)?;
+            crate::backend::api::graphql::connection::validate(args)?;
             if args.args.try_get("userLinkedOnly")?.deserialize::<bool>()? {
-                return connection::slice(args, Vec::new());
+                return crate::backend::api::graphql::connection::slice(args, Vec::new());
             }
             let pull = db::pull_requests::records::get_pull_request_by_id(pool, id)
                 .await
@@ -109,16 +122,16 @@ pub(super) async fn resolve(
                 .await?;
             // As on GitHub, keywords close issues only when the pull request targets the default branch.
             if pull.base_branch != repo.default_branch {
-                return connection::slice(args, Vec::new());
+                return crate::backend::api::graphql::connection::slice(args, Vec::new());
             }
             request.charge(pull.body.len() + pull.title.len())?;
-            let owner = repository::owner(repo, request).await?;
+            let owner = crate::backend::api::graphql::repository::owner(repo, request).await?;
             let mut groups = std::collections::BTreeMap::<(String, String), Vec<i32>>::new();
             for (owner, name, number) in crate::backend::issues::closing::referenced_targets(
                 &pull.body,
                 &owner,
                 &repo.name,
-                &super::url(""),
+                &crate::backend::api::graphql::url(""),
             ) {
                 request.charge(owner.len() + name.len() + 64)?;
                 groups.entry((owner, name)).or_default().push(number);
@@ -137,7 +150,11 @@ pub(super) async fn resolve(
                 let Some(target) = target else {
                     continue;
                 };
-                if !repository::optional_authority(target.id, "issues", request).await? {
+                if !crate::backend::api::graphql::repository::optional_authority(
+                    target.id, "issues", request,
+                )
+                .await?
+                {
                     continue;
                 }
                 let viewer = request.private_viewer(target.id, "issues").await?;
@@ -149,7 +166,8 @@ pub(super) async fn resolve(
                     targets.extend(rows.into_iter().map(|(id, _)| (target.id, id)));
                 }
             }
-            let page = connection::Page::new(args, targets.len() as i64)?;
+            let page =
+                crate::backend::api::graphql::connection::Page::new(args, targets.len() as i64)?;
             let selected: Vec<_> = targets
                 .into_iter()
                 .skip(page.offset as usize)
@@ -168,14 +186,18 @@ pub(super) async fn resolve(
                 for row in &rows {
                     request.charge(row.body.len() + row.title.len())?;
                 }
-                if !repository::optional_authority(repo, "issues", request).await? {
+                if !crate::backend::api::graphql::repository::optional_authority(
+                    repo, "issues", request,
+                )
+                .await?
+                {
                     continue;
                 }
                 let rows: std::collections::HashMap<_, _> =
                     rows.into_iter().map(|row| (row.id, row)).collect();
                 for (position, id) in positions {
                     if let Some(row) = rows.get(&id) {
-                        nodes[position] = super::issue::object(row);
+                        nodes[position] = crate::backend::api::graphql::issue::object(row);
                     }
                 }
             }
@@ -187,7 +209,7 @@ pub(super) async fn resolve(
         | "blocking"
         | "closedByPullRequestsReferences"
         | "projectCards"
-        | "projectItems" => connection::slice(args, vec![]),
+        | "projectItems" => crate::backend::api::graphql::connection::slice(args, vec![]),
         "isPinned" => Ok(json!(false)),
         "subIssuesSummary" => Ok(json!({"total":0,"completed":0,"percentCompleted":0})),
         "issueType" | "parent" => Ok(Value::Null),
@@ -205,7 +227,11 @@ pub(super) async fn resolve_comment(
     if let Some(value) = parent.get(field) {
         return Ok(value.clone());
     }
-    let repo = repository::by_id(parent["_repo"].as_i64().ok_or_else(missing)?, request).await?;
+    let repo = crate::backend::api::graphql::repository::by_id(
+        parent["_repo"].as_i64().ok_or_else(missing)?,
+        request,
+    )
+    .await?;
     match field {
         "authorAssociation" => Ok(json!(
             crate::backend::repositories::access::author_association(
@@ -230,7 +256,7 @@ pub(super) async fn resolve_comment(
         }
         "url" => Ok(json!(url(&format!(
             "/{}/{}/{}/{}?comment={}#comment-{}",
-            repository::owner(&repo, request).await?,
+            crate::backend::api::graphql::repository::owner(&repo, request).await?,
             repo.name,
             if parent["_pull"] == true {
                 "pull"

@@ -1,8 +1,9 @@
 mod notes;
 mod read;
-use crate::backend::db::releases::{
-    NewReleaseAsset, ReleaseChanges, ReleaseFields, ReleaseRefusal,
-};
+use crate::backend::db::releases::NewReleaseAsset;
+use crate::backend::db::releases::ReleaseChanges;
+use crate::backend::db::releases::ReleaseFields;
+use crate::backend::db::releases::ReleaseRefusal;
 use anyhow::Result;
 use codeyard_db_core::models::File;
 use codeyard_db_core::models::Release;
@@ -28,7 +29,8 @@ async fn begin_write(
 ) -> Result<Transaction<'_, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?,
+        crate::backend::db::sqlite::discussions::lock_write_authority(&mut tx, actor_id, repo_id)
+            .await?,
         ReleaseRefusal::Denied
     );
     Ok(tx)
@@ -144,7 +146,10 @@ pub async fn create_release_with_publication(
             .fetch_optional(&mut *tx)
             .await?;
     anyhow::ensure!(taken.is_none(), ReleaseRefusal::TagTaken);
-    super::repositories::immutable_releases::assert_available(&mut tx, repo_id, tag).await?;
+    crate::backend::db::sqlite::repositories::immutable_releases::assert_available(
+        &mut tx, repo_id, tag,
+    )
+    .await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO releases (repo_id, tag_name, target_commitish, name, body, is_draft, is_prerelease, author_id, published_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
@@ -163,7 +168,13 @@ pub async fn create_release_with_publication(
     .await?;
     set_latest_flag(&mut tx, repo_id, id, fields).await?;
     let release = release_in_repo(&mut tx, repo_id, id).await?;
-    super::repositories::immutable_releases::freeze(&mut tx, &release, true, publication).await?;
+    crate::backend::db::sqlite::repositories::immutable_releases::freeze(
+        &mut tx,
+        &release,
+        true,
+        publication,
+    )
+    .await?;
     let release = release_in_repo(&mut tx, repo_id, id).await?;
     tx.commit().await?;
     Ok(release)
@@ -220,8 +231,10 @@ pub async fn update_release_with_publication(
         .await?;
         anyhow::ensure!(!taken, ReleaseRefusal::TagTaken);
         if tag != &current.tag_name {
-            super::repositories::immutable_releases::assert_available(&mut tx, repo_id, tag)
-                .await?;
+            crate::backend::db::sqlite::repositories::immutable_releases::assert_available(
+                &mut tx, repo_id, tag,
+            )
+            .await?;
         }
     }
     let tag = fields
@@ -253,7 +266,7 @@ pub async fn update_release_with_publication(
     set_latest_flag(&mut tx, repo_id, release_id, &fields).await?;
     let release = release_in_repo(&mut tx, repo_id, release_id).await?;
     let published = current.is_draft && !release.is_draft;
-    super::repositories::immutable_releases::freeze(
+    crate::backend::db::sqlite::repositories::immutable_releases::freeze(
         &mut tx,
         &release,
         current.is_draft,
@@ -309,12 +322,15 @@ pub async fn add_release_asset(
 ) -> Result<ReleaseAsset> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
     anyhow::ensure!(
-        super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await?,
+        crate::backend::db::sqlite::users::transitions::credential_live(
+            &mut tx, actor_id, credential, true
+        )
+        .await?,
         ReleaseRefusal::Denied
     );
     if let Some(token) = token {
         anyhow::ensure!(
-            super::users::tokens::repository_write_on(
+            crate::backend::db::sqlite::users::tokens::repository_write_on(
                 &mut tx, token, actor_id, repo_id, "contents"
             )
             .await?,
@@ -422,7 +438,7 @@ async fn delete_asset_file(tx: &mut Transaction<'_, Sqlite>, id: Uuid) -> Result
     .fetch_optional(&mut **tx)
     .await?;
     if let Some(file) = &file {
-        super::files::queue_deletion(tx, file).await?;
+        crate::backend::db::sqlite::files::queue_deletion(tx, file).await?;
         sqlx::query("DELETE FROM files WHERE id=?1")
             .bind(id)
             .execute(&mut **tx)
@@ -573,8 +589,8 @@ pub async fn download_asset(
     name: Option<&str>,
     asset: Option<i64>,
 ) -> Result<Option<ReleaseAsset>> {
-    let readable = super::repositories::access::readable_condition();
-    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let readable = crate::backend::db::sqlite::repositories::access::readable_condition();
+    let access = crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     Ok(sqlx::query_as(&format!("SELECT a.* FROM release_assets a JOIN releases rel ON rel.id=a.release_id JOIN repositories r ON r.id=rel.repo_id LEFT JOIN users u ON u.id=?1 WHERE r.id=?2 AND {readable} AND (NOT rel.is_draft OR ({access})>=3 OR (r.owner_kind='user' AND u.is_admin)) AND (?3 IS NULL OR rel.tag_name=?3) AND (?4 IS NULL OR a.name=?4) AND (?5 IS NULL OR a.id=?5)"))
         .bind(viewer).bind(repo).bind(tag).bind(name).bind(asset).fetch_optional(pool).await?)
 }

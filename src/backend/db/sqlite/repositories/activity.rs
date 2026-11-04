@@ -1,4 +1,7 @@
-use crate::backend::db::repositories::activity::{Activity, Filter, Kind, RefActivity};
+use crate::backend::db::repositories::activity::Activity;
+use crate::backend::db::repositories::activity::Filter;
+use crate::backend::db::repositories::activity::Kind;
+use crate::backend::db::repositories::activity::RefActivity;
 use anyhow::Result;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -41,14 +44,14 @@ pub async fn list(
         sqlx::query_as::<_, Activity>(&crate::backend::db::repositories::activity::list_sql(
             false,
             filter,
-            &super::access::readable_condition(),
+            &crate::backend::db::sqlite::repositories::access::readable_condition(),
         ))
         .bind(repo)
         .bind(filter.boundary)
         .bind(filter.reference)
         .bind(filter.actor)
         .bind(filter.kind.map(Kind::as_str))
-        .bind(filter.since.map(super::super::time::encode))
+        .bind(filter.since.map(crate::backend::db::sqlite::time::encode))
         .bind(limit.clamp(1, 101))
         .bind(viewer)
         .fetch_all(pool)

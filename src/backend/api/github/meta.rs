@@ -1,9 +1,13 @@
 //! Small discovery endpoints reuse the same templates and Markdown renderer as repository pages.
-use super::{api_url, auth, contents, node_id, pagination::Pagination, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    repositories::{store::repo_store, templates},
-};
+use codeyard_model::urls::api_url;
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use crate::backend::repositories::store::repo_store;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap},
@@ -20,7 +24,7 @@ pub(super) async fn root(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>> {
-    auth::authenticate(&state, &headers, false).await?;
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     let mut value = json!({});
     for (key, path) in [
         ("current_user_url", "/user"),
@@ -91,13 +95,13 @@ pub(super) async fn root(
     }
     value["current_user_authorizations_html_url"] = json!(format!(
         "{}/settings/applications{{/client_id}}",
-        crate::backend::api::http::config::link_origin()
+        codeyard_model::http_config::link_origin()
     ));
     Ok(Json(value))
 }
 
 async fn meta(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Result<Json<Value>> {
-    auth::authenticate(&state, &headers, false).await?;
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     Ok(Json(
         json!({"verifiable_password_authentication":false,"installed_version":env!("CARGO_PKG_VERSION")}),
     ))
@@ -121,7 +125,10 @@ async fn octocat(Query(query): Query<HashMap<String, String>>) -> String {
     format!("{saying}\n  /\\_/\\\n ( o.o )\n  > ^ <\n")
 }
 
-pub(super) fn license_document(template: &templates::Template, full: bool) -> Value {
+pub(super) fn license_document(
+    template: &crate::backend::repositories::templates::Template,
+    full: bool,
+) -> Value {
     let key = template.name.to_ascii_lowercase();
     let url = api_url(&format!("/licenses/{key}"));
     let mut value = json!({"key":key,"name":template.name,"spdx_id":template.name,"url":url,"node_id":node_id::git("LIC",&key)});
@@ -189,7 +196,7 @@ async fn licenses(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
-    let rows = templates::LICENSE_TEMPLATES
+    let rows = crate::backend::repositories::templates::LICENSE_TEMPLATES
         .iter()
         .skip(offset)
         .take(limit)
@@ -198,11 +205,11 @@ async fn licenses(
     page.response(
         &uri,
         rows,
-        templates::LICENSE_TEMPLATES.len() > offset + limit,
+        crate::backend::repositories::templates::LICENSE_TEMPLATES.len() > offset + limit,
     )
 }
 async fn license(Path(key): Path<String>) -> Result<Json<Value>> {
-    let template = templates::LICENSE_TEMPLATES
+    let template = crate::backend::repositories::templates::LICENSE_TEMPLATES
         .iter()
         .find(|template| template.name.eq_ignore_ascii_case(&key))
         .ok_or_else(Error::missing)?;
@@ -221,37 +228,42 @@ async fn repository_license(
     let revision = store
         .commit(reference)
         .await
-        .map_err(contents::store_error)?
+        .map_err(crate::backend::api::github::contents::store_error)?
         .sha;
     let mut entries = store
         .tree_metadata(&revision, "")
         .await
-        .map_err(contents::store_error)?;
+        .map_err(crate::backend::api::github::contents::store_error)?;
     entries.sort_by_key(|entry| entry.name.to_ascii_lowercase());
     let path = entries
         .iter()
-        .find(|entry| entry.entry_type == "file" && templates::is_license_file(&entry.name))
+        .find(|entry| {
+            entry.entry_type == "file"
+                && crate::backend::repositories::templates::is_license_file(&entry.name)
+        })
         .ok_or_else(Error::missing)?
         .path
         .clone();
     let blob = store
         .blob_bytes(&revision, &path)
         .await
-        .map_err(contents::store_error)?;
+        .map_err(crate::backend::api::github::contents::store_error)?;
     if headers
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.contains("application/vnd.github.raw"))
     {
-        return contents::blob_response(&headers, &owner, &name, reference, &revision, &path, blob)
-            .await;
+        return crate::backend::api::github::contents::blob_response(
+            &headers, &owner, &name, reference, &revision, &path, blob,
+        )
+        .await;
     }
-    let mut value = contents::entry(
+    let mut value = crate::backend::api::github::contents::entry(
         &owner, &name, reference, &revision, &path, &blob.id, blob.size, "file",
     );
     value["encoding"] = json!("base64");
     value["content"] = json!(STANDARD.encode(&blob.bytes));
-    value["license"] = templates::detect_license(&blob.bytes)
+    value["license"] = crate::backend::repositories::templates::detect_license(&blob.bytes)
         .map(|template| license_document(template, false))
         .unwrap_or(Value::Null);
     Ok(Json(value).into_response())
@@ -276,13 +288,16 @@ async fn conduct_code(Path(key): Path<String>) -> Result<Json<Value>> {
     Ok(Json(conduct(true)))
 }
 async fn ignores() -> Json<Value> {
-    Json(json!(templates::GITIGNORE_TEMPLATES
-        .iter()
-        .map(|template| template.name)
-        .collect::<Vec<_>>()))
+    Json(json!(
+        crate::backend::repositories::templates::GITIGNORE_TEMPLATES
+            .iter()
+            .map(|template| template.name)
+            .collect::<Vec<_>>()
+    ))
 }
 async fn ignore(Path(name): Path<String>, headers: HeaderMap) -> Result<Response> {
-    let template = templates::gitignore(&name).ok_or_else(Error::missing)?;
+    let template =
+        crate::backend::repositories::templates::gitignore(&name).ok_or_else(Error::missing)?;
     if headers
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok())
@@ -323,7 +338,7 @@ async fn markdown(
             authentication
                 .repository_scope(&state.pool, repo.id, "contents", false)
                 .await
-                .map_err(super::auth::scope_error)?;
+                .map_err(crate::backend::api::github::auth::scope_error)?;
         }
         if input.mode.as_deref() == Some("gfm") {
             references = resolve_references(
@@ -342,14 +357,14 @@ async fn markdown(
 }
 pub(super) async fn resolve_references(
     state: &AppState,
-    authentication: Option<&super::auth::Authentication>,
+    authentication: Option<&crate::backend::api::github::auth::Authentication>,
     repo: &codeyard_db_core::models::Repository,
     owner: &str,
     name: &str,
     texts: &[&str],
     document: bool,
 ) -> Result<codeyard_webui::components::references::References> {
-    super::super::repos::refs::references::resolve_references_with(
+    crate::backend::api::repos::refs::references::resolve_references_with(
         &state.pool,
         state.cluster.as_ref(),
         repo,
@@ -359,11 +374,14 @@ pub(super) async fn resolve_references(
         document,
         |records| async move {
             let ids: Vec<_> = records.iter().map(|repo| repo.id).collect();
-            super::auth::readable_repositories(state, authentication, &ids, "contents")
-                .await
-                .map_err(|error| {
-                    anyhow::anyhow!("Reference audience could not be verified: {error:?}")
-                })
+            crate::backend::api::github::auth::readable_repositories(
+                state,
+                authentication,
+                &ids,
+                "contents",
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("Reference audience could not be verified: {error:?}"))
         },
     )
     .await

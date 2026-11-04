@@ -1,9 +1,22 @@
 //! Bounded request-local enrichment for Checks pages. Database parents, publishers and
 //! pull associations are batched; Git heads are read once and released after their last use.
-use super::{
-    actions_app, app_value, checks, db, payloads, pull_value, repo_store, run_value, store_error,
-    suite_value, AppState, Error, Repository, Result, Run, Suite, SuiteDocuments,
-};
+use crate::backend::api::github::checks::actions_app;
+use crate::backend::api::github::checks::app_value;
+use crate::backend::api::github::checks::checks;
+use crate::backend::api::github::checks::db;
+use crate::backend::api::github::checks::payloads;
+use crate::backend::api::github::checks::pull_value;
+use crate::backend::api::github::checks::repo_store;
+use crate::backend::api::github::checks::run_value;
+use crate::backend::api::github::checks::store_error;
+use crate::backend::api::github::checks::suite_value;
+use crate::backend::api::github::checks::AppState;
+use crate::backend::api::github::checks::Error;
+use crate::backend::api::github::checks::Repository;
+use crate::backend::api::github::checks::Result;
+use crate::backend::api::github::checks::Run;
+use crate::backend::api::github::checks::Suite;
+use crate::backend::api::github::checks::SuiteDocuments;
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
 

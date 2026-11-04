@@ -1,10 +1,15 @@
-use crate::backend::db::advisories::{identifier, Advisory, Data, Listing, Refusal, Scope};
+use crate::backend::db::advisories::Listing;
+use crate::backend::db::advisories::Scope;
 use anyhow::Result;
 use chrono::Utc;
+use codeyard_model::advisories::identifier;
+use codeyard_model::advisories::Advisory;
+use codeyard_model::advisories::Data;
+use codeyard_model::advisories::Refusal;
 use serde_json::Value;
 use sqlx::SqlitePool;
 fn visibility() -> String {
-    let level = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let level = crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     let manager = crate::backend::db::organizations::roles::security_manager_condition(
         "u.id",
         "r.owner_org_id",
@@ -13,7 +18,7 @@ fn visibility() -> String {
 }
 pub async fn can_administer(pool: &SqlitePool, actor: i64, repo: i64) -> Result<bool> {
     let sql = crate::backend::db::advisories::administration_sql(
-        super::repositories::access::USER_REPO_ACCESS_SQL,
+        crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL,
     );
     Ok(sqlx::query_scalar(&sql)
         .bind(actor)
@@ -81,20 +86,31 @@ pub async fn create(
     let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let report_id = if report {
-        let input = crate::backend::db::repositories::security::NewReport::new(
-            &data.summary,
-            &data.description,
-        )?;
-        Some(super::repositories::security::create_report_in(&mut tx, actor, repo, &input).await?)
+        let input =
+            codeyard_model::security_reports::NewReport::new(&data.summary, &data.description)?;
+        Some(
+            crate::backend::db::sqlite::repositories::security::create_report_in(
+                &mut tx, actor, repo, &input,
+            )
+            .await?,
+        )
     } else {
         anyhow::ensure!(
-            super::discussions::lock_security_authority(&mut tx, actor, repo, true).await?,
+            crate::backend::db::sqlite::discussions::lock_security_authority(
+                &mut tx, actor, repo, true
+            )
+            .await?,
             Refusal::Denied
         );
         None
     };
     if let Some(credential) = authority.credential() {
-        super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+        crate::backend::db::sqlite::users::transitions::require_account(
+            &mut tx,
+            actor,
+            &credential,
+        )
+        .await?;
     }
     let row=sqlx::query_as("INSERT INTO repository_advisories(repo_id,ghsa_id,author_id,state,document,report_id) VALUES(?1,?2,?3,?4,?5,?6) RETURNING *").bind(repo).bind(identifier()).bind(actor).bind(if report {"triage"} else {"draft"}).bind(serde_json::to_string(&data)?).bind(report_id).fetch_one(&mut *tx).await?;
     tx.commit().await?;
@@ -103,7 +119,13 @@ pub async fn create(
 /// Compensates failed provisioning only while the newly created draft is untouched.
 pub async fn discard_created(pool: &SqlitePool, actor: i64, created: &Advisory) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::discussions::lock_admin_authority(&mut tx, actor, created.repo_id).await? {
+    if !crate::backend::db::sqlite::discussions::lock_admin_authority(
+        &mut tx,
+        actor,
+        created.repo_id,
+    )
+    .await?
+    {
         return Ok(false);
     }
     let deleted = sqlx::query("DELETE FROM repository_advisories WHERE id=?1 AND repo_id=?2 AND author_id=?3 AND revision=?4 AND state='draft' AND private_fork_id IS NULL AND report_id IS NULL AND cve_requested_at IS NULL")
@@ -119,7 +141,8 @@ pub(crate) async fn administration(
     ghsa: &str,
 ) -> Result<Advisory> {
     anyhow::ensure!(
-        super::discussions::lock_security_authority(tx, actor, repo, true).await?,
+        crate::backend::db::sqlite::discussions::lock_security_authority(tx, actor, repo, true)
+            .await?,
         Refusal::Denied
     );
     Ok(
@@ -144,7 +167,12 @@ pub async fn update(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let row = administration(&mut tx, actor, repo, ghsa).await?;
     if let Some(credential) = authority.credential() {
-        super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+        crate::backend::db::sqlite::users::transitions::require_account(
+            &mut tx,
+            actor,
+            &credential,
+        )
+        .await?;
     }
     let previous = Data::from_row(&row)?;
     let data = Data::parse(patch, Some(&previous), false)?;
@@ -195,7 +223,7 @@ pub async fn update(
     };
     let updated: Advisory=sqlx::query_as("UPDATE repository_advisories SET revision=revision+1,document=?3,state=?4,updated_at=?5,published_at=?6,publisher_id=?7,closed_at=?8,report_accepted=?9 WHERE repo_id=?1 AND ghsa_id=?2 RETURNING *").bind(repo).bind(ghsa).bind(serde_json::to_string(&data)?).bind(state).bind(now).bind(published_at).bind(publisher).bind(closed_at).bind(row.report_accepted||(row.report_id.is_some()&&state=="draft")).fetch_one(&mut *tx).await?;
     if state == "published" {
-        super::super::dependabot_alerts::published(updated.clone())?;
+        crate::backend::db::dependabot_alerts::published(updated.clone())?;
     }
     if let Some(report) = row.report_id.filter(|_| state != row.state) {
         sqlx::query("UPDATE repository_security_reports SET state=?2,updated_at=?3 WHERE id=?1 AND repo_id=?4").bind(report).bind(if state=="closed" {"closed"} else {"open"}).bind(now).bind(repo).execute(&mut *tx).await?;
@@ -214,7 +242,12 @@ pub async fn request_cve(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let row = administration(&mut tx, actor, repo, ghsa).await?;
     if let Some(credential) = authority.credential() {
-        super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+        crate::backend::db::sqlite::users::transitions::require_account(
+            &mut tx,
+            actor,
+            &credential,
+        )
+        .await?;
     }
     let private: bool = sqlx::query_scalar("SELECT is_private FROM repositories WHERE id=$1")
         .bind(repo)
@@ -243,7 +276,12 @@ pub async fn attach_fork(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let row = administration(&mut tx, actor, repo, ghsa).await?;
     if let Some(credential) = authority.credential() {
-        super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+        crate::backend::db::sqlite::users::transitions::require_account(
+            &mut tx,
+            actor,
+            &credential,
+        )
+        .await?;
     }
     anyhow::ensure!(
         matches!(row.state.as_str(), "draft" | "triage") && row.private_fork_id.is_none(),

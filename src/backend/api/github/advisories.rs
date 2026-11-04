@@ -1,18 +1,21 @@
 //! Repository advisories and confidential reports share the native disclosure workflow.
-use super::{auth, orgs, repo_url, repos, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        advisories::{self, Advisory, Data, Listing, Scope, Sort},
-        repositories::security,
-    },
-    repositories::{
-        advisories as workflow,
-        lifecycle::{LifecycleFailure, StorageError},
-    },
-    webhooks::payloads,
-};
+
+use codeyard_model::urls::repo_url;
+
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::advisories::Listing;
+use crate::backend::db::advisories::Scope;
+use crate::backend::db::advisories::Sort;
+use codeyard_model::advisories::Advisory;
+use codeyard_model::advisories::Data;
+
+use crate::backend::repositories::lifecycle::LifecycleFailure;
+use crate::backend::repositories::lifecycle::StorageError;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode, Uri},
@@ -28,9 +31,9 @@ use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 pub(super) fn failure(error: anyhow::Error) -> Error {
     if let Some(
-        graph @ (db::dependency_graph::GraphError::Limit
-        | db::dependency_graph::GraphError::Disabled),
-    ) = error.downcast_ref::<db::dependency_graph::GraphError>()
+        graph @ (codeyard_model::dependency_graph::GraphError::Limit
+        | codeyard_model::dependency_graph::GraphError::Disabled),
+    ) = error.downcast_ref::<codeyard_model::dependency_graph::GraphError>()
     {
         return Error::new(StatusCode::UNPROCESSABLE_ENTITY, graph.to_string());
     }
@@ -40,15 +43,15 @@ pub(super) fn failure(error: anyhow::Error) -> Error {
             "A live unrestricted credential is required",
         );
     }
-    match error.downcast_ref::<advisories::Refusal>() {
-        Some(advisories::Refusal::Denied) => {
+    match error.downcast_ref::<codeyard_model::advisories::Refusal>() {
+        Some(codeyard_model::advisories::Refusal::Denied) => {
             return Error::new(StatusCode::FORBIDDEN, "Advisory administration denied")
         }
-        Some(advisories::Refusal::Missing) => return Error::missing(),
-        Some(advisories::Refusal::Invalid) => {
+        Some(codeyard_model::advisories::Refusal::Missing) => return Error::missing(),
+        Some(codeyard_model::advisories::Refusal::Invalid) => {
             return Error::validation("RepositoryAdvisory", "configuration", "invalid")
         }
-        Some(advisories::Refusal::Conflict) => {
+        Some(codeyard_model::advisories::Refusal::Conflict) => {
             return Error::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "The advisory state does not allow this operation",
@@ -56,18 +59,18 @@ pub(super) fn failure(error: anyhow::Error) -> Error {
         }
         None => {}
     }
-    match error.downcast_ref::<security::Refusal>() {
-        Some(security::Refusal::Denied) => {
+    match error.downcast_ref::<codeyard_model::security_reports::Refusal>() {
+        Some(codeyard_model::security_reports::Refusal::Denied) => {
             return Error::new(
                 StatusCode::FORBIDDEN,
                 "Private vulnerability reporting denied",
             )
         }
-        Some(security::Refusal::Missing) => return Error::missing(),
-        Some(security::Refusal::Invalid(_)) => {
+        Some(codeyard_model::security_reports::Refusal::Missing) => return Error::missing(),
+        Some(codeyard_model::security_reports::Refusal::Invalid(_)) => {
             return Error::validation("RepositoryAdvisory", "report", "invalid")
         }
-        Some(security::Refusal::Limit) => {
+        Some(codeyard_model::security_reports::Refusal::Limit) => {
             return Error::new(
                 StatusCode::TOO_MANY_REQUESTS,
                 "Security reporting limit reached",
@@ -91,12 +94,14 @@ pub(super) fn failure(error: anyhow::Error) -> Error {
 }
 async fn person(state: &AppState, id: Option<i64>) -> Result<Value> {
     if let Some(id) = id {
-        Ok(db::users::accounts::get_user_by_id(&state.pool, id)
-            .await
-            .map_err(Error::unavailable)?
-            .as_ref()
-            .map(payloads::user)
-            .unwrap_or(Value::Null))
+        Ok(
+            crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+                .await
+                .map_err(Error::unavailable)?
+                .as_ref()
+                .map(crate::backend::webhooks::payloads::user)
+                .unwrap_or(Value::Null),
+        )
     } else {
         Ok(Value::Null)
     }
@@ -104,17 +109,19 @@ async fn person(state: &AppState, id: Option<i64>) -> Result<Value> {
 async fn document(
     state: &AppState,
     row: &Advisory,
-    viewer: Option<&auth::Authentication>,
+    viewer: Option<&crate::backend::api::github::auth::Authentication>,
 ) -> Result<Value> {
     let data = Data::from_row(row).map_err(Error::unavailable)?;
-    let repo = db::repositories::records::get_repository_by_id(&state.pool, row.repo_id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    let owner = db::repositories::records::repository_owner_name(&state.pool, row.repo_id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let repo =
+        crate::backend::db::repositories::records::get_repository_by_id(&state.pool, row.repo_id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+    let owner =
+        crate::backend::db::repositories::records::repository_owner_name(&state.pool, row.repo_id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     let author = person(state, row.author_id).await?;
     let cvss = if let Some(vector) = &data.cvss_vector_string {
         json!({"vector_string":vector,"score":advisories::cvss_score(vector).map_err(Error::unavailable)?})
@@ -126,16 +133,22 @@ async fn document(
         identifiers.push(json!({"type":"CVE","value":cve}));
     }
     let fork = if let (Some(id), Some(viewer)) = (row.private_fork_id, viewer) {
-        if let Some(fork) = db::repositories::records::get_repository_by_id(&state.pool, id)
-            .await
-            .map_err(Error::unavailable)?
+        if let Some(fork) =
+            crate::backend::db::repositories::records::get_repository_by_id(&state.pool, id)
+                .await
+                .map_err(Error::unavailable)?
         {
             // The private fork shows only to a credential that may read it.
-            let allowed = auth::readable_repositories(state, Some(viewer), &[id], "metadata")
-                .await?
-                .contains(&id);
+            let allowed = crate::backend::api::github::auth::readable_repositories(
+                state,
+                Some(viewer),
+                &[id],
+                "metadata",
+            )
+            .await?
+            .contains(&id);
             if allowed {
-                repos::document(state, &fork, Some(viewer)).await?
+                crate::backend::api::github::repos::document(state, &fork, Some(viewer)).await?
             } else {
                 Value::Null
             }
@@ -146,7 +159,7 @@ async fn document(
         Value::Null
     };
     Ok(
-        json!({"ghsa_id":row.ghsa_id,"cve_id":data.cve_id,"url":format!("{}/security-advisories/{}",repo_url(&owner,&repo.name),row.ghsa_id),"html_url":format!("{}/{}/{}/security/advisories/{}",crate::backend::api::http::config::link_origin(),codeyard_webui::encode_component(&owner),codeyard_webui::encode_component(&repo.name),row.ghsa_id),"summary":data.summary,"description":data.description,"severity":data.severity,"author":author,"publisher":person(state,row.publisher_id).await?,"identifiers":identifiers,"state":row.state,"created_at":row.created_at,"updated_at":row.updated_at,"published_at":row.published_at,"closed_at":row.closed_at,"withdrawn_at":null,"submission":row.report_id.map(|_|json!({"accepted":row.report_accepted})),"vulnerabilities":data.vulnerabilities,"cvss":cvss,"cwes":null,"cwe_ids":data.cwe_ids,"credits":data.credits,"credits_detailed":null,"collaborating_users":[],"collaborating_teams":[],"private_fork":fork}),
+        json!({"ghsa_id":row.ghsa_id,"cve_id":data.cve_id,"url":format!("{}/security-advisories/{}",repo_url(&owner,&repo.name),row.ghsa_id),"html_url":format!("{}/{}/{}/security/advisories/{}",codeyard_model::http_config::link_origin(),codeyard_webui::encode_component(&owner),codeyard_webui::encode_component(&repo.name),row.ghsa_id),"summary":data.summary,"description":data.description,"severity":data.severity,"author":author,"publisher":person(state,row.publisher_id).await?,"identifiers":identifiers,"state":row.state,"created_at":row.created_at,"updated_at":row.updated_at,"published_at":row.published_at,"closed_at":row.closed_at,"withdrawn_at":null,"submission":row.report_id.map(|_|json!({"accepted":row.report_accepted})),"vulnerabilities":data.vulnerabilities,"cvss":cvss,"cwes":null,"cwe_ids":data.cwe_ids,"credits":data.credits,"credits_detailed":null,"collaborating_users":[],"collaborating_teams":[],"private_fork":fork}),
     )
 }
 #[derive(Default, Deserialize)]
@@ -180,7 +193,7 @@ fn link(uri: &Uri, cursor: &str, before: bool, limit: usize) -> String {
         .finish();
     format!(
         "<{}{}?{query}>; rel=\"{}\"",
-        crate::backend::api::http::config::link_origin(),
+        codeyard_model::http_config::link_origin(),
         uri.path(),
         if before { "prev" } else { "next" }
     )
@@ -193,8 +206,9 @@ async fn list(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (scope, actor) = if let Some(org) = params.get("org") {
-        let actor = auth::authenticate(&state, &headers, false).await?;
-        let org = orgs::target(&state, org).await?;
+        let actor =
+            crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
+        let org = crate::backend::api::github::orgs::target(&state, org).await?;
         (Scope::Organization(org.id), actor)
     } else {
         let (repo, actor) =
@@ -239,7 +253,7 @@ async fn list(
             Ok((cursor.at, cursor.id))
         })
         .transpose()?;
-    let limit = super::pagination::page_size(query.per_page);
+    let limit = crate::backend::api::github::pagination::page_size(query.per_page);
     let options = Listing {
         state: query.state.as_deref(),
         sort,
@@ -249,7 +263,7 @@ async fn list(
         limit: (limit + 1) as i64,
         offset: 0,
     };
-    let mut rows = advisories::list(
+    let mut rows = crate::backend::db::advisories::list(
         &state.pool,
         actor.as_ref().map(|a| a.user.id),
         scope,
@@ -305,7 +319,7 @@ async fn get_advisory(
 ) -> Result<Json<Value>> {
     let (repo, actor) =
         repository(&state, &headers, &params["owner"], &params["repo"], false).await?;
-    let row = advisories::get(
+    let row = crate::backend::db::advisories::get(
         &state.pool,
         actor.as_ref().map(|a| a.user.id),
         repo.id,
@@ -325,18 +339,35 @@ async fn create(
 ) -> Result<Response> {
     let (repo, actor) =
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
-    let actor = actor.ok_or_else(auth::required)?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     let report = uri.path().ends_with("/reports");
-    let mut row = advisories::create(&state.pool, actor.database_actor(), repo.id, &value, report)
-        .await
-        .map_err(failure)?;
+    let mut row = crate::backend::db::advisories::create(
+        &state.pool,
+        actor.database_actor(),
+        repo.id,
+        &value,
+        report,
+    )
+    .await
+    .map_err(failure)?;
     if value["start_private_fork"] == true {
-        match workflow::private_fork(&state, actor.database_actor(), &repo, &row.ghsa_id).await {
+        match crate::backend::repositories::advisories::private_fork(
+            &state,
+            actor.database_actor(),
+            &repo,
+            &row.ghsa_id,
+        )
+        .await
+        {
             Ok(_) => {
-                if let Some(fresh) =
-                    advisories::get(&state.pool, Some(actor.user.id), repo.id, &row.ghsa_id)
-                        .await
-                        .map_err(failure)?
+                if let Some(fresh) = crate::backend::db::advisories::get(
+                    &state.pool,
+                    Some(actor.user.id),
+                    repo.id,
+                    &row.ghsa_id,
+                )
+                .await
+                .map_err(failure)?
                 {
                     row = fresh;
                 } else if !report {
@@ -346,8 +377,8 @@ async fn create(
             Err(error) if report => {
                 // The report is already committed; optional remediation cannot reject it.
                 let denied = matches!(
-                    error.downcast_ref::<advisories::Refusal>(),
-                    Some(advisories::Refusal::Denied)
+                    error.downcast_ref::<codeyard_model::advisories::Refusal>(),
+                    Some(codeyard_model::advisories::Refusal::Denied)
                 ) || error
                     .downcast_ref::<StorageError>()
                     .is_some_and(|error| matches!(error.kind, LifecycleFailure::Denied));
@@ -356,7 +387,13 @@ async fn create(
                 }
             }
             Err(error) => {
-                match advisories::discard_created(&state.pool, actor.user.id, &row).await {
+                match crate::backend::db::advisories::discard_created(
+                    &state.pool,
+                    actor.user.id,
+                    &row,
+                )
+                .await
+                {
                     Ok(true) => return Err(failure(error)),
                     Ok(false) => {}
                     Err(cleanup) => {
@@ -388,8 +425,8 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (repo, actor) =
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
-    let actor = actor.ok_or_else(auth::required)?;
-    let row = advisories::update(
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
+    let row = crate::backend::db::advisories::update(
         &state.pool,
         actor.database_actor(),
         repo.id,
@@ -407,10 +444,10 @@ async fn cve(
 ) -> Result<StatusCode> {
     let (repo, actor) =
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
-    advisories::request_cve(
+    crate::backend::db::advisories::request_cve(
         &state.pool,
         {
-            let actor = actor.ok_or_else(auth::required)?;
+            let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
             actor.database_actor()
         },
         repo.id,
@@ -427,13 +464,18 @@ async fn fork(
 ) -> Result<Response> {
     let (repo, actor) =
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
-    let actor = actor.ok_or_else(auth::required)?;
-    let fork = workflow::private_fork(&state, actor.database_actor(), &repo, &params["ghsa_id"])
-        .await
-        .map_err(failure)?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
+    let fork = crate::backend::repositories::advisories::private_fork(
+        &state,
+        actor.database_actor(),
+        &repo,
+        &params["ghsa_id"],
+    )
+    .await
+    .map_err(failure)?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(repos::document(&state, &fork, Some(&actor)).await?),
+        Json(crate::backend::api::github::repos::document(&state, &fork, Some(&actor)).await?),
     )
         .into_response())
 }

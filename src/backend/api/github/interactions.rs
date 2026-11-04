@@ -1,11 +1,12 @@
-use super::{auth, Error, Result};
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::db::interactions::InteractionRefusal;
 use crate::backend::db::interactions::InteractionScope;
 use crate::backend::db::interactions::NewRestriction;
 use crate::backend::db::users::accounts::AccountCredential;
-use crate::backend::repositories::access;
+
 use axum::{
     extract::{rejection::JsonRejection, Path, State},
     http::{HeaderMap, StatusCode},
@@ -59,20 +60,31 @@ pub(super) async fn resolve(
     Ok(match scope {
         ScopeName::User => InteractionScope::User(actor.id),
         ScopeName::Organization(name) => InteractionScope::Organization(
-            db::organizations::profiles::get_public_organization(&state.pool, &name)
-                .await
-                .map_err(Error::unavailable)?
-                .ok_or_else(Error::missing)?
-                .id,
+            crate::backend::db::organizations::profiles::get_public_organization(
+                &state.pool,
+                &name,
+            )
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?
+            .id,
         ),
         ScopeName::Repository(owner, name) => {
-            let repository = db::repositories::records::get_repository(&state.pool, &owner, &name)
-                .await
-                .map_err(Error::unavailable)?
-                .ok_or_else(Error::missing)?;
-            if !access::can_read(&state.pool, Some(actor), &repository)
-                .await
-                .map_err(Error::unavailable)?
+            let repository = crate::backend::db::repositories::records::get_repository(
+                &state.pool,
+                &owner,
+                &name,
+            )
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+            if !crate::backend::repositories::access::can_read(
+                &state.pool,
+                Some(actor),
+                &repository,
+            )
+            .await
+            .map_err(Error::unavailable)?
             {
                 return Err(Error::missing());
             }
@@ -96,13 +108,14 @@ fn failure(error: anyhow::Error) -> Error {
     }
 }
 async fn read(state: Arc<AppState>, headers: HeaderMap, scope: ScopeName) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     let scope = resolve(&state, &actor.user, scope).await?;
-    let restriction = db::interactions::get_restriction(&state.pool, actor.user.id, scope)
-        .await
-        .map_err(failure)?;
+    let restriction =
+        crate::backend::db::interactions::get_restriction(&state.pool, actor.user.id, scope)
+            .await
+            .map_err(failure)?;
     if restriction.is_none() && matches!(scope, InteractionScope::User(_)) {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
@@ -117,9 +130,9 @@ async fn save(
     scope: ScopeName,
     input: Option<std::result::Result<Json<NewRestriction>, JsonRejection>>,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
     let scope = resolve(&state, &actor.user, scope).await?;
     let removing = input.is_none();
@@ -130,7 +143,7 @@ async fn save(
                 .map_err(|_| Error::validation("InteractionLimit", "limit", "invalid"))
         })
         .transpose()?;
-    let restriction = match db::interactions::set_restriction(
+    let restriction = match crate::backend::db::interactions::set_restriction(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),

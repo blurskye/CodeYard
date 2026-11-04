@@ -1,19 +1,17 @@
 //! Native branch merge adapters; both JSON and no-JavaScript forms use the shared domain operation.
-use crate::backend::{
-    api::{
-        http::{context::PageContext, error::ApiError, session::get_current_user},
-        repos::{
-            chrome::{self, Loaded},
-            forms::{authorize_post, field, with_status},
-            responses,
-        },
-    },
-    app::AppState,
-    repositories::{
-        merges::{self, BranchMerge},
-        refs::RefError,
-    },
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
+
+use crate::backend::api::repos::chrome::Loaded;
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::field;
+use crate::backend::api::repos::forms::with_status;
+
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::merges::BranchMerge;
+use crate::backend::repositories::refs::RefError;
 use axum::{
     extract::{DefaultBodyLimit, OriginalUri, Path, State},
     http::{HeaderMap, StatusCode},
@@ -44,8 +42,8 @@ pub(super) async fn merge_json(
     Json(input): Json<MergeInput>,
 ) -> Result<Response, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
-    let repo = super::repository_id(&state, &owner, &name).await?;
-    let result = merges::merge_branch(
+    let repo = crate::backend::api::repos::refs::repository_id(&state, &owner, &name).await?;
+    let result = crate::backend::repositories::merges::merge_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -74,9 +72,9 @@ pub(super) async fn merge_json(
 fn merge_error(error: RefError) -> (StatusCode, Json<ApiError>) {
     match error {
         RefError::Git(error) if error.kind == codeyard_git::error::ErrorKind::Conflict => {
-            responses::repo_store_error(error, StatusCode::CONFLICT)
+            crate::backend::api::repos::responses::repo_store_error(error, StatusCode::CONFLICT)
         }
-        error => responses::ref_error(error),
+        error => crate::backend::api::repos::responses::ref_error(error),
     }
 }
 
@@ -162,7 +160,7 @@ async fn page(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let loaded = match chrome::load(&ctx, &owner, &name).await {
+    let loaded = match crate::backend::api::repos::chrome::load(&ctx, &owner, &name).await {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
@@ -200,7 +198,8 @@ async fn submit(
     if let Err(response) = authorize_post(&ctx, &values) {
         return response;
     }
-    let loaded = match chrome::load_metadata(&ctx, &owner, &name).await {
+    let loaded = match crate::backend::api::repos::chrome::load_metadata(&ctx, &owner, &name).await
+    {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
@@ -219,7 +218,7 @@ async fn submit(
             .get("message")
             .filter(|message| !message.is_empty())
             .map(String::as_str);
-        merges::merge_branch(
+        crate::backend::repositories::merges::merge_branch(
             &ctx.state.pool,
             ctx.state.cluster.as_ref(),
             &ctx.state.ci_runs,

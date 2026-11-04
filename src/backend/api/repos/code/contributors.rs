@@ -1,11 +1,12 @@
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::{access_error, readable_repository};
+use crate::backend::api::repos::access::access_error;
+use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::responses::repo_store_error;
 use crate::backend::app::AppState;
 use crate::backend::repositories::access::AccessError;
-use crate::backend::repositories::store::{
-    repo_store, ContributorInfo, MAX_CONTRIBUTOR_RESPONSE_BYTES,
-};
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::ContributorInfo;
+use crate::backend::repositories::store::MAX_CONTRIBUTOR_RESPONSE_BYTES;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;

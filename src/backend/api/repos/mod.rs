@@ -77,7 +77,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(pulls::json_router())
         .merge(releases::json_router())
         .route_layer(axum::middleware::from_fn(
-            super::http::interaction_proofs::prepare,
+            crate::backend::api::http::interaction_proofs::prepare,
         ))
         .route_layer(axum::middleware::from_fn(
             crate::backend::api::http::middleware::require_node_access,
@@ -110,9 +110,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .nest(
             LEGACY_PREFIX,
             page_router()
-                .merge(super::ci::repository_router())
+                .merge(crate::backend::api::ci::repository_router())
                 .layer(axum::middleware::from_fn(
-                    super::http::middleware::bounded_legacy_repository_body,
+                    crate::backend::api::http::middleware::bounded_legacy_repository_body,
                 ))
                 .layer(axum::middleware::from_fn(legacy_alias_uri)),
         )
@@ -169,6 +169,6 @@ fn page_router() -> Router<Arc<AppState>> {
         .merge(labels::page_router())
         .merge(releases::upload_router())
         .layer(axum::middleware::from_fn(
-            super::http::interaction_proofs::prepare,
+            crate::backend::api::http::interaction_proofs::prepare,
         ))
 }

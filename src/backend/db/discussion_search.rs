@@ -382,7 +382,7 @@ impl Search {
     pub fn parse(query: &str) -> Result<Self, &'static str> {
         let mut expr = expression(query)?;
         let mut names = Vec::new();
-        super::catalog_search::extract_fields(&mut expr, &mut names)?;
+        crate::backend::db::catalog_search::extract_fields(&mut expr, &mut names)?;
         let mut fields = names
             .iter()
             .map(|field| match field.as_str() {
@@ -513,8 +513,10 @@ impl Statement {
             return readable.to_owned();
         };
         let token = self.bind(token.to_string());
-        let allowed =
-            super::fine_grained_tokens::classic_allowed_condition(&token, "r.owner_org_id");
+        let allowed = crate::backend::db::fine_grained_tokens::classic_allowed_condition(
+            &token,
+            "r.owner_org_id",
+        );
         format!("({readable}) AND (NOT r.is_private OR ({allowed}))")
     }
     pub(crate) fn bind(&mut self, value: impl Into<String>) -> String {
@@ -627,7 +629,7 @@ impl Statement {
         } else {
             String::new()
         };
-        let readable = super::projects::readable_condition("u.id");
+        let readable = crate::backend::db::projects::readable_condition("u.id");
         Ok(format!("EXISTS(SELECT 1 FROM project_items pi JOIN projects p ON p.id=pi.project_id WHERE ((i.pull_request AND pi.pull_request_id=i.id) OR (NOT i.pull_request AND pi.issue_id=i.id)) AND {readable}{scope})"))
     }
     fn review(&self, value: &str) -> Result<String, &'static str> {

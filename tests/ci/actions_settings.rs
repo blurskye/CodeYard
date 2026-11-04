@@ -748,7 +748,7 @@ async fn rest_settings(pg: bool) {
         .unwrap()
         .unwrap();
         let token = db::ci_tokens::get(f.pool(), pat.id).await.unwrap().unwrap();
-        let permissions: codeyard::backend::ci::tokens::Permissions =
+        let permissions: codeyard_model::permissions::Permissions =
             serde_json::from_str(&token.permissions).unwrap();
         assert_eq!(permissions.allows("contents", true), expected);
         db::ci::finish_ci_run(f.pool(), claim.run.id, "settings", "success", None)

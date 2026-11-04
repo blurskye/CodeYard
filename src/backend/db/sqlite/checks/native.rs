@@ -1,8 +1,10 @@
 //! Native output and its original browser authority share one read snapshot.
-use super::{Annotation, Refusal, Run, Suite};
-use crate::backend::db::{
-    checks::PageSnapshot, sqlite::repositories::access::USER_REPO_ACCESS_SQL,
-};
+use crate::backend::db::checks::PageSnapshot;
+use crate::backend::db::sqlite::checks::Annotation;
+use crate::backend::db::sqlite::checks::Refusal;
+use crate::backend::db::sqlite::checks::Run;
+use crate::backend::db::sqlite::checks::Suite;
+use crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
 use anyhow::{ensure, Result};
 use sqlx::{types::Json, SqlitePool};
 

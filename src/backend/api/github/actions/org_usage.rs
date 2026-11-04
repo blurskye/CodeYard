@@ -1,9 +1,11 @@
 //! Organization cache reports use one authorized snapshot, including private repositories.
-use crate::backend::{
-    api::github::{auth, pagination::Pagination, Error, Result},
-    app::AppState,
-    db::{action_objects as objects, organizations::OrganizationOutcome},
-};
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::organizations::OrganizationOutcome;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -20,15 +22,21 @@ async fn report(
     name: &str,
     offset: i64,
     limit: i64,
-) -> Result<objects::OrganizationCacheUsage> {
-    let actor = auth::authenticate(state, headers, true)
+) -> Result<crate::backend::db::action_objects::OrganizationCacheUsage> {
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?
+        .ok_or_else(crate::backend::api::github::auth::required)?
         .user
         .id;
-    match objects::org_cache_usage(&state.pool, actor, name, offset, limit)
-        .await
-        .map_err(Error::unavailable)?
+    match crate::backend::db::action_objects::org_cache_usage(
+        &state.pool,
+        actor,
+        name,
+        offset,
+        limit,
+    )
+    .await
+    .map_err(Error::unavailable)?
     {
         OrganizationOutcome::Denied => Err(Error::new(
             StatusCode::FORBIDDEN,

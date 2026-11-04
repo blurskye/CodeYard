@@ -12,8 +12,10 @@ pub mod session;
 pub(crate) mod two_factor;
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
-    use crate::backend::api::http::middleware;
-    use axum::{extract::DefaultBodyLimit, middleware::from_fn, routing::get, Router};
+    use axum::{
+        crate::backend::api::http::middleware::from_fn, extract::DefaultBodyLimit, routing::get,
+        Router,
+    };
     Router::new()
         .merge(oauth_apps::router())
         .merge(github_apps::router())
@@ -28,7 +30,9 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
                             "/login/oauth/:provider/callback",
                             get(oauth::oauth_callback),
                         )
-                        .layer(from_fn(middleware::private_sensitive_response)),
+                        .layer(from_fn(
+                            crate::backend::api::http::middleware::private_sensitive_response,
+                        )),
                 )
                 .route(
                     "/login/two-factor",
@@ -56,7 +60,9 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
                             "/verify-email",
                             get(email_links::verify_get).post(email_links::verify_post),
                         )
-                        .layer(from_fn(middleware::private_sensitive_response)),
+                        .layer(from_fn(
+                            crate::backend::api::http::middleware::private_sensitive_response,
+                        )),
                 )
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )

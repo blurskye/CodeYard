@@ -1,10 +1,14 @@
 //! The admin Actions page: whether workflows run on this site, the limits on each run and the
 //! runner image.
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::session;
-use crate::backend::api::user::responses::{field, mutation_guard, require_account, Fields};
+
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::require_account;
+use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
-use crate::backend::db::{self, actions::ActionsSettings};
+
+use crate::backend::db::actions::ActionsSettings;
 use axum::{
     extract::{DefaultBodyLimit, Form, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -145,7 +149,7 @@ async fn render(
             cache_retention_days: field(fields, "cache_retention_days").trim().to_owned(),
             artifact_retention_days: field(fields, "artifact_retention_days").trim().to_owned(),
         },
-        None => match db::actions::get_actions_settings(&ctx.state.pool).await {
+        None => match crate::backend::db::actions::get_actions_settings(&ctx.state.pool).await {
             Ok(saved) => view::Settings {
                 default_engine: saved.default_engine,
                 codeyard_actions_enabled: saved.codeyard_actions_enabled,
@@ -221,8 +225,16 @@ async fn save_form(
         }
     };
     let actor = ctx.user.as_ref().expect("admin guard").id;
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match db::actions::save_actions_settings(&ctx.state.pool, actor, &session, &settings).await {
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    match crate::backend::db::actions::save_actions_settings(
+        &ctx.state.pool,
+        actor,
+        &session,
+        &settings,
+    )
+    .await
+    {
         Ok(true) => ctx.redirect("/admin/actions?saved=1"),
         Ok(false) => ctx.error(StatusCode::FORBIDDEN, "Administrator access is required."),
         Err(_) => {

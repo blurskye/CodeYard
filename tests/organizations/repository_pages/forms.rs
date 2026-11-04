@@ -1,8 +1,7 @@
 use super::fixture::{applied, Actor, Fixture, Reply};
 use axum::http::StatusCode;
-use codeyard::backend::cluster::NodeKey;
-use codeyard::backend::db;
-use codeyard::backend::db::organizations as orgs;
+use codeyard_support::node_identity::NodeKey;
+
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
 use codeyard_webui::{
@@ -78,7 +77,7 @@ pub async fn contracts(f: &Fixture) {
         assert_eq!(repo.description.as_deref(), Some("Org draft"));
         if name == "owner_public" {
             // Direct write authority on a repository is not organization CREATE.
-            db::repositories::access::grant_repo_access(
+            codeyard::backend::db::repositories::access::grant_repo_access(
                 f.database.pool(),
                 f.writer.id,
                 repo.id,
@@ -86,14 +85,16 @@ pub async fn contracts(f: &Fixture) {
             )
             .await
             .unwrap();
-            assert!(db::repositories::access::get_user_repo_access(
-                f.database.pool(),
-                f.writer.id,
-                repo.id
-            )
-            .await
-            .unwrap()
-            .can_write());
+            assert!(
+                codeyard::backend::db::repositories::access::get_user_repo_access(
+                    f.database.pool(),
+                    f.writer.id,
+                    repo.id
+                )
+                .await
+                .unwrap()
+                .can_write()
+            );
         }
     }
     // A current allowed target outside the display page is still checked by the
@@ -139,9 +140,9 @@ pub async fn contracts(f: &Fixture) {
     .await;
     // The native private/public floor survives request projection. No source/fork
     // selector or arbitrary personal owner is part of /new's creation contract.
-    let public = db::repositories::records::list_public_repositories(
+    let public = codeyard::backend::db::repositories::records::list_public_repositories(
         f.database.pool(),
-        db::repositories::records::RepositorySort::Recent,
+        codeyard::backend::db::repositories::records::RepositorySort::Recent,
         100,
     )
     .await
@@ -270,7 +271,7 @@ pub async fn contracts(f: &Fixture) {
     assert_eq!(f.disk_inventory(), before_disk);
 
     // The existing row (including its directory) and real HEAD are unchanged.
-    let original = db::repositories::records::get_repository(
+    let original = codeyard::backend::db::repositories::records::get_repository(
         f.database.pool(),
         "canonical_org",
         "admin_private",
@@ -352,15 +353,27 @@ pub async fn revocation(f: &Fixture) {
         f.org
     );
     applied(
-        orgs::update_organization_member_role(pool, f.owner.id, f.org, f.admin.id, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::update_organization_member_role(
+            pool,
+            f.owner.id,
+            f.org,
+            f.admin.id,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     stale_refusal(f, &f.admin, "after_demotion").await;
     applied(
-        orgs::update_organization_member_role(pool, f.owner.id, f.org, f.admin.id, OrgRole::Admin)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::update_organization_member_role(
+            pool,
+            f.owner.id,
+            f.org,
+            f.admin.id,
+            OrgRole::Admin,
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(
         f.get(&f.admin, "/new", true)
@@ -372,15 +385,23 @@ pub async fn revocation(f: &Fixture) {
         f.org
     );
     applied(
-        orgs::remove_organization_member(pool, f.owner.id, f.org, f.admin.id)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::remove_organization_member(
+            pool, f.owner.id, f.org, f.admin.id,
+        )
+        .await
+        .unwrap(),
     );
     stale_refusal(f, &f.admin, "after_removal").await;
     applied(
-        orgs::add_organization_member(pool, f.owner.id, f.org, f.admin.id, OrgRole::Admin)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::add_organization_member(
+            pool,
+            f.owner.id,
+            f.org,
+            f.admin.id,
+            OrgRole::Admin,
+        )
+        .await
+        .unwrap(),
     );
     for column in ["is_banned", "must_change_password"] {
         assert_eq!(
@@ -534,9 +555,14 @@ pub async fn stale_settings_forms(f: &Fixture) {
         .created("personal_owner", "settings_old", f.owner.id, None, false)
         .await;
     let id = original.id.to_string();
-    db::repositories::access::grant_repo_access(pool, f.member.id, original.id, AccessLevel::Read)
-        .await
-        .unwrap();
+    codeyard::backend::db::repositories::access::grant_repo_access(
+        pool,
+        f.member.id,
+        original.id,
+        AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     let hidden = format!("name=\"repository_id\" value=\"{id}\"");
     // General settings, merge methods, rename, delete, both collaborator forms and the branch
     // protection add form carry the ID, spread over the settings sections. The transfer form
@@ -570,7 +596,7 @@ pub async fn stale_settings_forms(f: &Fixture) {
         .created("personal_owner", "settings_old", f.owner.id, None, true)
         .await;
     assert_ne!(replacement.id, original.id);
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         pool,
         f.member.id,
         replacement.id,
@@ -646,16 +672,21 @@ pub async fn stale_settings_forms(f: &Fixture) {
         let changed = reply.body.contains("The repository changed");
         assert!(changed, "{action}: {}", reply.body);
     }
-    let kept = db::repositories::records::get_repository(pool, "personal_owner", "settings_old")
-        .await
-        .unwrap()
-        .expect("replacement still has the vacated name");
+    let kept = codeyard::backend::db::repositories::records::get_repository(
+        pool,
+        "personal_owner",
+        "settings_old",
+    )
+    .await
+    .unwrap()
+    .expect("replacement still has the vacated name");
     assert_eq!(kept.id, replacement.id);
     assert!(kept.is_private);
     for repo in [original.id, replacement.id] {
-        let collaborators = db::repositories::access::list_repo_collaborators(pool, repo)
-            .await
-            .unwrap();
+        let collaborators =
+            codeyard::backend::db::repositories::access::list_repo_collaborators(pool, repo)
+                .await
+                .unwrap();
         assert_eq!(collaborators.len(), 1);
         assert_eq!(collaborators[0].user_id, f.member.id);
         assert_eq!(collaborators[0].level(), AccessLevel::Read);
@@ -674,9 +705,13 @@ pub async fn stale_settings_forms(f: &Fixture) {
     .await
     .redirect(&format!("{old}/settings?tab=collaborators"));
     assert_eq!(
-        db::repositories::access::get_user_repo_access(pool, f.admin.id, replacement.id)
-            .await
-            .unwrap(),
+        codeyard::backend::db::repositories::access::get_user_repo_access(
+            pool,
+            f.admin.id,
+            replacement.id
+        )
+        .await
+        .unwrap(),
         AccessLevel::Write
     );
     owner_post(
@@ -691,15 +726,20 @@ pub async fn stale_settings_forms(f: &Fixture) {
     .await
     .redirect(&format!("{old}/settings?tab=collaborators"));
     assert_eq!(
-        db::repositories::access::get_user_repo_access(pool, f.admin.id, replacement.id)
-            .await
-            .unwrap(),
+        codeyard::backend::db::repositories::access::get_user_repo_access(
+            pool,
+            f.admin.id,
+            replacement.id
+        )
+        .await
+        .unwrap(),
         AccessLevel::None
     );
-    let renamed = db::repositories::records::get_repository_by_id(pool, original.id)
-        .await
-        .unwrap()
-        .expect("original still exists");
+    let renamed =
+        codeyard::backend::db::repositories::records::get_repository_by_id(pool, original.id)
+            .await
+            .unwrap()
+            .expect("original still exists");
     assert_eq!(renamed.name, "settings_new");
     // A rejected edit keeps the ID, so its retry is checked against the same repository.
     let edit = [
@@ -765,13 +805,15 @@ pub async fn stale_settings_forms(f: &Fixture) {
     owner_post(f, &format!("{new}/_forms/delete"), &delete)
         .await
         .redirect("/personal_owner");
-    let deleted = db::repositories::records::get_repository_by_id(pool, original.id)
-        .await
-        .unwrap();
+    let deleted =
+        codeyard::backend::db::repositories::records::get_repository_by_id(pool, original.id)
+            .await
+            .unwrap();
     assert!(deleted.is_none());
-    let survivor = db::repositories::records::get_repository_by_id(pool, replacement.id)
-        .await
-        .unwrap();
+    let survivor =
+        codeyard::backend::db::repositories::records::get_repository_by_id(pool, replacement.id)
+            .await
+            .unwrap();
     assert!(survivor.is_some());
 }
 
@@ -819,10 +861,11 @@ pub async fn transfer_form(f: &Fixture) {
     owner_post(f, path, &moved)
         .await
         .redirect("/canonical_org/transfer_me");
-    let transferred = db::repositories::records::get_repository_by_id(pool, repo.id)
-        .await
-        .unwrap()
-        .expect("transferred repository keeps its ID");
+    let transferred =
+        codeyard::backend::db::repositories::records::get_repository_by_id(pool, repo.id)
+            .await
+            .unwrap()
+            .expect("transferred repository keeps its ID");
     assert_eq!(transferred.owner_org_id, Some(f.org));
     assert_eq!(transferred.owner_user_id, None);
     assert_eq!(transferred.disk_path, repo.disk_path);
@@ -855,10 +898,11 @@ pub async fn transfer_form(f: &Fixture) {
         owner_post(f, path, &conflict).await.status,
         StatusCode::CONFLICT
     );
-    let still_personal = db::repositories::records::get_repository_by_id(pool, again.id)
-        .await
-        .unwrap()
-        .expect("refused repository is untouched");
+    let still_personal =
+        codeyard::backend::db::repositories::records::get_repository_by_id(pool, again.id)
+            .await
+            .unwrap()
+            .expect("refused repository is untouched");
     assert_eq!(still_personal.owner_user_id, Some(f.owner.id));
 }
 
@@ -895,9 +939,14 @@ pub async fn repository_pages(f: &Fixture) {
         &[],
     )
     .unwrap();
-    db::repositories::access::grant_repo_access(pool, f.member.id, source.id, AccessLevel::Read)
-        .await
-        .unwrap();
+    codeyard::backend::db::repositories::access::grant_repo_access(
+        pool,
+        f.member.id,
+        source.id,
+        AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     let issues = "/personal_owner/fork_private/issues";
     let fork_path = "/personal_owner/fork_private/_forms/fork";
     let fork_form = "action=\"/personal_owner/fork_private/_forms/fork\"";
@@ -915,10 +964,14 @@ pub async fn repository_pages(f: &Fixture) {
     let bound = [("repository_id", source_id.as_str())];
     let forked = f.form(&f.member, fork_path, &bound, false).await;
     forked.redirect("/ordinary_member/fork_private");
-    let fork = db::repositories::records::get_repository(pool, "ordinary_member", "fork_private")
-        .await
-        .unwrap()
-        .expect("native fork row");
+    let fork = codeyard::backend::db::repositories::records::get_repository(
+        pool,
+        "ordinary_member",
+        "fork_private",
+    )
+    .await
+    .unwrap()
+    .expect("native fork row");
     assert!(fork.is_private);
     assert!(fork.is_fork);
     assert_eq!(fork.forked_from_id, Some(source.id));
@@ -933,11 +986,14 @@ pub async fn repository_pages(f: &Fixture) {
     assert!(staff_area.contains(fork_form), "{staff_area}");
     let forked = f.form(&f.staff, fork_path, &bound, false).await;
     forked.redirect("/siteadmin_only/fork_private");
-    let staff_fork =
-        db::repositories::records::get_repository(pool, "siteadmin_only", "fork_private")
-            .await
-            .unwrap()
-            .unwrap();
+    let staff_fork = codeyard::backend::db::repositories::records::get_repository(
+        pool,
+        "siteadmin_only",
+        "fork_private",
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(staff_fork.forked_from_id, Some(source.id));
     assert!(!staff_fork.is_archived);
 
@@ -980,7 +1036,8 @@ pub async fn repository_pages(f: &Fixture) {
     let grant_path = "/canonical_org/collab_org/_forms/collaborator";
     let refused = f.form(&f.owner, grant_path, &grant, false).await;
     assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.body);
-    let access = db::repositories::access::list_repo_collaborators(pool, org.id).await;
+    let access =
+        codeyard::backend::db::repositories::access::list_repo_collaborators(pool, org.id).await;
     assert!(!access.unwrap().iter().any(|row| row.user_id == f.member.id));
 
     // Git storage offline: database-only pages and actions work; the Git page answers 503.
@@ -992,9 +1049,15 @@ pub async fn repository_pages(f: &Fixture) {
         .await;
     let key = NodeKey::generate().public_hex();
     let roles = ["storage".to_owned()];
-    let node = db::cluster::register_own_node(pool, &key, "offline-storage", &roles, "test")
-        .await
-        .unwrap();
+    let node = codeyard::backend::db::cluster::register_own_node(
+        pool,
+        &key,
+        "offline-storage",
+        &roles,
+        "test",
+    )
+    .await
+    .unwrap();
     let assign = "UPDATE repositories SET storage_node_id=$1 WHERE id=$2";
     f.database.execute(assign, &[node.id, offline.id]).await;
     let offline_issues = f
@@ -1020,7 +1083,9 @@ pub async fn repository_pages(f: &Fixture) {
         )
         .await;
     starred.redirect("/personal_owner/offline_store");
-    let stars = db::repositories::engagement::is_repo_starred(pool, f.owner.id, offline.id);
+    let stars = codeyard::backend::db::repositories::engagement::is_repo_starred(
+        pool, f.owner.id, offline.id,
+    );
     assert!(stars.await.unwrap());
     let offline_settings = "/personal_owner/offline_store/settings";
     let settings = f.get(&f.owner, offline_settings, false).await;

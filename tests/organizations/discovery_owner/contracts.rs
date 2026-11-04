@@ -1,5 +1,5 @@
 use super::fixture::{Fixture, COLLISION, ORG, USER};
-use codeyard::backend::db;
+
 use codeyard_webui::pages::discovery::{self as view, RepositoryCard};
 
 const NAMES: [&str; 4] = [
@@ -26,7 +26,7 @@ fn public_cards(cards: &[RepositoryCard], order: &[usize]) {
 pub async fn run(f: &Fixture) {
     let pool = f.database.pool();
     for (index, id) in f.public.iter().enumerate() {
-        let repo = db::repositories::records::get_repository_by_id(pool, *id)
+        let repo = codeyard::backend::db::repositories::records::get_repository_by_id(pool, *id)
             .await
             .unwrap()
             .unwrap();
@@ -38,7 +38,7 @@ pub async fn run(f: &Fixture) {
             assert_eq!(repo.owner_org_id, Some(COLLISION));
         }
         assert_eq!(
-            db::repositories::records::repository_owner_name(pool, *id)
+            codeyard::backend::db::repositories::records::repository_owner_name(pool, *id)
                 .await
                 .unwrap()
                 .as_deref(),
@@ -48,20 +48,24 @@ pub async fn run(f: &Fixture) {
     // The equal-numbered user is not an organization member; neither membership
     // nor private repository metadata authority is conferred by a namespace read.
     assert_eq!(
-        db::repositories::access::get_user_repo_access(pool, COLLISION, f.private_org)
-            .await
-            .unwrap(),
+        codeyard::backend::db::repositories::access::get_user_repo_access(
+            pool,
+            COLLISION,
+            f.private_org
+        )
+        .await
+        .unwrap(),
         codeyard_db_core::models::AccessLevel::None,
     );
     assert_eq!(
-        db::repositories::records::repository_owner_name(pool, f.private_org)
+        codeyard::backend::db::repositories::records::repository_owner_name(pool, f.private_org)
             .await
             .unwrap()
             .as_deref(),
         Some(ORG),
     );
     assert_eq!(
-        db::repositories::records::repository_owner_name(pool, i64::MAX)
+        codeyard::backend::db::repositories::records::repository_owner_name(pool, i64::MAX)
             .await
             .unwrap(),
         None
@@ -85,9 +89,9 @@ pub async fn run(f: &Fixture) {
         }
         // Private orgs have higher stars/newer dates and outnumber every bound.
         assert_eq!(
-            db::repositories::records::list_public_repositories(
+            codeyard::backend::db::repositories::records::list_public_repositories(
                 pool,
-                db::repositories::records::RepositorySort::Recent,
+                codeyard::backend::db::repositories::records::RepositorySort::Recent,
                 1,
             )
             .await
@@ -96,11 +100,11 @@ pub async fn run(f: &Fixture) {
             f.public[order[0]],
         );
         assert_eq!(
-            db::repositories::discovery::search_repositories(
+            codeyard::backend::db::repositories::discovery::search_repositories(
                 pool,
                 None,
                 "discovery",
-                db::repositories::records::RepositorySort::Stars,
+                codeyard::backend::db::repositories::records::RepositorySort::Stars,
                 0,
                 1
             )
@@ -110,11 +114,11 @@ pub async fn run(f: &Fixture) {
             f.public[order[0]],
         );
         assert_eq!(
-            db::repositories::discovery::search_issues(
+            codeyard::backend::db::repositories::discovery::search_issues(
                 pool,
                 None,
                 "discovery",
-                db::repositories::discovery::ItemSort::Updated,
+                codeyard::backend::db::repositories::discovery::ItemSort::Updated,
                 0,
                 1
             )
@@ -255,14 +259,14 @@ pub async fn run(f: &Fixture) {
         )
         .await;
     assert_eq!(
-        db::repositories::records::repository_owner_name(pool, f.public[0])
+        codeyard::backend::db::repositories::records::repository_owner_name(pool, f.public[0])
             .await
             .unwrap()
             .as_deref(),
         Some("renamed_personal")
     );
     assert_eq!(
-        db::repositories::records::repository_owner_name(pool, f.public[1])
+        codeyard::backend::db::repositories::records::repository_owner_name(pool, f.public[1])
             .await
             .unwrap()
             .as_deref(),
@@ -297,7 +301,7 @@ pub async fn run(f: &Fixture) {
         .insert_repository_row("org", "discovery_deleted", false)
         .await;
     assert_eq!(
-        db::repositories::records::repository_owner_name(pool, deleted)
+        codeyard::backend::db::repositories::records::repository_owner_name(pool, deleted)
             .await
             .unwrap()
             .as_deref(),
@@ -307,13 +311,13 @@ pub async fn run(f: &Fixture) {
         .execute("DELETE FROM repositories WHERE id=$1", &[deleted])
         .await;
     assert_eq!(
-        db::repositories::records::repository_owner_name(pool, deleted)
+        codeyard::backend::db::repositories::records::repository_owner_name(pool, deleted)
             .await
             .unwrap(),
         None
     );
     assert_eq!(
-        db::repositories::records::repository_owner_name(pool, f.own_private)
+        codeyard::backend::db::repositories::records::repository_owner_name(pool, f.own_private)
             .await
             .unwrap()
             .as_deref(),
@@ -448,7 +452,7 @@ async fn discovery_page_failures_and_old_repositories(f: &Fixture) {
         }
         if table == "repositories" {
             // Reading user rows is independent of the repository counts used for tab badges.
-            let users = db::repositories::discovery::search_users(
+            let users = codeyard::backend::db::repositories::discovery::search_users(
                 f.database.pool(),
                 "discovery_user",
                 0,
@@ -529,7 +533,7 @@ async fn api_contracts(f: &Fixture) {
     // only the owned fixture session explicit Read on the child, not the parent.
     let (status, _) = f.api(&format!("/api/repos/{ORG}/api_org_fork")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         f.database.pool(),
         COLLISION,
         public_fork,
@@ -637,28 +641,46 @@ pub async fn bounded_queries(f: &Fixture) {
     }
     // Native callers cannot bypass the page cap either.
     assert_eq!(
-        db::repositories::discovery::list_forks(f.database.pool(), base, i64::MAX, 0)
-            .await
-            .unwrap()
-            .len(),
+        codeyard::backend::db::repositories::discovery::list_forks(
+            f.database.pool(),
+            base,
+            i64::MAX,
+            0
+        )
+        .await
+        .unwrap()
+        .len(),
         100
     );
     assert_eq!(
-        db::repositories::engagement::list_repo_stargazers(f.database.pool(), base, i64::MAX, 0)
-            .await
-            .unwrap()
-            .len(),
+        codeyard::backend::db::repositories::engagement::list_repo_stargazers(
+            f.database.pool(),
+            base,
+            i64::MAX,
+            0
+        )
+        .await
+        .unwrap()
+        .len(),
         100
     );
+    assert!(codeyard::backend::db::repositories::discovery::list_forks(
+        f.database.pool(),
+        base,
+        30,
+        -1
+    )
+    .await
+    .is_err());
     assert!(
-        db::repositories::discovery::list_forks(f.database.pool(), base, 30, -1)
-            .await
-            .is_err()
-    );
-    assert!(
-        db::repositories::engagement::list_repo_stargazers(f.database.pool(), base, 30, -1)
-            .await
-            .is_err()
+        codeyard::backend::db::repositories::engagement::list_repo_stargazers(
+            f.database.pool(),
+            base,
+            30,
+            -1
+        )
+        .await
+        .is_err()
     );
 
     // Forks the viewer cannot read are left out before paging, so they take no page slots.
@@ -709,7 +731,7 @@ pub async fn bounded_queries(f: &Fixture) {
         f.api_as(&format!("{path}?per_page=1"), true).await.1[0]["id"],
         private
     );
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         f.database.pool(),
         COLLISION,
         private_org,

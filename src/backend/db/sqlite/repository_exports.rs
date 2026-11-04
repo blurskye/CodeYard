@@ -13,7 +13,8 @@ async fn authority(
 ) -> Result<bool> {
     if let Some(org) = org {
         return Ok(matches!(
-            super::organizations::authority::authority(connection, actor, org).await?,
+            crate::backend::db::sqlite::organizations::authority::authority(connection, actor, org)
+                .await?,
             OrganizationOutcome::Applied(OrgRole::Owner)
         ));
     }

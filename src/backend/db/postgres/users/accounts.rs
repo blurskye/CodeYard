@@ -8,8 +8,9 @@ use sqlx::PgPool;
 
 pub async fn create_user(pool: &PgPool, username: &str, email: Option<&str>) -> Result<User> {
     let mut tx = pool.begin().await?;
-    super::transitions::lock_namespace(&mut tx).await?;
-    super::transitions::require_user_namespace(&mut tx, username).await?;
+    crate::backend::db::postgres::users::transitions::lock_namespace(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::require_user_namespace(&mut tx, username)
+        .await?;
     let result = sqlx::query_as::<_, User>(
         r#"
         INSERT INTO users (username, email)
@@ -43,8 +44,9 @@ pub async fn create_user_with_password_and_flags(
     must_change_password: bool,
 ) -> Result<User> {
     let mut tx = pool.begin().await?;
-    super::transitions::lock_namespace(&mut tx).await?;
-    super::transitions::require_user_namespace(&mut tx, username).await?;
+    crate::backend::db::postgres::users::transitions::lock_namespace(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::require_user_namespace(&mut tx, username)
+        .await?;
     let result = sqlx::query_as::<_, User>(
         r#"
         INSERT INTO users (username, email, password_hash, is_admin, must_change_password)
@@ -95,7 +97,10 @@ pub async fn update_user_password(
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
     let organizations =
-        super::transitions::owned_organizations_for_account_change(&mut tx, user_id).await?;
+        crate::backend::db::postgres::users::transitions::owned_organizations_for_account_change(
+            &mut tx, user_id,
+        )
+        .await?;
     // The new hash and the session revocation commit together.
     sqlx::query(
         "UPDATE users SET password_hash = $1, must_change_password = $2, updated_at = NOW() WHERE id = $3",
@@ -116,7 +121,11 @@ pub async fn update_user_password(
     if must_change_password {
         // A forced change locks the account out of CI like a ban does.
         crate::backend::db::postgres::ci::stop_actor_ci_runs(&mut tx, user_id).await?;
-        super::transitions::stop_ownerless_organization_ci(&mut tx, &organizations).await?;
+        crate::backend::db::postgres::users::transitions::stop_ownerless_organization_ci(
+            &mut tx,
+            &organizations,
+        )
+        .await?;
     }
     tx.commit().await?;
     Ok(())
@@ -230,8 +239,9 @@ pub async fn create_user_from_oauth(
     display_name: Option<&str>,
 ) -> Result<User> {
     let mut tx = pool.begin().await?;
-    super::transitions::lock_namespace(&mut tx).await?;
-    super::transitions::require_user_namespace(&mut tx, username).await?;
+    crate::backend::db::postgres::users::transitions::lock_namespace(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::require_user_namespace(&mut tx, username)
+        .await?;
     let result = sqlx::query_as::<_, User>(
         r#"
         INSERT INTO users (username, email, display_name, email_verified)
@@ -261,7 +271,10 @@ pub async fn set_user_avatar(
     // The account and the requesting session must still be live when the picture changes,
     // which happens after the upload's storage work. The user row is written below, so the
     // lock is exclusive: two shared holders that both upgrade it would deadlock.
-    super::transitions::require_account_exclusive(&mut tx, user_id, credential).await?;
+    crate::backend::db::postgres::users::transitions::require_account_exclusive(
+        &mut tx, user_id, credential,
+    )
+    .await?;
     let previous: Option<uuid::Uuid> =
         sqlx::query_scalar("SELECT avatar_file_id FROM users WHERE id=$1")
             .bind(user_id)
@@ -302,9 +315,10 @@ pub async fn update_user_profile(
     location: Option<&str>,
     website: Option<&str>,
 ) -> Result<Option<User>> {
-    use crate::backend::db::users::{accounts::AccountCredential, profiles::ProfilePatch};
+    use crate::backend::db::users::accounts::AccountCredential;
+    use crate::backend::db::users::profiles::ProfilePatch;
     use codeyard_support::credentials::AccountRestricted;
-    match super::profiles::save_profile(
+    match crate::backend::db::postgres::users::profiles::save_profile(
         pool,
         user_id,
         &AccountCredential::Session(session),
@@ -353,9 +367,17 @@ pub async fn admin_users_page(
     requested: usize,
 ) -> Result<crate::backend::db::users::accounts::AdminUserPage> {
     let mut tx = pool.begin().await?;
-    super::transitions::lock_accounts_shared(&mut tx, &[administrator.user_id]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(
+        &mut tx,
+        &[administrator.user_id],
+    )
+    .await?;
     anyhow::ensure!(
-        super::transitions::active_admin_session(&mut tx, administrator).await?,
+        crate::backend::db::postgres::users::transitions::active_admin_session(
+            &mut tx,
+            administrator
+        )
+        .await?,
         codeyard_support::credentials::AccountRestricted
     );
     let counts = count_matching_users(&mut *tx, text).await?;

@@ -1,15 +1,8 @@
 //! Warm a derived Git index for authenticated repository mutations. This middleware grants
 //! nothing: failed/missing/stale proofs are rechecked and fail closed in the domain transaction.
-use crate::backend::{
-    api::github::auth,
-    api::{
-        github,
-        http::{csrf, session},
-    },
-    app::AppState,
-    db,
-    identity::interactions,
-};
+
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{FromRequestParts, Path, Request},
     http::{header, Method, StatusCode},
@@ -70,7 +63,7 @@ pub(crate) async fn prepare(
                 headers.insert("x-csrf-token", token);
             }
         }
-        if let Err(error) = csrf::check(state.clone(), &headers).await {
+        if let Err(error) = crate::backend::api::http::csrf::check(state.clone(), &headers).await {
             return error.into_response();
         }
     }
@@ -80,29 +73,51 @@ pub(crate) async fn prepare(
     if let Some(Path(params)) = params {
         if let (Some(owner), Some(name)) = (params.get("owner"), params.get("repo")) {
             if let Ok(Some(repository)) =
-                db::repositories::records::get_repository(&state.pool, owner, name).await
+                crate::backend::db::repositories::records::get_repository(&state.pool, owner, name)
+                    .await
             {
                 // Avoid token/session work altogether when there is no contributor restriction.
-                if db::interactions::effective_restriction(&state.pool, repository.id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .is_some_and(|restriction| restriction.limit != "collaborators_only")
+                if crate::backend::db::interactions::effective_restriction(
+                    &state.pool,
+                    repository.id,
+                )
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|restriction| restriction.limit != "collaborators_only")
                 {
                     let actor = if token_route {
-                        match auth::authenticate(&state, &parts.headers, true).await {
+                        match crate::backend::api::github::auth::authenticate(
+                            &state,
+                            &parts.headers,
+                            true,
+                        )
+                        .await
+                        {
                             Ok(Some(actor)) if actor.require_write().is_ok() => {
-                                github::interaction_actor(&state, &parts.headers).await
+                                crate::backend::api::github::interaction_actor(
+                                    &state,
+                                    &parts.headers,
+                                )
+                                .await
                             }
                             _ => None,
                         }
                     } else {
-                        session::get_current_user(&state.pool, &parts.headers)
-                            .await
-                            .ok()
+                        crate::backend::api::http::session::get_current_user(
+                            &state.pool,
+                            &parts.headers,
+                        )
+                        .await
+                        .ok()
                     };
                     if let Some(actor) = actor {
-                        if let Err(error) = interactions::prepare(&state, &actor, &repository).await
+                        if let Err(error) = crate::backend::identity::interactions::prepare(
+                            &state,
+                            &actor,
+                            &repository,
+                        )
+                        .await
                         {
                             tracing::warn!(repo_id=repository.id,user_id=actor.id,%error,"Contributor proof preparation unavailable");
                         }

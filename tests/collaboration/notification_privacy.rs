@@ -19,8 +19,7 @@ use axum::{
 use codeyard::backend::api::create_router;
 use codeyard::backend::app::AppState;
 use codeyard::backend::ci::CiConfig;
-use codeyard::backend::db;
-use codeyard::backend::db::organizations;
+
 use codeyard::backend::notifications::NotificationEvent;
 use codeyard::backend::storage::ObjectStore;
 use codeyard_db_core::models::repositories::AccessLevel;
@@ -47,9 +46,11 @@ async fn agrees(f: &Fixture, recipient: i64, visible: &[i64]) {
         .filter(|r| expected.contains(&r["id"].as_i64().unwrap()) && r["read_at"].is_null())
         .map(|r| r["id"].as_i64().unwrap())
         .collect();
-    let all = db::notifications::records::list_notifications_for_user(pool, recipient, 100, false)
-        .await
-        .unwrap();
+    let all = codeyard::backend::db::notifications::records::list_notifications_for_user(
+        pool, recipient, 100, false,
+    )
+    .await
+    .unwrap();
     assert_eq!(ids(&all), expected);
     // Positive payloads agree with storage; no hidden title/body/link/metadata
     // can enter a projection, not merely a redacted title or omitted list row.
@@ -66,14 +67,16 @@ async fn agrees(f: &Fixture, recipient: i64, visible: &[i64]) {
     }
     assert_eq!(
         ids(
-            &db::notifications::records::list_notifications_for_user(pool, recipient, 100, true)
-                .await
-                .unwrap()
+            &codeyard::backend::db::notifications::records::list_notifications_for_user(
+                pool, recipient, 100, true
+            )
+            .await
+            .unwrap()
         ),
         unread
     );
     assert_eq!(
-        db::notifications::records::count_unread_notifications(pool, recipient)
+        codeyard::backend::db::notifications::records::count_unread_notifications(pool, recipient)
             .await
             .unwrap(),
         unread.len() as i64
@@ -84,71 +87,81 @@ async fn agrees(f: &Fixture, recipient: i64, visible: &[i64]) {
         .cloned()
         .collect();
     for row in &hidden {
-        assert!(db::notifications::records::mark_notification_read(
-            pool,
-            recipient,
-            row["id"].as_i64().unwrap()
-        )
-        .await
-        .unwrap()
-        .is_none());
+        assert!(
+            codeyard::backend::db::notifications::records::mark_notification_read(
+                pool,
+                recipient,
+                row["id"].as_i64().unwrap()
+            )
+            .await
+            .unwrap()
+            .is_none()
+        );
     }
     assert!(
-        db::notifications::records::mark_notification_read(pool, recipient, -1)
+        codeyard::backend::db::notifications::records::mark_notification_read(pool, recipient, -1)
             .await
             .unwrap()
             .is_none()
     );
     if let Some(id) = unread.first() {
-        let acknowledged = db::notifications::records::mark_notification_read(pool, recipient, *id)
-            .await
-            .unwrap()
-            .unwrap();
+        let acknowledged = codeyard::backend::db::notifications::records::mark_notification_read(
+            pool, recipient, *id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(acknowledged.id, *id);
         assert_eq!(acknowledged.user_id, recipient);
         assert!(acknowledged.read_at.is_some());
-        let again = db::notifications::records::mark_notification_read(pool, recipient, *id)
-            .await
-            .unwrap()
-            .unwrap();
+        let again = codeyard::backend::db::notifications::records::mark_notification_read(
+            pool, recipient, *id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(again.read_at, acknowledged.read_at, "one-ack is idempotent");
     }
     let remaining = unread.len().saturating_sub(1);
     assert_eq!(
-        db::notifications::records::count_unread_notifications(pool, recipient)
+        codeyard::backend::db::notifications::records::count_unread_notifications(pool, recipient)
             .await
             .unwrap(),
         remaining as i64
     );
     assert_eq!(
-        db::notifications::records::mark_all_notifications_read(pool, recipient)
+        codeyard::backend::db::notifications::records::mark_all_notifications_read(pool, recipient)
             .await
             .unwrap(),
         remaining as u64
     );
     assert_eq!(
-        db::notifications::records::mark_all_notifications_read(pool, recipient)
+        codeyard::backend::db::notifications::records::mark_all_notifications_read(pool, recipient)
             .await
             .unwrap(),
         0
     );
     assert_eq!(
-        db::notifications::records::count_unread_notifications(pool, recipient)
+        codeyard::backend::db::notifications::records::count_unread_notifications(pool, recipient)
             .await
             .unwrap(),
         0
     );
     assert!(
-        db::notifications::records::list_notifications_for_user(pool, recipient, 100, true)
-            .await
-            .unwrap()
-            .is_empty()
+        codeyard::backend::db::notifications::records::list_notifications_for_user(
+            pool, recipient, 100, true
+        )
+        .await
+        .unwrap()
+        .is_empty()
     );
     assert_eq!(
         ids(
-            &db::notifications::records::list_notifications_for_user(pool, recipient, 100, false)
-                .await
-                .unwrap()
+            &codeyard::backend::db::notifications::records::list_notifications_for_user(
+                pool, recipient, 100, false
+            )
+            .await
+            .unwrap()
         ),
         expected
     );
@@ -206,14 +219,23 @@ async fn authority_contract(pg: bool) {
     let direct = f.notify(recipient, Some(personal), "private-direct").await;
     let team_notice = f.notify(recipient, Some(tenant), "private-team").await;
     agrees(&f, recipient, &[account]).await;
-    db::repositories::access::grant_repo_access(f.pool(), recipient, personal, AccessLevel::Read)
-        .await
-        .unwrap();
+    codeyard::backend::db::repositories::access::grant_repo_access(
+        f.pool(),
+        recipient,
+        personal,
+        AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     agrees(&f, recipient, &[account, direct]).await;
     assert!(
-        db::repositories::access::revoke_repo_access(f.pool(), recipient, personal)
-            .await
-            .unwrap()
+        codeyard::backend::db::repositories::access::revoke_repo_access(
+            f.pool(),
+            recipient,
+            personal
+        )
+        .await
+        .unwrap()
     );
     agrees(&f, recipient, &[account]).await;
     let team = f.scalar("INSERT INTO teams(org_id,name,slug,privacy) VALUES($1,'Notification team','notification-team','secret') RETURNING id", &[org]).await;
@@ -243,10 +265,16 @@ async fn authority_contract(pg: bool) {
     .await;
     agrees(&f, recipient, &[account, team_notice]).await;
     assert!(matches!(
-        organizations::revoke_organization_team_repository(f.pool(), owner, org, team, tenant)
-            .await
-            .unwrap(),
-        organizations::OrganizationOutcome::Applied(_)
+        codeyard::backend::db::organizations::revoke_organization_team_repository(
+            f.pool(),
+            owner,
+            org,
+            team,
+            tenant
+        )
+        .await
+        .unwrap(),
+        codeyard::backend::db::organizations::OrganizationOutcome::Applied(_)
     ));
     agrees(&f, recipient, &[account]).await;
     f.execute(
@@ -255,10 +283,16 @@ async fn authority_contract(pg: bool) {
     )
     .await;
     assert!(matches!(
-        organizations::remove_organization_team_member(f.pool(), owner, org, team, recipient)
-            .await
-            .unwrap(),
-        organizations::OrganizationOutcome::Applied(_)
+        codeyard::backend::db::organizations::remove_organization_team_member(
+            f.pool(),
+            owner,
+            org,
+            team,
+            recipient
+        )
+        .await
+        .unwrap(),
+        codeyard::backend::db::organizations::OrganizationOutcome::Applied(_)
     ));
     agrees(&f, recipient, &[account]).await;
     f.execute(
@@ -277,15 +311,25 @@ async fn authority_contract(pg: bool) {
         &[org, recipient],
     )
     .await;
-    db::repositories::access::grant_repo_access(f.pool(), recipient, tenant, AccessLevel::Read)
-        .await
-        .unwrap();
+    codeyard::backend::db::repositories::access::grant_repo_access(
+        f.pool(),
+        recipient,
+        tenant,
+        AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     // Real member removal clears direct and team contributions, not notifications.
     assert!(matches!(
-        organizations::remove_organization_member(f.pool(), owner, org, recipient)
-            .await
-            .unwrap(),
-        organizations::OrganizationOutcome::Applied(_)
+        codeyard::backend::db::organizations::remove_organization_member(
+            f.pool(),
+            owner,
+            org,
+            recipient
+        )
+        .await
+        .unwrap(),
+        codeyard::backend::db::organizations::OrganizationOutcome::Applied(_)
     ));
     agrees(&f, recipient, &[account]).await;
     f.execute(
@@ -311,9 +355,14 @@ async fn authority_contract(pg: bool) {
         &[org, recipient],
     )
     .await;
-    db::repositories::access::grant_repo_access(f.pool(), recipient, tenant, AccessLevel::Admin)
-        .await
-        .unwrap();
+    codeyard::backend::db::repositories::access::grant_repo_access(
+        f.pool(),
+        recipient,
+        tenant,
+        AccessLevel::Admin,
+    )
+    .await
+    .unwrap();
     for restriction in ["is_banned", "must_change_password"] {
         f.execute(
             &format!("UPDATE users SET {restriction}=TRUE WHERE id=$1"),
@@ -321,9 +370,13 @@ async fn authority_contract(pg: bool) {
         )
         .await;
         assert_eq!(
-            db::repositories::access::get_user_repo_access(f.pool(), recipient, tenant)
-                .await
-                .unwrap(),
+            codeyard::backend::db::repositories::access::get_user_repo_access(
+                f.pool(),
+                recipient,
+                tenant
+            )
+            .await
+            .unwrap(),
             AccessLevel::Read
         );
         agrees(&f, recipient, &[account, team_notice]).await;
@@ -345,7 +398,7 @@ async fn authority_contract(pg: bool) {
     )
     .await;
     agrees(&f, recipient, &[account, team_notice]).await;
-    db::repositories::access::revoke_repo_access(f.pool(), recipient, tenant)
+    codeyard::backend::db::repositories::access::revoke_repo_access(f.pool(), recipient, tenant)
         .await
         .unwrap();
     agrees(&f, recipient, &[account]).await;
@@ -368,18 +421,26 @@ async fn authority_contract(pg: bool) {
     // Foreign caller, even a platform admin, cannot ack recipient history.
     let before = f.history(recipient).await;
     assert!(
-        db::notifications::records::mark_notification_read(f.pool(), site, account)
-            .await
-            .unwrap()
-            .is_none()
+        codeyard::backend::db::notifications::records::mark_notification_read(
+            f.pool(),
+            site,
+            account
+        )
+        .await
+        .unwrap()
+        .is_none()
     );
     assert!(
-        db::notifications::records::mark_notification_read(f.pool(), site, direct)
-            .await
-            .unwrap()
-            .is_none()
+        codeyard::backend::db::notifications::records::mark_notification_read(
+            f.pool(),
+            site,
+            direct
+        )
+        .await
+        .unwrap()
+        .is_none()
     );
-    db::notifications::records::mark_all_notifications_read(f.pool(), site)
+    codeyard::backend::db::notifications::records::mark_all_notifications_read(f.pool(), site)
         .await
         .unwrap();
     assert_eq!(f.history(recipient).await, before);
@@ -448,7 +509,7 @@ async fn bounded_projection(pg: bool) {
     let stored = f.history(recipient).await;
     for limit in [i64::MIN, -1, 0, 1, 2, 100, 101, i64::MAX] {
         for unread_only in [true, false] {
-            let rows = db::notifications::records::list_notifications_for_user(
+            let rows = codeyard::backend::db::notifications::records::list_notifications_for_user(
                 f.pool(),
                 recipient,
                 limit,
@@ -477,48 +538,65 @@ async fn bounded_projection(pg: bool) {
     .await;
     for unread_only in [true, false] {
         assert_eq!(
-            ids(&db::notifications::records::list_notifications_for_user(
-                f.pool(),
-                recipient,
-                2,
-                unread_only
-            )
-            .await
-            .unwrap()),
+            ids(
+                &codeyard::backend::db::notifications::records::list_notifications_for_user(
+                    f.pool(),
+                    recipient,
+                    2,
+                    unread_only
+                )
+                .await
+                .unwrap()
+            ),
             vec![visible[0], *visible.last().unwrap()],
             "created_at takes precedence over the id tie breaker"
         );
     }
     assert_eq!(
-        db::notifications::records::count_unread_notifications(f.pool(), recipient)
-            .await
-            .unwrap(),
+        codeyard::backend::db::notifications::records::count_unread_notifications(
+            f.pool(),
+            recipient
+        )
+        .await
+        .unwrap(),
         115
     );
-    assert!(db::notifications::records::mark_notification_read(
-        f.pool(),
-        recipient,
-        stored[0]["id"].as_i64().unwrap()
-    )
-    .await
-    .unwrap()
-    .is_none());
     assert!(
-        db::notifications::records::mark_notification_read(f.pool(), recipient, visible[0])
-            .await
-            .unwrap()
-            .is_some()
+        codeyard::backend::db::notifications::records::mark_notification_read(
+            f.pool(),
+            recipient,
+            stored[0]["id"].as_i64().unwrap()
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+    assert!(
+        codeyard::backend::db::notifications::records::mark_notification_read(
+            f.pool(),
+            recipient,
+            visible[0]
+        )
+        .await
+        .unwrap()
+        .is_some()
     );
     assert_eq!(
-        db::notifications::records::mark_all_notifications_read(f.pool(), recipient)
-            .await
-            .unwrap(),
+        codeyard::backend::db::notifications::records::mark_all_notifications_read(
+            f.pool(),
+            recipient
+        )
+        .await
+        .unwrap(),
         114
     );
     assert_eq!(
-        db::notifications::records::count_unread_notifications(f.pool(), recipient)
-            .await
-            .unwrap(),
+        codeyard::backend::db::notifications::records::count_unread_notifications(
+            f.pool(),
+            recipient
+        )
+        .await
+        .unwrap(),
         0
     );
     assert_eq!(
@@ -546,9 +624,9 @@ async fn corrupt_row_privacy(pg: bool) {
         &[source],
     )
     .await;
-    let fork = db::repositories::discovery::create_forked_repository(
+    let fork = codeyard::backend::db::repositories::discovery::create_forked_repository(
         f.pool(),
-        db::repositories::discovery::NewForkedRepository {
+        codeyard::backend::db::repositories::discovery::NewForkedRepository {
             owner_id: owner,
             name: "history_fork",
             description: None,
@@ -570,9 +648,14 @@ async fn corrupt_row_privacy(pg: bool) {
     )
     .await;
     agrees(&f, recipient, &[account]).await;
-    db::repositories::access::grant_repo_access(f.pool(), recipient, fork, AccessLevel::Read)
-        .await
-        .unwrap();
+    codeyard::backend::db::repositories::access::grant_repo_access(
+        f.pool(),
+        recipient,
+        fork,
+        AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     agrees(&f, recipient, &[account, fork_notice]).await;
     // Already-read hidden rows retain their exact stored read_at bytes.
     f.execute(
@@ -580,16 +663,21 @@ async fn corrupt_row_privacy(pg: bool) {
         &[fork_notice],
     )
     .await;
-    db::repositories::access::revoke_repo_access(f.pool(), recipient, fork)
+    codeyard::backend::db::repositories::access::revoke_repo_access(f.pool(), recipient, fork)
         .await
         .unwrap();
     agrees(&f, recipient, &[account]).await;
     let malformed = f.repo(owner, None, "history_malformed").await;
     f.notify(recipient, Some(malformed), "malformed-private")
         .await;
-    db::repositories::access::grant_repo_access(f.pool(), recipient, malformed, AccessLevel::Read)
-        .await
-        .unwrap();
+    codeyard::backend::db::repositories::access::grant_repo_access(
+        f.pool(),
+        recipient,
+        malformed,
+        AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     // Owned fixture SQL alone admits invalid ownership and dangling IDs.
     f.corrupt(
         "UPDATE repositories SET owner_kind='unknown' WHERE id=$1",
@@ -674,12 +762,14 @@ fn assert_no_event(events: &mut tokio::sync::broadcast::Receiver<NotificationEve
 }
 
 async fn notice_count(pool: &codeyard_db_core::DbPool, user_id: i64, kind: &str) -> usize {
-    db::notifications::records::list_notifications_for_user(pool, user_id, 100, false)
-        .await
-        .unwrap()
-        .into_iter()
-        .filter(|notification| notification.kind == kind)
-        .count()
+    codeyard::backend::db::notifications::records::list_notifications_for_user(
+        pool, user_id, 100, false,
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .filter(|notification| notification.kind == kind)
+    .count()
 }
 
 async fn idempotent_relationship_notifications(pg: bool) {
@@ -690,7 +780,7 @@ async fn idempotent_relationship_notifications(pg: bool) {
     let reviewer_id = f.actor("idempotent_reviewer").await;
     let watcher_id = f.actor("idempotent_watcher").await;
     let repository_id = f.repo(owner_id, None, "idempotent_project").await;
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         f.pool(),
         author_id,
         repository_id,
@@ -698,7 +788,7 @@ async fn idempotent_relationship_notifications(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         f.pool(),
         reviewer_id,
         repository_id,
@@ -706,7 +796,7 @@ async fn idempotent_relationship_notifications(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         f.pool(),
         watcher_id,
         repository_id,
@@ -714,9 +804,9 @@ async fn idempotent_relationship_notifications(pg: bool) {
     )
     .await
     .unwrap();
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard::backend::db::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard::backend::db::pull_requests::records::NewPullRequest {
             repo_id: repository_id,
             head_repo_id: Some(repository_id),
             author_id,
@@ -789,10 +879,13 @@ async fn idempotent_relationship_notifications(pg: bool) {
     assert_no_event(&mut events);
     assert_no_event(&mut reviewer_events);
     assert_eq!(
-        db::pull_requests::reviews::list_pull_request_reviewers(f.pool(), pull.id)
-            .await
-            .unwrap()
-            .len(),
+        codeyard::backend::db::pull_requests::reviews::list_pull_request_reviewers(
+            f.pool(),
+            pull.id
+        )
+        .await
+        .unwrap()
+        .len(),
         1
     );
     assert_eq!(
@@ -909,9 +1002,14 @@ async fn notification_history_pages(pg: bool) {
     let user = f.actor("history_reader").await;
     let repo = f.repo(owner, None, "history_project").await;
     let hidden = f.repo(owner, None, "history_hidden").await;
-    db::repositories::access::grant_repo_access(f.pool(), user, repo, AccessLevel::Read)
-        .await
-        .unwrap();
+    codeyard::backend::db::repositories::access::grant_repo_access(
+        f.pool(),
+        user,
+        repo,
+        AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     for _ in 0..10 {
         f.notify(user, Some(repo), "REVOKED_HISTORY").await;
     }
@@ -993,7 +1091,7 @@ async fn notification_history_pages(pg: bool) {
         &[newer],
     )
     .await;
-    db::repositories::access::revoke_repo_access(f.pool(), user, repo)
+    codeyard::backend::db::repositories::access::revoke_repo_access(f.pool(), user, repo)
         .await
         .unwrap();
     let older = client

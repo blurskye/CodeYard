@@ -1,11 +1,17 @@
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::{ApiError, ApiFailure};
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::ApiFailure;
 use crate::backend::api::http::session::extract_session_id;
-use crate::backend::api::user::profile::{load_settings, settings_response, settings_result};
-use crate::backend::api::user::responses::{field, mutation_guard, Fields};
+use crate::backend::api::user::profile::load_settings;
+use crate::backend::api::user::profile::settings_response;
+use crate::backend::api::user::profile::settings_result;
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
-use crate::backend::identity::tokens;
-use crate::backend::identity::tokens::{TokenError, TokenInput};
+
+use crate::backend::identity::tokens::TokenError;
+use crate::backend::identity::tokens::TokenInput;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -69,7 +75,7 @@ pub(crate) async fn token_add_post(
         .expect("mutation guard checked account")
         .id;
     let session_id = extract_session_id(&ctx.headers);
-    let result = tokens::create(
+    let result = crate::backend::identity::tokens::create(
         &ctx.state.pool,
         actor,
         session_id.as_deref(),
@@ -124,7 +130,7 @@ pub(crate) async fn token_delete_post(
     // A revoked token stops working at once, so the server refuses a delete that did not confirm.
     let result = if field(&form, "confirm") == "yes" {
         let session_id = extract_session_id(&ctx.headers);
-        tokens::delete(&ctx.state.pool, actor, session_id.as_deref(), id)
+        crate::backend::identity::tokens::delete(&ctx.state.pool, actor, session_id.as_deref(), id)
             .await
             .map_err(token_failure)
     } else {

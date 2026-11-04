@@ -8,7 +8,7 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::{http::StatusCode, Router};
-use codeyard::backend::db;
+
 use codeyard_db_core::models::repositories::AccessLevel;
 use database::Database;
 use pulls::Client;
@@ -38,7 +38,7 @@ async fn setup(pg: bool) -> World {
     let proj = codeyard::backend::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -48,9 +48,14 @@ async fn setup(pg: bool) -> World {
     .unwrap()
     .id;
     for user in [bob_id, carol_id] {
-        db::repositories::access::grant_repo_access(database.pool(), user, proj, AccessLevel::Read)
-            .await
-            .unwrap();
+        codeyard::backend::db::repositories::access::grant_repo_access(
+            database.pool(),
+            user,
+            proj,
+            AccessLevel::Read,
+        )
+        .await
+        .unwrap();
     }
     let router = database.router(root.path()).await;
     let alice = Client::login(&router, database.pool(), alice_id).await;
@@ -176,7 +181,7 @@ async fn ignoring_and_banned_users_hear_nothing(pg: bool) {
             StatusCode::CREATED,
         )
         .await;
-    db::repositories::engagement::set_watch_level(
+    codeyard::backend::db::repositories::engagement::set_watch_level(
         w.database.pool(),
         w.bob_id,
         w.proj,
@@ -270,9 +275,9 @@ async fn assigned_reason_filters_the_list(pg: bool) {
     w.alice
         .form_reply("/alice/proj/issues/1/assignees", &[("username", "bob")])
         .await;
-    db::notifications::records::create_notification(
+    codeyard::backend::db::notifications::records::create_notification(
         w.database.pool(),
-        db::notifications::NewNotification {
+        codeyard::backend::db::notifications::NewNotification {
             user_id: w.bob_id,
             actor_id: None,
             repo_id: Some(w.proj),

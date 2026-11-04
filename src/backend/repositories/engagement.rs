@@ -1,27 +1,23 @@
 //! Repository star/watch changes and explicit best-effort notices.
-use crate::backend::webhooks::{self, events, payloads};
-use crate::backend::{
-    db,
-    notifications::{
-        create::{create_and_broadcast_notification, NotificationRequest},
-        NotificationBroadcaster,
-    },
-    repositories::access,
-};
+
+use crate::backend::notifications::create::create_and_broadcast_notification;
+use crate::backend::notifications::create::NotificationRequest;
+use crate::backend::notifications::NotificationBroadcaster;
+
 use serde_json::json;
 
 #[derive(Debug)]
 pub enum EngagementError {
-    Access(access::AccessError),
+    Access(crate::backend::repositories::access::AccessError),
     Unavailable,
     ChangedCountUnavailable,
 }
 
 fn mutation_error(error: anyhow::Error) -> EngagementError {
-    if error.is::<db::users::blocks::InteractionBlocked>()
+    if error.is::<crate::backend::db::users::blocks::InteractionBlocked>()
         || error.is::<codeyard_support::credentials::AccountRestricted>()
     {
-        EngagementError::Access(access::AccessError::WriteDenied)
+        EngagementError::Access(crate::backend::repositories::access::AccessError::WriteDenied)
     } else {
         EngagementError::Unavailable
     }
@@ -37,29 +33,34 @@ pub enum Engagement {
 /// `watching`, `custom` or `ignoring`; `events` lists the kinds a `custom` watch wants.
 pub async fn set_level(
     pool: &codeyard_db_core::DbPool,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     level: &str,
     events: &[&str],
 ) -> Result<(), EngagementError> {
     let authority = actor.into();
     let actor = authority.user_id;
-    access::check_read(pool, repo_id, Some(actor))
+    crate::backend::repositories::access::check_read(pool, repo_id, Some(actor))
         .await
         .map_err(EngagementError::Access)?;
     let saved = match level {
-        "participating" => db::repositories::engagement::unwatch_repo(pool, authority, repo_id)
-            .await
-            .map(|_| ()),
+        "participating" => {
+            crate::backend::db::repositories::engagement::unwatch_repo(pool, authority, repo_id)
+                .await
+                .map(|_| ())
+        }
         "watching" | "ignoring" => {
-            db::repositories::engagement::set_watch_level(pool, authority, repo_id, level, "").await
+            crate::backend::db::repositories::engagement::set_watch_level(
+                pool, authority, repo_id, level, "",
+            )
+            .await
         }
         "custom" => {
             let events: Vec<&str> = ["issues", "pulls", "releases"]
                 .into_iter()
                 .filter(|name| events.contains(name))
                 .collect();
-            db::repositories::engagement::set_watch_level(
+            crate::backend::db::repositories::engagement::set_watch_level(
                 pool,
                 authority,
                 repo_id,
@@ -77,7 +78,7 @@ pub async fn set_level(
 pub async fn set_subscription(
     pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     subscribed: bool,
     ignored: bool,
@@ -95,10 +96,10 @@ pub async fn set_subscription(
         )
         .await?;
     } else {
-        access::check_read(pool, repo_id, Some(actor))
+        crate::backend::repositories::access::check_read(pool, repo_id, Some(actor))
             .await
             .map_err(EngagementError::Access)?;
-        db::repositories::engagement::set_watch_level(
+        crate::backend::db::repositories::engagement::set_watch_level(
             pool,
             authority,
             repo_id,
@@ -114,36 +115,40 @@ pub async fn set_subscription(
 pub async fn change(
     pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     kind: Engagement,
     enabled: bool,
 ) -> Result<i32, EngagementError> {
     let authority = actor.into();
     let actor = authority.user_id;
-    access::check_read(pool, repo_id, Some(actor))
+    crate::backend::repositories::access::check_read(pool, repo_id, Some(actor))
         .await
         .map_err(EngagementError::Access)?;
-    let user = db::users::accounts::get_user_by_id(pool, actor)
+    let user = crate::backend::db::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| EngagementError::Unavailable)?
-        .ok_or(EngagementError::Access(access::AccessError::NotFound))?;
+        .ok_or(EngagementError::Access(
+            crate::backend::repositories::access::AccessError::NotFound,
+        ))?;
     let changed = match (kind, enabled) {
         (Engagement::Star, true) => {
-            db::repositories::engagement::star_repo(pool, authority, repo_id).await
+            crate::backend::db::repositories::engagement::star_repo(pool, authority, repo_id).await
         }
         (Engagement::Star, false) => {
-            db::repositories::engagement::unstar_repo(pool, authority, repo_id).await
+            crate::backend::db::repositories::engagement::unstar_repo(pool, authority, repo_id)
+                .await
         }
         (Engagement::Watch, true) => {
-            db::repositories::engagement::watch_repo(pool, authority, repo_id).await
+            crate::backend::db::repositories::engagement::watch_repo(pool, authority, repo_id).await
         }
         (Engagement::Watch, false) => {
-            db::repositories::engagement::unwatch_repo(pool, authority, repo_id).await
+            crate::backend::db::repositories::engagement::unwatch_repo(pool, authority, repo_id)
+                .await
         }
     }
     .map_err(mutation_error)?;
-    let updated = db::repositories::records::get_repository_by_id(pool, repo_id)
+    let updated = crate::backend::db::repositories::records::get_repository_by_id(pool, repo_id)
         .await
         .map_err(|_| EngagementError::ChangedCountUnavailable)?
         .ok_or(EngagementError::ChangedCountUnavailable)?;
@@ -158,23 +163,29 @@ pub async fn change(
     if changed && matches!(kind, Engagement::Star) {
         let action = if enabled { "created" } else { "deleted" };
         let repository_for_hook = updated.clone();
-        webhooks::emit(
+        crate::backend::webhooks::emit(
             pool,
             &updated,
-            events::STAR,
+            codeyard_model::webhook_events::STAR,
             vec![actor],
             move |owner, people| {
                 let starrer = people.get(actor);
-                payloads::star(action, &starrer, &repository_for_hook, owner)
+                crate::backend::webhooks::payloads::star(
+                    action,
+                    &starrer,
+                    &repository_for_hook,
+                    owner,
+                )
             },
         )
         .await;
     }
     if let Some(recipient) = updated.personal_owner_id().filter(|_| enabled && changed) {
-        if let Some(owner) = db::repositories::records::repository_owner_name(pool, repo_id)
-            .await
-            .ok()
-            .flatten()
+        if let Some(owner) =
+            crate::backend::db::repositories::records::repository_owner_name(pool, repo_id)
+                .await
+                .ok()
+                .flatten()
         {
             let title = format!("{} {verb} {}/{}", user.username, owner, updated.name);
             let body = match kind {

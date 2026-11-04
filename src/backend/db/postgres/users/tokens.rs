@@ -13,10 +13,8 @@ pub(crate) async fn repository_write_on(
     repo: i64,
     permission: &str,
 ) -> Result<bool> {
-    use crate::backend::{
-        db::fine_grained_tokens::Bounds,
-        identity::{fine_grained, github_apps, oauth_apps},
-    };
+    use crate::backend::db::fine_grained_tokens::Bounds;
+
     let live: Option<String> = sqlx::query_scalar("SELECT u.username FROM personal_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.id=$1 AND t.user_id=$2 AND t.scope='write' AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password FOR SHARE OF t")
         .bind(token).bind(actor).fetch_optional(&mut **tx).await?;
     let Some(username) = live else {
@@ -28,7 +26,7 @@ pub(crate) async fn repository_write_on(
         return Ok(match job {
             Some((id, permissions)) => {
                 id == repo
-                    && serde_json::from_str::<crate::backend::ci::tokens::Permissions>(
+                    && serde_json::from_str::<codeyard_model::permissions::Permissions>(
                         &permissions,
                     )?
                     .allows(permission, true)
@@ -38,7 +36,7 @@ pub(crate) async fn repository_write_on(
     }
     let bounds: Option<Bounds> = sqlx::query_as(&format!(
         "{} FOR SHARE OF f,t",
-        super::super::fine_grained_tokens::BOUNDS
+        crate::backend::db::postgres::fine_grained_tokens::BOUNDS
     ))
     .bind(token)
     .fetch_optional(&mut **tx)
@@ -50,7 +48,11 @@ pub(crate) async fn repository_write_on(
         let permissions = serde_json::from_str(&bounds.permissions)?;
         return Ok(active
             && selected
-            && fine_grained::allows(&permissions, &permission.replace('-', "_"), true));
+            && codeyard_model::fine_grained::allows(
+                &permissions,
+                &permission.replace('-', "_"),
+                true,
+            ));
     }
     let bound: Option<(i64, String, String)> = sqlx::query_as("SELECT installation_id,permissions,repositories FROM github_app_tokens WHERE token_id=$1 FOR SHARE")
         .bind(token).fetch_optional(&mut **tx).await?;
@@ -60,7 +62,7 @@ pub(crate) async fn repository_write_on(
             .bind(installation).bind(repo).fetch_one(&mut **tx).await?;
         return Ok(covers
             && (selected.is_empty() || selected.contains(&repo))
-            && github_apps::allows(
+            && codeyard_model::github_apps::allows(
                 &serde_json::from_str(&permissions)?,
                 &permission.replace('-', "_"),
                 true,
@@ -78,7 +80,7 @@ pub(crate) async fn repository_write_on(
             let covers: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM github_app_installations i JOIN repositories r ON r.id=$2 WHERE i.app_id=$1 AND i.suspended_at IS NULL AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)))")
                 .bind(app).bind(repo).fetch_one(&mut **tx).await?;
             return Ok(covers
-                && github_apps::allows(
+                && codeyard_model::github_apps::allows(
                     &serde_json::from_str(&permissions)?,
                     &permission.replace('-', "_"),
                     true,
@@ -91,7 +93,7 @@ pub(crate) async fn repository_write_on(
         .bind(codeyard_model::identity::CLI_CLIENT)
         .fetch_one(&mut **tx)
         .await?;
-        return Ok(exists && oauth_apps::allows(&scopes, "/repos/owner/repo", true));
+        return Ok(exists && codeyard_model::oauth_apps::allows(&scopes, "/repos/owner/repo", true));
     }
     let refused: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r JOIN organization_token_policies p ON p.org_id=r.owner_org_id WHERE r.id=$1 AND NOT p.classic_allowed)")
         .bind(repo).fetch_one(&mut **tx).await?;
@@ -105,17 +107,15 @@ pub(crate) async fn team_write_on(
     actor: i64,
     org: i64,
 ) -> Result<bool> {
-    use crate::backend::{
-        db::fine_grained_tokens::Bounds,
-        identity::{fine_grained, github_apps, oauth_apps},
-    };
+    use crate::backend::db::fine_grained_tokens::Bounds;
+
     let live: Option<i64> = sqlx::query_scalar("SELECT t.id FROM personal_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.id=$1 AND t.user_id=$2 AND t.scope='write' AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password AND u.username<>$3 AND NOT EXISTS(SELECT 1 FROM actions_github_tokens j WHERE j.token_id=t.id) FOR SHARE OF t").bind(token).bind(actor).bind(crate::backend::db::ci_tokens::BOT).fetch_optional(&mut **tx).await?;
     if live.is_none() {
         return Ok(false);
     }
     let bounds: Option<Bounds> = sqlx::query_as(&format!(
         "{} FOR SHARE OF f,t",
-        super::super::fine_grained_tokens::BOUNDS
+        crate::backend::db::postgres::fine_grained_tokens::BOUNDS
     ))
     .bind(token)
     .fetch_optional(&mut **tx)
@@ -123,7 +123,11 @@ pub(crate) async fn team_write_on(
     if let Some(bounds) = bounds {
         return Ok(bounds.active()
             && bounds.owner_org_id == Some(org)
-            && fine_grained::allows(&serde_json::from_str(&bounds.permissions)?, "members", true));
+            && codeyard_model::fine_grained::allows(
+                &serde_json::from_str(&bounds.permissions)?,
+                "members",
+                true,
+            ));
     }
     let bound: Option<(i64, String)> = sqlx::query_as(
         "SELECT installation_id,permissions FROM github_app_tokens WHERE token_id=$1 FOR SHARE",
@@ -134,7 +138,11 @@ pub(crate) async fn team_write_on(
     if let Some((installation, permissions)) = bound {
         let covers: Option<i64> = sqlx::query_scalar("SELECT i.id FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN users u ON u.id=a.owner_id WHERE i.id=$1 AND i.org_id=$2 AND i.suspended_at IS NULL AND NOT u.is_banned AND NOT u.must_change_password FOR SHARE OF i,a,u").bind(installation).bind(org).fetch_optional(&mut **tx).await?;
         return Ok(covers.is_some()
-            && github_apps::allows(&serde_json::from_str(&permissions)?, "members", true));
+            && codeyard_model::github_apps::allows(
+                &serde_json::from_str(&permissions)?,
+                "members",
+                true,
+            ));
     }
     let oauth: Option<(String, String)> =
         sqlx::query_as("SELECT client_id,scopes FROM oauth_app_tokens WHERE token_id=$1 FOR SHARE")
@@ -146,7 +154,11 @@ pub(crate) async fn team_write_on(
         if let Some((app, permissions)) = app {
             let covers: Option<i64> = sqlx::query_scalar("SELECT id FROM github_app_installations WHERE app_id=$1 AND org_id=$2 AND suspended_at IS NULL FOR SHARE").bind(app).bind(org).fetch_optional(&mut **tx).await?;
             return Ok(covers.is_some()
-                && github_apps::allows(&serde_json::from_str(&permissions)?, "members", true));
+                && codeyard_model::github_apps::allows(
+                    &serde_json::from_str(&permissions)?,
+                    "members",
+                    true,
+                ));
         }
         let client_exists = client == codeyard_model::identity::CLI_CLIENT
             || sqlx::query_scalar::<_, i64>(
@@ -156,7 +168,7 @@ pub(crate) async fn team_write_on(
             .fetch_optional(&mut **tx)
             .await?
             .is_some();
-        return Ok(client_exists && oauth_apps::has_scope(&scopes, "write:org"));
+        return Ok(client_exists && codeyard_model::oauth_apps::has_scope(&scopes, "write:org"));
     }
     let policy: Option<bool> = sqlx::query_scalar(
         "SELECT classic_allowed FROM organization_token_policies WHERE org_id=$1 FOR SHARE",
@@ -194,7 +206,11 @@ pub async fn create_token(
         "Token expiry is outside the supported calendar range"
     );
     let mut tx = pool.begin().await?;
-    if !super::transitions::active_session(&mut tx, user_id, session_id).await? {
+    if !crate::backend::db::postgres::users::transitions::active_session(
+        &mut tx, user_id, session_id,
+    )
+    .await?
+    {
         return Ok(None);
     }
     let token = sqlx::query_as("INSERT INTO personal_access_tokens(user_id,name,token_hash,scope,expires_at) VALUES($1,$2,$3,$4,$5) RETURNING id,user_id,name,scope,expires_at,created_at")
@@ -212,7 +228,10 @@ pub async fn list_tokens(
 ) -> Result<Vec<PersonalAccessToken>> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::transitions::active_session_read(&mut tx, user_id, session_id).await?,
+        crate::backend::db::postgres::users::transitions::active_session_read(
+            &mut tx, user_id, session_id
+        )
+        .await?,
         codeyard_support::credentials::AccountRestricted
     );
     let tokens = sqlx::query_as("SELECT id,user_id,name,scope,expires_at,created_at,last_used_at,last_used_ip FROM personal_access_tokens WHERE user_id=$1 AND ($2<=0 OR id<$2) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens f WHERE f.token_id=personal_access_tokens.id) ORDER BY id DESC LIMIT 100")
@@ -228,7 +247,11 @@ pub async fn delete_token(
     token_id: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    if !super::transitions::active_session(&mut tx, user_id, session_id).await? {
+    if !crate::backend::db::postgres::users::transitions::active_session(
+        &mut tx, user_id, session_id,
+    )
+    .await?
+    {
         return Ok(false);
     }
     let deleted = sqlx::query("DELETE FROM personal_access_tokens WHERE id=$1 AND user_id=$2")
@@ -270,7 +293,7 @@ pub async fn token_user(pool: &PgPool, token_id: i64, write: bool) -> Result<Opt
         .bind(token_id).bind(write).bind(codeyard_model::identity::CLI_CLIENT).fetch_optional(pool).await?;
     if user.as_ref().is_some_and(|user| {
         user.username.ends_with("[bot]") && user.username != crate::backend::db::ci_tokens::BOT
-    }) && super::super::github_apps::token(pool, token_id)
+    }) && crate::backend::db::postgres::github_apps::token(pool, token_id)
         .await?
         .is_none()
     {
@@ -279,7 +302,7 @@ pub async fn token_user(pool: &PgPool, token_id: i64, write: bool) -> Result<Opt
     if user
         .as_ref()
         .is_some_and(|user| user.username == crate::backend::db::ci_tokens::BOT)
-        && super::super::ci_tokens::get(pool, token_id)
+        && crate::backend::db::postgres::ci_tokens::get(pool, token_id)
             .await?
             .is_none()
     {
@@ -296,7 +319,9 @@ pub async fn can_write_repository(
     permission: &str,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    if !super::super::discussions::lock_write_authority(&mut tx, actor, repo).await? {
+    if !crate::backend::db::postgres::discussions::lock_write_authority(&mut tx, actor, repo)
+        .await?
+    {
         return Ok(false);
     }
     let allowed = permits_write(&mut tx, actor, token, Some(repo), None, permission).await?;
@@ -314,8 +339,8 @@ pub(crate) async fn permits_write(
     org: Option<i64>,
     permission: &str,
 ) -> Result<bool> {
-    super::transitions::lock_accounts_shared(tx, &[actor]).await?;
-    super::super::oauth_apps::lock_token_issuer(tx, token).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(tx, &[actor]).await?;
+    crate::backend::db::postgres::oauth_apps::lock_token_issuer(tx, token).await?;
     let live: Option<String> = sqlx::query_scalar("SELECT u.username FROM personal_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.id=$1 AND u.id=$2 AND t.scope='write' AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password FOR SHARE OF t")
         .bind(token).bind(actor).fetch_optional(&mut *tx).await?;
     let Some(username) = live else {
@@ -333,7 +358,7 @@ pub(crate) async fn permits_write(
     let org = org.or_else(|| repository.as_ref().and_then(|r| r.owner_org_id));
     let bounds: Option<crate::backend::db::fine_grained_tokens::Bounds> = sqlx::query_as(&format!(
         "{} FOR SHARE OF f",
-        super::super::fine_grained_tokens::BOUNDS
+        crate::backend::db::postgres::fine_grained_tokens::BOUNDS
     ))
     .bind(token)
     .fetch_optional(&mut *tx)
@@ -353,7 +378,7 @@ pub(crate) async fn permits_write(
         };
         return Ok(active
             && reaches
-            && crate::backend::identity::github_apps::allows(&permissions, permission, true));
+            && codeyard_model::github_apps::allows(&permissions, permission, true));
     }
     let app_token: Option<crate::backend::db::github_apps::Token> =
         sqlx::query_as("SELECT * FROM github_app_tokens WHERE token_id=$1 FOR SHARE")
@@ -387,15 +412,15 @@ pub(crate) async fn permits_write(
             permission
         };
         return Ok((selected.is_empty() || selected.contains(&repo))
-            && crate::backend::identity::github_apps::allows(&permissions, permission, true)
-            && crate::backend::identity::github_apps::allows(&grant, permission, true));
+            && codeyard_model::github_apps::allows(&permissions, permission, true)
+            && codeyard_model::github_apps::allows(&grant, permission, true));
     }
     if username == crate::backend::db::ci_tokens::BOT {
         let job: Option<(i64, String)> = sqlx::query_as("SELECT r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=$1 AND t.revoked_at IS NULL AND r.status='running' FOR SHARE OF t,r")
             .bind(token).fetch_optional(&mut *tx).await?;
         return match job {
             Some((id, permissions)) => Ok(repo == Some(id)
-                && serde_json::from_str::<crate::backend::ci::tokens::Permissions>(&permissions)?
+                && serde_json::from_str::<codeyard_model::permissions::Permissions>(&permissions)?
                     .allows(&permission.replace('_', "-"), true)),
             None => Ok(false),
         };
@@ -403,11 +428,11 @@ pub(crate) async fn permits_write(
     if let Some((client, scopes, _)) = oauth {
         let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM oauth_applications c JOIN users owner ON owner.id=c.owner_id WHERE c.client_id=$1 AND NOT owner.is_banned AND NOT owner.must_change_password)")
             .bind(&client).fetch_one(&mut *tx).await?;
-        let allowed = crate::backend::identity::oauth_apps::has_scope(
+        let allowed = codeyard_model::oauth_apps::has_scope(
             &scopes,
             if repo.is_some() { "repo" } else { "write:org" },
         ) || permission == "security_events"
-            && crate::backend::identity::oauth_apps::has_scope(&scopes, "security_events");
+            && codeyard_model::oauth_apps::has_scope(&scopes, "security_events");
         return Ok((active || client == codeyard_model::identity::CLI_CLIENT) && allowed);
     }
     let refused: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organization_token_policies WHERE org_id=$1 AND NOT classic_allowed)")

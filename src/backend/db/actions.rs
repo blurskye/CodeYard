@@ -129,10 +129,10 @@ pub struct OrgCacheSettings {
 
 native_operation!(crate::backend::db::postgres::organizations::cache::get_cache_settings,
     crate::backend::db::sqlite::organizations::cache::get_cache_settings,
-    fn get_org_cache_settings(pool: &DbPool, actor: i64, name: &str) -> Result<super::organizations::OrganizationOutcome<OrgCacheSettings>>);
+    fn get_org_cache_settings(pool: &DbPool, actor: i64, name: &str) -> Result<crate::backend::db::organizations::OrganizationOutcome<OrgCacheSettings>>);
 native_operation!(crate::backend::db::postgres::organizations::cache::set_cache_limit,
     crate::backend::db::sqlite::organizations::cache::set_cache_limit,
-    fn set_org_cache_limit(pool: &DbPool, actor: i64, name: &str, kind: CacheLimit, value: i32) -> Result<super::organizations::OrganizationOutcome<()>>);
+    fn set_org_cache_limit(pool: &DbPool, actor: i64, name: &str, kind: CacheLimit, value: i32) -> Result<crate::backend::db::organizations::OrganizationOutcome<()>>);
 
 #[derive(Clone, Copy)]
 pub enum CacheLimit {
@@ -203,7 +203,7 @@ native_operation!(crate::backend::db::postgres::actions::get_repo_actions_settin
 native_operation!(crate::backend::db::postgres::actions::set_repo_enabled,
     crate::backend::db::sqlite::actions::set_repo_enabled,
     /// Changes only the execution switch, preserving native limits and engine selection.
-    fn set_repo_enabled(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, enabled: bool) -> Result<()>);
+    fn set_repo_enabled(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, enabled: bool) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::actions::save_repo_actions_settings,
     crate::backend::db::sqlite::actions::save_repo_actions_settings,
@@ -211,7 +211,7 @@ native_operation!(crate::backend::db::postgres::actions::save_repo_actions_setti
     /// repository and it is not archived.
     fn save_repo_actions_settings(
     pool: &DbPool,
-    actor_id: impl Into<super::credentials::Actor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     settings: &RepoActionsSettings,
 ) -> Result<()>);

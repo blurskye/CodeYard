@@ -1,6 +1,5 @@
 //! Personal token lifecycle (only hashes persist) and restricted activity-feed credentials.
 
-use crate::backend::db::users::tokens;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::models::PersonalAccessToken;
 use codeyard_db_core::DbPool;
@@ -48,12 +47,12 @@ pub(crate) fn installation_token() -> String {
 /// A feed credential has only read-only event access and remains bound to this API token's
 /// lifetime. Deleting the API token cascades to the feed credential; expiry is checked on reads.
 pub async fn activity_feed_token(pool: &DbPool, token_id: i64) -> Result<String, TokenError> {
-    tokens::token_user(pool, token_id, false)
+    crate::backend::db::users::tokens::token_user(pool, token_id, false)
         .await
         .map_err(|_| TokenError::Unavailable)?
         .ok_or(TokenError::Denied)?;
     // Feeds carry an account identity, not repository-specific integration bounds.
-    if super::github_apps::authority(pool, token_id)
+    if crate::backend::identity::github_apps::authority(pool, token_id)
         .await
         .map_err(|_| TokenError::Unavailable)?
         .is_some()
@@ -80,11 +79,11 @@ pub async fn activity_feed_user(
         .await
         .map_err(|_| TokenError::Unavailable)?
         .ok_or(TokenError::Denied)?;
-    let user = tokens::token_user(pool, id, false)
+    let user = crate::backend::db::users::tokens::token_user(pool, id, false)
         .await
         .map_err(|_| TokenError::Unavailable)?
         .ok_or(TokenError::Denied)?;
-    if super::github_apps::authority(pool, id)
+    if crate::backend::identity::github_apps::authority(pool, id)
         .await
         .map_err(|_| TokenError::Unavailable)?
         .is_some()
@@ -103,7 +102,7 @@ pub(crate) async fn repository_scope(
     permission: &str,
     write: bool,
 ) -> anyhow::Result<bool> {
-    if !tokens::token_user(pool, token, write)
+    if !crate::backend::db::users::tokens::token_user(pool, token, write)
         .await?
         .is_some_and(|user| user.id == actor)
         || crate::backend::db::fine_grained_tokens::classic_refused_repository(pool, token, repo)
@@ -111,35 +110,31 @@ pub(crate) async fn repository_scope(
     {
         return Ok(false);
     }
-    if let Some(authority) = super::github_apps::authority(pool, token).await? {
+    if let Some(authority) = crate::backend::identity::github_apps::authority(pool, token).await? {
         return authority.allows(pool, actor, repo, permission, write).await;
     }
     if let Some(job) = crate::backend::db::ci_tokens::get(pool, token).await? {
         return Ok(job.repo_id == repo
-            && super::github_apps::allows(
+            && codeyard_model::github_apps::allows(
                 &serde_json::from_str(&job.permissions)?,
                 permission,
                 write,
             ));
     }
     if let Some(oauth) = crate::backend::db::oauth_apps::token(pool, token).await? {
-        if super::oauth_apps::client(pool, &oauth.client_id)
+        if crate::backend::identity::oauth_apps::client(pool, &oauth.client_id)
             .await?
             .is_none()
         {
             return Ok(false);
         }
-        return Ok(super::oauth_apps::has_scope(&oauth.scopes, "repo")
+        return Ok(codeyard_model::oauth_apps::has_scope(&oauth.scopes, "repo")
             || (!write
                 && crate::backend::db::repositories::records::get_repository_by_id(pool, repo)
                     .await?
                     .is_some_and(|repo| !repo.is_private)));
     }
     Ok(true)
-}
-
-pub fn token_hash(value: &str) -> String {
-    hex::encode(Sha256::digest(value.as_bytes()))
 }
 
 /// The stored form of a personal access token name, classic or fine-grained: trimmed,
@@ -153,7 +148,7 @@ pub fn valid_name(name: &str) -> Option<&str> {
 pub fn validate(input: &TokenInput<'_>, now: DateTime<Utc>) -> Result<(), TokenError> {
     if valid_name(input.name).is_none()
         || !matches!(input.scope, "read" | "write")
-        || !tokens::supported_expiry(input.expires_at)
+        || !crate::backend::db::users::tokens::supported_expiry(input.expires_at)
         || input.expires_at.is_some_and(|expiry| expiry <= now)
     {
         return Err(TokenError::Invalid);
@@ -172,7 +167,7 @@ pub async fn create(
     validate(&input, Utc::now())?;
     let session_id = session_id.ok_or(TokenError::Denied)?;
     let value = format!("{PAT_PREFIX}{}", codeyard_support::crypto::random_hex());
-    let token = tokens::create_token(
+    let token = crate::backend::db::users::tokens::create_token(
         pool,
         actor,
         session_id,
@@ -194,7 +189,7 @@ pub async fn delete(
     id: i64,
 ) -> Result<(), TokenError> {
     let session_id = session_id.ok_or(TokenError::Denied)?;
-    if tokens::delete_token(pool, actor, session_id, id)
+    if crate::backend::db::users::tokens::delete_token(pool, actor, session_id, id)
         .await
         .map_err(|_| TokenError::Unavailable)?
     {
@@ -218,3 +213,5 @@ mod tests {
         assert_eq!(validate(&input, Utc::now()), Err(TokenError::Invalid));
     }
 }
+
+use codeyard_support::token_hash::token_hash;

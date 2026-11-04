@@ -4,7 +4,7 @@ use codeyard_db_core::models::OrgMembership;
 use sqlx::SqlitePool;
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing};
 
-use super::authority::*;
+use crate::backend::db::sqlite::organizations::authority::*;
 
 pub async fn recover_suspended_organization_owner(
     pool: &SqlitePool,

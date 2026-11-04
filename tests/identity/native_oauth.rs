@@ -4,7 +4,7 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use codeyard::backend::db;
+
 use tower::ServiceExt;
 
 const CHILD: &str = "CODEYARD_NATIVE_OAUTH_CHILD";
@@ -70,7 +70,7 @@ async fn browser_routes(pg: bool) {
     assert_eq!(query["code_challenge_method"], "S256");
     assert!(!query["code_challenge"].is_empty());
     let state = &query["state"];
-    let stored = db::users::sessions::get_oauth_state(database.pool(), state)
+    let stored = codeyard::backend::db::users::sessions::get_oauth_state(database.pool(), state)
         .await
         .unwrap()
         .unwrap();
@@ -98,10 +98,12 @@ async fn browser_routes(pg: bool) {
             .to_str()
             .unwrap()
             .contains("no-store"));
-        assert!(db::users::sessions::get_oauth_state(database.pool(), state)
-            .await
-            .unwrap()
-            .is_some());
+        assert!(
+            codeyard::backend::db::users::sessions::get_oauth_state(database.pool(), state)
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
     for path in [
         "/api/auth/oauth/gitlab".to_owned(),

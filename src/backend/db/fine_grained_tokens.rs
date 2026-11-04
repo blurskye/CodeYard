@@ -66,7 +66,7 @@ impl Bounds {
 /// An expiry fits a maximum of `days` when it is no later than the end of the day `days`
 /// after `from`, which is how the token form picks dates. `None` days allow no expiry.
 pub fn within(expires_at: Option<DateTime<Utc>>, from: DateTime<Utc>, days: Option<i64>) -> bool {
-    if !super::users::tokens::supported_expiry(expires_at) {
+    if !crate::backend::db::users::tokens::supported_expiry(expires_at) {
         return false;
     }
     match (days, expires_at) {
@@ -136,7 +136,7 @@ native_operation!(crate::backend::db::postgres::fine_grained_tokens::repositorie
     /// The selected repositories' ids and names, at most 100, that are still in the token's
     /// owner domain and readable by `actor`. Only the token's user or an owner of its
     /// organization sees them, through a live `credential`.
-    fn repositories(pool: &DbPool, token: i64, actor: i64, credential: &super::users::accounts::AccountCredential<'_>) -> Result<Vec<(i64, String)>>);
+    fn repositories(pool: &DbPool, token: i64, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>) -> Result<Vec<(i64, String)>>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::selected, crate::backend::db::sqlite::fine_grained_tokens::selected,
     fn selected(pool: &DbPool, token: i64, repo: i64) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::policy, crate::backend::db::sqlite::fine_grained_tokens::policy,
@@ -144,7 +144,7 @@ native_operation!(crate::backend::db::postgres::fine_grained_tokens::policy, cra
     fn policy(pool: &DbPool, org: i64) -> Result<Policy>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::set_policy, crate::backend::db::sqlite::fine_grained_tokens::set_policy,
     /// Saves the policy while `actor` owns the organization; false when they do not.
-    fn set_policy(pool: &DbPool, actor: impl Into<super::credentials::Actor>, org: i64, policy: &Policy) -> Result<bool>);
+    fn set_policy(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, policy: &Policy) -> Result<bool>);
 /// Which of an organization's tokens a listing shows: those in `status` whose users are still
 /// members and that pass every filter given, newest first unless `ascending`.
 #[derive(Default)]
@@ -186,10 +186,10 @@ native_operation!(crate::backend::db::postgres::fine_grained_tokens::owner_token
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::review, crate::backend::db::sqlite::fine_grained_tokens::review,
     /// Moves the organization's tokens in `from` to `status` while `reviewer` owns the
     /// organization, and returns how many changed.
-    fn review(pool: &DbPool, org: i64, reviewer: impl Into<super::credentials::Actor>, tokens: &[i64], from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
+    fn review(pool: &DbPool, org: i64, reviewer: impl Into<crate::backend::db::credentials::Actor>, tokens: &[i64], from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::review_all, crate::backend::db::sqlite::fine_grained_tokens::review_all,
     /// `review` for every token in `from` whose user is still a member, in one statement.
-    fn review_all(pool: &DbPool, org: i64, reviewer: impl Into<super::credentials::Actor>, from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
+    fn review_all(pool: &DbPool, org: i64, reviewer: impl Into<crate::backend::db::credentials::Actor>, from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::classic_refused, crate::backend::db::sqlite::fine_grained_tokens::classic_refused,
     /// Whether `token` is a classic personal token and `org` refuses classic tokens. OAuth,
     /// App, job and fine-grained tokens are never classic.

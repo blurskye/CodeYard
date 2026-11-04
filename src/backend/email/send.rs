@@ -1,5 +1,6 @@
 //! Building a message and handing it to the SMTP server.
-use super::config::{Security, SmtpConfig};
+use codeyard_model::mail_config::Security;
+use codeyard_model::mail_config::SmtpConfig;
 use lettre::message::{header::ContentType, Mailbox};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Address, AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};

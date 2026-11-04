@@ -1,12 +1,9 @@
 //! Browser inventory reads share the metadata repository authority and bounded database projections.
-use crate::backend::{
-    api::http::context::PageContext,
-    app::AppState,
-    db::{
-        self,
-        artifact_metadata::{self, Record, Refusal},
-    },
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::app::AppState;
+
+use crate::backend::db::artifact_metadata::Record;
+use crate::backend::db::artifact_metadata::Refusal;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -131,12 +128,16 @@ async fn show(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let organization =
-        match db::organizations::get_public_organization(&ctx.state.pool, &params["org"]).await {
-            Ok(Some(org)) => org,
-            Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Organization not found."),
-            Err(error) => return failure(&ctx, error),
-        };
+    let organization = match crate::backend::db::organizations::get_public_organization(
+        &ctx.state.pool,
+        &params["org"],
+    )
+    .await
+    {
+        Ok(Some(org)) => org,
+        Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Organization not found."),
+        Err(error) => return failure(&ctx, error),
+    };
     let digest = params
         .get("subject_digest")
         .or_else(|| ctx.query.get("digest"))
@@ -149,7 +150,8 @@ async fn show(
         .unwrap_or_else(|| "deployment".into());
     if !matches!(kind.as_str(), "deployment" | "storage")
         || (!digest.is_empty()
-            && (!digest.starts_with("sha256:") || !db::attestations::valid_digest(&digest)))
+            && (!digest.starts_with("sha256:")
+                || !crate::backend::db::attestations::valid_digest(&digest)))
     {
         return ctx.error(
             StatusCode::BAD_REQUEST,
@@ -172,7 +174,7 @@ async fn show(
     let mut rows = if digest.is_empty() {
         vec![]
     } else {
-        match artifact_metadata::pages::list(
+        match crate::backend::db::artifact_metadata::pages::list(
             &ctx.state.pool,
             session.as_deref(),
             organization.id,

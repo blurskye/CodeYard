@@ -1,9 +1,11 @@
-use super::pull::{detail_response, PullRequestDetailResponse};
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::discussion::*;
-use crate::backend::api::repos::forms::{authorize_post, field};
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::field;
+use crate::backend::api::repos::pulls::pull::detail_response;
+use crate::backend::api::repos::pulls::pull::PullRequestDetailResponse;
 use crate::backend::app::AppState;
 use crate::backend::repositories::pull_requests::workflows::RunWorkflowsRequest;
 use axum::extract::Form;
@@ -41,7 +43,7 @@ pub async fn run_pull_request_workflows(
         request,
     )
     .await
-    .map_err(super::operation_error)?;
+    .map_err(crate::backend::api::repos::pulls::operation_error)?;
     Ok(Json(detail_response(&state.pool, pull).await?))
 }
 

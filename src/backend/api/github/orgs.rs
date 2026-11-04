@@ -15,12 +15,15 @@ mod rule_suites;
 mod security;
 mod settings;
 mod token_grants;
-use super::{api_url, auth, pagination::Pagination, Error, Result};
+use codeyard_model::urls::api_url;
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db::organizations;
-use crate::backend::db::organizations::discovery;
+
 use crate::backend::db::organizations::OrganizationOutcome;
-use crate::backend::webhooks::payloads;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode, Uri},
@@ -117,7 +120,7 @@ pub(super) fn outcome<T>(value: OrganizationOutcome<T>) -> Result<T> {
 }
 
 pub(super) async fn target(state: &AppState, name: &str) -> Result<Organization> {
-    organizations::get_public_organization(&state.pool, name)
+    crate::backend::db::organizations::get_public_organization(&state.pool, name)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)
@@ -127,15 +130,22 @@ async fn owner_actor(
     state: &AppState,
     headers: &HeaderMap,
     name: &str,
-) -> Result<(Organization, auth::Authentication)> {
-    let actor = auth::authenticate(state, headers, true)
+) -> Result<(
+    Organization,
+    crate::backend::api::github::auth::Authentication,
+)> {
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     let org = target(state, name).await?;
     let role = outcome(
-        organizations::get_organization_role(&state.pool, actor.user.id, org.id)
-            .await
-            .map_err(Error::unavailable)?,
+        crate::backend::db::organizations::get_organization_role(
+            &state.pool,
+            actor.user.id,
+            org.id,
+        )
+        .await
+        .map_err(Error::unavailable)?,
     )?;
     if role != codeyard_db_core::models::OrgRole::Owner {
         return Err(Error::new(
@@ -151,11 +161,11 @@ async fn get_org(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(&state, &headers, false).await?;
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     let org = target(&state, &name).await?;
     if let Some(actor) = actor {
         if let OrganizationOutcome::Applied(owned) =
-            organizations::settings::owned(&state.pool, actor.user.id, org.id)
+            crate::backend::db::organizations::settings::owned(&state.pool, actor.user.id, org.id)
                 .await
                 .map_err(Error::unavailable)?
         {
@@ -164,7 +174,7 @@ async fn get_org(
                 .map(Json);
         }
     }
-    let configuration = organizations::settings::get(&state.pool, org.id)
+    let configuration = crate::backend::db::organizations::settings::get(&state.pool, org.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -174,7 +184,7 @@ async fn get_org(
 }
 
 pub(super) async fn document(state: &AppState, org: &Organization) -> Result<Value> {
-    let configuration = organizations::settings::get(&state.pool, org.id)
+    let configuration = crate::backend::db::organizations::settings::get(&state.pool, org.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -186,9 +196,9 @@ async fn delete_org(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
     let result = crate::backend::organizations::delete(&state, actor.database_actor(), org.id)
@@ -222,9 +232,9 @@ async fn list(
     headers: HeaderMap,
     Query(query): Query<Since>,
 ) -> Result<Response> {
-    auth::authenticate(&state, &headers, false).await?;
-    let limit = super::pagination::page_size(query.per_page);
-    let mut orgs = discovery::list_organizations(
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
+    let limit = crate::backend::api::github::pagination::page_size(query.per_page);
+    let mut orgs = crate::backend::db::organizations::discovery::list_organizations(
         &state.pool,
         None,
         false,
@@ -251,7 +261,11 @@ async fn list(
     }
     Ok((
         headers,
-        Json(orgs.iter().map(payloads::organization).collect::<Vec<_>>()),
+        Json(
+            orgs.iter()
+                .map(crate::backend::webhooks::payloads::organization)
+                .collect::<Vec<_>>(),
+        ),
     )
         .into_response())
 }
@@ -264,7 +278,7 @@ async fn organization_list(
     uri: Uri,
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
-    let rows = discovery::list_organizations(
+    let rows = crate::backend::db::organizations::discovery::list_organizations(
         &state.pool,
         Some(user),
         private,
@@ -277,7 +291,9 @@ async fn organization_list(
     let has_next = rows.len() > limit;
     page.response(
         &uri,
-        rows.iter().map(payloads::organization).collect(),
+        rows.iter()
+            .map(crate::backend::webhooks::payloads::organization)
+            .collect(),
         has_next,
     )
 }
@@ -287,9 +303,9 @@ async fn own_orgs(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     organization_list(&state, actor.user.id, true, page, uri).await
 }
 async fn user_orgs(
@@ -299,8 +315,8 @@ async fn user_orgs(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    auth::authenticate(&state, &headers, false).await?;
-    let user = super::users::target(&state, &username).await?;
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
+    let user = crate::backend::api::github::users::target(&state, &username).await?;
     // This endpoint only lists public memberships, including when the caller is the target.
     organization_list(&state, user.id, false, page, uri).await
 }
@@ -320,7 +336,7 @@ async fn member_list(
     uri: Uri,
     public: bool,
 ) -> Result<Response> {
-    let actor = auth::authenticate(state, headers, false).await?;
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, false).await?;
     let org = target(state, name).await?;
     let role = query.role.as_deref().unwrap_or("all");
     let filter = query.filter.as_deref().unwrap_or("all");
@@ -335,7 +351,7 @@ async fn member_list(
     };
     let (offset, limit) = page.window()?;
     let rows = outcome(
-        discovery::list_visible_members(
+        crate::backend::db::organizations::discovery::list_visible_members(
             &state.pool,
             actor.as_ref().map(|a| a.user.id),
             org.id,
@@ -348,7 +364,13 @@ async fn member_list(
         .map_err(Error::unavailable)?,
     )?;
     let has_next = rows.len() > limit;
-    page.response(&uri, rows.iter().map(payloads::user).collect(), has_next)
+    page.response(
+        &uri,
+        rows.iter()
+            .map(crate::backend::webhooks::payloads::user)
+            .collect(),
+        has_next,
+    )
 }
 async fn members(
     State(state): State<Arc<AppState>>,
@@ -376,24 +398,34 @@ async fn check(
     username: &str,
     public: bool,
 ) -> Result<Response> {
-    let actor = auth::authenticate(state, headers, false).await?;
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, false).await?;
     let org = target(state, name).await?;
-    let user = super::users::target(state, username).await?;
-    let visible =
-        discovery::list_organizations(&state.pool, Some(user.id), false, org.id - 1, 0, 1)
-            .await
-            .map_err(Error::unavailable)?
-            .first()
-            .is_some_and(|o| o.id == org.id);
+    let user = crate::backend::api::github::users::target(state, username).await?;
+    let visible = crate::backend::db::organizations::discovery::list_organizations(
+        &state.pool,
+        Some(user.id),
+        false,
+        org.id - 1,
+        0,
+        1,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .first()
+    .is_some_and(|o| o.id == org.id);
     if visible {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
     if !public {
         let is_member = if let Some(actor) = &actor {
             matches!(
-                organizations::get_organization_role(&state.pool, actor.user.id, org.id)
-                    .await
-                    .map_err(Error::unavailable)?,
+                crate::backend::db::organizations::get_organization_role(
+                    &state.pool,
+                    actor.user.id,
+                    org.id
+                )
+                .await
+                .map_err(Error::unavailable)?,
                 OrganizationOutcome::Applied(_)
             )
         } else {
@@ -414,7 +446,7 @@ async fn check(
                 .into_response());
         }
         if let Some(actor) = actor {
-            let states = discovery::list_membership_states(
+            let states = crate::backend::db::organizations::discovery::list_membership_states(
                 &state.pool,
                 actor.user.id,
                 Some(org.id),
@@ -453,9 +485,9 @@ async fn visibility(
     username: &str,
     public: bool,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(state, headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
     if actor.user.username != username {
         return Err(Error::new(
@@ -465,9 +497,14 @@ async fn visibility(
     }
     let org = target(state, name).await?;
     outcome(
-        discovery::set_membership_public(&state.pool, actor.database_actor(), org.id, public)
-            .await
-            .map_err(Error::unavailable)?,
+        crate::backend::db::organizations::discovery::set_membership_public(
+            &state.pool,
+            actor.database_actor(),
+            org.id,
+            public,
+        )
+        .await
+        .map_err(Error::unavailable)?,
     )?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -487,9 +524,9 @@ async fn conceal(
 }
 
 fn membership_document(org: &Organization, user: &User, role: &str, state: &str) -> Value {
-    let organization = payloads::organization(org);
+    let organization = crate::backend::webhooks::payloads::organization(org);
     json!({"url": api_url(&format!("/orgs/{}/memberships/{}", codeyard_webui::encode_component(&org.name), codeyard_webui::encode_component(&user.username))),
-        "organization_url": organization["url"], "organization": organization, "user": payloads::user(user),
+        "organization_url": organization["url"], "organization": organization, "user": crate::backend::webhooks::payloads::user(user),
         "role": if role == "owner" { "admin" } else { "member" }, "state": state, "direct_membership": true})
 }
 async fn membership_value(
@@ -498,13 +535,19 @@ async fn membership_value(
     org: &Organization,
     user: &User,
 ) -> Result<Value> {
-    let membership =
-        discovery::list_membership_states(&state.pool, actor, Some(org.id), user.id, None, (0, 1))
-            .await
-            .map_err(Error::unavailable)?
-            .into_iter()
-            .next()
-            .ok_or_else(Error::missing)?;
+    let membership = crate::backend::db::organizations::discovery::list_membership_states(
+        &state.pool,
+        actor,
+        Some(org.id),
+        user.id,
+        None,
+        (0, 1),
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .into_iter()
+    .next()
+    .ok_or_else(Error::missing)?;
     Ok(membership_document(
         org,
         user,
@@ -517,20 +560,24 @@ async fn membership(
     headers: HeaderMap,
     Path((name, username)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     let org = target(&state, &name).await?;
     // Unlike /user/memberships, this read requires membership even for an invitee.
     if !matches!(
-        organizations::get_organization_role(&state.pool, actor.user.id, org.id)
-            .await
-            .map_err(Error::unavailable)?,
+        crate::backend::db::organizations::get_organization_role(
+            &state.pool,
+            actor.user.id,
+            org.id
+        )
+        .await
+        .map_err(Error::unavailable)?,
         OrganizationOutcome::Applied(_)
     ) {
         return Err(Error::missing());
     }
-    let user = super::users::target(&state, &username).await?;
+    let user = crate::backend::api::github::users::target(&state, &username).await?;
     Ok(Json(
         membership_value(&state, actor.user.id, &org, &user).await?,
     ))
@@ -540,9 +587,9 @@ async fn own_membership(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     let org = target(&state, &name).await?;
     Ok(Json(
         membership_value(&state, actor.user.id, &org, &actor.user).await?,
@@ -560,9 +607,9 @@ async fn own_memberships(
     Query(query): Query<Memberships>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     if query
         .state
         .as_deref()
@@ -575,7 +622,7 @@ async fn own_memberships(
         per_page: query.per_page,
     };
     let (offset, limit) = page.window()?;
-    let rows = discovery::list_membership_states(
+    let rows = crate::backend::db::organizations::discovery::list_membership_states(
         &state.pool,
         actor.user.id,
         None,
@@ -588,10 +635,13 @@ async fn own_memberships(
     let has_next = rows.len() > limit;
     let mut values = Vec::new();
     for row in rows.into_iter().take(limit) {
-        let org = organizations::get_public_organization_by_id(&state.pool, row.org_id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let org = crate::backend::db::organizations::get_public_organization_by_id(
+            &state.pool,
+            row.org_id,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
         values.push(membership_document(
             &org,
             &actor.user,
@@ -611,17 +661,17 @@ async fn accept(
     Path(name): Path<String>,
     input: std::result::Result<Json<Accept>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
-    let Json(input) = input.map_err(super::json_error)?;
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     if input.state != "active" {
         return Err(Error::validation("Membership", "state", "invalid"));
     }
     let org = target(&state, &name).await?;
     let member = outcome(
-        organizations::accept_organization_invitation(
+        crate::backend::db::organizations::accept_organization_invitation(
             &state.pool,
             actor.database_actor(),
             org.id,

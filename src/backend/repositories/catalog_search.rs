@@ -1,10 +1,9 @@
 //! README and license predicates use pinned Git snapshots, bounded like live code search.
-use super::{
-    store::{repo_store, BlobRange},
-    templates,
-};
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::BlobRange;
+
 use crate::backend::cluster::NodeContext;
-use crate::backend::db;
+
 use crate::backend::db::catalog_search::Options;
 use crate::backend::db::catalog_search::Search;
 use anyhow::Result;
@@ -38,7 +37,8 @@ pub async fn git_facts(
     let Some(revision) = refs.get(&format!("refs/heads/{}", repo.default_branch)) else {
         return Ok(facts);
     };
-    let directories = super::community::directories(&store, revision).await?;
+    let directories =
+        crate::backend::repositories::community::directories(&store, revision).await?;
     let mut read_readme = false;
     let mut read_license = false;
     for (_, mut entries) in directories {
@@ -50,7 +50,8 @@ pub async fn git_facts(
             let name = entry.name.to_ascii_lowercase();
             let is_readme =
                 readme && !read_readme && (name == "readme" || name.starts_with("readme."));
-            let is_license = !read_license && templates::is_license_file(&name);
+            let is_license =
+                !read_license && crate::backend::repositories::templates::is_license_file(&name);
             if !is_readme && !is_license {
                 continue;
             }
@@ -75,7 +76,9 @@ pub async fn git_facts(
                 facts.readme = std::str::from_utf8(&blob.bytes).ok().map(str::to_owned);
             }
             if is_license {
-                facts.license = templates::detect_license(&blob.bytes).map(|t| t.name);
+                facts.license =
+                    crate::backend::repositories::templates::detect_license(&blob.bytes)
+                        .map(|t| t.name);
             }
         }
     }
@@ -89,7 +92,7 @@ pub async fn prepare(
     query: Search,
 ) -> Result<(Search, bool)> {
     let deadline = Instant::now() + Duration::from_secs(8);
-    let candidates = db::catalog_search::search(
+    let candidates = crate::backend::db::catalog_search::search(
         pool,
         viewer,
         &query.git_candidates(),
@@ -108,13 +111,14 @@ pub async fn prepare(
         .iter()
         .filter_map(|hit| hit.repository_id)
         .collect::<Vec<_>>();
-    let repos = db::repositories::records::get_repositories_by_ids(pool, &ids).await?;
+    let repos =
+        crate::backend::db::repositories::records::get_repositories_by_ids(pool, &ids).await?;
     let mut facts = Vec::new();
     let mut bytes = 0;
     let readme = query.needs_readme();
     for repo in repos {
         // Search candidates are not authority to read a later Git snapshot.
-        if super::access::check_read(pool, repo.id, viewer)
+        if crate::backend::repositories::access::check_read(pool, repo.id, viewer)
             .await
             .is_err()
         {

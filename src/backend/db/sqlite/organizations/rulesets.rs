@@ -1,4 +1,4 @@
-use super::authority::*;
+use crate::backend::db::sqlite::organizations::authority::*;
 mod access;
 mod suites;
 use crate::backend::db::organizations::OrganizationOutcome;
@@ -262,7 +262,7 @@ pub async fn change(
     if previous == document {
         return Ok(Applied(current));
     }
-    let revision = super::super::time::next_revision(current.updated_at)?;
+    let revision = crate::backend::db::sqlite::time::next_revision(current.updated_at)?;
     let row: StoredRuleset = sqlx::query_as(
         "UPDATE repository_rulesets SET definition=?2,updated_at=?3 WHERE id=?1 RETURNING *",
     )

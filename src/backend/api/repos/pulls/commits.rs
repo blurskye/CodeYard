@@ -1,6 +1,6 @@
 //! The Commits tab of a pull request: the commits its head has that its base does not.
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::repos::chrome;
+
 use crate::backend::api::repos::discussion::*;
 use crate::backend::app::AppState;
 use crate::backend::repositories::store::repo_store;
@@ -42,7 +42,7 @@ pub(crate) async fn native_commits(
         .await
         .map_err(|_| unavailable(&ctx))?
         .into_iter()
-        .map(chrome::commit)
+        .map(crate::backend::api::repos::chrome::commit)
         .collect::<Vec<_>>();
     Ok(ctx.page_model(
         &format!("{} #{}", value.title, value.number),

@@ -1,5 +1,6 @@
 //! Download formats project durable observations; archive members never stand in for executions.
-use crate::backend::db::action_logs::{Line, Snapshot};
+use crate::backend::db::action_logs::Line;
+use crate::backend::db::action_logs::Snapshot;
 use anyhow::Result;
 use chrono::Datelike;
 use std::{

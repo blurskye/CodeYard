@@ -8,7 +8,8 @@ use sqlx::SqlitePool;
 
 pub async fn create_user(pool: &SqlitePool, username: &str, email: Option<&str>) -> Result<User> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::transitions::require_user_namespace(&mut tx, username).await?;
+    crate::backend::db::sqlite::users::transitions::require_user_namespace(&mut tx, username)
+        .await?;
     let user = sqlx::query_as("INSERT INTO users(username,email) VALUES (?1,?2) RETURNING *")
         .bind(username)
         .bind(email)
@@ -36,7 +37,8 @@ pub async fn create_user_with_password_and_flags(
     must_change_password: bool,
 ) -> Result<User> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::transitions::require_user_namespace(&mut tx, username).await?;
+    crate::backend::db::sqlite::users::transitions::require_user_namespace(&mut tx, username)
+        .await?;
     let user = sqlx::query_as("INSERT INTO users(username,email,password_hash,is_admin,must_change_password) VALUES (?1,?2,?3,?4,?5) RETURNING *")
         .bind(username).bind(email).bind(password_hash).bind(is_admin).bind(must_change_password)
         .fetch_one(&mut *tx).await?;
@@ -73,7 +75,10 @@ pub async fn update_user_password(
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let organizations =
-        super::transitions::owned_organizations_for_account_change(&mut tx, user_id).await?;
+        crate::backend::db::sqlite::users::transitions::owned_organizations_for_account_change(
+            &mut tx, user_id,
+        )
+        .await?;
     sqlx::query("UPDATE users SET password_hash=?1,must_change_password=?2,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?3")
         .bind(password_hash).bind(must_change_password).bind(user_id).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM sessions WHERE user_id=?1")
@@ -87,7 +92,11 @@ pub async fn update_user_password(
     if must_change_password {
         // A forced change locks the account out of CI like a ban does.
         crate::backend::db::sqlite::ci::stop_actor_ci_runs(&mut tx, user_id).await?;
-        super::transitions::stop_ownerless_organization_ci(&mut tx, &organizations).await?;
+        crate::backend::db::sqlite::users::transitions::stop_ownerless_organization_ci(
+            &mut tx,
+            &organizations,
+        )
+        .await?;
     }
     tx.commit().await?;
     Ok(())
@@ -195,7 +204,8 @@ pub async fn create_user_from_oauth(
     display_name: Option<&str>,
 ) -> Result<User> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::transitions::require_user_namespace(&mut tx, username).await?;
+    crate::backend::db::sqlite::users::transitions::require_user_namespace(&mut tx, username)
+        .await?;
     let user = sqlx::query_as("INSERT INTO users(username,email,display_name,email_verified) VALUES (?1,?2,?3,?4) RETURNING *")
         .bind(username).bind(email).bind(display_name).bind(email.is_some()).fetch_one(&mut *tx).await?;
     tx.commit().await?;
@@ -213,7 +223,8 @@ pub async fn set_user_avatar(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     // The account and the requesting session must still be live when the picture changes,
     // which happens after the upload's storage work.
-    super::transitions::require_account(&mut tx, user_id, credential).await?;
+    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, user_id, credential)
+        .await?;
     let previous: Option<uuid::Uuid> =
         sqlx::query_scalar("SELECT avatar_file_id FROM users WHERE id=?1")
             .bind(user_id)
@@ -254,9 +265,10 @@ pub async fn update_user_profile(
     location: Option<&str>,
     website: Option<&str>,
 ) -> Result<Option<User>> {
-    use crate::backend::db::users::{accounts::AccountCredential, profiles::ProfilePatch};
+    use crate::backend::db::users::accounts::AccountCredential;
+    use crate::backend::db::users::profiles::ProfilePatch;
     use codeyard_support::credentials::AccountRestricted;
-    match super::profiles::save_profile(
+    match crate::backend::db::sqlite::users::profiles::save_profile(
         pool,
         user_id,
         &AccountCredential::Session(session),
@@ -284,7 +296,7 @@ pub async fn count_matching_users<'a>(
     Ok(sqlx::query_as(
         "SELECT COUNT(*), COALESCE(SUM(is_admin),0), COALESCE(SUM(is_banned),0) FROM users WHERE username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1",
     )
-    .bind(super::super::search::contains(text.trim()))
+    .bind(crate::backend::db::sqlite::search::contains(text.trim()))
     .fetch_one(pool)
     .await?)
 }
@@ -297,7 +309,7 @@ pub async fn list_admin_users<'a>(
     offset: i64,
 ) -> Result<Vec<AdminUser>> {
     Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE (username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1) AND CASE ?4 WHEN 'admins' THEN is_admin WHEN 'banned' THEN is_banned ELSE 1 END ORDER BY username,id LIMIT ?2 OFFSET ?3")
-        .bind(super::super::search::contains(text.trim())).bind(limit.clamp(1,100)).bind(offset.max(0)).bind(role).fetch_all(pool).await?)
+        .bind(crate::backend::db::sqlite::search::contains(text.trim())).bind(limit.clamp(1,100)).bind(offset.max(0)).bind(role).fetch_all(pool).await?)
 }
 
 pub async fn admin_users_page(
@@ -310,7 +322,11 @@ pub async fn admin_users_page(
 ) -> Result<crate::backend::db::users::accounts::AdminUserPage> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::transitions::active_admin_session(&mut tx, administrator).await?,
+        crate::backend::db::sqlite::users::transitions::active_admin_session(
+            &mut tx,
+            administrator
+        )
+        .await?,
         codeyard_support::credentials::AccountRestricted
     );
     let counts = count_matching_users(&mut *tx, text).await?;

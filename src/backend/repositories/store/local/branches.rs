@@ -69,7 +69,7 @@ impl LocalStore {
         let mut held = self.blocking(git::published_refs_in_use).await?;
         held.count = held.count.saturating_sub(1);
         held.bytes = held.bytes.saturating_sub(git::ref_listing_bytes(&old_ref));
-        super::ensure_ref_room(held, &[&new_ref])?;
+        crate::backend::repositories::store::local::ensure_ref_room(held, &[&new_ref])?;
         let advertised_default = git::repository::default_branch(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -246,8 +246,9 @@ impl LocalStore {
         source: (i64, &LocalStore),
         branch: &str,
         token: Option<i64>,
-    ) -> Result<super::super::UpstreamMerge, RepoError> {
-        use super::super::{UpstreamMerge, UpstreamMergeType};
+    ) -> Result<crate::backend::repositories::store::UpstreamMerge, RepoError> {
+        use crate::backend::repositories::store::UpstreamMerge;
+        use crate::backend::repositories::store::UpstreamMergeType;
         self.admitted_path(false).await?;
         source.1.admitted_path(true).await?;
         let reference =

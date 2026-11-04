@@ -1,6 +1,12 @@
-use super::{auth, discovery, membership_document, outcome, target, AppState, Error, Result};
-use crate::backend::db;
-use crate::backend::db::organizations;
+use crate::backend::api::github::orgs::auth;
+use crate::backend::api::github::orgs::discovery;
+use crate::backend::api::github::orgs::membership_document;
+use crate::backend::api::github::orgs::outcome;
+use crate::backend::api::github::orgs::target;
+use crate::backend::api::github::orgs::AppState;
+use crate::backend::api::github::orgs::Error;
+use crate::backend::api::github::orgs::Result;
+
 use crate::backend::db::organizations::OrganizationOutcome;
 use axum::{
     extract::{Path, State},
@@ -33,7 +39,7 @@ async fn set(
     let input: Value = if body.is_empty() {
         json!({})
     } else {
-        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?
+        serde_json::from_slice(&body).map_err(crate::backend::api::github::json_parse_error)?
     };
     let object = input
         .as_object()
@@ -49,7 +55,7 @@ async fn set(
         _ => return Err(Error::validation("Membership", "role", "invalid")),
     };
     let org = target(&state, &name).await?;
-    let user = db::users::accounts::get_user_by_username(&state.pool, &username)
+    let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, &username)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(|| Error::validation("Membership", "user", "invalid"))?;
@@ -65,7 +71,7 @@ async fn set(
     .map_err(Error::unavailable)?;
     let membership = if active.is_empty() {
         let invitation = outcome(
-            organizations::set_organization_invitation_by_owner(
+            crate::backend::db::organizations::set_organization_invitation_by_owner(
                 &state.pool,
                 actor.database_actor(),
                 org.id,
@@ -85,7 +91,7 @@ async fn set(
         membership_document(&org, &user, &invitation.role, "pending")
     } else {
         let member = outcome(
-            organizations::update_organization_member_role_by_owner(
+            crate::backend::db::organizations::update_organization_member_role_by_owner(
                 &state.pool,
                 actor.database_actor(),
                 org.id,
@@ -112,11 +118,11 @@ async fn remove(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(state, name).await?;
-    let user = db::users::accounts::get_user_by_username(&state.pool, username)
+    let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
         .await
         .map_err(Error::unavailable)?
         .map_or(-1, |user| user.id);
-    let result = organizations::remove_member_or_invitation_by_owner(
+    let result = crate::backend::db::organizations::remove_member_or_invitation_by_owner(
         &state.pool,
         actor.database_actor(),
         org.id,

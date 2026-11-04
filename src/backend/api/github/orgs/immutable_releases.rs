@@ -1,7 +1,13 @@
 //! Immutable release enforcement settings are owned by organization owners.
-use super::super::{api_url, pagination::Pagination};
-use super::{auth, outcome, target, AppState, Error, Result};
-use crate::backend::db::organizations::immutable_releases::{self as data, Change};
+use crate::backend::api::github::orgs::auth;
+use crate::backend::api::github::orgs::outcome;
+use crate::backend::api::github::orgs::target;
+use crate::backend::api::github::orgs::AppState;
+use crate::backend::api::github::orgs::Error;
+use crate::backend::api::github::orgs::Result;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::db::organizations::immutable_releases as data;
+use crate::backend::db::organizations::immutable_releases::Change;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -9,6 +15,7 @@ use axum::{
     routing::{delete, get, put, MethodRouter},
     Json,
 };
+use codeyard_model::urls::api_url;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;

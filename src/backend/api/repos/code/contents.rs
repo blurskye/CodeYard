@@ -1,12 +1,20 @@
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::{ApiError, ApiFailure};
-use crate::backend::api::repos::chrome::{resolve, store_error, Loaded};
-use crate::backend::api::repos::forms::{field, with_status};
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::ApiFailure;
+use crate::backend::api::repos::chrome::resolve;
+use crate::backend::api::repos::chrome::store_error;
+use crate::backend::api::repos::chrome::Loaded;
+use crate::backend::api::repos::forms::field;
+use crate::backend::api::repos::forms::with_status;
 use crate::backend::api::repos::refs::references::resolve_references;
-use crate::backend::api::repos::responses::{AuthorInfo, CommitResponse};
+use crate::backend::api::repos::responses::AuthorInfo;
+use crate::backend::api::repos::responses::CommitResponse;
 use crate::backend::app::AppState;
-use crate::backend::repositories::files;
-use crate::backend::repositories::store::{repo_store, BlobRange, FileWrite, MAX_EDITOR_BYTES};
+
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::BlobRange;
+use crate::backend::repositories::store::FileWrite;
+use crate::backend::repositories::store::MAX_EDITOR_BYTES;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
@@ -50,7 +58,9 @@ pub struct CreateFileResponse {
     pub path: String,
 }
 
-fn commit_response(saved: files::FileSave) -> Json<UpdateFileResponse> {
+fn commit_response(
+    saved: crate::backend::repositories::files::FileSave,
+) -> Json<UpdateFileResponse> {
     let user = saved.actor;
     let author = AuthorInfo {
         id: Some(user.id),
@@ -88,15 +98,16 @@ async fn write_file(
     (owner, repo, path): (String, String, String),
     req: WriteFileRequest,
     creating: bool,
-) -> Result<files::FileSave, ApiFailure> {
+) -> Result<crate::backend::repositories::files::FileSave, ApiFailure> {
     let actor = crate::backend::api::http::session::get_current_user(&state.pool, headers).await?;
-    let repository_id = files::ensure_readable(&state.pool, &actor, &owner, &repo)
-        .await
-        .map_err(|error| {
-            ApiError::failure(write_status(&error), "file_write_rejected", &error.message)
-        })?;
+    let repository_id =
+        crate::backend::repositories::files::ensure_readable(&state.pool, &actor, &owner, &repo)
+            .await
+            .map_err(|error| {
+                ApiError::failure(write_status(&error), "file_write_rejected", &error.message)
+            })?;
     let content = decode_content(&req.content)?;
-    files::write_file_bytes(
+    crate::backend::repositories::files::write_file_bytes(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -139,12 +150,13 @@ pub async fn delete_file_content(
     Json(req): Json<DeleteFileRequest>,
 ) -> Result<Json<UpdateFileResponse>, ApiFailure> {
     let actor = crate::backend::api::http::session::get_current_user(&state.pool, &headers).await?;
-    let repository = files::named_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|error| {
-            ApiError::failure(write_status(&error), "file_write_rejected", &error.message)
-        })?;
-    let saved = files::delete_file(
+    let repository =
+        crate::backend::repositories::files::named_repository(&state.pool, &owner, &repo)
+            .await
+            .map_err(|error| {
+                ApiError::failure(write_status(&error), "file_write_rejected", &error.message)
+            })?;
+    let saved = crate::backend::repositories::files::delete_file(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -226,7 +238,9 @@ fn write_target(
 /// The name a commit on a new branch gets, offered whether or not the branch takes direct commits.
 fn new_branch_for(ctx: &PageContext, loaded: &Loaded) -> String {
     match ctx.user.as_ref() {
-        Some(user) => files::free_branch_name(&user.username, &loaded.refs),
+        Some(user) => {
+            crate::backend::repositories::files::free_branch_name(&user.username, &loaded.refs)
+        }
         None => String::new(),
     }
 }
@@ -279,9 +293,10 @@ async fn editor_page(
                 "The web editor supports files up to 1 MiB.",
             ));
         }
-        editor.content = files::editor_text(&blob.bytes, blob.is_binary)
-            .map_err(|error| ctx.error(write_status(&error), &error.message))?
-            .to_owned();
+        editor.content =
+            crate::backend::repositories::files::editor_text(&blob.bytes, blob.is_binary)
+                .map_err(|error| ctx.error(write_status(&error), &error.message))?
+                .to_owned();
         editor.message = format!("Update {}", editor.path);
     }
     editor.references =
@@ -369,7 +384,7 @@ async fn refuses_direct_commit(
 ) -> bool {
     match ctx.user.as_ref() {
         Some(user) => {
-            files::direct_commit_refused(
+            crate::backend::repositories::files::direct_commit_refused(
                 &ctx.state.pool,
                 &loaded.repository,
                 user,
@@ -430,7 +445,7 @@ pub(in crate::backend::api::repos) async fn write_form(
     };
     // The description goes after the subject, so a blank message gets its default first.
     if input.message.trim().is_empty() {
-        input.message = files::default_commit_message(&input);
+        input.message = crate::backend::repositories::files::default_commit_message(&input);
     }
     if !editor.description.trim().is_empty() {
         input.message = format!("{}\n\n{}", input.message, editor.description.trim_end());
@@ -438,7 +453,7 @@ pub(in crate::backend::api::repos) async fn write_form(
     // The choice of a protected branch: the commit lands on a new branch, which starts there.
     let new_branch =
         (field(form, "commit_target") == "new_branch").then(|| editor.new_branch.clone());
-    match files::write_file(
+    match crate::backend::repositories::files::write_file(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.ci_runs,
@@ -465,7 +480,8 @@ pub(in crate::backend::api::repos) async fn write_form(
         }),
         Err(error) => {
             let status = write_status(&error);
-            editor.saved = error.kind == files::WriteFailure::SavedFollowupFailed;
+            editor.saved = error.kind
+                == crate::backend::repositories::files::WriteFailure::SavedFollowupFailed;
             let title = if editor.saved {
                 view::editor::SAVED_FOLLOWUP_FAILED
             } else {
@@ -590,7 +606,7 @@ pub(in crate::backend::api::repos) async fn delete_form(
         creating: false,
         deleting: true,
     };
-    match files::delete_file_web(
+    match crate::backend::repositories::files::delete_file_web(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.ci_runs,
@@ -613,7 +629,8 @@ pub(in crate::backend::api::repos) async fn delete_form(
         }),
         Err(error) => {
             let status = write_status(&error);
-            file.saved = error.kind == files::WriteFailure::SavedFollowupFailed;
+            file.saved = error.kind
+                == crate::backend::repositories::files::WriteFailure::SavedFollowupFailed;
             let title = if file.saved {
                 view::editor::SAVED_FOLLOWUP_FAILED
             } else {
@@ -636,8 +653,10 @@ pub(in crate::backend::api::repos) async fn delete_form(
     }
 }
 
-pub(in crate::backend::api::repos) fn write_status(error: &files::WriteError) -> StatusCode {
-    use files::WriteFailure;
+pub(in crate::backend::api::repos) fn write_status(
+    error: &crate::backend::repositories::files::WriteError,
+) -> StatusCode {
+    use crate::backend::repositories::files::WriteFailure;
     match error.kind {
         WriteFailure::Invalid => StatusCode::BAD_REQUEST,
         WriteFailure::Conflict => StatusCode::CONFLICT,
@@ -657,7 +676,7 @@ pub(in crate::backend::api::repos) async fn page(
     >,
     headers: axum::http::HeaderMap,
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
-    super::GitPathParams(params): super::GitPathParams,
+    crate::backend::api::repos::code::GitPathParams(params): crate::backend::api::repos::code::GitPathParams,
 ) -> axum::response::Response {
     let ctx =
         match crate::backend::api::http::context::PageContext::load(state, headers, &uri).await {

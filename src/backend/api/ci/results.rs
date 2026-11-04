@@ -1,13 +1,13 @@
 //! The Results Twirp JSON API and Azure block-blob subset used by Actions v4.
-use crate::backend::{
-    app::AppState,
-    ci::runtime,
-    db::{
-        self,
-        action_objects::{self as objects, ActionObject, BlobPart, NewObject, RuntimeRun},
-    },
-    storage::{StorageError, Upload, MAX_OBJECT_BYTES},
-};
+use crate::backend::app::AppState;
+
+use crate::backend::db::action_objects as objects;
+use crate::backend::db::action_objects::ActionObject;
+use crate::backend::db::action_objects::BlobPart;
+use crate::backend::db::action_objects::NewObject;
+use crate::backend::db::action_objects::RuntimeRun;
+use crate::backend::storage::StorageError;
+use crate::backend::storage::Upload;
 use axum::{
     body::Bytes,
     extract::{DefaultBodyLimit, Path, Query, State},
@@ -16,6 +16,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use codeyard_support::object_limits::MAX_OBJECT_BYTES;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -114,7 +115,7 @@ fn valid_name(name: &str) -> bool {
 
 fn credential_hash(headers: &HeaderMap) -> Result<String, Error> {
     let token = crate::backend::api::http::credentials::bearer(headers).ok_or_else(denied)?;
-    Ok(runtime::token_hash(token))
+    Ok(crate::backend::ci::runtime::token_hash(token))
 }
 
 async fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<RuntimeRun, Error> {
@@ -129,22 +130,22 @@ async fn signed_url(
     run: i64,
     write: bool,
 ) -> Result<String, Error> {
-    let token = runtime::secret();
+    let token = crate::backend::ci::runtime::secret();
     if !objects::grant_blob(
         &state.pool,
         object.id,
         run,
-        &runtime::token_hash(&token),
+        &crate::backend::ci::runtime::token_hash(&token),
         write,
     )
     .await?
     {
         return Err(denied());
     }
-    let site = db::actions::get_actions_settings(&state.pool).await?;
+    let site = crate::backend::db::actions::get_actions_settings(&state.pool).await?;
     Ok(format!(
         "{}/twirp/blobs/{}?sig={token}",
-        runtime::results_url(&site),
+        crate::backend::ci::runtime::results_url(&site),
         object.id
     ))
 }
@@ -170,8 +171,9 @@ async fn twirp(
     })?
     .map_err(|_| invalid())?;
     let request: Request = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-    let site = db::actions::get_actions_settings(&state.pool).await?;
-    let repo = db::actions::get_repo_actions_settings(&state.pool, run.repo_id).await?;
+    let site = crate::backend::db::actions::get_actions_settings(&state.pool).await?;
+    let repo =
+        crate::backend::db::actions::get_repo_actions_settings(&state.pool, run.repo_id).await?;
     let cache_limit = site.cache_size_bytes(&repo);
     let now = chrono::Utc::now().timestamp();
     let artifact = service == "github.actions.results.api.v1.ArtifactService";
@@ -205,12 +207,15 @@ async fn twirp(
             }
             let days = if artifact {
                 let (repo_policy, org_policy) =
-                    db::action_settings::effective(&state.pool, run.repo_id).await?;
-                let private =
-                    db::repositories::records::get_repository_by_id(&state.pool, run.repo_id)
-                        .await?
-                        .is_some_and(|repository| repository.is_private);
-                db::action_settings::retention(
+                    crate::backend::db::action_settings::effective(&state.pool, run.repo_id)
+                        .await?;
+                let private = crate::backend::db::repositories::records::get_repository_by_id(
+                    &state.pool,
+                    run.repo_id,
+                )
+                .await?
+                .is_some_and(|repository| repository.is_private);
+                crate::backend::db::action_settings::retention(
                     &repo_policy,
                     &org_policy,
                     site.artifact_retention_days,
@@ -343,9 +348,14 @@ async fn capability(
     write: bool,
 ) -> Result<ActionObject, Error> {
     let sig = query.get("sig").ok_or_else(denied)?;
-    objects::blob_grant(&state.pool, id, &runtime::token_hash(sig), write)
-        .await?
-        .ok_or_else(denied)
+    objects::blob_grant(
+        &state.pool,
+        id,
+        &crate::backend::ci::runtime::token_hash(sig),
+        write,
+    )
+    .await?
+    .ok_or_else(denied)
 }
 
 /// Azure emits only base64 block IDs, so no XML entities or arbitrary nested content is needed.
@@ -390,7 +400,7 @@ async fn put_blob(
     request: axum::extract::Request,
 ) -> Result<Response, Error> {
     let object = capability(&state, id, &query, true).await?;
-    let grant_hash = runtime::token_hash(query.get("sig").ok_or_else(denied)?);
+    let grant_hash = crate::backend::ci::runtime::token_hash(query.get("sig").ok_or_else(denied)?);
     let io = Arc::new(state.storage.try_acquire_io()?);
     let _memory = state
         .upload_reads
@@ -451,8 +461,10 @@ async fn put_blob(
         if bytes.is_empty() {
             return Err(invalid());
         }
-        let site = db::actions::get_actions_settings(&state.pool).await?;
-        let repo = db::actions::get_repo_actions_settings(&state.pool, object.repo_id).await?;
+        let site = crate::backend::db::actions::get_actions_settings(&state.pool).await?;
+        let repo =
+            crate::backend::db::actions::get_repo_actions_settings(&state.pool, object.repo_id)
+                .await?;
         let limit = if object.kind == "cache" {
             site.cache_size_bytes(&repo)
         } else {

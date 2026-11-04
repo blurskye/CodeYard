@@ -1,13 +1,17 @@
 //! Repository hooks share validation, encrypted secrets and delivery with the settings page.
-use super::{auth, pagination::Pagination, repo_url, repository, Error, Result};
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db;
+use codeyard_model::urls::repo_url;
+
 use crate::backend::db::webhooks::DeliveryOutcome;
 use crate::backend::db::webhooks::DeliveryWindow;
 use crate::backend::db::webhooks::HookOwner;
 use crate::backend::db::webhooks::HookSettings;
-use crate::backend::webhooks::payloads;
-use crate::backend::webhooks::settings;
+
 use crate::backend::webhooks::settings::HookError;
 use crate::backend::webhooks::settings::HookForm;
 use crate::backend::webhooks::settings::HookPatch;
@@ -44,12 +48,12 @@ async fn scope(
     headers: &HeaderMap,
     params: &Params,
     write: bool,
-) -> Result<(HookOwner, auth::Authentication)> {
+) -> Result<(HookOwner, crate::backend::api::github::auth::Authentication)> {
     let (repo, actor) =
         repository(state, headers, &params["owner"], &params["repo"], write).await?;
-    let actor = actor.ok_or_else(auth::required)?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     let owner = HookOwner::Repository(repo.id);
-    settings::authorize(&state.pool, &actor.user, owner)
+    crate::backend::webhooks::settings::authorize(&state.pool, &actor.user, owner)
         .await
         .map_err(hook_error)?;
     Ok((owner, actor))
@@ -66,12 +70,12 @@ fn id(params: &Params, key: &str) -> Result<i64> {
 async fn snapshot(
     state: &AppState,
     owner: HookOwner,
-    actor: &auth::Authentication,
+    actor: &crate::backend::api::github::auth::Authentication,
     hook: i64,
     delivery: Option<i64>,
     history: DeliveryWindow,
 ) -> Result<(Webhook, HookSettings)> {
-    let mut settings = db::webhooks::read_settings(
+    let mut settings = crate::backend::db::webhooks::read_settings(
         &state.pool,
         owner,
         actor.user.id,
@@ -92,7 +96,7 @@ async fn read_hook(
     state: &AppState,
     params: &Params,
     owner: HookOwner,
-    actor: &auth::Authentication,
+    actor: &crate::backend::api::github::auth::Authentication,
     hook: i64,
 ) -> Result<Value> {
     let (hook, settings) =
@@ -106,7 +110,7 @@ fn document(params: &Params, hook: &Webhook, last: Option<&WebhookDelivery>) -> 
         repo_url(&params["owner"], &params["repo"]),
         hook.id
     );
-    let mut value = payloads::webhook(hook, &url);
+    let mut value = crate::backend::webhooks::payloads::webhook(hook, &url);
     if hook.encrypted_secret.is_none() {
         value["config"]
             .as_object_mut()
@@ -129,7 +133,7 @@ async fn list(
 ) -> Result<Response> {
     let (owner, actor) = scope(&state, &headers, &params, false).await?;
     let (offset, limit) = page.window()?;
-    let hooks = db::webhooks::list_managed_webhooks(
+    let hooks = crate::backend::db::webhooks::list_managed_webhooks(
         &state.pool,
         owner,
         actor.user.id,
@@ -143,9 +147,10 @@ async fn list(
     let next = hooks.len() > limit;
     let mut values = Vec::new();
     for hook in hooks.iter().take(limit) {
-        let deliveries = db::webhooks::list_delivery_summaries(&state.pool, hook.id)
-            .await
-            .map_err(Error::unavailable)?;
+        let deliveries =
+            crate::backend::db::webhooks::list_delivery_summaries(&state.pool, hook.id)
+                .await
+                .map_err(Error::unavailable)?;
         values.push(document(&params, hook, deliveries.first()));
     }
     page.response(&uri, values, next)
@@ -212,15 +217,15 @@ async fn save(
     let replaces_config = !config_only && input.config.is_some();
     let config = input.config.unwrap_or_default();
     let content_type = match config.content_type.as_deref() {
-        Some("json") => Some(settings::JSON_CONTENT_TYPE.to_owned()),
-        Some("form") => Some(settings::FORM_CONTENT_TYPE.to_owned()),
+        Some("json") => Some(crate::backend::webhooks::settings::JSON_CONTENT_TYPE.to_owned()),
+        Some("form") => Some(crate::backend::webhooks::settings::FORM_CONTENT_TYPE.to_owned()),
         None => None,
         _ => return Err(Error::invalid("content_type must be json or form")),
     };
     let ssl_verify = config.insecure_ssl.map(ssl).transpose()?;
     let id = match hook_id {
         None => {
-            let events = db::webhooks::WebhookPatch {
+            let events = crate::backend::db::webhooks::WebhookPatch {
                 events: input.events.map(|events| events.join(",")),
                 add_events: input.add_events.unwrap_or_default(),
                 remove_events: input.remove_events.unwrap_or_default(),
@@ -240,14 +245,15 @@ async fn save(
                 payload_url: config
                     .url
                     .ok_or_else(|| Error::invalid("config.url is required"))?,
-                content_type: content_type
-                    .unwrap_or_else(|| settings::FORM_CONTENT_TYPE.to_owned()),
+                content_type: content_type.unwrap_or_else(|| {
+                    crate::backend::webhooks::settings::FORM_CONTENT_TYPE.to_owned()
+                }),
                 events,
                 active: input.active.unwrap_or(true),
                 ssl_verify: ssl_verify.unwrap_or(true),
                 secret: config.secret.unwrap_or_default(),
             };
-            settings::save(
+            crate::backend::webhooks::settings::save(
                 &state.pool,
                 state.secret_encryptor.as_deref(),
                 owner,
@@ -275,7 +281,7 @@ async fn save(
                 },
                 ..Default::default()
             };
-            settings::update(
+            crate::backend::webhooks::settings::update(
                 &state.pool,
                 state.secret_encryptor.as_deref(),
                 owner,
@@ -343,7 +349,7 @@ async fn remove(
     Path(params): Path<Params>,
 ) -> Result<StatusCode> {
     let (owner, actor) = scope(&state, &headers, &params, true).await?;
-    settings::delete(
+    crate::backend::webhooks::settings::delete(
         &state.pool,
         owner,
         &actor.user,
@@ -387,7 +393,7 @@ impl Deliveries {
             bodies,
             before,
             outcome,
-            limit: super::pagination::page_size(self.per_page) as i64 + 1,
+            limit: crate::backend::api::github::pagination::page_size(self.per_page) as i64 + 1,
         })
     }
 }
@@ -398,7 +404,7 @@ pub(super) fn delivery_page(
     query: Deliveries,
     uri: &Uri,
 ) -> Result<(HeaderMap, Vec<WebhookDelivery>)> {
-    let limit = super::pagination::page_size(query.per_page);
+    let limit = crate::backend::api::github::pagination::page_size(query.per_page);
     let next = rows.len() > limit;
     rows.truncate(limit);
     let mut headers = HeaderMap::new();
@@ -417,7 +423,7 @@ pub(super) fn delivery_page(
             header::LINK,
             format!(
                 "<{}{}?{query}>; rel=\"next\"",
-                crate::backend::api::http::config::link_origin(),
+                codeyard_model::http_config::link_origin(),
                 uri.path()
             )
             .parse()
@@ -428,7 +434,7 @@ pub(super) fn delivery_page(
 }
 
 fn delivery_document(hook: &Webhook, row: &WebhookDelivery, detail: bool) -> Value {
-    let mut value = payloads::webhook_delivery(row, detail);
+    let mut value = crate::backend::webhooks::payloads::webhook_delivery(row, detail);
     value["repository_id"] = json!(hook.repo_id);
     value
 }
@@ -480,7 +486,7 @@ async fn trigger(
     let (owner, actor) = scope(&state, &headers, &params, true).await?;
     let hook = id(&params, "hook_id")?;
     if params.contains_key("delivery_id") {
-        settings::redeliver(
+        crate::backend::webhooks::settings::redeliver(
             &state.pool,
             owner,
             &actor.user,
@@ -493,13 +499,25 @@ async fn trigger(
         return Ok((StatusCode::ACCEPTED, Json(json!({}))).into_response());
     }
     if uri.path().ends_with("/tests") {
-        settings::test_push(&state.pool, owner, &actor.user, &actor.credential(), hook)
-            .await
-            .map_err(hook_error)?;
+        crate::backend::webhooks::settings::test_push(
+            &state.pool,
+            owner,
+            &actor.user,
+            &actor.credential(),
+            hook,
+        )
+        .await
+        .map_err(hook_error)?;
     } else {
-        settings::ping(&state.pool, owner, &actor.user, &actor.credential(), hook)
-            .await
-            .map_err(hook_error)?;
+        crate::backend::webhooks::settings::ping(
+            &state.pool,
+            owner,
+            &actor.user,
+            &actor.credential(),
+            hook,
+        )
+        .await
+        .map_err(hook_error)?;
     }
     Ok(StatusCode::NO_CONTENT.into_response())
 }

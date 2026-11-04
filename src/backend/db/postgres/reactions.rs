@@ -1,4 +1,8 @@
-use crate::backend::db::reactions::{Reaction, ReactionCount, ReactionRefusal, Subject, Target};
+use crate::backend::db::reactions::Reaction;
+use crate::backend::db::reactions::ReactionCount;
+use crate::backend::db::reactions::ReactionRefusal;
+use crate::backend::db::reactions::Subject;
+use crate::backend::db::reactions::Target;
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -69,7 +73,12 @@ async fn begin_write<'a>(
     target: Target,
 ) -> Result<Transaction<'a, Postgres>> {
     let mut tx = pool.begin().await?;
-    super::discussions::require_contribution_authority(&mut tx, actor_id, target.repo_id).await?;
+    crate::backend::db::postgres::discussions::require_contribution_authority(
+        &mut tx,
+        actor_id,
+        target.repo_id,
+    )
+    .await?;
     let table = match target.subject {
         Subject::Issue | Subject::IssueComment => "issues",
         Subject::Release => "releases",
@@ -95,14 +104,21 @@ async fn begin_write<'a>(
             .await?;
         anyhow::ensure!(
             !draft
-                || super::discussions::lock_write_authority(&mut tx, actor_id, target.repo_id)
-                    .await?,
+                || crate::backend::db::postgres::discussions::lock_write_authority(
+                    &mut tx,
+                    actor_id,
+                    target.repo_id
+                )
+                .await?,
             ReactionRefusal::NotFound
         );
     }
     anyhow::ensure!(
-        super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await?,
-        super::discussions::AUTHORITY_DENIED
+        crate::backend::db::postgres::users::transitions::credential_live(
+            &mut tx, actor_id, credential, true
+        )
+        .await?,
+        crate::backend::db::postgres::discussions::AUTHORITY_DENIED
     );
     Ok(tx)
 }

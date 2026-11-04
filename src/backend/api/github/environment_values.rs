@@ -1,11 +1,13 @@
-use super::{auth, pagination::Pagination, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        environment_values::{self as values, EnvironmentValue, Kind, Save, ValueError},
-    },
-};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::environment_values as values;
+use crate::backend::db::environment_values::EnvironmentValue;
+use crate::backend::db::environment_values::Kind;
+use crate::backend::db::environment_values::Save;
+use crate::backend::db::environment_values::ValueError;
 use axum::{
     extract::{rejection::JsonRejection, MatchedPath, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -83,29 +85,34 @@ async fn target(
     headers: &HeaderMap,
     params: &HashMap<String, String>,
     write: bool,
-) -> Result<(codeyard_db_core::models::Repository, auth::Authentication)> {
+) -> Result<(
+    codeyard_db_core::models::Repository,
+    crate::backend::api::github::auth::Authentication,
+)> {
     let (owner, name) = if let Some(id) = params.get("repository_id") {
         let id = id.parse::<i64>().map_err(|_| Error::missing())?;
-        let repo = db::repositories::records::get_repository_by_id(&state.pool, id)
+        let repo = crate::backend::db::repositories::records::get_repository_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        let owner = db::repositories::records::repository_owner_name(&state.pool, id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let owner =
+            crate::backend::db::repositories::records::repository_owner_name(&state.pool, id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
         (owner, repo.name)
     } else {
         (params["owner"].clone(), params["repo"].clone())
     };
-    let (repo, auth) = super::repository(state, headers, &owner, &name, false).await?;
+    let (repo, auth) =
+        crate::backend::api::github::repository(state, headers, &owner, &name, false).await?;
     if params
         .get("repository_id")
         .is_some_and(|id| id.parse::<i64>().ok() != Some(repo.id))
     {
         return Err(Error::missing());
     }
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     if write {
         auth.require_write()?;
         values::list(
@@ -223,19 +230,19 @@ async fn public_key(
         .secret_encryptor
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
-    let (key_id, key) = db::secrets::repository_secret_key_for(
+    let (key_id, key) = crate::backend::db::secrets::repository_secret_key_for(
         &state.pool,
-        db::secrets::SecretKind::Actions,
+        crate::backend::db::secrets::SecretKind::Actions,
         encryptor,
         auth.user.id,
         repo.id,
         &auth.credential(),
     )
     .await
-    .map_err(super::action_secrets::error)?;
-    Ok(Json(super::action_secrets::public_key_document(
-        &key_id, &key,
-    )))
+    .map_err(crate::backend::api::github::action_secrets::error)?;
+    Ok(Json(
+        crate::backend::api::github::action_secrets::public_key_document(&key_id, &key),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -255,17 +262,22 @@ async fn save_secret(
         .secret_encryptor
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
-    let (id, key) = db::secrets::repository_secret_key_for(
+    let (id, key) = crate::backend::db::secrets::repository_secret_key_for(
         &state.pool,
-        db::secrets::SecretKind::Actions,
+        crate::backend::db::secrets::SecretKind::Actions,
         encryptor,
         auth.user.id,
         repo.id,
         &auth.credential(),
     )
     .await
-    .map_err(super::action_secrets::error)?;
-    let value = super::action_secrets::open_value(&key, &id, &body.key_id, &body.encrypted_value)?;
+    .map_err(crate::backend::api::github::action_secrets::error)?;
+    let value = crate::backend::api::github::action_secrets::open_value(
+        &key,
+        &id,
+        &body.key_id,
+        &body.encrypted_value,
+    )?;
     let created = values::save(
         &state.pool,
         Some(encryptor),

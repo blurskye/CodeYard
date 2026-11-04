@@ -1,15 +1,16 @@
-use super::super::{auth, pagination::Pagination, repository, Error, Result};
-use super::{association, target};
-use crate::backend::{
-    app::AppState,
-    db,
-    issues::comments::CommentTarget,
-    repositories::{
-        pull_requests::{self, comments as domain},
-        store::{repo_store, DiffFileInfo},
-    },
-    webhooks::payloads,
-};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::pulls::association;
+use crate::backend::api::github::pulls::target;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::issues::comments::CommentTarget;
+
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::DiffFileInfo;
+
 use axum::{
     body::Bytes,
     extract::{OriginalUri, Path, Query, State},
@@ -23,8 +24,8 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-fn operation_error(error: pull_requests::OperationError) -> Error {
-    super::mutations::operation_error(error)
+fn operation_error(error: crate::backend::repositories::pull_requests::OperationError) -> Error {
+    crate::backend::api::github::pulls::mutations::operation_error(error)
 }
 
 pub(super) async fn visible(
@@ -36,24 +37,30 @@ pub(super) async fn visible(
     codeyard_db_core::models::PullRequest,
     codeyard_db_core::models::PullRequestComment,
 )> {
-    let comment = db::pull_requests::reviews::get_pull_request_comment_by_id(&state.pool, id)
+    let comment =
+        crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(&state.pool, id)
+            .await
+            .map_err(Error::unavailable)?
+            .filter(|c| c.path.is_some())
+            .ok_or_else(Error::missing)?;
+    let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+        &state.pool,
+        comment.pull_request_id,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .filter(|p| p.repo_id == repo.id)
+    .ok_or_else(Error::missing)?;
+    if let Some(review) = comment.review_id {
+        let review = crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(
+            &state.pool,
+            review,
+        )
         .await
         .map_err(Error::unavailable)?
-        .filter(|c| c.path.is_some())
         .ok_or_else(Error::missing)?;
-    let pull =
-        db::pull_requests::records::get_pull_request_by_id(&state.pool, comment.pull_request_id)
-            .await
-            .map_err(Error::unavailable)?
-            .filter(|p| p.repo_id == repo.id)
-            .ok_or_else(Error::missing)?;
-    if let Some(review) = comment.review_id {
-        let review = db::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, review)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
         if review.state == "pending"
-            && !auth::authenticate(state, headers, false)
+            && !crate::backend::api::github::auth::authenticate(state, headers, false)
                 .await?
                 .is_some_and(|a| a.user.id == review.author_id)
         {
@@ -85,25 +92,25 @@ async fn document_cached(
     comment: &codeyard_db_core::models::PullRequestComment,
     diffs: &mut HashMap<(String, String, String), Vec<DiffFileInfo>>,
 ) -> Result<Value> {
-    let user = db::users::accounts::get_user_by_id(&state.pool, comment.author_id)
+    let user = crate::backend::db::users::accounts::get_user_by_id(&state.pool, comment.author_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let mut value = payloads::pull_request_review_comment_json(
+    let mut value = crate::backend::webhooks::payloads::pull_request_review_comment_json(
         comment,
         pull,
-        &payloads::Person::of(&user),
+        &crate::backend::webhooks::payloads::Person::of(&user),
         repo,
         owner,
     );
-    value["user"] = payloads::user(&user);
+    value["user"] = crate::backend::webhooks::payloads::user(&user);
     value["author_association"] = json!(association(&state.pool, repo, user.id).await?);
     let reactions =
         crate::backend::webhooks::documents::review_comment_reactions(&state.pool, &value)
             .await
             .map_err(Error::unavailable)?;
     value["reactions"] = reactions;
-    let (base, head) = payloads::review_comment_revisions(comment, pull);
+    let (base, head) = crate::backend::webhooks::payloads::review_comment_revisions(comment, pull);
     let key = (
         base.to_owned(),
         head.to_owned(),
@@ -116,10 +123,15 @@ async fn document_cached(
         let diff = repo_store(repo, state.cluster.as_ref())
             .diff_file(&key.0, &key.1, &key.2)
             .await
-            .map_err(super::store_error)?;
+            .map_err(crate::backend::api::github::pulls::store_error)?;
         diffs.insert(key.clone(), diff.files);
     }
-    payloads::review_comment_diff(&mut value, comment, pull, &diffs[&key]);
+    crate::backend::webhooks::payloads::review_comment_diff(
+        &mut value,
+        comment,
+        pull,
+        &diffs[&key],
+    );
     Ok(value)
 }
 
@@ -144,7 +156,8 @@ pub(super) async fn prepare(
     pull: &codeyard_db_core::models::PullRequest,
     input: Create,
     pending: bool,
-) -> Result<domain::CreatePullRequestCommentRequest> {
+) -> Result<crate::backend::repositories::pull_requests::comments::CreatePullRequestCommentRequest>
+{
     prepare_with_diff(state, headers, repo, pull, input, pending, None).await
 }
 
@@ -156,7 +169,8 @@ pub(super) async fn prepare_with_diff(
     input: Create,
     pending: bool,
     cached: Option<&codeyard_git::DiffInfo>,
-) -> Result<domain::CreatePullRequestCommentRequest> {
+) -> Result<crate::backend::repositories::pull_requests::comments::CreatePullRequestCommentRequest>
+{
     let mut line = input.line;
     let mut side = input.side;
     if let Some(parent) = input.in_reply_to {
@@ -166,7 +180,7 @@ pub(super) async fn prepare_with_diff(
                 "Reply must name a top-level comment on this pull request",
             ));
         }
-        return Ok(domain::CreatePullRequestCommentRequest {
+        return Ok(crate::backend::repositories::pull_requests::comments::CreatePullRequestCommentRequest {
             body: input.body,
             repository_id: Some(repo.id),
             path: None,
@@ -207,7 +221,7 @@ pub(super) async fn prepare_with_diff(
                         path,
                     )
                     .await
-                    .map_err(super::store_error)?;
+                    .map_err(crate::backend::api::github::pulls::store_error)?;
                 &loaded
             };
             let row = diff
@@ -215,7 +229,7 @@ pub(super) async fn prepare_with_diff(
                 .iter()
                 .find(|f| f.filename == path)
                 .and_then(|f| {
-                    payloads::diff_positions(&f.patch)
+                    crate::backend::webhooks::payloads::diff_positions(&f.patch)
                         .into_iter()
                         .find(|r| r.0 == position)
                 })
@@ -238,20 +252,22 @@ pub(super) async fn prepare_with_diff(
             side = Some("RIGHT".into());
         }
     }
-    Ok(domain::CreatePullRequestCommentRequest {
-        body: input.body,
-        repository_id: Some(repo.id),
-        path: input.path,
-        line,
-        side,
-        start_line: input.start_line,
-        start_side: input.start_side,
-        commit_sha: input.commit_id,
-        base_sha: Some(pull.base_sha.clone()),
-        in_reply_to_comment_id: input.in_reply_to,
-        pending,
-        review_id: None,
-    })
+    Ok(
+        crate::backend::repositories::pull_requests::comments::CreatePullRequestCommentRequest {
+            body: input.body,
+            repository_id: Some(repo.id),
+            path: input.path,
+            line,
+            side,
+            start_line: input.start_line,
+            start_side: input.start_side,
+            commit_sha: input.commit_id,
+            base_sha: Some(pull.base_sha.clone()),
+            in_reply_to_comment_id: input.in_reply_to,
+            pending,
+            review_id: None,
+        },
+    )
 }
 
 async fn create(
@@ -261,22 +277,26 @@ async fn create(
     body: Bytes,
 ) -> Result<Response> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(auth::required)?.user;
+    let actor = viewer
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
-    let input = serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
+    let input =
+        serde_json::from_slice(&body).map_err(crate::backend::api::github::json_parse_error)?;
     let request = prepare(&state, &headers, &repo, &pull, input, false).await?;
-    let comment = domain::create_pull_request_comment(
-        &state.pool,
-        state.cluster.as_ref(),
-        &state.notification_broadcaster,
-        actor.id,
-        owner.clone(),
-        name,
-        number,
-        request,
-    )
-    .await
-    .map_err(operation_error)?;
+    let comment =
+        crate::backend::repositories::pull_requests::comments::create_pull_request_comment(
+            &state.pool,
+            state.cluster.as_ref(),
+            &state.notification_broadcaster,
+            actor.id,
+            owner.clone(),
+            name,
+            number,
+            request,
+        )
+        .await
+        .map_err(operation_error)?;
     Ok((
         StatusCode::CREATED,
         Json(document(&state, &owner, &repo, &pull, &comment).await?),
@@ -294,7 +314,8 @@ async fn reply(
     Path((owner, name, number, id)): Path<(String, String, i32, i64)>,
     body: Bytes,
 ) -> Result<Response> {
-    let input: Body = serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
+    let input: Body =
+        serde_json::from_slice(&body).map_err(crate::backend::api::github::json_parse_error)?;
     create(
         State(state),
         headers,
@@ -322,10 +343,13 @@ async fn update(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(auth::required)?.user;
+    let actor = viewer
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
     let (pull, _) = visible(&state, &headers, &repo, id).await?;
-    let input: Body = serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
-    let comment = domain::edit_pull_request_comment(
+    let input: Body =
+        serde_json::from_slice(&body).map_err(crate::backend::api::github::json_parse_error)?;
+    let comment = crate::backend::repositories::pull_requests::comments::edit_pull_request_comment(
         &state.pool,
         &state.notification_broadcaster,
         actor.id,
@@ -350,9 +374,11 @@ async fn remove(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(auth::required)?.user;
+    let actor = viewer
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
     let (pull, _) = visible(&state, &headers, &repo, id).await?;
-    domain::delete_pull_request_comment(
+    crate::backend::repositories::pull_requests::comments::delete_pull_request_comment(
         &state.pool,
         actor.id,
         CommentTarget {
@@ -401,9 +427,9 @@ async fn collection(
         "desc" => false,
         _ => return Err(Error::invalid("Invalid direction")),
     };
-    let rows = db::pull_requests::reviews::list_visible_review_comments(
+    let rows = crate::backend::db::pull_requests::reviews::list_visible_review_comments(
         &state.pool,
-        &db::pull_requests::reviews::ReviewCommentFilter {
+        &crate::backend::db::pull_requests::reviews::ReviewCommentFilter {
             repo_id: repo.id,
             pull_id,
             review_id,
@@ -421,7 +447,7 @@ async fn collection(
     let mut items = Vec::new();
     let mut diffs = HashMap::new();
     for comment in rows.iter().take(limit) {
-        let pull = db::pull_requests::records::get_pull_request_by_id(
+        let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
             &state.pool,
             comment.pull_request_id,
         )
@@ -468,13 +494,14 @@ async fn list_review(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
-    let review = db::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
-        .await
-        .map_err(Error::unavailable)?
-        .filter(|r| r.pull_request_id == pull.id)
-        .ok_or_else(Error::missing)?;
+    let review =
+        crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
+            .await
+            .map_err(Error::unavailable)?
+            .filter(|r| r.pull_request_id == pull.id)
+            .ok_or_else(Error::missing)?;
     if review.state == "pending"
-        && !auth::authenticate(&state, &headers, false)
+        && !crate::backend::api::github::auth::authenticate(&state, &headers, false)
             .await?
             .is_some_and(|a| a.user.id == review.author_id)
     {

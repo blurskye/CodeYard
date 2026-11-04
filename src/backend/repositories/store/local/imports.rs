@@ -1,8 +1,8 @@
 use super::*;
-use crate::backend::repositories::{
-    git_sessions::validation::ZERO_SHA,
-    imports::{GitImport, ImportCredential, MAX_IMPORT_PACK_BYTES},
-};
+use crate::backend::repositories::git_sessions::validation::ZERO_SHA;
+use crate::backend::repositories::imports::GitImport;
+use crate::backend::repositories::imports::ImportCredential;
+use crate::backend::repositories::imports::MAX_IMPORT_PACK_BYTES;
 
 impl LocalStore {
     pub(in crate::backend::repositories::store) async fn import_git(

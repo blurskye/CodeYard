@@ -28,5 +28,3 @@ pub use stats::*;
 
 pub mod error;
 pub mod gist_types;
-
-pub mod secret_detection;

@@ -1,7 +1,7 @@
 use super::{
     assert_github_schema, db, request, tokens, Client, Database, StatusCode, TokenInput, Value,
 };
-use codeyard::backend::db::dependabot_alerts as store;
+
 use codeyard_db_core::DbPool;
 use serde_json::json;
 
@@ -12,7 +12,7 @@ fn snapshot(
     version: &str,
     branch: &str,
     scanned: &str,
-) -> codeyard::backend::dependency_graph::Snapshot {
+) -> codeyard_model::dependency_graph::Snapshot {
     serde_json::from_value(json!({"version":0,"sha":"a".repeat(40),"ref":branch,"scanned":scanned,"job":{"id":"1","correlator":"test"},"detector":{"name":"fixture","version":"1","url":"https://example.test"},"manifests":{"package-lock.json":{"name":"package-lock.json","resolved":{"example":{"package_url":format!("pkg:npm/example@{version}"),"scope":"runtime","relationship":"direct"}}}}})).unwrap()
 }
 async fn token(f: &Database, client: &Client, actor: i64, scope: &str) -> String {
@@ -256,7 +256,10 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     assert_eq!(
-        store::alerts(f.pool(), owner, repo).await.unwrap()[0].state,
+        codeyard::backend::db::dependabot_alerts::alerts(f.pool(), owner, repo)
+            .await
+            .unwrap()[0]
+            .state,
         "fixed"
     );
     db::dependency_graph::submit(
@@ -267,7 +270,9 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let rows = store::alerts(f.pool(), owner, repo).await.unwrap();
+    let rows = codeyard::backend::db::dependabot_alerts::alerts(f.pool(), owner, repo)
+        .await
+        .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].number, number);
     assert_eq!(rows[0].state, "open");
@@ -276,7 +281,7 @@ async fn contract(pg: bool) {
     let a = db::advisories::create(f.pool(), owner, repo, &repo_advisory, false)
         .await
         .unwrap();
-    assert!(!store::global(f.pool())
+    assert!(!codeyard::backend::db::dependabot_alerts::global(f.pool())
         .await
         .unwrap()
         .iter()
@@ -290,12 +295,18 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(store::global(f.pool())
+    assert!(codeyard::backend::db::dependabot_alerts::global(f.pool())
         .await
         .unwrap()
         .iter()
         .any(|v| v["ghsa_id"] == a.ghsa_id));
-    assert_eq!(store::alerts(f.pool(), owner, repo).await.unwrap().len(), 2);
+    assert_eq!(
+        codeyard::backend::db::dependabot_alerts::alerts(f.pool(), owner, repo)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
     let (status, headers, page) = request(
         &router,
         "GET",
@@ -386,7 +397,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(!store::global(f.pool())
+    assert!(!codeyard::backend::db::dependabot_alerts::global(f.pool())
         .await
         .unwrap()
         .iter()
@@ -400,8 +411,12 @@ async fn contract(pg: bool) {
     }
     let mut withdrawn = advisory();
     withdrawn["withdrawn_at"] = json!("2026-02-01T00:00:00Z");
-    store::import(f.pool(), owner, &withdrawn).await.unwrap();
-    let rows = store::alerts(f.pool(), owner, repo).await.unwrap();
+    codeyard::backend::db::dependabot_alerts::import(f.pool(), owner, &withdrawn)
+        .await
+        .unwrap();
+    let rows = codeyard::backend::db::dependabot_alerts::alerts(f.pool(), owner, repo)
+        .await
+        .unwrap();
     assert_eq!(
         rows.iter().find(|r| r.ghsa_id == id).unwrap().state,
         "fixed"

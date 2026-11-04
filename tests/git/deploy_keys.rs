@@ -6,7 +6,7 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::git_remote::{api, git, success, tool, Server};
 use crate::support::native_database as native;
 use chrono::{Duration as ChronoDuration, Utc};
-use codeyard::backend::db;
+
 use reqwest::{Client, StatusCode};
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -153,15 +153,16 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     codeyard::backend::db::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard::backend::db::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
-    let owner = db::users::accounts::create_user(&database.pool, "deploy_owner", None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard::backend::db::users::accounts::create_user(&database.pool, "deploy_owner", None)
+            .await
+            .unwrap();
     let root = tempfile::tempdir().unwrap();
     let session = native::token();
-    db::users::sessions::create_session(
+    codeyard::backend::db::users::sessions::create_session(
         &database.pool,
         &session,
         owner.id,
@@ -173,7 +174,7 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     .unwrap();
     let csrf = native::token();
     assert_eq!(
-        db::users::sessions::get_or_create_csrf_token(
+        codeyard::backend::db::users::sessions::get_or_create_csrf_token(
             &database.pool,
             &session,
             Some(owner.id),
@@ -334,7 +335,7 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
         .await,
     );
     let reader = work.join("reader");
-    let used = db::deploy_keys::get_deploy_key(&database.pool, reader_id)
+    let used = codeyard::backend::db::deploy_keys::get_deploy_key(&database.pool, reader_id)
         .await
         .unwrap()
         .unwrap();
@@ -374,11 +375,14 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
 
     // A rule that exempts administrators still applies to a deploy key, even though the key
     // acts for the administrator who added it.
-    let project =
-        db::repositories::records::get_repository(&database.pool, "deploy_owner", "project")
-            .await
-            .unwrap()
-            .unwrap();
+    let project = codeyard::backend::db::repositories::records::get_repository(
+        &database.pool,
+        "deploy_owner",
+        "project",
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let physical = root.path().join("storage/repos").join(format!(
         "{}.git",
         codeyard::backend::cluster::rpc::repository_uuid(&project.disk_path).unwrap()
@@ -395,9 +399,9 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
         codeyard_git::PublicationActor::DeployKey(writer_id)
     );
     assert_eq!(provenance.publication.actor.user_id(), None);
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard::backend::db::repositories::protection::upsert_branch_protection_rule(
         &database.pool,
-        db::repositories::BranchProtectionRuleUpsert {
+        codeyard::backend::db::repositories::BranchProtectionRuleUpsert {
             actor_id: owner.id,
             repo_id: project.id,
             pattern: "guarded",
@@ -464,7 +468,7 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
         "the Git write itself was accepted"
     );
     assert!(
-        db::ci::list_ci_runs_for_repo(&database.pool, project.id, 100)
+        codeyard::backend::db::ci::list_ci_runs_for_repo(&database.pool, project.id, 100)
             .await
             .unwrap()
             .iter()
@@ -491,13 +495,17 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
         .await,
     );
     assert!(listed.starts_with(&deployment_sha));
-    let pull = db::pull_requests::records::get_pull_request(&database.pool, project.id, 1)
-        .await
-        .unwrap()
-        .unwrap();
+    let pull = codeyard::backend::db::pull_requests::records::get_pull_request(
+        &database.pool,
+        project.id,
+        1,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(pull.head_sha, deployment_sha);
     assert!(
-        db::ci::list_ci_runs_for_repo(&database.pool, project.id, 100)
+        codeyard::backend::db::ci::list_ci_runs_for_repo(&database.pool, project.id, 100)
             .await
             .unwrap()
             .iter()
@@ -526,12 +534,12 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     assert!(!revoked.status.success());
     let still_reads = git(&reader, &["fetch", "-q", "origin"], None, &read_key).await;
     assert!(still_reads.status.success());
-    use codeyard::backend::repositories::traffic;
-    let observed = traffic::summary(
+
+    let observed = codeyard::backend::repositories::traffic::summary(
         &database.pool,
         Some(&owner),
         &project,
-        traffic::Kind::Clones,
+        codeyard::backend::repositories::traffic::Kind::Clones,
         false,
     )
     .await
@@ -550,11 +558,11 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
         )
         .await,
     );
-    let observed = traffic::summary(
+    let observed = codeyard::backend::repositories::traffic::summary(
         &database.pool,
         Some(&owner),
         &project,
-        traffic::Kind::Clones,
+        codeyard::backend::repositories::traffic::Kind::Clones,
         false,
     )
     .await

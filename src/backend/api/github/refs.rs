@@ -1,8 +1,12 @@
-use super::{contents::store_error, pagination::Pagination, repo_url, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    repositories::{refs, store::repo_store},
-};
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use codeyard_model::urls::repo_url;
+
+use crate::backend::repositories::store::repo_store;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -24,8 +28,8 @@ fn reference(
 ) -> Value {
     json!({
         "ref": reference,
-        "node_id": super::node_id::reference(repo_id, reference),
-        "url": format!("{}/git/refs/{}", repo_url(owner, name), super::contents::path_url(reference.strip_prefix("refs/").unwrap_or(reference))),
+        "node_id": crate::backend::api::github::node_id::reference(repo_id, reference),
+        "url": format!("{}/git/refs/{}", repo_url(owner, name), crate::backend::api::github::contents::path_url(reference.strip_prefix("refs/").unwrap_or(reference))),
         "object": {"type": kind, "sha": sha, "url": format!("{}/git/{}s/{sha}", repo_url(owner, name), kind)},
     })
 }
@@ -95,8 +99,8 @@ struct Create {
     sha: String,
 }
 
-pub(super) fn ref_error(error: refs::RefError) -> Error {
-    use refs::RefError;
+pub(super) fn ref_error(error: crate::backend::repositories::refs::RefError) -> Error {
+    use crate::backend::repositories::refs::RefError;
     match error {
         RefError::Git(error)
             if matches!(
@@ -124,13 +128,13 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = auth.database_actor();
     if !codeyard_git::is_full_commit_id(&input.sha) {
         return Err(Error::invalid("sha must be a full object ID"));
     }
     let sha = if let Some(branch) = input.reference.strip_prefix("refs/heads/") {
-        refs::create_branch(
+        crate::backend::repositories::refs::create_branch(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
@@ -143,7 +147,7 @@ async fn create(
         .await
         .map_err(ref_error)?
     } else if let Some(tag) = input.reference.strip_prefix("refs/tags/") {
-        refs::create_tag(
+        crate::backend::repositories::refs::create_tag(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
@@ -186,7 +190,7 @@ async fn remove(
     Path((owner, name, reference)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = auth.database_actor();
     let store = repo_store(&repo, state.cluster.as_ref());
     if !store
@@ -198,7 +202,7 @@ async fn remove(
         return Err(Error::invalid("Reference does not exist"));
     }
     if let Some(branch) = reference.strip_prefix("heads/") {
-        refs::delete_branch(
+        crate::backend::repositories::refs::delete_branch(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
@@ -209,9 +213,15 @@ async fn remove(
         .await
         .map_err(ref_error)?;
     } else if let Some(tag) = reference.strip_prefix("tags/") {
-        refs::delete_tag(&state.pool, state.cluster.as_ref(), actor, repo.id, tag)
-            .await
-            .map_err(ref_error)?;
+        crate::backend::repositories::refs::delete_tag(
+            &state.pool,
+            state.cluster.as_ref(),
+            actor,
+            repo.id,
+            tag,
+        )
+        .await
+        .map_err(ref_error)?;
     } else {
         return Err(Error::invalid("Only heads and tags may be deleted"));
     }
@@ -232,10 +242,10 @@ async fn update(
     Json(input): Json<Update>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = auth.database_actor();
     let full = format!("refs/{reference}");
-    let sha = refs::update_reference(
+    let sha = crate::backend::repositories::refs::update_reference(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -249,7 +259,7 @@ async fn update(
     .await
     .map_err(ref_error)?;
     let kind = object_kind(&repo_store(&repo, state.cluster.as_ref()), &full, &sha).await?;
-    Ok(Json(self::reference(
+    Ok(Json(crate::backend::api::github::refs::reference(
         repo.id, &owner, &name, &full, &sha, &kind,
     )))
 }

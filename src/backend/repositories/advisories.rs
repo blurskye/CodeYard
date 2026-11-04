@@ -1,15 +1,14 @@
 //! Temporary remediation forks reuse repository storage placement and checked fork initialization.
-use super::{access, lifecycle};
+
 use crate::backend::app::AppState;
 use crate::backend::cluster::NodeContext;
-use crate::backend::db;
-use crate::backend::db::advisories;
-use crate::backend::db::advisories::Refusal;
+
 use crate::backend::db::credentials::Actor;
 use crate::backend::db::repositories::creation::CreationAdmission;
 use crate::backend::db::repositories::creation::RepositoryCreationOwner;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
+use codeyard_model::advisories::Refusal;
 use std::path::Path;
 
 pub async fn private_fork(
@@ -47,12 +46,12 @@ async fn private_fork_owned(
     ghsa: &str,
 ) -> Result<Repository> {
     let actor = authority.user_id;
-    access::credential_user(pool, &authority, true).await?;
+    crate::backend::repositories::access::credential_user(pool, &authority, true).await?;
     anyhow::ensure!(
-        advisories::can_administer(pool, actor, repo.id).await?,
+        crate::backend::db::advisories::can_administer(pool, actor, repo.id).await?,
         Refusal::Denied
     );
-    let advisory = advisories::get(pool, Some(actor), repo.id, ghsa)
+    let advisory = crate::backend::db::advisories::get(pool, Some(actor), repo.id, ghsa)
         .await?
         .ok_or(Refusal::Missing)?;
     anyhow::ensure!(
@@ -60,26 +59,25 @@ async fn private_fork_owned(
         Refusal::Conflict
     );
     if let Some(id) = advisory.private_fork_id {
-        let fork =
-            access::check_read(pool, id, Some(actor))
-                .await
-                .map_err(|error| match error {
-                    access::AccessError::Unavailable => {
-                        anyhow::anyhow!("Repository authority is unavailable")
-                    }
-                    _ => Refusal::Missing.into(),
-                })?;
-        access::credential_user(pool, &authority, true).await?;
+        let fork = crate::backend::repositories::access::check_read(pool, id, Some(actor))
+            .await
+            .map_err(|error| match error {
+                crate::backend::repositories::access::AccessError::Unavailable => {
+                    anyhow::anyhow!("Repository authority is unavailable")
+                }
+                _ => Refusal::Missing.into(),
+            })?;
+        crate::backend::repositories::access::credential_user(pool, &authority, true).await?;
         anyhow::ensure!(
-            advisories::can_administer(pool, actor, repo.id).await?,
+            crate::backend::db::advisories::can_administer(pool, actor, repo.id).await?,
             Refusal::Denied
         );
         return Ok(fork);
     }
-    let fork = lifecycle::provision_with_properties(
+    let fork = crate::backend::repositories::lifecycle::provision_with_properties(
         (pool, context),
         path,
-        lifecycle::CreationInput {
+        crate::backend::repositories::lifecycle::CreationInput {
             owner: RepositoryCreationOwner::personal(actor),
             properties: &[],
             admission: CreationAdmission {
@@ -93,10 +91,20 @@ async fn private_fork_owned(
         Some(repo),
     )
     .await?;
-    if let Err(error) = advisories::attach_fork(pool, authority, repo.id, ghsa, fork.id).await {
-        match db::repositories::records::delete_unattached_advisory_fork(pool, fork.id).await {
+    if let Err(error) =
+        crate::backend::db::advisories::attach_fork(pool, authority, repo.id, ghsa, fork.id).await
+    {
+        match crate::backend::db::repositories::records::delete_unattached_advisory_fork(
+            pool, fork.id,
+        )
+        .await
+        {
             Ok(Some(deleted)) => {
-                if let Err(cleanup) = lifecycle::remove_deleted_repository(context, &deleted).await
+                if let Err(cleanup) =
+                    crate::backend::repositories::lifecycle::remove_deleted_repository(
+                        context, &deleted,
+                    )
+                    .await
                 {
                     tracing::warn!(repo_id=fork.id,%cleanup,"Unattached private advisory fork requires cleanup");
                 }
@@ -111,15 +119,17 @@ async fn private_fork_owned(
         }
         return Err(error);
     }
-    access::check_read(pool, fork.id, Some(actor))
+    crate::backend::repositories::access::check_read(pool, fork.id, Some(actor))
         .await
         .map_err(authority_error)
 }
 
-fn authority_error(error: access::AccessError) -> anyhow::Error {
+fn authority_error(error: crate::backend::repositories::access::AccessError) -> anyhow::Error {
     match error {
-        access::AccessError::Unavailable => anyhow::anyhow!("Repository authority is unavailable"),
-        access::AccessError::NotFound => Refusal::Missing.into(),
+        crate::backend::repositories::access::AccessError::Unavailable => {
+            anyhow::anyhow!("Repository authority is unavailable")
+        }
+        crate::backend::repositories::access::AccessError::NotFound => Refusal::Missing.into(),
         _ => Refusal::Denied.into(),
     }
 }

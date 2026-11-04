@@ -1,12 +1,13 @@
-use super::{time, user};
-use crate::backend::api::github::api_url;
-use crate::backend::api::github::node_id;
-use crate::backend::api::http::config::http_clone_base;
-use crate::backend::api::http::config::link_origin;
+use crate::backend::webhooks::payloads::time;
+use crate::backend::webhooks::payloads::user;
+use codeyard_model::urls::api_url;
+
 use crate::backend::db::gists::Comment;
 use crate::backend::db::gists::Gist;
 use codeyard_git::error::RepoError;
 use codeyard_git::gist_types::GistRevision;
+use codeyard_model::http_config::http_clone_base;
+use codeyard_model::http_config::link_origin;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use codeyard_db_core::models::User;

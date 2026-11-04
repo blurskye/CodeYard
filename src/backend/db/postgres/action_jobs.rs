@@ -1,10 +1,10 @@
-use crate::backend::db::action_concurrency::Configuration;
 use crate::backend::db::action_jobs::Job;
 use crate::backend::db::action_jobs::Page;
 use crate::backend::db::action_jobs::Step;
 use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
 use codeyard_actions::progress::{Annotation, Event, State, Update};
+use codeyard_db_core::ci_concurrency::Configuration;
 use codeyard_db_core::models::CiRun;
 use sqlx::{types::Json, PgConnection, PgPool};
 
@@ -99,7 +99,7 @@ pub async fn apply(
         );
         let existing: Option<i64> = sqlx::query_scalar("SELECT check_run_id FROM actions_jobs WHERE run_id=$1 AND generation=$2 AND workflow_path=$3 AND logical_job=$4 AND variant=$5").bind(run).bind(generation).bind(workflow).bind(&event.job).bind(event.variant as i32).fetch_optional(&mut *tx).await?;
         if existing.is_none() {
-            let check = super::checks::allocate_run_id(&mut tx).await?;
+            let check = crate::backend::db::postgres::checks::allocate_run_id(&mut tx).await?;
             sqlx::query("INSERT INTO actions_jobs(run_id,generation,workflow_path,logical_job,variant,name,labels,workflow_name,status,created_at,matrix,check_run_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'queued',$9,$10,$11)").bind(run).bind(generation).bind(workflow).bind(&event.job).bind(event.variant as i32).bind(display).bind(Json(labels)).bind(workflow_name).bind(at).bind(matrix.as_ref().map(|matrix|Json(&matrix.values))).bind(check).execute(&mut *tx).await?;
             transitioned = true;
         }
@@ -160,7 +160,10 @@ pub async fn apply(
                 group: group.clone(),
                 cancel_in_progress: *cancel_in_progress,
             };
-            super::action_concurrency::request_job(&mut tx, &leased, id, &config).await?;
+            crate::backend::db::postgres::action_concurrency::request_job(
+                &mut tx, &leased, id, &config,
+            )
+            .await?;
         }
         Update::Summary { number, markdown } => {
             ensure!(
@@ -195,7 +198,8 @@ pub async fn admit(
     let leased = lease(&mut tx, worker, run, generation, workflow).await?;
     let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM actions_jobs WHERE id=$1 AND run_id=$2 AND generation=$3 AND workflow_path=$4)").bind(job).bind(run).bind(generation).bind(workflow).fetch_one(&mut *tx).await?;
     ensure!(owned, "job is outside the claim");
-    let answer = super::action_concurrency::admit_job(&mut tx, &leased, job).await?;
+    let answer =
+        crate::backend::db::postgres::action_concurrency::admit_job(&mut tx, &leased, job).await?;
     tx.commit().await?;
     Ok(answer)
 }

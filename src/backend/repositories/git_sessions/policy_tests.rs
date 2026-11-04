@@ -5,7 +5,7 @@ pub(in crate::backend::repositories::git_sessions) use fixture::{
 
 #[cfg(test)]
 mod fixture {
-    use super::super::*;
+    use crate::backend::repositories::git_sessions::policy_tests::super::*;
     use crate::backend::repositories::git_sessions::validation::ZERO_SHA;
     use base64::Engine;
 
@@ -360,7 +360,7 @@ mod fixture {
                 let status = receive_session(
                     pool,
                     ci,
-                    super::super::super::ReceiveSession {
+                    crate::backend::repositories::ReceiveSession {
                         repo_id,
                         path: &path,
                         // Unit tests are not the application, so CI names the built binary.
@@ -1518,7 +1518,7 @@ mod fixture {
 
         // Only a repository that a storage node holds has replicas to tell, and a node
         // keeps its repositories at `<uuid>.git`.
-        let key = crate::backend::cluster::NodeKey::generate();
+        let key = codeyard_support::node_identity::NodeKey::generate();
         let node = db::cluster::register_own_node(
             &fixture.pool,
             &key.public_hex(),
@@ -2054,7 +2054,7 @@ mod fixture {
             .unwrap()
             .unwrap()
             .unwrap_err();
-        assert!(error.is::<super::super::super::PostReceiveFailed>());
+        assert!(error.is::<crate::backend::repositories::PostReceiveFailed>());
         assert!(git2::Repository::open_bare(&fixture.path)
             .unwrap()
             .find_reference("refs/heads/spare")

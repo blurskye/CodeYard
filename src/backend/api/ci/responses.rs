@@ -40,7 +40,7 @@ pub fn map_job_info(run: codeyard_db_core::models::CiRun) -> JobInfo {
         branch: if matches!(run.event.as_str(), "pull_request" | "pull_request_target") {
             run.branch
         } else {
-            crate::backend::ci::branch_name(&run.branch).to_owned()
+            codeyard_db_core::ci_messages::branch_name(&run.branch).to_owned()
         },
         event: run.event,
         head_sha: run.head_sha,
@@ -49,7 +49,9 @@ pub fn map_job_info(run: codeyard_db_core::models::CiRun) -> JobInfo {
         started_at: run.started_at.map(|v| v.timestamp()),
         completed_at: run.completed_at.map(|v| v.timestamp()),
         created_at: run.created_at.timestamp(),
-        error_message: crate::backend::ci::visible_run_error(run.error_message.as_deref()),
+        error_message: codeyard_db_core::ci_messages::visible_run_error(
+            run.error_message.as_deref(),
+        ),
     }
 }
 pub fn map_workflow_info(workflow: crate::backend::ci::WorkflowDefinition) -> WorkflowInfo {
@@ -79,7 +81,7 @@ pub(crate) fn map_run(
             if matches!(run.event.as_str(), "pull_request" | "pull_request_target") {
                 &run.branch
             } else {
-                crate::backend::ci::branch_name(&run.branch)
+                codeyard_db_core::ci_messages::branch_name(&run.branch)
             }
         })
         .to_owned();
@@ -105,7 +107,9 @@ pub(crate) fn map_run(
         created_at: run.created_at.timestamp(),
         started_at: run.started_at.map(|value| value.timestamp()),
         completed_at: run.completed_at.map(|value| value.timestamp()),
-        error_message: crate::backend::ci::visible_run_error(run.error_message.as_deref()),
+        error_message: codeyard_db_core::ci_messages::visible_run_error(
+            run.error_message.as_deref(),
+        ),
         // Admission stores these as an object of strings; the page shows none if it cannot read them.
         inputs: run
             .workflow_inputs
@@ -232,10 +236,10 @@ mod tests {
 
     #[test]
     fn workflow_metadata_fits_the_model_budget_without_a_selected_run() {
-        use crate::backend::ci::{
-            dispatch_inputs::{DispatchInput, InputKind},
-            workflows::{WorkflowDefinition, WorkflowTriggers},
-        };
+        use crate::backend::ci::dispatch_inputs::DispatchInput;
+        use crate::backend::ci::dispatch_inputs::InputKind;
+        use crate::backend::ci::workflows::WorkflowDefinition;
+        use crate::backend::ci::workflows::WorkflowTriggers;
         let workflow = workflow_view(WorkflowDefinition {
             path: ".github/workflows/ci.yml".into(),
             name: "quote".repeat(100_000),

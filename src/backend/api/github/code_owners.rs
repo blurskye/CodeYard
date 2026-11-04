@@ -1,5 +1,9 @@
-use super::{contents::store_error, repository, Error, Result};
-use crate::backend::{app::AppState, repositories::code_owners};
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{Path, Query, State},
     http::HeaderMap,
@@ -23,11 +27,15 @@ async fn errors(
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let reference = query.reference.as_deref().unwrap_or(&repo.default_branch);
-    let errors =
-        code_owners::load_diagnostics(&state.pool, &repo, state.cluster.as_ref(), reference)
-            .await
-            .map_err(store_error)?
-            .ok_or_else(Error::missing)?;
+    let errors = crate::backend::repositories::code_owners::load_diagnostics(
+        &state.pool,
+        &repo,
+        state.cluster.as_ref(),
+        reference,
+    )
+    .await
+    .map_err(store_error)?
+    .ok_or_else(Error::missing)?;
     Ok(Json(json!({"errors":errors})))
 }
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

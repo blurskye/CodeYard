@@ -7,13 +7,16 @@ pub(super) use mutations::operation_error;
 mod reviews;
 mod stacks;
 mod team_reviewers;
-use super::{contents::store_error, pagination::Pagination, repo_url, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db,
-    repositories::{access, store::repo_store},
-    webhooks::payloads,
-};
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use codeyard_model::urls::repo_url;
+
+use crate::backend::repositories::store::repo_store;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -36,18 +39,21 @@ async fn target(
     codeyard_db_core::models::PullRequest,
 )> {
     let (repo, _) = repository(state, headers, owner, name, false).await?;
-    let pull = db::pull_requests::records::get_pull_request(&state.pool, repo.id, number)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let pull =
+        crate::backend::db::pull_requests::records::get_pull_request(&state.pool, repo.id, number)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     Ok((repo, pull))
 }
 
 async fn person(state: &AppState, id: i64) -> Result<Value> {
-    let user = db::users::accounts::get_user_by_id(&state.pool, id)
+    let user = crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
         .await
         .map_err(Error::unavailable)?;
-    Ok(user.as_ref().map_or(Value::Null, payloads::user))
+    Ok(user
+        .as_ref()
+        .map_or(Value::Null, crate::backend::webhooks::payloads::user))
 }
 
 pub(super) async fn association(
@@ -55,18 +61,18 @@ pub(super) async fn association(
     repo: &codeyard_db_core::models::Repository,
     user_id: i64,
 ) -> Result<&'static str> {
-    access::author_association(pool, repo, user_id)
+    crate::backend::repositories::access::author_association(pool, repo, user_id)
         .await
         .map_err(Error::unavailable)
 }
 
 pub(super) async fn readable_head(
     state: &AppState,
-    auth: Option<&super::auth::Authentication>,
+    auth: Option<&crate::backend::api::github::auth::Authentication>,
     pull: &codeyard_db_core::models::PullRequest,
 ) -> Result<Option<codeyard_db_core::models::Repository>> {
     match pull.head_repo_id {
-        Some(id) => super::auth::referenced_repository(state, auth, id).await,
+        Some(id) => crate::backend::api::github::auth::referenced_repository(state, auth, id).await,
         None => Ok(None),
     }
 }
@@ -78,21 +84,25 @@ pub(super) async fn hidden_head(
     pull: &codeyard_db_core::models::PullRequest,
 ) -> Result<Value> {
     let head = match pull.head_repo_id {
-        Some(id) => db::repositories::records::get_repository_by_id(&state.pool, id)
-            .await
-            .map_err(Error::unavailable)?,
+        Some(id) => {
+            crate::backend::db::repositories::records::get_repository_by_id(&state.pool, id)
+                .await
+                .map_err(Error::unavailable)?
+        }
         None => None,
     };
     let owner = match &head {
-        Some(head) => db::repositories::records::repository_owner_name(&state.pool, head.id)
-            .await
-            .map_err(Error::unavailable)?
-            .map(|name| {
-                (
-                    payloads::repository_owner(head, &name),
-                    format!("{name}:{}", pull.head_branch),
-                )
-            }),
+        Some(head) => {
+            crate::backend::db::repositories::records::repository_owner_name(&state.pool, head.id)
+                .await
+                .map_err(Error::unavailable)?
+                .map(|name| {
+                    (
+                        crate::backend::webhooks::payloads::repository_owner(head, &name),
+                        format!("{name}:{}", pull.head_branch),
+                    )
+                })
+        }
         None => None,
     };
     let (user, label) = owner.unwrap_or((Value::Null, pull.head_branch.clone()));
@@ -109,18 +119,23 @@ pub(super) async fn document(
     pull: &codeyard_db_core::models::PullRequest,
     detail: bool,
 ) -> Result<Value> {
-    let viewer = super::auth::authenticate(state, headers, false).await?;
-    let author = db::users::accounts::get_user_by_id(&state.pool, pull.author_id)
+    let viewer = crate::backend::api::github::auth::authenticate(state, headers, false).await?;
+    let author = crate::backend::db::users::accounts::get_user_by_id(&state.pool, pull.author_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let mut value = payloads::pull_request_json(pull, &payloads::Person::of(&author), repo, owner);
-    value["user"] = payloads::user(&author);
+    let mut value = crate::backend::webhooks::payloads::pull_request_json(
+        pull,
+        &crate::backend::webhooks::payloads::Person::of(&author),
+        repo,
+        owner,
+    );
+    value["user"] = crate::backend::webhooks::payloads::user(&author);
     value["author_association"] = json!(association(&state.pool, repo, author.id).await?);
-    let mut base_repo = payloads::repository(repo, owner);
-    payloads::set_fork_counts(
+    let mut base_repo = crate::backend::webhooks::payloads::repository(repo, owner);
+    crate::backend::webhooks::payloads::set_fork_counts(
         &mut base_repo,
-        super::repos::public_fork_count(state, repo.id).await?,
+        crate::backend::api::github::repos::public_fork_count(state, repo.id).await?,
     );
     value["base"] = json!({"label": format!("{owner}:{}", pull.base_branch), "ref": pull.base_branch, "sha": pull.base_sha, "repo": base_repo, "user": person(state, repo.owner_id()).await?});
     if repo.owner_kind == "org" {
@@ -128,57 +143,69 @@ pub(super) async fn document(
     }
     // The base shares the retained revision, not authority over the source repository.
     value["head"] = if let Some(head) = readable_head(state, viewer.as_ref(), pull).await? {
-        let head_owner = db::repositories::records::repository_owner_name(&state.pool, head.id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        let mut head_value = payloads::repository(&head, &head_owner);
-        payloads::set_fork_counts(
+        let head_owner =
+            crate::backend::db::repositories::records::repository_owner_name(&state.pool, head.id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
+        let mut head_value = crate::backend::webhooks::payloads::repository(&head, &head_owner);
+        crate::backend::webhooks::payloads::set_fork_counts(
             &mut head_value,
-            super::repos::public_fork_count(state, head.id).await?,
+            crate::backend::api::github::repos::public_fork_count(state, head.id).await?,
         );
         json!({"label": format!("{head_owner}:{}", pull.head_branch), "ref": pull.head_branch, "sha": pull.head_sha, "user": head_value["owner"], "repo": head_value})
     } else {
         hidden_head(state, pull).await?
     };
-    let labels = db::labels::get_pull_request_labels(&state.pool, pull.repo_id, pull.id)
-        .await
-        .map_err(Error::unavailable)?;
+    let labels =
+        crate::backend::db::labels::get_pull_request_labels(&state.pool, pull.repo_id, pull.id)
+            .await
+            .map_err(Error::unavailable)?;
     value["labels"] = json!(labels
         .iter()
-        .map(|label| payloads::label(label, owner, &repo.name))
+        .map(|label| crate::backend::webhooks::payloads::label(label, owner, &repo.name))
         .collect::<Vec<_>>());
     if let Some(id) = pull.milestone_id {
-        let summary = db::milestones::get_milestone_by_id(&state.pool, repo.id, id)
+        let summary = crate::backend::db::milestones::get_milestone_by_id(&state.pool, repo.id, id)
             .await
             .map_err(Error::unavailable)?;
         value["milestone"] = match summary {
             Some(summary) => {
-                super::milestones::document(&state.pool, &summary, owner, &repo.name).await?
+                crate::backend::api::github::milestones::document(
+                    &state.pool,
+                    &summary,
+                    owner,
+                    &repo.name,
+                )
+                .await?
             }
             None => Value::Null,
         };
     }
-    let names = db::assignees::list_assignees(
+    let names = crate::backend::db::assignees::list_assignees(
         &state.pool,
-        db::assignees::AssignedItem::PullRequest(pull.id),
+        crate::backend::db::assignees::AssignedItem::PullRequest(pull.id),
     )
     .await
     .map_err(Error::unavailable)?;
     let mut assignees = Vec::new();
     for name in names {
-        if let Some(user) = db::users::accounts::get_user_by_username(&state.pool, &name)
-            .await
-            .map_err(Error::unavailable)?
+        if let Some(user) =
+            crate::backend::db::users::accounts::get_user_by_username(&state.pool, &name)
+                .await
+                .map_err(Error::unavailable)?
         {
             assignees.push(person(state, user.id).await?);
         }
     }
     value["assignee"] = assignees.first().cloned().unwrap_or(Value::Null);
     value["assignees"] = json!(assignees);
-    let reviewers = db::pull_requests::reviews::list_pull_request_reviewers(&state.pool, pull.id)
-        .await
-        .map_err(Error::unavailable)?;
+    let reviewers = crate::backend::db::pull_requests::reviews::list_pull_request_reviewers(
+        &state.pool,
+        pull.id,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     let mut requested = Vec::new();
     for user in reviewers {
         requested.push(person(state, user.id).await?);
@@ -207,9 +234,12 @@ pub(super) async fn document(
             .await
             .map_err(store_error)?;
         let (comments, review_comments) =
-            db::pull_requests::reviews::pull_request_comment_counts(&state.pool, pull.id)
-                .await
-                .map_err(Error::unavailable)?;
+            crate::backend::db::pull_requests::reviews::pull_request_comment_counts(
+                &state.pool,
+                pull.id,
+            )
+            .await
+            .map_err(Error::unavailable)?;
         value["comments"] = json!(comments);
         value["review_comments"] = json!(review_comments);
         value["commits"] = json!(commits);
@@ -275,7 +305,7 @@ async fn list(
         }
         None => (None, None),
     };
-    let filter = db::pull_requests::records::PullRequestFilter {
+    let filter = crate::backend::db::pull_requests::records::PullRequestFilter {
         viewer_id: viewer.as_ref().map(|actor| actor.user.id),
         state: state_filter,
         base: query.base.as_deref(),
@@ -285,7 +315,7 @@ async fn list(
         ascending,
         month_ago: chrono::Utc::now() - chrono::Duration::days(30),
     };
-    let rows = db::pull_requests::records::list_filtered_pull_requests(
+    let rows = crate::backend::db::pull_requests::records::list_filtered_pull_requests(
         &state.pool,
         repo.id,
         &filter,
@@ -309,7 +339,7 @@ async fn get_pull(
 ) -> Result<Response> {
     // A head repository the viewer cannot read is left out of the document; its owner is not.
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
-    if let Some(media) = super::diff_media::requested(&headers) {
+    if let Some(media) = crate::backend::api::github::diff_media::requested(&headers) {
         return diff_response(&state, &repo, &pull, media).await;
     }
     Ok(Json(document(&state, &headers, &repo, &owner, &pull, true).await?).into_response())
@@ -320,16 +350,16 @@ pub(super) async fn diff_response(
     state: &AppState,
     repo: &codeyard_db_core::models::Repository,
     pull: &codeyard_db_core::models::PullRequest,
-    media: super::diff_media::Media,
+    media: crate::backend::api::github::diff_media::Media,
 ) -> Result<Response> {
     let store = repo_store(repo, state.cluster.as_ref());
-    if media == super::diff_media::Media::Patch {
+    if media == crate::backend::api::github::diff_media::Media::Patch {
         let (total, commits) = store
             .pull_request_commits(pull.diff_base(), &pull.head_sha, 0, 250)
             .await
             .map_err(store_error)?;
         let total = usize::try_from(total).unwrap_or(usize::MAX);
-        return super::diff_media::series(&store, &commits, total)
+        return crate::backend::api::github::diff_media::series(&store, &commits, total)
             .await
             .map_err(store_error);
     }
@@ -338,7 +368,11 @@ pub(super) async fn diff_response(
         .await
         .map_err(store_error)?;
     let head = store.commit(&pull.head_sha).await.map_err(store_error)?;
-    Ok(super::diff_media::response(media, &head, &diff.files))
+    Ok(crate::backend::api::github::diff_media::response(
+        media,
+        &head,
+        &diff.files,
+    ))
 }
 
 async fn merged(
@@ -356,7 +390,7 @@ async fn merged(
     } else {
         StatusCode::NOT_FOUND
     };
-    Ok(super::empty(status))
+    Ok(crate::backend::api::github::empty(status))
 }
 
 async fn commits(
@@ -373,7 +407,9 @@ async fn commits(
         .await
         .map_err(store_error)?;
     let has_next = (offset as u64).saturating_add(limit as u64) < total.min(250);
-    let items = super::commits::documents(&state, repo.id, &rows, &owner, &name).await?;
+    let items =
+        crate::backend::api::github::commits::documents(&state, repo.id, &rows, &owner, &name)
+            .await?;
     page.response(&uri, items, has_next)
 }
 
@@ -387,8 +423,14 @@ async fn files(
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
     let (offset, limit) = page.window()?;
     let store = repo_store(&repo, state.cluster.as_ref());
-    let page_files =
-        super::commits::file_page(&store, pull.diff_base(), &pull.head_sha, offset, limit).await?;
+    let page_files = crate::backend::api::github::commits::file_page(
+        &store,
+        pull.diff_base(),
+        &pull.head_sha,
+        offset,
+        limit,
+    )
+    .await?;
     let has_next = page_files.has_next;
     let files = page_files.files;
     let base = if files.iter().any(|file| file.status == "removed") {
@@ -401,7 +443,7 @@ async fn files(
     } else {
         pull.diff_base().to_owned()
     };
-    let items = super::commits::diff_files(
+    let items = crate::backend::api::github::commits::diff_files(
         files,
         &owner,
         &name,

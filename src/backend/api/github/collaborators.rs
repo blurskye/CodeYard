@@ -1,11 +1,14 @@
 //! Invitations and effective collaborator permissions, including organization and team grants.
-use super::{auth, optional_json::OptionalJson, pagination::Pagination, repository, Error, Result};
+
+use crate::backend::api::github::optional_json::OptionalJson;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::repositories::access;
-use crate::backend::repositories::collaborators as members;
+
 use crate::backend::repositories::collaborators::Error as MemberError;
-use crate::backend::webhooks::payloads;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, Method, StatusCode},
@@ -29,28 +32,37 @@ fn member_error(error: MemberError) -> Error {
     }
 }
 
-async fn invitation_document(state: &AppState, invitation: &members::Invitation) -> Result<Value> {
-    let repo = db::repositories::records::get_repository_by_id(&state.pool, invitation.repo_id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    let owner = db::repositories::records::repository_owner_name(&state.pool, repo.id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    let inviter = db::users::accounts::get_user_by_id(&state.pool, invitation.inviter_id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    let invitee = db::users::accounts::get_user_by_id(&state.pool, invitation.invitee_id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    Ok(payloads::repository_invitation(
+async fn invitation_document(
+    state: &AppState,
+    invitation: &crate::backend::repositories::collaborators::Invitation,
+) -> Result<Value> {
+    let repo = crate::backend::db::repositories::records::get_repository_by_id(
+        &state.pool,
+        invitation.repo_id,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .ok_or_else(Error::missing)?;
+    let owner =
+        crate::backend::db::repositories::records::repository_owner_name(&state.pool, repo.id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+    let inviter =
+        crate::backend::db::users::accounts::get_user_by_id(&state.pool, invitation.inviter_id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+    let invitee =
+        crate::backend::db::users::accounts::get_user_by_id(&state.pool, invitation.invitee_id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+    Ok(crate::backend::webhooks::payloads::repository_invitation(
         invitation,
-        payloads::repository(&repo, &owner),
-        &payloads::Person::of(&inviter),
-        &payloads::Person::of(&invitee),
+        crate::backend::webhooks::payloads::repository(&repo, &owner),
+        &crate::backend::webhooks::payloads::Person::of(&inviter),
+        &crate::backend::webhooks::payloads::Person::of(&invitee),
     ))
 }
 
@@ -68,7 +80,9 @@ async fn list(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
     let affiliation = query.affiliation.as_deref().unwrap_or("all");
     if !matches!(affiliation, "all" | "direct" | "outside") {
         return Err(Error::invalid("Invalid affiliation"));
@@ -76,14 +90,17 @@ async fn list(
     let permission = query
         .permission
         .as_deref()
-        .map(|name| members::permission(name).ok_or_else(|| Error::invalid("Invalid permission")))
+        .map(|name| {
+            crate::backend::repositories::collaborators::permission(name)
+                .ok_or_else(|| Error::invalid("Invalid permission"))
+        })
         .transpose()?;
     let (offset, limit) = page.window()?;
-    let rows = members::list(
+    let rows = crate::backend::repositories::collaborators::list(
         &state.pool,
         actor.id,
         repo.id,
-        &members::CollaboratorQuery {
+        &crate::backend::repositories::collaborators::CollaboratorQuery {
             username: None,
             affiliation,
             permission: permission.map(|value| value as i16),
@@ -98,7 +115,12 @@ async fn list(
         &uri,
         rows.into_iter()
             .take(limit)
-            .map(|row| payloads::collaborator(&row.user, AccessLevel::from(row.permission)))
+            .map(|row| {
+                crate::backend::webhooks::payloads::collaborator(
+                    &row.user,
+                    AccessLevel::from(row.permission),
+                )
+            })
             .collect(),
         next,
     )
@@ -110,12 +132,14 @@ async fn check(
     Path((owner, name, username)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
-    let rows = members::list(
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
+    let rows = crate::backend::repositories::collaborators::list(
         &state.pool,
         actor.id,
         repo.id,
-        &members::CollaboratorQuery {
+        &crate::backend::repositories::collaborators::CollaboratorQuery {
             username: Some(&username),
             affiliation: "all",
             permission: None,
@@ -137,12 +161,12 @@ async fn permission(
     Path((owner, name, username)): Path<(String, String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    auth.ok_or_else(auth::required)?;
-    let user = db::users::accounts::get_user_by_username(&state.pool, &username)
+    auth.ok_or_else(crate::backend::api::github::auth::required)?;
+    let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, &username)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let level = access::user_access(&state.pool, &user, &repo)
+    let level = crate::backend::repositories::access::user_access(&state.pool, &user, &repo)
         .await
         .map_err(Error::unavailable)?;
     let permission = if level.can_admin() {
@@ -170,16 +194,28 @@ async fn add(
     OptionalJson(input): OptionalJson<Add>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
     let input = input.unwrap_or_default();
-    let level = members::permission(input.permission.as_deref().unwrap_or("push"))
-        .ok_or_else(|| Error::invalid("Invalid permission"))?;
-    match members::add(&state.pool, actor.id, repo.id, &username, level)
-        .await
-        .map_err(member_error)?
+    let level = crate::backend::repositories::collaborators::permission(
+        input.permission.as_deref().unwrap_or("push"),
+    )
+    .ok_or_else(|| Error::invalid("Invalid permission"))?;
+    match crate::backend::repositories::collaborators::add(
+        &state.pool,
+        actor.id,
+        repo.id,
+        &username,
+        level,
+    )
+    .await
+    .map_err(member_error)?
     {
-        members::Added::Updated => Ok(StatusCode::NO_CONTENT.into_response()),
-        members::Added::Invited(invitation) => Ok((
+        crate::backend::repositories::collaborators::Added::Updated => {
+            Ok(StatusCode::NO_CONTENT.into_response())
+        }
+        crate::backend::repositories::collaborators::Added::Invited(invitation) => Ok((
             StatusCode::CREATED,
             Json(invitation_document(&state, &invitation).await?),
         )
@@ -192,8 +228,10 @@ async fn remove(
     Path((owner, name, username)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
-    members::remove(&state.pool, actor.id, repo.id, &username)
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
+    crate::backend::repositories::collaborators::remove(&state.pool, actor.id, repo.id, &username)
         .await
         .map_err(member_error)?;
     Ok(StatusCode::NO_CONTENT)
@@ -210,20 +248,30 @@ async fn invitations(
         if let Some(Path(params)) = params.filter(|Path(params)| params.contains_key("owner")) {
             let (repo, auth) =
                 repository(&state, &headers, &params["owner"], &params["repo"], false).await?;
-            (Some(repo.id), auth.ok_or_else(auth::required)?.user)
+            (
+                Some(repo.id),
+                auth.ok_or_else(crate::backend::api::github::auth::required)?
+                    .user,
+            )
         } else {
             (
                 None,
-                auth::authenticate(&state, &headers, true)
+                crate::backend::api::github::auth::authenticate(&state, &headers, true)
                     .await?
-                    .ok_or_else(auth::required)?
+                    .ok_or_else(crate::backend::api::github::auth::required)?
                     .user,
             )
         };
     let (offset, limit) = page.window()?;
-    let rows = members::invitations(&state.pool, actor.id, repo, offset as i64, limit as i64 + 1)
-        .await
-        .map_err(member_error)?;
+    let rows = crate::backend::repositories::collaborators::invitations(
+        &state.pool,
+        actor.id,
+        repo,
+        offset as i64,
+        limit as i64 + 1,
+    )
+    .await
+    .map_err(member_error)?;
     let next = rows.len() > limit;
     let mut values = Vec::new();
     for invitation in rows.into_iter().take(limit) {
@@ -238,11 +286,11 @@ async fn respond(
     Path(id): Path<i64>,
     method: Method,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
-    members::respond(
+    crate::backend::repositories::collaborators::respond(
         &state.pool,
         actor.database_actor(),
         id,
@@ -264,12 +312,20 @@ async fn update_invitation(
     Json(input): Json<InvitationUpdate>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
-    let level = members::permission(&input.permissions)
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
+    let level = crate::backend::repositories::collaborators::permission(&input.permissions)
         .ok_or_else(|| Error::invalid("Invalid permission"))?;
-    let invitation = members::update_invitation(&state.pool, actor.id, repo.id, id, Some(level))
-        .await
-        .map_err(member_error)?;
+    let invitation = crate::backend::repositories::collaborators::update_invitation(
+        &state.pool,
+        actor.id,
+        repo.id,
+        id,
+        Some(level),
+    )
+    .await
+    .map_err(member_error)?;
     Ok(Json(invitation_document(&state, &invitation).await?))
 }
 async fn delete_invitation(
@@ -278,10 +334,18 @@ async fn delete_invitation(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
-    members::update_invitation(&state.pool, actor.id, repo.id, id, None)
-        .await
-        .map_err(member_error)?;
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
+    crate::backend::repositories::collaborators::update_invitation(
+        &state.pool,
+        actor.id,
+        repo.id,
+        id,
+        None,
+    )
+    .await
+    .map_err(member_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

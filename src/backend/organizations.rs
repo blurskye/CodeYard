@@ -1,9 +1,8 @@
 //! Shared organization lifecycle effects for native settings and REST.
 use crate::backend::app::AppState;
-use crate::backend::db::organizations;
-use crate::backend::repositories::lifecycle;
+
+use crate::backend::db::organizations::OrganizationOutcome::{self, Applied};
 use codeyard_db_core::DbPool;
-use organizations::OrganizationOutcome::{self, Applied};
 use tokio::sync::Semaphore;
 
 static CONVERSION_SLOTS: Semaphore = Semaphore::const_new(16);
@@ -18,7 +17,8 @@ pub async fn convert_to_outside(
     let _permit = CONVERSION_SLOTS
         .try_acquire()
         .map_err(|_| anyhow::anyhow!("Organization conversion admission is full"))?;
-    organizations::convert_to_outside_collaborator(pool, actor, org, target).await
+    crate::backend::db::organizations::convert_to_outside_collaborator(pool, actor, org, target)
+        .await
 }
 
 /// Deletes repositories first, then the organization. A partial failure leaves the remaining
@@ -29,18 +29,19 @@ pub async fn delete(
     org: i64,
 ) -> anyhow::Result<OrganizationOutcome<()>> {
     let actor = actor.into();
-    let repositories = match organizations::list_organization_deletion_repositories(
-        &state.pool,
-        actor.clone(),
-        org,
-    )
-    .await?
-    {
-        Applied(repositories) => repositories,
-        other => return Ok(other.map(|_| ())),
-    };
+    let repositories =
+        match crate::backend::db::organizations::list_organization_deletion_repositories(
+            &state.pool,
+            actor.clone(),
+            org,
+        )
+        .await?
+        {
+            Applied(repositories) => repositories,
+            other => return Ok(other.map(|_| ())),
+        };
     for repository in repositories {
-        let deleted = match organizations::delete_organization_repository(
+        let deleted = match crate::backend::db::organizations::delete_organization_repository(
             &state.pool,
             actor.clone(),
             org,
@@ -51,7 +52,11 @@ pub async fn delete(
             Applied(deleted) => deleted,
             other => return Ok(other.map(|_| ())),
         };
-        lifecycle::remove_deleted_repository(state.cluster.as_ref(), &deleted).await?;
+        crate::backend::repositories::lifecycle::remove_deleted_repository(
+            state.cluster.as_ref(),
+            &deleted,
+        )
+        .await?;
     }
-    organizations::delete_organization(&state.pool, actor, org).await
+    crate::backend::db::organizations::delete_organization(&state.pool, actor, org).await
 }

@@ -1,10 +1,10 @@
-use super::{authenticate, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{self, packages::Publish},
-    packages,
-    storage::MAX_OBJECT_BYTES,
-};
+use crate::backend::api::packages::authenticate;
+use crate::backend::api::packages::Error;
+use crate::backend::api::packages::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::packages::Publish;
+
 use axum::{
     body::to_bytes,
     extract::{Path, Request, State},
@@ -14,6 +14,7 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+use codeyard_support::object_limits::MAX_OBJECT_BYTES;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha512};
 use std::{sync::Arc, time::Duration};
@@ -34,14 +35,14 @@ async fn handle(
     request: Request,
 ) -> Response {
     let anonymous = !request.headers().contains_key(header::AUTHORIZATION);
-    super::finish(
+    crate::backend::api::packages::finish(
         tokio::time::timeout(
             Duration::from_secs(120),
             dispatch(&state, &owner, &path, request),
         )
         .await,
         anonymous,
-        super::RegistryFormat::Npm,
+        crate::backend::api::packages::RegistryFormat::Npm,
     )
 }
 
@@ -106,15 +107,19 @@ fn valid_tag(tag: &str) -> bool {
         && semver::VersionReq::parse(tag.trim_start_matches('v')).is_err()
 }
 
-fn version_metadata(namespace: &str, slug: &str, version: &db::packages::Version) -> Result<Value> {
-    if version.manifest.len() > db::packages::MAX_LISTED_METADATA_BYTES {
+fn version_metadata(
+    namespace: &str,
+    slug: &str,
+    version: &crate::backend::db::packages::Version,
+) -> Result<Value> {
+    if version.manifest.len() > crate::backend::db::packages::MAX_LISTED_METADATA_BYTES {
         return Err(Error::unavailable());
     }
     let mut metadata: Value =
         serde_json::from_str(&version.manifest).map_err(|_| Error::unavailable())?;
     metadata["dist"]["tarball"] = json!(format!(
         "{}/api/packages/{}/npm/@{}/{}/-/{}-{}.tgz",
-        crate::backend::api::http::config::link_origin(),
+        codeyard_model::http_config::link_origin(),
         codeyard_webui::encode_component(namespace),
         codeyard_webui::encode_component(namespace),
         codeyard_webui::encode_component(slug),
@@ -147,8 +152,8 @@ async fn dispatch(
     }
     let (slug, rest) = package_name(namespace, path)?;
     let name = format!("@{namespace}/{slug}");
-    let owner = super::owner(state, namespace).await?;
-    let package = super::package(
+    let owner = crate::backend::api::packages::owner(state, namespace).await?;
+    let package = crate::backend::api::packages::package(
         state,
         &owner,
         "npm",
@@ -172,28 +177,38 @@ async fn dispatch(
                 let mut before = i64::MAX;
                 let mut bytes = 0usize;
                 loop {
-                    let rows =
-                        db::packages::version_page(&state.pool, package.id, token, before, false)
-                            .await
-                            .map_err(Error::db)?;
+                    let rows = crate::backend::db::packages::version_page(
+                        &state.pool,
+                        package.id,
+                        token,
+                        before,
+                        false,
+                    )
+                    .await
+                    .map_err(Error::db)?;
                     let count = rows.len();
                     for version in rows {
                         before = version.id;
                         bytes = bytes
                             .saturating_add(version.manifest.len() + version.name.len() + 1024);
-                        if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES {
+                        if bytes > crate::backend::db::packages::MAX_METADATA_RESPONSE_BYTES {
                             return Err(Error::unavailable());
                         }
                         let metadata = version_metadata(namespace, slug, &version)?;
                         if metadata["name"] != name {
                             continue;
                         }
-                        for tag in db::packages::tags(&state.pool, package.id, token, version.id)
-                            .await
-                            .map_err(Error::db)?
+                        for tag in crate::backend::db::packages::tags(
+                            &state.pool,
+                            package.id,
+                            token,
+                            version.id,
+                        )
+                        .await
+                        .map_err(Error::db)?
                         {
                             bytes = bytes.saturating_add(tag.len() + version.name.len() + 16);
-                            if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES {
+                            if bytes > crate::backend::db::packages::MAX_METADATA_RESPONSE_BYTES {
                                 return Err(Error::unavailable());
                             }
                             tags.insert(tag, json!(version.name));
@@ -220,18 +235,26 @@ async fn dispatch(
                 .filter(|value| valid_version(value))
                 .ok_or_else(Error::missing)?;
             let reference = version;
-            let version = db::packages::version(&state.pool, package.id, token, reference)
-                .await
-                .map_err(Error::db)?;
+            let version =
+                crate::backend::db::packages::version(&state.pool, package.id, token, reference)
+                    .await
+                    .map_err(Error::db)?;
             if version.name != reference {
                 return Err(Error::missing());
             }
-            let blob = db::packages::blob(&state.pool, package.id, token, &version.digest)
-                .await
-                .map_err(Error::db)?;
-            return super::oci::download(state, &blob, &method, request.headers()).await;
+            let blob =
+                crate::backend::db::packages::blob(&state.pool, package.id, token, &version.digest)
+                    .await
+                    .map_err(Error::db)?;
+            return crate::backend::api::packages::oci::download(
+                state,
+                &blob,
+                &method,
+                request.headers(),
+            )
+            .await;
         }
-        let version = db::packages::version(&state.pool, package.id, token, rest)
+        let version = crate::backend::db::packages::version(&state.pool, package.id, token, rest)
             .await
             .map_err(Error::db)?;
         if valid_version(rest) && version.name != rest {
@@ -254,7 +277,7 @@ async fn dispatch(
         .as_ref()
         .map(|auth| auth.token.id)
         .ok_or_else(Error::missing)?;
-    let _slot = super::upload_slot(state)?;
+    let _slot = crate::backend::api::packages::upload_slot(state)?;
     let bytes = to_bytes(
         request.into_body(),
         (MAX_OBJECT_BYTES as usize * 4 / 3) + 1024 * 1024,
@@ -276,7 +299,7 @@ async fn dispatch(
         .filter(|v| v.len() == 1)
         .ok_or_else(Error::invalid)?;
     let (version, metadata) = versions.iter().next().ok_or_else(Error::invalid)?;
-    if metadata.to_string().len() > db::packages::MAX_LISTED_METADATA_BYTES {
+    if metadata.to_string().len() > crate::backend::db::packages::MAX_LISTED_METADATA_BYTES {
         return Err(Error::invalid());
     }
     if !valid_version(version)
@@ -323,13 +346,13 @@ async fn dispatch(
         return Err(Error::invalid());
     }
     let tags: Vec<_> = tags.keys().cloned().collect();
-    let blob = packages::store(
+    let blob = crate::backend::packages::store(
         &state.pool,
         &state.storage,
         package.id,
         token,
         tarball,
-        db::packages::Charge::Upload,
+        crate::backend::db::packages::Charge::Upload,
     )
     .await
     .map_err(Error::db)?;
@@ -349,7 +372,7 @@ async fn dispatch(
     );
     metadata["dist"] = json!({"tarball":format!("{base}/-/{slug}-{version}.tgz"),"shasum":sha1,"integrity":integrity});
     let manifest = metadata.to_string();
-    db::packages::publish(
+    crate::backend::db::packages::publish(
         &state.pool,
         token,
         Publish {
@@ -377,7 +400,7 @@ async fn dist_tags(
     state: &AppState,
     namespace: &str,
     path: &str,
-    auth: Option<&super::Authentication>,
+    auth: Option<&crate::backend::api::packages::Authentication>,
     request: Request,
 ) -> Result<Response> {
     let (slug, rest) = package_name(namespace, path)?;
@@ -390,21 +413,28 @@ async fn dist_tags(
         ),
         None => return Err(Error::missing()),
     };
-    let owner = super::owner(state, namespace).await?;
-    let package = super::package(state, &owner, "npm", slug, auth, false).await?;
+    let owner = crate::backend::api::packages::owner(state, namespace).await?;
+    let package =
+        crate::backend::api::packages::package(state, &owner, "npm", slug, auth, false).await?;
     let method = request.method().clone();
     match (method, tag) {
         (Method::GET | Method::HEAD, None) => {
             let token = auth.map(|auth| auth.token.id.into());
             let (mut tags, mut after, mut bytes) = (Map::new(), String::new(), 0usize);
             loop {
-                let page = db::packages::tag_page(&state.pool, package.id, token, &after, 100)
-                    .await
-                    .map_err(Error::db)?;
+                let page = crate::backend::db::packages::tag_page(
+                    &state.pool,
+                    package.id,
+                    token,
+                    &after,
+                    100,
+                )
+                .await
+                .map_err(Error::db)?;
                 let done = page.len() < 100;
                 for (tag, version) in page {
                     bytes = bytes.saturating_add(tag.len() + version.len() + 16);
-                    if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES {
+                    if bytes > crate::backend::db::packages::MAX_METADATA_RESPONSE_BYTES {
                         return Err(Error::unavailable());
                     }
                     after.clone_from(&tag);
@@ -416,7 +446,7 @@ async fn dist_tags(
             }
         }
         (Method::PUT, Some(tag)) => {
-            let token = super::writer(auth)?.token.id;
+            let token = crate::backend::api::packages::writer(auth)?.token.id;
             let bytes = to_bytes(request.into_body(), 1024)
                 .await
                 .map_err(|_| Error::invalid())?;
@@ -424,14 +454,14 @@ async fn dist_tags(
             if !valid_version(&version) {
                 return Err(Error::invalid());
             }
-            db::packages::set_tag(&state.pool, package.id, token, tag, &version)
+            crate::backend::db::packages::set_tag(&state.pool, package.id, token, tag, &version)
                 .await
                 .map_err(Error::db)?;
             Ok(Json(json!({"ok":true})).into_response())
         }
         (Method::DELETE, Some(tag)) => {
-            let token = super::writer(auth)?.token.id;
-            db::packages::delete_tag(&state.pool, package.id, token, tag)
+            let token = crate::backend::api::packages::writer(auth)?.token.id;
+            crate::backend::db::packages::delete_tag(&state.pool, package.id, token, tag)
                 .await
                 .map_err(Error::db)?;
             Ok(Json(json!({"ok":true})).into_response())
@@ -449,7 +479,7 @@ mod tests {
     #[test]
     fn npm_versions_are_semver() {
         for version in ["1.2.3", "0.0.0", "1.2.3-rc.1+build.02"] {
-            assert!(super::valid_version(version));
+            assert!(crate::backend::api::packages::npm::valid_version(version));
         }
         for version in [
             "",
@@ -460,7 +490,7 @@ mod tests {
             "../1.0.0",
             "1.2.3-rc..1",
         ] {
-            assert!(!super::valid_version(version));
+            assert!(!crate::backend::api::packages::npm::valid_version(version));
         }
     }
 }

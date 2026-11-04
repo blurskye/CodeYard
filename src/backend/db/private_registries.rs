@@ -1,9 +1,9 @@
 //! Organization registry metadata is readable separately from its encrypted credential.
-use super::secrets::SecretsError;
-use crate::backend::crypto::SecretEncryptor;
+use crate::backend::db::secrets::SecretsError;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
+use codeyard_support::secrets::SecretEncryptor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -79,7 +79,7 @@ impl Configuration {
             return Err(RegistryError::Invalid("visibility"));
         }
         if let Some(ids) = &self.selected_repository_ids {
-            super::dependabot::validate_repository_access(ids, &[])?;
+            crate::backend::db::dependabot::validate_repository_access(ids, &[])?;
         }
         let required: Vec<(&str, Option<&str>)> = match self.auth_type.as_str() {
             "token" => vec![],
@@ -210,14 +210,14 @@ pub(crate) fn configuration(
     Ok(result)
 }
 
-native_operation!(super::postgres::private_registries::list,
-    super::sqlite::private_registries::list,
+native_operation!(crate::backend::db::postgres::private_registries::list,
+    crate::backend::db::sqlite::private_registries::list,
     fn list(pool: &DbPool, actor: i64, org: i64, name: Option<&str>, offset: i64, limit: i64) -> Result<(i64, Vec<Registry>), RegistryError>);
 
-native_operation!(super::postgres::private_registries::save,
-    super::sqlite::private_registries::save,
-    fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, org: i64, name: Option<&str>, input: &Value, value: Option<&str>) -> Result<Registry, RegistryError>);
+native_operation!(crate::backend::db::postgres::private_registries::save,
+    crate::backend::db::sqlite::private_registries::save,
+    fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, org: i64, name: Option<&str>, input: &Value, value: Option<&str>) -> Result<Registry, RegistryError>);
 
-native_operation!(super::postgres::private_registries::delete,
-    super::sqlite::private_registries::delete,
-    fn delete(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, org: i64, name: &str) -> Result<(), RegistryError>);
+native_operation!(crate::backend::db::postgres::private_registries::delete,
+    crate::backend::db::sqlite::private_registries::delete,
+    fn delete(pool: &DbPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, org: i64, name: &str) -> Result<(), RegistryError>);

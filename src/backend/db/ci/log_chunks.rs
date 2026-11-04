@@ -140,7 +140,7 @@ impl Chunk {
         );
         let mut prepared = Vec::with_capacity(lines.len());
         for line in lines {
-            prepared.extend(crate::backend::ci::queue::prepare_logs(&[line])?);
+            prepared.extend(codeyard_db_core::ci_logs::prepare_logs(&[line])?);
         }
         let lines = prepared;
         ensure!(

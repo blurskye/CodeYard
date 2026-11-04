@@ -9,7 +9,7 @@ use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
 use base64::Engine;
-use codeyard::backend::db;
+
 use database::Database;
 use pulls::{hidden_value, text, visible_text, Client};
 use serde_json::{json, Value};
@@ -40,7 +40,9 @@ impl World {
         let repository = codeyard::backend::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+            codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+                alice_id,
+            ),
             "proj",
             None,
             true,
@@ -53,7 +55,7 @@ impl World {
             (carol_id, codeyard_db_core::models::AccessLevel::Write),
             (dave_id, codeyard_db_core::models::AccessLevel::Read),
         ] {
-            db::repositories::access::grant_repo_access(
+            codeyard::backend::db::repositories::access::grant_repo_access(
                 database.pool(),
                 user,
                 repository.id,
@@ -394,11 +396,14 @@ async fn reader_merge_form_leaves_the_stored_head(pg: bool) {
     let (number, first) = open_pull(&world.alice, "topic", world.base.as_str()).await;
     // The branch moves in the store. A save through the API would refresh the pull request
     // first, so the stored head would not be stale.
-    let repository =
-        db::repositories::records::get_repository(world.database.pool(), "alice", "proj")
-            .await
-            .unwrap()
-            .unwrap();
+    let repository = codeyard::backend::db::repositories::records::get_repository(
+        world.database.pool(),
+        "alice",
+        "proj",
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let second = codeyard::backend::repositories::store::repo_store(&repository, None)
         .save_file_as(
             world.database.pool(),
@@ -1260,13 +1265,15 @@ async fn review_requests_for(
     pool: &codeyard_db_core::DbPool,
     user_id: i64,
 ) -> Vec<(String, Option<String>)> {
-    db::notifications::records::list_notifications_for_user(pool, user_id, 100, false)
-        .await
-        .unwrap()
-        .into_iter()
-        .filter(|notification| notification.kind == "pull_request_review_requested")
-        .map(|notification| (notification.title, notification.link))
-        .collect()
+    codeyard::backend::db::notifications::records::list_notifications_for_user(
+        pool, user_id, 100, false,
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .filter(|notification| notification.kind == "pull_request_review_requested")
+    .map(|notification| (notification.title, notification.link))
+    .collect()
 }
 
 /// The Reviewers panel posts to the same rules as the requested_reviewers routes. A visitor, a
@@ -1732,11 +1739,14 @@ async fn commit_tree(
     parent_sha: &str,
     files: &[(&str, &str)],
 ) -> String {
-    let repository =
-        db::repositories::records::get_repository(world.database.pool(), "alice", "proj")
-            .await
-            .unwrap()
-            .unwrap();
+    let repository = codeyard::backend::db::repositories::records::get_repository(
+        world.database.pool(),
+        "alice",
+        "proj",
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let git = git2::Repository::open_bare(&repository.disk_path).unwrap();
     let parent = git
         .find_commit(git2::Oid::from_str(parent_sha).unwrap())

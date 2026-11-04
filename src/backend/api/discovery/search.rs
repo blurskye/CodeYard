@@ -1,12 +1,13 @@
-use super::{
-    content_search, owner_name, page_number, repository_cards, unavailable, DiscoveryReadError,
-};
-use crate::backend::{
-    api::http::context::PageContext,
-    app::AppState,
-    db,
-    db::repositories::{discovery::ItemSort, records::RepositorySort},
-};
+use crate::backend::api::discovery::owner_name;
+use crate::backend::api::discovery::page_number;
+use crate::backend::api::discovery::repository_cards;
+use crate::backend::api::discovery::unavailable;
+use crate::backend::api::discovery::DiscoveryReadError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::app::AppState;
+
+use crate::backend::db::repositories::discovery::ItemSort;
+use crate::backend::db::repositories::records::RepositorySort;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode, Uri},
@@ -157,18 +158,20 @@ async fn issue_cards(
     rows: Vec<ItemRow>,
 ) -> Result<Vec<IssueCard>, DiscoveryReadError> {
     let ids = rows.iter().map(|row| row.repo_id).collect::<Vec<_>>();
-    let repos = db::repositories::records::get_repositories_by_ids(&state.pool, &ids)
-        .await
-        .map_err(|_| DiscoveryReadError::Unavailable)?
-        .into_iter()
-        .map(|repo| (repo.id, repo))
-        .collect::<HashMap<_, _>>();
+    let repos =
+        crate::backend::db::repositories::records::get_repositories_by_ids(&state.pool, &ids)
+            .await
+            .map_err(|_| DiscoveryReadError::Unavailable)?
+            .into_iter()
+            .map(|repo| (repo.id, repo))
+            .collect::<HashMap<_, _>>();
     let ids = repos.keys().copied().collect::<Vec<_>>();
-    let owners = db::repositories::records::repository_owner_names(&state.pool, &ids)
-        .await
-        .map_err(|_| DiscoveryReadError::Unavailable)?;
+    let owners =
+        crate::backend::db::repositories::records::repository_owner_names(&state.pool, &ids)
+            .await
+            .map_err(|_| DiscoveryReadError::Unavailable)?;
     let author_ids = rows.iter().map(|row| row.author_id).collect::<Vec<_>>();
-    let authors = db::users::accounts::get_users_by_ids(&state.pool, &author_ids)
+    let authors = crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &author_ids)
         .await
         .map_err(|_| DiscoveryReadError::Unavailable)?
         .into_iter()
@@ -236,23 +239,39 @@ async fn load_search(
     } else {
         SearchCounts {
             repositories: count_as_usize(
-                db::repositories::discovery::count_repositories(&state.pool, viewer, &query, cap)
-                    .await
-                    .map_err(unavailable)?,
+                crate::backend::db::repositories::discovery::count_repositories(
+                    &state.pool,
+                    viewer,
+                    &query,
+                    cap,
+                )
+                .await
+                .map_err(unavailable)?,
             ),
             issues: badge_count(
-                db::repositories::discovery::count_issues(&state.pool, viewer, &query, cap).await,
+                crate::backend::db::repositories::discovery::count_issues(
+                    &state.pool,
+                    viewer,
+                    &query,
+                    cap,
+                )
+                .await,
                 "issues",
                 &mut model.counts_unavailable,
             )?,
             pulls: badge_count(
-                db::repositories::discovery::count_pull_requests(&state.pool, viewer, &query, cap)
-                    .await,
+                crate::backend::db::repositories::discovery::count_pull_requests(
+                    &state.pool,
+                    viewer,
+                    &query,
+                    cap,
+                )
+                .await,
                 "pulls",
                 &mut model.counts_unavailable,
             )?,
             users: count_as_usize(
-                db::repositories::discovery::count_users(&state.pool, &query, cap)
+                crate::backend::db::repositories::discovery::count_users(&state.pool, &query, cap)
                     .await
                     .map_err(unavailable)?,
             ),
@@ -264,7 +283,7 @@ async fn load_search(
     let limit = RESULTS_PER_PAGE as i64 + 1;
     match model.tab.as_str() {
         "repos" => {
-            let repos = db::repositories::discovery::search_repositories(
+            let repos = crate::backend::db::repositories::discovery::search_repositories(
                 &state.pool,
                 viewer,
                 &query,
@@ -279,7 +298,7 @@ async fn load_search(
             model.repositories = repository_cards(state, viewer, repos).await?;
         }
         "issues" => {
-            let issues = db::repositories::discovery::search_issues(
+            let issues = crate::backend::db::repositories::discovery::search_issues(
                 &state.pool,
                 viewer,
                 &query,
@@ -310,7 +329,7 @@ async fn load_search(
             .await?;
         }
         "pulls" => {
-            let pulls = db::repositories::discovery::search_pull_requests(
+            let pulls = crate::backend::db::repositories::discovery::search_pull_requests(
                 &state.pool,
                 viewer,
                 &query,
@@ -345,10 +364,14 @@ async fn load_search(
             .await?;
         }
         "users" => {
-            let users =
-                db::repositories::discovery::search_users(&state.pool, &query, offset, limit)
-                    .await
-                    .map_err(unavailable)?;
+            let users = crate::backend::db::repositories::discovery::search_users(
+                &state.pool,
+                &query,
+                offset,
+                limit,
+            )
+            .await
+            .map_err(unavailable)?;
             let (users, has_older) = take_page(users);
             model.has_older = has_older;
             model.users = users
@@ -362,9 +385,14 @@ async fn load_search(
         }
         // Code and commits: the tab is one of the two, since the filters accept no other.
         _ => {
-            let content =
-                content_search::search_content(state, viewer, &query, model.tab == "code", page)
-                    .await?;
+            let content = crate::backend::api::discovery::content_search::search_content(
+                state,
+                viewer,
+                &query,
+                model.tab == "code",
+                page,
+            )
+            .await?;
             model.highlight = content.needle;
             model.commits = content.commits;
             model.code = content.code;
@@ -419,10 +447,14 @@ pub(super) async fn search_page(
     // so one that is live now was live for every read before.
     if let Some(viewer) = viewer {
         let live = match ctx.session_id.as_deref() {
-            Some(id) => match db::users::sessions::get_session_user(&ctx.state.pool, id).await {
-                Ok(user) => user.is_some_and(|user| user.id == viewer),
-                Err(_) => return unavailable(&ctx, "search_session"),
-            },
+            Some(id) => {
+                match crate::backend::db::users::sessions::get_session_user(&ctx.state.pool, id)
+                    .await
+                {
+                    Ok(user) => user.is_some_and(|user| user.id == viewer),
+                    Err(_) => return unavailable(&ctx, "search_session"),
+                }
+            }
             None => false,
         };
         if !live {

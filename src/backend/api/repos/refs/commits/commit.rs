@@ -1,14 +1,19 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::{
-    access_error, check_repo_read_access, readable_repository,
-};
-use crate::backend::api::repos::chrome::{commit, hex_revision, store_error, Loaded};
+use crate::backend::api::repos::access::access_error;
+use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::chrome::commit;
+use crate::backend::api::repos::chrome::hex_revision;
+use crate::backend::api::repos::chrome::store_error;
+use crate::backend::api::repos::chrome::Loaded;
 use crate::backend::api::repos::pulls::diff::diff_model;
-use crate::backend::api::repos::responses::{AuthorInfo, CommitResponse};
+use crate::backend::api::repos::responses::AuthorInfo;
+use crate::backend::api::repos::responses::CommitResponse;
 use crate::backend::app::AppState;
 use crate::backend::repositories::access::AccessError;
-use crate::backend::repositories::store::{repo_store, DiffInfo};
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::DiffInfo;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
@@ -87,7 +92,8 @@ async fn related_pulls(
     loaded: &Loaded,
     sha: &str,
 ) -> Result<view::commits::pulls::RelatedPulls, Response> {
-    use crate::backend::repositories::commit_pulls::{associated_pulls, CommitPullQuery};
+    use crate::backend::repositories::commit_pulls::associated_pulls;
+    use crate::backend::repositories::commit_pulls::CommitPullQuery;
     use view::commits::pulls::{RelatedPull, RelatedPulls};
     let page = ctx
         .query
@@ -190,7 +196,10 @@ pub(super) async fn commit_page(
         tags.sort();
         tags.dedup();
     }
-    let discussion = super::comments::discussion(ctx, loaded, &info.sha, draft, error).await?;
+    let discussion = crate::backend::api::repos::refs::commits::comments::discussion(
+        ctx, loaded, &info.sha, draft, error,
+    )
+    .await?;
     let related_pulls = related_pulls(ctx, loaded, &info.sha).await?;
     check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
         .await

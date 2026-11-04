@@ -5,9 +5,9 @@ use super::{
 };
 use crate::support::{database::Database, fake_webui_bundle};
 use axum::http::StatusCode;
-use codeyard::backend::ci;
+
 use codeyard::backend::ci::admission::AdmissionError;
-use codeyard::backend::db;
+
 use codeyard::backend::db::ci::CiRunDeletion;
 use codeyard_model::ci::LogLine;
 use std::collections::BTreeMap;
@@ -25,7 +25,9 @@ async fn contract(pg: bool) {
             codeyard::backend::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
-                db::repositories::creation::RepositoryCreationOwner::personal(alice),
+                codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+                    alice,
+                ),
                 name,
                 None,
                 true,
@@ -41,19 +43,25 @@ async fn contract(pg: bool) {
     let reader = pat(&f, &router, alice, "read").await;
     let (source, _) = results::run(&f, repo.id, alice, "main").await;
     let definitions=BTreeMap::from([(".github/workflows/ci.yml".to_owned(),b"on: push\njobs:\n  reader:\n    permissions: {actions: read}\n    runs-on: ubuntu-latest\n    steps: [{run: 'echo ok'}]\n  writer:\n    permissions: {actions: write}\n    runs-on: ubuntu-latest\n    steps: [{run: 'echo ok'}]\n".to_vec())]);
-    let credentials = ci::tokens::issue(f.pool(), &source, &definitions, false)
+    let credentials = codeyard::backend::ci::tokens::issue(f.pool(), &source, &definitions, false)
         .await
         .unwrap();
     let read_token = &credentials.workflows[".github/workflows/ci.yml"]["reader"];
     let write_token = &credentials.workflows[".github/workflows/ci.yml"]["writer"];
-    let read_pat = db::users::tokens::find_token(f.pool(), &ci::runtime::token_hash(read_token))
-        .await
-        .unwrap()
-        .unwrap();
-    let write_pat = db::users::tokens::find_token(f.pool(), &ci::runtime::token_hash(write_token))
-        .await
-        .unwrap()
-        .unwrap();
+    let read_pat = codeyard::backend::db::users::tokens::find_token(
+        f.pool(),
+        &codeyard::backend::ci::runtime::token_hash(read_token),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let write_pat = codeyard::backend::db::users::tokens::find_token(
+        f.pool(),
+        &codeyard::backend::ci::runtime::token_hash(write_token),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let (queued, _) = results::run(&f, repo.id, alice, "main").await;
     f.execute(
         "UPDATE ci_runs SET status='queued',worker=NULL WHERE id=$1",
@@ -80,13 +88,13 @@ async fn contract(pg: bool) {
         StatusCode::FORBIDDEN,
     )
     .await;
-    let refusal = db::ci::request_ci_cancellation_with_credential(
+    let refusal = codeyard::backend::db::ci::request_ci_cancellation_with_credential(
         f.pool(),
         queued.run_id,
         alice,
-        &db::ci::CiCredential::Token {
+        &codeyard::backend::db::ci::CiCredential::Token {
             id: read_pat.id,
-            hash: ci::runtime::token_hash(read_token),
+            hash: codeyard::backend::ci::runtime::token_hash(read_token),
             permission: "actions",
         },
     )
@@ -106,7 +114,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::ci::get_ci_run_by_id(f.pool(), repo.id, queued.id)
+        codeyard::backend::db::ci::get_ci_run_by_id(f.pool(), repo.id, queued.id)
             .await
             .unwrap()
             .unwrap()
@@ -135,13 +143,13 @@ async fn contract(pg: bool) {
         StatusCode::NOT_FOUND,
     )
     .await;
-    let refusal = db::ci::request_ci_cancellation_with_credential(
+    let refusal = codeyard::backend::db::ci::request_ci_cancellation_with_credential(
         f.pool(),
         foreign.run_id,
         alice,
-        &db::ci::CiCredential::Token {
+        &codeyard::backend::db::ci::CiCredential::Token {
             id: write_pat.id,
-            hash: ci::runtime::token_hash(write_token),
+            hash: codeyard::backend::ci::runtime::token_hash(write_token),
             permission: "actions",
         },
     )
@@ -152,20 +160,21 @@ async fn contract(pg: bool) {
         AdmissionError::Denied(_)
     ));
     assert!(
-        !db::ci::get_ci_run_by_id(f.pool(), repos[1].id, foreign.id)
+        !codeyard::backend::db::ci::get_ci_run_by_id(f.pool(), repos[1].id, foreign.id)
             .await
             .unwrap()
             .unwrap()
             .cancel_requested
     );
     let (target, runtime) = results::run(&f, repo.id, alice, "main").await;
-    let target_credentials = ci::tokens::issue(f.pool(), &target, &definitions, false)
-        .await
-        .unwrap();
-    let target_hash = ci::runtime::token_hash(
+    let target_credentials =
+        codeyard::backend::ci::tokens::issue(f.pool(), &target, &definitions, false)
+            .await
+            .unwrap();
+    let target_hash = codeyard::backend::ci::runtime::token_hash(
         &target_credentials.workflows[".github/workflows/ci.yml"]["reader"],
     );
-    assert!(db::ci::append_ci_logs(
+    assert!(codeyard::backend::db::ci::append_ci_logs(
         f.pool(),
         target.id,
         "test",
@@ -208,18 +217,22 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(
-        db::ci::get_ci_run_by_id(f.pool(), repo.id, target.id)
+        codeyard::backend::db::ci::get_ci_run_by_id(f.pool(), repo.id, target.id)
             .await
             .unwrap()
             .unwrap()
             .cancel_requested
     );
-    assert!(
-        db::ci::finish_ci_run(f.pool(), target.id, "test", "cancelled", Some("Cancelled"))
-            .await
-            .unwrap()
-            .is_some()
-    );
+    assert!(codeyard::backend::db::ci::finish_ci_run(
+        f.pool(),
+        target.id,
+        "test",
+        "cancelled",
+        Some("Cancelled")
+    )
+    .await
+    .unwrap()
+    .is_some());
     checked(
         &router,
         "actions/force-cancel-workflow-run",
@@ -257,10 +270,12 @@ async fn contract(pg: bool) {
             .await,
         0
     );
-    assert!(db::ci::list_ci_logs(f.pool(), target.id, 100)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        codeyard::backend::db::ci::list_ci_logs(f.pool(), target.id, 100)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     // Repository mutations must not trust a stale ingress access decision.
     f.execute(
         "INSERT INTO repo_access(repo_id,user_id,access_level) VALUES($1,$2,3)",
@@ -272,9 +287,15 @@ async fn contract(pg: bool) {
         &[repo.id, bob],
     )
     .await;
-    let refusal = db::ci::delete_ci_run_data(f.pool(), bob, repo.id, target.id, CiRunDeletion::Run)
-        .await
-        .unwrap_err();
+    let refusal = codeyard::backend::db::ci::delete_ci_run_data(
+        f.pool(),
+        bob,
+        repo.id,
+        target.id,
+        CiRunDeletion::Run,
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(
         AdmissionError::from(refusal),
         AdmissionError::Denied(_)
@@ -288,14 +309,18 @@ async fn contract(pg: bool) {
         StatusCode::NO_CONTENT,
     )
     .await;
-    assert!(db::ci::get_ci_run_by_id(f.pool(), repo.id, target.id)
-        .await
-        .unwrap()
-        .is_none());
-    assert!(db::users::tokens::find_token(f.pool(), &target_hash)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        codeyard::backend::db::ci::get_ci_run_by_id(f.pool(), repo.id, target.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        codeyard::backend::db::users::tokens::find_token(f.pool(), &target_hash)
+            .await
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(
         f.scalar(
             "SELECT COUNT(*) FROM actions_objects WHERE id=$1",

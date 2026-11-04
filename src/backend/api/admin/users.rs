@@ -1,17 +1,21 @@
 //! Administrator account management: the users page, signup requests, creating accounts, bans
 //! and roles. Every handler rechecks administrator authority in its identity call.
-use super::signup_requests::{load_requests, signup_decision};
-use crate::backend::api::auth::errors;
+use crate::backend::api::admin::signup_requests::load_requests;
+use crate::backend::api::admin::signup_requests::signup_decision;
+
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::{ApiError, ApiFailure};
-use crate::backend::api::user::responses::{
-    field, mutation_guard, optional_field, public_api_message, require_account, within_bounds,
-    Fields,
-};
-use crate::backend::api::{auth, http::session};
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::ApiFailure;
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::optional_field;
+use crate::backend::api::user::responses::public_api_message;
+use crate::backend::api::user::responses::require_account;
+use crate::backend::api::user::responses::within_bounds;
+use crate::backend::api::user::responses::Fields;
+
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::identity;
+
 use crate::backend::identity::credentials::PasswordAccount;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -92,7 +96,7 @@ async fn load_users(ctx: &PageContext, listing: &Listing<'_>) -> Result<AdminUse
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let authority = (admin.id, session).into();
-    let snapshot = db::users::accounts::admin_users_page(
+    let snapshot = crate::backend::db::users::accounts::admin_users_page(
         &ctx.state.pool,
         &authority,
         listing.search,
@@ -133,7 +137,7 @@ async fn load_users(ctx: &PageContext, listing: &Listing<'_>) -> Result<AdminUse
             created: user.created_at.format("%b %e, %Y").to_string(),
         })
         .collect();
-    let managed_accounts = db::node_config::get_node_configuration(&ctx.state.pool)
+    let managed_accounts = crate::backend::db::node_config::get_node_configuration(&ctx.state.pool)
         .await
         .map_err(|_| {
             ctx.error(
@@ -248,9 +252,9 @@ pub(crate) async fn managed_user_post(
             )),
         ))
     } else {
-        let session_id = session::extract_session_id(&ctx.headers);
+        let session_id = crate::backend::api::http::session::extract_session_id(&ctx.headers);
         let email = optional_field(&form, "email");
-        identity::accounts::create_managed_account(
+        crate::backend::identity::accounts::create_managed_account(
             &ctx.state.pool,
             session_id.as_deref(),
             PasswordAccount {
@@ -262,7 +266,7 @@ pub(crate) async fn managed_user_post(
         )
         .await
         .map(|_| ())
-        .map_err(auth::errors::managed_account_failure)
+        .map_err(crate::backend::api::auth::errors::managed_account_failure)
     };
     match result {
         Ok(()) => ctx.redirect("/admin/users?saved=account"),
@@ -307,7 +311,7 @@ pub(crate) async fn new_user_get(
     if let Err(response) = require_account(&ctx, true) {
         return response;
     }
-    match db::node_config::get_node_configuration(&ctx.state.pool).await {
+    match crate::backend::db::node_config::get_node_configuration(&ctx.state.pool).await {
         Ok(config) if config.as_ref().is_some_and(|config| config.is_private()) => {
             new_user_response(&ctx, &Fields::new(), StatusCode::OK, None)
         }
@@ -334,15 +338,15 @@ pub(crate) async fn signup_post(
         return response;
     }
     let listing = listing_from_form(&form);
-    let session_id = session::extract_session_id(&ctx.headers);
-    let result = identity::accounts::review_signup(
+    let session_id = crate::backend::api::http::session::extract_session_id(&ctx.headers);
+    let result = crate::backend::identity::accounts::review_signup(
         &ctx.state.pool,
         session_id.as_deref(),
         id,
         signup_decision(field(&form, "action")),
     )
     .await
-    .map_err(auth::errors::signup_review_failure);
+    .map_err(crate::backend::api::auth::errors::signup_review_failure);
     match result {
         Ok(_) => ctx.redirect(&users_path(&listing, "request")),
         Err(error) => {
@@ -385,10 +389,15 @@ pub(crate) async fn ban_post(
             .await
         }
     };
-    let session_id = session::extract_session_id(&ctx.headers);
-    let result = identity::accounts::set_ban(&ctx.state.pool, session_id.as_deref(), id, banned)
-        .await
-        .map_err(auth::errors::ban_failure);
+    let session_id = crate::backend::api::http::session::extract_session_id(&ctx.headers);
+    let result = crate::backend::identity::accounts::set_ban(
+        &ctx.state.pool,
+        session_id.as_deref(),
+        id,
+        banned,
+    )
+    .await
+    .map_err(crate::backend::api::auth::errors::ban_failure);
     match result {
         Ok(_) => ctx.redirect(&users_path(&listing, "ban")),
         Err(error) => {
@@ -418,11 +427,17 @@ pub(crate) async fn two_factor_reset_post(
         return response;
     }
     let listing = listing_from_form(&form);
-    let session_id = session::extract_session_id(&ctx.headers);
-    match identity::two_factor::admin_turn_off(&ctx.state.pool, session_id.as_deref(), id).await {
+    let session_id = crate::backend::api::http::session::extract_session_id(&ctx.headers);
+    match crate::backend::identity::two_factor::admin_turn_off(
+        &ctx.state.pool,
+        session_id.as_deref(),
+        id,
+    )
+    .await
+    {
         Ok(()) => ctx.redirect(&users_path(&listing, "two-factor-reset")),
         Err(error) => {
-            let (status, body) = auth::errors::two_factor_failure(error);
+            let (status, body) = crate::backend::api::auth::errors::two_factor_failure(error);
             users_response(&ctx, listing, status, Some(public_api_message(&body.0))).await
         }
     }
@@ -456,13 +471,18 @@ pub(crate) async fn role_post(
             .await
         }
     };
-    let session_id = session::extract_session_id(&ctx.headers);
-    match identity::accounts::set_admin_role(&ctx.state.pool, session_id.as_deref(), id, admin)
-        .await
+    let session_id = crate::backend::api::http::session::extract_session_id(&ctx.headers);
+    match crate::backend::identity::accounts::set_admin_role(
+        &ctx.state.pool,
+        session_id.as_deref(),
+        id,
+        admin,
+    )
+    .await
     {
         Ok(_) => ctx.redirect(&users_path(&listing, "role")),
         Err(error) => {
-            let failure = errors::role_failure(error);
+            let failure = crate::backend::api::auth::errors::role_failure(error);
             users_response(
                 &ctx,
                 listing,

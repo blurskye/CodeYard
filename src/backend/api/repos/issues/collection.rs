@@ -1,25 +1,35 @@
-use super::issue::{load_issue_response, IssueResponse};
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::discussion::*;
-use crate::backend::api::repos::forms::{authorize_post, field, repeated, with_status};
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::field;
+use crate::backend::api::repos::forms::repeated;
+use crate::backend::api::repos::forms::with_status;
 use crate::backend::api::repos::issues::assignees::user_id;
+use crate::backend::api::repos::issues::issue::load_issue_response;
+use crate::backend::api::repos::issues::issue::IssueResponse;
 use crate::backend::api::repos::milestones::milestone_choice_view;
-use crate::backend::api::repos::paging;
+
 use crate::backend::api::repos::refs::compare::comparison;
 use crate::backend::api::repos::refs::references::resolve_references_or_none;
 use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::api::user::responses::PublicUserResponse;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::db::discussions::{ListFilter, ListSort, Pick};
+
+use crate::backend::db::discussions::ListFilter;
+use crate::backend::db::discussions::ListSort;
+use crate::backend::db::discussions::Pick;
 use crate::backend::issues::mutations::CreateIssueRequest;
-use crate::backend::repositories::issue_templates::{
-    compose_form_body, first_missing_answer, issue_templates, pull_request_template, FormElement,
-    FormKind, IssueTemplate, IssueTemplates,
-};
+use crate::backend::repositories::issue_templates::compose_form_body;
+use crate::backend::repositories::issue_templates::first_missing_answer;
+use crate::backend::repositories::issue_templates::issue_templates;
+use crate::backend::repositories::issue_templates::pull_request_template;
+use crate::backend::repositories::issue_templates::FormElement;
+use crate::backend::repositories::issue_templates::FormKind;
+use crate::backend::repositories::issue_templates::IssueTemplate;
+use crate::backend::repositories::issue_templates::IssueTemplates;
 use crate::backend::repositories::store::repo_store;
 use axum::extract::Form;
 use axum::extract::Path;
@@ -56,7 +66,7 @@ pub async fn create_issue(
         req,
     )
     .await
-    .map_err(super::operation_error)?;
+    .map_err(crate::backend::api::repos::issues::operation_error)?;
     let response = load_issue_response(
         &state.pool,
         issue,
@@ -134,11 +144,14 @@ pub async fn list_issues(
             )
         })?;
 
-    let (offset, limit) = paging::json_page(query.page, Some(query.per_page.unwrap_or(100)))?;
-    let issues = db::issues::list_repo_issues(
+    let (offset, limit) = crate::backend::api::repos::paging::json_page(
+        query.page,
+        Some(query.per_page.unwrap_or(100)),
+    )?;
+    let issues = crate::backend::db::issues::list_repo_issues(
         &state.pool,
         repository.id,
-        &db::discussions::ListFilter {
+        &crate::backend::db::discussions::ListFilter {
             state: issue_state,
             labels: &labels,
             offset: offset as i64,
@@ -153,14 +166,16 @@ pub async fn list_issues(
         .iter()
         .map(|entry| entry.issue.id)
         .collect::<Vec<_>>();
-    let mut labels = db::labels::get_issues_labels(&state.pool, repository.id, &ids)
-        .await
-        .map_err(|_| storage_unavailable())?;
-    let mut comments: HashMap<i64, i64> = db::issues::count_issue_comments(&state.pool, &ids)
-        .await
-        .map_err(|_| storage_unavailable())?
-        .into_iter()
-        .collect();
+    let mut labels =
+        crate::backend::db::labels::get_issues_labels(&state.pool, repository.id, &ids)
+            .await
+            .map_err(|_| storage_unavailable())?;
+    let mut comments: HashMap<i64, i64> =
+        crate::backend::db::issues::count_issue_comments(&state.pool, &ids)
+            .await
+            .map_err(|_| storage_unavailable())?
+            .into_iter()
+            .collect();
     let mut responses = Vec::with_capacity(issues.len());
     for entry in issues {
         let author = Some(PublicUserResponse::from_display(&entry.author));
@@ -208,11 +223,13 @@ async fn query_narrowing(
         "none" => Pick::Unset,
         text => {
             let found = match text.parse::<i32>() {
-                Ok(number) => {
-                    db::milestones::get_milestone(&ctx.state.pool, repo.record.id, number)
-                        .await
-                        .map_err(|_| unavailable(ctx))?
-                }
+                Ok(number) => crate::backend::db::milestones::get_milestone(
+                    &ctx.state.pool,
+                    repo.record.id,
+                    number,
+                )
+                .await
+                .map_err(|_| unavailable(ctx))?,
                 Err(_) => None,
             };
             match found {
@@ -259,10 +276,13 @@ async fn add_row_milestones(
 ) -> ResultPage<()> {
     let ids: Vec<_> = ids.filter(|id| !named.contains_key(id)).collect();
     if !ids.is_empty() {
-        for milestone in
-            db::milestones::milestone_choices_by_ids(&ctx.state.pool, repo.record.id, &ids)
-                .await
-                .map_err(|_| unavailable(ctx))?
+        for milestone in crate::backend::db::milestones::milestone_choices_by_ids(
+            &ctx.state.pool,
+            repo.record.id,
+            &ids,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?
         {
             named.insert(milestone.id, milestone_choice_view(milestone));
         }
@@ -278,22 +298,31 @@ async fn list_filters(
     selected_labels: Vec<String>,
     selected_author: Option<i64>,
 ) -> ResultPage<view::ListFilters> {
-    let mut labels: Vec<_> =
-        db::labels::list_repo_labels_page(&ctx.state.pool, repo.record.id, "", "name", 100, 0)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .into_iter()
-            .map(label)
-            .collect();
+    let mut labels: Vec<_> = crate::backend::db::labels::list_repo_labels_page(
+        &ctx.state.pool,
+        repo.record.id,
+        "",
+        "name",
+        100,
+        0,
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?
+    .into_iter()
+    .map(label)
+    .collect();
     for name in &selected_labels {
         if !labels
             .iter()
             .any(|label| label.name.eq_ignore_ascii_case(name))
         {
-            if let Some(found) =
-                db::labels::get_repo_label_by_name(&ctx.state.pool, repo.record.id, name)
-                    .await
-                    .map_err(|_| unavailable(ctx))?
+            if let Some(found) = crate::backend::db::labels::get_repo_label_by_name(
+                &ctx.state.pool,
+                repo.record.id,
+                name,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?
             {
                 labels.push(label(found));
             }
@@ -302,13 +331,16 @@ async fn list_filters(
     Ok(view::ListFilters {
         labels,
         selected_labels,
-        assignees: db::assignees::list_assignable_usernames(&ctx.state.pool, repo.record.id)
-            .await
-            .map_err(|_| unavailable(ctx))?,
+        assignees: crate::backend::db::assignees::list_assignable_usernames(
+            &ctx.state.pool,
+            repo.record.id,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?,
         assignee: query_value(ctx, "assignee"),
         milestones: milestones.into_iter().map(milestone_choice_view).collect(),
         milestone: query_value(ctx, "milestone"),
-        authors: db::discussions::list_repo_authors(
+        authors: crate::backend::db::discussions::list_repo_authors(
             &ctx.state.pool,
             repo.record.id,
             selected_author,
@@ -334,9 +366,10 @@ pub(crate) async fn native_index(
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
     // The milestones name each row and feed the milestone filter, so they are read once.
-    let mut milestones = db::milestones::list_milestone_choices(&ctx.state.pool, repo.record.id)
-        .await
-        .map_err(|_| unavailable(&ctx))?;
+    let mut milestones =
+        crate::backend::db::milestones::list_milestone_choices(&ctx.state.pool, repo.record.id)
+            .await
+            .map_err(|_| unavailable(&ctx))?;
     // The search box holds the filters as qualifiers (`state:closed label:bug`); they replace the
     // parameters the menus and links use, and the words left over are the search.
     let mut typed_search = view::parse_search(ctx.query.get("q").map(String::as_str).unwrap_or(""));
@@ -349,13 +382,17 @@ pub(crate) async fn native_index(
         {
             Some(found) => found.number,
             None => {
-                db::milestones::milestone_choice_by_title(&ctx.state.pool, repo.record.id, title)
-                    .await
-                    .map_err(|_| unavailable(&ctx))?
-                    .ok_or_else(|| {
-                        ctx.error(StatusCode::BAD_REQUEST, "Choose a milestone from the list.")
-                    })?
-                    .number
+                crate::backend::db::milestones::milestone_choice_by_title(
+                    &ctx.state.pool,
+                    repo.record.id,
+                    title,
+                )
+                .await
+                .map_err(|_| unavailable(&ctx))?
+                .ok_or_else(|| {
+                    ctx.error(StatusCode::BAD_REQUEST, "Choose a milestone from the list.")
+                })?
+                .number
             }
         };
         *title = number.to_string();
@@ -387,9 +424,13 @@ pub(crate) async fn native_index(
     if let Pick::Is(id) = narrowing.milestone {
         if !milestones.iter().any(|milestone| milestone.id == id) {
             milestones.extend(
-                db::milestones::milestone_choices_by_ids(&ctx.state.pool, repo.record.id, &[id])
-                    .await
-                    .map_err(|_| unavailable(&ctx))?,
+                crate::backend::db::milestones::milestone_choices_by_ids(
+                    &ctx.state.pool,
+                    repo.record.id,
+                    &[id],
+                )
+                .await
+                .map_err(|_| unavailable(&ctx))?,
             );
         }
     }
@@ -404,8 +445,13 @@ pub(crate) async fn native_index(
             .chain(search_labels.iter().map(String::as_str)),
     )
     .map_err(|message| ctx.error(StatusCode::BAD_REQUEST, message))?;
-    let page_number = paging::number(&ctx, "page", 1, 1..=paging::MAX_PAGE)?;
-    let (offset, _) = paging::page_window(page_number, 100)
+    let page_number = crate::backend::api::repos::paging::number(
+        &ctx,
+        "page",
+        1,
+        1..=crate::backend::api::repos::paging::MAX_PAGE,
+    )?;
+    let (offset, _) = crate::backend::api::repos::paging::page_window(page_number, 100)
         .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid issue page."))?;
     let list = ListFilter {
         offset: offset as i64,
@@ -422,21 +468,34 @@ pub(crate) async fn native_index(
     let mut filters = list_filters(&ctx, &repo, milestones, labels.clone(), list.author_id).await?;
     filters.page = page_number;
     if kind == Kind::Issue {
-        filters.pinned_issues = super::management::pinned(&ctx, &repo).await?;
+        filters.pinned_issues =
+            crate::backend::api::repos::issues::management::pinned(&ctx, &repo).await?;
     }
     let mut items = Vec::new();
     let totals;
     match kind {
         Kind::Issue => {
-            totals = db::issues::count_repo_issues(&ctx.state.pool, repo.record.id, &list)
-                .await
-                .map_err(|_| unavailable(&ctx))?;
-            let mut entries =
-                db::issues::list_repo_issues(&ctx.state.pool, repo.record.id, &list, 101)
-                    .await
-                    .map_err(|_| unavailable(&ctx))?;
-            filters.has_more =
-                paging::has_next_page(page_number, entries.len(), 100, paging::MAX_PAGE);
+            totals = crate::backend::db::issues::count_repo_issues(
+                &ctx.state.pool,
+                repo.record.id,
+                &list,
+            )
+            .await
+            .map_err(|_| unavailable(&ctx))?;
+            let mut entries = crate::backend::db::issues::list_repo_issues(
+                &ctx.state.pool,
+                repo.record.id,
+                &list,
+                101,
+            )
+            .await
+            .map_err(|_| unavailable(&ctx))?;
+            filters.has_more = crate::backend::api::repos::paging::has_next_page(
+                page_number,
+                entries.len(),
+                100,
+                crate::backend::api::repos::paging::MAX_PAGE,
+            );
             entries.truncate(100);
             add_row_milestones(
                 &ctx,
@@ -449,12 +508,16 @@ pub(crate) async fn native_index(
                 .iter()
                 .map(|entry| entry.issue.id)
                 .collect::<Vec<_>>();
-            let mut labels = db::labels::get_issues_labels(&ctx.state.pool, repo.record.id, &ids)
-                .await
-                .map_err(|_| unavailable(&ctx))?;
+            let mut labels = crate::backend::db::labels::get_issues_labels(
+                &ctx.state.pool,
+                repo.record.id,
+                &ids,
+            )
+            .await
+            .map_err(|_| unavailable(&ctx))?;
             let mut assignees = listed_assignees(&ctx, &ids, false).await?;
             let mut comments: HashMap<i64, i64> =
-                db::issues::count_issue_comments(&ctx.state.pool, &ids)
+                crate::backend::db::issues::count_issue_comments(&ctx.state.pool, &ids)
                     .await
                     .map_err(|_| unavailable(&ctx))?
                     .into_iter()
@@ -476,14 +539,14 @@ pub(crate) async fn native_index(
             }
         }
         Kind::Pull => {
-            totals = db::pull_requests::records::count_repo_pull_requests(
+            totals = crate::backend::db::pull_requests::records::count_repo_pull_requests(
                 &ctx.state.pool,
                 repo.record.id,
                 &list,
             )
             .await
             .map_err(|_| unavailable(&ctx))?;
-            let mut pulls = db::pull_requests::records::list_repo_pull_requests(
+            let mut pulls = crate::backend::db::pull_requests::records::list_repo_pull_requests(
                 &ctx.state.pool,
                 repo.record.id,
                 &list,
@@ -491,8 +554,12 @@ pub(crate) async fn native_index(
             )
             .await
             .map_err(|_| unavailable(&ctx))?;
-            filters.has_more =
-                paging::has_next_page(page_number, pulls.len(), 100, paging::MAX_PAGE);
+            filters.has_more = crate::backend::api::repos::paging::has_next_page(
+                page_number,
+                pulls.len(),
+                100,
+                crate::backend::api::repos::paging::MAX_PAGE,
+            );
             pulls.truncate(100);
             add_row_milestones(
                 &ctx,
@@ -507,24 +574,34 @@ pub(crate) async fn native_index(
                 .iter()
                 .map(|value| value.pull_request.id)
                 .collect::<Vec<_>>();
-            let mut labels =
-                db::labels::get_pull_requests_labels(&ctx.state.pool, repo.record.id, &ids)
-                    .await
-                    .map_err(|_| unavailable(&ctx))?;
+            let mut labels = crate::backend::db::labels::get_pull_requests_labels(
+                &ctx.state.pool,
+                repo.record.id,
+                &ids,
+            )
+            .await
+            .map_err(|_| unavailable(&ctx))?;
             let mut assignees = listed_assignees(&ctx, &ids, true).await?;
             let mut comments: HashMap<i64, i64> =
-                db::pull_requests::reviews::count_pull_request_comments_for(&ctx.state.pool, &ids)
-                    .await
-                    .map_err(|_| unavailable(&ctx))?
-                    .into_iter()
-                    .collect();
+                crate::backend::db::pull_requests::reviews::count_pull_request_comments_for(
+                    &ctx.state.pool,
+                    &ids,
+                )
+                .await
+                .map_err(|_| unavailable(&ctx))?
+                .into_iter()
+                .collect();
             let reviews =
-                db::pull_requests::reviews::list_pull_request_review_states(&ctx.state.pool, &ids)
-                    .await
-                    .map_err(|_| unavailable(&ctx))?;
-            let checks = db::ci::list_pull_request_check_statuses(&ctx.state.pool, &ids)
+                crate::backend::db::pull_requests::reviews::list_pull_request_review_states(
+                    &ctx.state.pool,
+                    &ids,
+                )
                 .await
                 .map_err(|_| unavailable(&ctx))?;
+            let checks =
+                crate::backend::db::ci::list_pull_request_check_statuses(&ctx.state.pool, &ids)
+                    .await
+                    .map_err(|_| unavailable(&ctx))?;
             let mut heads = HashMap::new();
             for value in pulls {
                 let author = value.author.username;
@@ -658,12 +735,13 @@ async fn issue_choices(
     if kind != Kind::Issue || !repo.view.can_write {
         return Ok(view::IssueChoices::default());
     }
-    let assignable = db::assignees::list_assignable_usernames(&ctx.state.pool, repo.record.id)
-        .await
-        .map_err(|_| unavailable(ctx))?;
+    let assignable =
+        crate::backend::db::assignees::list_assignable_usernames(&ctx.state.pool, repo.record.id)
+            .await
+            .map_err(|_| unavailable(ctx))?;
     // Labels are applied by administrators, as on the issue page, so writers are not offered them.
     let labels = if repo.view.can_admin {
-        db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
+        crate::backend::db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
             .await
             .map_err(|_| unavailable(ctx))?
             .into_iter()
@@ -672,12 +750,13 @@ async fn issue_choices(
     } else {
         Vec::new()
     };
-    let milestones = db::milestones::list_milestone_choices(&ctx.state.pool, repo.record.id)
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .into_iter()
-        .map(milestone_choice_view)
-        .collect();
+    let milestones =
+        crate::backend::db::milestones::list_milestone_choices(&ctx.state.pool, repo.record.id)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .into_iter()
+            .map(milestone_choice_view)
+            .collect();
     Ok(view::IssueChoices {
         assignable,
         labels,
@@ -691,12 +770,13 @@ fn issue_choices_valid(
     draft: &view::NewDraft,
     choices: &view::IssueChoices,
 ) -> Result<(), &'static str> {
-    let assignees_ok = (draft.assignees.len() as i64) <= db::assignees::MAX_ASSIGNEES
+    let assignees_ok = (draft.assignees.len() as i64)
+        <= crate::backend::db::assignees::MAX_ASSIGNEES
         && draft
             .assignees
             .iter()
             .all(|name| choices.assignable.contains(name));
-    if draft.labels.len() > db::labels::MAX_ISSUE_LABELS {
+    if draft.labels.len() > crate::backend::db::labels::MAX_ISSUE_LABELS {
         return Err("Choose at most 100 labels.");
     }
     let labels_ok = draft.labels.iter().all(|id| {
@@ -804,7 +884,7 @@ fn apply_issue_template(
             .assignees
             .iter()
             .filter(|name| choices.assignable.contains(name))
-            .take(db::assignees::MAX_ASSIGNEES as usize)
+            .take(crate::backend::db::assignees::MAX_ASSIGNEES as usize)
             .cloned()
             .collect();
     }
@@ -1049,9 +1129,9 @@ pub(crate) async fn native_create(
     let validation = (if compare_only && draft.title.is_empty() {
         Ok(())
     } else {
-        crate::backend::issues::validate_title(&draft.title)
+        codeyard_model::issue_input::validate_title(&draft.title)
     })
-    .and_then(|_| crate::backend::issues::validate_body(&draft.body, false))
+    .and_then(|_| codeyard_model::issue_input::validate_body(&draft.body, false))
     .and_then(|_| issue_choices_valid(&draft, &choices))
     .and_then(|_| {
         if kind == Kind::Pull
@@ -1138,8 +1218,11 @@ pub(crate) async fn native_create(
             let mut names = draft.assignees.clone();
             names.sort_unstable();
             names.dedup();
-            let users = match db::users::accounts::get_users_by_usernames(&ctx.state.pool, &names)
-                .await
+            let users = match crate::backend::db::users::accounts::get_users_by_usernames(
+                &ctx.state.pool,
+                &names,
+            )
+            .await
             {
                 Ok(users) => users,
                 Err(error) => {
@@ -1179,7 +1262,7 @@ pub(crate) async fn native_create(
                     parent_issue_id: None,
                     parent_repository_id: None,
                 },
-                db::issues::OwnedIssueMetadata {
+                crate::backend::db::issues::OwnedIssueMetadata {
                     labels,
                     assignees,
                     milestone: draft.milestone.parse().ok(),
@@ -1232,7 +1315,8 @@ pub(crate) async fn native_create(
 
 #[cfg(test)]
 mod tests {
-    use super::{check_state, review_state};
+    use crate::backend::api::repos::issues::collection::check_state;
+    use crate::backend::api::repos::issues::collection::review_state;
 
     #[test]
     fn markdown_template_identity_survives_preview_and_refused_submissions() {

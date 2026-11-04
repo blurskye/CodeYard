@@ -2,15 +2,16 @@
 pub(super) mod installations;
 mod manifests;
 mod webhooks;
-use super::{api_url, Error, Result};
-use crate::backend::api::http::session;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use codeyard_model::urls::api_url;
+
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::db::oauth_apps::Application;
-use crate::backend::identity::admission;
-use crate::backend::identity::oauth_apps as oauth;
-use crate::backend::identity::tokens::token_hash;
-use crate::backend::webhooks::payloads;
+
+use codeyard_support::token_hash::token_hash;
+
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -128,28 +129,30 @@ pub(super) async fn application(
     let credentials = crate::backend::api::http::credentials::basic(headers)
         .filter(|(client, _)| client == id)
         .map(|(_, secret)| secret);
-    let app = oauth::client(&state.pool, id)
+    let app = crate::backend::identity::oauth_apps::client(&state.pool, id)
         .await
         .map_err(Error::unavailable)?;
     if let (Some(app), Some(secret)) = (app, credentials) {
-        if oauth::valid_secret(&app, &secret) {
+        if crate::backend::identity::oauth_apps::valid_secret(&app, &secret) {
             return Ok(app);
         }
     }
-    match admission::admit_login(
+    match crate::backend::identity::admission::admit_login(
         &state.pool,
-        session::client_address(headers),
+        crate::backend::api::http::session::client_address(headers),
         None,
         &format!("oauth-client:{id}"),
     )
     .await
     {
         Ok(_) => Err(Error::new(StatusCode::UNAUTHORIZED, "Bad credentials")),
-        Err(admission::AdmissionError::Limited) => Err(Error::new(
+        Err(crate::backend::identity::admission::AdmissionError::Limited) => Err(Error::new(
             StatusCode::TOO_MANY_REQUESTS,
             "Too many failed logins",
         )),
-        Err(admission::AdmissionError::Unavailable) => Err(Error::unavailable(())),
+        Err(crate::backend::identity::admission::AdmissionError::Unavailable) => {
+            Err(Error::unavailable(()))
+        }
     }
 }
 
@@ -161,11 +164,11 @@ fn access_token(body: &Value) -> Result<&str> {
 }
 
 async fn owned_token(state: &AppState, client: &str, hash: &str) -> Result<PersonalAccessToken> {
-    let token = db::oauth_apps::owned_token(&state.pool, client, hash)
+    let token = crate::backend::db::oauth_apps::owned_token(&state.pool, client, hash)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    db::users::tokens::token_user(&state.pool, token.id, false)
+    crate::backend::db::users::tokens::token_user(&state.pool, token.id, false)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -182,23 +185,24 @@ struct Authorization {
 }
 
 async fn authorization(state: &AppState, token: &PersonalAccessToken) -> Result<Authorization> {
-    let metadata = db::oauth_apps::token(&state.pool, token.id)
+    let metadata = crate::backend::db::oauth_apps::token(&state.pool, token.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let user = db::users::tokens::token_user(&state.pool, token.id, false)
+    let user = crate::backend::db::users::tokens::token_user(&state.pool, token.id, false)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let bounds = db::github_apps::token(&state.pool, token.id)
+    let bounds = crate::backend::db::github_apps::token(&state.pool, token.id)
         .await
         .map_err(Error::unavailable)?
         .filter(|bounds| bounds.user_token);
     let mut installation = None;
     if let Some(bounds) = bounds {
-        if let Some(row) = db::github_apps::installation(&state.pool, bounds.installation_id)
-            .await
-            .map_err(Error::unavailable)?
+        if let Some(row) =
+            crate::backend::db::github_apps::installation(&state.pool, bounds.installation_id)
+                .await
+                .map_err(Error::unavailable)?
         {
             let selected: Vec<i64> =
                 serde_json::from_str(&bounds.repositories).map_err(Error::unavailable)?;
@@ -245,7 +249,7 @@ async fn check_token(
 ) -> Result<Json<Value>> {
     let app = application(&state, &headers, &id).await?;
     let value = access_token(&body)?;
-    let token = db::oauth_apps::owned_token(&state.pool, &id, &token_hash(value))
+    let token = crate::backend::db::oauth_apps::owned_token(&state.pool, &id, &token_hash(value))
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -265,7 +269,7 @@ async fn reset_token(
     // Everything the response shows is read first: once the hash rotates, the old token is
     // gone and the new one exists only in this response.
     let details = authorization(&state, &current).await?;
-    let value = if db::github_apps::app(&state.pool, &id)
+    let value = if crate::backend::db::github_apps::app(&state.pool, &id)
         .await
         .map_err(Error::unavailable)?
         .is_some()
@@ -274,11 +278,15 @@ async fn reset_token(
     } else {
         codeyard_support::crypto::random_hex()
     };
-    let token =
-        db::oauth_apps::reset_token(&state.pool, &id, &token_hash(old), &token_hash(&value))
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+    let token = crate::backend::db::oauth_apps::reset_token(
+        &state.pool,
+        &id,
+        &token_hash(old),
+        &token_hash(&value),
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .ok_or_else(Error::missing)?;
     Ok(Json(document(&app, &token, &value, &details)))
 }
 
@@ -289,9 +297,14 @@ async fn delete_token(
     Json(body): Json<Value>,
 ) -> Result<StatusCode> {
     application(&state, &headers, &id).await?;
-    db::oauth_apps::revoke(&state.pool, &id, &token_hash(access_token(&body)?), false)
-        .await
-        .map_err(Error::unavailable)?;
+    crate::backend::db::oauth_apps::revoke(
+        &state.pool,
+        &id,
+        &token_hash(access_token(&body)?),
+        false,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -302,8 +315,13 @@ async fn delete_authorization(
     Json(body): Json<Value>,
 ) -> Result<StatusCode> {
     application(&state, &headers, &id).await?;
-    db::oauth_apps::revoke(&state.pool, &id, &token_hash(access_token(&body)?), true)
-        .await
-        .map_err(Error::unavailable)?;
+    crate::backend::db::oauth_apps::revoke(
+        &state.pool,
+        &id,
+        &token_hash(access_token(&body)?),
+        true,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     Ok(StatusCode::NO_CONTENT)
 }

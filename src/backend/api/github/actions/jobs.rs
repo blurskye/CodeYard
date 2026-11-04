@@ -1,11 +1,11 @@
 //! Job and step reads use actual runner observations; no parsed YAML is presented as execution.
-use super::id;
-use crate::backend::{
-    api::github::{pagination::Pagination, repository, Error, Result},
-    app::AppState,
-    db::{self, action_jobs as jobs},
-    webhooks::payloads,
-};
+use crate::backend::api::github::actions::id;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -21,16 +21,18 @@ async fn document(
     state: &AppState,
     repo: &codeyard_db_core::models::Repository,
     owner: &str,
-    job: &jobs::Job,
+    job: &crate::backend::db::action_jobs::Job,
 ) -> Result<Value> {
-    let run = db::ci::get_ci_run_by_id(&state.pool, repo.id, job.run_id)
+    let run = crate::backend::db::ci::get_ci_run_by_id(&state.pool, repo.id, job.run_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let steps = jobs::steps(&state.pool, repo.id, job.id)
+    let steps = crate::backend::db::action_jobs::steps(&state.pool, repo.id, job.id)
         .await
         .map_err(Error::unavailable)?;
-    Ok(payloads::action_job(job, &steps, &run, owner, &repo.name))
+    Ok(crate::backend::webhooks::payloads::action_job(
+        job, &steps, &run, owner, &repo.name,
+    ))
 }
 async fn get_one(
     State(state): State<Arc<AppState>>,
@@ -38,7 +40,7 @@ async fn get_one(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let job = jobs::get(&state.pool, repo.id, id, false)
+    let job = crate::backend::db::action_jobs::get(&state.pool, repo.id, id, false)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -64,10 +66,11 @@ async fn list(
     } else {
         None
     };
-    let run = db::action_runs::get(&state.pool, repo.id, id(&params, "run_id")?, attempt)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let run =
+        crate::backend::db::action_runs::get(&state.pool, repo.id, id(&params, "run_id")?, attempt)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     let all = match filter.filter.as_deref().unwrap_or("latest") {
         "latest" => false,
         "all" if attempt.is_none() => true,
@@ -76,7 +79,7 @@ async fn list(
     };
     if !all
         && run.started_at.is_some()
-        && !jobs::observed(&state.pool, repo.id, run.id)
+        && !crate::backend::db::action_jobs::observed(&state.pool, repo.id, run.id)
             .await
             .map_err(Error::unavailable)?
     {
@@ -86,7 +89,7 @@ async fn list(
         ));
     }
     let (offset, limit) = page.window()?;
-    let result = jobs::list(
+    let result = crate::backend::db::action_jobs::list(
         &state.pool,
         repo.id,
         if all {
@@ -120,15 +123,20 @@ pub(in crate::backend::api::github) async fn annotations(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    jobs::get(&state.pool, repo.id, id, false)
+    crate::backend::db::action_jobs::get(&state.pool, repo.id, id, false)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let (offset, limit) = page.window()?;
-    let (total, annotations) =
-        jobs::annotations(&state.pool, repo.id, id, offset as i64, limit as i64)
-            .await
-            .map_err(Error::unavailable)?;
+    let (total, annotations) = crate::backend::db::action_jobs::annotations(
+        &state.pool,
+        repo.id,
+        id,
+        offset as i64,
+        limit as i64,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     let values: Vec<_> = annotations
         .into_iter()
         .map(|row| {

@@ -1,5 +1,7 @@
 use super::request;
-use crate::support::{database::Database, http_client::Client, organizations::applied};
+use crate::support::{
+    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+};
 use axum::{
     http::{HeaderMap, StatusCode},
     routing::post,
@@ -9,14 +11,13 @@ use base64::Engine as _;
 use codeyard::backend::api::create_router;
 use codeyard::backend::app::AppState;
 use codeyard::backend::ci::CiConfig;
-use codeyard::backend::crypto::SecretEncryptor;
+use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard::backend::db::organizations;
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::OrganizationProfile;
-use codeyard::backend::db::webhooks;
+
 use codeyard::backend::db::webhooks::HookOwner;
-use codeyard::backend::identity::tokens;
+
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard::backend::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
@@ -31,7 +32,9 @@ async fn records(
 ) -> Vec<codeyard_db_core::models::WebhookDelivery> {
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
-            let rows = webhooks::list_deliveries(f.pool(), hook).await.unwrap();
+            let rows = codeyard::backend::db::webhooks::list_deliveries(f.pool(), hook)
+                .await
+                .unwrap();
             if rows.len() >= count {
                 return rows;
             }
@@ -49,7 +52,7 @@ async fn contract(pg: bool) {
     let admin = f.actor("delegated").await;
     let outsider = f.actor("outsider").await;
     let org = applied(
-        organizations::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -59,13 +62,19 @@ async fn contract(pg: bool) {
     );
     for (user, role) in [(member, OrgRole::Member), (admin, OrgRole::Admin)] {
         applied(
-            organizations::add_organization_member(f.pool(), owner, org.id, user, role)
-                .await
-                .unwrap(),
+            codeyard::backend::db::organizations::add_organization_member(
+                f.pool(),
+                owner,
+                org.id,
+                user,
+                role,
+            )
+            .await
+            .unwrap(),
         );
     }
     applied(
-        organizations::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("other", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -92,7 +101,7 @@ async fn contract(pg: bool) {
         (outsider, "write"),
     ] {
         let client = Client::login(&router, f.pool(), user).await;
-        let token = tokens::create(
+        let token = codeyard::backend::identity::tokens::create(
             f.pool(),
             user,
             Some(&client.session),
@@ -220,10 +229,14 @@ async fn contract(pg: bool) {
     assert!(!body.to_string().contains("http-password"));
     assert_eq!(body["config"]["username"], "receiver");
     assert_eq!(body["config"]["password"], "********");
-    let stored = webhooks::get_webhook(f.pool(), HookOwner::Organization(org.id), hook)
-        .await
-        .unwrap()
-        .unwrap();
+    let stored = codeyard::backend::db::webhooks::get_webhook(
+        f.pool(),
+        HookOwner::Organization(org.id),
+        hook,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(
         key.decrypt(
             stored.encrypted_secret.as_ref().unwrap(),
@@ -440,10 +453,14 @@ async fn contract(pg: bool) {
     assert_eq!(body["events"], json!(["issues", "push"]));
     assert_eq!(body["config"]["url"], url);
     // A full update without `config` keeps the stored secret.
-    let stored = webhooks::get_webhook(f.pool(), HookOwner::Organization(org.id), hook)
-        .await
-        .unwrap()
-        .unwrap();
+    let stored = codeyard::backend::db::webhooks::get_webhook(
+        f.pool(),
+        HookOwner::Organization(org.id),
+        hook,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(
         key.decrypt(
             stored.encrypted_secret.as_ref().unwrap(),
@@ -464,10 +481,14 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(body["url"], url);
     assert_eq!(body["secret"], "********");
-    let stored = webhooks::get_webhook(f.pool(), HookOwner::Organization(org.id), hook)
-        .await
-        .unwrap()
-        .unwrap();
+    let stored = codeyard::backend::db::webhooks::get_webhook(
+        f.pool(),
+        HookOwner::Organization(org.id),
+        hook,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(
         key.decrypt(
             stored.encrypted_secret.as_ref().unwrap(),
@@ -583,10 +604,14 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-    let stored = webhooks::get_webhook(f.pool(), HookOwner::Organization(org.id), hook)
-        .await
-        .unwrap()
-        .unwrap();
+    let stored = codeyard::backend::db::webhooks::get_webhook(
+        f.pool(),
+        HookOwner::Organization(org.id),
+        hook,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert!(stored.encrypted_secret.is_none());
     assert!(stored.secret_nonce.is_none());
     assert_eq!(
@@ -619,10 +644,14 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-    let stored = webhooks::get_webhook(f.pool(), HookOwner::Organization(org.id), hook)
-        .await
-        .unwrap()
-        .unwrap();
+    let stored = codeyard::backend::db::webhooks::get_webhook(
+        f.pool(),
+        HookOwner::Organization(org.id),
+        hook,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert!(stored.username.is_none());
     assert!(stored.encrypted_password.is_none());
     assert!(stored.password_nonce.is_none());
@@ -664,10 +693,14 @@ async fn contract(pg: bool) {
         200,
     )
     .await;
-    let stored = webhooks::get_webhook(f.pool(), HookOwner::Organization(org.id), hook)
-        .await
-        .unwrap()
-        .unwrap();
+    let stored = codeyard::backend::db::webhooks::get_webhook(
+        f.pool(),
+        HookOwner::Organization(org.id),
+        hook,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert!(stored.encrypted_secret.is_none());
     assert!(stored.secret_nonce.is_none());
     // A full update with `config` replaces the configuration, so an omitted secret is cleared.
@@ -691,10 +724,14 @@ async fn contract(pg: bool) {
         200,
     )
     .await;
-    let stored = webhooks::get_webhook(f.pool(), HookOwner::Organization(org.id), hook)
-        .await
-        .unwrap()
-        .unwrap();
+    let stored = codeyard::backend::db::webhooks::get_webhook(
+        f.pool(),
+        HookOwner::Organization(org.id),
+        hook,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert!(stored.encrypted_secret.is_none());
     request(
         &router,
@@ -746,10 +783,12 @@ async fn contract(pg: bool) {
         404,
     )
     .await;
-    assert!(webhooks::list_deliveries(f.pool(), hook)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        codeyard::backend::db::webhooks::list_deliveries(f.pool(), hook)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     request(
         &router,
         "orgs/delete-webhook",

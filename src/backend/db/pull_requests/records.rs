@@ -1,5 +1,6 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::discussions::{ListFilter, StateCounts};
+use crate::backend::db::discussions::ListFilter;
+use crate::backend::db::discussions::StateCounts;
 use anyhow::Result;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::native_operation;
@@ -75,7 +76,7 @@ pub fn can_grant_maintainer_edit(
 }
 
 pub(crate) fn retarget_dismisses_reviews(patterns: &[String], branch: &str) -> Result<bool> {
-    let mut budget = crate::backend::ci::workflows::WorkflowMatchBudget::new();
+    let mut budget = codeyard_model::workflow_glob::WorkflowMatchBudget::new();
     for pattern in patterns {
         if crate::backend::db::repositories::protection::branch_pattern_matches(
             pattern,

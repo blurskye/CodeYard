@@ -21,7 +21,7 @@ pub(super) fn contains(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::contains;
+    use crate::backend::db::sqlite::search::contains;
 
     #[test]
     fn search_text_is_a_literal_case_insensitive_pattern() {

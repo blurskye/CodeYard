@@ -44,7 +44,7 @@ native_operation!(crate::backend::db::postgres::backups::is_empty,
     fn is_empty(pool: &DbPool) -> Result<bool>);
 
 pub async fn sqlite_snapshot_repositories(path: &std::path::Path) -> Result<Vec<Repository>> {
-    super::sqlite::backups::snapshot_repositories(path).await
+    crate::backend::db::sqlite::backups::snapshot_repositories(path).await
 }
 
 /// Keep the exporting transaction alive until pg_dump has imported and read its snapshot.
@@ -56,7 +56,9 @@ pub async fn postgres_snapshot(
     Vec<Repository>,
 )> {
     match pool {
-        DbPool::Postgres(pool) => super::postgres::backups::export_snapshot(pool).await,
+        DbPool::Postgres(pool) => {
+            crate::backend::db::postgres::backups::export_snapshot(pool).await
+        }
         DbPool::Sqlite(_) => bail!("only PostgreSQL exports snapshots"),
     }
 }

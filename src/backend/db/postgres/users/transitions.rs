@@ -1,6 +1,9 @@
-use crate::backend::db::users::transitions::{
-    AccountAdmission, AdministratorActor, BanChange, EmailChange, RoleChange, SetupClaim,
-};
+use crate::backend::db::users::transitions::AccountAdmission;
+use crate::backend::db::users::transitions::AdministratorActor;
+use crate::backend::db::users::transitions::BanChange;
+use crate::backend::db::users::transitions::EmailChange;
+use crate::backend::db::users::transitions::RoleChange;
+use crate::backend::db::users::transitions::SetupClaim;
 use sqlx::PgPool;
 // Atomic identity transitions. No provider, filesystem or KDF work under locks.
 use anyhow::Result;

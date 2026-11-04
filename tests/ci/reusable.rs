@@ -258,7 +258,7 @@ jobs:
             }
         };
         for policy in policies {
-            let policy: codeyard::backend::ci::tokens::Permissions =
+            let policy: codeyard_model::permissions::Permissions =
                 serde_json::from_str(&policy).unwrap();
             assert!(policy.allows("contents", false));
             assert!(!policy.allows("contents", true));

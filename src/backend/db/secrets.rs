@@ -1,8 +1,9 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::crypto::{SecretEncryptor, SecretError};
 use codeyard_db_core::models::RepoSecretMeta;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
+use codeyard_support::secrets::SecretEncryptor;
+use codeyard_support::secrets::SecretError;
 
 // One bounded sample per encryption domain, from one database snapshot.
 pub(crate) const ENCRYPTION_SAMPLES_SQL: &str = "
@@ -187,7 +188,7 @@ pub async fn create_or_update_secret(
     name: &str,
     value: &str,
     created_by_id: Option<i64>,
-    credential: &super::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     create_or_update_secret_for(
         pool,
@@ -208,7 +209,7 @@ pub async fn create_or_update_secret_for(
     name: &str,
     value: &str,
     created_by_id: Option<i64>,
-    credential: &super::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     // Secret names are case-insensitive, as on GitHub, so every writer stores them uppercase.
     let name = &name.to_ascii_uppercase();
@@ -254,7 +255,7 @@ pub async fn delete_secret(
     actor_id: i64,
     repo_id: i64,
     name: &str,
-    credential: &super::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     // An upgrade keeps an old lowercase name whose uppercase form was taken, so the exact name
     // is deleted first.
@@ -288,7 +289,7 @@ native_operation!(crate::backend::db::postgres::secrets::repository_secret_key,
     encryptor: &SecretEncryptor,
     actor_id: i64,
     repo_id: i64,
-    credential: &super::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<(String, crypto_box::SecretKey), SecretsError>);
 
 native_operation!(crate::backend::db::postgres::secrets::list_secrets,
@@ -302,7 +303,7 @@ native_operation!(crate::backend::db::postgres::secrets::list_secrets,
 
 native_operation!(crate::backend::db::postgres::secrets::delete_secret,
     crate::backend::db::sqlite::secrets::delete_secret,
-    fn delete_secret_for(pool: &DbPool, kind: SecretKind, actor_id: i64, repo_id: i64, name: &str, credential: &super::users::accounts::AccountCredential<'_>) -> Result<bool, SecretsError>);
+    fn delete_secret_for(pool: &DbPool, kind: SecretKind, actor_id: i64, repo_id: i64, name: &str, credential: &crate::backend::db::users::accounts::AccountCredential<'_>) -> Result<bool, SecretsError>);
 
 // A claim with no encryption key must not silently omit configured secrets.
 native_operation!(crate::backend::db::postgres::secrets::repository_has_secrets,

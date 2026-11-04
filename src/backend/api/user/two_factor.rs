@@ -3,13 +3,17 @@
 
 use crate::backend::api::auth::errors::two_factor_failure;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::user::profile::{load_settings, settings_response};
-use crate::backend::api::user::responses::{
-    field, mutation_guard, public_api_message, require_account, Fields,
-};
+use crate::backend::api::user::profile::load_settings;
+use crate::backend::api::user::profile::settings_response;
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::public_api_message;
+use crate::backend::api::user::responses::require_account;
+use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
-use crate::backend::crypto::SecretEncryptor;
-use crate::backend::identity::two_factor::{self, TwoFactorError};
+use codeyard_support::secrets::SecretEncryptor;
+
+use crate::backend::identity::two_factor::TwoFactorError;
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -84,7 +88,7 @@ pub(crate) async fn setup_post(
     };
     let setup = match encryptor(&ctx) {
         Ok(key) => {
-            two_factor::begin_setup(
+            crate::backend::identity::two_factor::begin_setup(
                 &ctx.state.pool,
                 key,
                 &user,
@@ -143,7 +147,7 @@ pub(crate) async fn enable_post(
     let token = field(&form, "setup");
     let confirmed = match encryptor(&ctx) {
         Ok(key) => {
-            two_factor::confirm_setup(
+            crate::backend::identity::two_factor::confirm_setup(
                 &ctx.state.pool,
                 key,
                 &user,
@@ -175,13 +179,13 @@ pub(crate) async fn enable_post(
         // A wrong code keeps the same secret on the page, so the app can be tried again.
         Err(TwoFactorError::InvalidCode) => {
             let reopened = match encryptor(&ctx) {
-                Ok(key) => two_factor::open_setup(
+                Ok(key) => crate::backend::identity::two_factor::open_setup(
                     key,
                     &user,
                     &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                         .unwrap_or_default(),
                     token,
-                    two_factor::now_unix(),
+                    crate::backend::identity::two_factor::now_unix(),
                 ),
                 Err(error) => Err(error),
             };
@@ -232,7 +236,7 @@ pub(crate) async fn recovery_codes_post(
         Ok(model) => model,
         Err(response) => return response,
     };
-    match two_factor::regenerate_recovery_codes(
+    match crate::backend::identity::two_factor::regenerate_recovery_codes(
         &ctx.state.pool,
         &user,
         &crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
@@ -275,7 +279,7 @@ pub(crate) async fn disable_post(
         Ok(user) => user.clone(),
         Err(response) => return response,
     };
-    match two_factor::disable(
+    match crate::backend::identity::two_factor::disable(
         &ctx.state.pool,
         &user,
         &crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),

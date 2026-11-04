@@ -1,13 +1,14 @@
-use super::{auth, issues, pagination::Pagination, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        assignees::AssignedItem,
-        discussion_search::{Collection, Relation, Search, Sort},
-    },
-    webhooks::payloads,
-};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::assignees::AssignedItem;
+use crate::backend::db::discussion_search::Collection;
+use crate::backend::db::discussion_search::Relation;
+use crate::backend::db::discussion_search::Search;
+use crate::backend::db::discussion_search::Sort;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, Uri},
@@ -32,12 +33,12 @@ async fn run(
     uri: Uri,
     organization: Option<String>,
 ) -> Result<Response> {
-    let auth = auth::authenticate(&state, &headers, true)
+    let auth = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     let viewer = auth.user.id;
     if let Some(name) = &organization {
-        db::organizations::get_public_organization(&state.pool, name)
+        crate::backend::db::organizations::get_public_organization(&state.pool, name)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -115,7 +116,7 @@ async fn run(
     .map_err(Error::invalid)?
     .with_classic_policy(Some(auth.token.id));
     let (offset, limit) = page.window()?;
-    let result = db::discussion_search::search(
+    let result = crate::backend::db::discussion_search::search(
         &state.pool,
         Some(viewer),
         &filter,
@@ -133,16 +134,24 @@ async fn run(
         .collect::<Vec<_>>();
     ids.sort_unstable();
     ids.dedup();
-    let readable = auth::readable_repositories(&state, Some(&auth), &ids, "issues").await?;
-    let repos = db::repositories::records::get_repositories_by_ids(&state.pool, &ids)
-        .await
-        .map_err(Error::unavailable)?
-        .into_iter()
-        .map(|repo| (repo.id, repo))
-        .collect::<HashMap<_, _>>();
-    let owners = db::repositories::records::repository_owner_names(&state.pool, &ids)
-        .await
-        .map_err(Error::unavailable)?;
+    let readable = crate::backend::api::github::auth::readable_repositories(
+        &state,
+        Some(&auth),
+        &ids,
+        "issues",
+    )
+    .await?;
+    let repos =
+        crate::backend::db::repositories::records::get_repositories_by_ids(&state.pool, &ids)
+            .await
+            .map_err(Error::unavailable)?
+            .into_iter()
+            .map(|repo| (repo.id, repo))
+            .collect::<HashMap<_, _>>();
+    let owners =
+        crate::backend::db::repositories::records::repository_owner_names(&state.pool, &ids)
+            .await
+            .map_err(Error::unavailable)?;
     let mut items = Vec::new();
     for (id, repo_id, pull_request, _) in result.items {
         if !readable.contains(&repo_id) {
@@ -157,15 +166,15 @@ async fn run(
         } else {
             AssignedItem::Issue(id)
         };
-        let mut value = issues::document(
+        let mut value = crate::backend::api::github::issues::document(
             &state.pool,
-            issues::Reader::Request(&state, Some(&auth)),
+            crate::backend::api::github::issues::Reader::Request(&state, Some(&auth)),
             repo,
             owner,
             item,
         )
         .await?;
-        value["repository"] = payloads::repository(repo, owner);
+        value["repository"] = crate::backend::webhooks::payloads::repository(repo, owner);
         items.push(value);
     }
     page.response(&uri, items, offset + limit < result.total as usize)

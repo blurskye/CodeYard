@@ -1,9 +1,10 @@
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_optional_user;
-use crate::backend::api::repos::access::{access_error, readable_repository};
+use crate::backend::api::repos::access::access_error;
+use crate::backend::api::repos::access::readable_repository;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::repositories::access::{self, AccessError};
+
+use crate::backend::repositories::access::AccessError;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
@@ -29,21 +30,27 @@ pub async fn get_repo_permissions(
     // is not reported as writable.
     let (can_write, can_admin, role) = if let Some(user) = current_user {
         let unavailable = || access_error(AccessError::Unavailable);
-        let can_write = access::can_write(&state.pool, &user, &repository)
-            .await
-            .map_err(|_| unavailable())?;
-        let can_admin = access::can_admin(&state.pool, &user, &repository)
-            .await
-            .map_err(|_| unavailable())?;
+        let can_write =
+            crate::backend::repositories::access::can_write(&state.pool, &user, &repository)
+                .await
+                .map_err(|_| unavailable())?;
+        let can_admin =
+            crate::backend::repositories::access::can_admin(&state.pool, &user, &repository)
+                .await
+                .map_err(|_| unavailable())?;
         let role = if user.is_admin && repository.owner_kind == "user" {
             "admin"
         } else if repository.is_personal_owner(user.id) {
             "owner"
         } else {
-            db::repositories::access::get_user_repo_access(&state.pool, user.id, repository.id)
-                .await
-                .map_err(|_| unavailable())?
-                .as_str()
+            crate::backend::db::repositories::access::get_user_repo_access(
+                &state.pool,
+                user.id,
+                repository.id,
+            )
+            .await
+            .map_err(|_| unavailable())?
+            .as_str()
         };
         (can_write, can_admin, role.to_string())
     } else {

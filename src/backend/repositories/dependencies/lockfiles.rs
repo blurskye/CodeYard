@@ -1,5 +1,6 @@
 //! Read resolved versions without invoking package managers or following external files.
-use super::npm::{MAX_LOCK_BYTES, MAX_PACKAGES};
+use crate::backend::repositories::dependencies::npm::MAX_LOCK_BYTES;
+use crate::backend::repositories::dependencies::npm::MAX_PACKAGES;
 use anyhow::{ensure, Context, Result};
 use codeyard_model::repositories::Package;
 use serde_json::Value;
@@ -30,7 +31,7 @@ fn add(
     version: &str,
 ) -> Result<()> {
     let name = if ecosystem == "pypi" {
-        crate::backend::vulnerabilities::python_name(name)
+        codeyard_model::vulnerabilities::python_name(name)
     } else if ecosystem == "nuget" {
         name.to_ascii_lowercase()
     } else {
@@ -39,7 +40,7 @@ fn add(
     ensure!(
         !name.is_empty()
             && name.len() <= 512
-            && version.len() <= crate::backend::db::dependency_inventory::MAX_VERSION_BYTES
+            && version.len() <= codeyard_model::dependency_inventory::MAX_VERSION_BYTES
             && !version.is_empty(),
         "Invalid locked dependency"
     );

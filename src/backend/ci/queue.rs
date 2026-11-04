@@ -1,10 +1,11 @@
 //! One CI queue, reached through the database or a paired core node.
-use super::{config::RunLimits, CiConfig, CiExecutionMode};
-use crate::backend::cluster;
-use crate::backend::cluster::rpc;
+use crate::backend::ci::config::RunLimits;
+use crate::backend::ci::CiConfig;
+use crate::backend::ci::CiExecutionMode;
+
 use crate::backend::cluster::NodeContext;
-use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db;
+use codeyard_support::secrets::SecretEncryptor;
+
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::store::repo_store;
 use crate::backend::repositories::store::RepoStore;
@@ -35,14 +36,16 @@ pub struct PullRequestEvent {
 /// The variables a run sees: its repository's, then inherited organization values that the
 /// repository does not set. Admission and claiming both read them, so they agree.
 pub(super) async fn run_variables(pool: &DbPool, repo: i64) -> Result<Vec<(String, String)>> {
-    let variables = db::variables::for_run(pool, repo).await?;
-    db::variables::validate_all(&variables)?;
+    let variables = crate::backend::db::variables::for_run(pool, repo).await?;
+    crate::backend::db::variables::validate_all(&variables)?;
     let mut variables: std::collections::BTreeMap<_, _> = variables.into_iter().collect();
     let mut bytes: usize = variables
         .iter()
         .map(|(name, value)| name.len() + value.len())
         .sum();
-    for (name, value) in db::organization_values::variables_for_run(pool, repo).await? {
+    for (name, value) in
+        crate::backend::db::organization_values::variables_for_run(pool, repo).await?
+    {
         if variables.contains_key(&name) {
             continue;
         }
@@ -86,18 +89,18 @@ pub struct ClaimedRun {
     #[serde(default)]
     pub variables: Vec<(String, String)>,
     #[serde(default)]
-    pub environment_values: super::environment_values::EnvironmentValues,
+    pub environment_values: crate::backend::ci::environment_values::EnvironmentValues,
     #[serde(default)]
     pub pull_request: Option<PullRequestEvent>,
-    pub storage_peer: Option<cluster::CorePeer>,
+    pub storage_peer: Option<crate::backend::cluster::CorePeer>,
     #[serde(default)]
-    pub storage_replicas: Vec<(i64, cluster::CorePeer)>,
+    pub storage_replicas: Vec<(i64, crate::backend::cluster::CorePeer)>,
     #[serde(default)]
     pub limits: RunLimits,
     #[serde(default)]
-    pub runtime: super::runtime::RuntimeCredentials,
+    pub runtime: crate::backend::ci::runtime::RuntimeCredentials,
     #[serde(default)]
-    pub github_tokens: super::tokens::GithubTokens,
+    pub github_tokens: crate::backend::ci::tokens::GithubTokens,
     // Used only by a database worker; never sent to a remote worker.
     #[serde(skip)]
     pub(crate) store: Option<RepoStore>,
@@ -114,59 +117,9 @@ pub enum RunQueue {
     },
     Remote {
         context: NodeContext,
-        peers: Vec<cluster::CorePeer>,
+        peers: Vec<crate::backend::cluster::CorePeer>,
         preferred: Arc<std::sync::Mutex<Option<String>>>,
     },
-}
-
-/// Replaces each control byte except tab, CR and LF with `?`. PostgreSQL cannot store NUL.
-/// A replacement keeps the byte length, so the batch limits and the worker's byte count
-/// match what is stored.
-fn printable_log_text(text: &str) -> String {
-    text.chars()
-        .map(|c| match c {
-            '\t' | '\r' | '\n' => c,
-            c if c.is_ascii_control() => '?',
-            c => c,
-        })
-        .collect()
-}
-
-pub(crate) fn prepare_logs(lines: &[LogLine]) -> Result<Vec<LogLine>> {
-    ensure!(
-        !lines.is_empty() && lines.len() <= 64,
-        "CI log batch exceeds ingestion limits"
-    );
-    // PostgreSQL text cannot store NUL. Count the printable bytes on both engines.
-    let lines: Vec<_> = lines
-        .iter()
-        .map(|line| LogLine {
-            stage: printable_log_text(&line.stage),
-            line: printable_log_text(&line.line),
-            level: line.level.clone(),
-            job_id: line.job_id,
-            step_number: line.step_number,
-        })
-        .collect();
-    ensure!(
-        lines.iter().all(|line| line.stage.len() <= 255
-            && line.line.len() <= 16 * 1024
-            && matches!(line.level.as_str(), "info" | "warn" | "error" | "debug")
-            && line.job_id.is_none_or(|id| id > 0)
-            && line
-                .step_number
-                .is_none_or(|number| line.job_id.is_some() && (1..=10000).contains(&number))),
-        "CI log input exceeds ingestion limits"
-    );
-    ensure!(
-        lines
-            .iter()
-            .map(|line| line.line.len() + line.stage.len())
-            .sum::<usize>()
-            <= 256 * 1024,
-        "CI log batch exceeds ingestion limits"
-    );
-    Ok(lines)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -232,7 +185,7 @@ pub(crate) const CORE_UNAVAILABLE: &str = "core node unavailable";
 
 impl RunQueue {
     /// The service a database queue sends workflow webhooks through.
-    fn events(&self) -> Option<super::CiRuns> {
+    fn events(&self) -> Option<crate::backend::ci::CiRuns> {
         let Self::Database {
             pool,
             config,
@@ -243,7 +196,7 @@ impl RunQueue {
         else {
             return None;
         };
-        Some(super::CiRuns::new(
+        Some(crate::backend::ci::CiRuns::new(
             pool.clone(),
             config.clone(),
             Arc::new(tokio::sync::Notify::new()),
@@ -269,7 +222,8 @@ impl RunQueue {
         else {
             return Ok(());
         };
-        let (finished, created, jobs) = db::ci::fail_stale_ci_runs(pool, stale_seconds).await?;
+        let (finished, created, jobs) =
+            crate::backend::db::ci::fail_stale_ci_runs(pool, stale_seconds).await?;
         notifications.send_created(&created).await;
         if let Some(ci) = self.events() {
             for (run, job) in jobs {
@@ -329,10 +283,12 @@ impl RunQueue {
             .context("the run has no commit")?;
         if let Err(error) = store.checkout(destination, sha).await {
             if let Self::Database { pool, context, .. } = self {
-                let repository =
-                    db::repositories::records::get_repository_by_id(pool, claim.run.repo_id)
-                        .await?
-                        .context("the repository no longer exists")?;
+                let repository = crate::backend::db::repositories::records::get_repository_by_id(
+                    pool,
+                    claim.run.repo_id,
+                )
+                .await?
+                .context("the repository no longer exists")?;
                 store = repo_store(&repository, context.as_ref()).for_ci_run(
                     claim.run.id,
                     claim
@@ -350,7 +306,7 @@ impl RunQueue {
                 let local_worker = worker
                     .strip_prefix(&format!("{}/", context.key.public_hex()))
                     .context("the CI run belongs to another worker")?;
-                let (node, peer): (i64, cluster::CorePeer) = self
+                let (node, peer): (i64, crate::backend::cluster::CorePeer) = self
                     .call(
                         local_worker,
                         Operation::Storage {
@@ -399,7 +355,9 @@ impl RunQueue {
         // futures that await a claim stay small, and so do the stack frames that poll them.
         let prepare = Box::pin(self.claim_prepared(worker, mode, platforms, stop));
         match self {
-            Self::Database { pool, .. } => db::ci::prepare_claim(pool, worker, prepare).await,
+            Self::Database { pool, .. } => {
+                crate::backend::db::ci::prepare_claim(pool, worker, prepare).await
+            }
             Self::Remote { .. } => prepare.await,
         }
     }
@@ -435,7 +393,7 @@ impl RunQueue {
                     // Cluster worker ids start with the node's public key, then `/`.
                     Some(_) => {
                         let node_key = worker.split_once('/').map_or(worker, |(key, _)| key);
-                        db::ci::claim_ci_run_on_node(
+                        crate::backend::db::ci::claim_ci_run_on_node(
                             pool,
                             node_key,
                             worker,
@@ -447,8 +405,14 @@ impl RunQueue {
                     }
                     // A database without cluster membership has no node rows to check.
                     None => {
-                        db::ci::claim_ci_run(pool, worker, mode.as_str(), &trusted, platforms)
-                            .await?
+                        crate::backend::db::ci::claim_ci_run(
+                            pool,
+                            worker,
+                            mode.as_str(),
+                            &trusted,
+                            platforms,
+                        )
+                        .await?
                     }
                 };
                 let Some(mut run) = claimed else {
@@ -458,15 +422,19 @@ impl RunQueue {
                 let run_id = run.id;
                 let loaded = async {
                     let repository =
-                        db::repositories::records::get_repository_by_id(pool, run.repo_id)
-                            .await?
-                            .context("the repository no longer exists")?;
-                    let uuid = rpc::repository_uuid(&repository.disk_path)?;
-                    let owner = db::ci::ci_repository_owner(pool, run.repo_id)
+                        crate::backend::db::repositories::records::get_repository_by_id(
+                            pool,
+                            run.repo_id,
+                        )
+                        .await?
+                        .context("the repository no longer exists")?;
+                    let uuid =
+                        crate::backend::cluster::rpc::repository_uuid(&repository.disk_path)?;
+                    let owner = crate::backend::db::ci::ci_repository_owner(pool, run.repo_id)
                         .await?
                         .unwrap_or_default();
                     let actor = match run.triggered_by_id {
-                        Some(id) => db::users::accounts::get_user_by_id(pool, id)
+                        Some(id) => crate::backend::db::users::accounts::get_user_by_id(pool, id)
                             .await?
                             .map(|user| user.username)
                             .unwrap_or_default(),
@@ -474,20 +442,23 @@ impl RunQueue {
                     };
                     let original_actor =
                         if let Some(root) = run.workflow_run_id.filter(|root| *root != run.id) {
-                            let source = db::ci::get_ci_run_by_id(pool, run.repo_id, root)
-                                .await?
-                                .context("original workflow run is unavailable")?;
-                            Some(match source.triggered_by_id {
-                                Some(id) => db::users::accounts::get_user_by_id(pool, id)
+                            let source =
+                                crate::backend::db::ci::get_ci_run_by_id(pool, run.repo_id, root)
                                     .await?
-                                    .map(|user| RunActor {
-                                        id: user.id,
-                                        login: user.username,
-                                    })
-                                    .unwrap_or(RunActor {
-                                        id: 0,
-                                        login: "ghost".into(),
-                                    }),
+                                    .context("original workflow run is unavailable")?;
+                            Some(match source.triggered_by_id {
+                                Some(id) => {
+                                    crate::backend::db::users::accounts::get_user_by_id(pool, id)
+                                        .await?
+                                        .map(|user| RunActor {
+                                            id: user.id,
+                                            login: user.username,
+                                        })
+                                        .unwrap_or(RunActor {
+                                            id: 0,
+                                            login: "ghost".into(),
+                                        })
+                                }
                                 None => RunActor {
                                     id: 0,
                                     login: "ghost".into(),
@@ -499,7 +470,7 @@ impl RunQueue {
                                 login: actor.clone(),
                             })
                         };
-                    let options = db::ci::ci_run_options(pool, run.id)
+                    let options = crate::backend::db::ci::ci_run_options(pool, run.id)
                         .await?
                         .unwrap_or_default();
                     let pull_request = run
@@ -510,18 +481,20 @@ impl RunQueue {
                     let secrets_encryptor = secrets.as_deref();
                     let secrets = match secrets {
                         Some(encryptor) if !run.is_fork => {
-                            let mut values = db::organization_values::secrets_for_run(
-                                pool,
-                                encryptor,
-                                run.repo_id,
-                            )
-                            .await?;
-                            let repository = db::secrets::decrypt_repository_secrets(
-                                pool,
-                                encryptor,
-                                run.repo_id,
-                            )
-                            .await?;
+                            let mut values =
+                                crate::backend::db::organization_values::secrets_for_run(
+                                    pool,
+                                    encryptor,
+                                    run.repo_id,
+                                )
+                                .await?;
+                            let repository =
+                                crate::backend::db::secrets::decrypt_repository_secrets(
+                                    pool,
+                                    encryptor,
+                                    run.repo_id,
+                                )
+                                .await?;
                             let names: std::collections::BTreeSet<_> = repository
                                 .iter()
                                 .map(|(name, _)| name.to_ascii_uppercase())
@@ -532,11 +505,15 @@ impl RunQueue {
                         }
                         None if !run.is_fork => {
                             ensure!(
-                                !db::secrets::repository_has_secrets(pool, run.repo_id).await?
-                                    && db::organization_values::workflow_values(
+                                !crate::backend::db::secrets::repository_has_secrets(
+                                    pool,
+                                    run.repo_id
+                                )
+                                .await?
+                                    && crate::backend::db::organization_values::workflow_values(
                                         pool,
                                         run.repo_id,
-                                        db::organization_values::Kind::Secret
+                                        crate::backend::db::organization_values::Kind::Secret
                                     )
                                     .await?
                                     .is_empty(),
@@ -548,9 +525,9 @@ impl RunQueue {
                     };
                     // The whole set goes out in one RPC reply and into one secret file, so it
                     // is bounded before the run is handed out.
-                    db::secrets::validate_workflow_secrets(&secrets)?;
+                    crate::backend::db::secrets::validate_workflow_secrets(&secrets)?;
                     let variables = run_variables(pool, run.repo_id).await?;
-                    db::variables::validate_workflow_variables(&variables)?;
+                    crate::backend::db::variables::validate_workflow_variables(&variables)?;
                     let primary = repository
                         .storage_node_id
                         .or_else(|| context.as_ref().map(|c| c.node_id));
@@ -567,8 +544,9 @@ impl RunQueue {
                             );
                         }
                         for id in candidates {
-                            let Some(node) =
-                                db::cluster::get_node_by_id(pool, id).await?.filter(|node| {
+                            let Some(node) = crate::backend::db::cluster::get_node_by_id(pool, id)
+                                .await?
+                                .filter(|node| {
                                     node.status == "active"
                                         && node.roles.iter().any(|role| role == "storage")
                                 })
@@ -584,7 +562,7 @@ impl RunQueue {
                             };
                             targets.push((
                                 id,
-                                cluster::CorePeer {
+                                crate::backend::cluster::CorePeer {
                                     target: None,
                                     public_key: node.public_key,
                                     address,
@@ -609,16 +587,20 @@ impl RunQueue {
                         .as_object()
                         .context("the run has no workflow files")?
                     {
-                        let bytes = if let Some(content) = super::reusable::content(sha) {
+                        let bytes = if let Some(content) =
+                            crate::backend::ci::reusable::content(sha)
+                        {
                             let called_id = sha
                                 .get("repository_id")
                                 .and_then(serde_json::Value::as_i64)
                                 .context("invalid called workflow repository")?;
                             let called =
-                                db::repositories::records::get_repository_by_id(pool, called_id)
-                                    .await?
-                                    .context("called workflow repository unavailable")?;
-                            super::reusable::authorize(
+                                crate::backend::db::repositories::records::get_repository_by_id(
+                                    pool, called_id,
+                                )
+                                .await?
+                                .context("called workflow repository unavailable")?;
+                            crate::backend::ci::reusable::authorize(
                                 pool,
                                 &repository,
                                 run.triggered_by_id.context("run has no actor")?,
@@ -633,16 +615,16 @@ impl RunQueue {
                         };
                         definitions.insert(path.clone(), bytes);
                     }
-                    let environment_values = super::environment_values::load(
+                    let environment_values = crate::backend::ci::environment_values::load(
                         pool,
                         secrets_encryptor,
                         &run,
                         &definitions,
                     )
                     .await?;
-                    let site = db::actions::get_actions_settings(pool).await?;
+                    let site = crate::backend::db::actions::get_actions_settings(pool).await?;
                     run.engine = Some(
-                        db::actions::record_ci_engine(
+                        crate::backend::db::actions::record_ci_engine(
                             pool,
                             run.id,
                             worker,
@@ -651,12 +633,12 @@ impl RunQueue {
                         .await?,
                     );
                     let (repo_policy, org_policy) =
-                        db::action_settings::effective(pool, run.repo_id).await?;
-                    let github_tokens = super::tokens::issue_selected(
+                        crate::backend::db::action_settings::effective(pool, run.repo_id).await?;
+                    let github_tokens = crate::backend::ci::tokens::issue_selected(
                         pool,
                         &run,
                         &definitions,
-                        db::action_settings::workflow_write(
+                        crate::backend::db::action_settings::workflow_write(
                             &repo_policy,
                             &org_policy,
                             site.default_workflow_permissions == "permissive",
@@ -664,14 +646,14 @@ impl RunQueue {
                         options.replay.as_ref().map(|replay| &replay.0),
                     )
                     .await?;
-                    let runtime = super::runtime::issue(pool, &run, &site).await?;
+                    let runtime = crate::backend::ci::runtime::issue(pool, &run, &site).await?;
                     if run.engine.as_deref() == Some("codeyard-actions") {
                         for workflow in run.workflow_path.split(',') {
-                            db::action_jobs::save_state(
+                            crate::backend::db::action_jobs::save_state(
                                 pool,
                                 worker,
                                 run.id,
-                                &super::runtime::token_hash(&runtime.token),
+                                &crate::backend::ci::runtime::token_hash(&runtime.token),
                                 workflow,
                                 &Default::default(),
                             )
@@ -680,7 +662,8 @@ impl RunQueue {
                     }
                     let limits = RunLimits::new(
                         &site,
-                        &db::actions::get_repo_actions_settings(pool, run.repo_id).await?,
+                        &crate::backend::db::actions::get_repo_actions_settings(pool, run.repo_id)
+                            .await?,
                     );
                     let store = Some(store);
                     Ok::<_, anyhow::Error>(ClaimedRun {
@@ -692,7 +675,7 @@ impl RunQueue {
                         owner,
                         actor,
                         original_actor,
-                        forge_origin: crate::backend::api::http::config::link_origin(),
+                        forge_origin: codeyard_model::http_config::link_origin(),
                         replay: options.replay.map(|data| data.0),
                         debug: options.debug,
                         secrets,
@@ -762,8 +745,10 @@ impl RunQueue {
         match self {
             Self::Database { pool, .. } => {
                 use codeyard_actions::progress::Update;
-                let job =
-                    db::action_jobs::apply(pool, worker, id, generation, workflow, event).await?;
+                let job = crate::backend::db::action_jobs::apply(
+                    pool, worker, id, generation, workflow, event,
+                )
+                .await?;
                 let action = match event.update {
                     Update::Queued { .. } => Some("queued"),
                     Update::Started => Some("in_progress"),
@@ -803,7 +788,10 @@ impl RunQueue {
         state.validate()?;
         match self {
             Self::Database { pool, .. } => {
-                db::action_jobs::save_state(pool, worker, id, generation, workflow, state).await
+                crate::backend::db::action_jobs::save_state(
+                    pool, worker, id, generation, workflow, state,
+                )
+                .await
             }
             Self::Remote { .. } => {
                 self.call(
@@ -833,7 +821,8 @@ impl RunQueue {
     ) -> Result<Option<bool>> {
         match self {
             Self::Database { pool, .. } => {
-                db::action_jobs::admit(pool, worker, id, generation, workflow, job).await
+                crate::backend::db::action_jobs::admit(pool, worker, id, generation, workflow, job)
+                    .await
             }
             Self::Remote { .. } => {
                 self.call(
@@ -854,7 +843,9 @@ impl RunQueue {
     pub async fn finish_job(&self, worker: &str, id: i64, job: &str) -> Result<()> {
         ensure!(job.len() <= 1024, "invalid job id");
         match self {
-            Self::Database { pool, .. } => db::ci_tokens::finish_job(pool, id, worker, job).await,
+            Self::Database { pool, .. } => {
+                crate::backend::db::ci_tokens::finish_job(pool, id, worker, job).await
+            }
             Self::Remote { .. } => {
                 self.call(
                     worker,
@@ -873,7 +864,7 @@ impl RunQueue {
         match self {
             Self::Database { pool, context, .. } => match context {
                 Some(_) => {
-                    db::ci::heartbeat_ci_run_on_node(
+                    crate::backend::db::ci::heartbeat_ci_run_on_node(
                         pool,
                         id,
                         worker,
@@ -881,7 +872,7 @@ impl RunQueue {
                     )
                     .await
                 }
-                None => db::ci::heartbeat_ci_run(pool, id, worker).await,
+                None => crate::backend::db::ci::heartbeat_ci_run(pool, id, worker).await,
             },
             Self::Remote { .. } => self.call(worker, Operation::Heartbeat { id }, None).await,
         }
@@ -898,7 +889,7 @@ impl RunQueue {
         let lines = prepare_logs(lines)?;
         match self {
             Self::Database { pool, .. } => {
-                db::ci::append_ci_logs(pool, id, worker, sequence, &lines).await
+                crate::backend::db::ci::append_ci_logs(pool, id, worker, sequence, &lines).await
             }
             Self::Remote { .. } => {
                 self.call(
@@ -936,7 +927,9 @@ impl RunQueue {
                 notifications,
                 ..
             } => {
-                let finished = db::ci::finish_ci_run(pool, id, worker, status, message).await?;
+                let finished =
+                    crate::backend::db::ci::finish_ci_run(pool, id, worker, status, message)
+                        .await?;
                 if let Some((run, created, jobs)) = &finished {
                     notifications.send_created(created).await;
                     if let Some(ci) = self.events() {
@@ -998,7 +991,13 @@ impl RunQueue {
             // ends only the dial: once the request is written, its reply is awaited below.
             let dial = async {
                 let address = peer.resolved_address().await?;
-                cluster::dial_node(&context.iroh, node, &address, cluster::ALPN_EVENTS).await
+                crate::backend::cluster::dial_node(
+                    &context.iroh,
+                    node,
+                    &address,
+                    crate::backend::cluster::ALPN_EVENTS,
+                )
+                .await
             };
             let dialed = match stop.as_deref_mut() {
                 Some(stop) => {
@@ -1024,10 +1023,19 @@ impl RunQueue {
                 continue;
             };
             let result = tokio::time::timeout(std::time::Duration::from_secs(100), async {
-                rpc::write_frame(&mut link.writer, &header, rpc::MAX_JSON + 64 * 1024).await?;
+                crate::backend::cluster::rpc::write_frame(
+                    &mut link.writer,
+                    &header,
+                    codeyard_db_core::limits::MAX_JSON + 64 * 1024,
+                )
+                .await?;
                 link.finish().await?;
                 let reply: Reply = serde_json::from_slice(
-                    &rpc::read_frame(&mut link.reader, rpc::MAX_JSON).await?,
+                    &crate::backend::cluster::rpc::read_frame(
+                        &mut link.reader,
+                        codeyard_db_core::limits::MAX_JSON,
+                    )
+                    .await?,
                 )?;
                 Ok::<_, anyhow::Error>(reply)
             })
@@ -1057,3 +1065,5 @@ impl RunQueue {
         Err(last)
     }
 }
+
+use codeyard_db_core::ci_logs::prepare_logs;

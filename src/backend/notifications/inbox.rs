@@ -1,7 +1,6 @@
-use super::NotificationBroadcaster;
-use super::NotificationEvent;
-use crate::backend::db;
-use crate::backend::db::notifications::records;
+use crate::backend::notifications::NotificationBroadcaster;
+use crate::backend::notifications::NotificationEvent;
+
 use crate::backend::db::notifications::records::NotificationInbox;
 use crate::backend::db::notifications::records::NotificationInboxAction;
 #[derive(Debug, thiserror::Error)]
@@ -23,7 +22,7 @@ pub async fn inbox(
     with_credential(
         pool,
         broadcaster,
-        records::NotificationCredential::Session(session_id),
+        crate::backend::db::notifications::records::NotificationCredential::Session(session_id),
         user_id,
         action,
     )
@@ -41,7 +40,7 @@ pub async fn token_inbox(
     with_credential(
         pool,
         broadcaster,
-        records::NotificationCredential::Token(token_id),
+        crate::backend::db::notifications::records::NotificationCredential::Token(token_id),
         user_id,
         action,
     )
@@ -50,7 +49,7 @@ pub async fn token_inbox(
 async fn with_credential(
     pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
-    credential: records::NotificationCredential<'_>,
+    credential: crate::backend::db::notifications::records::NotificationCredential<'_>,
     user_id: i64,
     action: NotificationInboxAction,
 ) -> Result<NotificationInbox, InboxError> {
@@ -66,15 +65,17 @@ async fn with_credential(
     ) || matches!(
         &action,
         NotificationInboxAction::Threads(
-            db::notifications::threads::ThreadAction::Read(_)
-                | db::notifications::threads::ThreadAction::Done(_)
-                | db::notifications::threads::ThreadAction::ReadAll { .. }
+            crate::backend::db::notifications::threads::ThreadAction::Read(_)
+                | crate::backend::db::notifications::threads::ThreadAction::Done(_)
+                | crate::backend::db::notifications::threads::ThreadAction::ReadAll { .. }
         )
     );
-    let result = records::notification_inbox_with_credential(pool, credential, user_id, action)
-        .await
-        .map_err(|_| InboxError::Unavailable)?
-        .ok_or(InboxError::Denied)?;
+    let result = crate::backend::db::notifications::records::notification_inbox_with_credential(
+        pool, credential, user_id, action,
+    )
+    .await
+    .map_err(|_| InboxError::Unavailable)?
+    .ok_or(InboxError::Denied)?;
     match read {
         Some(Some(notification_id)) if !result.notifications.is_empty() => {
             broadcaster

@@ -1,12 +1,12 @@
-use super::{auth, issues, pagination::Pagination, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        suggestions::{ListFilter, Refusal},
-    },
-    webhooks::payloads,
-};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::suggestions::ListFilter;
+use crate::backend::db::suggestions::Refusal;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -19,7 +19,7 @@ use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 pub(super) fn error(error: anyhow::Error) -> Error {
-    match db::suggestions::refusal(&error) {
+    match crate::backend::db::suggestions::refusal(&error) {
         Some(Refusal::Missing) => Error::missing(),
         Some(Refusal::Denied) => Error::new(StatusCode::FORBIDDEN, error.to_string()),
         Some(_) => Error::invalid(error.to_string()),
@@ -44,13 +44,18 @@ async fn list(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
-    let auth = auth.ok_or_else(auth::required)?;
-    let issue = issues::required_issue(&state.pool, repo.id, &p["issue_number"]).await?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
+    let issue = crate::backend::api::github::issues::required_issue(
+        &state.pool,
+        repo.id,
+        &p["issue_number"],
+    )
+    .await?;
     let (offset, limit) = page.window()?;
     let (mut scanned, mut accepted) = (0_i64, 0_usize);
     let mut rows = Vec::new();
     while rows.len() <= limit {
-        let batch = db::suggestions::list(
+        let batch = crate::backend::db::suggestions::list(
             &state.pool,
             repo.id,
             auth.user.id,
@@ -73,13 +78,20 @@ async fn list(
             .filter(|row| row.action == "close_issue")
             .filter_map(|row| row.target_id)
             .collect();
-        let targets: HashMap<_, _> = db::issues::issue_repositories(&state.pool, &targets)
-            .await
-            .map_err(Error::unavailable)?
-            .into_iter()
-            .collect();
+        let targets: HashMap<_, _> =
+            crate::backend::db::issues::issue_repositories(&state.pool, &targets)
+                .await
+                .map_err(Error::unavailable)?
+                .into_iter()
+                .collect();
         let repos: Vec<_> = targets.values().copied().collect();
-        let readable = auth::readable_repositories(&state, Some(&auth), &repos, "issues").await?;
+        let readable = crate::backend::api::github::auth::readable_repositories(
+            &state,
+            Some(&auth),
+            &repos,
+            "issues",
+        )
+        .await?;
         for row in batch {
             if row.action == "close_issue"
                 && row
@@ -104,7 +116,7 @@ async fn list(
     let values = rows
         .iter()
         .take(limit)
-        .map(payloads::issue_suggestion)
+        .map(crate::backend::webhooks::payloads::issue_suggestion)
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(Error::unavailable)?;
     page.response(&uri, values, next)
@@ -116,9 +128,14 @@ async fn resolve(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let authentication = auth.ok_or_else(auth::required)?;
+    let authentication = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = &authentication.user;
-    let issue = issues::required_issue(&state.pool, repo.id, &p["issue_number"]).await?;
+    let issue = crate::backend::api::github::issues::required_issue(
+        &state.pool,
+        repo.id,
+        &p["issue_number"],
+    )
+    .await?;
     let id = p["suggestion_id"].parse().map_err(|_| Error::missing())?;
     let row = crate::backend::issues::suggestions::resolve(
         &state.pool,
@@ -132,7 +149,7 @@ async fn resolve(
     .await
     .map_err(error)?;
     Ok(Json(
-        payloads::issue_suggestion(&row).map_err(Error::unavailable)?,
+        crate::backend::webhooks::payloads::issue_suggestion(&row).map_err(Error::unavailable)?,
     ))
 }
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

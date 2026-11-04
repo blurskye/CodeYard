@@ -3,12 +3,15 @@
 
 use crate::backend::api::auth::errors::database_failure;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::{ApiError, ApiFailure};
-use crate::backend::api::http::session;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::ApiFailure;
+
 use crate::backend::api::user::profile::settings_result;
-use crate::backend::api::user::responses::{field, mutation_guard, Fields};
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -50,10 +53,14 @@ pub(crate) async fn load_sessions(
     current: Option<&str>,
     before: i64,
 ) -> Result<SessionListing, ApiFailure> {
-    let mut sessions =
-        db::users::sessions::session_page(pool, user_id, current.unwrap_or_default(), before)
-            .await
-            .map_err(session_failure)?;
+    let mut sessions = crate::backend::db::users::sessions::session_page(
+        pool,
+        user_id,
+        current.unwrap_or_default(),
+        before,
+    )
+    .await
+    .map_err(session_failure)?;
     let more = sessions.len() > 100;
     sessions.truncate(100);
     let pagination = SessionPagination {
@@ -118,12 +125,13 @@ async fn revoke_one(
     key: &str,
     before: i64,
 ) -> Result<bool, ApiFailure> {
-    let Some(current) = session::extract_session_id(&ctx.headers) else {
+    let Some(current) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return Ok(false);
     };
-    let sessions = db::users::sessions::session_page(&ctx.state.pool, actor, &current, before)
-        .await
-        .map_err(session_failure)?;
+    let sessions =
+        crate::backend::db::users::sessions::session_page(&ctx.state.pool, actor, &current, before)
+            .await
+            .map_err(session_failure)?;
     let Some(target) = sessions
         .into_iter()
         .take(100)
@@ -131,9 +139,14 @@ async fn revoke_one(
     else {
         return Ok(false);
     };
-    db::users::sessions::revoke_user_session(&ctx.state.pool, actor, &target.session.id, &current)
-        .await
-        .map_err(|_| database_failure())
+    crate::backend::db::users::sessions::revoke_user_session(
+        &ctx.state.pool,
+        actor,
+        &target.session.id,
+        &current,
+    )
+    .await
+    .map_err(|_| database_failure())
 }
 
 pub(crate) async fn revoke_others_post(
@@ -154,13 +167,15 @@ pub(crate) async fn revoke_others_post(
         .as_ref()
         .expect("mutation guard checked account")
         .id;
-    let result = match session::extract_session_id(&ctx.headers) {
-        Some(keep) => {
-            db::users::sessions::revoke_other_user_sessions(&ctx.state.pool, actor, &keep)
-                .await
-                .map(|_| ())
-                .map_err(|_| database_failure())
-        }
+    let result = match crate::backend::api::http::session::extract_session_id(&ctx.headers) {
+        Some(keep) => crate::backend::db::users::sessions::revoke_other_user_sessions(
+            &ctx.state.pool,
+            actor,
+            &keep,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|_| database_failure()),
         None => Err(not_found()),
     };
     settings_result(&ctx, "sessions", &form, result, "sessions-revoked").await

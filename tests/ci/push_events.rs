@@ -315,7 +315,10 @@ async fn contract(pg: bool) {
             })
             .await
             .unwrap();
-        assert_eq!(run.branch, codeyard::backend::ci::branch_name(&reference));
+        assert_eq!(
+            run.branch,
+            codeyard_db_core::ci_messages::branch_name(&reference)
+        );
         let again = service.rerun_run(run.run_id, actor, None).await.unwrap();
         assert_eq!(again.branch, run.branch);
         assert_eq!(again.head_sha, run.head_sha);

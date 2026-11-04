@@ -1,13 +1,19 @@
 //! Repository-list selections use the same Git files and catalogues as native pages.
-use super::{
-    connection, db, missing, repository, unavailable, url, user, Arguments, RequestContext, Result,
-    Value,
-};
-use crate::backend::repositories::{
-    issue_templates,
-    store::{repo_store, RepoStore},
-    templates,
-};
+
+use crate::backend::api::graphql::db;
+use crate::backend::api::graphql::missing;
+
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::url;
+
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
+
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::RepoStore;
+
 use async_graphql::Error;
 use serde_json::json;
 
@@ -109,9 +115,12 @@ pub(super) async fn resolve(
             ))
         }
         "isBlankIssuesEnabled" | "issueTemplates" => {
-            let files = issue_templates::issue_templates(&store, &repo.default_branch)
-                .await
-                .map_err(unavailable)?;
+            let files = crate::backend::repositories::issue_templates::issue_templates(
+                &store,
+                &repo.default_branch,
+            )
+            .await
+            .map_err(unavailable)?;
             Ok(if field == "isBlankIssuesEnabled" {
                 json!(files.blank_allowed)
             } else {
@@ -127,7 +136,7 @@ pub(super) async fn resolve(
             let files = texts(
                 &store,
                 &repo.default_branch,
-                &issue_templates::PULL_REQUEST_TEMPLATE_PATHS,
+                &crate::backend::repositories::issue_templates::PULL_REQUEST_TEMPLATE_PATHS,
             )
             .await?;
             Ok(json!(files
@@ -146,7 +155,7 @@ pub(super) async fn resolve(
             if field == "isSecurityPolicyEnabled" {
                 return Ok(json!(!files.is_empty()));
             }
-            let owner = repository::owner(repo, request).await?;
+            let owner = crate::backend::api::graphql::repository::owner(repo, request).await?;
             Ok(json!(files.first().map(|(path, _)| url(
                 &codeyard_webui::pages::repos::ref_path::branch_url(
                     &format!("/{}/{}", owner, repo.name),
@@ -195,7 +204,7 @@ pub(super) async fn resolve(
                 ],
             )
             .await?;
-            let owner = repository::owner(repo, request).await?;
+            let owner = crate::backend::api::graphql::repository::owner(repo, request).await?;
             Ok(files.first().map(|(path, text)| {
                 let covenant = crate::backend::repositories::community::contributor_covenant(text);
                 json!({"key":if covenant { "contributor_covenant" } else { "other" },"name":if covenant { "Contributor Covenant" } else { "Other" },"url":url(&codeyard_webui::pages::repos::ref_path::branch_url(&format!("/{}/{}",owner,repo.name),"blob",&repo.default_branch,path))})
@@ -211,10 +220,10 @@ pub(super) async fn resolve(
                 .await
                 .map_err(unavailable)?;
             files.sort_by_key(|file| file.name.to_ascii_lowercase());
-            let Some(file) = files
-                .iter()
-                .find(|file| file.entry_type == "file" && templates::is_license_file(&file.name))
-            else {
+            let Some(file) = files.iter().find(|file| {
+                file.entry_type == "file"
+                    && crate::backend::repositories::templates::is_license_file(&file.name)
+            }) else {
                 return Ok(Value::Null);
             };
             let texts = store
@@ -222,7 +231,7 @@ pub(super) async fn resolve(
                 .await
                 .map_err(unavailable)?;
             Ok(texts.first().and_then(Option::as_ref).map(|(_, text)| {
-                templates::detect_license(text.as_bytes()).map(|template| json!({"key":template.name.to_lowercase(),"name":template.name,"nickname":Value::Null})).unwrap_or(json!({"key":"other","name":"Other","nickname":Value::Null}))
+                crate::backend::repositories::templates::detect_license(text.as_bytes()).map(|template| json!({"key":template.name.to_lowercase(),"name":template.name,"nickname":Value::Null})).unwrap_or(json!({"key":"other","name":"Other","nickname":Value::Null}))
             }).unwrap_or(Value::Null))
         }
         "languages" | "primaryLanguage" => {
@@ -258,7 +267,8 @@ pub(super) async fn resolve(
                 }
             }
             let total = languages.iter().map(|l| l.bytes).sum::<u64>();
-            let page = connection::Page::new(ctx, languages.len() as i64)?;
+            let page =
+                crate::backend::api::graphql::connection::Page::new(ctx, languages.len() as i64)?;
             let sizes: Vec<_> = languages
                 .iter()
                 .skip(page.offset as usize)
@@ -284,7 +294,7 @@ pub(super) async fn resolve(
             Ok(result)
         }
         "assignableUsers" | "mentionableUsers" => {
-            connection::validate(ctx)?;
+            crate::backend::api::graphql::connection::validate(ctx)?;
             let filter = ctx
                 .args
                 .get("query")
@@ -296,7 +306,7 @@ pub(super) async fn resolve(
             let total = db::assignees::count_assignable_users(pool, repo.id, &filter)
                 .await
                 .map_err(unavailable)?;
-            let page = connection::Page::new(ctx, total)?;
+            let page = crate::backend::api::graphql::connection::Page::new(ctx, total)?;
             let rows = if page.limit == 0 {
                 Vec::new()
             } else {
@@ -312,7 +322,7 @@ pub(super) async fn resolve(
             };
             Ok(page.finish(
                 rows.iter()
-                    .map(|user| user::object(user, actor.id))
+                    .map(|user| crate::backend::api::graphql::user::object(user, actor.id))
                     .collect(),
             ))
         }

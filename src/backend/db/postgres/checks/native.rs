@@ -1,8 +1,10 @@
 //! Native output and its original browser authority share one read snapshot.
-use super::{Annotation, Refusal, Run, Suite};
-use crate::backend::db::{
-    checks::PageSnapshot, postgres::repositories::access::USER_REPO_ACCESS_SQL,
-};
+use crate::backend::db::checks::PageSnapshot;
+use crate::backend::db::postgres::checks::Annotation;
+use crate::backend::db::postgres::checks::Refusal;
+use crate::backend::db::postgres::checks::Run;
+use crate::backend::db::postgres::checks::Suite;
+use crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL;
 use anyhow::{ensure, Result};
 use sqlx::{types::Json, PgPool};
 

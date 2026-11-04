@@ -1,6 +1,10 @@
 //! Core addresses and the dialing-only context for a worker with no database.
-use super::{load_or_create, parse_public_key, NodeAddress, NodeContext, Settings};
+use crate::backend::cluster::NodeAddress;
+use crate::backend::cluster::NodeContext;
+use crate::backend::cluster::Settings;
 use anyhow::{ensure, Context, Result};
+use codeyard_support::node_identity::load_or_create;
+use codeyard_support::node_identity::parse_public_key;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -57,8 +61,8 @@ async fn resolve(host: &str) -> Result<Vec<SocketAddr>> {
         .collect())
 }
 
-pub fn save_core(state_dir: &Path, ticket: &super::JoinTicket) -> Result<()> {
-    crate::backend::fs::private_dir(state_dir)?;
+pub fn save_core(state_dir: &Path, ticket: &crate::backend::cluster::JoinTicket) -> Result<()> {
+    codeyard_support::fs::private_dir(state_dir)?;
     let peer = CorePeer {
         public_key: ticket.node.to_string(),
         address: ticket.address.clone(),
@@ -132,7 +136,7 @@ pub async fn worker_context(
     // A join token joins every time: the saved address says a core was found, not that
     // this key is enrolled, and joining again with an enrolled key changes nothing.
     if let Some(ticket) = &settings.join_ticket {
-        let joined = super::join(
+        let joined = crate::backend::cluster::join(
             ticket,
             &key,
             &settings.relay,
@@ -170,7 +174,7 @@ pub async fn worker_context(
     Ok((
         NodeContext {
             pool: None,
-            iroh: super::IrohDialer::new(settings.relay.clone(), key.clone()),
+            iroh: crate::backend::cluster::IrohDialer::new(settings.relay.clone(), key.clone()),
             key,
             node_id: 0,
             repos_path: state_dir.to_owned(),
@@ -190,7 +194,7 @@ mod tests {
     async fn malformed_saved_core_does_not_override_configured_peers() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("cluster-peer.json"), b"{broken").unwrap();
-        let key = super::super::NodeKey::generate().public_hex();
+        let key = codeyard_support::node_identity::NodeKey::generate().public_hex();
         let settings = Settings::from_lookup(&|name| {
             (name == "CLUSTER_PEERS").then(|| format!("{key}@tcp://127.0.0.1:7444"))
         })
@@ -198,9 +202,11 @@ mod tests {
         .unwrap();
         let (_, peers) = worker_context(root.path(), settings).await.unwrap();
         assert_eq!(peers.len(), 1);
-        let ticket =
-            super::super::JoinTicket::new(peers[0].node().unwrap(), peers[0].address.clone())
-                .unwrap();
+        let ticket = crate::backend::cluster::JoinTicket::new(
+            peers[0].node().unwrap(),
+            peers[0].address.clone(),
+        )
+        .unwrap();
         save_core(root.path(), &ticket).unwrap();
         let peer: CorePeer =
             serde_json::from_slice(&std::fs::read(root.path().join("cluster-peer.json")).unwrap())
@@ -208,8 +214,8 @@ mod tests {
         assert_eq!(peer.address, ticket.address);
         // A replacement does not truncate a file that another reader has open.
         let held = std::fs::File::open(root.path().join("cluster-peer.json")).unwrap();
-        let replacement = super::super::JoinTicket::new(
-            super::super::NodeKey::generate().public_key(),
+        let replacement = crate::backend::cluster::JoinTicket::new(
+            codeyard_support::node_identity::NodeKey::generate().public_key(),
             ticket.address.clone(),
         )
         .unwrap();
@@ -228,7 +234,7 @@ mod tests {
     #[tokio::test]
     async fn one_failed_resolution_keeps_usable_configured_and_saved_cores() {
         let root = tempfile::tempdir().unwrap();
-        let key = super::super::NodeKey::generate().public_hex();
+        let key = codeyard_support::node_identity::NodeKey::generate().public_hex();
         let settings = Settings::from_lookup(&|name| {
             (name == "CLUSTER_PEERS")
                 .then(|| format!("{key}@missing-port,{key}@tcp://127.0.0.1:7444"))

@@ -1,9 +1,10 @@
 //! Organization Actions values and their repository visibility.
-use super::users::accounts::AccountCredential;
-use crate::backend::crypto::{SecretEncryptor, SecretError};
+use crate::backend::db::users::accounts::AccountCredential;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
+use codeyard_support::secrets::SecretEncryptor;
+use codeyard_support::secrets::SecretError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -124,7 +125,7 @@ native_operation!(crate::backend::db::postgres::organizations::action_values::de
     fn delete(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, org: i64, kind: Kind, name: &str) -> Result<(), ValueError>);
 native_operation!(crate::backend::db::postgres::organizations::action_values::repositories,
     crate::backend::db::sqlite::organizations::action_values::repositories,
-    fn repositories(pool: &DbPool, actor: i64, org: i64, kind: Kind, name: &str, offset: i64, limit: i64) -> Result<(i64, Vec<super::repository_stats::RepositorySnapshot>), ValueError>);
+    fn repositories(pool: &DbPool, actor: i64, org: i64, kind: Kind, name: &str, offset: i64, limit: i64) -> Result<(i64, Vec<crate::backend::db::repository_stats::RepositorySnapshot>), ValueError>);
 native_operation!(crate::backend::db::postgres::organizations::action_values::select,
     crate::backend::db::sqlite::organizations::action_values::select,
     fn select(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, org: i64, kind: Kind, name: &str, change: Selection<'_>) -> Result<(), ValueError>);

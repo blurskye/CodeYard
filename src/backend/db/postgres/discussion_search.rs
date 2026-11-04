@@ -1,4 +1,6 @@
-use crate::backend::db::discussion_search::{Results, Search, Sort};
+use crate::backend::db::discussion_search::Results;
+use crate::backend::db::discussion_search::Search;
+use crate::backend::db::discussion_search::Sort;
 use anyhow::Result;
 use sqlx::PgPool;
 
@@ -16,9 +18,13 @@ pub async fn search(
         "Invalid search window"
     );
     let statement = query
-        .statement(true, &super::repositories::access::readable_condition())
+        .statement(
+            true,
+            &crate::backend::db::postgres::repositories::access::readable_condition(),
+        )
         .map_err(anyhow::Error::msg)?;
-    let mut tx = super::repositories::discovery::search_connection(pool).await?;
+    let mut tx =
+        crate::backend::db::postgres::repositories::discovery::search_connection(pool).await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         .execute(&mut *tx)
         .await?;

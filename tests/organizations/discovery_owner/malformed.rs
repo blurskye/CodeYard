@@ -1,6 +1,6 @@
 use super::fixture::{Fixture, COLLISION, PRIVATE, USER};
 use axum::http::StatusCode;
-use codeyard::backend::db;
+
 use codeyard_webui::app::Page;
 
 const UNAVAILABLE: &str = "This page's data is temporarily unavailable. Please try again.";
@@ -64,17 +64,23 @@ pub async fn run(f: &Fixture) {
         let code = rejected.as_database_error().and_then(|error| error.code());
         assert!(matches!(code.as_deref(), Some("23514" | "275")));
         assert_eq!(
-            db::repositories::records::repository_owner_name(f.database.pool(), repo)
-                .await
-                .unwrap()
-                .as_deref(),
+            codeyard::backend::db::repositories::records::repository_owner_name(
+                f.database.pool(),
+                repo
+            )
+            .await
+            .unwrap()
+            .as_deref(),
             Some(USER)
         );
         f.database.corrupt_shape(repo, kind, user, org).await;
         assert_eq!(
-            db::repositories::records::repository_owner_name(f.database.pool(), repo)
-                .await
-                .unwrap(),
+            codeyard::backend::db::repositories::records::repository_owner_name(
+                f.database.pool(),
+                repo
+            )
+            .await
+            .unwrap(),
             None
         );
         for authenticated in [false, true] {
@@ -101,10 +107,13 @@ pub async fn run(f: &Fixture) {
         let code = rejected.as_database_error().and_then(|error| error.code());
         assert!(matches!(code.as_deref(), Some("23503" | "787")));
         assert_eq!(
-            db::repositories::records::repository_owner_name(f.database.pool(), repo)
-                .await
-                .unwrap()
-                .as_deref(),
+            codeyard::backend::db::repositories::records::repository_owner_name(
+                f.database.pool(),
+                repo
+            )
+            .await
+            .unwrap()
+            .as_deref(),
             Some(USER)
         );
     }
@@ -122,11 +131,11 @@ pub async fn run(f: &Fixture) {
         .await;
     // The repository matches again through its owner's name, which contains "discovery".
     assert_eq!(
-        db::repositories::discovery::search_repositories(
+        codeyard::backend::db::repositories::discovery::search_repositories(
             f.database.pool(),
             None,
             "discovery",
-            db::repositories::records::RepositorySort::Stars,
+            codeyard::backend::db::repositories::records::RepositorySort::Stars,
             0,
             50
         )

@@ -23,14 +23,16 @@ use sqlx::{PgConnection as Connection, PgPool as Pool, Postgres, Transaction};
 async fn authorize(c: &mut Transaction<'_, Postgres>, actor: i64, scope: Scope) -> Result<()> {
     match scope {
         Scope::Organization(org) => {
-            let role = super::organizations::authority::authority(c, actor, org).await?;
+            let role =
+                crate::backend::db::postgres::organizations::authority::authority(c, actor, org)
+                    .await?;
             anyhow::ensure!(
                 matches!(role,OrganizationOutcome::Applied(role) if administers(role)),
                 Refusal::Denied
             );
         }
         Scope::Repository(repo) => anyhow::ensure!(
-            super::discussions::lock_admin_authority(c, actor, repo).await?,
+            crate::backend::db::postgres::discussions::lock_admin_authority(c, actor, repo).await?,
             Refusal::Denied
         ),
     }
@@ -69,7 +71,7 @@ async fn stop_runners(
     group: Option<i64>,
 ) -> Result<()> {
     let ids:Vec<i64>=sqlx::query_scalar("SELECT c.id FROM ci_runs c WHERE c.status='running' AND EXISTS(SELECT 1 FROM action_runners a JOIN nodes n ON n.id=a.node_id WHERE c.worker LIKE n.public_key || '/%' AND (a.id=$1 OR a.group_id=$2))").bind(runner).bind(group).fetch_all(&mut **tx).await?;
-    super::ci::stop_ci_runs(tx, &ids).await
+    crate::backend::db::postgres::ci::stop_ci_runs(tx, &ids).await
 }
 pub async fn authorize_scope(pool: &Pool, actor: i64, scope: Scope) -> Result<()> {
     let mut tx = pool.begin().await?;
@@ -103,7 +105,9 @@ pub async fn list_groups(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let role = super::organizations::authority::read_authority(&mut tx, actor, org).await?;
+    let role =
+        crate::backend::db::postgres::organizations::authority::read_authority(&mut tx, actor, org)
+            .await?;
     anyhow::ensure!(
         matches!(role, OrganizationOutcome::Applied(role) if administers(role)),
         Refusal::Denied
@@ -306,7 +310,7 @@ pub async fn delete_group(pool: &Pool, actor: i64, org: i64, id: i64) -> Result<
     let default = default_group(&mut tx, org).await?;
     let queued: Vec<i64> = sqlx::query_scalar("SELECT c.id FROM ci_runs c JOIN repositories r ON r.id=c.repo_id WHERE c.status='queued' AND lower(c.runner_group)=lower($2) AND r.owner_kind='org' AND r.owner_org_id=$1")
         .bind(org).bind(&row.name).fetch_all(&mut *tx).await?;
-    super::ci::stop_ci_runs(&mut tx, &queued).await?;
+    crate::backend::db::postgres::ci::stop_ci_runs(&mut tx, &queued).await?;
     stop_runners(&mut tx, None, Some(id)).await?;
     sqlx::query("UPDATE action_runners SET group_id=$2 WHERE group_id=$1 AND org_id=$3")
         .bind(id)
@@ -341,7 +345,7 @@ pub async fn group_repositories(
     if !removed.is_empty() {
         let runs: Vec<i64> = sqlx::query_scalar("SELECT c.id FROM ci_runs c WHERE c.status='running' AND c.repo_id=ANY($2) AND EXISTS(SELECT 1 FROM action_runners a JOIN nodes n ON n.id=a.node_id WHERE a.group_id=$1 AND c.worker LIKE n.public_key || '/%')")
             .bind(id).bind(&removed).fetch_all(&mut *tx).await?;
-        super::ci::stop_ci_runs(&mut tx, &runs).await?;
+        crate::backend::db::postgres::ci::stop_ci_runs(&mut tx, &runs).await?;
     }
     tx.commit().await?;
     Ok(())
@@ -512,7 +516,8 @@ pub async fn registration(
     authorize(&mut tx, actor, scope).await?;
     if let Some(session) = input.session {
         anyhow::ensure!(
-            super::users::transitions::live_session(&mut tx, actor, session).await?,
+            crate::backend::db::postgres::users::transitions::live_session(&mut tx, actor, session)
+                .await?,
             Refusal::Denied
         );
     }

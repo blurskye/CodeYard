@@ -1,13 +1,16 @@
-use crate::backend::db::{
-    credentials::Actor,
-    oauth_apps::{
-        self, Application, ApplicationSummary, Exchange, Grant, Token, APPLICATIONS_SQL,
-        APPLICATION_PAGE_SIZE,
-    },
-};
-use crate::backend::identity::{oauth_apps as oauth, tokens::token_hash};
+use crate::backend::db::credentials::Actor;
+
+use crate::backend::db::oauth_apps::Application;
+use crate::backend::db::oauth_apps::ApplicationSummary;
+use crate::backend::db::oauth_apps::Exchange;
+use crate::backend::db::oauth_apps::Grant;
+use crate::backend::db::oauth_apps::Token;
+use crate::backend::db::oauth_apps::APPLICATIONS_SQL;
+use crate::backend::db::oauth_apps::APPLICATION_PAGE_SIZE;
+
 use anyhow::Result;
 use chrono::Utc;
+use codeyard_support::token_hash::token_hash;
 use sqlx::{PgConnection, PgPool};
 
 async fn lock_client_accounts(
@@ -20,9 +23,12 @@ async fn lock_client_accounts(
         .bind(client).fetch_all(&mut *connection).await?;
     accounts.extend(user);
     if exclusive {
-        super::users::transitions::lock_accounts(connection, &accounts).await
+        crate::backend::db::postgres::users::transitions::lock_accounts(connection, &accounts).await
     } else {
-        super::users::transitions::lock_accounts_shared(connection, &accounts).await
+        crate::backend::db::postgres::users::transitions::lock_accounts_shared(
+            connection, &accounts,
+        )
+        .await
     }
 }
 
@@ -49,7 +55,8 @@ pub async fn register(
     redirect_uri: &str,
 ) -> Result<Option<Application>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
+        .await?;
     sqlx::query("SELECT id FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password FOR UPDATE").bind(actor).fetch_optional(&mut *tx).await?;
     sqlx::query("SELECT id FROM sessions WHERE id=$1 AND user_id=$2 FOR SHARE")
         .bind(session)
@@ -65,7 +72,7 @@ pub async fn register(
 pub async fn application(pool: &PgPool, client_id: &str) -> Result<Option<Application>> {
     Ok(sqlx::query_as(&format!(
         "SELECT * FROM oauth_applications WHERE client_id=$1 AND {}",
-        oauth_apps::client_condition("$1")
+        crate::backend::db::oauth_apps::client_condition("$1")
     ))
     .bind(client_id)
     .fetch_optional(pool)
@@ -80,14 +87,20 @@ pub async fn applications(
 ) -> Result<Option<Vec<ApplicationSummary>>> {
     let actor = actor.into();
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_accounts_shared(&mut tx, &[actor.user_id]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(
+        &mut tx,
+        &[actor.user_id],
+    )
+    .await?;
     let active: Option<i64> = sqlx::query_scalar(
         "SELECT id FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password FOR SHARE",
     )
     .bind(actor.user_id)
     .fetch_optional(&mut *tx)
     .await?;
-    if active.is_none() || !super::credentials::live(&mut tx, &actor, false).await? {
+    if active.is_none()
+        || !crate::backend::db::postgres::credentials::live(&mut tx, &actor, false).await?
+    {
         return Ok(None);
     }
     let rows = sqlx::query_as(APPLICATIONS_SQL)
@@ -156,7 +169,7 @@ pub async fn exchange(
     lock_client_accounts(&mut tx, client_id, candidate, false).await?;
     let active: bool = sqlx::query_scalar(&format!(
         "SELECT $1=$2 OR {}",
-        oauth_apps::client_condition("$1")
+        crate::backend::db::oauth_apps::client_condition("$1")
     ))
     .bind(client_id)
     .bind(codeyard_model::identity::CLI_CLIENT)
@@ -190,7 +203,7 @@ pub async fn exchange(
     if grant.kind == "web"
         && (redirect_uri.is_some_and(|uri| uri != grant.redirect_uri)
             || state.is_some_and(|state| state != grant.state)
-            || !oauth::verify_challenge(&grant.challenge, verifier))
+            || !codeyard_model::oauth_apps::verify_challenge(&grant.challenge, verifier))
     {
         return Ok(Exchange::Invalid);
     }
@@ -223,7 +236,7 @@ pub async fn exchange(
         .fetch_optional(&mut *tx)
         .await?;
     let token_id: Option<i64> = sqlx::query_scalar("INSERT INTO personal_access_tokens(user_id,name,token_hash,scope) SELECT u.id,'OAuth: ' || $3,$4,CASE WHEN EXISTS(SELECT 1 FROM github_apps WHERE client_id=$3 AND access_level>=3) THEN 'write' ELSE $5 END FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND s.expires_at>clock_timestamp() RETURNING id")
-        .bind(actor).bind(&grant.session_id).bind(client_id).bind(token_hash(value)).bind(if oauth::write_scope(&grant.scopes) { "write" } else { "read" }).fetch_optional(&mut *tx).await?;
+        .bind(actor).bind(&grant.session_id).bind(client_id).bind(token_hash(value)).bind(if codeyard_model::oauth_apps::write_scope(&grant.scopes) { "write" } else { "read" }).fetch_optional(&mut *tx).await?;
     let Some(token_id) = token_id else {
         return Ok(Exchange::Denied);
     };
@@ -255,7 +268,7 @@ pub async fn owned_token(
     client: &str,
     hash: &str,
 ) -> Result<Option<codeyard_db_core::models::PersonalAccessToken>> {
-    let issuer = oauth_apps::token_issuer_condition("t", "$3");
+    let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "$3");
     Ok(sqlx::query_as(&format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer}"))
         .bind(client).bind(hash).bind(codeyard_model::identity::CLI_CLIENT).fetch_optional(pool).await?)
 }
@@ -271,7 +284,7 @@ pub async fn reset_token(
         .bind(client).bind(hash).fetch_optional(&mut *tx).await?;
     lock_client_accounts(&mut tx, client, user, false).await?;
     // A token from an app that is no longer available is not refreshed.
-    let issuer = oauth_apps::token_issuer_condition("t", "$3");
+    let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "$3");
     let old: Option<codeyard_db_core::models::PersonalAccessToken> = sqlx::query_as(&format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer} FOR UPDATE OF t"))
         .bind(client).bind(hash).bind(codeyard_model::identity::CLI_CLIENT).fetch_optional(&mut *tx).await?;
     let Some(old) = old else {
@@ -298,7 +311,7 @@ pub async fn revoke(pool: &PgPool, client: &str, hash: &str, authorization: bool
     lock_client_accounts(&mut tx, client, candidate, true).await?;
     let active: bool = sqlx::query_scalar(&format!(
         "SELECT $1=$2 OR {}",
-        oauth_apps::client_condition("$1")
+        crate::backend::db::oauth_apps::client_condition("$1")
     ))
     .bind(client)
     .bind(codeyard_model::identity::CLI_CLIENT)

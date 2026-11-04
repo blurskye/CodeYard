@@ -14,7 +14,7 @@ pub async fn window(pool: &PgPool, page: &Window<'_>) -> Result<Vec<Link>> {
         page.offset >= 0 && (1..=101).contains(&page.limit),
         Refusal::Invalid
     );
-    let readable = super::repositories::access::readable_condition();
+    let readable = crate::backend::db::postgres::repositories::access::readable_condition();
     let sql = window_sql(page, &readable, "$5::BIGINT[] IS NULL OR i.repo_id=ANY($5)");
     Ok(sqlx::query_as(&sql)
         .bind(page.viewer)
@@ -33,7 +33,7 @@ pub async fn repository_counts(
     root: i64,
     kind: Kind,
 ) -> Result<Vec<(i64, i64)>> {
-    let readable = super::repositories::access::readable_condition();
+    let readable = crate::backend::db::postgres::repositories::access::readable_condition();
     let sql = format!(
         "SELECT i.repo_id,COUNT(*) {} GROUP BY i.repo_id ORDER BY i.repo_id",
         related_sql(kind, &readable, "TRUE")
@@ -80,7 +80,10 @@ pub async fn change(
     mutation: Mutation,
     token: Option<i64>,
 ) -> Result<()> {
-    super::retry_on_conflict(|| change_once(pool, actor, repo, root, mutation, token)).await
+    crate::backend::db::postgres::retry_on_conflict(|| {
+        change_once(pool, actor, repo, root, mutation, token)
+    })
+    .await
 }
 async fn change_once(
     pool: &PgPool,
@@ -114,9 +117,9 @@ async fn authority(
     triage: bool,
 ) -> Result<bool> {
     if triage {
-        super::discussions::lock_triage_authority(tx, actor, repo).await
+        crate::backend::db::postgres::discussions::lock_triage_authority(tx, actor, repo).await
     } else {
-        super::discussions::lock_write_authority(tx, actor, repo).await
+        crate::backend::db::postgres::discussions::lock_write_authority(tx, actor, repo).await
     }
 }
 pub(crate) async fn change_in_transaction<'a>(
@@ -154,7 +157,7 @@ pub(crate) async fn change_in_transaction<'a>(
     if let Some(token) = token {
         for affected in [repo, target_repo] {
             anyhow::ensure!(
-                super::users::tokens::repository_write_on(
+                crate::backend::db::postgres::users::tokens::repository_write_on(
                     &mut tx, token, actor, affected, "issues"
                 )
                 .await?,
@@ -162,14 +165,15 @@ pub(crate) async fn change_in_transaction<'a>(
             );
         }
     }
-    let access = super::repositories::access::lock_user_repo_access_in_transaction(
-        &mut tx,
-        actor,
-        target_repo,
-        super::repositories::access::RepositoryRowLock::Shared,
-        true,
-    )
-    .await?;
+    let access =
+        crate::backend::db::postgres::repositories::access::lock_user_repo_access_in_transaction(
+            &mut tx,
+            actor,
+            target_repo,
+            crate::backend::db::postgres::repositories::access::RepositoryRowLock::Shared,
+            true,
+        )
+        .await?;
     anyhow::ensure!(
         access.is_some_and(|a| a.access.can_read() || (!a.organization && a.is_admin)),
         Refusal::Missing
@@ -236,7 +240,7 @@ pub(crate) async fn change_in_transaction<'a>(
                         anyhow::ensure!(replace, Refusal::HasParent);
                         if let Some(token) = token {
                             anyhow::ensure!(
-                                super::users::tokens::repository_write_on(
+                                crate::backend::db::postgres::users::tokens::repository_write_on(
                                     &mut tx, token, actor, old_repo, "issues"
                                 )
                                 .await?,

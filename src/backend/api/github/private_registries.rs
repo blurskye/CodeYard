@@ -1,8 +1,9 @@
-use super::{action_secrets, dependabot, pagination::Pagination, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{self, private_registries::RegistryError},
-};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::private_registries::RegistryError;
 use axum::{
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -22,7 +23,7 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
         ),
         (
             "private-registries/get-org-public-key",
-            get(dependabot::public_key),
+            get(crate::backend::api::github::dependabot::public_key),
         ),
         ("private-registries/get-org-private-registry", get(registry)),
         (
@@ -40,7 +41,7 @@ fn error(error: RegistryError) -> Error {
     match error {
         RegistryError::Missing => Error::missing(),
         RegistryError::Invalid(field) => Error::validation("PrivateRegistry", field, "invalid"),
-        RegistryError::Secret(error) => action_secrets::error(error),
+        RegistryError::Secret(error) => crate::backend::api::github::action_secrets::error(error),
         _ => Error::unavailable(error),
     }
 }
@@ -52,9 +53,11 @@ async fn list(
     OriginalUri(uri): OriginalUri,
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
-    let (org, actor) = dependabot::organization(&state, &headers, &org, false).await?;
+    let (org, actor) =
+        crate::backend::api::github::dependabot::organization(&state, &headers, &org, false)
+            .await?;
     let (offset, limit) = page.window()?;
-    let (total, configurations) = db::private_registries::list(
+    let (total, configurations) = crate::backend::db::private_registries::list(
         &state.pool,
         actor.user.id,
         org,
@@ -81,14 +84,23 @@ async fn registry(
     headers: HeaderMap,
     Path((org, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
-    let (org, actor) = dependabot::organization(&state, &headers, &org, false).await?;
-    let registry = db::private_registries::list(&state.pool, actor.user.id, org, Some(&name), 0, 1)
-        .await
-        .map_err(error)?
-        .1
-        .into_iter()
-        .next()
-        .ok_or_else(Error::missing)?;
+    let (org, actor) =
+        crate::backend::api::github::dependabot::organization(&state, &headers, &org, false)
+            .await?;
+    let registry = crate::backend::db::private_registries::list(
+        &state.pool,
+        actor.user.id,
+        org,
+        Some(&name),
+        0,
+        1,
+    )
+    .await
+    .map_err(error)?
+    .1
+    .into_iter()
+    .next()
+    .ok_or_else(Error::missing)?;
     Ok(Json(registry.document().map_err(error)?))
 }
 
@@ -110,11 +122,17 @@ async fn input(
                 .secret_encryptor
                 .as_deref()
                 .ok_or_else(|| Error::unavailable(()))?;
-            let (key_id, key) =
-                db::dependabot::organization_key(&state.pool, encryptor, actor, org)
-                    .await
-                    .map_err(action_secrets::error)?;
-            Some(action_secrets::open_value(&key, &key_id, &id, &value)?)
+            let (key_id, key) = crate::backend::db::dependabot::organization_key(
+                &state.pool,
+                encryptor,
+                actor,
+                org,
+            )
+            .await
+            .map_err(crate::backend::api::github::action_secrets::error)?;
+            Some(crate::backend::api::github::action_secrets::open_value(
+                &key, &key_id, &id, &value,
+            )?)
         }
         _ => {
             return Err(Error::validation(
@@ -133,14 +151,18 @@ async fn create(
     Path(org): Path<String>,
     body: std::result::Result<Json<Value>, JsonRejection>,
 ) -> Result<Response> {
-    let (org, actor) = dependabot::organization(&state, &headers, &org, true).await?;
-    let Json(body) = body.map_err(super::json_error)?;
+    let (org, actor) =
+        crate::backend::api::github::dependabot::organization(&state, &headers, &org, true).await?;
+    let Json(body) = body.map_err(crate::backend::api::github::json_error)?;
     let (body, value) = input(&state, actor.user.id, org, body).await?;
-    let registry = db::private_registries::save(
+    let registry = crate::backend::db::private_registries::save(
         &state.pool,
         state.secret_encryptor.as_deref(),
         actor.user.id,
-        &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash),
+        &crate::backend::db::users::accounts::AccountCredential::Token(
+            actor.token.id,
+            &actor.token.token_hash,
+        ),
         org,
         None,
         &body,
@@ -161,14 +183,18 @@ async fn update(
     Path((org, name)): Path<(String, String)>,
     body: std::result::Result<Json<Value>, JsonRejection>,
 ) -> Result<StatusCode> {
-    let (org, actor) = dependabot::organization(&state, &headers, &org, true).await?;
-    let Json(body) = body.map_err(super::json_error)?;
+    let (org, actor) =
+        crate::backend::api::github::dependabot::organization(&state, &headers, &org, true).await?;
+    let Json(body) = body.map_err(crate::backend::api::github::json_error)?;
     let (body, value) = input(&state, actor.user.id, org, body).await?;
-    db::private_registries::save(
+    crate::backend::db::private_registries::save(
         &state.pool,
         state.secret_encryptor.as_deref(),
         actor.user.id,
-        &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash),
+        &crate::backend::db::users::accounts::AccountCredential::Token(
+            actor.token.id,
+            &actor.token.token_hash,
+        ),
         org,
         Some(&name.to_ascii_uppercase()),
         &body,
@@ -184,11 +210,15 @@ async fn remove(
     headers: HeaderMap,
     Path((org, name)): Path<(String, String)>,
 ) -> Result<StatusCode> {
-    let (org, actor) = dependabot::organization(&state, &headers, &org, true).await?;
-    db::private_registries::delete(
+    let (org, actor) =
+        crate::backend::api::github::dependabot::organization(&state, &headers, &org, true).await?;
+    crate::backend::db::private_registries::delete(
         &state.pool,
         actor.user.id,
-        &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash),
+        &crate::backend::db::users::accounts::AccountCredential::Token(
+            actor.token.id,
+            &actor.token.token_hash,
+        ),
         org,
         &name.to_ascii_uppercase(),
     )

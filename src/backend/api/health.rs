@@ -1,5 +1,6 @@
 //! Liveness and role-aware readiness for load balancers.
-use crate::backend::{app::AppState, node::NodeRole};
+use crate::backend::app::AppState;
+use crate::backend::node::NodeRole;
 use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
 use std::{io::Write, net::SocketAddr, path::Path, sync::Arc, time::Duration};
 
@@ -10,7 +11,7 @@ pub fn router() -> Router<Arc<AppState>> {
             get(|| async { Json(serde_json::json!({ "status": "ok" })) }),
         )
         .route("/ready", get(ready))
-        .route("/metrics", get(super::metrics::metrics))
+        .route("/metrics", get(crate::backend::api::metrics::metrics))
 }
 
 /// Storage-only nodes expose probes and metrics, never the web application.

@@ -7,7 +7,7 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::db;
+
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};
@@ -70,7 +70,7 @@ async fn contract(pg: bool) {
     codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,

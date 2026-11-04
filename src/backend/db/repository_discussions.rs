@@ -1,7 +1,7 @@
 //! Repository discussions use the issue/PR number allocator and live repository authority.
-use super::discussion_search;
-use super::discussion_search::Expr;
-use super::discussion_search::Statement;
+
+use crate::backend::db::discussion_search::Expr;
+use crate::backend::db::discussion_search::Statement;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::native_operation;
@@ -145,7 +145,9 @@ impl Filter {
             ..Default::default()
         };
         let mut words = Vec::new();
-        for word in discussion_search::tokens(query).map_err(anyhow::Error::msg)? {
+        for word in
+            crate::backend::db::discussion_search::tokens(query).map_err(anyhow::Error::msg)?
+        {
             if let Some(sort) = word.strip_prefix("sort:") {
                 let (field, direction) = sort.rsplit_once('-').ok_or(Refusal::Invalid)?;
                 filter.order = match field {
@@ -169,16 +171,16 @@ impl Filter {
         &self,
         postgres: bool,
         readable: &str,
-        reader: &super::repositories::credentials::Reader<'_>,
+        reader: &crate::backend::db::repositories::credentials::Reader<'_>,
     ) -> Result<Statement> {
         let mut sql = Statement::new(postgres);
         let token = sql.bind(reader.token().unwrap_or(0).to_string());
         let session = sql.bind(reader.session().unwrap_or(""));
         let hash = sql.bind(reader.hash().unwrap_or(""));
-        let scope = super::repositories::credentials::repository_condition(
+        let scope = crate::backend::db::repositories::credentials::repository_condition(
             postgres,
             "discussions",
-            super::repositories::credentials::Access::PublicRead,
+            crate::backend::db::repositories::credentials::Access::PublicRead,
             &format!("NULLIF({token},'0')"),
             &format!("NULLIF({session},'')"),
             &format!("NULLIF({hash},'')"),
@@ -204,7 +206,8 @@ impl Filter {
         if let Some(query) = &self.query {
             predicates.push(search_expression(
                 &mut sql,
-                &discussion_search::expression(query).map_err(anyhow::Error::msg)?,
+                &crate::backend::db::discussion_search::expression(query)
+                    .map_err(anyhow::Error::msg)?,
             )?);
         }
         sql.prefix = format!("FROM discussions i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id={} LEFT JOIN users owners ON r.owner_kind='user' AND owners.id=r.owner_user_id LEFT JOIN organizations orgs ON r.owner_kind='org' AND orgs.id=r.owner_org_id WHERE {}", sql.placeholder(1), predicates.into_iter().map(|p| format!("({p})")).collect::<Vec<_>>().join(" AND "));
@@ -269,28 +272,28 @@ fn search_expression(sql: &mut Statement, expr: &Expr) -> Result<String> {
     })
 }
 
-native_operation!(super::postgres::repository_discussions::enabled, super::sqlite::repository_discussions::enabled,
+native_operation!(crate::backend::db::postgres::repository_discussions::enabled, crate::backend::db::sqlite::repository_discussions::enabled,
     fn enabled(pool: &DbPool, repo: i64) -> Result<bool>);
-native_operation!(super::postgres::repository_discussions::categories, super::sqlite::repository_discussions::categories,
+native_operation!(crate::backend::db::postgres::repository_discussions::categories, crate::backend::db::sqlite::repository_discussions::categories,
     fn categories(pool: &DbPool, repo: i64) -> Result<Vec<Category>>);
-native_operation!(super::postgres::repository_discussions::category_by_id, super::sqlite::repository_discussions::category_by_id,
+native_operation!(crate::backend::db::postgres::repository_discussions::category_by_id, crate::backend::db::sqlite::repository_discussions::category_by_id,
     fn category_by_id(pool: &DbPool, id: i64) -> Result<Option<Category>>);
-native_operation!(super::postgres::repository_discussions::get, super::sqlite::repository_discussions::get,
+native_operation!(crate::backend::db::postgres::repository_discussions::get, crate::backend::db::sqlite::repository_discussions::get,
     fn get(pool: &DbPool, id: i64) -> Result<Option<Discussion>>);
-native_operation!(super::postgres::repository_discussions::by_number, super::sqlite::repository_discussions::by_number,
+native_operation!(crate::backend::db::postgres::repository_discussions::by_number, crate::backend::db::sqlite::repository_discussions::by_number,
     fn by_number(pool: &DbPool, repo: i64, number: i32) -> Result<Option<Discussion>>);
-native_operation!(super::postgres::repository_discussions::comment, super::sqlite::repository_discussions::comment,
+native_operation!(crate::backend::db::postgres::repository_discussions::comment, crate::backend::db::sqlite::repository_discussions::comment,
     fn comment(pool: &DbPool, id: i64) -> Result<Option<Comment>>);
-native_operation!(super::postgres::repository_discussions::comments, super::sqlite::repository_discussions::comments,
+native_operation!(crate::backend::db::postgres::repository_discussions::comments, crate::backend::db::sqlite::repository_discussions::comments,
     fn comments(pool: &DbPool, discussion: i64, reply: Option<i64>, offset: i64, limit: i64) -> Result<(i64, Vec<Comment>)>);
-native_operation!(super::postgres::repository_discussions::labels, super::sqlite::repository_discussions::labels,
+native_operation!(crate::backend::db::postgres::repository_discussions::labels, crate::backend::db::sqlite::repository_discussions::labels,
     fn labels(pool: &DbPool, discussion: i64) -> Result<Vec<codeyard_db_core::models::Label>>);
-native_operation!(super::postgres::repository_discussions::list, super::sqlite::repository_discussions::list,
-    fn list_counted(pool: &DbPool, viewer: i64, credential: &super::users::accounts::AccountCredential<'_>, filter: &Filter, offset: i64, limit: i64, count: bool) -> Result<(i64, Vec<Discussion>)>);
+native_operation!(crate::backend::db::postgres::repository_discussions::list, crate::backend::db::sqlite::repository_discussions::list,
+    fn list_counted(pool: &DbPool, viewer: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, filter: &Filter, offset: i64, limit: i64, count: bool) -> Result<(i64, Vec<Discussion>)>);
 pub async fn list(
     pool: &DbPool,
     viewer: i64,
-    credential: &super::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     filter: &Filter,
     offset: i64,
     limit: i64,
@@ -300,7 +303,7 @@ pub async fn list(
 pub async fn list_rows(
     pool: &DbPool,
     viewer: i64,
-    credential: &super::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     filter: &Filter,
     offset: i64,
     limit: i64,
@@ -311,8 +314,8 @@ pub async fn list_rows(
             .1,
     )
 }
-native_operation!(super::postgres::repository_discussions::write, super::sqlite::repository_discussions::write,
-    fn write(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64, discussion: Option<i64>, change: &Write<'_>) -> Result<i64>);
+native_operation!(crate::backend::db::postgres::repository_discussions::write, crate::backend::db::sqlite::repository_discussions::write,
+    fn write(pool: &DbPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64, discussion: Option<i64>, change: &Write<'_>) -> Result<i64>);
 
 pub(crate) fn valid_body(body: &str) -> Result<()> {
     anyhow::ensure!(

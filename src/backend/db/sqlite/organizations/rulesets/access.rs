@@ -1,10 +1,10 @@
 use super::*;
-use crate::backend::ci::workflows::WorkflowMatchBudget;
 use crate::backend::db::organizations::properties::PropertyValue;
 use crate::backend::db::rulesets::ListFilter;
 use crate::backend::db::rulesets::Owner;
 use crate::backend::db::rulesets::RepositoryContext;
 use codeyard_db_core::models::Repository;
+use codeyard_model::workflow_glob::WorkflowMatchBudget;
 use sqlx::{Sqlite, Transaction};
 use std::collections::HashMap;
 
@@ -119,8 +119,17 @@ pub(super) async fn rows(
                         })
                 });
                 let values = if needs_properties {
-                    let definitions = super::super::properties::definitions_on(tx, org).await?;
-                    super::super::properties::values_on(tx, repo, &definitions).await?
+                    let definitions =
+                        crate::backend::db::sqlite::organizations::properties::definitions_on(
+                            tx, org,
+                        )
+                        .await?;
+                    crate::backend::db::sqlite::organizations::properties::values_on(
+                        tx,
+                        repo,
+                        &definitions,
+                    )
+                    .await?
                 } else {
                     Vec::new()
                 };

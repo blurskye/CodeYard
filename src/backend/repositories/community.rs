@@ -1,11 +1,11 @@
 //! Community standards are derived from real files at a pinned default-branch commit.
-use super::{
-    access,
-    store::{repo_store, BlobRange, RepoStore},
-    templates,
-};
+
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::BlobRange;
+use crate::backend::repositories::store::RepoStore;
+
 use crate::backend::cluster::NodeContext;
-use crate::backend::db;
+
 use chrono::{DateTime, Utc};
 use codeyard_db_core::models::Repository;
 use codeyard_git::error::{ErrorKind, RepoError};
@@ -73,30 +73,32 @@ fn normalized(text: &str) -> String {
         .join(" ")
 }
 fn license_info(text: &str) -> License {
-    let known = templates::detect_license(text.as_bytes()).and_then(|template| {
-        let index = templates::LICENSE_TEMPLATES
-            .iter()
-            // A const slice has no fixed address, so the template is found by name.
-            .position(|known| known.name == template.name)?;
-        let (key, name) = match template.name {
-            "MIT" => ("mit", "MIT License"),
-            "Apache-2.0" => ("apache-2.0", "Apache License 2.0"),
-            "GPL-3.0" => ("gpl-3.0", "GNU General Public License v3.0"),
-            "BSD-3-Clause" => (
-                "bsd-3-clause",
-                "BSD 3-Clause \"New\" or \"Revised\" License",
-            ),
-            "MPL-2.0" => ("mpl-2.0", "Mozilla Public License 2.0"),
-            "Unlicense" => ("unlicense", "The Unlicense"),
-            _ => return None,
-        };
-        Some(License {
-            key,
-            name,
-            spdx: template.name,
-            id: index as i64 + 1,
-        })
-    });
+    let known = crate::backend::repositories::templates::detect_license(text.as_bytes()).and_then(
+        |template| {
+            let index = crate::backend::repositories::templates::LICENSE_TEMPLATES
+                .iter()
+                // A const slice has no fixed address, so the template is found by name.
+                .position(|known| known.name == template.name)?;
+            let (key, name) = match template.name {
+                "MIT" => ("mit", "MIT License"),
+                "Apache-2.0" => ("apache-2.0", "Apache License 2.0"),
+                "GPL-3.0" => ("gpl-3.0", "GNU General Public License v3.0"),
+                "BSD-3-Clause" => (
+                    "bsd-3-clause",
+                    "BSD 3-Clause \"New\" or \"Revised\" License",
+                ),
+                "MPL-2.0" => ("mpl-2.0", "Mozilla Public License 2.0"),
+                "Unlicense" => ("unlicense", "The Unlicense"),
+                _ => return None,
+            };
+            Some(License {
+                key,
+                name,
+                spdx: template.name,
+                id: index as i64 + 1,
+            })
+        },
+    );
     known.unwrap_or(License {
         key: "other",
         name: "Other",
@@ -236,7 +238,9 @@ async fn discover(
                     // Only a directory with a template the issue form offers counts; a lone
                     // config.yml offers none.
                     let entries = store.tree_metadata(reference, &entry.path).await?;
-                    if !super::issue_templates::template_paths(entries).is_empty() {
+                    if !crate::backend::repositories::issue_templates::template_paths(entries)
+                        .is_empty()
+                    {
                         profile.issue_templates = Some(candidate)
                     }
                 }
@@ -291,12 +295,13 @@ pub async fn load(
         || (profile.issue_template.is_none() && profile.issue_templates.is_none())
         || (profile.pull_request_template.is_none() && profile.pull_request_templates.is_none());
     if repo.name != ".github" && needs_defaults {
-        if let Some(default) = db::repositories::records::get_repository(pool, owner, ".github")
-            .await
-            .map_err(RepoError::from)?
+        if let Some(default) =
+            crate::backend::db::repositories::records::get_repository(pool, owner, ".github")
+                .await
+                .map_err(RepoError::from)?
         {
             if !default.is_private
-                && access::can_read(pool, None, &default)
+                && crate::backend::repositories::access::can_read(pool, None, &default)
                     .await
                     .map_err(RepoError::from)?
             {
@@ -305,7 +310,10 @@ pub async fn load(
                     Err(_) => return Ok(profile), // Optional owner defaults cannot hide local files.
                 };
                 // Defaults are public inheritance, not a retained grant to a later private revision.
-                if access::check_read(pool, default.id, None).await.is_err() {
+                if crate::backend::repositories::access::check_read(pool, default.id, None)
+                    .await
+                    .is_err()
+                {
                     return Ok(profile);
                 }
                 if profile.conduct.is_none() {
@@ -346,8 +354,12 @@ mod tests {
     use super::*;
     #[test]
     fn standard_licenses_survive_the_native_copyright_substitution() {
-        for template in templates::LICENSE_TEMPLATES {
-            let filled = templates::fill_license(template.text, 2026, "A person");
+        for template in crate::backend::repositories::templates::LICENSE_TEMPLATES {
+            let filled = crate::backend::repositories::templates::fill_license(
+                template.text,
+                2026,
+                "A person",
+            );
             assert_eq!(license_info(&filled).spdx, template.name);
         }
         assert_eq!(license_info("This is not a license").spdx, "NOASSERTION");

@@ -1,5 +1,5 @@
-use super::error::ApiError;
-use crate::backend::db;
+use crate::backend::api::http::error::ApiError;
+
 use axum::{
     http::{header, HeaderMap, StatusCode},
     Json,
@@ -23,7 +23,7 @@ fn parse_bool_env(value: &str) -> bool {
 pub(crate) fn secure_cookie() -> bool {
     // A pinned HTTPS deployment origin cannot be downgraded by an accidental
     // COOKIE_SECURE=false setting. Never infer transport from forwarded headers.
-    if super::config::public_url()
+    if codeyard_model::http_config::public_url()
         .ok()
         .flatten()
         .is_some_and(|url| url.scheme() == "https")
@@ -133,7 +133,7 @@ pub(crate) fn has_session_cookie(headers: &HeaderMap) -> bool {
 }
 
 pub(crate) fn oauth_browser_cookie_name() -> &'static str {
-    if super::config::public_url()
+    if codeyard_model::http_config::public_url()
         .ok()
         .flatten()
         .is_some_and(|url| url.scheme() == "http")
@@ -190,7 +190,7 @@ pub(crate) async fn get_optional_user(
     let Some(session_id) = extract_session_id(headers) else {
         return Ok(None);
     };
-    let user = db::users::sessions::get_session_account(pool, &session_id)
+    let user = crate::backend::db::users::sessions::get_session_account(pool, &session_id)
         .await
         .map_err(|_| crate::backend::api::auth::errors::session_failure())?;
     // Absent/expired/revoked is anonymous; a storage outage is NOT anonymous.

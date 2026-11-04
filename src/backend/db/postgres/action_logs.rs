@@ -1,4 +1,10 @@
-use crate::backend::db::action_logs::{Grant, Job, Line, Manifest, ObservedStep, Snapshot, Target};
+use crate::backend::db::action_logs::Grant;
+use crate::backend::db::action_logs::Job;
+use crate::backend::db::action_logs::Line;
+use crate::backend::db::action_logs::Manifest;
+use crate::backend::db::action_logs::ObservedStep;
+use crate::backend::db::action_logs::Snapshot;
+use crate::backend::db::action_logs::Target;
 use anyhow::{ensure, Result};
 use sqlx::{types::Json, PgConnection, PgPool};
 
@@ -11,7 +17,10 @@ pub async fn issue(
     hash: &str,
 ) -> Result<bool> {
     let actor = actor.into();
-    super::retry_on_conflict(|| issue_once(pool, &actor, repo, resource, target, hash)).await
+    crate::backend::db::postgres::retry_on_conflict(|| {
+        issue_once(pool, &actor, repo, resource, target, hash)
+    })
+    .await
 }
 
 async fn issue_once(
@@ -22,7 +31,8 @@ async fn issue_once(
     target: Target,
     hash: &str,
 ) -> Result<bool> {
-    use super::repositories::access::{lock_user_repo_access_in_transaction, RepositoryRowLock};
+    use crate::backend::db::postgres::repositories::access::lock_user_repo_access_in_transaction;
+    use crate::backend::db::postgres::repositories::access::RepositoryRowLock;
     ensure!(
         resource.len() <= 4096
             && hash.len() == 64
@@ -46,7 +56,11 @@ async fn issue_once(
     if !authority.is_some_and(|a| a.access.can_read() || (!a.organization && a.is_admin)) {
         return Ok(false);
     }
-    if !super::credentials::repository(&mut tx, actor, repo, "actions", false).await? {
+    if !crate::backend::db::postgres::credentials::repository(
+        &mut tx, actor, repo, "actions", false,
+    )
+    .await?
+    {
         return Ok(false);
     }
     let version: Option<i64> =
@@ -98,18 +112,24 @@ pub async fn read(pool: &PgPool, hash: &str, resource: &str) -> Result<Option<Sn
     let Some(grant) = grant else {
         return Ok(None);
     };
-    let lines =
-        super::ci::read_log_range(&mut tx, grant.run_id, 0, grant.max_log_id, 100_000, false)
-            .await?
-            .into_iter()
-            .filter(|line| {
-                grant.job_id.is_none_or(|job| line.job_id == Some(job))
-                    && grant
-                        .step_number
-                        .is_none_or(|step| line.step_number == Some(step))
-            })
-            .map(Line::from)
-            .collect();
+    let lines = crate::backend::db::postgres::ci::read_log_range(
+        &mut tx,
+        grant.run_id,
+        0,
+        grant.max_log_id,
+        100_000,
+        false,
+    )
+    .await?
+    .into_iter()
+    .filter(|line| {
+        grant.job_id.is_none_or(|job| line.job_id == Some(job))
+            && grant
+                .step_number
+                .is_none_or(|step| line.step_number == Some(step))
+    })
+    .map(Line::from)
+    .collect();
     tx.commit().await?;
     Ok(Some(Snapshot { grant, lines }))
 }

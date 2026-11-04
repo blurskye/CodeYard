@@ -3,12 +3,11 @@
 //! A tag that does not exist yet is created when the release is published, so a draft never
 //! publishes its tag.
 pub(crate) mod immutable;
-pub(crate) mod integrity;
+
 mod notes;
 use crate::backend::ci::CiRuns;
 use crate::backend::cluster::NodeContext;
-use crate::backend::db;
-use crate::backend::files;
+
 use crate::backend::files::DownloadError;
 use crate::backend::files::UploadDeclaration;
 use crate::backend::files::UploadError;
@@ -16,15 +15,16 @@ use crate::backend::notifications::watchers::notify_watchers;
 use crate::backend::notifications::watchers::WatchEvent;
 use crate::backend::notifications::watchers::WatchedItem;
 use crate::backend::notifications::NotificationBroadcaster;
-use crate::backend::repositories::access;
+
 use crate::backend::repositories::access::AccessError;
-use crate::backend::repositories::refs;
+
 use crate::backend::repositories::refs::RefError;
 use crate::backend::repositories::store::repo_store;
 use codeyard_git::error::RepoError;
 
 use crate::backend::storage::ObjectStore;
-use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
+
+use crate::backend::webhooks::payloads::Scope;
 use anyhow::Error;
 use codeyard_db_core::models::Release;
 use codeyard_db_core::models::ReleaseAsset;
@@ -36,11 +36,10 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-pub use crate::backend::db::releases::{
-    LatestSelection, ReleaseChanges, ReleaseFields, ReleaseRefusal,
-};
-
-pub const MAX_ASSET_BYTES: usize = crate::backend::storage::MAX_OBJECT_BYTES as usize;
+pub use crate::backend::db::releases::LatestSelection;
+pub use crate::backend::db::releases::ReleaseChanges;
+pub use crate::backend::db::releases::ReleaseFields;
+pub use crate::backend::db::releases::ReleaseRefusal;
 
 #[cfg(test)]
 mod tests {
@@ -142,11 +141,11 @@ async fn writable(
     owner: &str,
     name: &str,
 ) -> Result<(Repository, codeyard_db_core::models::User), ReleaseError> {
-    let repository = db::repositories::records::get_repository(pool, owner, name)
+    let repository = crate::backend::db::repositories::records::get_repository(pool, owner, name)
         .await
         .map_err(|_| ReleaseError::Unavailable)?
         .ok_or(AccessError::NotFound)?;
-    Ok(access::check_write(pool, repository.id, actor).await?)
+    Ok(crate::backend::repositories::access::check_write(pool, repository.id, actor).await?)
 }
 
 async fn can_write(
@@ -156,17 +155,20 @@ async fn can_write(
 ) -> Result<bool, ReleaseError> {
     match viewer {
         Some(actor) => {
-            let repo = access::current_repository(pool, repo_id).await?;
-            let Some(user) = db::users::accounts::get_user_by_id(pool, actor)
+            let repo =
+                crate::backend::repositories::access::current_repository(pool, repo_id).await?;
+            let Some(user) = crate::backend::db::users::accounts::get_user_by_id(pool, actor)
                 .await
                 .map_err(unavailable)?
             else {
                 return Ok(false);
             };
-            Ok(access::user_access(pool, &user, &repo)
-                .await
-                .map_err(unavailable)?
-                .can_write())
+            Ok(
+                crate::backend::repositories::access::user_access(pool, &user, &repo)
+                    .await
+                    .map_err(unavailable)?
+                    .can_write(),
+            )
         }
         None => Ok(false),
     }
@@ -271,11 +273,11 @@ pub async fn list(
         .filter(|_| page > 0 && (1..=100).contains(&per_page))
         .and_then(|page| page.checked_mul(per_page))
         .ok_or(ReleaseError::Invalid("Release pagination is out of range"))?;
-    let snapshot = db::releases::read_release_snapshot(
+    let snapshot = crate::backend::db::releases::read_release_snapshot(
         pool,
         viewer,
         repo_id,
-        db::releases::ReleaseSelection::Page {
+        crate::backend::db::releases::ReleaseSelection::Page {
             limit: per_page,
             offset,
         },
@@ -303,7 +305,7 @@ pub async fn detail_by_tag(
         pool,
         viewer,
         repo_id,
-        db::releases::ReleaseSelection::Tag(tag),
+        crate::backend::db::releases::ReleaseSelection::Tag(tag),
     )
     .await
 }
@@ -319,7 +321,7 @@ pub async fn detail_by_id(
         pool,
         viewer,
         repo_id,
-        db::releases::ReleaseSelection::Id(release_id),
+        crate::backend::db::releases::ReleaseSelection::Id(release_id),
     )
     .await
 }
@@ -328,11 +330,12 @@ async fn visible_detail(
     pool: &codeyard_db_core::DbPool,
     viewer: Option<i64>,
     repo_id: i64,
-    selection: db::releases::ReleaseSelection<'_>,
+    selection: crate::backend::db::releases::ReleaseSelection<'_>,
 ) -> Result<ReleaseDetail, ReleaseError> {
-    let mut snapshot = db::releases::read_release_snapshot(pool, viewer, repo_id, selection)
-        .await
-        .map_err(write_error)?;
+    let mut snapshot =
+        crate::backend::db::releases::read_release_snapshot(pool, viewer, repo_id, selection)
+            .await
+            .map_err(write_error)?;
     let release = snapshot.releases.pop().ok_or(ReleaseError::NotFound)?;
     let can_write = can_write(pool, viewer, repo_id).await?;
     Ok(ReleaseDetail {
@@ -352,11 +355,11 @@ pub async fn edit_detail(
     release_id: i64,
 ) -> Result<ReleaseDetail, ReleaseError> {
     let (repository, _) = writable(pool, actor, owner, name).await?;
-    let release = db::releases::get_release(pool, repository.id, release_id)
+    let release = crate::backend::db::releases::get_release(pool, repository.id, release_id)
         .await
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?;
-    let assets = db::releases::list_release_assets(pool, release.release.id)
+    let assets = crate::backend::db::releases::list_release_assets(pool, release.release.id)
         .await
         .map_err(unavailable)?;
     Ok(ReleaseDetail {
@@ -401,10 +404,10 @@ pub async fn summary(
     repository: &Repository,
 ) -> Result<ReleaseSummary, ReleaseError> {
     let writer = can_write(pool, viewer, repository.id).await?;
-    let count = db::releases::count_releases(pool, repository.id, writer)
+    let count = crate::backend::db::releases::count_releases(pool, repository.id, writer)
         .await
         .map_err(unavailable)?;
-    let latest = db::releases::latest_release(pool, repository.id)
+    let latest = crate::backend::db::releases::latest_release(pool, repository.id)
         .await
         .map_err(unavailable)?;
     Ok(ReleaseSummary { count, latest })
@@ -426,10 +429,11 @@ pub async fn create(
     name: &str,
     input: &ReleaseInput,
 ) -> Result<Release, ReleaseError> {
-    let (repository, user) = access::check_write(pool, input.repository_id, actor).await?;
+    let (repository, user) =
+        crate::backend::repositories::access::check_write(pool, input.repository_id, actor).await?;
     validate_tag(&input.tag)?;
     validate_fields(&input.fields)?;
-    if db::releases::get_release_by_tag(pool, repository.id, &input.tag)
+    if crate::backend::db::releases::get_release_by_tag(pool, repository.id, &input.tag)
         .await
         .map_err(unavailable)?
         .is_some()
@@ -461,7 +465,7 @@ pub async fn create(
                     AccessError::WriteDenied,
                 )));
             }
-            refs::create_tag(
+            crate::backend::repositories::refs::create_tag(
                 pool,
                 cluster,
                 ci,
@@ -539,14 +543,14 @@ async fn emit_release(
 ) {
     let (release, repository_for_hook) = (release.clone(), repository.clone());
     let author_id = release.author_id;
-    webhooks::emit(
+    crate::backend::webhooks::emit(
         pool,
         repository,
-        events::RELEASE,
+        codeyard_model::webhook_events::RELEASE,
         vec![author_id, actor],
         move |owner, people| {
             let (author, sender) = (people.get(author_id), people.get(actor));
-            let mut payload = payloads::release(
+            let mut payload = crate::backend::webhooks::payloads::release(
                 action,
                 &release,
                 &author,
@@ -591,17 +595,15 @@ pub async fn update(
         body: fields.body.clone().flatten(),
         ..Default::default()
     })?;
-    let current = db::releases::get_release(pool, repository.id, release_id)
+    let current = crate::backend::db::releases::get_release(pool, repository.id, release_id)
         .await
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?
         .release;
     // A stale form must not create the tag; the write below checks the same revision again.
-    if fields
-        .expected_revision
-        .as_ref()
-        .is_some_and(|expected| *expected != db::releases::release_revision(&current))
-    {
+    if fields.expected_revision.as_ref().is_some_and(|expected| {
+        *expected != crate::backend::db::releases::release_revision(&current)
+    }) {
         return Err(ReleaseError::Conflict);
     }
     let mut fields = fields.clone();
@@ -623,7 +625,7 @@ pub async fn update(
         // and target this publication was prepared for.
         fields
             .expected_revision
-            .get_or_insert_with(|| db::releases::release_revision(&current));
+            .get_or_insert_with(|| crate::backend::db::releases::release_revision(&current));
         let refs = store.refs_from_primary().await.map_err(ReleaseError::Git)?;
         let reference = format!("refs/tags/{tag}");
         if !refs.contains_key(&reference) {
@@ -645,7 +647,7 @@ pub async fn update(
                         AccessError::WriteDenied,
                     )));
                 }
-                refs::create_tag(
+                crate::backend::repositories::refs::create_tag(
                     pool,
                     cluster,
                     ci,
@@ -699,7 +701,8 @@ pub async fn update(
         "edited"
     };
     // Only an edit carries the earlier values, as on GitHub.
-    let changes = (action == "edited").then(|| payloads::release_changes(&current, &release));
+    let changes = (action == "edited")
+        .then(|| crate::backend::webhooks::payloads::release_changes(&current, &release));
     emit_release(pool, &repository, &release, actor, action, None, changes).await;
 
     Ok(release)
@@ -715,16 +718,21 @@ pub async fn delete(
     release_id: i64,
 ) -> Result<(), ReleaseError> {
     let (repository, _) = writable(pool, actor, owner, name).await?;
-    let deleted = db::releases::get_release(pool, repository.id, release_id)
+    let deleted = crate::backend::db::releases::get_release(pool, repository.id, release_id)
         .await
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?;
     // The deletion event still lists the assets, which are gone once the release is.
-    let assets = webhooks::documents::release_assets(pool, &repository, owner, &deleted.release)
-        .await
-        .inspect_err(|error| tracing::warn!(release_id, %error, "release assets could not be read"))
-        .ok();
-    db::releases::delete_release(pool, actor, repository.id, release_id)
+    let assets = crate::backend::webhooks::documents::release_assets(
+        pool,
+        &repository,
+        owner,
+        &deleted.release,
+    )
+    .await
+    .inspect_err(|error| tracing::warn!(release_id, %error, "release assets could not be read"))
+    .ok();
+    crate::backend::db::releases::delete_release(pool, actor, repository.id, release_id)
         .await
         .map_err(write_error)?;
     // The DAL queues asset bytes for deletion after the backup restore window.
@@ -751,7 +759,7 @@ pub async fn add_asset(
     pool: &codeyard_db_core::DbPool,
     store: &ObjectStore,
     actor: i64,
-    credential: &db::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     owner: &str,
     name: &str,
     release_id: i64,
@@ -794,7 +802,7 @@ pub async fn upload_asset(
     pool: &codeyard_db_core::DbPool,
     store: &ObjectStore,
     actor: i64,
-    credential: &db::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     owner: &str,
     name: &str,
     release_id: i64,
@@ -829,7 +837,7 @@ pub async fn upload_asset(
     {
         return Err(ReleaseError::Invalid("Invalid asset content type"));
     }
-    let release = db::releases::get_release(pool, repository.id, release_id)
+    let release = crate::backend::db::releases::get_release(pool, repository.id, release_id)
         .await
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?;
@@ -838,7 +846,7 @@ pub async fn upload_asset(
     }
     let size = bytes.len() as i64;
     let checksum = hex::encode(Sha256::digest(&bytes));
-    let file_id = files::store_upload(
+    let file_id = crate::backend::files::store_upload(
         pool,
         store,
         actor,
@@ -854,13 +862,13 @@ pub async fn upload_asset(
     )
     .await
     .map_err(ReleaseError::Upload)?;
-    let linked = db::releases::add_release_asset_with_token(
+    let linked = crate::backend::db::releases::add_release_asset_with_token(
         pool,
         actor,
         credential,
         repository.id,
         release_id,
-        &db::releases::NewReleaseAsset {
+        &crate::backend::db::releases::NewReleaseAsset {
             file_id,
             name: filename,
             label,
@@ -903,16 +911,22 @@ pub async fn update_asset(
     owner: &str,
     name: &str,
     asset_id: i64,
-    changes: &db::releases::AssetChanges,
+    changes: &crate::backend::db::releases::AssetChanges,
 ) -> Result<ReleaseAsset, ReleaseError> {
     let (repository, _) = writable(pool, actor, owner, name).await?;
     validate_asset_fields(
         changes.name.as_deref().unwrap_or("asset"),
         changes.label.as_ref().and_then(|label| label.as_deref()),
     )?;
-    db::releases::update_release_asset(pool, actor, repository.id, asset_id, changes)
-        .await
-        .map_err(write_error)
+    crate::backend::db::releases::update_release_asset(
+        pool,
+        actor,
+        repository.id,
+        asset_id,
+        changes,
+    )
+    .await
+    .map_err(write_error)
 }
 
 /// Detaches an asset from its release and removes its file.
@@ -926,9 +940,15 @@ pub async fn delete_asset(
     asset_id: i64,
 ) -> Result<(), ReleaseError> {
     let (repository, _) = writable(pool, actor, owner, name).await?;
-    db::releases::delete_release_asset(pool, actor, repository.id, release_id, asset_id)
-        .await
-        .map_err(write_error)?;
+    crate::backend::db::releases::delete_release_asset(
+        pool,
+        actor,
+        repository.id,
+        release_id,
+        asset_id,
+    )
+    .await
+    .map_err(write_error)?;
     Ok(())
 }
 
@@ -942,12 +962,18 @@ pub async fn download(
     tag: &str,
     asset_name: &str,
     count: bool,
-) -> Result<files::AssetDownload, ReleaseError> {
-    let asset =
-        db::releases::download_asset(pool, viewer, repo_id, Some(tag), Some(asset_name), None)
-            .await
-            .map_err(unavailable)?
-            .ok_or(ReleaseError::NotFound)?;
+) -> Result<crate::backend::files::AssetDownload, ReleaseError> {
+    let asset = crate::backend::db::releases::download_asset(
+        pool,
+        viewer,
+        repo_id,
+        Some(tag),
+        Some(asset_name),
+        None,
+    )
+    .await
+    .map_err(unavailable)?
+    .ok_or(ReleaseError::NotFound)?;
     open_asset(pool, store, asset, count).await
 }
 
@@ -959,11 +985,18 @@ pub async fn download_by_id(
     repo_id: i64,
     asset_id: i64,
     count: bool,
-) -> Result<files::AssetDownload, ReleaseError> {
-    let asset = db::releases::download_asset(pool, viewer, repo_id, None, None, Some(asset_id))
-        .await
-        .map_err(unavailable)?
-        .ok_or(ReleaseError::NotFound)?;
+) -> Result<crate::backend::files::AssetDownload, ReleaseError> {
+    let asset = crate::backend::db::releases::download_asset(
+        pool,
+        viewer,
+        repo_id,
+        None,
+        None,
+        Some(asset_id),
+    )
+    .await
+    .map_err(unavailable)?
+    .ok_or(ReleaseError::NotFound)?;
     open_asset(pool, store, asset, count).await
 }
 
@@ -972,18 +1005,19 @@ async fn open_asset(
     store: &ObjectStore,
     asset: ReleaseAsset,
     count: bool,
-) -> Result<files::AssetDownload, ReleaseError> {
-    let mut file = db::files::get_file_by_id(pool, asset.file_id)
+) -> Result<crate::backend::files::AssetDownload, ReleaseError> {
+    let mut file = crate::backend::db::files::get_file_by_id(pool, asset.file_id)
         .await
         .map_err(unavailable)?
         .filter(|file| file.is_active)
         .ok_or(ReleaseError::NotFound)?;
     file.original_name = asset.name;
-    let opened = files::open_file(store, file)
+    let opened = crate::backend::files::open_file(store, file)
         .await
         .map_err(ReleaseError::Download)?;
     if count {
-        if let Err(error) = db::releases::count_asset_download(pool, asset.id).await {
+        if let Err(error) = crate::backend::db::releases::count_asset_download(pool, asset.id).await
+        {
             tracing::warn!(%error, asset = asset.id, "could not count a release download");
         }
     }
@@ -992,7 +1026,7 @@ async fn open_asset(
 
 /// Removes an uploaded file that no release uses any more, as its uploader.
 async fn discard_file(pool: &codeyard_db_core::DbPool, store: &ObjectStore, file: Uuid) {
-    let uploader = match db::files::get_file_by_id(pool, file).await {
+    let uploader = match crate::backend::db::files::get_file_by_id(pool, file).await {
         Ok(Some(found)) => found.user_id,
         _ => None,
     };
@@ -1000,7 +1034,7 @@ async fn discard_file(pool: &codeyard_db_core::DbPool, store: &ObjectStore, file
         tracing::warn!(%file, "could not find the uploader of a release file");
         return;
     };
-    if files::delete_unreferenced_file(pool, store, uploader, file)
+    if crate::backend::files::delete_unreferenced_file(pool, store, uploader, file)
         .await
         .is_err()
     {
@@ -1040,3 +1074,5 @@ async fn notify_published(
     )
     .await;
 }
+
+use codeyard_model::release_integrity::MAX_ASSET_BYTES;

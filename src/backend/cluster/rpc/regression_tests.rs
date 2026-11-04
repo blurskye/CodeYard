@@ -1,9 +1,9 @@
 use super::*;
 use crate::backend::ci::CiConfig;
 use crate::backend::cluster::IrohDialer;
-use crate::backend::cluster::NodeKey;
 use crate::backend::cluster::Relay;
-use crate::backend::db;
+use codeyard_support::node_identity::NodeKey;
+
 use crate::backend::repositories::git_sessions::ReceiveCredential;
 use crate::backend::repositories::store::GitService;
 use crate::backend::repositories::store::GitSession;
@@ -17,9 +17,11 @@ async fn context(path: &Path) -> NodeContext {
         .unwrap();
     codeyard_db_core::run_migrations(&pool).await.unwrap();
     // A web and storage node only exists in cluster mode.
-    db::cluster::enable_cluster(&pool).await.unwrap();
+    crate::backend::db::cluster::enable_cluster(&pool)
+        .await
+        .unwrap();
     let key = NodeKey::generate();
-    let node = db::cluster::register_own_node(
+    let node = crate::backend::db::cluster::register_own_node(
         &pool,
         &key.public_hex(),
         "storage",
@@ -263,16 +265,16 @@ async fn storage_git_admission_rechecks_live_tokens_keys_and_grants() {
     let directory = tempfile::tempdir().unwrap();
     let context = context(directory.path()).await;
     let pool = context.database().unwrap();
-    let owner = db::users::accounts::create_user(pool, "owner", None)
+    let owner = crate::backend::db::users::accounts::create_user(pool, "owner", None)
         .await
         .unwrap();
-    let actor = db::users::accounts::create_user(pool, "reader", None)
+    let actor = crate::backend::db::users::accounts::create_user(pool, "reader", None)
         .await
         .unwrap();
     let store = RepoStore::create(directory.path(), "main", None)
         .await
         .unwrap();
-    let repo = db::repositories::records::create_repository(
+    let repo = crate::backend::db::repositories::records::create_repository(
         pool,
         owner.id,
         "private",
@@ -282,10 +284,10 @@ async fn storage_git_admission_rechecks_live_tokens_keys_and_grants() {
     )
     .await
     .unwrap();
-    db::cluster::place_repository(pool, repo.id, context.node_id)
+    crate::backend::db::cluster::place_repository(pool, repo.id, context.node_id)
         .await
         .unwrap();
-    db::repositories::access::grant_repo_access(
+    crate::backend::db::repositories::access::grant_repo_access(
         pool,
         actor.id,
         repo.id,
@@ -294,7 +296,7 @@ async fn storage_git_admission_rechecks_live_tokens_keys_and_grants() {
     .await
     .unwrap();
     let session_id = "a".repeat(64);
-    db::users::sessions::create_session(
+    crate::backend::db::users::sessions::create_session(
         pool,
         &session_id,
         actor.id,
@@ -304,7 +306,7 @@ async fn storage_git_admission_rechecks_live_tokens_keys_and_grants() {
     )
     .await
     .unwrap();
-    let token = db::users::tokens::create_token(
+    let token = crate::backend::db::users::tokens::create_token(
         pool,
         actor.id,
         &session_id,
@@ -322,7 +324,7 @@ async fn storage_git_admission_rechecks_live_tokens_keys_and_grants() {
         "ssh-ed25519 {}",
         base64::engine::general_purpose::STANDARD.encode(wire)
     );
-    let key = db::users::ssh_keys::add_ssh_key(pool, actor.id, "reader", &public)
+    let key = crate::backend::db::users::ssh_keys::add_ssh_key(pool, actor.id, "reader", &public)
         .await
         .unwrap();
     let request = |credential| {
@@ -345,7 +347,7 @@ async fn storage_git_admission_rechecks_live_tokens_keys_and_grants() {
             .await
             .unwrap();
     }
-    db::repositories::access::revoke_repo_access(pool, actor.id, repo.id)
+    crate::backend::db::repositories::access::revoke_repo_access(pool, actor.id, repo.id)
         .await
         .unwrap();
     for credential in [
@@ -357,7 +359,7 @@ async fn storage_git_admission_rechecks_live_tokens_keys_and_grants() {
             .await
             .is_err());
     }
-    db::repositories::access::grant_repo_access(
+    crate::backend::db::repositories::access::grant_repo_access(
         pool,
         actor.id,
         repo.id,
@@ -365,7 +367,7 @@ async fn storage_git_admission_rechecks_live_tokens_keys_and_grants() {
     )
     .await
     .unwrap();
-    db::users::tokens::delete_token(pool, actor.id, &session_id, token.id)
+    crate::backend::db::users::tokens::delete_token(pool, actor.id, &session_id, token.id)
         .await
         .unwrap();
     let DbPool::Sqlite(raw) = pool else {
@@ -446,7 +448,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
     let context = context(directory.path()).await;
     let pool = context.database().unwrap();
     let key = NodeKey::generate();
-    let primary = db::cluster::register_own_node(
+    let primary = crate::backend::db::cluster::register_own_node(
         pool,
         &key.public_hex(),
         "primary",
@@ -460,7 +462,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
         tcp: vec![listener.local_addr().unwrap()],
         ..Default::default()
     };
-    db::cluster::record_node_heartbeat(
+    crate::backend::db::cluster::record_node_heartbeat(
         pool,
         &key.public_hex(),
         "test",
@@ -469,15 +471,21 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
     )
     .await
     .unwrap();
-    db::cluster::record_node_heartbeat(pool, &context.key.public_hex(), "test", "{}", Some(100))
-        .await
-        .unwrap();
-    let owner = db::users::accounts::create_user(pool, "owner", None)
+    crate::backend::db::cluster::record_node_heartbeat(
+        pool,
+        &context.key.public_hex(),
+        "test",
+        "{}",
+        Some(100),
+    )
+    .await
+    .unwrap();
+    let owner = crate::backend::db::users::accounts::create_user(pool, "owner", None)
         .await
         .unwrap();
     let uuid = uuid::Uuid::new_v4();
     let path = crate::backend::cluster::replicas::copy_path(directory.path(), uuid);
-    let repo = db::repositories::records::create_repository(
+    let repo = crate::backend::db::repositories::records::create_repository(
         pool,
         owner.id,
         "repo",
@@ -487,7 +495,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
     )
     .await
     .unwrap();
-    db::cluster::place_repository(pool, repo.id, primary.id)
+    crate::backend::db::cluster::place_repository(pool, repo.id, primary.id)
         .await
         .unwrap();
     let DbPool::Sqlite(raw) = pool else {

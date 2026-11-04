@@ -1,14 +1,16 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::http::session::{extract_session_id, get_current_user};
-use crate::backend::api::repos::access::{check_repo_admin_access, find_repository};
+use crate::backend::api::http::session::extract_session_id;
+use crate::backend::api::http::session::get_current_user;
+use crate::backend::api::repos::access::check_repo_admin_access;
+use crate::backend::api::repos::access::find_repository;
 use crate::backend::api::repos::discussion::*;
 use crate::backend::api::repos::forms::authorize_post;
 use crate::backend::api::repos::issues::assignees::assigned_item;
 use crate::backend::api::repos::labels::label_write_error;
 use crate::backend::api::repos::labels::LabelResponse;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::db::assignees::AssignedItem;
 use axum::extract::Form;
 use axum::extract::Path;
@@ -36,7 +38,7 @@ pub async fn add_issue_labels(
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
-    let issue = db::issues::get_issue(&state.pool, repository.id, number)
+    let issue = crate::backend::db::issues::get_issue(&state.pool, repository.id, number)
         .await
         .map_err(label_write_error)?
         .ok_or_else(|| {
@@ -67,7 +69,7 @@ pub async fn remove_issue_label(
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
-    let issue = db::issues::get_issue(&state.pool, repository.id, number)
+    let issue = crate::backend::db::issues::get_issue(&state.pool, repository.id, number)
         .await
         .map_err(label_write_error)?
         .ok_or_else(|| {
@@ -94,17 +96,18 @@ pub async fn remove_issue_label(
 /// not on it yet. Returns every label the item has afterwards.
 async fn add_labels(
     pool: &codeyard_db_core::DbPool,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     subject: AssignedItem,
     ids: &[i64],
 ) -> anyhow::Result<Vec<codeyard_db_core::models::Label>> {
     let labels = match subject {
         AssignedItem::Issue(item_id) => {
-            db::labels::add_issue_labels(pool, actor, repo_id, item_id, ids).await?
+            crate::backend::db::labels::add_issue_labels(pool, actor, repo_id, item_id, ids).await?
         }
         AssignedItem::PullRequest(item_id) => {
-            db::labels::add_pull_request_labels(pool, actor, repo_id, item_id, ids).await?
+            crate::backend::db::labels::add_pull_request_labels(pool, actor, repo_id, item_id, ids)
+                .await?
         }
     };
     Ok(labels)
@@ -114,17 +117,21 @@ async fn add_labels(
 /// it. Returns whether it was.
 async fn remove_label(
     pool: &codeyard_db_core::DbPool,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     subject: AssignedItem,
     label_id: i64,
 ) -> anyhow::Result<bool> {
     let removed = match subject {
         AssignedItem::Issue(item_id) => {
-            db::labels::remove_issue_label(pool, actor, repo_id, item_id, label_id).await?
+            crate::backend::db::labels::remove_issue_label(pool, actor, repo_id, item_id, label_id)
+                .await?
         }
         AssignedItem::PullRequest(item_id) => {
-            db::labels::remove_pull_request_label(pool, actor, repo_id, item_id, label_id).await?
+            crate::backend::db::labels::remove_pull_request_label(
+                pool, actor, repo_id, item_id, label_id,
+            )
+            .await?
         }
     };
     Ok(removed)
@@ -149,7 +156,7 @@ pub(crate) async fn native_add_label(
         value.id,
     )?;
     let draft = submitted_detail(&form, "label");
-    let labels = db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
+    let labels = crate::backend::db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
         .await
         .map_err(|_| unavailable(&ctx))?;
     let selected = draft

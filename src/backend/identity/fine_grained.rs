@@ -2,8 +2,8 @@
 //! organization the user belongs to), a repository selection and named permissions. What it
 //! can do is always the intersection of those grants with the user's own live rights: every
 //! request still runs as the user, and this module only narrows it.
-use super::tokens::token_hash;
-use crate::backend::db;
+use codeyard_support::token_hash::token_hash;
+
 use crate::backend::db::fine_grained_tokens::within;
 use crate::backend::db::fine_grained_tokens::Bounds;
 use crate::backend::db::fine_grained_tokens::NewToken;
@@ -17,151 +17,7 @@ pub const PREFIX: &str = codeyard_support::tokens::FGPAT_PREFIX;
 /// The longest lifetime any token may have, and the default organization maximum.
 pub const MAX_DAYS: i64 = 366;
 pub const DEFAULT_DAYS: i64 = 30;
-pub const MAX_REPOSITORIES: usize = db::fine_grained_tokens::MAX_REPOSITORIES;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Group {
-    Repository,
-    Organization,
-    Account,
-}
-
-pub struct Permission {
-    pub key: &'static str,
-    pub name: &'static str,
-    pub group: Group,
-    pub levels: &'static [&'static str],
-}
-
-const RW: &[&str] = &["read", "write"];
-const RWA: &[&str] = &["read", "write", "admin"];
-
-const fn permission(
-    key: &'static str,
-    name: &'static str,
-    group: Group,
-    levels: &'static [&'static str],
-) -> Permission {
-    Permission {
-        key,
-        name,
-        group,
-        levels,
-    }
-}
-
-/// GitHub's permission names, limited to the features Codeyard has.
-pub const PERMISSIONS: &[Permission] = &[
-    permission("actions", "Actions", Group::Repository, RW),
-    permission("administration", "Administration", Group::Repository, RW),
-    permission("attestations", "Attestations", Group::Repository, RW),
-    permission("checks", "Checks", Group::Repository, RW),
-    permission("contents", "Contents", Group::Repository, RW),
-    permission(
-        "dependabot_secrets",
-        "Dependabot secrets",
-        Group::Repository,
-        RW,
-    ),
-    permission("deployments", "Deployments", Group::Repository, RW),
-    permission("discussions", "Discussions", Group::Repository, RW),
-    permission("environments", "Environments", Group::Repository, RW),
-    permission("issues", "Issues", Group::Repository, RW),
-    permission("metadata", "Metadata", Group::Repository, &["read"]),
-    permission("packages", "Packages", Group::Repository, RW),
-    permission("pages", "Pages", Group::Repository, RW),
-    permission("pull_requests", "Pull requests", Group::Repository, RW),
-    permission("repository_hooks", "Webhooks", Group::Repository, RW),
-    permission(
-        "secret_scanning_alerts",
-        "Secret scanning alerts",
-        Group::Repository,
-        RW,
-    ),
-    permission("secrets", "Secrets", Group::Repository, RW),
-    permission(
-        "security_events",
-        "Code scanning alerts",
-        Group::Repository,
-        RW,
-    ),
-    permission("statuses", "Commit statuses", Group::Repository, RW),
-    permission("variables", "Variables", Group::Repository, RW),
-    permission(
-        "vulnerability_alerts",
-        "Dependabot alerts",
-        Group::Repository,
-        RW,
-    ),
-    permission("workflows", "Workflows", Group::Repository, &["write"]),
-    permission("members", "Members", Group::Organization, RW),
-    permission(
-        "organization_administration",
-        "Administration",
-        Group::Organization,
-        RW,
-    ),
-    permission(
-        "organization_actions_variables",
-        "Variables",
-        Group::Organization,
-        RW,
-    ),
-    permission(
-        "organization_custom_properties",
-        "Custom properties",
-        Group::Organization,
-        RWA,
-    ),
-    permission("organization_hooks", "Webhooks", Group::Organization, RW),
-    permission(
-        "organization_projects",
-        "Projects",
-        Group::Organization,
-        RWA,
-    ),
-    permission("organization_secrets", "Secrets", Group::Organization, RW),
-    permission(
-        "organization_self_hosted_runners",
-        "Self-hosted runners",
-        Group::Organization,
-        RW,
-    ),
-    permission(
-        "organization_user_blocking",
-        "Blocking users",
-        Group::Organization,
-        RW,
-    ),
-    permission("blocking", "Block another user", Group::Account, RW),
-    permission("email_addresses", "Email addresses", Group::Account, RW),
-    permission("followers", "Followers", Group::Account, RW),
-    permission("gists", "Gists", Group::Account, &["write"]),
-    permission("git_ssh_keys", "Git SSH keys", Group::Account, RW),
-    permission("gpg_keys", "GPG keys", Group::Account, RW),
-    permission(
-        "interaction_limits",
-        "Interaction limits",
-        Group::Account,
-        RW,
-    ),
-    permission("profile", "Profile", Group::Account, &["write"]),
-    permission("ssh_signing_keys", "SSH signing keys", Group::Account, RW),
-    permission("starring", "Starring", Group::Account, RW),
-    permission("watching", "Watching", Group::Account, RW),
-];
-
-pub fn catalog(key: &str) -> Option<&'static Permission> {
-    PERMISSIONS.iter().find(|permission| permission.key == key)
-}
-
-/// Whether `level` covers `write` (or read). `admin` covers both.
-pub fn allows(permissions: &Map<String, Value>, key: &str, write: bool) -> bool {
-    permissions
-        .get(key)
-        .and_then(Value::as_str)
-        .is_some_and(|level| matches!(level, "write" | "admin") || (!write && level == "read"))
-}
+pub const MAX_REPOSITORIES: usize = crate::backend::db::fine_grained_tokens::MAX_REPOSITORIES;
 
 /// What any token may read on a public repository, as an anonymous visitor can.
 fn public_read() -> Value {
@@ -259,7 +115,7 @@ pub fn validate(
     policy: Option<&Policy>,
     now: DateTime<Utc>,
 ) -> Result<Map<String, Value>, TokenError> {
-    if super::tokens::valid_name(&request.name).is_none() {
+    if crate::backend::identity::tokens::valid_name(&request.name).is_none() {
         return Err(TokenError::Invalid("Use a name of 1-100 characters."));
     }
     if request.description.len() > 1024 || request.description.contains('\0') {
@@ -341,7 +197,7 @@ pub async fn create(
 ) -> Result<Created, TokenError> {
     let session = session.ok_or(TokenError::Denied)?;
     let unavailable = |_| TokenError::Unavailable;
-    let account = db::users::accounts::get_user_by_id(pool, user)
+    let account = crate::backend::db::users::accounts::get_user_by_id(pool, user)
         .await
         .map_err(unavailable)?
         .ok_or(TokenError::Denied)?;
@@ -349,7 +205,7 @@ pub async fn create(
         Owner::User(id) if id == user => None,
         Owner::User(_) => return Err(TokenError::Denied),
         Owner::Organization(org) => {
-            let policy = db::fine_grained_tokens::policy(pool, org)
+            let policy = crate::backend::db::fine_grained_tokens::policy(pool, org)
                 .await
                 .map_err(unavailable)?;
             if !policy.fine_grained_allowed {
@@ -362,7 +218,7 @@ pub async fn create(
     };
     let permissions = validate(&request, policy.as_ref(), Utc::now())?;
     for id in &request.repositories {
-        let repo = db::repositories::records::get_repository_by_id(pool, *id)
+        let repo = crate::backend::db::repositories::records::get_repository_by_id(pool, *id)
             .await
             .map_err(unavailable)?;
         let readable = match &repo {
@@ -382,7 +238,7 @@ pub async fn create(
     let value = format!("{PREFIX}{}", codeyard_support::crypto::random_hex());
     let write = permissions.values().any(|level| level != "read");
     let permissions = Value::Object(permissions).to_string();
-    let (id, status) = db::fine_grained_tokens::create(
+    let (id, status) = crate::backend::db::fine_grained_tokens::create(
         pool,
         user,
         session,
@@ -417,14 +273,14 @@ pub async fn regenerate(
 ) -> Result<String, TokenError> {
     let session = session.ok_or(TokenError::Denied)?;
     let unavailable = |_| TokenError::Unavailable;
-    let token = db::fine_grained_tokens::get(pool, id)
+    let token = crate::backend::db::fine_grained_tokens::get(pool, id)
         .await
         .map_err(unavailable)?
         .filter(|token| token.user_id == user)
         .ok_or(TokenError::Missing)?;
     let policy = match token.owner_org_id {
         Some(org) => Some(
-            db::fine_grained_tokens::policy(pool, org)
+            crate::backend::db::fine_grained_tokens::policy(pool, org)
                 .await
                 .map_err(unavailable)?,
         ),
@@ -442,9 +298,16 @@ pub async fn regenerate(
         ));
     }
     let value = format!("{PREFIX}{}", codeyard_support::crypto::random_hex());
-    if db::fine_grained_tokens::regenerate(pool, user, session, id, &token_hash(&value), expires_at)
-        .await
-        .map_err(unavailable)?
+    if crate::backend::db::fine_grained_tokens::regenerate(
+        pool,
+        user,
+        session,
+        id,
+        &token_hash(&value),
+        expires_at,
+    )
+    .await
+    .map_err(unavailable)?
     {
         Ok(value)
     } else {
@@ -511,14 +374,21 @@ impl Grant {
                 Access::All => true,
                 Access::Selected => {
                     !repo.is_gist
-                        && db::fine_grained_tokens::selected(pool, self.token_id, repo.id).await?
+                        && crate::backend::db::fine_grained_tokens::selected(
+                            pool,
+                            self.token_id,
+                            repo.id,
+                        )
+                        .await?
                 }
             })
     }
 
     /// The token's permissions on one repository, before the user's own rights apply.
     pub async fn repository(&self, pool: &DbPool, repo: i64) -> anyhow::Result<Option<Value>> {
-        let Some(repo) = db::repositories::records::get_repository_by_id(pool, repo).await? else {
+        let Some(repo) =
+            crate::backend::db::repositories::records::get_repository_by_id(pool, repo).await?
+        else {
             return Ok(None);
         };
         let reach = self.reaches(pool, &repo).await?;
@@ -564,7 +434,7 @@ impl Grant {
 }
 
 pub async fn grant(pool: &DbPool, token: i64) -> anyhow::Result<Option<Grant>> {
-    db::fine_grained_tokens::bounds(pool, token)
+    crate::backend::db::fine_grained_tokens::bounds(pool, token)
         .await?
         .map(Grant::from_bounds)
         .transpose()
@@ -782,7 +652,7 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
         (Some("issue-types"), _) => read("issues"),
         (Some("stacks"), _) => Some("pull_requests"),
         (Some("comments"), _) => Some("contents"),
-        _ => super::github_apps::repository_permission(path, write),
+        _ => crate::backend::identity::github_apps::repository_permission(path, write),
     }
 }
 
@@ -990,3 +860,13 @@ mod tests {
         assert_eq!(need("/repos/a/b/import", false), Need::Denied);
     }
 }
+
+use codeyard_model::fine_grained::Group;
+
+use codeyard_model::fine_grained::PERMISSIONS;
+
+use codeyard_model::fine_grained::allows;
+
+use codeyard_model::fine_grained::catalog;
+
+use codeyard_model::fine_grained::permission;

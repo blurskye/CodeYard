@@ -1,9 +1,13 @@
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::user::profile::{settings_response, settings_result};
-use crate::backend::api::user::responses::{field, mutation_guard, within_bounds, Fields};
-use crate::backend::api::{auth, http::session};
+use crate::backend::api::user::profile::settings_response;
+use crate::backend::api::user::profile::settings_result;
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::within_bounds;
+use crate::backend::api::user::responses::Fields;
+
 use crate::backend::app::AppState;
-use crate::backend::identity;
+
 use crate::backend::identity::accounts::PasswordChange;
 use axum::extract::{Form, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
@@ -33,8 +37,8 @@ pub(crate) async fn password_post(
         )
         .await;
     }
-    let session_id = session::extract_session_id(&ctx.headers);
-    let result = identity::accounts::change_password(
+    let session_id = crate::backend::api::http::session::extract_session_id(&ctx.headers);
+    let result = crate::backend::identity::accounts::change_password(
         &ctx.state.pool,
         session_id.as_deref(),
         PasswordChange {
@@ -43,12 +47,14 @@ pub(crate) async fn password_post(
         },
     )
     .await
-    .map_err(auth::errors::password_change_failure);
+    .map_err(crate::backend::api::auth::errors::password_change_failure);
     match result {
         Ok(_) => {
             // Changing credentials revokes every session, including this one.
             let mut response = ctx.redirect("/login");
-            let Ok(cookie) = HeaderValue::from_str(&session::build_logout_cookie()) else {
+            let Ok(cookie) =
+                HeaderValue::from_str(&crate::backend::api::http::session::build_logout_cookie())
+            else {
                 return ctx.error(StatusCode::INTERNAL_SERVER_ERROR, "Your password changed, but the logout cookie could not be issued. Sign in again.");
             };
             response.headers_mut().append(header::SET_COOKIE, cookie);

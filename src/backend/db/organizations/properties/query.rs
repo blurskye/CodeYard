@@ -1,6 +1,7 @@
 //! Bounded repository predicates for organization property listings. Every expression
 //! is evaluated inside the organization and repository-read predicates, including ORs.
-use super::{invalid, valid_name};
+use crate::backend::db::organizations::properties::invalid;
+use crate::backend::db::organizations::properties::valid_name;
 use anyhow::{ensure, Result};
 
 #[derive(Clone, Debug, PartialEq, Eq)]

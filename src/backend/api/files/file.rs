@@ -1,8 +1,8 @@
-use crate::backend::{
-    api::http::session::{extract_session_id, get_current_user},
-    app::AppState,
-    files::{self, DeleteError},
-};
+use crate::backend::api::http::session::extract_session_id;
+use crate::backend::api::http::session::get_current_user;
+use crate::backend::app::AppState;
+
+use crate::backend::files::DeleteError;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -10,7 +10,8 @@ use axum::{
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::backend::api::http::error::{ApiError, ApiFailure};
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::ApiFailure;
 
 pub async fn delete_file(
     State(state): State<Arc<AppState>>,
@@ -25,7 +26,7 @@ pub async fn delete_file(
             "Invalid file ID format",
         )
     })?;
-    files::delete_owned_file(
+    crate::backend::files::delete_owned_file(
         &state.pool,
         &state.storage,
         (user.id, extract_session_id(&headers).unwrap_or_default()),

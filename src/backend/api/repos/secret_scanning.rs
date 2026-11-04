@@ -1,9 +1,8 @@
 //! Native secret scanning pages use the same transactions as REST.
-use super::{chrome, forms};
-use crate::backend::{
-    api::http::context::PageContext, app::AppState, db::secret_scanning as records,
-    repositories::secret_scanning::jobs,
-};
+
+use crate::backend::api::http::context::PageContext;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -33,24 +32,28 @@ pub fn page_router() -> Router<Arc<AppState>> {
         )
 }
 
-fn failure(ctx: &PageContext, loaded: &chrome::Loaded, error: anyhow::Error) -> Response {
-    match error.downcast_ref::<records::Refusal>() {
-        Some(records::Refusal::Missing) => ctx.repo_error(
+fn failure(
+    ctx: &PageContext,
+    loaded: &crate::backend::api::repos::chrome::Loaded,
+    error: anyhow::Error,
+) -> Response {
+    match error.downcast_ref::<crate::backend::db::secret_scanning::Refusal>() {
+        Some(crate::backend::db::secret_scanning::Refusal::Missing) => ctx.repo_error(
             &loaded.chrome,
             StatusCode::NOT_FOUND,
             "Secret scanning resource not found",
         ),
-        Some(records::Refusal::Denied) => ctx.repo_error(
+        Some(crate::backend::db::secret_scanning::Refusal::Denied) => ctx.repo_error(
             &loaded.chrome,
             StatusCode::FORBIDDEN,
             "Repository administration required",
         ),
-        Some(records::Refusal::Invalid) => ctx.repo_error(
+        Some(crate::backend::db::secret_scanning::Refusal::Invalid) => ctx.repo_error(
             &loaded.chrome,
             StatusCode::UNPROCESSABLE_ENTITY,
             "Invalid secret scanning submission",
         ),
-        _ => chrome::unavailable(ctx),
+        _ => crate::backend::api::repos::chrome::unavailable(ctx),
     }
 }
 
@@ -59,14 +62,20 @@ async fn open(
     headers: HeaderMap,
     uri: &Uri,
     params: &HashMap<String, String>,
-) -> Result<(PageContext, chrome::Loaded), Response> {
+) -> Result<(PageContext, crate::backend::api::repos::chrome::Loaded), Response> {
     let ctx = PageContext::load(state, headers, uri).await?;
-    let loaded = chrome::load_database(&ctx, &params["owner"], &params["repo"]).await?;
+    let loaded =
+        crate::backend::api::repos::chrome::load_database(&ctx, &params["owner"], &params["repo"])
+            .await?;
     ctx.require_user()?;
     Ok((ctx, loaded))
 }
 
-fn show(ctx: &PageContext, loaded: chrome::Loaded, page: view::Page) -> Response {
+fn show(
+    ctx: &PageContext,
+    loaded: crate::backend::api::repos::chrome::Loaded,
+    page: view::Page,
+) -> Response {
     ctx.page_model(
         "Secret scanning",
         Page::Repositories(RepoPage::SecretSecurity {
@@ -76,7 +85,7 @@ fn show(ctx: &PageContext, loaded: chrome::Loaded, page: view::Page) -> Response
     )
 }
 
-fn summary(alert: records::Alert) -> view::Alert {
+fn summary(alert: crate::backend::db::secret_scanning::Alert) -> view::Alert {
     view::Alert {
         number: alert.number,
         name: alert.display_name,
@@ -109,14 +118,14 @@ async fn list(
         .and_then(|page| page.parse::<i64>().ok())
         .unwrap_or(1)
         .clamp(1, MAX_PAGE);
-    let filter = records::Filter {
+    let filter = crate::backend::db::secret_scanning::Filter {
         state: Some(state.clone()),
         secret_type: (!secret_type.is_empty()).then_some(secret_type.clone()),
         offset: (page - 1) * 30,
         limit: 31,
         ..Default::default()
     };
-    let mut rows = match records::alerts(
+    let mut rows = match crate::backend::db::secret_scanning::alerts(
         &ctx.state.pool,
         ctx.user.as_ref().expect("signed in").id,
         loaded.repository.id,
@@ -127,8 +136,8 @@ async fn list(
         Ok(rows) => rows,
         Err(error)
             if matches!(
-                error.downcast_ref::<records::Refusal>(),
-                Some(records::Refusal::Missing)
+                error.downcast_ref::<crate::backend::db::secret_scanning::Refusal>(),
+                Some(crate::backend::db::secret_scanning::Refusal::Missing)
             ) =>
         {
             return show(&ctx, loaded, view::Page::Disabled)
@@ -168,11 +177,11 @@ async fn alert(
     };
     let number = params["number"].parse().unwrap_or(0);
     let actor = ctx.user.as_ref().expect("signed in").id;
-    let alert = match records::alerts(
+    let alert = match crate::backend::db::secret_scanning::alerts(
         &ctx.state.pool,
         actor,
         loaded.repository.id,
-        &records::Filter {
+        &crate::backend::db::secret_scanning::Filter {
             number: Some(number),
             limit: 1,
             ..Default::default()
@@ -181,7 +190,13 @@ async fn alert(
     .await
     {
         Ok(mut alerts) if !alerts.is_empty() => alerts.remove(0),
-        Ok(_) => return failure(&ctx, &loaded, records::Refusal::Missing.into()),
+        Ok(_) => {
+            return failure(
+                &ctx,
+                &loaded,
+                crate::backend::db::secret_scanning::Refusal::Missing.into(),
+            )
+        }
         Err(error) => return failure(&ctx, &loaded, error),
     };
     let page = ctx
@@ -190,7 +205,7 @@ async fn alert(
         .and_then(|page| page.parse::<i64>().ok())
         .unwrap_or(1)
         .clamp(1, MAX_PAGE);
-    let mut locations = match records::locations(
+    let mut locations = match crate::backend::db::secret_scanning::locations(
         &ctx.state.pool,
         actor,
         loaded.repository.id,
@@ -240,7 +255,7 @@ async fn resolve(
         Ok(open) => open,
         Err(response) => return response,
     };
-    if let Err(response) = forms::authorize_post(&ctx, &form) {
+    if let Err(response) = crate::backend::api::repos::forms::authorize_post(&ctx, &form) {
         return response;
     }
     if form
@@ -248,16 +263,20 @@ async fn resolve(
         .and_then(|id| id.parse::<i64>().ok())
         != Some(loaded.repository.id)
     {
-        return failure(&ctx, &loaded, records::Refusal::Missing.into());
+        return failure(
+            &ctx,
+            &loaded,
+            crate::backend::db::secret_scanning::Refusal::Missing.into(),
+        );
     }
     let number = params["number"].parse().unwrap_or(0);
-    let state = forms::field(&form, "state");
-    let input = records::AlertUpdate {
+    let state = crate::backend::api::repos::forms::field(&form, "state");
+    let input = crate::backend::db::secret_scanning::AlertUpdate {
         state: Some(&state),
         reason: form.get("resolution").map(String::as_str),
         ..Default::default()
     };
-    let alert = match records::update_alert(
+    let alert = match crate::backend::db::secret_scanning::update_alert(
         &ctx.state.pool,
         ctx.user.as_ref().expect("signed in").id,
         loaded.repository.id,
@@ -269,7 +288,7 @@ async fn resolve(
         Ok(alert) => alert,
         Err(error) => return failure(&ctx, &loaded, error),
     };
-    if let Err(error) = jobs::emit_alert(
+    if let Err(error) = crate::backend::repositories::secret_scanning::jobs::emit_alert(
         &ctx.state,
         &loaded.repository,
         &alert,
@@ -301,7 +320,7 @@ async fn bypass_page(
         Ok(open) => open,
         Err(response) => return response,
     };
-    let placeholder = match records::bypass(
+    let placeholder = match crate::backend::db::secret_scanning::bypass(
         &ctx.state.pool,
         ctx.user.as_ref().expect("signed in").id,
         loaded.repository.id,
@@ -335,7 +354,7 @@ async fn bypass_form(
         Ok(open) => open,
         Err(response) => return response,
     };
-    if let Err(response) = forms::authorize_post(&ctx, &form) {
+    if let Err(response) = crate::backend::api::repos::forms::authorize_post(&ctx, &form) {
         return response;
     }
     if form
@@ -343,10 +362,14 @@ async fn bypass_form(
         .and_then(|id| id.parse::<i64>().ok())
         != Some(loaded.repository.id)
     {
-        return failure(&ctx, &loaded, records::Refusal::Missing.into());
+        return failure(
+            &ctx,
+            &loaded,
+            crate::backend::db::secret_scanning::Refusal::Missing.into(),
+        );
     }
-    let reason = forms::field(&form, "reason");
-    match records::bypass(
+    let reason = crate::backend::api::repos::forms::field(&form, "reason");
+    match crate::backend::db::secret_scanning::bypass(
         &ctx.state.pool,
         ctx.user.as_ref().expect("signed in").id,
         loaded.repository.id,

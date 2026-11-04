@@ -1,10 +1,12 @@
-use super::super::responses::{map_job_info, JobInfo};
-use super::{ensure_repo_read_access, missing, CiReadError};
-use crate::backend::{
-    api::{http::error::ApiError, http::session::get_current_user},
-    app::AppState,
-    db,
-};
+use crate::backend::api::ci::jobs::ensure_repo_read_access;
+use crate::backend::api::ci::jobs::missing;
+use crate::backend::api::ci::jobs::CiReadError;
+use crate::backend::api::ci::responses::map_job_info;
+use crate::backend::api::ci::responses::JobInfo;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
@@ -42,26 +44,27 @@ pub async fn list_ci_jobs(
         ));
     }
     let runs = if let (Some(owner), Some(repo)) = (query.owner.as_ref(), query.repo.as_ref()) {
-        let repo = db::repositories::records::get_repository(&state.pool, owner, repo)
-            .await
-            .map_err(super::unavailable)?
-            .ok_or_else(missing)?;
+        let repo =
+            crate::backend::db::repositories::records::get_repository(&state.pool, owner, repo)
+                .await
+                .map_err(crate::backend::api::ci::jobs::unavailable)?
+                .ok_or_else(missing)?;
         ensure_repo_read_access(&state, &user, &repo).await?;
-        db::ci::list_filtered_ci_runs(
+        crate::backend::db::ci::list_filtered_ci_runs(
             &state.pool,
             user.id,
             Some(repo.id),
-            &db::ci::CiRunFilter::default(),
+            &crate::backend::db::ci::CiRunFilter::default(),
             limit,
         )
         .await
-        .map_err(super::unavailable)?
+        .map_err(crate::backend::api::ci::jobs::unavailable)?
     } else {
         // Current repository visibility is in SQL, BEFORE LIMIT; historical
         // triggering is not continuing private-resource authority.
-        db::ci::list_ci_runs_for_user(&state.pool, user.id, limit)
+        crate::backend::db::ci::list_ci_runs_for_user(&state.pool, user.id, limit)
             .await
-            .map_err(super::unavailable)?
+            .map_err(crate::backend::api::ci::jobs::unavailable)?
     };
     Ok(Json(ListJobsResponse {
         jobs: runs.into_iter().map(map_job_info).collect(),

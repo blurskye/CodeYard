@@ -26,9 +26,19 @@ pub async fn follow_user(
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::users::transitions::require_account(&mut tx, follower_id, credential).await?;
+    crate::backend::db::sqlite::users::transitions::require_account(
+        &mut tx,
+        follower_id,
+        credential,
+    )
+    .await?;
     anyhow::ensure!(
-        !super::users::blocks::interaction_blocked(&mut tx, follower_id, following_id).await?,
+        !crate::backend::db::sqlite::users::blocks::interaction_blocked(
+            &mut tx,
+            follower_id,
+            following_id
+        )
+        .await?,
         crate::backend::db::following::FollowRestricted
     );
     let result = sqlx::query(
@@ -49,7 +59,12 @@ pub async fn unfollow_user(
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::users::transitions::require_account(&mut tx, follower_id, credential).await?;
+    crate::backend::db::sqlite::users::transitions::require_account(
+        &mut tx,
+        follower_id,
+        credential,
+    )
+    .await?;
     let result = sqlx::query("DELETE FROM follows WHERE follower_id = ?1 AND following_id = ?2")
         .bind(follower_id)
         .bind(following_id)

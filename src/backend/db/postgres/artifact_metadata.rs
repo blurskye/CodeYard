@@ -1,8 +1,18 @@
 pub(crate) mod pages;
-use crate::backend::db::artifact_metadata::{
-    cacheable, Actor, Admission, Artifact, ClusterInput, Deployment, DeploymentInput, Environment,
-    Job, JobInput, Mutation, Record, Refusal, StorageInput,
-};
+use crate::backend::db::artifact_metadata::cacheable;
+use crate::backend::db::artifact_metadata::Actor;
+use crate::backend::db::artifact_metadata::Admission;
+use crate::backend::db::artifact_metadata::Artifact;
+use crate::backend::db::artifact_metadata::ClusterInput;
+use crate::backend::db::artifact_metadata::Deployment;
+use crate::backend::db::artifact_metadata::DeploymentInput;
+use crate::backend::db::artifact_metadata::Environment;
+use crate::backend::db::artifact_metadata::Job;
+use crate::backend::db::artifact_metadata::JobInput;
+use crate::backend::db::artifact_metadata::Mutation;
+use crate::backend::db::artifact_metadata::Record;
+use crate::backend::db::artifact_metadata::Refusal;
+use crate::backend::db::artifact_metadata::StorageInput;
 use anyhow::Result;
 use serde_json::{json, Value};
 use sqlx::{PgPool, Postgres, Transaction};
@@ -13,7 +23,7 @@ async fn begin(pool: &PgPool) -> Result<Tx<'_>> {
     sqlx::query("SELECT pg_advisory_xact_lock(723947121)")
         .execute(&mut *tx)
         .await?;
-    super::attestations::lock(&mut tx).await?;
+    crate::backend::db::postgres::attestations::lock(&mut tx).await?;
     Ok(tx)
 }
 
@@ -25,7 +35,7 @@ async fn credential(tx: &mut Tx<'_>, actor: Actor) -> Result<()> {
         let job: Option<(i64,String)> = sqlx::query_as("SELECT r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=$1 AND (t.revoked_at IS NULL OR t.revoked_at>FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint-60) AND (r.status='running' OR r.completed_at>clock_timestamp()-INTERVAL '1 minute')")
             .bind(actor.token).fetch_optional(&mut **tx).await?;
         let (repo, permissions) = job.ok_or(Refusal::Denied)?;
-        let permissions: crate::backend::ci::tokens::Permissions =
+        let permissions: codeyard_model::permissions::Permissions =
             serde_json::from_str(&permissions)?;
         anyhow::ensure!(
             actor.repo == Some(repo) && permissions.allows("artifact-metadata", true),
@@ -44,10 +54,10 @@ async fn writable(tx: &mut Tx<'_>, admission: &mut Admission, org: i64, repo: i6
     let actor = admission.actor;
     let result: Result<()> = async {
         anyhow::ensure!(actor.repo.is_none_or(|scope| scope == repo), Refusal::Missing);
-        let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND r.owner_kind='org' AND r.owner_org_id=$3 AND {})",super::repositories::access::readable_condition()))
+        let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND r.owner_kind='org' AND r.owner_org_id=$3 AND {})",crate::backend::db::postgres::repositories::access::readable_condition()))
             .bind(actor.user).bind(repo).bind(org).fetch_one(&mut **tx).await?;
         anyhow::ensure!(readable, Refusal::Missing);
-        anyhow::ensure!(super::discussions::lock_write_authority(tx, actor.user, repo).await?, Refusal::Denied);
+        anyhow::ensure!(crate::backend::db::postgres::discussions::lock_write_authority(tx, actor.user, repo).await?, Refusal::Denied);
         let belongs: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND owner_kind='org' AND owner_org_id=$2)").bind(repo).bind(org).fetch_one(&mut **tx).await?;
         anyhow::ensure!(belongs, Refusal::Missing);
         Ok(())
@@ -77,7 +87,7 @@ async fn targets(
     }
     let actor = admission.actor;
     let result: Result<Vec<(i64, Option<i64>)>> = async {
-        let sql = crate::backend::db::artifact_metadata::target_candidates_sql(true, super::repositories::access::USER_REPO_ACCESS_SQL);
+        let sql = crate::backend::db::artifact_metadata::target_candidates_sql(true, crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL);
         let mut rows: Vec<(i64,Option<i64>)> = sqlx::query_as(&sql)
             .bind(org).bind(&artifact.digest).bind(actor.user).bind(actor.repo).bind(maximum as i64).fetch_all(&mut **tx).await?;
         if rows.is_empty() {
@@ -368,7 +378,7 @@ pub async fn list(
     kind: &str,
 ) -> Result<Vec<Record>> {
     use futures_util::TryStreamExt;
-    let sql = format!("SELECT d.id,a.repo_id,d.kind,a.digest,a.name,a.version,d.document,d.attestation_id,d.created_at,d.updated_at FROM artifact_metadata_records d JOIN artifact_metadata a ON a.id=d.artifact_id JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=$1 WHERE d.org_id=$2 AND r.owner_kind='org' AND r.owner_org_id=$2 AND a.digest=$3 AND d.kind=$4 AND (CAST($5 AS BIGINT) IS NULL OR r.id=$5) AND {} ORDER BY d.id LIMIT 10001",super::repositories::access::readable_condition());
+    let sql = format!("SELECT d.id,a.repo_id,d.kind,a.digest,a.name,a.version,d.document,d.attestation_id,d.created_at,d.updated_at FROM artifact_metadata_records d JOIN artifact_metadata a ON a.id=d.artifact_id JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=$1 WHERE d.org_id=$2 AND r.owner_kind='org' AND r.owner_org_id=$2 AND a.digest=$3 AND d.kind=$4 AND (CAST($5 AS BIGINT) IS NULL OR r.id=$5) AND {} ORDER BY d.id LIMIT 10001",crate::backend::db::postgres::repositories::access::readable_condition());
     let mut stream = sqlx::query_as(&sql)
         .bind(actor.user)
         .bind(org)
@@ -385,9 +395,9 @@ pub async fn list(
 }
 
 async fn prune_jobs(tx: &mut Tx<'_>, scope: Option<(i64, i64, Option<i64>)>) -> Result<()> {
-    use crate::backend::db::artifact_metadata::{
-        JOB_GC_BATCH, JOB_HISTORY_LIMIT, JOB_HISTORY_SECONDS,
-    };
+    use crate::backend::db::artifact_metadata::JOB_GC_BATCH;
+    use crate::backend::db::artifact_metadata::JOB_HISTORY_LIMIT;
+    use crate::backend::db::artifact_metadata::JOB_HISTORY_SECONDS;
     let cutoff = chrono::Utc::now() - chrono::Duration::seconds(JOB_HISTORY_SECONDS);
     sqlx::query("DELETE FROM artifact_metadata_jobs WHERE id IN (SELECT id FROM artifact_metadata_jobs WHERE status IN ('completed','failed') AND completed_at<$1 ORDER BY completed_at,id LIMIT $2)")
         .bind(cutoff).bind(JOB_GC_BATCH).execute(&mut **tx).await?;

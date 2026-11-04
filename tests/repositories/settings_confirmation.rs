@@ -6,7 +6,7 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client::Client;
 
 use axum::http::StatusCode;
-use codeyard::backend::db;
+
 use database::Database;
 use serde_json::Value;
 
@@ -20,7 +20,7 @@ async fn contract(pg: bool) {
     codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -94,16 +94,16 @@ async fn contract(pg: bool) {
     assert_eq!(private["is_private"], true, "{private}");
 
     // An unconfirmed save based on the earlier public row must not reopen it.
-    let refused = db::repositories::records::update_repository(
+    let refused = codeyard::backend::db::repositories::records::update_repository(
         f.pool(),
         alice_id,
         repo.parse().unwrap(),
         Some("stale description"),
-        db::repositories::records::VisibilityUpdate {
+        codeyard::backend::db::repositories::records::VisibilityUpdate {
             is_private: false,
             expected: Some(false),
         },
-        db::repositories::records::MergeMethodUpdate {
+        codeyard::backend::db::repositories::records::MergeMethodUpdate {
             merge: None,
             squash: None,
             rebase: None,
@@ -111,10 +111,13 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(refused.is_err());
-    let kept = db::repositories::records::get_repository_by_id(f.pool(), repo.parse().unwrap())
-        .await
-        .unwrap()
-        .unwrap();
+    let kept = codeyard::backend::db::repositories::records::get_repository_by_id(
+        f.pool(),
+        repo.parse().unwrap(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert!(kept.is_private);
     assert_eq!(kept.description.as_deref(), Some("Edited"));
 

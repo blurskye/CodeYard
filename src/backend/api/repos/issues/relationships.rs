@@ -1,17 +1,14 @@
-use crate::backend::{
-    api::{
-        http::context::PageContext,
-        repos::{
-            discussion::{repository, unavailable, ResultPage},
-            forms::{authorize_post, field},
-        },
-    },
-    app::AppState,
-    db::{
-        self,
-        relationships::{Kind, Mutation, Refusal},
-    },
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::repos::discussion::repository;
+use crate::backend::api::repos::discussion::unavailable;
+use crate::backend::api::repos::discussion::ResultPage;
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::field;
+use crate::backend::app::AppState;
+
+use crate::backend::db::relationships::Kind;
+use crate::backend::db::relationships::Mutation;
+use crate::backend::db::relationships::Refusal;
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -28,7 +25,7 @@ pub(crate) async fn load(ctx: &PageContext, root: i64) -> ResultPage<Vec<Related
         Kind::Blocking,
         Kind::Related,
     ] {
-        for link in db::relationships::list(
+        for link in crate::backend::db::relationships::list(
             &ctx.state.pool,
             ctx.user.as_ref().map(|u| u.id),
             root,
@@ -67,7 +64,7 @@ pub(crate) async fn native_change(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let root = db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
+    let root = crate::backend::db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
         .await
         .map_err(|_| unavailable(&ctx))?
         .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
@@ -80,8 +77,12 @@ pub(crate) async fn native_change(
             .parse()
             .map_err(|_| ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid issue."))?
     } else {
-        super::super::discussion::issue_reference(&ctx, (&owner, &name), &field(&form, "reference"))
-            .await?
+        crate::backend::api::repos::discussion::issue_reference(
+            &ctx,
+            (&owner, &name),
+            &field(&form, "reference"),
+        )
+        .await?
     };
     let mutation = match action.as_str() {
         "add" => Mutation::Add {
@@ -102,7 +103,7 @@ pub(crate) async fn native_change(
             ))
         }
     };
-    db::relationships::change(
+    crate::backend::db::relationships::change(
         &ctx.state.pool,
         ctx.require_user()?.id,
         repo.record.id,

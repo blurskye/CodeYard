@@ -1,13 +1,10 @@
-use super::{repository, target, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db,
-    repositories::{
-        access,
-        pull_requests::{self, async_merge as native},
-        store::MergeMethod,
-    },
-};
+use crate::backend::api::github::pulls::repository;
+use crate::backend::api::github::pulls::target;
+use crate::backend::api::github::pulls::Error;
+use crate::backend::api::github::pulls::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::store::MergeMethod;
 use axum::{
     body::Bytes,
     extract::{Path, State},
@@ -43,13 +40,13 @@ async fn start(
     body: Bytes,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     // The merge moves the base branch, so the credential needs contents write as well as the
     // pull request grant the route asked for.
     auth.repository_scope(&state.pool, repo.id, "contents", true)
         .await
-        .map_err(super::super::auth::scope_error)?;
-    if !access::can_write(&state.pool, &auth.user, &repo)
+        .map_err(crate::backend::api::github::auth::scope_error)?;
+    if !crate::backend::repositories::access::can_write(&state.pool, &auth.user, &repo)
         .await
         .map_err(Error::unavailable)?
     {
@@ -67,7 +64,7 @@ async fn start(
         match serde_json::from_slice(&body) {
             Ok(input) => input,
             Err(error) => {
-                let error = super::super::json_parse_error(error);
+                let error = crate::backend::api::github::json_parse_error(error);
                 return Ok(failed(error.0, error.1));
             }
         }
@@ -92,7 +89,7 @@ async fn start(
     }
     let (_, mut pull) = target(&state, &headers, &owner, &name, number).await?;
     if pull.state == "open" {
-        pull_requests::refresh_open_pull_request(
+        crate::backend::repositories::pull_requests::refresh_open_pull_request(
             &state.pool,
             &repo,
             &state.ci_runs,
@@ -102,10 +99,13 @@ async fn start(
         )
         .await
         .map_err(Error::unavailable)?;
-        pull = db::pull_requests::records::get_pull_request_by_id(&state.pool, pull.id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+            &state.pool,
+            pull.id,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
     }
     if input
         .sha
@@ -129,7 +129,7 @@ async fn start(
             "Only an open, non-draft pull request can be merged",
         ));
     }
-    let request = pull_requests::merge::MergeRequest {
+    let request = crate::backend::repositories::pull_requests::merge::MergeRequest {
         expected_head: pull.head_sha,
         expected_base: pull.base_sha,
         expected_base_branch: Some(pull.base_branch),
@@ -139,9 +139,9 @@ async fn start(
         commit_message: input.commit_message,
         author_email: None,
     };
-    match native::start(
+    match crate::backend::repositories::pull_requests::async_merge::start(
         &state,
-        native::Job {
+        crate::backend::repositories::pull_requests::async_merge::Job {
             repo_id: repo.id,
             pull_request_id: pull.id,
             authority: auth.database_actor(),
@@ -155,10 +155,11 @@ async fn start(
     .await
     {
         Ok(value) => Ok((StatusCode::ACCEPTED, Json(value)).into_response()),
-        Err(pull_requests::OperationError::Conflict { message, .. }) => {
-            Ok(failed(StatusCode::CONFLICT, message))
-        }
-        Err(error) => Err(super::mutations::operation_error(error)),
+        Err(crate::backend::repositories::pull_requests::OperationError::Conflict {
+            message,
+            ..
+        }) => Ok(failed(StatusCode::CONFLICT, message)),
+        Err(error) => Err(crate::backend::api::github::pulls::mutations::operation_error(error)),
     }
 }
 async fn result(
@@ -171,10 +172,11 @@ async fn result(
         .map_err(|_| Error::missing())?
         .to_string();
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
-    let request = db::pull_requests::async_merge::get(&state.pool, repo.id, pull.id, &uuid)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let request =
+        crate::backend::db::pull_requests::async_merge::get(&state.pool, repo.id, pull.id, &uuid)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     Ok(Json(
         json!({"status":request.status,"details":request.details}),
     ))

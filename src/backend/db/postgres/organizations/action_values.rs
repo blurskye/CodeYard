@@ -1,18 +1,22 @@
-use crate::backend::{
-    crypto::{SecretEncryptor, SecretError},
-    db::{
-        organization_values::{
-            self, Kind, OrganizationValue, Save, Selection, SettingsPage, SettingsValue,
-            StoredValue, ValueError, SETTINGS_PAGE_SIZE,
-        },
-        organizations::{administers, OrganizationOutcome},
-        users::accounts::AccountCredential,
-    },
-};
+use codeyard_support::secrets::SecretEncryptor;
+use codeyard_support::secrets::SecretError;
+
+use crate::backend::db::organization_values::Kind;
+use crate::backend::db::organization_values::OrganizationValue;
+use crate::backend::db::organization_values::Save;
+use crate::backend::db::organization_values::Selection;
+use crate::backend::db::organization_values::SettingsPage;
+use crate::backend::db::organization_values::SettingsValue;
+use crate::backend::db::organization_values::StoredValue;
+use crate::backend::db::organization_values::ValueError;
+use crate::backend::db::organization_values::SETTINGS_PAGE_SIZE;
+use crate::backend::db::organizations::administers;
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::users::accounts::AccountCredential;
 use sqlx::{PgConnection as Connection, PgPool as Pool, Postgres, Transaction};
 
 async fn authorize(connection: &mut Connection, actor: i64, org: i64) -> Result<(), ValueError> {
-    match super::authority::authority(connection, actor, org)
+    match crate::backend::db::postgres::organizations::authority::authority(connection, actor, org)
         .await
         .map_err(ValueError::Authority)?
     {
@@ -114,7 +118,7 @@ async fn valid_repositories(
 ) -> Result<Vec<i64>, ValueError> {
     let ids: std::collections::BTreeSet<_> = ids.iter().copied().collect();
     let ids: Vec<i64> = ids.into_iter().collect();
-    if !super::authority::scoped_repos(connection, org, &ids)
+    if !crate::backend::db::postgres::organizations::authority::scoped_repos(connection, org, &ids)
         .await
         .map_err(ValueError::Authority)?
     {
@@ -169,7 +173,7 @@ pub async fn save(
     org: i64,
     input: &Save<'_>,
 ) -> Result<bool, ValueError> {
-    organization_values::validate(input.name, input.value.unwrap_or_default())?;
+    crate::backend::db::organization_values::validate(input.name, input.value.unwrap_or_default())?;
     let mut tx = pool.begin().await?;
     authorize_write(&mut tx, actor, credential, org).await?;
     let kind = input.kind.as_str();
@@ -424,7 +428,7 @@ pub async fn inherited(
     kind: Kind,
 ) -> Result<Vec<OrganizationValue>, ValueError> {
     let mut tx = pool.begin().await?;
-    let allowed = super::super::discussions::lock_settings_read_authority(
+    let allowed = crate::backend::db::postgres::discussions::lock_settings_read_authority(
         &mut tx,
         actor,
         repo,
@@ -435,7 +439,7 @@ pub async fn inherited(
     if !allowed {
         return Err(ValueError::Denied);
     }
-    let rows = sqlx::query_as(&format!("SELECT v.name,v.kind,v.value,v.visibility,v.created_at,v.updated_at FROM org_actions_values v JOIN repositories r ON r.owner_org_id=v.org_id AND r.owner_kind='org' WHERE r.id=$1 AND v.kind=$2 AND {} ORDER BY v.name", organization_values::REACHES_REPOSITORY))
+    let rows = sqlx::query_as(&format!("SELECT v.name,v.kind,v.value,v.visibility,v.created_at,v.updated_at FROM org_actions_values v JOIN repositories r ON r.owner_org_id=v.org_id AND r.owner_kind='org' WHERE r.id=$1 AND v.kind=$2 AND {} ORDER BY v.name", crate::backend::db::organization_values::REACHES_REPOSITORY))
         .bind(repo).bind(kind.as_str()).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
@@ -446,6 +450,6 @@ pub async fn workflow_values(
     repo: i64,
     kind: Kind,
 ) -> Result<Vec<StoredValue>, ValueError> {
-    Ok(sqlx::query_as(&format!("SELECT v.name,v.value,v.visibility,v.encrypted_value,v.nonce FROM org_actions_values v JOIN repositories r ON r.owner_org_id=v.org_id AND r.owner_kind='org' WHERE r.id=$1 AND v.kind=$2 AND {} ORDER BY v.name LIMIT $3", organization_values::REACHES_REPOSITORY))
+    Ok(sqlx::query_as(&format!("SELECT v.name,v.value,v.visibility,v.encrypted_value,v.nonce FROM org_actions_values v JOIN repositories r ON r.owner_org_id=v.org_id AND r.owner_kind='org' WHERE r.id=$1 AND v.kind=$2 AND {} ORDER BY v.name LIMIT $3", crate::backend::db::organization_values::REACHES_REPOSITORY))
         .bind(repo).bind(kind.as_str()).bind(if kind==Kind::Secret {100i64} else {1000i64}).fetch_all(pool).await?)
 }

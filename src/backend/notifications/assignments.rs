@@ -1,8 +1,9 @@
 //! Assignment notifications. A user who is newly assigned to an issue or pull request hears about
 //! it, unless they assigned themselves, are restricted, cannot read the repository, or ignore it.
-use super::create::{create_and_broadcast_notification, NotificationRequest};
-use super::NotificationBroadcaster;
-use crate::backend::db;
+use crate::backend::notifications::create::create_and_broadcast_notification;
+use crate::backend::notifications::create::NotificationRequest;
+use crate::backend::notifications::NotificationBroadcaster;
+
 use crate::backend::repositories::access::can_read;
 use serde_json::json;
 
@@ -40,7 +41,7 @@ pub async fn notify_assignees(
         if assignee == assignment.actor.id {
             continue;
         }
-        let user = match db::users::accounts::get_user_by_id(pool, assignee).await {
+        let user = match crate::backend::db::users::accounts::get_user_by_id(pool, assignee).await {
             Ok(Some(user)) => user,
             Ok(None) => continue,
             Err(error) => {

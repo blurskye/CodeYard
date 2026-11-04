@@ -1,15 +1,18 @@
 //! Organization hooks share validation, encrypted secrets and sends with native settings.
-use super::{auth, target, AppState, Error, Result};
-use crate::backend::api::github::api_url;
+use crate::backend::api::github::orgs::auth;
+use crate::backend::api::github::orgs::target;
+use crate::backend::api::github::orgs::AppState;
+use crate::backend::api::github::orgs::Error;
+use crate::backend::api::github::orgs::Result;
 use crate::backend::api::github::pagination::Pagination;
 use crate::backend::api::github::webhooks::delivery_page;
 use crate::backend::api::github::webhooks::Deliveries;
-use crate::backend::db::webhooks as hooks;
+use codeyard_model::urls::api_url;
+
 use crate::backend::db::webhooks::DeliveryWindow;
 use crate::backend::db::webhooks::HookOwner;
 use crate::backend::db::webhooks::HookSettings;
-use crate::backend::webhooks::payloads;
-use crate::backend::webhooks::settings;
+
 use crate::backend::webhooks::settings::HookError;
 use crate::backend::webhooks::settings::HookForm;
 use crate::backend::webhooks::settings::HookPatch;
@@ -42,7 +45,7 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 fn error(error: HookError) -> Error {
-    super::super::webhooks::owner_error(error, "Must be an organization owner")
+    crate::backend::api::github::webhooks::owner_error(error, "Must be an organization owner")
 }
 fn id(params: &Params, name: &str) -> Result<i64> {
     params
@@ -73,7 +76,7 @@ async fn snapshot(
     delivery: Option<i64>,
     history: Option<DeliveryWindow>,
 ) -> Result<HookSettings> {
-    let settings = hooks::read_settings(
+    let settings = crate::backend::db::webhooks::read_settings(
         &state.pool,
         HookOwner::Organization(org),
         actor.user.id,
@@ -98,7 +101,7 @@ fn url(org: &str, id: i64) -> String {
     ))
 }
 fn document(org: &str, hook: &Webhook) -> Value {
-    payloads::webhook(hook, &url(org, hook.id))
+    crate::backend::webhooks::payloads::webhook(hook, &url(org, hook.id))
 }
 async fn list(
     State(state): State<Arc<AppState>>,
@@ -109,7 +112,7 @@ async fn list(
 ) -> Result<Response> {
     let (org, actor) = actor(&state, &headers, &name, false).await?;
     let (offset, limit) = page.window()?;
-    let rows = hooks::list_managed_webhooks(
+    let rows = crate::backend::db::webhooks::list_managed_webhooks(
         &state.pool,
         HookOwner::Organization(org.id),
         actor.user.id,
@@ -143,7 +146,7 @@ async fn get_config(
 ) -> Result<Json<Value>> {
     let (org, actor) = actor(&state, &headers, &params["org"], false).await?;
     let snapshot = snapshot(&state, org.id, &actor, id(&params, "hook_id")?, None, None).await?;
-    Ok(Json(payloads::webhook_config(
+    Ok(Json(crate::backend::webhooks::payloads::webhook_config(
         snapshot.hook.as_ref().unwrap(),
     )))
 }
@@ -176,8 +179,8 @@ fn config(value: Option<&Value>) -> Result<HookPatch> {
     let config = object(value)?;
     let content_type = text(config, "content_type")?
         .map(|kind| match kind.as_str() {
-            "json" => Ok(settings::JSON_CONTENT_TYPE.to_owned()),
-            "form" => Ok(settings::FORM_CONTENT_TYPE.to_owned()),
+            "json" => Ok(crate::backend::webhooks::settings::JSON_CONTENT_TYPE.to_owned()),
+            "form" => Ok(crate::backend::webhooks::settings::FORM_CONTENT_TYPE.to_owned()),
             _ => Err(Error::validation("Hook", "content_type", "invalid")),
         })
         .transpose()?;
@@ -228,7 +231,7 @@ async fn create(
     body: Body,
 ) -> Result<Response> {
     let (org, actor) = actor(&state, &headers, &name, true).await?;
-    let Json(value) = body.map_err(super::super::json_error)?;
+    let Json(value) = body.map_err(crate::backend::api::github::json_error)?;
     let object = object(&value)?;
     if text(object, "name")?.as_deref() != Some("web") {
         return Err(Error::validation("Hook", "name", "invalid"));
@@ -243,14 +246,14 @@ async fn create(
             .ok_or_else(|| Error::validation("Hook", "url", "missing_field"))?,
         content_type: patch
             .content_type
-            .unwrap_or_else(|| settings::FORM_CONTENT_TYPE.into()),
+            .unwrap_or_else(|| crate::backend::webhooks::settings::FORM_CONTENT_TYPE.into()),
         events: patch.events.unwrap_or_else(|| vec!["push".into()]),
         active: patch.active.unwrap_or(true),
         ssl_verify: patch.ssl_verify.unwrap_or(true),
         secret: patch.secret.unwrap_or_default(),
         clear_secret: false,
     };
-    let id = settings::save(
+    let id = crate::backend::webhooks::settings::save(
         &state.pool,
         state.secret_encryptor.as_deref(),
         HookOwner::Organization(org.id),
@@ -279,10 +282,10 @@ async fn update(
     body: Body,
 ) -> Result<Json<Value>> {
     let (org, actor) = actor(&state, &headers, &params["org"], true).await?;
-    let Json(value) = body.map_err(super::super::json_error)?;
+    let Json(value) = body.map_err(crate::backend::api::github::json_error)?;
     let patch = parse_patch(&value)?;
     let id = id(&params, "hook_id")?;
-    settings::update(
+    crate::backend::webhooks::settings::update(
         &state.pool,
         state.secret_encryptor.as_deref(),
         HookOwner::Organization(org.id),
@@ -308,10 +311,10 @@ async fn update_config(
     body: Body,
 ) -> Result<Json<Value>> {
     let (org, actor) = actor(&state, &headers, &params["org"], true).await?;
-    let Json(value) = body.map_err(super::super::json_error)?;
+    let Json(value) = body.map_err(crate::backend::api::github::json_error)?;
     let patch = config(Some(&value))?;
     let id = id(&params, "hook_id")?;
-    settings::update(
+    crate::backend::webhooks::settings::update(
         &state.pool,
         state.secret_encryptor.as_deref(),
         HookOwner::Organization(org.id),
@@ -322,7 +325,7 @@ async fn update_config(
     )
     .await
     .map_err(error)?;
-    Ok(Json(payloads::webhook_config(
+    Ok(Json(crate::backend::webhooks::payloads::webhook_config(
         &snapshot(&state, org.id, &actor, id, None, None)
             .await?
             .hook
@@ -335,7 +338,7 @@ async fn remove(
     Path(params): Path<Params>,
 ) -> Result<StatusCode> {
     let (org, actor) = actor(&state, &headers, &params["org"], true).await?;
-    settings::delete(
+    crate::backend::webhooks::settings::delete(
         &state.pool,
         HookOwner::Organization(org.id),
         &actor.user,
@@ -352,7 +355,7 @@ async fn ping(
     Path(params): Path<Params>,
 ) -> Result<StatusCode> {
     let (org, actor) = actor(&state, &headers, &params["org"], true).await?;
-    settings::ping(
+    crate::backend::webhooks::settings::ping(
         &state.pool,
         HookOwner::Organization(org.id),
         &actor.user,
@@ -369,7 +372,7 @@ async fn redeliver(
     Path(params): Path<Params>,
 ) -> Result<StatusCode> {
     let (org, actor) = actor(&state, &headers, &params["org"], true).await?;
-    settings::redeliver(
+    crate::backend::webhooks::settings::redeliver(
         &state.pool,
         HookOwner::Organization(org.id),
         &actor.user,
@@ -396,7 +399,7 @@ async fn delivery(
         None,
     )
     .await?;
-    Ok(Json(payloads::webhook_delivery(
+    Ok(Json(crate::backend::webhooks::payloads::webhook_delivery(
         &snapshot.delivery.ok_or_else(Error::missing)?,
         true,
     )))
@@ -424,7 +427,7 @@ async fn deliveries(
         headers,
         Json(
             rows.iter()
-                .map(|row| payloads::webhook_delivery(row, false))
+                .map(|row| crate::backend::webhooks::payloads::webhook_delivery(row, false))
                 .collect::<Vec<_>>(),
         ),
     )

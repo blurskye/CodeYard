@@ -1,8 +1,11 @@
 //! The `status` event, sent after a commit status is saved through REST or the native API.
-use super::payloads::{self, Person, Scope};
-use super::{emit, events};
-use crate::backend::db;
-use crate::backend::repositories::store::{CommitInfo, RepoStore};
+
+use crate::backend::webhooks::emit;
+use crate::backend::webhooks::payloads::Person;
+use crate::backend::webhooks::payloads::Scope;
+
+use crate::backend::repositories::store::CommitInfo;
+use crate::backend::repositories::store::RepoStore;
 use codeyard_db_core::models::CommitStatus;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
@@ -43,7 +46,7 @@ pub async fn emit_status(
         .unwrap_or_default();
     let author = accounts.get(&commit.author_email).map(Person::of);
     let committer = accounts.get(&commit.committer_email).map(Person::of);
-    let comments = db::repositories::commit_comments::comment_counts(
+    let comments = crate::backend::db::repositories::commit_comments::comment_counts(
         pool,
         repo.id,
         std::slice::from_ref(&commit.sha),
@@ -60,13 +63,17 @@ pub async fn emit_status(
     emit(
         pool,
         repo,
-        events::STATUS,
+        codeyard_model::webhook_events::STATUS,
         vec![actor],
         move |owner, people| {
             let sender = people.get(actor);
-            let detail =
-                payloads::git_commit(&commit, owner, &repo_for_hook.name, repo_for_hook.id);
-            let commit = payloads::commit(
+            let detail = crate::backend::webhooks::payloads::git_commit(
+                &commit,
+                owner,
+                &repo_for_hook.name,
+                repo_for_hook.id,
+            );
+            let commit = crate::backend::webhooks::payloads::commit(
                 &commit,
                 detail,
                 owner,
@@ -76,7 +83,7 @@ pub async fn emit_status(
                 author.as_ref(),
                 committer.as_ref(),
             );
-            payloads::status(
+            crate::backend::webhooks::payloads::status(
                 &status,
                 commit,
                 &branches,

@@ -1,11 +1,12 @@
-use crate::backend::db::{
-    oidc::{Inclusion, Refusal, Scope, Settings, TokenSettings},
-    organizations::{
-        self,
-        properties::{DefinitionRow, PropertyValue},
-        OrganizationOutcome,
-    },
-};
+use crate::backend::db::oidc::Inclusion;
+use crate::backend::db::oidc::Refusal;
+use crate::backend::db::oidc::Scope;
+use crate::backend::db::oidc::Settings;
+use crate::backend::db::oidc::TokenSettings;
+
+use crate::backend::db::organizations::properties::DefinitionRow;
+use crate::backend::db::organizations::properties::PropertyValue;
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::{ensure, Result};
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::collections::BTreeMap;
@@ -19,10 +20,10 @@ async fn authorize(
     let actor = credential.user_id;
     let allowed = match scope {
         Scope::Repository(repo) => {
-            super::discussions::lock_admin_authority(tx, actor, repo).await?
+            crate::backend::db::sqlite::discussions::lock_admin_authority(tx, actor, repo).await?
         }
         Scope::Organization(org) => {
-            matches!(super::organizations::authority::authority(tx, actor, org).await?, OrganizationOutcome::Applied(role) if organizations::administers(role))
+            matches!(crate::backend::db::sqlite::organizations::authority::authority(tx, actor, org).await?, OrganizationOutcome::Applied(role) if crate::backend::db::organizations::administers(role))
         }
     };
     ensure!(allowed, Refusal::Denied);
@@ -31,7 +32,8 @@ async fn authorize(
         Scope::Organization(org) => (None, Some(org), "organization_administration"),
     };
     ensure!(
-        super::credentials::writes(tx, &credential, repo, org, permission).await?,
+        crate::backend::db::sqlite::credentials::writes(tx, &credential, repo, org, permission)
+            .await?,
         Refusal::Denied
     );
     Ok(())
@@ -46,7 +48,7 @@ async fn authorize_write(
     let actor = actor.into();
     authorize(tx, actor.clone(), scope).await?;
     ensure!(
-        super::credentials::live(tx, &actor, true).await?,
+        crate::backend::db::sqlite::credentials::live(tx, &actor, true).await?,
         Refusal::Denied
     );
     Ok(())
@@ -190,8 +192,12 @@ pub async fn token_settings(pool: &SqlitePool, repo: i64) -> Result<TokenSetting
                 .into_iter()
                 .map(DefinitionRow::decode)
                 .collect::<Result<Vec<_>>>()?;
-        for property in
-            super::organizations::properties::values_on(&mut tx, repo, &definitions).await?
+        for property in crate::backend::db::sqlite::organizations::properties::values_on(
+            &mut tx,
+            repo,
+            &definitions,
+        )
+        .await?
         {
             if let Some(value) = property.value.filter(PropertyValue::present) {
                 let value = match value {

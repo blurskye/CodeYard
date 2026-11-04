@@ -1,12 +1,16 @@
-use super::{
-    issue, missing,
-    mutations::{issue_error, pull_error, text},
-    node_id, repository, RequestContext, Result, Value,
-};
-use crate::backend::{
-    issues::comments::{self, CommentTarget, CreateCommentRequest},
-    repositories::pull_requests,
-};
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::mutations::issue_error;
+use crate::backend::api::graphql::mutations::pull_error;
+use crate::backend::api::graphql::mutations::text;
+use crate::backend::api::graphql::node_id;
+
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
+
+use crate::backend::issues::comments::CommentTarget;
+use crate::backend::issues::comments::CreateCommentRequest;
+
 use serde_json::json;
 pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext) -> Result<Value> {
     let encoded = text(input, "id")?;
@@ -16,13 +20,17 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         "PC" => (true, id),
         _ => return Err(missing()),
     };
-    let parent = Box::pin(super::node(encoded, request)).await?;
-    let repo = repository::by_id(parent["_repo"].as_i64().ok_or_else(missing)?, request).await?;
+    let parent = Box::pin(crate::backend::api::graphql::node(encoded, request)).await?;
+    let repo = crate::backend::api::graphql::repository::by_id(
+        parent["_repo"].as_i64().ok_or_else(missing)?,
+        request,
+    )
+    .await?;
     request
         .authorize(repo.id, if pull { "pull-requests" } else { "issues" }, true)
         .await?;
     let target = CommentTarget {
-        owner: repository::owner(&repo, request).await?,
+        owner: crate::backend::api::graphql::repository::owner(&repo, request).await?,
         repo: repo.name.clone(),
         number: parent["_number"].as_i64().ok_or_else(missing)? as i32,
         comment_id: id,
@@ -33,30 +41,38 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     let mut payload = json!({"clientMutationId":input["clientMutationId"]});
     if field == "deleteIssueComment" {
         if pull {
-            pull_requests::comments::delete_pull_request_comment(pool, actor, target)
-                .await
-                .map_err(pull_error)?;
+            crate::backend::repositories::pull_requests::comments::delete_pull_request_comment(
+                pool, actor, target,
+            )
+            .await
+            .map_err(pull_error)?;
         } else {
-            comments::delete_issue_comment(pool, actor, &credential, target)
-                .await
-                .map_err(issue_error)?;
+            crate::backend::issues::comments::delete_issue_comment(
+                pool,
+                actor,
+                &credential,
+                target,
+            )
+            .await
+            .map_err(issue_error)?;
         }
     } else {
         let body = text(input, "body")?.to_owned();
         payload["issueComment"] = if pull {
-            let row = pull_requests::comments::edit_pull_request_comment(
-                pool,
-                &request.state.notification_broadcaster,
-                actor,
-                target,
-                body,
-                parent["body"].as_str(),
-            )
-            .await
-            .map_err(pull_error)?;
-            issue::pull_comment(&row, request).await?
+            let row =
+                crate::backend::repositories::pull_requests::comments::edit_pull_request_comment(
+                    pool,
+                    &request.state.notification_broadcaster,
+                    actor,
+                    target,
+                    body,
+                    parent["body"].as_str(),
+                )
+                .await
+                .map_err(pull_error)?;
+            crate::backend::api::graphql::issue::pull_comment(&row, request).await?
         } else {
-            let row = comments::edit_issue_comment(
+            let row = crate::backend::issues::comments::edit_issue_comment(
                 pool,
                 &request.state.notification_broadcaster,
                 actor,
@@ -71,7 +87,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             )
             .await
             .map_err(issue_error)?;
-            issue::comment(&row, request).await?
+            crate::backend::api::graphql::issue::comment(&row, request).await?
         };
     }
     Ok(payload)

@@ -1,13 +1,14 @@
-use super::{
-    profile::settings_response,
-    responses::{field, mutation_guard, require_account, Fields},
-};
-use crate::backend::{
-    api::http::{context::PageContext, session},
-    app::AppState,
-    db::users::accounts::AccountCredential,
-    identity::gpg::{self, GpgError},
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::user::profile::settings_response;
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::require_account;
+use crate::backend::api::user::responses::Fields;
+
+use crate::backend::app::AppState;
+use crate::backend::db::users::accounts::AccountCredential;
+
+use crate::backend::identity::gpg::GpgError;
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -47,10 +48,11 @@ pub(crate) async fn add_post(
         Ok(actor) => actor,
         Err(response) => return response,
     };
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     result(
         &ctx,
-        gpg::enroll(
+        crate::backend::identity::gpg::enroll(
             &ctx.state.pool,
             actor.id,
             &AccountCredential::Session(&session),
@@ -80,10 +82,11 @@ pub(crate) async fn delete_post(
         Ok(actor) => actor,
         Err(response) => return response,
     };
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     result(
         &ctx,
-        gpg::delete(
+        crate::backend::identity::gpg::delete(
             &ctx.state.pool,
             actor.id,
             &AccountCredential::Session(&session),

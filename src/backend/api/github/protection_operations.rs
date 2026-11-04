@@ -1,20 +1,23 @@
 //! Additional classic protection settings and the rules derived from them.
-use super::{
-    auth::read_method,
-    contents::store_error,
-    protection::{document, protected, review_document, write_error},
-    repo_url, repository, Error, Result,
-};
+use crate::backend::api::github::auth::read_method;
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::protection::document;
+use crate::backend::api::github::protection::protected;
+use crate::backend::api::github::protection::review_document;
+use crate::backend::api::github::protection::write_error;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::db::repositories::protection;
+use codeyard_model::urls::repo_url;
+
 use crate::backend::db::repositories::protection::ActorListUpdate;
 use crate::backend::db::repositories::protection::BranchProtectionRuleUpsert;
 use crate::backend::db::repositories::protection::ProtectionUpdate;
 use crate::backend::db::repositories::protection::ReviewProtectionUpdate;
-use crate::backend::repositories::access;
+
 use crate::backend::repositories::store::repo_store;
-use crate::backend::webhooks::payloads;
+
 use axum::{
     extract::{FromRequest, Path, Request, State},
     http::{HeaderMap, Method, StatusCode},
@@ -84,7 +87,7 @@ struct Protection {
 }
 
 fn valid_names(names: &[String]) -> Result<()> {
-    if names.len() > protection::MAX_ALLOWANCE_ACTORS
+    if names.len() > crate::backend::db::repositories::protection::MAX_ALLOWANCE_ACTORS
         || names
             .iter()
             .any(|name| name.is_empty() || name.len() > 255 || name.chars().any(char::is_control))
@@ -101,7 +104,7 @@ pub(super) async fn user_ids(state: &AppState, names: &[String]) -> Result<Vec<i
     let mut names = names.to_vec();
     names.sort_unstable();
     names.dedup();
-    let users = db::users::accounts::get_users_by_usernames(&state.pool, &names)
+    let users = crate::backend::db::users::accounts::get_users_by_usernames(&state.pool, &names)
         .await
         .map_err(Error::unavailable)?;
     if users.len() != names.len() {
@@ -114,14 +117,20 @@ async fn app_ids(state: &AppState, repo: i64, names: &[String]) -> Result<Vec<i6
     valid_names(names)?;
     let mut ids = Vec::new();
     for name in names {
-        let app = db::github_apps::app(&state.pool, name)
+        let app = crate::backend::db::github_apps::app(&state.pool, name)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(|| Error::invalid("Unknown app"))?;
-        if db::github_apps::repository_installation(&state.pool, app.id, repo, true, None)
-            .await
-            .map_err(Error::unavailable)?
-            .is_none()
+        if crate::backend::db::github_apps::repository_installation(
+            &state.pool,
+            app.id,
+            repo,
+            true,
+            None,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .is_none()
         {
             return Err(Error::invalid("App is not installed on this repository"));
         }
@@ -135,11 +144,13 @@ async fn app_ids(state: &AppState, repo: i64, names: &[String]) -> Result<Vec<i6
 pub(super) async fn app_documents(state: &AppState, ids: &[i64]) -> Result<Vec<Value>> {
     let mut values = Vec::new();
     for id in ids {
-        if let Some(app) = db::github_apps::app(&state.pool, &id.to_string())
+        if let Some(app) = crate::backend::db::github_apps::app(&state.pool, &id.to_string())
             .await
             .map_err(Error::unavailable)?
         {
-            values.push(super::apps::installations::app_document(state, &app).await?);
+            values.push(
+                crate::backend::api::github::apps::installations::app_document(state, &app).await?,
+            );
         }
     }
     Ok(values)
@@ -147,27 +158,39 @@ pub(super) async fn app_documents(state: &AppState, ids: &[i64]) -> Result<Vec<V
 
 async fn actor_document(state: &AppState, repo: i64, actors: Actors) -> Result<Value> {
     if actors.users.len() + actors.teams.len() + actors.apps.len()
-        > protection::MAX_ALLOWANCE_ACTORS
+        > crate::backend::db::repositories::protection::MAX_ALLOWANCE_ACTORS
     {
         return Err(Error::invalid("Supply at most 100 actors"));
     }
     let ids = user_ids(state, &actors.users).await?;
-    let users = db::users::accounts::get_users_by_ids(&state.pool, &ids)
+    let users = crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &ids)
         .await
         .map_err(Error::unavailable)?;
-    let teams = db::repositories::push_teams::resolve_names(&state.pool, repo, &actors.teams)
-        .await
-        .map_err(write_error)?;
-    let rows = db::repositories::push_teams::by_ids(&state.pool, repo, &teams)
+    let teams = crate::backend::db::repositories::push_teams::resolve_names(
+        &state.pool,
+        repo,
+        &actors.teams,
+    )
+    .await
+    .map_err(write_error)?;
+    let rows = crate::backend::db::repositories::push_teams::by_ids(&state.pool, repo, &teams)
         .await
         .map_err(Error::unavailable)?;
     let mut teams = Vec::new();
     for row in rows {
-        teams.push(super::teams::summary(state, &row.team, &row.org_slug, row.permission).await?);
+        teams.push(
+            crate::backend::api::github::teams::summary(
+                state,
+                &row.team,
+                &row.org_slug,
+                row.permission,
+            )
+            .await?,
+        );
     }
     let apps = app_documents(state, &app_ids(state, repo, &actors.apps).await?).await?;
     Ok(
-        json!({"users": users.iter().map(payloads::user).collect::<Vec<_>>(), "teams": teams, "apps": apps}),
+        json!({"users": users.iter().map(crate::backend::webhooks::payloads::user).collect::<Vec<_>>(), "teams": teams, "apps": apps}),
     )
 }
 
@@ -208,9 +231,9 @@ async fn update(
     request: Request,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = &auth.user;
-    if !access::can_admin(&state.pool, actor, &repo)
+    if !crate::backend::repositories::access::can_admin(&state.pool, actor, &repo)
         .await
         .map_err(Error::unavailable)?
     {
@@ -226,7 +249,7 @@ async fn update(
     }
     let Json(value) = Json::<Value>::from_request(request, &state)
         .await
-        .map_err(super::json_error)?;
+        .map_err(crate::backend::api::github::json_error)?;
     for field in [
         "required_status_checks",
         "enforce_admins",
@@ -288,18 +311,24 @@ async fn update(
         upsert.push_allowances = user_ids(&state, &actors.users)
             .await
             .map_err(Error::simple)?;
-        upsert.push_team_allowances =
-            db::repositories::push_teams::resolve_names(&state.pool, repo.id, &actors.teams)
-                .await
-                .map_err(|error| write_error(error).simple())?;
+        upsert.push_team_allowances = crate::backend::db::repositories::push_teams::resolve_names(
+            &state.pool,
+            repo.id,
+            &actors.teams,
+        )
+        .await
+        .map_err(|error| write_error(error).simple())?;
         settings.push_apps = app_ids(&state, repo.id, &actors.apps)
             .await
             .map_err(Error::simple)?;
     }
     upsert.github_settings = Some(settings);
-    let rule = protection::upsert_branch_protection_rule(&state.pool, upsert)
-        .await
-        .map_err(|error| write_error(error).simple())?;
+    let rule = crate::backend::db::repositories::protection::upsert_branch_protection_rule(
+        &state.pool,
+        upsert,
+    )
+    .await
+    .map_err(|error| write_error(error).simple())?;
     let url = format!(
         "{}/branches/{}/protection",
         repo_url(&owner, &name),
@@ -316,7 +345,7 @@ async fn reviews(
 ) -> Result<Json<Value>> {
     let (rule, actor, url) = protected(&state, &headers, &owner, &name, &branch, true).await?;
     let update = review_update(&state, rule.repo_id, input).await?;
-    let rule = protection::update_branch_protection_rule(
+    let rule = crate::backend::db::repositories::protection::update_branch_protection_rule(
         &state.pool,
         actor,
         rule.repo_id,
@@ -344,7 +373,7 @@ async fn signatures(
     )
     .await?;
     if !read_method(&method) {
-        rule = protection::update_branch_protection_rule(
+        rule = crate::backend::db::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor,
             rule.repo_id,
@@ -389,13 +418,13 @@ async fn apps(
     if !read_method(&method) {
         let Json(input) = Json::<Apps>::from_request(request, &state)
             .await
-            .map_err(super::json_error)?;
+            .map_err(crate::backend::api::github::json_error)?;
         let (Apps::Array(names) | Apps::Object { apps: names }) = input;
         let ids = if method == Method::DELETE {
             valid_names(&names)?;
             let mut ids = Vec::new();
             for name in names {
-                if let Some(app) = db::github_apps::app(&state.pool, &name)
+                if let Some(app) = crate::backend::db::github_apps::app(&state.pool, &name)
                     .await
                     .map_err(Error::unavailable)?
                 {
@@ -411,7 +440,7 @@ async fn apps(
             Method::PUT => ActorListUpdate::Set(ids),
             _ => ActorListUpdate::Remove(ids),
         };
-        rule = protection::update_branch_protection_rule(
+        rule = crate::backend::db::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor,
             rule.repo_id,
@@ -453,7 +482,9 @@ async fn rules(
                 values.push(json!({"type":kind}));
             }
         }
-        if protection::has_review_requirements(&rule) || rule.require_conversation_resolution {
+        if crate::backend::db::repositories::protection::has_review_requirements(&rule)
+            || rule.require_conversation_resolution
+        {
             values.push(json!({"type":"pull_request","parameters":{
                 "dismiss_stale_reviews_on_push":rule.dismiss_stale_reviews,"require_code_owner_review":rule.require_code_owner_review,
                 "require_last_push_approval":rule.github_settings.require_last_push_approval,"required_approving_review_count":rule.required_approving_reviews,
@@ -529,7 +560,7 @@ pub(super) async fn check_bindings(
         let app = match check.app_id {
             Some(-1) => None,
             Some(id) => {
-                db::github_apps::app(&state.pool, &id.to_string())
+                crate::backend::db::github_apps::app(&state.pool, &id.to_string())
                     .await
                     .map_err(Error::unavailable)?
                     .filter(|app| app.id == id)
@@ -548,13 +579,13 @@ pub(super) async fn check_bindings(
             bindings.push(json!({"context": context, "app_id": app}));
         }
     }
-    protection::normalize_check_bindings(&mut bindings)
+    crate::backend::db::repositories::protection::normalize_check_bindings(&mut bindings)
         .map_err(|refusal| write_error(refusal.into()))?;
     Ok(bindings)
 }
 
 async fn recent_producer(state: &AppState, repo: i64, context: &str) -> Result<Option<i64>> {
-    db::checks::recent_app(&state.pool, repo, context)
+    crate::backend::db::checks::recent_app(&state.pool, repo, context)
         .await
         .map_err(Error::unavailable)
 }

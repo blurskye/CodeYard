@@ -1,17 +1,17 @@
-use crate::backend::{
-    api::{
-        http::{context::PageContext, error::ApiError},
-        repos::{
-            discussion::{self, repository, unavailable, ResultPage},
-            forms::{authorize_post, field},
-        },
-    },
-    app::AppState,
-    db::{
-        self,
-        suggestions::{Action, ListFilter, Proposal, Refusal},
-    },
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+
+use crate::backend::api::repos::discussion::repository;
+use crate::backend::api::repos::discussion::unavailable;
+use crate::backend::api::repos::discussion::ResultPage;
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::field;
+use crate::backend::app::AppState;
+
+use crate::backend::db::suggestions::Action;
+use crate::backend::db::suggestions::ListFilter;
+use crate::backend::db::suggestions::Proposal;
+use crate::backend::db::suggestions::Refusal;
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -28,7 +28,7 @@ use std::{
     sync::Arc,
 };
 fn failure(error: &anyhow::Error) -> (StatusCode, String) {
-    match db::suggestions::refusal(error) {
+    match crate::backend::db::suggestions::refusal(error) {
         Some(Refusal::Missing) => (
             StatusCode::NOT_FOUND,
             "Issue or suggestion not found, or suggestions disabled.".into(),
@@ -54,7 +54,7 @@ pub(crate) async fn load(
     let Some(actor) = &ctx.user else {
         return Ok(None);
     };
-    let enabled = db::suggestions::enabled(&ctx.state.pool, repo.id)
+    let enabled = crate::backend::db::suggestions::enabled(&ctx.state.pool, repo.id)
         .await
         .map_err(|_| unavailable(ctx))?;
     if !enabled && !admin {
@@ -82,18 +82,18 @@ pub(crate) async fn load(
         .query
         .get("suggestion_page")
         .is_some_and(|s| s.parse::<usize>().is_err())
-        || !db::suggestions::valid_state(&state)
+        || !crate::backend::db::suggestions::valid_state(&state)
     {
         return Err(ctx.error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "Invalid suggestion filters.",
         ));
     }
-    let triage = db::suggestions::can_triage(&ctx.state.pool, repo.id, actor.id)
+    let triage = crate::backend::db::suggestions::can_triage(&ctx.state.pool, repo.id, actor.id)
         .await
         .map_err(|_| unavailable(ctx))?;
     let mut rows = if enabled {
-        db::suggestions::list(
+        crate::backend::db::suggestions::list(
             &ctx.state.pool,
             repo.id,
             actor.id,
@@ -124,7 +124,7 @@ pub(crate) async fn load(
         .collect::<HashSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let people = db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
+    let people = crate::backend::db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
         .await
         .map_err(|_| unavailable(ctx))?
         .into_iter()
@@ -152,20 +152,29 @@ pub(crate) async fn load(
     if !actor.is_admin {
         if let Some(owner) = repo.personal_owner_id() {
             if owner != actor.id {
-                can_propose &= !db::users::blocks::is_blocked(&ctx.state.pool, owner, actor.id)
+                can_propose &= !crate::backend::db::users::blocks::is_blocked(
+                    &ctx.state.pool,
+                    owner,
+                    actor.id,
+                )
+                .await
+                .map_err(|_| unavailable(ctx))?
+                    && !crate::backend::db::users::blocks::is_blocked(
+                        &ctx.state.pool,
+                        actor.id,
+                        owner,
+                    )
                     .await
-                    .map_err(|_| unavailable(ctx))?
-                    && !db::users::blocks::is_blocked(&ctx.state.pool, actor.id, owner)
-                        .await
-                        .map_err(|_| unavailable(ctx))?;
+                    .map_err(|_| unavailable(ctx))?;
             }
         }
     }
     if let Some(org) = repo.owner_org_id {
-        can_propose &= db::organizations::get_public_organization_by_id(&ctx.state.pool, org)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .is_some();
+        can_propose &=
+            crate::backend::db::organizations::get_public_organization_by_id(&ctx.state.pool, org)
+                .await
+                .map_err(|_| unavailable(ctx))?
+                .is_some();
     }
     Ok(Some(Box::new(IssueSuggestions {
         enabled,
@@ -203,10 +212,14 @@ async fn native_propose(
             } else {
                 "field"
             };
-            let catalog =
-                db::issue_attributes::catalog(&ctx.state.pool, repo.id, Some(actor), kind)
-                    .await
-                    .map_err(|_| unavailable(ctx))?;
+            let catalog = crate::backend::db::issue_attributes::catalog(
+                &ctx.state.pool,
+                repo.id,
+                Some(actor),
+                kind,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?;
             let a = catalog
                 .iter()
                 .find(|a| a.name.to_lowercase() == target.to_lowercase())
@@ -226,7 +239,7 @@ async fn native_propose(
             Some(a.id)
         }
         Action::AddLabel => {
-            let labels = db::labels::list_repo_labels(&ctx.state.pool, repo.id)
+            let labels = crate::backend::db::labels::list_repo_labels(&ctx.state.pool, repo.id)
                 .await
                 .map_err(|_| unavailable(ctx))?;
             // The exact name wins; names that differ only in case are distinct labels.
@@ -242,7 +255,7 @@ async fn native_propose(
             Some(label.id)
         }
         Action::AddAssignee => Some(
-            db::users::accounts::get_user_by_username(
+            crate::backend::db::users::accounts::get_user_by_username(
                 &ctx.state.pool,
                 target.trim_start_matches('@'),
             )
@@ -260,7 +273,14 @@ async fn native_propose(
             if target.is_empty() {
                 None
             } else {
-                Some(discussion::issue_reference(ctx, (owner, name), &target).await?)
+                Some(
+                    crate::backend::api::repos::discussion::issue_reference(
+                        ctx,
+                        (owner, name),
+                        &target,
+                    )
+                    .await?,
+                )
             }
         }
     };
@@ -271,11 +291,11 @@ async fn native_propose(
         rationale: Some(field(form, "rationale")).filter(|s| !s.is_empty()),
         confidence: Some(field(form, "confidence")).filter(|s| !s.is_empty()),
     };
-    db::suggestions::propose(
+    crate::backend::db::suggestions::propose(
         &ctx.state.pool,
         repo.id,
         actor,
-        &db::users::accounts::AccountCredential::Session(
+        &crate::backend::db::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),
@@ -301,7 +321,8 @@ pub(crate) async fn native_change(
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
     let actor = ctx.require_user()?;
-    let shown = discussion::item(&ctx, &repo, Kind::Issue, number).await?;
+    let shown =
+        crate::backend::api::repos::discussion::item(&ctx, &repo, Kind::Issue, number).await?;
     let draft = DetailDraft {
         suggestion: Some(Box::new(SuggestionDraft {
             repository_id: field(&form, "repository_id").parse().ok(),
@@ -317,15 +338,15 @@ pub(crate) async fn native_change(
     if field(&form, "repository_id").parse::<i64>().ok() != Some(repo.record.id)
         || field(&form, "issue_id").parse::<i64>().ok() != Some(shown.id)
     {
-        return discussion::render_detail(&ctx, &repo, Kind::Issue, &shown, &draft,
+        return crate::backend::api::repos::discussion::render_detail(&ctx, &repo, Kind::Issue, &shown, &draft,
             Some("The suggestion target changed. Your draft is preserved; return to the original issue before submitting."), StatusCode::CONFLICT).await;
     }
     match field(&form, "action").as_str() {
-        "set_enabled" => db::suggestions::set_enabled(
+        "set_enabled" => crate::backend::db::suggestions::set_enabled(
             &ctx.state.pool,
             repo.record.id,
             actor.id,
-            &db::users::accounts::AccountCredential::Session(
+            &crate::backend::db::users::accounts::AccountCredential::Session(
                 &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                     .unwrap_or_default(),
             ),
@@ -340,7 +361,7 @@ pub(crate) async fn native_change(
             if let Err(error) =
                 native_propose(&ctx, &repo.record, (&owner, &name), shown.id, &form).await
             {
-                return discussion::render_detail(&ctx,&repo,Kind::Issue,&shown,&draft,Some("Suggestion not saved. Review your preserved draft and check the target and value."),error.status()).await;
+                return crate::backend::api::repos::discussion::render_detail(&ctx,&repo,Kind::Issue,&shown,&draft,Some("Suggestion not saved. Review your preserved draft and check the target and value."),error.status()).await;
             }
         }
         action @ ("approve" | "dismiss") => {
@@ -351,7 +372,7 @@ pub(crate) async fn native_change(
                 &ctx.state.pool,
                 &ctx.state.notification_broadcaster,
                 actor,
-                &db::users::accounts::AccountCredential::Session(
+                &crate::backend::db::users::accounts::AccountCredential::Session(
                     &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                         .unwrap_or_default(),
                 ),
@@ -436,11 +457,11 @@ pub async fn agent_propose(
             )
                 .into_response()
         })?;
-    let scoped = db::oauth_apps::token(&state.pool, auth.token.id)
+    let scoped = crate::backend::db::oauth_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(unavailable)?
         .map(|token| {
-            crate::backend::identity::oauth_apps::allows(
+            codeyard_model::oauth_apps::allows(
                 &token.scopes,
                 &format!("/repos/{owner}/{name}/issues/{number}/comments"),
                 true,
@@ -456,7 +477,7 @@ pub async fn agent_propose(
         )
             .into_response());
     }
-    let issue = db::issues::get_issue(&state.pool, repo.id, number)
+    let issue = crate::backend::db::issues::get_issue(&state.pool, repo.id, number)
         .await
         .map_err(|_| {
             (
@@ -491,7 +512,7 @@ pub async fn agent_propose(
                 )
                     .into_response()
             };
-            let target = db::issues::get_issue_by_id(&state.pool, id)
+            let target = crate::backend::db::issues::get_issue_by_id(&state.pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -503,7 +524,7 @@ pub async fn agent_propose(
                     }
                     _ => missing(),
                 })?;
-            let readable = db::repositories::access::readable_repository_ids(
+            let readable = crate::backend::db::repositories::access::readable_repository_ids(
                 &state.pool,
                 Some(auth.user.id),
                 &[target.repo_id],
@@ -520,7 +541,7 @@ pub async fn agent_propose(
     } else {
         None
     };
-    let row = db::suggestions::propose(
+    let row = crate::backend::db::suggestions::propose(
         &state.pool,
         repo.id,
         auth.user.id,

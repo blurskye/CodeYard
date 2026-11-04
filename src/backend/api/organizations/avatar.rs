@@ -1,13 +1,13 @@
 //! The organization picture forms: choose an image and it becomes the picture, or
 //! remove the current one. Owners and admins only; the store enforces that.
 
-use super::organization;
-use super::organization::{not_found, Fields};
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::pictures;
+use crate::backend::api::organizations::organization::not_found;
+use crate::backend::api::organizations::organization::Fields;
+
 use crate::backend::api::user::avatar::avatar_status;
 use crate::backend::app::AppState;
-use crate::backend::identity::avatars;
+
 use axum::extract::multipart::MultipartRejection;
 use axum::extract::{DefaultBodyLimit, Form, Multipart, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -21,7 +21,9 @@ pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route(
             "/settings/organizations/:id/avatar",
-            post(upload).layer(DefaultBodyLimit::max(pictures::BODY_LIMIT)),
+            post(upload).layer(DefaultBodyLimit::max(
+                crate::backend::api::pictures::BODY_LIMIT,
+            )),
         )
         .route(
             "/settings/organizations/:id/avatar/remove",
@@ -31,7 +33,7 @@ pub(super) fn router() -> Router<Arc<AppState>> {
 
 /// The organization page again, with what went wrong.
 async fn refused(ctx: &PageContext, org: i64, status: StatusCode, message: &str) -> Response {
-    organization::respond(
+    crate::backend::api::organizations::organization::respond(
         ctx,
         Some(org),
         status,
@@ -47,7 +49,8 @@ async fn target(ctx: &PageContext, actor: i64, id: &str) -> Result<i64, Response
     let Some(org) = id.parse::<i64>().ok().filter(|id| *id > 0) else {
         return Err(not_found(ctx));
     };
-    let current = organization::selected(ctx, actor, org).await?;
+    let current =
+        crate::backend::api::organizations::organization::selected(ctx, actor, org).await?;
     if current.governance_suspended {
         return Err(refused(
             ctx,
@@ -81,7 +84,7 @@ async fn upload(
             "Send the picture from the organization form.",
         );
     };
-    let form = match pictures::read(multipart).await {
+    let form = match crate::backend::api::pictures::read(multipart).await {
         Ok(form) => form,
         Err(error) => return ctx.error(error.status(), error.message()),
     };
@@ -101,9 +104,18 @@ async fn upload(
         )
         .await;
     };
-    match avatars::upload_org_avatar(&ctx.state.pool, &ctx.state.storage, &actor, org, bytes).await
+    match crate::backend::identity::avatars::upload_org_avatar(
+        &ctx.state.pool,
+        &ctx.state.storage,
+        &actor,
+        org,
+        bytes,
+    )
+    .await
     {
-        Ok(()) => ctx.redirect(&organization::destination(&ctx, Some(org), false)),
+        Ok(()) => ctx.redirect(
+            &crate::backend::api::organizations::organization::destination(&ctx, Some(org), false),
+        ),
         Err(error) => refused(&ctx, org, avatar_status(&error).0, &error.to_string()).await,
     }
 }
@@ -130,8 +142,12 @@ async fn remove(
         Ok(org) => org,
         Err(response) => return response,
     };
-    match avatars::set_org_avatar(&ctx.state.pool, &actor, org, None).await {
-        Ok(()) => ctx.redirect(&organization::destination(&ctx, Some(org), false)),
+    match crate::backend::identity::avatars::set_org_avatar(&ctx.state.pool, &actor, org, None)
+        .await
+    {
+        Ok(()) => ctx.redirect(
+            &crate::backend::api::organizations::organization::destination(&ctx, Some(org), false),
+        ),
         Err(error) => refused(&ctx, org, avatar_status(&error).0, &error.to_string()).await,
     }
 }

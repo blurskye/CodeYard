@@ -1,9 +1,9 @@
-use crate::support::{database::Database, organizations::applied};
-use codeyard::backend::db::organizations;
+use crate::support::{codeyard::backend::db::organizations::applied, database::Database};
+
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::OrganizationOutcome;
 use codeyard::backend::db::organizations::OrganizationProfile;
-use codeyard::backend::db::rulesets;
+
 use codeyard::backend::db::rulesets::Definition;
 use codeyard::backend::db::rulesets::ListFilter;
 use codeyard::backend::db::rulesets::Owner;
@@ -19,7 +19,7 @@ async fn contract(pg: bool) {
     let member = f.actor("member").await;
     let outside = f.actor("outside").await;
     let org = applied(
-        organizations::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -28,63 +28,101 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        organizations::add_organization_member(f.pool(), owner, org.id, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::add_organization_member(
+            f.pool(),
+            owner,
+            org.id,
+            member,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let scope = Owner::Organization(org.id);
     let input = Definition::parse(&json!({"name":"Release policy","enforcement":"active","bypass_actors":[{"actor_type":"OrganizationAdmin"}],"rules":[{"type":"non_fast_forward"}]})).unwrap();
     assert!(matches!(
-        rulesets::create_ruleset(f.pool(), member, scope, &input)
+        codeyard::backend::db::rulesets::create_ruleset(f.pool(), member, scope, &input)
             .await
             .unwrap(),
         OrganizationOutcome::Denied
     ));
-    assert!(rulesets::create_ruleset(f.pool(), owner, scope, &input)
-        .await
-        .is_err());
+    assert!(
+        codeyard::backend::db::rulesets::create_ruleset(f.pool(), owner, scope, &input)
+            .await
+            .is_err()
+    );
     let input = input.merge(&json!({"enforcement":"disabled"})).unwrap();
     let rule = applied(
-        rulesets::create_ruleset(f.pool(), owner, scope, &input)
+        codeyard::backend::db::rulesets::create_ruleset(f.pool(), owner, scope, &input)
             .await
             .unwrap(),
     );
     let page = Page::new(0, 2).unwrap();
     let listed = applied(
-        rulesets::list_rulesets(f.pool(), Some(member), scope, &ListFilter::default(), page)
-            .await
-            .unwrap(),
+        codeyard::backend::db::rulesets::list_rulesets(
+            f.pool(),
+            Some(member),
+            scope,
+            &ListFilter::default(),
+            page,
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(listed.len(), 1);
     assert!(!listed[0].can_edit);
     assert!(listed[0].value.definition.bypass_actors.is_empty());
     assert!(matches!(
-        rulesets::get_ruleset(f.pool(), Some(outside), scope, rule.id, false)
-            .await
-            .unwrap(),
+        codeyard::backend::db::rulesets::get_ruleset(
+            f.pool(),
+            Some(outside),
+            scope,
+            rule.id,
+            false
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Denied
     ));
     let changed = applied(
-        rulesets::change_ruleset(f.pool(), owner, scope, rule.id, &json!({"name":"Renamed"}))
-            .await
-            .unwrap(),
+        codeyard::backend::db::rulesets::change_ruleset(
+            f.pool(),
+            owner,
+            scope,
+            rule.id,
+            &json!({"name":"Renamed"}),
+        )
+        .await
+        .unwrap(),
     );
     assert!(changed.updated_at > rule.updated_at);
     let versions = applied(
-        rulesets::ruleset_versions(f.pool(), Some(owner), scope, rule.id, page)
-            .await
-            .unwrap(),
+        codeyard::backend::db::rulesets::ruleset_versions(
+            f.pool(),
+            Some(owner),
+            scope,
+            rule.id,
+            page,
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(versions.value.len(), 2);
     assert_eq!(versions.value[0].definition.name, "Renamed");
     let version = applied(
-        rulesets::ruleset_version(f.pool(), Some(member), scope, rule.id, versions.value[1].id)
-            .await
-            .unwrap(),
+        codeyard::backend::db::rulesets::ruleset_version(
+            f.pool(),
+            Some(member),
+            scope,
+            rule.id,
+            versions.value[1].id,
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(version.value.definition.name, "Release policy");
     assert!(version.value.definition.bypass_actors.is_empty());
-    assert!(rulesets::change_ruleset(
+    assert!(codeyard::backend::db::rulesets::change_ruleset(
         f.pool(),
         owner,
         scope,
@@ -94,13 +132,13 @@ async fn contract(pg: bool) {
     .await
     .is_err());
     let unchanged = applied(
-        rulesets::get_ruleset(f.pool(), Some(owner), scope, rule.id, false)
+        codeyard::backend::db::rulesets::get_ruleset(f.pool(), Some(owner), scope, rule.id, false)
             .await
             .unwrap(),
     );
     assert_eq!(unchanged.value.definition.rules.len(), 1);
     assert!(applied(
-        rulesets::organization_rule_suites(
+        codeyard::backend::db::rulesets::organization_rule_suites(
             f.pool(),
             owner,
             org.id,
@@ -119,18 +157,18 @@ async fn contract(pg: bool) {
     )
     .is_empty());
     assert!(matches!(
-        rulesets::organization_rule_suite(f.pool(), owner, org.id, 9999)
+        codeyard::backend::db::rulesets::organization_rule_suite(f.pool(), owner, org.id, 9999)
             .await
             .unwrap(),
         OrganizationOutcome::Missing
     ));
     applied(
-        rulesets::remove_ruleset(f.pool(), owner, scope, rule.id)
+        codeyard::backend::db::rulesets::remove_ruleset(f.pool(), owner, scope, rule.id)
             .await
             .unwrap(),
     );
     assert!(matches!(
-        rulesets::get_ruleset(f.pool(), Some(owner), scope, rule.id, false)
+        codeyard::backend::db::rulesets::get_ruleset(f.pool(), Some(owner), scope, rule.id, false)
             .await
             .unwrap(),
         OrganizationOutcome::Missing

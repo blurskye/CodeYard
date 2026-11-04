@@ -63,20 +63,18 @@ pub struct Dependency {
 }
 
 impl Snapshot {
-    pub fn validate(&self) -> Result<(), crate::backend::db::dependency_graph::GraphError> {
+    pub fn validate(&self) -> Result<(), crate::dependency_graph::GraphError> {
         self.validate_with_limit(1024 * 1024)
     }
 
-    pub(crate) fn validate_native(
-        &self,
-    ) -> Result<(), crate::backend::db::dependency_graph::GraphError> {
+    pub fn validate_native(&self) -> Result<(), crate::dependency_graph::GraphError> {
         self.validate_with_limit(128 * 1024 * 1024)
     }
 
     fn validate_with_limit(
         &self,
         max_bytes: usize,
-    ) -> Result<(), crate::backend::db::dependency_graph::GraphError> {
+    ) -> Result<(), crate::dependency_graph::GraphError> {
         let valid_metadata = |metadata: &Option<BTreeMap<String, Value>>| {
             metadata.as_ref().is_none_or(|values| {
                 values
@@ -106,7 +104,7 @@ impl Snapshot {
                     && valid_metadata(&manifest.metadata)
                     && manifest.resolved.values().all(|dependency| {
                         dependency.package_url.as_deref().is_none_or(|p| {
-                            crate::backend::db::dependency_inventory::package_parts(p).is_some()
+                            crate::dependency_inventory::package_parts(p).is_some()
                         }) && dependency
                             .relationship
                             .as_deref()
@@ -123,7 +121,7 @@ impl Snapshot {
                     })
             });
         if !valid || serde_json::to_vec(self).map_or(true, |bytes| bytes.len() > max_bytes) {
-            return Err(crate::backend::db::dependency_graph::GraphError::Invalid);
+            return Err(crate::dependency_graph::GraphError::Invalid);
         }
         Ok(())
     }
@@ -143,7 +141,7 @@ fn decode(value: &str) -> Option<String> {
     Some(codeyard_webui::decode_component(value))
 }
 
-fn package(purl: &str) -> Option<(String, String, String)> {
+pub fn package(purl: &str) -> Option<(String, String, String)> {
     let path = purl.strip_prefix("pkg:")?.trim_start_matches('/');
     let path = path.split(['?', '#']).next()?;
     let (ecosystem, path) = path.split_once('/')?;
@@ -305,4 +303,21 @@ pub fn sbom(name: &str, snapshots: &[Snapshot]) -> Value {
         "creationInfo":{"created":Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true), "creators":["Tool: Codeyard"]},
         "packages":packages, "relationships":relationships
     }})
+}
+#[derive(Debug, thiserror::Error)]
+pub enum GraphError {
+    #[error("Dependency graph access denied")]
+    Denied,
+    #[error("Invalid dependency snapshot")]
+    Invalid,
+    #[error("Dependency snapshot catalogue exceeds its limits")]
+    Limit,
+    #[error("Dependency graph is disabled")]
+    Disabled,
+    #[error("Dependency graph database unavailable")]
+    Database(#[from] sqlx::Error),
+    #[error("Dependency graph authority unavailable")]
+    Authority(#[source] anyhow::Error),
+    #[error("Invalid stored dependency graph")]
+    Stored(#[from] serde_json::Error),
 }

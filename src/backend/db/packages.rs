@@ -347,7 +347,7 @@ impl Drop for CollectorLock {
 pub async fn collector_lock(pool: &DbPool) -> Result<Option<CollectorLock>> {
     match pool {
         DbPool::Sqlite(_) => Ok(Some(CollectorLock(None))),
-        DbPool::Postgres(pool) => Ok(super::postgres::packages::collector_lock(pool)
+        DbPool::Postgres(pool) => Ok(crate::backend::db::postgres::packages::collector_lock(pool)
             .await?
             .map(|connection| CollectorLock(Some(connection)))),
     }

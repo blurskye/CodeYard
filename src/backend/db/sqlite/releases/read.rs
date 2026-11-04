@@ -1,9 +1,10 @@
 //! Release content and draft visibility share one SQLite read transaction.
-use super::super::repositories::access::USER_REPO_ACCESS_SQL;
-use super::{ASSET_COLUMNS, ROW_SELECT};
 use crate::backend::db::releases::ReleaseRefusal;
 use crate::backend::db::releases::ReleaseSelection;
 use crate::backend::db::releases::ReleaseSnapshot;
+use crate::backend::db::sqlite::releases::ASSET_COLUMNS;
+use crate::backend::db::sqlite::releases::ROW_SELECT;
+use crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
 use anyhow::Result;
 use codeyard_db_core::models::ReleaseAsset;
 use codeyard_db_core::models::ReleaseRow;

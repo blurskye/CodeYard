@@ -1,10 +1,10 @@
 //! Future-publication policy and permanent immutable-tag reservations.
-use crate::backend::db;
-use crate::backend::repositories::releases::integrity::Artifact;
-use crate::backend::repositories::releases::integrity::Attestation;
-use crate::backend::repositories::releases::integrity::Statement;
+
 use anyhow::{ensure, Result};
 use codeyard_db_core::DbPool;
+use codeyard_model::release_integrity::Artifact;
+use codeyard_model::release_integrity::Attestation;
+use codeyard_model::release_integrity::Statement;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
@@ -44,7 +44,7 @@ impl Publication {
                 && predicate.tag == tag
                 && predicate.assets == assets
                 && predicate.repository == namespace,
-            db::releases::ReleaseRefusal::Conflict
+            crate::backend::db::releases::ReleaseRefusal::Conflict
         );
         Ok(())
     }
@@ -58,36 +58,45 @@ pub struct Reservation {
 }
 pub async fn policy(pool: &DbPool, repo: i64) -> Result<(bool, bool)> {
     match pool {
-        DbPool::Sqlite(p) => db::sqlite::repositories::immutable_releases::policy(p, repo).await,
+        DbPool::Sqlite(p) => {
+            crate::backend::db::sqlite::repositories::immutable_releases::policy(p, repo).await
+        }
         DbPool::Postgres(p) => {
-            db::postgres::repositories::immutable_releases::policy(p, repo).await
+            crate::backend::db::postgres::repositories::immutable_releases::policy(p, repo).await
         }
     }
 }
 
 pub async fn enabled(pool: &DbPool, repo: i64) -> Result<bool> {
     match pool {
-        DbPool::Sqlite(p) => db::sqlite::repositories::immutable_releases::enabled(p, repo).await,
+        DbPool::Sqlite(p) => {
+            crate::backend::db::sqlite::repositories::immutable_releases::enabled(p, repo).await
+        }
         DbPool::Postgres(p) => {
-            db::postgres::repositories::immutable_releases::enabled(p, repo).await
+            crate::backend::db::postgres::repositories::immutable_releases::enabled(p, repo).await
         }
     }
 }
 
 pub async fn set_enabled(
     pool: &DbPool,
-    actor: impl Into<super::super::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     enabled: bool,
 ) -> Result<()> {
     let actor = actor.into();
     match pool {
         DbPool::Sqlite(p) => {
-            db::sqlite::repositories::immutable_releases::set_enabled(p, actor, repo, enabled).await
+            crate::backend::db::sqlite::repositories::immutable_releases::set_enabled(
+                p, actor, repo, enabled,
+            )
+            .await
         }
         DbPool::Postgres(p) => {
-            db::postgres::repositories::immutable_releases::set_enabled(p, actor, repo, enabled)
-                .await
+            crate::backend::db::postgres::repositories::immutable_releases::set_enabled(
+                p, actor, repo, enabled,
+            )
+            .await
         }
     }
 }
@@ -104,12 +113,16 @@ pub async fn reservations(
     }
     let rows = match pool {
         DbPool::Sqlite(p) => {
-            db::sqlite::repositories::immutable_releases::reservations(p, repo, owner, name, tags)
-                .await?
+            crate::backend::db::sqlite::repositories::immutable_releases::reservations(
+                p, repo, owner, name, tags,
+            )
+            .await?
         }
         DbPool::Postgres(p) => {
-            db::postgres::repositories::immutable_releases::reservations(p, repo, owner, name, tags)
-                .await?
+            crate::backend::db::postgres::repositories::immutable_releases::reservations(
+                p, repo, owner, name, tags,
+            )
+            .await?
         }
     };
     ensure!(
@@ -121,15 +134,16 @@ pub async fn reservations(
 pub async fn assets(pool: &DbPool, release: i64) -> Result<Vec<Artifact>> {
     let mut assets = match pool {
         DbPool::Sqlite(p) => {
-            db::sqlite::repositories::immutable_releases::assets(p, release).await?
+            crate::backend::db::sqlite::repositories::immutable_releases::assets(p, release).await?
         }
         DbPool::Postgres(p) => {
-            db::postgres::repositories::immutable_releases::assets(p, release).await?
+            crate::backend::db::postgres::repositories::immutable_releases::assets(p, release)
+                .await?
         }
     };
     ensure!(
-        assets.len() as i64 <= db::releases::MAX_RELEASE_ASSETS,
-        db::releases::ReleaseRefusal::TooManyAssets
+        assets.len() as i64 <= crate::backend::db::releases::MAX_RELEASE_ASSETS,
+        crate::backend::db::releases::ReleaseRefusal::TooManyAssets
     );
     assets.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(assets)
@@ -141,10 +155,16 @@ pub async fn attestation(
 ) -> Result<Option<(String, String)>> {
     match pool {
         DbPool::Sqlite(p) => {
-            db::sqlite::repositories::immutable_releases::attestation(p, repo, release).await
+            crate::backend::db::sqlite::repositories::immutable_releases::attestation(
+                p, repo, release,
+            )
+            .await
         }
         DbPool::Postgres(p) => {
-            db::postgres::repositories::immutable_releases::attestation(p, repo, release).await
+            crate::backend::db::postgres::repositories::immutable_releases::attestation(
+                p, repo, release,
+            )
+            .await
         }
     }
 }

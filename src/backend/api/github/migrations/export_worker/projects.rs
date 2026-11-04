@@ -1,5 +1,4 @@
 use super::*;
-use crate::backend::api::github::projects as project_api;
 
 pub(super) async fn append(
     state: &AppState,
@@ -30,8 +29,9 @@ pub(super) async fn append(
         let mut values = Vec::new();
         for project in rows {
             after = project.id;
-            let url = project_api::project_url(&project, &name);
-            let mut value = project_api::document(state, &project, &name).await?;
+            let url = crate::backend::api::github::projects::project_url(&project, &name);
+            let mut value =
+                crate::backend::api::github::projects::document(state, &project, &name).await?;
             value["url"] = json!(url);
             value["created_at"] = json!(project.created_at);
             value["updated_at"] = json!(project.updated_at);

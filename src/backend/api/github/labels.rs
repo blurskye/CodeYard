@@ -1,6 +1,11 @@
 //! Repository labels and their assignments use the same authorized transactions as the forms.
-use super::{auth, pagination::Pagination, repository, Error, Result};
-use crate::backend::{app::AppState, db, webhooks::payloads};
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -15,7 +20,7 @@ use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 
 pub(in crate::backend::api) fn write_error(error: anyhow::Error) -> Error {
-    use db::labels::LabelWriteRefusal;
+    use crate::backend::db::labels::LabelWriteRefusal;
     match error.downcast_ref::<LabelWriteRefusal>() {
         Some(LabelWriteRefusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Label mutation denied")
@@ -35,7 +40,7 @@ async fn find(
     repo_id: i64,
     name: &str,
 ) -> Result<codeyard_db_core::models::Label> {
-    db::labels::list_repo_labels(pool, repo_id)
+    crate::backend::db::labels::list_repo_labels(pool, repo_id)
         .await
         .map_err(Error::unavailable)?
         .into_iter()
@@ -66,11 +71,13 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.database_actor();
-    crate::backend::issues::validate_label(&input.name, input.description.as_deref())
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .database_actor();
+    codeyard_model::issue_input::validate_label(&input.name, input.description.as_deref())
         .map_err(Error::invalid)?;
     let color = color(input.color.as_deref().unwrap_or("ededed"))?;
-    let label = db::labels::create_label(
+    let label = crate::backend::db::labels::create_label(
         &state.pool,
         actor,
         repo.id,
@@ -82,7 +89,11 @@ async fn create(
     .map_err(write_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(payloads::label(&label, &p["owner"], &repo.name)),
+        Json(crate::backend::webhooks::payloads::label(
+            &label,
+            &p["owner"],
+            &repo.name,
+        )),
     ))
 }
 
@@ -95,7 +106,7 @@ async fn list(
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let (offset, limit) = page.window()?;
-    let labels = db::labels::list_repo_labels_page(
+    let labels = crate::backend::db::labels::list_repo_labels_page(
         &state.pool,
         repo.id,
         "",
@@ -110,7 +121,7 @@ async fn list(
         &uri,
         labels
             .iter()
-            .map(|label| payloads::label(label, &p["owner"], &repo.name))
+            .map(|label| crate::backend::webhooks::payloads::label(label, &p["owner"], &repo.name))
             .collect(),
         next,
     )
@@ -123,7 +134,11 @@ async fn get_label(
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let label = find(&state.pool, repo.id, &p["name"]).await?;
-    Ok(Json(payloads::label(&label, &p["owner"], &repo.name)))
+    Ok(Json(crate::backend::webhooks::payloads::label(
+        &label,
+        &p["owner"],
+        &repo.name,
+    )))
 }
 
 #[derive(Deserialize)]
@@ -133,7 +148,7 @@ struct Update {
     /// Left out keeps the description; `null` clears it.
     #[serde(
         default,
-        deserialize_with = "db::repositories::records::nullable_change"
+        deserialize_with = "crate::backend::db::repositories::records::nullable_change"
     )]
     description: Option<Option<String>>,
 }
@@ -145,15 +160,17 @@ async fn update(
     Json(input): Json<Update>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.database_actor();
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .database_actor();
     let existing = find(&state.pool, repo.id, &p["name"]).await?;
-    crate::backend::issues::validate_label(
+    codeyard_model::issue_input::validate_label(
         input.new_name.as_deref().unwrap_or(&existing.name),
         input.description.as_ref().and_then(Option::as_deref),
     )
     .map_err(Error::invalid)?;
     let color = input.color.as_deref().map(color).transpose()?;
-    let label = db::labels::update_label(
+    let label = crate::backend::db::labels::update_label(
         &state.pool,
         actor,
         repo.id,
@@ -164,7 +181,11 @@ async fn update(
     )
     .await
     .map_err(write_error)?;
-    Ok(Json(payloads::label(&label, &p["owner"], &repo.name)))
+    Ok(Json(crate::backend::webhooks::payloads::label(
+        &label,
+        &p["owner"],
+        &repo.name,
+    )))
 }
 
 async fn remove(
@@ -173,9 +194,11 @@ async fn remove(
     Path(p): Path<Params>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.database_actor();
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .database_actor();
     let label = find(&state.pool, repo.id, &p["name"]).await?;
-    db::labels::delete_label(&state.pool, actor, repo.id, label.id)
+    crate::backend::db::labels::delete_label(&state.pool, actor, repo.id, label.id)
         .await
         .map_err(write_error)?;
     Ok(StatusCode::NO_CONTENT)
@@ -185,32 +208,34 @@ pub(super) async fn item(
     pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     number: &str,
-) -> Result<db::assignees::AssignedItem> {
+) -> Result<crate::backend::db::assignees::AssignedItem> {
     let number = number.parse().map_err(|_| Error::missing())?;
-    if let Some(issue) = db::issues::get_issue(pool, repo_id, number)
+    if let Some(issue) = crate::backend::db::issues::get_issue(pool, repo_id, number)
         .await
         .map_err(Error::unavailable)?
     {
-        return Ok(db::assignees::AssignedItem::Issue(issue.id));
+        return Ok(crate::backend::db::assignees::AssignedItem::Issue(issue.id));
     }
-    let pull = db::pull_requests::records::get_pull_request(pool, repo_id, number)
+    let pull = crate::backend::db::pull_requests::records::get_pull_request(pool, repo_id, number)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    Ok(db::assignees::AssignedItem::PullRequest(pull.id))
+    Ok(crate::backend::db::assignees::AssignedItem::PullRequest(
+        pull.id,
+    ))
 }
 
 async fn assigned(
     pool: &codeyard_db_core::DbPool,
     repo_id: i64,
-    item: db::assignees::AssignedItem,
+    item: crate::backend::db::assignees::AssignedItem,
 ) -> Result<Vec<codeyard_db_core::models::Label>> {
     match item {
-        db::assignees::AssignedItem::Issue(id) => {
-            db::labels::get_issue_labels(pool, repo_id, id).await
+        crate::backend::db::assignees::AssignedItem::Issue(id) => {
+            crate::backend::db::labels::get_issue_labels(pool, repo_id, id).await
         }
-        db::assignees::AssignedItem::PullRequest(id) => {
-            db::labels::get_pull_request_labels(pool, repo_id, id).await
+        crate::backend::db::assignees::AssignedItem::PullRequest(id) => {
+            crate::backend::db::labels::get_pull_request_labels(pool, repo_id, id).await
         }
     }
     .map_err(Error::unavailable)
@@ -234,7 +259,7 @@ async fn list_on_issue(
             .iter()
             .skip(offset)
             .take(limit)
-            .map(|label| payloads::label(label, &p["owner"], &repo.name))
+            .map(|label| crate::backend::webhooks::payloads::label(label, &p["owner"], &repo.name))
             .collect(),
         next,
     )
@@ -262,12 +287,14 @@ async fn change(
     replace: bool,
 ) -> Result<Json<Vec<Value>>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.database_actor();
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .database_actor();
     let item = item(&state.pool, repo.id, &p["issue_number"]).await?;
-    if names.len() > db::labels::MAX_ISSUE_LABELS {
+    if names.len() > crate::backend::db::labels::MAX_ISSUE_LABELS {
         return Err(Error::invalid("Too many labels"));
     }
-    let catalog = db::labels::list_repo_labels(&state.pool, repo.id)
+    let catalog = crate::backend::db::labels::list_repo_labels(&state.pool, repo.id)
         .await
         .map_err(Error::unavailable)?;
     let ids = names
@@ -285,33 +312,33 @@ async fn change(
     Ok(Json(
         labels
             .iter()
-            .map(|label| payloads::label(label, &p["owner"], &repo.name))
+            .map(|label| crate::backend::webhooks::payloads::label(label, &p["owner"], &repo.name))
             .collect(),
     ))
 }
 
 pub(in crate::backend::api) async fn save_labels(
     pool: &codeyard_db_core::DbPool,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
-    item: db::assignees::AssignedItem,
+    item: crate::backend::db::assignees::AssignedItem,
     ids: &[i64],
     replace: bool,
 ) -> Result<Vec<codeyard_db_core::models::Label>> {
     match (item, replace) {
-        (db::assignees::AssignedItem::Issue(id), true) => {
-            db::labels::set_issue_labels(pool, actor, repo_id, id, ids).await
+        (crate::backend::db::assignees::AssignedItem::Issue(id), true) => {
+            crate::backend::db::labels::set_issue_labels(pool, actor, repo_id, id, ids).await
         }
-        (db::assignees::AssignedItem::PullRequest(id), true) => {
-            db::labels::set_pull_request_labels(pool, actor, repo_id, id, ids).await
+        (crate::backend::db::assignees::AssignedItem::PullRequest(id), true) => {
+            crate::backend::db::labels::set_pull_request_labels(pool, actor, repo_id, id, ids).await
         }
-        (db::assignees::AssignedItem::Issue(id), false) => {
-            db::labels::add_issue_labels(pool, actor, repo_id, id, ids)
+        (crate::backend::db::assignees::AssignedItem::Issue(id), false) => {
+            crate::backend::db::labels::add_issue_labels(pool, actor, repo_id, id, ids)
                 .await
                 .map(|_| ())
         }
-        (db::assignees::AssignedItem::PullRequest(id), false) => {
-            db::labels::add_pull_request_labels(pool, actor, repo_id, id, ids)
+        (crate::backend::db::assignees::AssignedItem::PullRequest(id), false) => {
+            crate::backend::db::labels::add_pull_request_labels(pool, actor, repo_id, id, ids)
                 .await
                 .map(|_| ())
         }
@@ -355,15 +382,31 @@ async fn remove_from_issue(
     Path(p): Path<Params>,
 ) -> Result<Json<Vec<Value>>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.database_actor();
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .database_actor();
     let item = item(&state.pool, repo.id, &p["issue_number"]).await?;
     let label = find(&state.pool, repo.id, &p["name"]).await?;
     let removed = match item {
-        db::assignees::AssignedItem::Issue(id) => {
-            db::labels::remove_issue_label(&state.pool, actor, repo.id, id, label.id).await
+        crate::backend::db::assignees::AssignedItem::Issue(id) => {
+            crate::backend::db::labels::remove_issue_label(
+                &state.pool,
+                actor,
+                repo.id,
+                id,
+                label.id,
+            )
+            .await
         }
-        db::assignees::AssignedItem::PullRequest(id) => {
-            db::labels::remove_pull_request_label(&state.pool, actor, repo.id, id, label.id).await
+        crate::backend::db::assignees::AssignedItem::PullRequest(id) => {
+            crate::backend::db::labels::remove_pull_request_label(
+                &state.pool,
+                actor,
+                repo.id,
+                id,
+                label.id,
+            )
+            .await
         }
     }
     .map_err(write_error)?;
@@ -374,7 +417,7 @@ async fn remove_from_issue(
         assigned(&state.pool, repo.id, item)
             .await?
             .iter()
-            .map(|label| payloads::label(label, &p["owner"], &repo.name))
+            .map(|label| crate::backend::webhooks::payloads::label(label, &p["owner"], &repo.name))
             .collect(),
     ))
 }

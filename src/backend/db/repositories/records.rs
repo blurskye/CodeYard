@@ -43,10 +43,10 @@ pub async fn get_git_repository(
     name: &str,
 ) -> Result<Option<Repository>> {
     if owner.eq_ignore_ascii_case("gists") || owner.eq_ignore_ascii_case("gist") {
-        if let Some(repo) = super::super::gists::git_repository(pool, name).await? {
+        if let Some(repo) = crate::backend::db::gists::git_repository(pool, name).await? {
             return Ok(Some(repo));
         }
-        if super::super::gists::is_identifier(pool, name).await? {
+        if crate::backend::db::gists::is_identifier(pool, name).await? {
             return Ok(None);
         }
     }

@@ -12,9 +12,9 @@ mod repair;
 
 pub use repair::{rebuild, verify};
 
-use crate::backend::{db, fs::private_dir};
 use anyhow::{bail, ensure, Context, Result};
 use codeyard_git::mirror;
+use codeyard_support::fs::private_dir;
 use std::collections::{BTreeSet, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -410,12 +410,12 @@ pub async fn backup(
     dir: &Path,
 ) -> Result<()> {
     ensure!(
-        !db::cluster::cluster_enabled(pool).await?,
+        !crate::backend::db::cluster::cluster_enabled(pool).await?,
         "codeyard backup covers a single-node installation; this one is in cluster mode"
     );
     let s3 = crate::backend::storage::s3::S3Config::optional_from_env()?.is_some();
     let started = std::time::Instant::now();
-    let before = db::backups::list_repositories(pool).await?;
+    let before = crate::backend::db::backups::list_repositories(pool).await?;
     ensure!(
         before.iter().all(|repo| repo.storage_node_id.is_none()),
         "single-node backup cannot include repositories assigned to storage nodes"
@@ -448,12 +448,12 @@ pub async fn backup(
     let after = match pool {
         codeyard_db_core::DbPool::Sqlite(_) => {
             let target = partial.to_str().context("backup path is not UTF-8")?;
-            db::backups::copy_sqlite(pool, target).await?;
-            db::backups::sqlite_snapshot_repositories(&partial).await?
+            crate::backend::db::backups::copy_sqlite(pool, target).await?;
+            crate::backend::db::backups::sqlite_snapshot_repositories(&partial).await?
         }
         codeyard_db_core::DbPool::Postgres(_) => {
             let (snapshot_tx, snapshot, repositories) =
-                db::backups::postgres_snapshot(pool).await?;
+                crate::backend::db::backups::postgres_snapshot(pool).await?;
             let snapshot = format!("--snapshot={snapshot}");
             let target = format!("--file={}", partial.display());
             postgres_tool(
@@ -552,9 +552,9 @@ pub async fn backup(
     }
     // Offline backups also migrate the legacy standalone signer before copying keys.
     if places.repos_path.join(NODE_KEY).is_file() {
-        crate::backend::cluster::identity::release_key(places.state_dir, places.repos_path)?;
+        codeyard_support::node_identity::release_key(places.state_dir, places.repos_path)?;
     }
-    if let Some(key) = crate::backend::cluster::load_existing(places.state_dir)? {
+    if let Some(key) = codeyard_support::node_identity::load_existing(places.state_dir)? {
         let mut temporary = tempfile::NamedTempFile::new_in(dir)?;
         writeln!(temporary, "{}", key.secret_hex())?;
         temporary.as_file().sync_all()?;
@@ -571,7 +571,7 @@ pub async fn backup(
     // Publish the new database last. Until this rename the previous backup is still complete:
     // nothing it names has been removed yet.
     ensure!(
-        started.elapsed().as_secs() < db::files::RESTORE_WINDOW_SECONDS as u64,
+        started.elapsed().as_secs() < crate::backend::db::files::RESTORE_WINDOW_SECONDS as u64,
         "backup exceeded the object retention window; refusing publication"
     );
     std::fs::rename(&partial, dir.join(file))?;
@@ -604,10 +604,11 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
         .unwrap_or_else(|| places.state_dir.join(NODE_KEY));
     let backup_key = dir.join(NODE_KEY);
     if backup_key.is_file() {
-        let saved =
-            crate::backend::cluster::NodeKey::parse(&std::fs::read_to_string(&backup_key)?)?;
+        let saved = codeyard_support::node_identity::NodeKey::parse(&std::fs::read_to_string(
+            &backup_key,
+        )?)?;
         let existing = if key.exists() || std::env::var_os("NODE_KEY").is_some() {
-            crate::backend::cluster::load_existing(places.state_dir)?
+            codeyard_support::node_identity::load_existing(places.state_dir)?
         } else {
             None
         };
@@ -631,10 +632,12 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
     let saved_signer = dir.join("release.key");
     let current_signer = places.state_dir.join("release.key");
     if saved_signer.exists() && current_signer.exists() {
-        let saved =
-            crate::backend::cluster::NodeKey::parse(&std::fs::read_to_string(saved_signer)?)?;
-        let current =
-            crate::backend::cluster::NodeKey::parse(&std::fs::read_to_string(current_signer)?)?;
+        let saved = codeyard_support::node_identity::NodeKey::parse(&std::fs::read_to_string(
+            saved_signer,
+        )?)?;
+        let current = codeyard_support::node_identity::NodeKey::parse(&std::fs::read_to_string(
+            current_signer,
+        )?)?;
         ensure!(
             saved.public_hex() == current.public_hex(),
             "restore would replace a different release signing identity"
@@ -687,7 +690,7 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
             ensure!(source.is_file(), "{} has no {POSTGRES_FILE}", dir.display());
             let pool = codeyard_db_core::init_db(places.database_url).await?;
             ensure!(
-                db::backups::is_empty(&pool).await?,
+                crate::backend::db::backups::is_empty(&pool).await?,
                 "restore needs an empty PostgreSQL database; this one has tables"
             );
             let source = source.to_str().context("backup path is not UTF-8")?;
@@ -723,7 +726,7 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
     }
     // The rows name the directory the backup came from; point them at this one. A repository
     // deleted after the snapshot is only under `deleted/`, and the checks below bring it back.
-    for repository in db::backups::list_repositories(&pool).await? {
+    for repository in crate::backend::db::backups::list_repositories(&pool).await? {
         if repository.storage_node_id.is_some() {
             continue;
         }
@@ -731,7 +734,7 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
         let here = root.join(&name);
         let here = here.to_str().context("repository path is not UTF-8")?;
         if repository.disk_path != here {
-            db::backups::set_disk_path(&pool, repository.id, here).await?;
+            crate::backend::db::backups::set_disk_path(&pool, repository.id, here).await?;
         }
     }
     println!("Repositories restored.");

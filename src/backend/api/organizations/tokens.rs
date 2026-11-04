@@ -1,13 +1,13 @@
 //! Owners set the organization's token policy and review the fine-grained tokens that reach
 //! it. The same rows back the REST personal-access-token endpoints.
-use super::organization::{self, Fields};
+
 use crate::backend::api::http::context::PageContext;
+use crate::backend::api::organizations::organization::Fields;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::db::fine_grained_tokens::Policy;
-use crate::backend::db::organizations;
+
 use crate::backend::db::organizations::OrganizationOutcome;
-use crate::backend::identity::fine_grained::catalog;
 use crate::backend::identity::fine_grained::MAX_DAYS;
 use axum::{
     extract::{rejection::FormRejection, Form, Path, State},
@@ -17,6 +17,7 @@ use axum::{
     Router,
 };
 use codeyard_db_core::models::OrgRole;
+use codeyard_model::fine_grained::catalog;
 use codeyard_webui::pages::orgs as view;
 use serde_json::{Map, Value};
 use std::{
@@ -36,31 +37,36 @@ pub(super) fn router() -> Router<Arc<AppState>> {
     reason = "HTML adapters preserve complete Axum responses under the PageContext contract."
 )]
 async fn require_owner(ctx: &PageContext, actor: i64, org: i64) -> Result<(), Response> {
-    match organizations::get_organization_role(&ctx.state.pool, actor, org).await {
+    match crate::backend::db::organizations::get_organization_role(&ctx.state.pool, actor, org)
+        .await
+    {
         Ok(OrganizationOutcome::Applied(OrgRole::Owner)) => Ok(()),
         Ok(OrganizationOutcome::Applied(_)) => Err(ctx.error(
             StatusCode::FORBIDDEN,
             "Only organization owners can manage personal access tokens.",
         )),
-        Ok(_) => Err(organization::not_found(ctx)),
-        Err(_) => Err(organization::unavailable(ctx)),
+        Ok(_) => Err(crate::backend::api::organizations::organization::not_found(
+            ctx,
+        )),
+        Err(_) => Err(crate::backend::api::organizations::organization::unavailable(ctx)),
     }
 }
 
 /// Projects listed tokens with their users and selected repository names.
 async fn grants(
     ctx: &PageContext,
-    rows: Vec<db::fine_grained_tokens::Token>,
+    rows: Vec<crate::backend::db::fine_grained_tokens::Token>,
     repositories: &HashMap<i64, Vec<String>>,
 ) -> anyhow::Result<Vec<view::TokenGrant>> {
     let mut ids: Vec<_> = rows.iter().map(|token| token.user_id).collect();
     ids.sort_unstable();
     ids.dedup();
-    let users: HashMap<_, _> = db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
-        .await?
-        .into_iter()
-        .map(|user| (user.id, user.username))
-        .collect();
+    let users: HashMap<_, _> =
+        crate::backend::db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
+            .await?
+            .into_iter()
+            .map(|user| (user.id, user.username))
+            .collect();
     Ok(rows
         .into_iter()
         .map(|token| {
@@ -100,15 +106,17 @@ pub(super) async fn panel(
     actor: i64,
     org: i64,
 ) -> Result<view::TokenPanel, Response> {
-    let unavailable = |_| organization::unavailable(ctx);
-    let limit = organization::PAGE_LIMIT;
+    let unavailable = |_| crate::backend::api::organizations::organization::unavailable(ctx);
+    let limit = crate::backend::api::organizations::organization::PAGE_LIMIT;
     let (Some((pending_before, _)), Some((active_before, _))) = (
-        organization::cursor(ctx, "pending_before"),
-        organization::cursor(ctx, "active_before"),
+        crate::backend::api::organizations::organization::cursor(ctx, "pending_before"),
+        crate::backend::api::organizations::organization::cursor(ctx, "active_before"),
     ) else {
-        return Err(organization::invalid(ctx));
+        return Err(crate::backend::api::organizations::organization::invalid(
+            ctx,
+        ));
     };
-    let loaded = db::fine_grained_tokens::owner_tokens(
+    let loaded = crate::backend::db::fine_grained_tokens::owner_tokens(
         &ctx.state.pool,
         actor,
         ctx.session_id.as_deref().unwrap_or(""),
@@ -118,12 +126,15 @@ pub(super) async fn panel(
     )
     .await
     .map_err(unavailable)?
-    .ok_or_else(|| organization::not_found(ctx))?;
+    .ok_or_else(|| crate::backend::api::organizations::organization::not_found(ctx))?;
     let mut repositories: HashMap<i64, Vec<String>> = HashMap::new();
     for (token, name) in loaded.repositories {
         repositories.entry(token).or_default().push(name);
     }
-    let base = format!("{}/{org}?tab=personal-access-tokens", super::INDEX);
+    let base = format!(
+        "{}/{org}?tab=personal-access-tokens",
+        crate::backend::api::organizations::INDEX
+    );
     let (mut pending, mut active) = (loaded.pending, loaded.approved);
     let pending_next = (pending.len() as i64 > limit).then(|| {
         pending.truncate(limit as usize);
@@ -167,16 +178,19 @@ fn policy(form: &Fields) -> Result<Policy, &'static str> {
         Some("true") => Ok(true),
         _ => Err("Use the token policy checkboxes."),
     };
-    let days = match organization::field(form, "max_lifetime_days").trim() {
-        "" => None,
-        value => Some(
-            value
-                .parse::<i32>()
-                .ok()
-                .filter(|days| (1..=MAX_DAYS as i32).contains(days))
-                .ok_or("Use a maximum lifetime of 1 to 366 days, or leave it empty.")?,
-        ),
-    };
+    let days =
+        match crate::backend::api::organizations::organization::field(form, "max_lifetime_days")
+            .trim()
+        {
+            "" => None,
+            value => Some(
+                value
+                    .parse::<i32>()
+                    .ok()
+                    .filter(|days| (1..=MAX_DAYS as i32).contains(days))
+                    .ok_or("Use a maximum lifetime of 1 to 366 days, or leave it empty.")?,
+            ),
+        };
     Ok(Policy {
         fine_grained_allowed: flag("fine_grained_allowed")?,
         fine_grained_approval: flag("fine_grained_approval")?,
@@ -186,12 +200,14 @@ fn policy(form: &Fields) -> Result<Policy, &'static str> {
 }
 
 async fn apply(ctx: &PageContext, actor: i64, org: i64, form: &Fields) -> anyhow::Result<Outcome> {
-    let actor = db::credentials::Actor::from((
+    let actor = crate::backend::db::credentials::Actor::from((
         actor,
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
     ));
     let pool = &ctx.state.pool;
-    let token = organization::field(form, "token_id").parse::<i64>().ok();
+    let token = crate::backend::api::organizations::organization::field(form, "token_id")
+        .parse::<i64>()
+        .ok();
     let changed = |done: bool| {
         if done {
             Outcome::Saved
@@ -199,52 +215,62 @@ async fn apply(ctx: &PageContext, actor: i64, org: i64, form: &Fields) -> anyhow
             Outcome::Changed
         }
     };
-    Ok(match (organization::field(form, "action"), token) {
-        ("token-policy", _) => match policy(form) {
-            Ok(policy) => {
-                changed(db::fine_grained_tokens::set_policy(pool, actor, org, &policy).await?)
+    Ok(
+        match (
+            crate::backend::api::organizations::organization::field(form, "action"),
+            token,
+        ) {
+            ("token-policy", _) => match policy(form) {
+                Ok(policy) => changed(
+                    crate::backend::db::fine_grained_tokens::set_policy(pool, actor, org, &policy)
+                        .await?,
+                ),
+                Err(message) => Outcome::Invalid(message),
+            },
+            ("token-review", Some(token)) => {
+                let status =
+                    match crate::backend::api::organizations::organization::field(form, "decision")
+                    {
+                        "approve" => "approved",
+                        "deny" => "denied",
+                        _ => return Ok(Outcome::Invalid("Approve or deny the request.")),
+                    };
+                let reason =
+                    crate::backend::api::organizations::organization::optional(form, "reason")
+                        .map(str::trim);
+                if reason.is_some_and(|reason| reason.len() > 1024 || reason.contains('\0')) {
+                    return Ok(Outcome::Invalid("Use a reason of at most 1024 characters."));
+                }
+                changed(
+                    crate::backend::db::fine_grained_tokens::review(
+                        pool,
+                        org,
+                        actor,
+                        &[token],
+                        "pending",
+                        status,
+                        reason,
+                    )
+                    .await?
+                        == 1,
+                )
             }
-            Err(message) => Outcome::Invalid(message),
-        },
-        ("token-review", Some(token)) => {
-            let status = match organization::field(form, "decision") {
-                "approve" => "approved",
-                "deny" => "denied",
-                _ => return Ok(Outcome::Invalid("Approve or deny the request.")),
-            };
-            let reason = organization::optional(form, "reason").map(str::trim);
-            if reason.is_some_and(|reason| reason.len() > 1024 || reason.contains('\0')) {
-                return Ok(Outcome::Invalid("Use a reason of at most 1024 characters."));
-            }
-            changed(
-                db::fine_grained_tokens::review(
+            ("token-revoke", Some(token)) => changed(
+                crate::backend::db::fine_grained_tokens::review(
                     pool,
                     org,
                     actor,
                     &[token],
-                    "pending",
-                    status,
-                    reason,
+                    "approved",
+                    "revoked",
+                    None,
                 )
                 .await?
                     == 1,
-            )
-        }
-        ("token-revoke", Some(token)) => changed(
-            db::fine_grained_tokens::review(
-                pool,
-                org,
-                actor,
-                &[token],
-                "approved",
-                "revoked",
-                None,
-            )
-            .await?
-                == 1,
-        ),
-        _ => Outcome::Invalid(organization::INVALID_FORM),
-    })
+            ),
+            _ => Outcome::Invalid(crate::backend::api::organizations::organization::INVALID_FORM),
+        },
+    )
 }
 
 async fn mutate(
@@ -261,7 +287,7 @@ async fn mutate(
     ctx.query
         .insert("tab".into(), "personal-access-tokens".into());
     let Ok(Form(pairs)) = input else {
-        return organization::invalid(&ctx);
+        return crate::backend::api::organizations::organization::invalid(&ctx);
     };
     let mut seen = HashSet::new();
     if pairs.len() > 12
@@ -269,7 +295,7 @@ async fn mutate(
             .iter()
             .any(|(key, value)| key.len() > 64 || value.len() > 4096 || !seen.insert(key))
     {
-        return organization::invalid(&ctx);
+        return crate::backend::api::organizations::organization::invalid(&ctx);
     }
     let form: Fields = pairs.into_iter().collect();
     if let Err(response) = ctx.check_csrf(&form) {
@@ -279,7 +305,9 @@ async fn mutate(
         Ok(user) => user.id,
         Err(response) => return response,
     };
-    if let Err(response) = organization::selected(&ctx, actor, org).await {
+    if let Err(response) =
+        crate::backend::api::organizations::organization::selected(&ctx, actor, org).await
+    {
         return response;
     }
     if let Err(response) = require_owner(&ctx, actor, org).await {
@@ -289,7 +317,7 @@ async fn mutate(
         Ok(Outcome::Saved) => {
             return ctx.redirect(&format!(
                 "{}/{org}?tab=personal-access-tokens",
-                super::INDEX
+                crate::backend::api::organizations::INDEX
             ))
         }
         Ok(Outcome::Changed) => (
@@ -297,11 +325,18 @@ async fn mutate(
             "The token or request changed. Reload and try again.",
         ),
         Ok(Outcome::Invalid(message)) => (StatusCode::BAD_REQUEST, message),
-        Err(_) => return organization::unavailable(&ctx),
+        Err(_) => return crate::backend::api::organizations::organization::unavailable(&ctx),
     };
     let draft = form
         .into_iter()
         .filter(|(key, _)| key != "csrf_token")
         .collect();
-    organization::respond(&ctx, Some(org), status, Some(message.into()), draft).await
+    crate::backend::api::organizations::organization::respond(
+        &ctx,
+        Some(org),
+        status,
+        Some(message.into()),
+        draft,
+    )
+    .await
 }

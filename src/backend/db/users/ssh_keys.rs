@@ -19,7 +19,7 @@ pub struct SshKeySummary {
 native_operation!(crate::backend::db::postgres::users::ssh_keys::list_user_key_summaries,
     crate::backend::db::sqlite::users::ssh_keys::list_user_key_summaries,
     /// The account's own settings listing, read while `credential` is still live.
-    fn list_user_key_summaries(pool: &DbPool, user_id: i64, credential: &super::accounts::AccountCredential<'_>, after: i64) -> Result<Vec<SshKeySummary>>);
+    fn list_user_key_summaries(pool: &DbPool, user_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, after: i64) -> Result<Vec<SshKeySummary>>);
 
 fn parse_key_parts(key_type: &str, blob: &str) -> Result<PublicKey, SshKeyWriteRefusal> {
     use codeyard_model::identity::SshKeyWriteRefusal::InvalidKey;

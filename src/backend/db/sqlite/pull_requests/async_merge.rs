@@ -1,6 +1,7 @@
-use crate::backend::db::pull_requests::async_merge::{
-    AsyncMerge, NewAsyncMerge, PENDING_TIMEOUT_SECONDS, TIMEOUT_MESSAGE,
-};
+use crate::backend::db::pull_requests::async_merge::AsyncMerge;
+use crate::backend::db::pull_requests::async_merge::NewAsyncMerge;
+use crate::backend::db::pull_requests::async_merge::PENDING_TIMEOUT_SECONDS;
+use crate::backend::db::pull_requests::async_merge::TIMEOUT_MESSAGE;
 use anyhow::Result;
 use serde_json::Value;
 use sqlx::SqlitePool;

@@ -13,7 +13,7 @@ use std::{
     path::{Component, Path},
 };
 
-const MAX_ARCHIVE_BYTES: usize = crate::backend::storage::MAX_OBJECT_BYTES as usize;
+const MAX_ARCHIVE_BYTES: usize = codeyard_support::object_limits::MAX_OBJECT_BYTES as usize;
 pub(crate) const MAX_UNPACKED_BYTES: u64 = 512 * 1024 * 1024;
 // The export writes archives within these limits too, so every archive it reports as complete
 // can be imported.
@@ -334,7 +334,8 @@ pub fn read(bytes: &[u8], selected: Option<&str>) -> Result<ArchiveSource> {
         if let Some(relative) = prefixes.iter().find_map(|prefix| path.strip_prefix(prefix)) {
             if git_object_path(relative) {
                 ensure!(
-                    data.len() <= super::MAX_IMPORT_PACK_BYTES - git_bytes,
+                    data.len()
+                        <= crate::backend::repositories::imports::MAX_IMPORT_PACK_BYTES - git_bytes,
                     "Migration Git data exceeds its size limit"
                 );
                 git_bytes += data.len();

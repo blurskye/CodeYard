@@ -1,6 +1,5 @@
 //! Bounded, durable notification hints shared by web nodes.
-use crate::backend::db::postgres;
-use crate::backend::db::sqlite;
+
 use codeyard_db_core::DbPool;
 
 pub const BATCH_SIZE: usize = 256;
@@ -23,9 +22,11 @@ async fn poll(pool: &DbPool, cursor: i64, pending: &[i64]) -> Result<EventBatch,
     }
     let batch = match pool {
         DbPool::Postgres(pool) => {
-            postgres::notifications::events::poll(pool, cursor, pending).await?
+            crate::backend::db::postgres::notifications::events::poll(pool, cursor, pending).await?
         }
-        DbPool::Sqlite(pool) => sqlite::notifications::events::poll(pool, cursor).await?,
+        DbPool::Sqlite(pool) => {
+            crate::backend::db::sqlite::notifications::events::poll(pool, cursor).await?
+        }
     };
     if batch.active.len() > MAX_ACTIVE_TRANSACTIONS {
         return Err(sqlx::Error::Protocol(
@@ -85,15 +86,23 @@ pub async fn announce(pool: &DbPool, payload: &str) -> Result<(), sqlx::Error> {
         ));
     }
     match pool {
-        DbPool::Postgres(pool) => postgres::notifications::events::announce(pool, payload).await,
-        DbPool::Sqlite(pool) => sqlite::notifications::events::announce(pool, payload).await,
+        DbPool::Postgres(pool) => {
+            crate::backend::db::postgres::notifications::events::announce(pool, payload).await
+        }
+        DbPool::Sqlite(pool) => {
+            crate::backend::db::sqlite::notifications::events::announce(pool, payload).await
+        }
     }
 }
 
 /// Hints are not inbox history. A disconnected browser reloads the authoritative inbox.
 pub async fn prune(pool: &DbPool) -> Result<u64, sqlx::Error> {
     match pool {
-        DbPool::Postgres(pool) => postgres::notifications::events::prune(pool).await,
-        DbPool::Sqlite(pool) => sqlite::notifications::events::prune(pool).await,
+        DbPool::Postgres(pool) => {
+            crate::backend::db::postgres::notifications::events::prune(pool).await
+        }
+        DbPool::Sqlite(pool) => {
+            crate::backend::db::sqlite::notifications::events::prune(pool).await
+        }
     }
 }

@@ -1,10 +1,10 @@
 //! Shared application state: database, storage, CI and notification services.
 use crate::backend::ci::CiConfig;
 use crate::backend::ci::CiRuns;
-use crate::backend::crypto::SecretEncryptor;
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::storage::ObjectStore;
 use codeyard_db_core::DbPool;
+use codeyard_support::secrets::SecretEncryptor;
 use std::{path::PathBuf, sync::Arc};
 
 /// Allows the primary and one replica their full transport admission budgets, plus search time.
@@ -68,7 +68,7 @@ impl AppState {
             metrics_token_hash: std::env::var("METRICS_TOKEN")
                 .ok()
                 .filter(|token| !token.is_empty() && token.len() <= 4096)
-                .map(|token| crate::backend::identity::tokens::token_hash(&token)),
+                .map(|token| codeyard_support::token_hash::token_hash(&token)),
             roles: crate::backend::node::NodeRoles::default(),
             storage_min_free_bytes: 1024 * 1024 * 1024,
             storage_readiness: Arc::new(tokio::sync::Semaphore::new(1)),

@@ -1,4 +1,10 @@
-use crate::backend::db::action_logs::{Grant, Job, Line, Manifest, ObservedStep, Snapshot, Target};
+use crate::backend::db::action_logs::Grant;
+use crate::backend::db::action_logs::Job;
+use crate::backend::db::action_logs::Line;
+use crate::backend::db::action_logs::Manifest;
+use crate::backend::db::action_logs::ObservedStep;
+use crate::backend::db::action_logs::Snapshot;
+use crate::backend::db::action_logs::Target;
 use anyhow::{ensure, Result};
 use sqlx::{types::Json, SqliteConnection, SqlitePool};
 
@@ -20,11 +26,13 @@ pub async fn issue(
         "invalid log capability"
     );
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let readable:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND {})",super::repositories::access::readable_condition())).bind(actor.user_id).bind(repo).fetch_one(&mut *tx).await?;
+    let readable:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND {})",crate::backend::db::sqlite::repositories::access::readable_condition())).bind(actor.user_id).bind(repo).fetch_one(&mut *tx).await?;
     if !readable {
         return Ok(false);
     }
-    if !super::credentials::repository(&mut tx, &actor, repo, "actions", false).await? {
+    if !crate::backend::db::sqlite::credentials::repository(&mut tx, &actor, repo, "actions", false)
+        .await?
+    {
         return Ok(false);
     }
     let version: Option<i64> =
@@ -73,18 +81,24 @@ pub async fn read(pool: &SqlitePool, hash: &str, resource: &str) -> Result<Optio
     let Some(grant) = grant else {
         return Ok(None);
     };
-    let lines =
-        super::ci::read_log_range(&mut tx, grant.run_id, 0, grant.max_log_id, 100_000, false)
-            .await?
-            .into_iter()
-            .filter(|line| {
-                grant.job_id.is_none_or(|job| line.job_id == Some(job))
-                    && grant
-                        .step_number
-                        .is_none_or(|step| line.step_number == Some(step))
-            })
-            .map(Line::from)
-            .collect();
+    let lines = crate::backend::db::sqlite::ci::read_log_range(
+        &mut tx,
+        grant.run_id,
+        0,
+        grant.max_log_id,
+        100_000,
+        false,
+    )
+    .await?
+    .into_iter()
+    .filter(|line| {
+        grant.job_id.is_none_or(|job| line.job_id == Some(job))
+            && grant
+                .step_number
+                .is_none_or(|step| line.step_number == Some(step))
+    })
+    .map(Line::from)
+    .collect();
     tx.commit().await?;
     Ok(Some(Snapshot { grant, lines }))
 }

@@ -3,23 +3,38 @@
 //! again.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::discussion::{
-    api_error, detail_outcome, item, kind, label, listed_assignees, listed_head, page, pull_item,
-    repository, safe_api_error, unavailable, ApiFailure, RepositoryData, ResultPage,
-};
-use crate::backend::api::repos::forms::{authorize_post, field, with_status};
+use crate::backend::api::repos::discussion::api_error;
+use crate::backend::api::repos::discussion::detail_outcome;
+use crate::backend::api::repos::discussion::item;
+use crate::backend::api::repos::discussion::kind;
+use crate::backend::api::repos::discussion::label;
+use crate::backend::api::repos::discussion::listed_assignees;
+use crate::backend::api::repos::discussion::listed_head;
+use crate::backend::api::repos::discussion::page;
+use crate::backend::api::repos::discussion::pull_item;
+use crate::backend::api::repos::discussion::repository;
+use crate::backend::api::repos::discussion::safe_api_error;
+use crate::backend::api::repos::discussion::unavailable;
+use crate::backend::api::repos::discussion::ApiFailure;
+use crate::backend::api::repos::discussion::RepositoryData;
+use crate::backend::api::repos::discussion::ResultPage;
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::field;
+use crate::backend::api::repos::forms::with_status;
 use crate::backend::api::repos::issues::assignees::assigned_item;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::db::assignees::AssignedItem;
-use crate::backend::db::discussions::{ListFilter, Pick};
+use crate::backend::db::discussions::ListFilter;
+use crate::backend::db::discussions::Pick;
 use crate::backend::db::milestones::MilestoneWriteRefusal;
-use crate::backend::issues::{parse_due_date, validate_milestone};
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
 use codeyard_db_core::models::MilestoneSummary;
+use codeyard_model::issue_input::parse_due_date;
+use codeyard_model::issue_input::validate_milestone;
 use codeyard_webui::pages::repos::issues::{self as view, ListCounts, MilestoneDraft};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -159,9 +174,10 @@ pub(crate) async fn native_index(
     let ctx = PageContext::load(state, headers, &uri).await?;
     let repo = repository(&ctx, &owner, &name).await?;
     let tab = state_tab(&ctx, &["open", "closed"])?;
-    let (open, closed) = db::milestones::count_milestones(&ctx.state.pool, repo.record.id)
-        .await
-        .map_err(|_| unavailable(&ctx))?;
+    let (open, closed) =
+        crate::backend::db::milestones::count_milestones(&ctx.state.pool, repo.record.id)
+            .await
+            .map_err(|_| unavailable(&ctx))?;
     let counts = ListCounts { open, closed };
     let sort = ctx.query.get("sort").cloned().unwrap_or_default();
     let page_number = crate::backend::api::repos::paging::number(
@@ -170,13 +186,13 @@ pub(crate) async fn native_index(
         1,
         1..=crate::backend::api::repos::paging::MAX_PAGE,
     )?;
-    let offset = (page_number - 1) as i64 * db::milestones::MILESTONES_PER_PAGE;
-    let items = db::milestones::list_milestones_page(
+    let offset = (page_number - 1) as i64 * crate::backend::db::milestones::MILESTONES_PER_PAGE;
+    let items = crate::backend::db::milestones::list_milestones_page(
         &ctx.state.pool,
         repo.record.id,
         Some(tab),
         &sort,
-        db::milestones::MILESTONES_PER_PAGE,
+        crate::backend::db::milestones::MILESTONES_PER_PAGE,
         offset,
     )
     .await
@@ -194,7 +210,7 @@ pub(crate) async fn native_index(
             sort,
             page_number,
             has_next: page_number < crate::backend::api::repos::paging::MAX_PAGE
-                && offset + db::milestones::MILESTONES_PER_PAGE
+                && offset + crate::backend::db::milestones::MILESTONES_PER_PAGE
                     < if tab == "open" { open } else { closed },
         }),
     ))
@@ -292,7 +308,7 @@ pub(crate) async fn native_create(
         Err(failure) => return Ok(new_form_refused(&ctx, &repo, &draft, &failure)),
     };
     let actor = ctx.database_actor(ctx.require_user()?.id);
-    match db::milestones::create_milestone(
+    match crate::backend::db::milestones::create_milestone(
         &ctx.state.pool,
         actor,
         repo.record.id,
@@ -325,10 +341,11 @@ async fn milestone_page(
     tab: &str,
     refused: Option<(MilestoneDraft, ApiFailure)>,
 ) -> ResultPage<Response> {
-    let summary = db::milestones::get_milestone(&ctx.state.pool, repo.record.id, number)
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Milestone not found."))?;
+    let summary =
+        crate::backend::db::milestones::get_milestone(&ctx.state.pool, repo.record.id, number)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Milestone not found."))?;
     let milestone_id = summary.milestone.id;
     let milestone = milestone_view(summary);
     let page_number = crate::backend::api::repos::paging::number(
@@ -343,7 +360,7 @@ async fn milestone_page(
         "all" => None,
         open_or_closed => Some(open_or_closed),
     };
-    let mut entries = db::issues::list_repo_issues(
+    let mut entries = crate::backend::db::issues::list_repo_issues(
         &ctx.state.pool,
         repo.record.id,
         &ListFilter {
@@ -362,9 +379,10 @@ async fn milestone_page(
         .iter()
         .map(|entry| entry.issue.id)
         .collect::<Vec<_>>();
-    let mut labels = db::labels::get_issues_labels(&ctx.state.pool, repo.record.id, &ids)
-        .await
-        .map_err(|_| unavailable(ctx))?;
+    let mut labels =
+        crate::backend::db::labels::get_issues_labels(&ctx.state.pool, repo.record.id, &ids)
+            .await
+            .map_err(|_| unavailable(ctx))?;
     let mut assignees = listed_assignees(ctx, &ids, false).await?;
     let mut items = Vec::new();
     for entry in entries {
@@ -379,7 +397,7 @@ async fn milestone_page(
         items.push(row);
     }
     // Filter before the limit; merged pull requests belong to the closed tab.
-    let mut pulls = db::pull_requests::records::list_repo_pull_requests(
+    let mut pulls = crate::backend::db::pull_requests::records::list_repo_pull_requests(
         &ctx.state.pool,
         repo.record.id,
         &ListFilter {
@@ -400,10 +418,13 @@ async fn milestone_page(
         .iter()
         .map(|value| value.pull_request.id)
         .collect::<Vec<_>>();
-    let mut pull_labels =
-        db::labels::get_pull_requests_labels(&ctx.state.pool, repo.record.id, &pull_ids)
-            .await
-            .map_err(|_| unavailable(ctx))?;
+    let mut pull_labels = crate::backend::db::labels::get_pull_requests_labels(
+        &ctx.state.pool,
+        repo.record.id,
+        &pull_ids,
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?;
     let mut pull_assignees = listed_assignees(ctx, &pull_ids, true).await?;
     let mut pull_items = Vec::new();
     let mut heads = HashMap::new();
@@ -506,16 +527,17 @@ pub(crate) async fn native_update(
         }
     };
     let actor = ctx.database_actor(ctx.require_user()?.id);
-    match db::milestones::save_milestone_checked(
+    match crate::backend::db::milestones::save_milestone_checked(
         &ctx.state.pool,
         actor,
         repo.record.id,
         Some(number),
-        db::milestones::MilestoneInput {
+        crate::backend::db::milestones::MilestoneInput {
             title: Some(&input.title),
             description: Some(input.description.as_deref()),
             due_on: Some(
-                db::milestones::due_on(input.due_date.as_deref()).map_err(|_| unavailable(&ctx))?,
+                crate::backend::db::milestones::due_on(input.due_date.as_deref())
+                    .map_err(|_| unavailable(&ctx))?,
             ),
             state: None,
         },
@@ -548,8 +570,14 @@ async fn change_state(
     state: &str,
 ) -> ResultPage<Response> {
     let actor = ctx.database_actor(ctx.require_user()?.id);
-    match db::milestones::set_milestone_state(&ctx.state.pool, actor, repo.record.id, number, state)
-        .await
+    match crate::backend::db::milestones::set_milestone_state(
+        &ctx.state.pool,
+        actor,
+        repo.record.id,
+        number,
+        state,
+    )
+    .await
     {
         Ok(_) => Ok(ctx.redirect(&format!("{}/milestones/{}", repo.view.url(), number))),
         Err(error) => Err(api_error(ctx, milestone_write_error(error))),
@@ -606,7 +634,7 @@ pub(crate) async fn native_delete(
     let actor = ctx.database_actor(ctx.require_user()?.id);
     let expected_id = field(&form, "milestone_id").parse::<i64>().unwrap_or(0);
     require_current_repository(&ctx, &form, &repo)?;
-    match db::milestones::delete_milestone(
+    match crate::backend::db::milestones::delete_milestone(
         &ctx.state.pool,
         actor,
         repo.record.id,
@@ -668,7 +696,7 @@ pub(crate) async fn native_set_item_milestone(
     let actor = ctx.database_actor(ctx.require_user()?.id);
     let outcome = match subject {
         AssignedItem::Issue(item_id) => {
-            db::milestones::set_issue_milestone(
+            crate::backend::db::milestones::set_issue_milestone(
                 &ctx.state.pool,
                 actor,
                 repo.record.id,
@@ -678,7 +706,7 @@ pub(crate) async fn native_set_item_milestone(
             .await
         }
         AssignedItem::PullRequest(item_id) => {
-            db::milestones::set_pull_request_milestone(
+            crate::backend::db::milestones::set_pull_request_milestone(
                 &ctx.state.pool,
                 actor,
                 repo.record.id,

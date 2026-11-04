@@ -1,9 +1,10 @@
-use super::{open, show};
-use crate::backend::{
-    api::{http::context::PageContext, repos::chrome},
-    app::AppState,
-    repositories::traffic::{self, Refusal},
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::repos::insights::open;
+use crate::backend::api::repos::insights::show;
+
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::traffic::Refusal;
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -21,10 +22,10 @@ fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
         Some(Refusal::Missing) => ctx.error(StatusCode::NOT_FOUND, "Repository not found."),
         Some(Refusal::Denied) => ctx.error(StatusCode::FORBIDDEN, &error.to_string()),
         Some(Refusal::Period) => ctx.error(StatusCode::UNPROCESSABLE_ENTITY, &error.to_string()),
-        None => chrome::unavailable(ctx),
+        None => crate::backend::api::repos::chrome::unavailable(ctx),
     }
 }
-fn series(data: traffic::Summary) -> view::Series {
+fn series(data: crate::backend::repositories::traffic::Summary) -> view::Series {
     view::Series {
         count: data.totals.count,
         uniques: data.totals.uniques,
@@ -50,7 +51,7 @@ pub(super) async fn page(
         Ok(opened) => opened,
         Err(response) => return response,
     };
-    let weekly = match traffic::weekly(period.per.as_deref()) {
+    let weekly = match crate::backend::repositories::traffic::weekly(period.per.as_deref()) {
         Ok(value) => value,
         Err(error) => return failure(&ctx, error),
     };
@@ -58,10 +59,22 @@ pub(super) async fn page(
     let viewer = ctx.user.as_ref();
     let repo = &loaded.repository;
     let (views, clones, paths, referrers) = match tokio::try_join!(
-        traffic::summary(pool, viewer, repo, traffic::Kind::Views, weekly),
-        traffic::summary(pool, viewer, repo, traffic::Kind::Clones, weekly),
-        traffic::paths(pool, viewer, repo),
-        traffic::referrers(pool, viewer, repo)
+        crate::backend::repositories::traffic::summary(
+            pool,
+            viewer,
+            repo,
+            crate::backend::repositories::traffic::Kind::Views,
+            weekly
+        ),
+        crate::backend::repositories::traffic::summary(
+            pool,
+            viewer,
+            repo,
+            crate::backend::repositories::traffic::Kind::Clones,
+            weekly
+        ),
+        crate::backend::repositories::traffic::paths(pool, viewer, repo),
+        crate::backend::repositories::traffic::referrers(pool, viewer, repo)
     ) {
         Ok(data) => data,
         Err(error) => return failure(&ctx, error),

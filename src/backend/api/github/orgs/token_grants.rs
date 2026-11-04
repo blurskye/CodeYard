@@ -1,22 +1,23 @@
 //! Organization owners review and revoke the fine-grained tokens that reach their organization.
 //! A request's id and a grant's id are the token id. App and fine-grained tokens cannot use
 //! these endpoints.
-use super::{outcome, target};
-use crate::backend::api::github::api_url;
-use crate::backend::api::github::auth;
+use crate::backend::api::github::orgs::outcome;
+use crate::backend::api::github::orgs::target;
+use codeyard_model::urls::api_url;
+
 use crate::backend::api::github::pagination::Pagination;
 use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::db::fine_grained_tokens::Token;
 use crate::backend::db::fine_grained_tokens::TokenFilter;
-use crate::backend::db::organizations;
+
 use crate::backend::db::organizations::OrganizationPage;
-use crate::backend::identity::fine_grained::catalog;
 use crate::backend::identity::fine_grained::Access;
-use crate::backend::identity::fine_grained::Group;
-use crate::backend::webhooks::payloads;
+use codeyard_model::fine_grained::catalog;
+use codeyard_model::fine_grained::Group;
+
 use axum::{
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -54,10 +55,13 @@ async fn context(
     headers: &HeaderMap,
     name: &str,
     write: bool,
-) -> Result<(auth::Authentication, Organization)> {
-    let actor = auth::authenticate(state, headers, true)
+) -> Result<(
+    crate::backend::api::github::auth::Authentication,
+    Organization,
+)> {
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     if write {
         actor.require_write()?;
     }
@@ -80,7 +84,7 @@ async fn context(
 /// nothing they return was read after the owner lost the organization.
 async fn owner(state: &AppState, actor: i64, org: i64) -> Result<()> {
     let role = outcome(
-        organizations::get_organization_role(&state.pool, actor, org)
+        crate::backend::db::organizations::get_organization_role(&state.pool, actor, org)
             .await
             .map_err(Error::unavailable)?,
     )?;
@@ -170,12 +174,14 @@ async fn tokens(
 ) -> Result<Vec<(Token, User)>> {
     let repository = match &filters.repository {
         Some(name) => {
-            let Some(repo) =
-                db::repositories::records::get_repository(&state.pool, &org.name, name)
-                    .await
-                    .map_err(Error::unavailable)?
-                    .filter(|repo| repo.owner_org_id == Some(org.id) && !repo.is_gist)
-            else {
+            let Some(repo) = crate::backend::db::repositories::records::get_repository(
+                &state.pool,
+                &org.name,
+                name,
+            )
+            .await
+            .map_err(Error::unavailable)?
+            .filter(|repo| repo.owner_org_id == Some(org.id) && !repo.is_gist) else {
                 // No token reaches a repository the organization does not have.
                 return Ok(Vec::new());
             };
@@ -197,7 +203,7 @@ async fn tokens(
         ascending: filters.ascending,
         before: None,
     };
-    let rows = db::fine_grained_tokens::organization_tokens(
+    let rows = crate::backend::db::fine_grained_tokens::organization_tokens(
         &state.pool,
         org.id,
         &filter,
@@ -209,12 +215,13 @@ async fn tokens(
     let mut ids: Vec<_> = rows.iter().map(|token| token.user_id).collect();
     ids.sort_unstable();
     ids.dedup();
-    let users: HashMap<_, _> = db::users::accounts::get_users_by_ids(&state.pool, &ids)
-        .await
-        .map_err(Error::unavailable)?
-        .into_iter()
-        .map(|user| (user.id, user))
-        .collect();
+    let users: HashMap<_, _> =
+        crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &ids)
+            .await
+            .map_err(Error::unavailable)?
+            .into_iter()
+            .map(|user| (user.id, user))
+            .collect();
     Ok(rows
         .into_iter()
         .filter_map(|token| {
@@ -246,7 +253,7 @@ fn document(token: &Token, user: &User, org: &Organization, request: bool) -> Va
     };
     let mut value = json!({
         "id": token.token_id,
-        "owner": payloads::user(user),
+        "owner": crate::backend::webhooks::payloads::user(user),
         "repository_selection": Access::parse(&token.repository_access).unwrap_or(Access::Public).selection(),
         "repositories_url": api_url(&format!("/orgs/{}/{collection}/{}/repositories", org.name, token.token_id)),
         "permissions": groups,
@@ -320,7 +327,7 @@ async fn repositories(
     status: &str,
 ) -> Result<Response> {
     let (actor, org) = context(state, headers, name, false).await?;
-    let token = db::fine_grained_tokens::get(&state.pool, id)
+    let token = crate::backend::db::fine_grained_tokens::get(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
         .filter(|token| token.owner_org_id == Some(org.id) && token.status == status)
@@ -330,7 +337,7 @@ async fn repositories(
     let mut more = false;
     match Access::parse(&token.repository_access) {
         Some(Access::Selected) => {
-            for (repo, _) in db::fine_grained_tokens::repositories(
+            for (repo, _) in crate::backend::db::fine_grained_tokens::repositories(
                 &state.pool,
                 token.token_id,
                 actor.user.id,
@@ -339,13 +346,13 @@ async fn repositories(
             .await
             .map_err(Error::unavailable)?
             {
-                if let Some(repo) =
-                    db::repositories::records::get_repository_by_id(&state.pool, repo)
-                        .await
-                        .map_err(Error::unavailable)?
-                        .filter(|repo| {
-                            repo.owner_kind == "org" && repo.owner_org_id == Some(org.id)
-                        })
+                if let Some(repo) = crate::backend::db::repositories::records::get_repository_by_id(
+                    &state.pool,
+                    repo,
+                )
+                .await
+                .map_err(Error::unavailable)?
+                .filter(|repo| repo.owner_kind == "org" && repo.owner_org_id == Some(org.id))
                 {
                     repositories.push(repo);
                 }
@@ -356,21 +363,23 @@ async fn repositories(
         Some(Access::All) => {
             let window = OrganizationPage::new(offset as i64, limit as i64)
                 .map_err(|_| Error::new(StatusCode::BAD_REQUEST, "Invalid page"))?;
-            repositories = organizations::access::list_organization_profile_repositories(
-                &state.pool,
-                org.id,
-                Some(token.user_id),
-                window,
-            )
-            .await
-            .map_err(Error::unavailable)?;
-            let total = organizations::access::count_organization_profile_repositories(
-                &state.pool,
-                org.id,
-                Some(token.user_id),
-            )
-            .await
-            .map_err(Error::unavailable)?;
+            repositories =
+                crate::backend::db::organizations::access::list_organization_profile_repositories(
+                    &state.pool,
+                    org.id,
+                    Some(token.user_id),
+                    window,
+                )
+                .await
+                .map_err(Error::unavailable)?;
+            let total =
+                crate::backend::db::organizations::access::count_organization_profile_repositories(
+                    &state.pool,
+                    org.id,
+                    Some(token.user_id),
+                )
+                .await
+                .map_err(Error::unavailable)?;
             more = (offset + limit) < usize::try_from(total).unwrap_or_default();
         }
         _ => {}
@@ -378,7 +387,7 @@ async fn repositories(
     owner(state, actor.user.id, org.id).await?;
     let items = repositories
         .iter()
-        .map(|repo| payloads::repository(repo, &org.name))
+        .map(|repo| crate::backend::webhooks::payloads::repository(repo, &org.name))
         .collect();
     page.response(uri, items, more)
 }
@@ -429,7 +438,7 @@ async fn review(
 ) -> Result<u64> {
     let (reviewer, org) = context(state, headers, name, true).await?;
     let invalid = |field: &str| Error::validation("PersonalAccessTokenRequest", field, "invalid");
-    let Json(body) = body.map_err(super::super::json_error)?;
+    let Json(body) = body.map_err(crate::backend::api::github::json_error)?;
     let status = match body.action.as_str() {
         "approve" => "approved",
         "deny" => "denied",
@@ -449,7 +458,7 @@ async fn review(
         }
         (None, Some(ids)) => ids,
         (None, None) => {
-            return db::fine_grained_tokens::review_all(
+            return crate::backend::db::fine_grained_tokens::review_all(
                 &state.pool,
                 org.id,
                 reviewer.database_actor(),
@@ -461,7 +470,7 @@ async fn review(
             .map_err(Error::unavailable)
         }
     };
-    db::fine_grained_tokens::review(
+    crate::backend::db::fine_grained_tokens::review(
         &state.pool,
         org.id,
         reviewer.database_actor(),
@@ -508,7 +517,7 @@ async fn revoke(
 ) -> Result<u64> {
     let (reviewer, org) = context(state, headers, name, true).await?;
     let invalid = |field: &str| Error::validation("PersonalAccessToken", field, "invalid");
-    let Json(body) = body.map_err(super::super::json_error)?;
+    let Json(body) = body.map_err(crate::backend::api::github::json_error)?;
     if body.action != "revoke" {
         return Err(invalid("action"));
     }
@@ -519,7 +528,7 @@ async fn revoke(
     if ids.is_empty() || ids.len() > 100 {
         return Err(invalid("pat_ids"));
     }
-    db::fine_grained_tokens::review(
+    crate::backend::db::fine_grained_tokens::review(
         &state.pool,
         org.id,
         reviewer.database_actor(),

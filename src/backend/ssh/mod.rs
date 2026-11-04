@@ -1,5 +1,5 @@
 pub mod handler;
-pub mod mode;
+
 #[cfg(unix)]
 pub mod openssh;
 mod rate_limit;

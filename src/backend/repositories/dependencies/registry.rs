@@ -1,5 +1,5 @@
 //! Registry downloads verify patch candidates; advisory matching belongs to vulnerabilities.
-use super::npm;
+
 use anyhow::{ensure, Context, Result};
 use semver::Version;
 use serde_json::Value;
@@ -44,7 +44,10 @@ impl Client {
         })
     }
     fn archive_url(&self, official: &str) -> Result<Url> {
-        ensure!(npm::registry_url(official), "Untrusted npm archive URL");
+        ensure!(
+            crate::backend::repositories::dependencies::npm::registry_url(official),
+            "Untrusted npm archive URL"
+        );
         let source = Url::parse(official)?;
         Ok(self
             .registry
@@ -86,7 +89,7 @@ impl Client {
         name: &str,
         version: &Version,
         expected: Option<&str>,
-    ) -> Result<npm::Archive> {
+    ) -> Result<crate::backend::repositories::dependencies::npm::Archive> {
         ensure!(
             crate::backend::npm::dependency_name(name) && version.to_string().len() <= 256,
             "Invalid npm package request"
@@ -109,15 +112,22 @@ impl Client {
             .pointer("/dist/tarball")
             .and_then(Value::as_str)
             .context("Missing npm archive URL")?;
-        ensure!(npm::registry_url(tarball), "Untrusted npm archive URL");
+        ensure!(
+            crate::backend::repositories::dependencies::npm::registry_url(tarball),
+            "Untrusted npm archive URL"
+        );
         let bytes = Self::body(
             self.http.get(self.archive_url(tarball)?).send().await?,
-            npm::MAX_ARCHIVE,
+            crate::backend::repositories::dependencies::npm::MAX_ARCHIVE,
         )
         .await?;
         let expected = expected.map(str::to_owned);
         tokio::task::spawn_blocking(move || {
-            npm::Archive::verify(&metadata, &bytes, expected.as_deref())
+            crate::backend::repositories::dependencies::npm::Archive::verify(
+                &metadata,
+                &bytes,
+                expected.as_deref(),
+            )
         })
         .await?
     }

@@ -1,11 +1,15 @@
 //! The public page of an organization, at the same address as a user profile.
 //! The store decides what is visible; this page renders only what it returns.
 
-use super::membership::project;
-use super::organization::{cursor_with_limit, invalid, public_view, team_view, unavailable};
 use crate::backend::api::http::context::PageContext;
+use crate::backend::api::organizations::membership::project;
+use crate::backend::api::organizations::organization::cursor_with_limit;
+use crate::backend::api::organizations::organization::invalid;
+use crate::backend::api::organizations::organization::public_view;
+use crate::backend::api::organizations::organization::team_view;
+use crate::backend::api::organizations::organization::unavailable;
 use crate::backend::api::users::profile::profile_repositories;
-use crate::backend::db::organizations;
+
 use crate::backend::db::organizations::OrganizationOutcome;
 use axum::http::StatusCode;
 use axum::response::Response;
@@ -17,7 +21,7 @@ const TAB_PAGE_LIMIT: i64 = 30;
 
 pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Response {
     let pool = &ctx.state.pool;
-    let org = match organizations::get_public_organization(pool, name).await {
+    let org = match crate::backend::db::organizations::get_public_organization(pool, name).await {
         Ok(Some(org)) => org,
         // The same answer as an unknown user, so the two cannot be told apart.
         Ok(None) => {
@@ -28,41 +32,61 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
         }
         Err(_) => return unavailable(ctx),
     };
-    let settings = match organizations::settings::get(pool, org.id).await {
+    let settings = match crate::backend::db::organizations::settings::get(pool, org.id).await {
         Ok(Some(settings)) => settings,
         _ => return unavailable(ctx),
     };
     let viewer = ctx.user.as_ref().map(|user| user.id);
     let repository_count =
-        match organizations::count_organization_profile_repositories(pool, org.id, viewer).await {
+        match crate::backend::db::organizations::count_organization_profile_repositories(
+            pool, org.id, viewer,
+        )
+        .await
+        {
             Ok(count) => count,
             Err(_) => return unavailable(ctx),
         };
     // Only owners and admins are offered the management page; members are counted, others are not.
     let (manage, member_count, team_count) = match viewer {
-        Some(actor) => match organizations::get_organization_role(pool, actor, org.id).await {
-            Ok(OrganizationOutcome::Applied(role)) => {
-                let members =
-                    match organizations::count_organization_members(pool, actor, org.id).await {
-                        Ok(OrganizationOutcome::Applied(count)) => Some(count),
-                        Ok(_) => None,
-                        Err(_) => return unavailable(ctx),
-                    };
-                let teams = match members {
-                    Some(_) => {
-                        match organizations::count_organization_teams(pool, actor, org.id).await {
+        Some(actor) => {
+            match crate::backend::db::organizations::get_organization_role(pool, actor, org.id)
+                .await
+            {
+                Ok(OrganizationOutcome::Applied(role)) => {
+                    let members =
+                        match crate::backend::db::organizations::count_organization_members(
+                            pool, actor, org.id,
+                        )
+                        .await
+                        {
                             Ok(OrganizationOutcome::Applied(count)) => Some(count),
                             Ok(_) => None,
                             Err(_) => return unavailable(ctx),
+                        };
+                    let teams = match members {
+                        Some(_) => {
+                            match crate::backend::db::organizations::count_organization_teams(
+                                pool, actor, org.id,
+                            )
+                            .await
+                            {
+                                Ok(OrganizationOutcome::Applied(count)) => Some(count),
+                                Ok(_) => None,
+                                Err(_) => return unavailable(ctx),
+                            }
                         }
-                    }
-                    None => None,
-                };
-                (organizations::administers(role), members, teams)
+                        None => None,
+                    };
+                    (
+                        crate::backend::db::organizations::administers(role),
+                        members,
+                        teams,
+                    )
+                }
+                Ok(_) => (false, None, None),
+                Err(_) => return unavailable(ctx),
             }
-            Ok(_) => (false, None, None),
-            Err(_) => return unavailable(ctx),
-        },
+        }
         None => (false, None, None),
     };
     // The member list, the member count and the team list are for members only, so a
@@ -83,7 +107,7 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
             {
                 (
                     0,
-                    organizations::OrganizationPage::new(0, TAB_PAGE_LIMIT)
+                    crate::backend::db::organizations::OrganizationPage::new(0, TAB_PAGE_LIMIT)
                         .expect("valid page limit"),
                 )
             } else {
@@ -92,14 +116,15 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
                 };
                 page
             };
-            let rows = match organizations::list_organization_profile_repositories(
-                pool, org.id, viewer, page,
-            )
-            .await
-            {
-                Ok(rows) => rows,
-                Err(_) => return unavailable(ctx),
-            };
+            let rows =
+                match crate::backend::db::organizations::list_organization_profile_repositories(
+                    pool, org.id, viewer, page,
+                )
+                .await
+                {
+                    Ok(rows) => rows,
+                    Err(_) => return unavailable(ctx),
+                };
             let after = after + rows.len() as i64;
             let more = after < repository_count;
             repositories = match profile_repositories(&ctx.state.pool, rows).await {
@@ -112,11 +137,14 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
             let Some((after, page)) = cursor_with_limit(ctx, "after", TAB_PAGE_LIMIT) else {
                 return invalid(ctx);
             };
-            let rows =
-                match organizations::list_organization_members(pool, actor, org.id, page).await {
-                    Ok(OrganizationOutcome::Applied(rows)) => rows,
-                    _ => return unavailable(ctx),
-                };
+            let rows = match crate::backend::db::organizations::list_organization_members(
+                pool, actor, org.id, page,
+            )
+            .await
+            {
+                Ok(OrganizationOutcome::Applied(rows)) => rows,
+                _ => return unavailable(ctx),
+            };
             let more = rows.len() as i64 == TAB_PAGE_LIMIT;
             let after = rows.last().map_or(after, |row| row.id);
             let people = match project(
@@ -136,7 +164,10 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
             let Some((after, page)) = cursor_with_limit(ctx, "after", TAB_PAGE_LIMIT) else {
                 return invalid(ctx);
             };
-            let rows = match organizations::list_organization_teams(pool, actor, org.id, page).await
+            let rows = match crate::backend::db::organizations::list_organization_teams(
+                pool, actor, org.id, page,
+            )
+            .await
             {
                 Ok(OrganizationOutcome::Applied(rows)) => rows,
                 _ => return unavailable(ctx),

@@ -1,7 +1,9 @@
 //! Native forms on a run's page: cancel a queued or running run, or run it again at the same
 //! commit. Both check CSRF and use the run service's action-specific authority checks. The run
 //! must belong to the readable repository named in the URL.
-use crate::backend::{api::http::context::PageContext, app::AppState, db, repositories::access};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{Form, OriginalUri, Path, State},
     http::{HeaderMap, StatusCode},
@@ -43,17 +45,18 @@ async fn readable_run(
             "Actions data is temporarily unavailable.",
         )
     };
-    let repository = db::repositories::records::get_repository(&ctx.state.pool, owner, name)
-        .await
-        .map_err(|_| unavailable())?
-        .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
-    if !access::can_read(&ctx.state.pool, Some(user), &repository)
+    let repository =
+        crate::backend::db::repositories::records::get_repository(&ctx.state.pool, owner, name)
+            .await
+            .map_err(|_| unavailable())?
+            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
+    if !crate::backend::repositories::access::can_read(&ctx.state.pool, Some(user), &repository)
         .await
         .map_err(|_| unavailable())?
     {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Repository not found."));
     }
-    let run = db::ci::get_ci_run_by_run_id(&ctx.state.pool, run_id)
+    let run = crate::backend::db::ci::get_ci_run_by_run_id(&ctx.state.pool, run_id)
         .await
         .map_err(|_| unavailable())?
         .filter(|run| run.repo_id == repository.id)
@@ -80,7 +83,7 @@ pub(crate) async fn download_artifact(
         return ctx.error(StatusCode::UNAUTHORIZED, "A live session is required.");
     };
     let actor = ctx.user.as_ref().expect("readable run").id;
-    let object = match db::action_objects::artifact_for_reader(
+    let object = match crate::backend::db::action_objects::artifact_for_reader(
         &state.pool,
         actor,
         &session,
@@ -94,7 +97,7 @@ pub(crate) async fn download_artifact(
         Ok(_) => return ctx.error(StatusCode::NOT_FOUND, "Artifact not found."),
         Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Artifacts unavailable."),
     };
-    match super::results::download(state, object, &headers).await {
+    match crate::backend::api::ci::results::download(state, object, &headers).await {
         Ok(response) => response,
         Err(error) => error.into_response(),
     }
@@ -120,8 +123,8 @@ pub(crate) async fn delete_artifact(
     }
     let actor = ctx.user.as_ref().expect("readable run").id;
     let credential = crate::backend::api::http::session::extract_session_id(&ctx.headers)
-        .map(db::ci::CiCredential::Session);
-    match db::action_objects::delete_artifact(
+        .map(crate::backend::db::ci::CiCredential::Session);
+    match crate::backend::db::action_objects::delete_artifact(
         &ctx.state.pool,
         artifact,
         run.id,
@@ -176,13 +179,13 @@ pub(crate) async fn cancel_run(
             run.run_id,
             actor,
             crate::backend::api::http::session::extract_session_id(&ctx.headers)
-                .map(db::ci::CiCredential::Session),
+                .map(crate::backend::db::ci::CiCredential::Session),
         )
         .await
     {
         Ok(_) => ctx.redirect(&run_page(&owner, &name, run.run_id)),
         Err(error) => {
-            let (status, axum::Json(error)) = super::admission_error(error);
+            let (status, axum::Json(error)) = crate::backend::api::ci::admission_error(error);
             ctx.error(status, &error.message)
         }
     }
@@ -220,13 +223,13 @@ pub(crate) async fn rerun_run(
             run.run_id,
             actor,
             crate::backend::api::http::session::extract_session_id(&ctx.headers)
-                .map(db::ci::CiCredential::Session),
+                .map(crate::backend::db::ci::CiCredential::Session),
         )
         .await
     {
         Ok(new_run) => ctx.redirect(&run_page(&owner, &name, new_run.run_id)),
         Err(error) => {
-            let (status, axum::Json(error)) = super::admission_error(error);
+            let (status, axum::Json(error)) = crate::backend::api::ci::admission_error(error);
             ctx.error(status, &error.message)
         }
     }

@@ -1,11 +1,13 @@
-use super::pull::{detail_response, PullRequestDetailResponse, PullRequestResponse};
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::pulls::pull::detail_response;
+use crate::backend::api::repos::pulls::pull::PullRequestDetailResponse;
+use crate::backend::api::repos::pulls::pull::PullRequestResponse;
 use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::api::user::responses::PublicUserResponse;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::repositories::pull_requests::mutations::CreatePullRequestRequest;
 use axum::extract::Path;
 use axum::extract::Query;
@@ -32,7 +34,7 @@ pub async fn create_pull_request(
         req,
     )
     .await
-    .map_err(super::operation_error)?;
+    .map_err(crate::backend::api::repos::pulls::operation_error)?;
 
     Ok((
         StatusCode::CREATED,
@@ -72,10 +74,10 @@ pub async fn list_pull_requests(
         query.page,
         Some(query.per_page.unwrap_or(100)),
     )?;
-    let prs = db::pull_requests::records::list_repo_pull_requests(
+    let prs = crate::backend::db::pull_requests::records::list_repo_pull_requests(
         &state.pool,
         repository.id,
-        &db::discussions::ListFilter {
+        &crate::backend::db::discussions::ListFilter {
             state: pr_state,
             include_merged: true,
             offset: offset as i64,

@@ -1,14 +1,11 @@
 //! Node access and private representation middleware.
-use super::{
-    config::WebConfig,
-    error::ApiError,
-    session::{self, get_current_user},
-};
-use crate::backend::api::{
-    files,
-    repos::{code::upload, releases},
-};
-use crate::backend::{app::AppState, db};
+use crate::backend::api::http::error::ApiError;
+use codeyard_model::http_config::WebConfig;
+
+use crate::backend::api::http::session::get_current_user;
+
+use crate::backend::app::AppState;
+
 use axum::{
     body::HttpBody,
     extract::{ConnectInfo, MatchedPath, Request},
@@ -26,7 +23,7 @@ use std::{
     time::Duration,
 };
 
-/// Sets the header that `session::client_address` reads, and drops any value the client sent.
+/// Sets the header that `crate::backend::api::http::session::client_address` reads, and drops any value the client sent.
 /// The address is the connection's, or, when the connection comes from a trusted proxy, the
 /// client that proxy forwarded for. IPv6 clients are told apart by their /64 network.
 pub(crate) async fn stamp_client_address(
@@ -34,11 +31,15 @@ pub(crate) async fn stamp_client_address(
     mut request: Request,
     next: Next,
 ) -> Response {
-    request.headers_mut().remove(session::CLIENT_HEADER);
+    request
+        .headers_mut()
+        .remove(crate::backend::api::http::session::CLIENT_HEADER);
     if let Some(Ok(value)) = client_key(&request, &config.trusted_proxies)
         .map(|client| client.parse::<header::HeaderValue>())
     {
-        request.headers_mut().insert(session::CLIENT_HEADER, value);
+        request
+            .headers_mut()
+            .insert(crate::backend::api::http::session::CLIENT_HEADER, value);
     }
     next.run(request).await
 }
@@ -89,13 +90,14 @@ fn streams_upload(request: &Request) -> bool {
             (*request.method() == Method::PUT
                 && matches!(
                     path,
-                    files::CONTENT_ROUTE | crate::backend::api::github::SARIF_ACTION_ROUTE
+                    crate::backend::api::files::CONTENT_ROUTE
+                        | crate::backend::api::github::SARIF_ACTION_ROUTE
                 ))
                 || (*request.method() == Method::POST
                     && matches!(
                         path,
-                        upload::ROUTE
-                            | releases::ASSET_ROUTE
+                        crate::backend::api::repos::code::upload::ROUTE
+                            | crate::backend::api::repos::releases::ASSET_ROUTE
                             | crate::backend::api::github::BLOB_ROUTE
                             | crate::backend::api::github::SARIF_ROUTE
                             | crate::backend::api::github::CODEQL_UPLOAD_ROUTE
@@ -164,13 +166,17 @@ async fn bounded_mutation_body(state: Arc<AppState>, request: Request, next: Nex
     let permit = if declared.is_some_and(|size| size <= SMALL_BODY) {
         None
     } else {
-        let mut authenticated =
-            match session::get_optional_user(&state.pool, request.headers()).await {
-                Ok(user) => user.is_some(),
-                // Password-change forms still need to reach their own session check.
-                Err((StatusCode::PRECONDITION_REQUIRED, _)) => true,
-                Err(error) => return error.into_response(),
-            };
+        let mut authenticated = match crate::backend::api::http::session::get_optional_user(
+            &state.pool,
+            request.headers(),
+        )
+        .await
+        {
+            Ok(user) => user.is_some(),
+            // Password-change forms still need to reach their own session check.
+            Err((StatusCode::PRECONDITION_REQUIRED, _)) => true,
+            Err(error) => return error.into_response(),
+        };
         if !authenticated
             && (request.uri().path().starts_with("/api/v3/")
                 || request.uri().path() == "/api/graphql")
@@ -320,19 +326,20 @@ pub(crate) async fn require_node_access(
     request: Request,
     next: Next,
 ) -> Response {
-    let node_config = match db::node_config::get_node_configuration(&state.pool).await {
-        Ok(config) => config,
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Failed to load node configuration",
-                )),
-            )
-                .into_response();
-        }
-    };
+    let node_config =
+        match crate::backend::db::node_config::get_node_configuration(&state.pool).await {
+            Ok(config) => config,
+            Err(_) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiError::new(
+                        "database_error",
+                        "Failed to load node configuration",
+                    )),
+                )
+                    .into_response();
+            }
+        };
 
     let (setup_completed, private_mode) = match node_config {
         Some(config) => (config.setup_completed, config.is_private()),

@@ -285,9 +285,9 @@ impl Eligibility {
         }
         if let Some(policy) = &self.policy {
             let policy = serde_json::from_str(policy)?;
-            if !super::action_settings::organization_allows(
+            if !crate::backend::db::action_settings::organization_allows(
                 &policy,
-                super::action_settings::Setting::Runners,
+                crate::backend::db::action_settings::Setting::Runners,
                 run.repo_id,
             ) {
                 return Ok(false);
@@ -369,7 +369,7 @@ impl Eligibility {
 pub struct Scheduling {
     pub labels: Vec<String>,
     pub group: Option<String>,
-    pub concurrency: Option<super::action_concurrency::Configuration>,
+    pub concurrency: Option<codeyard_db_core::ci_concurrency::Configuration>,
     /// Expression and non-run contexts retained until the enqueue transaction assigns identity.
     pub concurrency_expression:
         Option<(serde_yaml::Value, codeyard_actions::expressions::Contexts)>,

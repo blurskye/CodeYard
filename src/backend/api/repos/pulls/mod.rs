@@ -200,7 +200,6 @@ fn pull_redirect(
 }
 
 pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
-    use crate::backend::api::repos::issues;
     use axum::{
         routing::{get, post},
         Router,
@@ -208,26 +207,30 @@ pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppStat
     Router::new()
         .route("/:owner/:repo/pull/:number", get(pull_alias))
         .route("/:owner/:repo/pull/:number/*rest", get(pull_alias_with_tab))
-        .route("/:owner/:repo/pulls", get(issues::collection::native_index))
+        .route(
+            "/:owner/:repo/pulls",
+            get(crate::backend::api::repos::issues::collection::native_index),
+        )
         .route(
             "/:owner/:repo/pulls/new",
-            get(issues::collection::native_new_page).post(issues::collection::native_create),
+            get(crate::backend::api::repos::issues::collection::native_new_page)
+                .post(crate::backend::api::repos::issues::collection::native_create),
         )
         .route(
             "/:owner/:repo/pulls/:number",
-            get(issues::issue::native_detail),
+            get(crate::backend::api::repos::issues::issue::native_detail),
         )
         .route(
             "/:owner/:repo/pulls/:number/edit",
-            post(issues::issue::native_edit),
+            post(crate::backend::api::repos::issues::issue::native_edit),
         )
         .route(
             "/:owner/:repo/pulls/:number/state",
-            post(issues::issue::native_change_state),
+            post(crate::backend::api::repos::issues::issue::native_change_state),
         )
         .route(
             "/:owner/:repo/pulls/:number/tasks",
-            post(issues::tasks::native_toggle_task),
+            post(crate::backend::api::repos::issues::tasks::native_toggle_task),
         )
         .route(
             "/:owner/:repo/pulls/:number/comments",
@@ -235,15 +238,15 @@ pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppStat
         )
         .route(
             "/:owner/:repo/pulls/:number/lock",
-            post(issues::locking::native_lock),
+            post(crate::backend::api::repos::issues::locking::native_lock),
         )
         .route(
             "/:owner/:repo/pulls/:number/comments/:comment/pin",
-            post(issues::pins::native_pin),
+            post(crate::backend::api::repos::issues::pins::native_pin),
         )
         .route(
             "/:owner/:repo/pulls/:number/react",
-            post(issues::reactions::native_react),
+            post(crate::backend::api::repos::issues::reactions::native_react),
         )
         .route(
             "/:owner/:repo/pulls/:number/comments/:comment_id/edit",
@@ -322,19 +325,19 @@ pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppStat
         )
         .route(
             "/:owner/:repo/pulls/:number/labels",
-            post(issues::labels::native_add_label),
+            post(crate::backend::api::repos::issues::labels::native_add_label),
         )
         .route(
             "/:owner/:repo/pulls/:number/labels/:label_id/remove",
-            post(issues::labels::native_remove_label),
+            post(crate::backend::api::repos::issues::labels::native_remove_label),
         )
         .route(
             "/:owner/:repo/pulls/:number/assignees",
-            post(issues::assignees::native_assign),
+            post(crate::backend::api::repos::issues::assignees::native_assign),
         )
         .route(
             "/:owner/:repo/pulls/:number/assignees/:username/remove",
-            post(issues::assignees::native_unassign),
+            post(crate::backend::api::repos::issues::assignees::native_unassign),
         )
 }
 

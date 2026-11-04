@@ -8,7 +8,7 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::db;
+
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};
@@ -44,7 +44,9 @@ impl World {
             let repository = codeyard::backend::repositories::lifecycle::provision(
                 (database.pool(), None),
                 root.path(),
-                db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+                codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+                    alice_id,
+                ),
                 name,
                 None,
                 private,
@@ -58,7 +60,7 @@ impl World {
         }
         let proj = proj.unwrap();
         for user in [bob_id, carol_id, dave_id] {
-            db::repositories::access::grant_repo_access(
+            codeyard::backend::db::repositories::access::grant_repo_access(
                 database.pool(),
                 user,
                 proj,
@@ -110,12 +112,17 @@ async fn notices(
     user: i64,
     kind: &str,
 ) -> Vec<codeyard_db_core::models::Notification> {
-    db::notifications::records::list_notifications_for_user(world.pool(), user, 100, false)
-        .await
-        .unwrap()
-        .into_iter()
-        .filter(|notification| notification.kind == kind)
-        .collect()
+    codeyard::backend::db::notifications::records::list_notifications_for_user(
+        world.pool(),
+        user,
+        100,
+        false,
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .filter(|notification| notification.kind == kind)
+    .collect()
 }
 
 /// The sorted field names of a JSON object.
@@ -212,13 +219,14 @@ async fn deleted_comments_take_their_mention_notices(pg: bool) {
     assert!(removed.status.is_redirection(), "{}", removed.text());
     assert!(mentions(&world, world.bob_id).await.is_empty());
     // A delayed recipient from the original fan-out cannot recreate the deleted text.
-    let repo = db::repositories::records::get_repository(world.pool(), "alice", "proj")
-        .await
-        .unwrap()
-        .unwrap();
-    let delayed = db::notifications::records::create_notification(
+    let repo =
+        codeyard::backend::db::repositories::records::get_repository(world.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
+    let delayed = codeyard::backend::db::notifications::records::create_notification(
         world.pool(),
-        db::notifications::records::NewNotification {
+        codeyard::backend::db::notifications::records::NewNotification {
             user_id: world.bob_id,
             actor_id: Some(world.alice_id),
             repo_id: Some(repo.id),
@@ -232,10 +240,10 @@ async fn deleted_comments_take_their_mention_notices(pg: bool) {
     .await;
     assert!(delayed
         .unwrap_err()
-        .is::<db::notifications::records::NotificationSuppressed>());
-    let delayed_pull = db::notifications::records::create_notification(
+        .is::<codeyard::backend::db::notifications::records::NotificationSuppressed>());
+    let delayed_pull = codeyard::backend::db::notifications::records::create_notification(
         world.pool(),
-        db::notifications::records::NewNotification {
+        codeyard::backend::db::notifications::records::NewNotification {
             user_id: world.bob_id,
             actor_id: Some(world.alice_id),
             repo_id: Some(repo.id),
@@ -249,7 +257,7 @@ async fn deleted_comments_take_their_mention_notices(pg: bool) {
     .await;
     assert!(delayed_pull
         .unwrap_err()
-        .is::<db::notifications::records::NotificationSuppressed>());
+        .is::<codeyard::backend::db::notifications::records::NotificationSuppressed>());
     assert!(mentions(&world, world.bob_id).await.is_empty());
     world.close().await;
 }
@@ -408,7 +416,7 @@ async fn issue_author_gets_one_notice_for_a_comment(pg: bool) {
             StatusCode::CREATED,
         )
         .await;
-    let all = db::notifications::records::list_notifications_for_user(
+    let all = codeyard::backend::db::notifications::records::list_notifications_for_user(
         world.pool(),
         world.bob_id,
         100,
@@ -645,14 +653,18 @@ async fn restricted_accounts_do_not_use_the_budget(pg: bool) {
 
 async fn unreadable_names_are_bounded_per_write(pg: bool) {
     let world = World::new(pg).await;
-    let vault = db::repositories::records::get_repository(world.pool(), "alice", "vault")
-        .await
-        .unwrap()
-        .unwrap()
-        .id;
+    let vault = codeyard::backend::db::repositories::records::get_repository(
+        world.pool(),
+        "alice",
+        "vault",
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .id;
     // Bob and carol can read the private repository. Three hundred other users cannot.
     for user in [world.bob_id, world.carol_id] {
-        db::repositories::access::grant_repo_access(
+        codeyard::backend::db::repositories::access::grant_repo_access(
             world.pool(),
             user,
             vault,
@@ -858,18 +870,25 @@ async fn sqlite_native_form_issue_mentions() {
 /// ignoring user is told nothing, even when mentioned.
 async fn watch_levels(pg: bool) {
     let world = World::new(pg).await;
-    let proj = db::repositories::records::get_repository(world.pool(), "alice", "proj")
-        .await
-        .unwrap()
-        .unwrap();
+    let proj =
+        codeyard::backend::db::repositories::records::get_repository(world.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
     for (user, level, events) in [
         (world.bob_id, "watching", ""),
         (world.carol_id, "custom", "pulls"),
         (world.dave_id, "ignoring", ""),
     ] {
-        db::repositories::engagement::set_watch_level(world.pool(), user, proj.id, level, events)
-            .await
-            .unwrap();
+        codeyard::backend::db::repositories::engagement::set_watch_level(
+            world.pool(),
+            user,
+            proj.id,
+            level,
+            events,
+        )
+        .await
+        .unwrap();
     }
     world
         .alice
@@ -908,16 +927,21 @@ async fn sqlite_watch_levels() {
 /// a banned watcher hears nothing.
 async fn watchers_past_the_first_batch_are_notified(pg: bool) {
     let world = World::new(pg).await;
-    let proj = db::repositories::records::get_repository(world.pool(), "alice", "proj")
-        .await
-        .unwrap()
-        .unwrap();
+    let proj =
+        codeyard::backend::db::repositories::records::get_repository(world.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
     // Two hundred custom watchers who picked pull requests come before the one who picked issues.
     for index in 0..200 {
-        let user = db::users::accounts::create_user(world.pool(), &format!("pulls{index}"), None)
-            .await
-            .unwrap();
-        db::repositories::engagement::set_watch_level(
+        let user = codeyard::backend::db::users::accounts::create_user(
+            world.pool(),
+            &format!("pulls{index}"),
+            None,
+        )
+        .await
+        .unwrap();
+        codeyard::backend::db::repositories::engagement::set_watch_level(
             world.pool(),
             user.id,
             proj.id,
@@ -927,10 +951,11 @@ async fn watchers_past_the_first_batch_are_notified(pg: bool) {
         .await
         .unwrap();
     }
-    let late = db::users::accounts::create_user(world.pool(), "lateissues", None)
-        .await
-        .unwrap();
-    db::repositories::engagement::set_watch_level(
+    let late =
+        codeyard::backend::db::users::accounts::create_user(world.pool(), "lateissues", None)
+            .await
+            .unwrap();
+    codeyard::backend::db::repositories::engagement::set_watch_level(
         world.pool(),
         late.id,
         proj.id,
@@ -942,11 +967,14 @@ async fn watchers_past_the_first_batch_are_notified(pg: bool) {
     // Two hundred "All activity" watchers come after it, so the reads take a second batch.
     let mut last_watcher = None;
     for index in 0..200 {
-        let user =
-            db::users::accounts::create_user(world.pool(), &format!("watching{index}"), None)
-                .await
-                .unwrap();
-        db::repositories::engagement::set_watch_level(
+        let user = codeyard::backend::db::users::accounts::create_user(
+            world.pool(),
+            &format!("watching{index}"),
+            None,
+        )
+        .await
+        .unwrap();
+        codeyard::backend::db::repositories::engagement::set_watch_level(
             world.pool(),
             user.id,
             proj.id,
@@ -957,12 +985,19 @@ async fn watchers_past_the_first_batch_are_notified(pg: bool) {
         .unwrap();
         last_watcher = Some(user.id);
     }
-    let banned = db::users::accounts::create_user(world.pool(), "bannedwatch", None)
-        .await
-        .unwrap();
-    db::repositories::engagement::set_watch_level(world.pool(), banned.id, proj.id, "watching", "")
-        .await
-        .unwrap();
+    let banned =
+        codeyard::backend::db::users::accounts::create_user(world.pool(), "bannedwatch", None)
+            .await
+            .unwrap();
+    codeyard::backend::db::repositories::engagement::set_watch_level(
+        world.pool(),
+        banned.id,
+        proj.id,
+        "watching",
+        "",
+    )
+    .await
+    .unwrap();
     world
         .database
         .execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[banned.id])

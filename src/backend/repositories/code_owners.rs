@@ -3,10 +3,12 @@
 use codeyard_git::error::{ErrorKind, RepoError};
 use codeyard_model::repositories::MAX_REVIEWERS;
 
-use crate::backend::ci::workflows::{code_owner_glob_matches_bounded, WorkflowMatchBudget};
 use crate::backend::cluster::NodeContext;
-use crate::backend::db;
-use crate::backend::repositories::store::{repo_store, BlobRange};
+use codeyard_model::workflow_glob::code_owner_glob_matches_bounded;
+use codeyard_model::workflow_glob::WorkflowMatchBudget;
+
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::BlobRange;
 use codeyard_db_core::models::Repository;
 use std::collections::{HashMap, HashSet};
 
@@ -324,7 +326,8 @@ pub async fn resolve_owners<'a>(
         }
     }
     for names in names.chunks(500) {
-        for user in db::users::accounts::get_users_by_usernames(pool, names).await? {
+        for user in crate::backend::db::users::accounts::get_users_by_usernames(pool, names).await?
+        {
             resolved
                 .get_mut(&format!("@{}", user.username))
                 .expect("requested owner")
@@ -344,7 +347,7 @@ pub async fn resolve_owners<'a>(
     let review_teams: std::collections::HashSet<String> = if teams.is_empty() {
         std::collections::HashSet::new()
     } else {
-        db::pull_requests::team_reviewers::list(pool, repository.id, None, None)
+        crate::backend::db::pull_requests::team_reviewers::list(pool, repository.id, None, None)
             .await?
             .into_iter()
             .map(|team| team.team.slug)
@@ -360,7 +363,8 @@ pub async fn resolve_owners<'a>(
             break;
         };
         for (team, id) in
-            db::organizations::teams::team_members_by_names(pool, org_id, teams).await?
+            crate::backend::db::organizations::teams::team_members_by_names(pool, org_id, teams)
+                .await?
         {
             members += 1;
             anyhow::ensure!(
@@ -384,11 +388,15 @@ pub async fn resolve_owners<'a>(
     if !repository.is_archived {
         for ids in ids.chunks(500) {
             let levels: HashMap<_, _> =
-                db::repositories::access::get_users_repo_access(pool, ids, repository.id)
-                    .await?
-                    .into_iter()
-                    .collect();
-            for user in db::users::accounts::get_users_by_ids(pool, ids).await? {
+                crate::backend::db::repositories::access::get_users_repo_access(
+                    pool,
+                    ids,
+                    repository.id,
+                )
+                .await?
+                .into_iter()
+                .collect();
+            for user in crate::backend::db::users::accounts::get_users_by_ids(pool, ids).await? {
                 if !user.is_banned
                     && !user.must_change_password
                     && ((repository.owner_kind == "user"

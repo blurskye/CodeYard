@@ -1,17 +1,17 @@
 //! Private dependency contexts come from completed observations, never workflow plans.
-use super::action_jobs::Job;
-use super::ci::CiAdmissionRefusal as Refusal;
-use super::ci::CiReplaySelection;
-use super::ci::NewCiAttempt;
+use crate::backend::db::action_jobs::Job;
+use crate::backend::db::ci::CiReplaySelection;
+use crate::backend::db::ci::NewCiAttempt;
 use anyhow::{ensure, Result};
 use codeyard_actions::progress::{Replay, State};
+use codeyard_db_core::ci_policy::CiAdmissionRefusal as Refusal;
 use codeyard_db_core::models::CiRun;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A claim carries its replay across a cluster RPC frame together with the run, workflow and
 /// event payload, so the replay may use at most half of one frame. Admitting more would fail
 /// the claim after the attempt was queued.
-const MAX_REPLAY_BYTES: usize = crate::backend::cluster::rpc::MAX_JSON / 2;
+const MAX_REPLAY_BYTES: usize = codeyard_db_core::limits::MAX_JSON / 2;
 
 pub(crate) fn compose(previous: Option<Replay>, fresh: State) -> State {
     let mut state = if let Some(previous) = previous {

@@ -3,12 +3,12 @@ use std::path::Path;
 
 /// Creates `path` and its missing parents, syncing each new directory and its parent so
 /// the directories survive a power loss.
-pub(crate) fn durable_dir(path: &Path) -> std::io::Result<()> {
+pub fn durable_dir(path: &Path) -> std::io::Result<()> {
     create_durable(path, std::fs::DirBuilder::new().recursive(true))
 }
 
 /// A durable directory only this user can enter.
-pub(crate) fn private_dir(path: &Path) -> std::io::Result<()> {
+pub fn private_dir(path: &Path) -> std::io::Result<()> {
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -53,7 +53,7 @@ fn create_durable(path: &Path, builder: &std::fs::DirBuilder) -> std::io::Result
 }
 
 /// The same lock protects serving and persistent runner work-folder changes.
-pub(crate) fn lock_state_dir(path: &Path) -> anyhow::Result<std::fs::File> {
+pub fn lock_state_dir(path: &Path) -> anyhow::Result<std::fs::File> {
     private_dir(path)?;
-    codeyard_support::locks::exclusive_file(&path.join("serve.lock"))
+    crate::locks::exclusive_file(&path.join("serve.lock"))
 }

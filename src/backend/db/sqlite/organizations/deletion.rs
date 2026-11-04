@@ -5,7 +5,7 @@ use codeyard_db_core::models::OrgRole;
 use sqlx::{SqliteConnection, SqlitePool};
 use OrganizationOutcome::{Applied, Conflict, Denied};
 
-use super::authority::*;
+use crate::backend::db::sqlite::organizations::authority::*;
 
 pub async fn delete_organization(
     pool: &SqlitePool,
@@ -15,10 +15,10 @@ pub async fn delete_organization(
     let owner = actor.into();
     let actor = owner.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::super::credentials::require_account(&mut tx, &owner).await?;
+    crate::backend::db::sqlite::credentials::require_account(&mut tx, &owner).await?;
     let role = require_org!(tx, actor, org);
     if role != OrgRole::Owner
-        || !super::super::credentials::organization(
+        || !crate::backend::db::sqlite::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -73,9 +73,9 @@ pub async fn list_organization_deletion_repositories(
     let owner = actor.into();
     let actor = owner.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::super::credentials::require_account(&mut tx, &owner).await?;
+    crate::backend::db::sqlite::credentials::require_account(&mut tx, &owner).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner
-        || !super::super::credentials::organization(
+        || !crate::backend::db::sqlite::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -106,9 +106,9 @@ pub async fn delete_organization_repository(
     let owner = actor.into();
     let actor = owner.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::super::credentials::require_account(&mut tx, &owner).await?;
+    crate::backend::db::sqlite::credentials::require_account(&mut tx, &owner).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner
-        || !super::super::credentials::organization(
+        || !crate::backend::db::sqlite::credentials::organization(
             &mut tx,
             &owner,
             org,

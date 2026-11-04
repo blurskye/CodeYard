@@ -256,7 +256,7 @@ fn tab_links(source: &str) -> Vec<&str> {
 
 pub async fn teams(f: &Fixture) {
     use super::{fixture::applied, profile::html};
-    use codeyard::backend::db;
+
     use codeyard::backend::db::organizations::*;
 
     let pool = f.database.pool();
@@ -689,7 +689,7 @@ pub async fn teams(f: &Fixture) {
         grants.iter().map(|grant| grant.repo_id).collect::<Vec<_>>(),
         vec![public]
     );
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         pool,
         f.member.id,
         private,
@@ -707,7 +707,7 @@ pub async fn teams(f: &Fixture) {
             .len(),
         2
     );
-    db::repositories::access::revoke_repo_access(pool, f.member.id, private)
+    codeyard::backend::db::repositories::access::revoke_repo_access(pool, f.member.id, private)
         .await
         .unwrap();
     f.form(

@@ -39,7 +39,7 @@ native_operation!(crate::backend::db::postgres::graphql::node_repository,
     crate::backend::db::sqlite::graphql::node_repository,
     fn node_repository(pool: &DbPool, kind: &str, id: i64) -> Result<Option<i64>>);
 native_operation!(crate::backend::db::postgres::graphql::linked_branch, crate::backend::db::sqlite::graphql::linked_branch,
-    fn linked_branch(pool: &DbPool, id: i64) -> Result<Option<super::issues::management::LinkedBranch>>);
+    fn linked_branch(pool: &DbPool, id: i64) -> Result<Option<crate::backend::db::issues::management::LinkedBranch>>);
 native_operation!(crate::backend::db::postgres::graphql::ruleset_owner, crate::backend::db::sqlite::graphql::ruleset_owner,
     fn ruleset_owner(pool: &DbPool, id: i64) -> Result<Option<(Option<i64>, Option<i64>)>>);
 native_operation!(crate::backend::db::postgres::graphql::issue_type_repositories, crate::backend::db::sqlite::graphql::issue_type_repositories,
@@ -49,7 +49,7 @@ native_operation!(crate::backend::db::postgres::graphql::team_locator,
     fn team_locator(pool:&DbPool,id:i64)->Result<Option<(i64,String)>>);
 native_operation!(crate::backend::db::postgres::graphql::reaction,
     crate::backend::db::sqlite::graphql::reaction,
-    fn reaction(pool: &DbPool, id: i64) -> Result<Option<super::reactions::Reaction>>);
+    fn reaction(pool: &DbPool, id: i64) -> Result<Option<crate::backend::db::reactions::Reaction>>);
 native_operation!(crate::backend::db::postgres::graphql::status,
     crate::backend::db::sqlite::graphql::status,
     fn status(pool: &DbPool, id: i64) -> Result<Option<codeyard_db_core::models::CommitStatus>>);

@@ -27,15 +27,20 @@ async fn authorize(
     }
     let allowed = match scope {
         PullCapScope::Organization(org) => matches!(
-            super::organizations::authority::authority(&mut *connection, actor, org).await?,
+            crate::backend::db::postgres::organizations::authority::authority(
+                &mut *connection,
+                actor,
+                org
+            )
+            .await?,
             OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin)
         ),
         PullCapScope::Repository(repo) => {
-            super::discussions::lock_policy_authority_with(
+            crate::backend::db::postgres::discussions::lock_policy_authority_with(
                 connection,
                 actor,
                 repo,
-                super::repositories::access::RepositoryRowLock::Exclusive,
+                crate::backend::db::postgres::repositories::access::RepositoryRowLock::Exclusive,
                 maintain,
             )
             .await?
@@ -49,7 +54,8 @@ async fn cap(connection: &mut PgConnection, scope: PullCapScope) -> Result<PullC
 }
 pub async fn get_cap(pool: &PgPool, actor: i64, scope: PullCapScope) -> Result<PullCap> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
+        .await?;
     authorize(&mut tx, actor, scope, false).await?;
     let result = cap(&mut tx, scope).await?;
     tx.commit().await?;
@@ -64,9 +70,11 @@ pub async fn update_cap(
 ) -> Result<PullCap> {
     input.validate()?;
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
+        .await?;
     authorize(&mut tx, actor, scope, false).await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     let result = input.apply(cap(&mut tx, scope).await?);
     sqlx::query(&format!("INSERT INTO interaction_pull_caps({},enabled,max_open_pull_requests,include_drafts) VALUES($1,$2,$3,$4) ON CONFLICT({}) DO UPDATE SET enabled=excluded.enabled,max_open_pull_requests=excluded.max_open_pull_requests,include_drafts=excluded.include_drafts",scope.column(),scope.column())).bind(scope.id()).bind(result.enabled).bind(result.max_open_pull_requests).bind(result.include_drafts).execute(&mut *tx).await?;
     tx.commit().await?;
@@ -74,7 +82,8 @@ pub async fn update_cap(
 }
 pub async fn bypass_users(pool: &PgPool, actor: i64, repo: i64) -> Result<Vec<User>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
+        .await?;
     authorize(&mut tx, actor, PullCapScope::Repository(repo), true).await?;
     let result = sqlx::query_as("SELECT u.* FROM users u JOIN interaction_pull_bypass b ON b.user_id=u.id WHERE b.repo_id=$1 ORDER BY LOWER(u.username),u.id").bind(repo).fetch_all(&mut *tx).await?;
     tx.commit().await?;
@@ -90,9 +99,11 @@ pub async fn change_bypass(
 ) -> Result<()> {
     anyhow::ensure!(names.len() <= 100, PullCapRefusal::Limit);
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
+        .await?;
     authorize(&mut tx, actor, PullCapScope::Repository(repo), true).await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     for name in names {
         let id: i64 = sqlx::query_scalar(
             "SELECT id FROM users WHERE username=$1 AND (NOT is_banned OR NOT $2)",

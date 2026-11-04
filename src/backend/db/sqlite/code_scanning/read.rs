@@ -1,8 +1,11 @@
 //! Current scanning authority and bounded PR findings share one SQLite read transaction.
-use super::super::repositories::access::USER_REPO_ACCESS_SQL;
-use crate::backend::db::code_scanning::{
-    Analysis, NewFinding, PullGroup, PullSelection, PullSnapshot, ANALYSIS_COLUMNS,
-};
+use crate::backend::db::code_scanning::Analysis;
+use crate::backend::db::code_scanning::NewFinding;
+use crate::backend::db::code_scanning::PullGroup;
+use crate::backend::db::code_scanning::PullSelection;
+use crate::backend::db::code_scanning::PullSnapshot;
+use crate::backend::db::code_scanning::ANALYSIS_COLUMNS;
+use crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
 use anyhow::Result;
 use sqlx::{SqliteConnection, SqlitePool};
 
@@ -13,7 +16,7 @@ async fn allowed(c: &mut SqliteConnection, actor: i64, session: &str, repo: i64)
     match authority {
         Some((_, true)) => Ok(true),
         Some((Some(org), false)) => {
-            super::super::organizations::roles::manages_security(c, actor, org).await
+            crate::backend::db::sqlite::organizations::roles::manages_security(c, actor, org).await
         }
         _ => Ok(false),
     }
@@ -34,7 +37,11 @@ pub async fn read_alert_snapshot(
     session: &str,
     selection: &crate::backend::db::code_scanning::AlertSelection<'_>,
 ) -> Result<crate::backend::db::code_scanning::AlertSnapshot> {
-    use crate::backend::db::code_scanning::{Alert, AlertScope, AlertSnapshot, Instance, Refusal};
+    use crate::backend::db::code_scanning::Alert;
+    use crate::backend::db::code_scanning::AlertScope;
+    use crate::backend::db::code_scanning::AlertSnapshot;
+    use crate::backend::db::code_scanning::Instance;
+    use crate::backend::db::code_scanning::Refusal;
     anyhow::ensure!(
         selection.offset >= 0 && (1..=101).contains(&selection.limit),
         "Invalid alert page"
@@ -55,7 +62,7 @@ pub async fn read_alert_snapshot(
                 .collect()
         }
         None => {
-            super::list::alert_page_on(
+            crate::backend::db::sqlite::code_scanning::list::alert_page_on(
                 &mut tx,
                 AlertScope::Repository(selection.repo),
                 selection.filters,

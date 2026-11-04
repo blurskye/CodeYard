@@ -45,7 +45,7 @@ impl From<(Option<i64>, Option<String>)> for FileAuthority {
     }
 }
 
-pub const MAX_UPLOAD_BYTES: i64 = crate::backend::storage::MAX_OBJECT_BYTES;
+pub const MAX_UPLOAD_BYTES: i64 = codeyard_support::object_limits::MAX_OBJECT_BYTES;
 
 /// How long a client has to send the bytes after reserving an upload.
 pub const PUT_LIFETIME_SECONDS: i64 = 900;

@@ -16,8 +16,7 @@ use std::sync::Arc;
 /// The asset upload route, shared with the form-body middleware that exempts it.
 pub const ASSET_ROUTE: &str = "/:owner/:repo/releases/:id/assets";
 /// The largest asset body: the file limit plus room for the form fields.
-const UPLOAD_BODY_LIMIT: usize =
-    crate::backend::repositories::releases::MAX_ASSET_BYTES + 1024 * 1024;
+const UPLOAD_BODY_LIMIT: usize = codeyard_model::release_integrity::MAX_ASSET_BYTES + 1024 * 1024;
 
 pub fn json_router() -> Router<Arc<AppState>> {
     Router::new()

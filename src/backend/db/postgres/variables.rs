@@ -1,4 +1,7 @@
-use super::super::variables::{ensure_room, validate, Variable, VariableError};
+use crate::backend::db::variables::ensure_room;
+use crate::backend::db::variables::validate;
+use crate::backend::db::variables::Variable;
+use crate::backend::db::variables::VariableError;
 use sqlx::PgPool;
 
 /// Collaborator access, leaving out the read access a public repository gives everyone: as on
@@ -8,7 +11,7 @@ pub(crate) async fn is_collaborator(
     actor: i64,
     repo: i64,
 ) -> sqlx::Result<bool> {
-    sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM (SELECT id,owner_kind,owner_user_id,owner_org_id,is_gist,TRUE AS is_private FROM repositories WHERE id=$2) r JOIN users u ON u.id=$1 WHERE NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({})>=1))", super::repositories::access::USER_REPO_ACCESS_SQL))
+    sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM (SELECT id,owner_kind,owner_user_id,owner_org_id,is_gist,TRUE AS is_private FROM repositories WHERE id=$2) r JOIN users u ON u.id=$1 WHERE NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({})>=1))", crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL))
         .bind(actor)
         .bind(repo)
         .fetch_one(&mut **tx)
@@ -23,10 +26,14 @@ async fn credential_authority(
     repo: i64,
     write: bool,
 ) -> Result<(), VariableError> {
-    use crate::backend::db::repositories::credentials::{repository_condition, Access, Reader};
-    if !super::users::transitions::credential_live(tx, actor, credential, write)
-        .await
-        .map_err(VariableError::Authority)?
+    use crate::backend::db::repositories::credentials::repository_condition;
+    use crate::backend::db::repositories::credentials::Access;
+    use crate::backend::db::repositories::credentials::Reader;
+    if !crate::backend::db::postgres::users::transitions::credential_live(
+        tx, actor, credential, write,
+    )
+    .await
+    .map_err(VariableError::Authority)?
     {
         return Err(VariableError::Denied);
     }
@@ -51,11 +58,11 @@ pub async fn list(
     repo: i64,
 ) -> Result<Vec<Variable>, VariableError> {
     let mut tx = pool.begin().await?;
-    if super::repositories::access::lock_user_repo_access_in_transaction(
+    if crate::backend::db::postgres::repositories::access::lock_user_repo_access_in_transaction(
         &mut tx,
         actor,
         repo,
-        super::repositories::access::RepositoryRowLock::Shared,
+        crate::backend::db::postgres::repositories::access::RepositoryRowLock::Shared,
         true,
     )
     .await
@@ -87,9 +94,11 @@ pub async fn save(
 ) -> Result<(), VariableError> {
     validate(name, value.unwrap_or_default())?;
     let mut tx = pool.begin().await?;
-    if !super::discussions::lock_exclusive_write_authority(&mut tx, actor, repo)
-        .await
-        .map_err(VariableError::Authority)?
+    if !crate::backend::db::postgres::discussions::lock_exclusive_write_authority(
+        &mut tx, actor, repo,
+    )
+    .await
+    .map_err(VariableError::Authority)?
     {
         return Err(VariableError::Denied);
     }
@@ -145,9 +154,11 @@ pub async fn delete(
     name: &str,
 ) -> Result<(), VariableError> {
     let mut tx = pool.begin().await?;
-    if !super::discussions::lock_exclusive_write_authority(&mut tx, actor, repo)
-        .await
-        .map_err(VariableError::Authority)?
+    if !crate::backend::db::postgres::discussions::lock_exclusive_write_authority(
+        &mut tx, actor, repo,
+    )
+    .await
+    .map_err(VariableError::Authority)?
     {
         return Err(VariableError::Denied);
     }

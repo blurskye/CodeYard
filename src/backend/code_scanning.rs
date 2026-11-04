@@ -1,7 +1,7 @@
 //! Open scanners submit SARIF; queued uploads survive restarts and commit atomically.
 #[cfg(test)]
 mod tests;
-use crate::backend::db;
+
 use crate::backend::db::code_scanning::Finding;
 use crate::backend::db::code_scanning::Run;
 use crate::backend::db::code_scanning::Upload;
@@ -634,7 +634,7 @@ pub fn parse(upload: &Upload) -> Result<Vec<Run>> {
 }
 
 pub async fn process_next(pool: &DbPool) -> Result<bool> {
-    let Some(upload) = db::code_scanning::pending(pool).await? else {
+    let Some(upload) = crate::backend::db::code_scanning::pending(pool).await? else {
         return Ok(false);
     };
     let parsed = tokio::task::spawn_blocking({
@@ -643,34 +643,36 @@ pub async fn process_next(pool: &DbPool) -> Result<bool> {
     })
     .await?;
     let changes = match parsed {
-        Ok(runs) => match db::code_scanning::finish(pool, &upload, &runs, None).await {
-            Ok(changes) => changes,
-            Err(error)
-                if error
-                    .downcast_ref::<sqlx::Error>()
-                    .and_then(|error| error.as_database_error())
-                    .and_then(|error| error.code())
-                    .is_some_and(|code| {
-                        code.starts_with("22") || code.starts_with("54") || code == "23514"
-                    }) =>
-            {
-                tracing::warn!(upload = %upload.id, "SARIF processing rejected by storage constraints");
-                db::code_scanning::finish(
-                    pool,
-                    &upload,
-                    &[],
-                    Some("Analysis exceeds storage constraints"),
-                )
-                .await?
+        Ok(runs) => {
+            match crate::backend::db::code_scanning::finish(pool, &upload, &runs, None).await {
+                Ok(changes) => changes,
+                Err(error)
+                    if error
+                        .downcast_ref::<sqlx::Error>()
+                        .and_then(|error| error.as_database_error())
+                        .and_then(|error| error.code())
+                        .is_some_and(|code| {
+                            code.starts_with("22") || code.starts_with("54") || code == "23514"
+                        }) =>
+                {
+                    tracing::warn!(upload = %upload.id, "SARIF processing rejected by storage constraints");
+                    crate::backend::db::code_scanning::finish(
+                        pool,
+                        &upload,
+                        &[],
+                        Some("Analysis exceeds storage constraints"),
+                    )
+                    .await?
+                }
+                Err(error) => return Err(error),
             }
-            Err(error) => return Err(error),
-        },
+        }
         Err(error) => {
             let message = format!("Invalid SARIF: {error}")
                 .chars()
                 .take(2048)
                 .collect::<String>();
-            db::code_scanning::finish(pool, &upload, &[], Some(&message)).await?
+            crate::backend::db::code_scanning::finish(pool, &upload, &[], Some(&message)).await?
         }
     };
     if let Some(actor) = upload.actor_id {
@@ -695,20 +697,21 @@ pub async fn process_next(pool: &DbPool) -> Result<bool> {
 async fn notify(
     pool: &DbPool,
     actor: i64,
-    alert: &db::code_scanning::Alert,
+    alert: &crate::backend::db::code_scanning::Alert,
     action: &'static str,
     revision: Option<(&str, &str)>,
-    instance: Option<&db::code_scanning::Instance>,
+    instance: Option<&crate::backend::db::code_scanning::Instance>,
 ) -> Result<()> {
-    use crate::backend::webhooks::{self, payloads};
-    let Some(repo) = db::repositories::records::get_repository_by_id(pool, alert.repo_id).await?
+    let Some(repo) =
+        crate::backend::db::repositories::records::get_repository_by_id(pool, alert.repo_id)
+            .await?
     else {
         return Ok(());
     };
     let instance = match instance {
         Some(instance) => instance.clone(),
         None if revision.is_some() => return Ok(()),
-        None => match db::code_scanning::instance(pool, alert.id, None).await? {
+        None => match crate::backend::db::code_scanning::instance(pool, alert.id, None).await? {
             Some(instance) => instance,
             None => return Ok(()),
         },
@@ -719,9 +722,9 @@ async fn notify(
     let dismissed = alert.dismissed_by;
     let mut people = vec![actor];
     people.extend(dismissed);
-    webhooks::emit(pool, &repo, "code_scanning_alert", people, move |owner, people| {
-        let dismissed = dismissed.map(|id|payloads::person(&people.get(id)));
-        let document = payloads::code_scanning_alert(&alert, std::slice::from_ref(&instance), owner, &snapshot.name, dismissed).expect("stored alert documents are valid JSON");
+    crate::backend::webhooks::emit(pool, &repo, "code_scanning_alert", people, move |owner, people| {
+        let dismissed = dismissed.map(|id|crate::backend::webhooks::payloads::person(&people.get(id)));
+        let document = crate::backend::webhooks::payloads::code_scanning_alert(&alert, std::slice::from_ref(&instance), owner, &snapshot.name, dismissed).expect("stored alert documents are valid JSON");
         let instance = &document["most_recent_instance"];
         let (reference,commit)=match &revision {Some((reference,commit))=>(json!(reference),json!(commit)),None=>(instance["ref"].clone(),instance["commit_sha"].clone())};
         json!({"action":action,"alert":document,"ref":reference,"commit_oid":commit,"repository":payloads::repository(&snapshot,owner),"sender":payloads::person(&people.get(actor))})
@@ -731,15 +734,16 @@ async fn notify(
 
 pub async fn dismiss(
     pool: &DbPool,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     number: i64,
-    input: &db::code_scanning::Dismissal<'_>,
-) -> Result<db::code_scanning::Alert> {
+    input: &crate::backend::db::code_scanning::Dismissal<'_>,
+) -> Result<crate::backend::db::code_scanning::Alert> {
     input.validate()?;
     let actor = actor.into();
     let actor_id = actor.user_id;
-    let alert = db::code_scanning::dismiss(pool, actor, repo, number, input).await?;
+    let alert =
+        crate::backend::db::code_scanning::dismiss(pool, actor, repo, number, input).await?;
     if let Err(error) = notify(
         pool,
         actor_id,

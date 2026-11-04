@@ -1,5 +1,6 @@
-use super::profiles::{validate_description, validate_name};
 use super::*;
+use crate::backend::db::organizations::profiles::validate_description;
+use crate::backend::db::organizations::profiles::validate_name;
 use anyhow::Result;
 use codeyard_db_core::models::Team;
 use codeyard_db_core::models::TeamMembership;
@@ -208,7 +209,7 @@ impl TeamProfile {
         notifications_enabled: Option<bool>,
     ) -> std::result::Result<Self, OrganizationInputError> {
         if let Some(slug) = slug {
-            crate::backend::identity::credentials::validate_namespace(slug, 1)
+            codeyard_model::account_input::validate_namespace(slug, 1)
                 .map_err(|_| OrganizationInputError::Slug)?;
         }
         self.slug = slug.map(str::to_owned);
@@ -232,7 +233,7 @@ impl NewTeam {
         slug: &str,
         profile: TeamProfile,
     ) -> std::result::Result<Self, OrganizationInputError> {
-        crate::backend::identity::credentials::validate_namespace(slug, 1)
+        codeyard_model::account_input::validate_namespace(slug, 1)
             .map_err(|_| OrganizationInputError::Slug)?;
         let name = profile.name.clone().ok_or(OrganizationInputError::Name)?;
         let privacy = profile.privacy.ok_or(OrganizationInputError::Privacy)?;

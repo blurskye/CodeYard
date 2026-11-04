@@ -1,9 +1,8 @@
 //! Browser session decoding and repository authority HTTP responses.
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::http::session;
+
 use crate::backend::api::repos::chrome::ApiResult;
-use crate::backend::db;
-use crate::backend::repositories::access;
+
 use crate::backend::repositories::access::AccessError;
 use axum::{
     http::{HeaderMap, StatusCode},
@@ -40,19 +39,21 @@ pub(crate) fn access_error(error: AccessError) -> (StatusCode, Json<ApiError>) {
 }
 
 async fn current_repository(pool: &codeyard_db_core::DbPool, id: i64) -> ApiResult<Repository> {
-    access::current_repository(pool, id).await.map_err(|error| {
-        if error == AccessError::Unavailable {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ApiError::new(
-                    "database_error",
-                    "Unable to check repository access",
-                )),
-            )
-        } else {
-            access_error(error)
-        }
-    })
+    crate::backend::repositories::access::current_repository(pool, id)
+        .await
+        .map_err(|error| {
+            if error == AccessError::Unavailable {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(ApiError::new(
+                        "database_error",
+                        "Unable to check repository access",
+                    )),
+                )
+            } else {
+                access_error(error)
+            }
+        })
 }
 
 /// The repository at `owner/repo`: 404 when there is none, 503 when the lookup fails.
@@ -61,7 +62,7 @@ pub(crate) async fn find_repository(
     owner: &str,
     repo: &str,
 ) -> ApiResult<Repository> {
-    db::repositories::records::get_repository(pool, owner, repo)
+    crate::backend::db::repositories::records::get_repository(pool, owner, repo)
         .await
         .map_err(|_| access_error(AccessError::Unavailable))?
         .ok_or_else(|| access_error(AccessError::NotFound))
@@ -97,8 +98,8 @@ async fn read_access(
     if !repository.is_private {
         return Ok(());
     }
-    let user = session::get_optional_user(pool, headers).await?;
-    if access::can_read(pool, user.as_ref(), repository)
+    let user = crate::backend::api::http::session::get_optional_user(pool, headers).await?;
+    if crate::backend::repositories::access::can_read(pool, user.as_ref(), repository)
         .await
         .map_err(|_| access_error(AccessError::Unavailable))?
     {
@@ -118,7 +119,7 @@ pub(crate) async fn check_repo_admin_access(
     if user.must_change_password {
         return Err(access_error(AccessError::PasswordChangeRequired));
     }
-    if access::can_admin(pool, user, &repository)
+    if crate::backend::repositories::access::can_admin(pool, user, &repository)
         .await
         .map_err(|_| access_error(AccessError::Unavailable))?
     {
@@ -135,13 +136,13 @@ pub(crate) async fn check_repo_write_access(
     user: &User,
 ) -> ApiResult<()> {
     let repository = current_repository(pool, repository.id).await?;
-    if access::can_write(pool, user, &repository)
+    if crate::backend::repositories::access::can_write(pool, user, &repository)
         .await
         .map_err(|_| access_error(AccessError::Unavailable))?
     {
         return Ok(());
     }
-    if !access::can_read(pool, Some(user), &repository)
+    if !crate::backend::repositories::access::can_read(pool, Some(user), &repository)
         .await
         .map_err(|_| access_error(AccessError::Unavailable))?
     {

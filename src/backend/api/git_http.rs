@@ -1,9 +1,14 @@
 //! Git smart HTTP. Basic auth accepts a personal access token, never a password or session.
-use crate::backend::api::http::session;
-use crate::backend::identity::tokens::token_hash;
-use crate::backend::repositories::store::{repo_store, GitService, GitSession, GitStreams};
-use crate::backend::repositories::{git_sessions::ReceiveCredential, traffic};
-use crate::backend::{app::AppState, db, identity::admission};
+
+use crate::backend::repositories::git_sessions::ReceiveCredential;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::GitService;
+use crate::backend::repositories::store::GitSession;
+use crate::backend::repositories::store::GitStreams;
+use codeyard_support::token_hash::token_hash;
+
+use crate::backend::app::AppState;
+
 use axum::{
     body::{to_bytes, Body},
     extract::{Path, Query, Request, State},
@@ -65,16 +70,18 @@ async fn authenticate(
     if !headers.contains_key(header::AUTHORIZATION) {
         return Ok(None);
     }
-    let presented = super::http::credentials::basic(headers).map(|(_, token)| token);
+    let presented = crate::backend::api::http::credentials::basic(headers).map(|(_, token)| token);
     let found = match presented.as_deref() {
-        Some(value) => db::users::tokens::find_token(&state.pool, &token_hash(value))
-            .await
-            .map_err(|_| unavailable())?,
+        Some(value) => {
+            crate::backend::db::users::tokens::find_token(&state.pool, &token_hash(value))
+                .await
+                .map_err(|_| unavailable())?
+        }
         None => None,
     };
     let mut user_id = None;
     if let Some(token) = found {
-        match db::users::tokens::token_user(&state.pool, token.id, false)
+        match crate::backend::db::users::tokens::token_user(&state.pool, token.id, false)
             .await
             .map_err(|_| unavailable())?
         {
@@ -88,19 +95,19 @@ async fn authenticate(
     // Successful Git requests do not spend the failed-login budget: a clone/fetch can make many
     // RPCs. A refused token counts against the client address and the token's user. An unknown
     // token is its own account key, like an unknown username.
-    match admission::admit_login(
+    match crate::backend::identity::admission::admit_login(
         &state.pool,
-        session::client_address(headers),
+        crate::backend::api::http::session::client_address(headers),
         user_id,
         presented.as_deref().unwrap_or("git-http"),
     )
     .await
     {
         Ok(_) => Err(challenge()),
-        Err(admission::AdmissionError::Limited) => {
+        Err(crate::backend::identity::admission::AdmissionError::Limited) => {
             Err((StatusCode::TOO_MANY_REQUESTS, "Too many failed Git logins").into_response())
         }
-        Err(admission::AdmissionError::Unavailable) => Err(unavailable()),
+        Err(crate::backend::identity::admission::AdmissionError::Unavailable) => Err(unavailable()),
     }
 }
 
@@ -118,7 +125,7 @@ async fn repository(
     headers: &HeaderMap,
     write: bool,
 ) -> Result<AuthorizedRepository, Response> {
-    let found = db::repositories::records::get_git_repository(
+    let found = crate::backend::db::repositories::records::get_git_repository(
         &state.pool,
         owner,
         name.strip_suffix(".git").unwrap_or(name),
@@ -134,7 +141,7 @@ async fn authorize_repository(
     headers: &HeaderMap,
     write: bool,
 ) -> Result<AuthorizedRepository, Response> {
-    let config = db::node_config::get_node_configuration(&state.pool)
+    let config = crate::backend::db::node_config::get_node_configuration(&state.pool)
         .await
         .map_err(|_| unavailable())?
         .filter(|config| config.setup_completed)
@@ -200,7 +207,8 @@ pub async fn info_refs(
             Ok(repo) => repo,
             Err(response) => return response,
         };
-    let Some(permit) = super::http::middleware::wait_for_slot(&state.repository_downloads).await
+    let Some(permit) =
+        crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads).await
     else {
         return unavailable();
     };
@@ -213,10 +221,13 @@ pub async fn info_refs(
     };
     // The advertisement may have waited for a session slot, and access can change meanwhile. The
     // check is for the repository the refs came from, even if its name has been reused.
-    let found = match db::repositories::records::get_repository_by_id(&state.pool, repo.id).await {
-        Ok(found) => found,
-        Err(_) => return unavailable(),
-    };
+    let found =
+        match crate::backend::db::repositories::records::get_repository_by_id(&state.pool, repo.id)
+            .await
+        {
+            Ok(found) => found,
+            Err(_) => return unavailable(),
+        };
     if let Err(response) = authorize_repository(&state, found, &headers, write).await {
         return response;
     }
@@ -230,7 +241,7 @@ pub async fn info_refs(
     body.extend(refs);
     git_response(
         &format!("application/x-{service}-advertisement"),
-        super::http::middleware::buffered_download_body(body, permit),
+        crate::backend::api::http::middleware::buffered_download_body(body, permit),
     )
 }
 
@@ -332,10 +343,13 @@ async fn rpc(
     // The wait for the slot and the body can both outlast credentials or access, so access is
     // checked again now. It is keyed by the original repository id, so a name reused meanwhile
     // does not stand in for it.
-    let found = match db::repositories::records::get_repository_by_id(&state.pool, repo.id).await {
-        Ok(found) => found,
-        Err(_) => return unavailable(),
-    };
+    let found =
+        match crate::backend::db::repositories::records::get_repository_by_id(&state.pool, repo.id)
+            .await
+        {
+            Ok(found) => found,
+            Err(_) => return unavailable(),
+        };
     let AuthorizedRepository {
         repo,
         token_id,
@@ -360,17 +374,19 @@ async fn rpc(
         None
     } else {
         match actor_id {
-            Some(id) => traffic::Identity::account(id),
-            None => super::http::session::client_address(&parts.headers).and_then(|address| {
-                traffic::Identity::client(
-                    address,
-                    parts
-                        .headers
-                        .get(header::USER_AGENT)
-                        .and_then(|header| header.to_str().ok())
-                        .unwrap_or(""),
-                )
-            }),
+            Some(id) => crate::backend::repositories::traffic::Identity::account(id),
+            None => crate::backend::api::http::session::client_address(&parts.headers).and_then(
+                |address| {
+                    crate::backend::repositories::traffic::Identity::client(
+                        address,
+                        parts
+                            .headers
+                            .get(header::USER_AGENT)
+                            .and_then(|header| header.to_str().ok())
+                            .unwrap_or(""),
+                    )
+                },
+            ),
         }
     };
     let (output, reader) = tokio::io::duplex(git_process::CHUNK);
@@ -382,7 +398,7 @@ async fn rpc(
     let git_tasks = state.git_tasks.clone();
     if !git_tasks.spawn(async move {
         let _permit = permit;
-        let observation = traffic::clone::Observation::default();
+        let observation = crate::backend::repositories::traffic::clone::Observation::default();
         if !write {
             input = Box::new(observation.input(input));
         }
@@ -412,11 +428,11 @@ async fn rpc(
         }
         if status.is_ok() && !write && observation.initial_transfer() {
             if let Some(visitor) = visitor {
-                traffic::observe(
+                crate::backend::repositories::traffic::observe(
                     &state.pool,
                     repo.id,
                     &visitor,
-                    &traffic::Metric::clone_transfer(),
+                    &crate::backend::repositories::traffic::Metric::clone_transfer(),
                 )
                 .await;
             }
@@ -430,7 +446,7 @@ async fn rpc(
     // Remote storage may have waited for its own session slot. Do not disclose even the
     // first bytes until the original credential and repository have been checked again.
     if !write {
-        let found = match db::repositories::records::get_repository_by_id(
+        let found = match crate::backend::db::repositories::records::get_repository_by_id(
             &response_state.pool,
             repository_id,
         )

@@ -1,8 +1,7 @@
-use crate::backend::{
-    api::github::repo_url,
-    api::http::config::link_origin,
-    db::code_scanning::{Alert, Instance},
-};
+use crate::backend::db::code_scanning::Alert;
+use crate::backend::db::code_scanning::Instance;
+use codeyard_model::http_config::link_origin;
+use codeyard_model::urls::repo_url;
 use serde_json::{json, Value};
 
 fn html_url(owner: &str, repo: &str, number: i64, instance: Option<&Instance>) -> String {

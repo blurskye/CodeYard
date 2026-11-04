@@ -1,7 +1,6 @@
 //! Discussions anchored to immutable commits, shared by REST and native forms.
 use crate::backend::cluster::NodeContext;
-use crate::backend::db;
-use crate::backend::db::repositories::commit_comments as records;
+
 use crate::backend::db::repositories::commit_comments::CommentCreate;
 use crate::backend::db::repositories::commit_comments::CommentEdit;
 use crate::backend::db::repositories::commit_comments::CommentRefusal;
@@ -11,13 +10,10 @@ use crate::backend::notifications::mentions::notify_mentions;
 use crate::backend::notifications::mentions::MentionComment;
 use crate::backend::notifications::mentions::MentionSource;
 use crate::backend::notifications::NotificationBroadcaster;
-use crate::backend::repositories::access;
+
 use crate::backend::repositories::store::repo_store;
 use codeyard_git::error::{ErrorKind, RepoError};
 
-use crate::backend::webhooks;
-use crate::backend::webhooks::events;
-use crate::backend::webhooks::payloads;
 use crate::backend::webhooks::payloads::Person;
 use crate::backend::webhooks::payloads::Scope;
 use codeyard_db_core::models::CommitComment;
@@ -88,9 +84,10 @@ async fn authors(
     repo: &Repository,
     ids: &[i64],
 ) -> Result<HashMap<i64, Author>> {
-    let mut authors = records::comment_authors(pool, repo.id, ids)
-        .await
-        .map_err(|_| CommentError::Unavailable)?;
+    let mut authors =
+        crate::backend::db::repositories::commit_comments::comment_authors(pool, repo.id, ids)
+            .await
+            .map_err(|_| CommentError::Unavailable)?;
     if authors.iter().any(|author| author.association == "NONE") {
         // The contributor badge is optional, so a history too large to list keeps NONE.
         let contributors = match repo_store(repo, cluster).contributors().await {
@@ -182,17 +179,17 @@ async fn writable(
     actor: i64,
     repo: i64,
 ) -> Result<(User, Repository, String)> {
-    let user = db::users::accounts::get_user_by_id(pool, actor)
+    let user = crate::backend::db::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| CommentError::Unavailable)?
         .ok_or(CommentError::Denied)?;
     if user.is_banned || user.must_change_password {
         return Err(CommentError::Denied);
     }
-    let repository = access::check_read(pool, repo, Some(actor))
+    let repository = crate::backend::repositories::access::check_read(pool, repo, Some(actor))
         .await
         .map_err(|error| {
-            if error == access::AccessError::NotFound {
+            if error == crate::backend::repositories::access::AccessError::NotFound {
                 CommentError::Missing
             } else {
                 CommentError::Unavailable
@@ -201,7 +198,7 @@ async fn writable(
     if repository.is_archived {
         return Err(CommentError::Denied);
     }
-    let owner = db::repositories::records::repository_owner_name(pool, repo)
+    let owner = crate::backend::db::repositories::records::repository_owner_name(pool, repo)
         .await
         .map_err(|_| CommentError::Unavailable)?
         .ok_or(CommentError::Unavailable)?;
@@ -227,14 +224,14 @@ async fn emit(
     entry: &CommentDetails,
 ) {
     let (repo_for_hook, entry) = (repo.clone(), entry.clone());
-    webhooks::emit(
+    crate::backend::webhooks::emit(
         pool,
         repo,
-        events::COMMIT_COMMENT,
+        codeyard_model::webhook_events::COMMIT_COMMENT,
         vec![actor],
         move |owner, people| {
             let sender = people.get(actor);
-            let comment = payloads::commit_comment(
+            let comment = crate::backend::webhooks::payloads::commit_comment(
                 &entry.comment,
                 entry.author.as_ref(),
                 &entry.association,
@@ -242,7 +239,7 @@ async fn emit(
                 owner,
                 &[], // At creation the new comment has no reactions.
             );
-            payloads::commit_comment_event(
+            crate::backend::webhooks::payloads::commit_comment_event(
                 action,
                 comment,
                 Scope {
@@ -292,7 +289,9 @@ async fn notify(
             if author.id == user.id
                 || author.is_banned
                 || author.must_change_password
-                || !access::can_read(pool, Some(&author), repo).await.ok()?
+                || !crate::backend::repositories::access::can_read(pool, Some(&author), repo)
+                    .await
+                    .ok()?
             {
                 return None;
             }
@@ -361,7 +360,7 @@ pub async fn create(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     reference: &str,
     mut input: CreateComment,
@@ -372,9 +371,9 @@ pub async fn create(
     if input.repository_id.is_some_and(|id| id != repo) {
         return Err(CommentError::Conflict);
     }
-    records::validate_body(&input.body).map_err(|_| {
-        CommentError::Invalid("A comment needs a nonempty body of at most 65,536 characters")
-    })?;
+    crate::backend::db::repositories::commit_comments::validate_body(&input.body).map_err(
+        |_| CommentError::Invalid("A comment needs a nonempty body of at most 65,536 characters"),
+    )?;
     let store = repo_store(&repository, cluster);
     let commit = store
         .commit_from_primary(reference)
@@ -438,7 +437,7 @@ pub async fn create(
         }
     }
     let authors = authors(pool, cluster, &repository, &[actor]).await?;
-    let comment = records::create_comment(
+    let comment = crate::backend::db::repositories::commit_comments::create_comment(
         pool,
         CommentCreate {
             actor: credential,
@@ -475,18 +474,22 @@ pub async fn edit(
     input: CommentEdit<'_>,
 ) -> Result<CommentDetails> {
     let (user, repository, owner) = writable(pool, input.actor.user_id, input.repo_id).await?;
-    let previous = records::get_comment(pool, input.repo_id, input.id)
-        .await
-        .map_err(|_| CommentError::Unavailable)?
-        .ok_or(CommentError::Missing)?;
+    let previous = crate::backend::db::repositories::commit_comments::get_comment(
+        pool,
+        input.repo_id,
+        input.id,
+    )
+    .await
+    .map_err(|_| CommentError::Unavailable)?
+    .ok_or(CommentError::Missing)?;
     if previous.author_id != Some(user.id) {
         return Err(CommentError::Denied);
     }
-    records::validate_body(input.body).map_err(|_| {
+    crate::backend::db::repositories::commit_comments::validate_body(input.body).map_err(|_| {
         CommentError::Invalid("A comment needs a nonempty body of at most 65,536 characters")
     })?;
     let authors = authors(pool, cluster, &repository, &[user.id]).await?;
-    let changed = records::edit_comment(pool, input)
+    let changed = crate::backend::db::repositories::commit_comments::edit_comment(pool, input)
         .await
         .map_err(write_error)?
         .ok_or(CommentError::Missing)?;
@@ -507,7 +510,7 @@ pub async fn edit(
 
 pub async fn delete(
     pool: &codeyard_db_core::DbPool,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     id: i64,
     revision: Option<&str>,
@@ -515,8 +518,10 @@ pub async fn delete(
     let actor = actor.into();
     writable(pool, actor.user_id, repo).await?;
     // GitHub sends commit_comment only for creation. Deletion needs no Git metadata lookup.
-    records::delete_comment(pool, actor, repo, id, revision)
-        .await
-        .map_err(write_error)?
-        .ok_or(CommentError::Missing)
+    crate::backend::db::repositories::commit_comments::delete_comment(
+        pool, actor, repo, id, revision,
+    )
+    .await
+    .map_err(write_error)?
+    .ok_or(CommentError::Missing)
 }

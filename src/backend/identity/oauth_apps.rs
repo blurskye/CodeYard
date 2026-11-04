@@ -1,9 +1,9 @@
 //! OAuth clients authorize through native forms; only hashes of codes, secrets and tokens persist.
-use crate::backend::db;
+
 use crate::backend::db::oauth_apps::Application;
-use crate::backend::identity::tokens::token_hash;
 use codeyard_db_core::DbPool;
 use codeyard_model::identity::CLI_CLIENT;
+use codeyard_support::token_hash::token_hash;
 use subtle::ConstantTimeEq;
 
 const CLI_SECRET: &str = "34ddeff2b558a23d38fba8a6de74f086ede1cc0b";
@@ -30,10 +30,10 @@ pub async fn client(pool: &DbPool, id: &str) -> anyhow::Result<Option<Applicatio
             created_at: chrono::Utc::now(),
         }));
     }
-    if !db::github_apps::client_active(pool, id).await? {
+    if !crate::backend::db::github_apps::client_active(pool, id).await? {
         return Ok(None);
     }
-    db::oauth_apps::application(pool, id).await
+    crate::backend::db::oauth_apps::application(pool, id).await
 }
 
 pub fn valid_secret(app: &Application, secret: &str) -> bool {
@@ -110,139 +110,13 @@ pub fn scopes(value: &str) -> Option<String> {
     Some(scopes.join(","))
 }
 
-pub fn has_scope(scopes: &str, scope: &str) -> bool {
-    scopes.split(',').any(|granted| {
-        granted == scope
-            || (scope == "read:org" && granted == "write:org")
-            || (matches!(scope, "read:user" | "user:email" | "user:follow") && granted == "user")
-    })
-}
-
-pub fn write_scope(scopes: &str) -> bool {
-    has_scope(scopes, "repo")
-        || has_scope(scopes, "gist")
-        || has_scope(scopes, "delete_repo")
-        || has_scope(scopes, "write:org")
-        || has_scope(scopes, "security_events")
-        || has_scope(scopes, "write:public_key")
-        || has_scope(scopes, "admin:public_key")
-        || has_scope(scopes, "write:ssh_signing_key")
-        || has_scope(scopes, "admin:ssh_signing_key")
-        || has_scope(scopes, "write:gpg_key")
-        || has_scope(scopes, "admin:gpg_key")
-}
-
-/// GitHub's key scopes: an admin scope includes write, and write includes read.
-fn key_scope(scopes: &str, kind: &str, write: bool) -> bool {
-    has_scope(scopes, &format!("admin:{kind}"))
-        || has_scope(scopes, &format!("write:{kind}"))
-        || (!write && has_scope(scopes, &format!("read:{kind}")))
-}
-
-pub fn verify_challenge(challenge: &str, verifier: &str) -> bool {
-    if challenge.is_empty() {
-        return true;
-    }
-    if !(43..=128).contains(&verifier.len())
-        || !verifier
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || b"-._~".contains(&c))
-    {
-        return false;
-    }
-    let actual = super::oauth::providers::pkce_challenge(verifier);
-    bool::from(actual.as_bytes().ct_eq(challenge.as_bytes()))
-}
-
-/// OAuth permissions complement, rather than replace, the account's live access rules.
-pub fn allows(scopes: &str, path: &str, write: bool) -> bool {
-    let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
-    match parts.as_slice() {
-        [""] | ["user"] => !write,
-        ["repos", _, _, "code-scanning", "default-setup", ..] => has_scope(scopes, "repo"),
-        ["repos", _, _, "code-scanning" | "secret-scanning", ..]
-        | ["orgs", _, "code-scanning" | "secret-scanning", ..]
-        | ["repos", _, _, "dependabot", "alerts", ..]
-        | ["orgs", _, "dependabot", "alerts", ..] => {
-            has_scope(scopes, "repo") || has_scope(scopes, "security_events")
-        }
-        ["orgs", _, "code-security", ..] => {
-            has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org"))
-        }
-        ["user", "docker", "conflicts"]
-        | ["users" | "orgs", _, "docker", "conflicts"]
-        | ["user", "packages", ..]
-        | ["users" | "orgs", _, "packages", ..] => !write && has_scope(scopes, "read:packages"),
-        ["user", "repos" | "starred" | "subscriptions", ..]
-        | ["repositories", ..]
-        | ["repos", ..]
-        | ["orgs", _, "repos"]
-        | ["orgs", _, "attestations" | "artifacts", ..]
-        | ["users", _, "attestations", ..]
-        | ["notifications", ..] => has_scope(scopes, "repo"),
-        ["orgs", _] if write => has_scope(scopes, "repo"),
-        ["user", "teams"] => {
-            !write
-                && (has_scope(scopes, "repo")
-                    || has_scope(scopes, "read:org")
-                    || has_scope(scopes, "write:org"))
-        }
-        ["orgs", _, "public_members", ..] => {
-            has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org"))
-        }
-        ["user", "orgs"] | ["orgs", _] | ["orgs", _, "issue-types", ..] => {
-            !write && (has_scope(scopes, "read:org") || has_scope(scopes, "write:org"))
-        }
-        ["orgs", _, "rulesets", ..] => {
-            has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org"))
-        }
-        ["issues"] | ["user", "issues"] | ["orgs", _, "issues"] => {
-            !write && has_scope(scopes, "repo")
-        }
-        ["users", _, "events" | "received_events", ..]
-        | ["orgs", _, "events", ..]
-        | ["networks", _, _, "events"] => !write && has_scope(scopes, "repo"),
-        ["users"]
-        | ["organizations", ..]
-        | ["users", _, "orgs" | "gists" | "social_accounts"]
-        | ["feeds"]
-        | ["events"] => !write,
-        ["orgs", _, "members" | "memberships" | "teams", ..]
-        | ["user", "memberships", "orgs", ..] => {
-            has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org"))
-        }
-        ["gists", ..] => has_scope(scopes, "gist"),
-        ["markdown"] | ["markdown", "raw"] => true,
-        ["users", _, "repos" | "starred" | "subscriptions", ..] | ["search", ..] => {
-            !write && has_scope(scopes, "repo")
-        }
-        ["users", _]
-        | ["users", _, "followers" | "following" | "keys" | "gpg_keys" | "ssh_signing_keys"]
-        | ["rate_limit"]
-        | ["meta"]
-        | ["versions" | "zen" | "octocat" | "emojis" | "licenses" | "codes_of_conduct"]
-        | ["emojis" | "licenses" | "codes_of_conduct", _]
-        | ["gitignore", "templates", ..] => !write,
-        // The only write to one key is its deletion, which GitHub keeps for the admin scope.
-        ["user", "keys", _] if write => has_scope(scopes, "admin:public_key"),
-        ["user", "ssh_signing_keys", _] if write => has_scope(scopes, "admin:ssh_signing_key"),
-        ["user", "gpg_keys", _] if write => has_scope(scopes, "admin:gpg_key"),
-        ["user", "gpg_keys"] | ["user", "gpg_keys", _] => key_scope(scopes, "gpg_key", write),
-        ["user", "keys"] | ["user", "keys", _] => key_scope(scopes, "public_key", write),
-        ["user", "ssh_signing_keys"] | ["user", "ssh_signing_keys", _] => {
-            key_scope(scopes, "ssh_signing_key", write)
-        }
-        _ => false,
-    }
-}
-
 /// OAuth credentials retain anonymous-equivalent public reads; private reads and writes need scopes.
 /// `bounds` is the token's `github_apps::authority`, which the caller loads once and reuses for
 /// its repository check.
 pub async fn allows_git(
     pool: &DbPool,
     token_id: i64,
-    bounds: Option<&super::github_apps::Authority>,
+    bounds: Option<&crate::backend::identity::github_apps::Authority>,
     gist: bool,
     public_read: bool,
 ) -> anyhow::Result<bool> {
@@ -251,10 +125,12 @@ pub async fn allows_git(
         if bounds.personal().is_some() {
             return Ok(true);
         }
-        return Ok(!gist && super::github_apps::allows(&bounds.permissions, "contents", false));
+        return Ok(
+            !gist && codeyard_model::github_apps::allows(&bounds.permissions, "contents", false)
+        );
     }
     let scope = if gist { "gist" } else { "repo" };
-    Ok(db::oauth_apps::token(pool, token_id)
+    Ok(crate::backend::db::oauth_apps::token(pool, token_id)
         .await?
         .is_none_or(|token| public_read || has_scope(&token.scopes, scope)))
 }
@@ -263,22 +139,24 @@ pub async fn allows_git(
 /// `workflows` permission and OAuth tokens need the `workflow` scope. A job token never may,
 /// as GitHub's GITHUB_TOKEN cannot be given the workflows permission.
 pub async fn allows_workflows(pool: &DbPool, token_id: i64) -> anyhow::Result<bool> {
-    if db::ci_tokens::get(pool, token_id).await?.is_some() {
+    if crate::backend::db::ci_tokens::get(pool, token_id)
+        .await?
+        .is_some()
+    {
         return Ok(false);
     }
-    if let Some(grant) = super::fine_grained::grant(pool, token_id).await? {
-        return Ok(
-            grant.active && super::fine_grained::allows(&grant.permissions, "workflows", true)
-        );
+    if let Some(grant) = crate::backend::identity::fine_grained::grant(pool, token_id).await? {
+        return Ok(grant.active
+            && codeyard_model::fine_grained::allows(&grant.permissions, "workflows", true));
     }
-    if let Some(bounds) = super::github_apps::authority(pool, token_id).await? {
-        return Ok(super::github_apps::allows(
+    if let Some(bounds) = crate::backend::identity::github_apps::authority(pool, token_id).await? {
+        return Ok(codeyard_model::github_apps::allows(
             &bounds.permissions,
             "workflows",
             true,
         ));
     }
-    Ok(db::oauth_apps::token(pool, token_id)
+    Ok(crate::backend::db::oauth_apps::token(pool, token_id)
         .await?
         .is_none_or(|token| has_scope(&token.scopes, "workflow")))
 }
@@ -422,3 +300,9 @@ mod tests {
         ));
     }
 }
+
+use codeyard_model::oauth_apps::allows;
+
+use codeyard_model::oauth_apps::has_scope;
+
+use codeyard_model::oauth_apps::write_scope;

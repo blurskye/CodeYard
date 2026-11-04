@@ -1,11 +1,12 @@
-use super::{
-    auth, contents::store_error, pagination::Pagination, repo_url, repository, Error, Result,
-};
-use crate::backend::{
-    app::AppState,
-    db, dependency_graph,
-    repositories::{dependency_graph as inventory, store::repo_store},
-};
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use codeyard_model::urls::repo_url;
+
+use crate::backend::repositories::store::repo_store;
 use axum::{
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
     http::{header, HeaderMap, Method, StatusCode},
@@ -27,8 +28,8 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 
-fn error(error: db::dependency_graph::GraphError) -> Error {
-    use db::dependency_graph::GraphError;
+fn error(error: codeyard_model::dependency_graph::GraphError) -> Error {
+    use codeyard_model::dependency_graph::GraphError;
     match error {
         GraphError::Denied => Error::new(StatusCode::FORBIDDEN, GraphError::Denied.to_string()),
         GraphError::Invalid => Error::validation("Snapshot", "snapshot", "invalid"),
@@ -46,21 +47,24 @@ async fn readable(
     name: &str,
 ) -> Result<(
     codeyard_db_core::models::Repository,
-    db::dependency_graph::Reader,
+    crate::backend::db::dependency_graph::Reader,
 )> {
     let (repo, authentication) = repository(state, headers, owner, name, false).await?;
     let actor = authentication.as_ref().map(|auth| auth.database_actor());
-    Ok((repo, db::dependency_graph::Reader::Viewer(actor)))
+    Ok((
+        repo,
+        crate::backend::db::dependency_graph::Reader::Viewer(actor),
+    ))
 }
 
 async fn submit(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
-    body: std::result::Result<Json<dependency_graph::Snapshot>, JsonRejection>,
+    body: std::result::Result<Json<codeyard_model::dependency_graph::Snapshot>, JsonRejection>,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(auth::required)?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     let Json(mut snapshot) =
         body.map_err(|_| Error::validation("Snapshot", "snapshot", "invalid"))?;
     snapshot.validate().map_err(error)?;
@@ -74,11 +78,15 @@ async fn submit(
         .await
         .map_err(store_error)?
         .sha;
-    let submission =
-        db::dependency_graph::submit(&state.pool, actor.database_actor(), repo.id, &snapshot)
-            .await
-            .map_err(error)?;
-    db::vulnerabilities::enqueue(&state.pool, repo.id)
+    let submission = crate::backend::db::dependency_graph::submit(
+        &state.pool,
+        actor.database_actor(),
+        repo.id,
+        &snapshot,
+    )
+    .await
+    .map_err(error)?;
+    crate::backend::db::vulnerabilities::enqueue(&state.pool, repo.id)
         .await
         .map_err(Error::unavailable)?;
     Ok((StatusCode::CREATED, Json(json!({
@@ -107,7 +115,7 @@ async fn compare(
         .split_once("...")
         .filter(|(base, head)| !base.is_empty() && !head.is_empty())
         .ok_or_else(|| Error::new(StatusCode::BAD_REQUEST, "Invalid comparison"))?;
-    db::dependency_graph::check_read(&state.pool, &reader, repo.id)
+    crate::backend::db::dependency_graph::check_read(&state.pool, &reader, repo.id)
         .await
         .map_err(error)?;
     let store = repo_store(&repo, state.cluster.as_ref());
@@ -115,7 +123,7 @@ async fn compare(
         .comparison_from(&store, base, head, 0, 1)
         .await
         .map_err(store_error)?;
-    let mut base = db::dependency_graph::snapshots(
+    let mut base = crate::backend::db::dependency_graph::snapshots(
         &state.pool,
         &reader,
         repo.id,
@@ -124,7 +132,7 @@ async fn compare(
     )
     .await
     .map_err(error)?;
-    let mut head = db::dependency_graph::snapshots(
+    let mut head = crate::backend::db::dependency_graph::snapshots(
         &state.pool,
         &reader,
         repo.id,
@@ -137,11 +145,13 @@ async fn compare(
         (&comparison.merge_base_commit.sha, &mut base),
         (&comparison.head_sha, &mut head),
     ] {
-        inventory::append_native_snapshot(&state, &reader, &repo, sha, None, snapshots)
-            .await
-            .map_err(store_error)?;
+        crate::backend::repositories::dependency_graph::append_native_snapshot(
+            &state, &reader, &repo, sha, None, snapshots,
+        )
+        .await
+        .map_err(store_error)?;
     }
-    let changes = dependency_graph::diff(&base, &head, query.name.as_deref());
+    let changes = codeyard_model::dependency_graph::diff(&base, &head, query.name.as_deref());
     let page = Pagination {
         page: query.page,
         per_page: query.per_page,
@@ -154,7 +164,7 @@ async fn compare(
         .iter()
         .any(|change| change["version"].as_str().is_some_and(|v| !v.is_empty()))
     {
-        db::dependabot_alerts::without_osv(&state.pool)
+        crate::backend::db::dependabot_alerts::without_osv(&state.pool)
             .await
             .map_err(Error::unavailable)?
     } else {
@@ -180,7 +190,7 @@ async fn compare(
                 "advisory_summary":a.summary,
                 "advisory_url":format!("https://osv.dev/vulnerability/{}",codeyard_webui::encode_component(&a.id)),
             })).collect::<Vec<_>>();
-        if let Some(ecosystem) = crate::backend::vulnerabilities::ecosystem(&package.ecosystem) {
+        if let Some(ecosystem) = codeyard_model::vulnerabilities::ecosystem(&package.ecosystem) {
             for advisory in &local {
                 if !advisory["withdrawn_at"].is_null() {
                     continue;
@@ -190,27 +200,27 @@ async fn compare(
                     .into_iter()
                     .flatten()
                     .any(|entry| {
-                        crate::backend::vulnerabilities::ecosystem(
+                        codeyard_model::vulnerabilities::ecosystem(
                             entry["package"]["ecosystem"].as_str().unwrap_or(""),
                         ) == Some(ecosystem)
-                            && crate::backend::vulnerabilities::name(
+                            && codeyard_model::vulnerabilities::name(
                                 ecosystem,
                                 entry["package"]["name"].as_str().unwrap_or(""),
-                            ) == crate::backend::vulnerabilities::name(ecosystem, &package.name)
-                            && crate::backend::vulnerabilities::in_range(
+                            ) == codeyard_model::vulnerabilities::name(ecosystem, &package.name)
+                            && codeyard_model::vulnerabilities::in_range(
                                 ecosystem,
                                 &package.version,
                                 entry["vulnerable_version_range"].as_str().unwrap_or(""),
                             )
                     });
                 if affected {
-                    vulnerabilities.push(json!({"severity":advisory["severity"],"advisory_ghsa_id":advisory["ghsa_id"],"advisory_summary":advisory["summary"],"advisory_url":super::api_url(&format!("/advisories/{}", advisory["ghsa_id"].as_str().unwrap_or("")))}));
+                    vulnerabilities.push(json!({"severity":advisory["severity"],"advisory_ghsa_id":advisory["ghsa_id"],"advisory_summary":advisory["summary"],"advisory_url":crate::backend::api::github::api_url(&format!("/advisories/{}", advisory["ghsa_id"].as_str().unwrap_or("")))}));
                 }
             }
         }
         change["vulnerabilities"] = json!(vulnerabilities);
     }
-    db::dependency_graph::check_read(&state.pool, &reader, repo.id)
+    crate::backend::db::dependency_graph::check_read(&state.pool, &reader, repo.id)
         .await
         .map_err(error)?;
     Ok((page.headers(&uri, has_more)?, Json(changes)).into_response())
@@ -218,11 +228,11 @@ async fn compare(
 
 async fn current(
     state: &AppState,
-    reader: &db::dependency_graph::Reader,
+    reader: &crate::backend::db::dependency_graph::Reader,
     repo: &codeyard_db_core::models::Repository,
     owner: &str,
 ) -> Result<Value> {
-    db::dependency_graph::check_read(&state.pool, reader, repo.id)
+    crate::backend::db::dependency_graph::check_read(&state.pool, reader, repo.id)
         .await
         .map_err(error)?;
     let (refs, branch) = repo_store(repo, state.cluster.as_ref())
@@ -233,23 +243,36 @@ async fn current(
     // One commit for both the saved snapshots and the live inventory, so a branch that moves
     // mid-request cannot mix versions.
     let Some(sha) = refs.get(&reference).cloned() else {
-        let value = dependency_graph::sbom(&format!("{owner}/{}", repo.name), &[]);
-        db::dependency_graph::check_read(&state.pool, reader, repo.id)
+        let value = codeyard_model::dependency_graph::sbom(&format!("{owner}/{}", repo.name), &[]);
+        crate::backend::db::dependency_graph::check_read(&state.pool, reader, repo.id)
             .await
             .map_err(error)?;
         return Ok(value);
     };
-    let mut snapshots =
-        db::dependency_graph::snapshots(&state.pool, reader, repo.id, Some(&reference), Some(&sha))
-            .await
-            .map_err(error)?;
+    let mut snapshots = crate::backend::db::dependency_graph::snapshots(
+        &state.pool,
+        reader,
+        repo.id,
+        Some(&reference),
+        Some(&sha),
+    )
+    .await
+    .map_err(error)?;
     // The native scan keeps the branch that selected the submitted snapshots, so snapshots of
     // other branches at the same commit neither hide nor join its manifests.
-    inventory::append_native_snapshot(state, reader, repo, &reference, Some(&sha), &mut snapshots)
-        .await
-        .map_err(store_error)?;
-    let value = dependency_graph::sbom(&format!("{owner}/{}", repo.name), &snapshots);
-    db::dependency_graph::check_read(&state.pool, reader, repo.id)
+    crate::backend::repositories::dependency_graph::append_native_snapshot(
+        state,
+        reader,
+        repo,
+        &reference,
+        Some(&sha),
+        &mut snapshots,
+    )
+    .await
+    .map_err(store_error)?;
+    let value =
+        codeyard_model::dependency_graph::sbom(&format!("{owner}/{}", repo.name), &snapshots);
+    crate::backend::db::dependency_graph::check_read(&state.pool, reader, repo.id)
         .await
         .map_err(error)?;
     Ok(value)
@@ -268,7 +291,7 @@ async fn export(
 ) -> Result<Json<Value>> {
     let (repo, reader) = readable(&state, &headers, &owner, &name).await?;
     let value = if let Some(id) = query.report {
-        let body = db::dependency_graph::report(&state.pool, &reader, repo.id, &id)
+        let body = crate::backend::db::dependency_graph::report(&state.pool, &reader, repo.id, &id)
             .await
             .map_err(error)?
             .ok_or_else(Error::missing)?;
@@ -286,7 +309,7 @@ async fn generate(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Response> {
     let (repo, reader) = readable(&state, &headers, &owner, &name).await?;
-    db::dependency_graph::check_read(&state.pool, &reader, repo.id)
+    crate::backend::db::dependency_graph::check_read(&state.pool, &reader, repo.id)
         .await
         .map_err(error)?;
     if method == Method::HEAD {
@@ -294,9 +317,15 @@ async fn generate(
     }
     let body = current(&state, &reader, &repo, &owner).await?;
     let id = uuid::Uuid::new_v4().to_string();
-    db::dependency_graph::save_report(&state.pool, &reader, repo.id, &id, &body.to_string())
-        .await
-        .map_err(error)?;
+    crate::backend::db::dependency_graph::save_report(
+        &state.pool,
+        &reader,
+        repo.id,
+        &id,
+        &body.to_string(),
+    )
+    .await
+    .map_err(error)?;
     Ok((StatusCode::CREATED, Json(json!({"sbom_url":format!("{}/dependency-graph/sbom/fetch-report/{id}", repo_url(&owner, &name))}))).into_response())
 }
 
@@ -306,7 +335,7 @@ async fn fetch(
     Path((owner, name, id)): Path<(String, String, String)>,
 ) -> Result<Response> {
     let (repo, reader) = readable(&state, &headers, &owner, &name).await?;
-    if db::dependency_graph::report(&state.pool, &reader, repo.id, &id)
+    if crate::backend::db::dependency_graph::report(&state.pool, &reader, repo.id, &id)
         .await
         .map_err(error)?
         .is_none()

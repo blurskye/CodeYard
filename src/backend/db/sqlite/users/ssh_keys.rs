@@ -71,15 +71,17 @@ async fn require_key_account(
     credential: Option<&AccountCredential<'_>>,
 ) -> Result<()> {
     if let Some(credential @ AccountCredential::Token(_, _)) = credential {
-        return super::transitions::require_account(tx, user, credential)
-            .await
-            .map_err(|error| {
-                if error.is::<AccountRestricted>() {
-                    anyhow::Error::from(SshKeyWriteRefusal::AccountRestricted)
-                } else {
-                    error
-                }
-            });
+        return crate::backend::db::sqlite::users::transitions::require_account(
+            tx, user, credential,
+        )
+        .await
+        .map_err(|error| {
+            if error.is::<AccountRestricted>() {
+                anyhow::Error::from(SshKeyWriteRefusal::AccountRestricted)
+            } else {
+                error
+            }
+        });
     }
     let active: Option<bool> = sqlx::query_scalar(
         "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=?1",
@@ -90,7 +92,7 @@ async fn require_key_account(
     anyhow::ensure!(active == Some(true), SshKeyWriteRefusal::AccountRestricted);
     if let Some(AccountCredential::Session(session)) = credential {
         anyhow::ensure!(
-            super::transitions::live_session(tx, user, session).await?,
+            crate::backend::db::sqlite::users::transitions::live_session(tx, user, session).await?,
             SshKeyWriteRefusal::InvalidSession
         );
     }
@@ -196,7 +198,8 @@ pub async fn list_user_key_summaries(
     after: i64,
 ) -> Result<Vec<crate::backend::db::users::ssh_keys::SshKeySummary>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::transitions::require_account(&mut tx, user_id, credential).await?;
+    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, user_id, credential)
+        .await?;
     let keys = sqlx::query_as("SELECT id,name,fingerprint,key_type,created_at FROM ssh_keys WHERE user_id=?1 AND id>?2 ORDER BY id LIMIT 100")
         .bind(user_id).bind(after.max(0)).fetch_all(&mut *tx).await?;
     tx.commit().await?;

@@ -1,16 +1,15 @@
 //! Native gist pages and forms share the Git-backed domain with the GitHub API.
-use crate::backend::{
-    api::{
-        http::{context::PageContext, session},
-        user::responses::{field, mutation_guard, Fields},
-    },
-    app::AppState,
-    db, gists as domain,
-    repositories::{
-        lifecycle::{LifecycleFailure, StorageError},
-        store::{repo_store, GistCredential},
-    },
-};
+use crate::backend::api::http::context::PageContext;
+
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::Fields;
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::lifecycle::LifecycleFailure;
+use crate::backend::repositories::lifecycle::StorageError;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::GistCredential;
 use axum::{
     extract::{DefaultBodyLimit, Form, Path, State},
     http::{header, HeaderMap, StatusCode, Uri},
@@ -53,13 +52,13 @@ fn refusal(error: &anyhow::Error) -> (StatusCode, String) {
     if let Some(error) = error.downcast_ref::<InvalidInput>() {
         return (StatusCode::UNPROCESSABLE_ENTITY, error.to_string());
     }
-    if let Some(error) = error.downcast_ref::<db::gists::GistRefusal>() {
+    if let Some(error) = error.downcast_ref::<crate::backend::db::gists::GistRefusal>() {
         return (
             match error {
-                db::gists::GistRefusal::Missing => StatusCode::NOT_FOUND,
-                db::gists::GistRefusal::Denied => StatusCode::FORBIDDEN,
-                db::gists::GistRefusal::Conflict => StatusCode::CONFLICT,
-                db::gists::GistRefusal::Invalid => StatusCode::UNPROCESSABLE_ENTITY,
+                crate::backend::db::gists::GistRefusal::Missing => StatusCode::NOT_FOUND,
+                crate::backend::db::gists::GistRefusal::Denied => StatusCode::FORBIDDEN,
+                crate::backend::db::gists::GistRefusal::Conflict => StatusCode::CONFLICT,
+                crate::backend::db::gists::GistRefusal::Invalid => StatusCode::UNPROCESSABLE_ENTITY,
             },
             error.to_string(),
         );
@@ -70,7 +69,9 @@ fn refusal(error: &anyhow::Error) -> (StatusCode, String) {
             "Your session no longer permits this change. Sign in again.".into(),
         );
     }
-    if error.is::<domain::GistSaved>() || error.is::<domain::GistDeleted>() {
+    if error.is::<crate::backend::gists::GistSaved>()
+        || error.is::<crate::backend::gists::GistDeleted>()
+    {
         return (StatusCode::SERVICE_UNAVAILABLE, error.to_string());
     }
     if let Some(error) = error.downcast_ref::<RepoError>() {
@@ -163,7 +164,9 @@ fn page_url(ctx: &PageContext, key: &str, page: usize) -> String {
     )
 }
 fn credential(ctx: &PageContext) -> GistCredential {
-    GistCredential::Session(session::extract_session_id(&ctx.headers).unwrap_or_default())
+    GistCredential::Session(
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    )
 }
 fn render_editor(ctx: &PageContext, status: StatusCode, editor: view::Editor) -> Response {
     ctx.page_model_status(

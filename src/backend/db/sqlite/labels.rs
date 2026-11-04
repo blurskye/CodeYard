@@ -1,6 +1,8 @@
-use crate::backend::db::labels::{
-    bounded_label_ids, ItemLabel, LabelTarget, LabelWriteRefusal, PAGE_DESCRIPTION_CHARS,
-};
+use crate::backend::db::labels::bounded_label_ids;
+use crate::backend::db::labels::ItemLabel;
+use crate::backend::db::labels::LabelTarget;
+use crate::backend::db::labels::LabelWriteRefusal;
+use crate::backend::db::labels::PAGE_DESCRIPTION_CHARS;
 use anyhow::Result;
 use codeyard_db_core::models::Label;
 use sqlx::{Sqlite, SqlitePool, Transaction};
@@ -12,7 +14,12 @@ async fn begin_label_write<'a>(
 ) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor.user_id, repo_id).await?,
+        crate::backend::db::sqlite::discussions::lock_write_authority(
+            &mut tx,
+            actor.user_id,
+            repo_id
+        )
+        .await?,
         LabelWriteRefusal::Denied
     );
     anyhow::ensure!(
@@ -49,7 +56,12 @@ async fn begin_item_label_write<'a>(
 ) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_triage_authority(&mut tx, actor.user_id, repo_id).await?,
+        crate::backend::db::sqlite::discussions::lock_triage_authority(
+            &mut tx,
+            actor.user_id,
+            repo_id
+        )
+        .await?,
         LabelWriteRefusal::Denied
     );
     anyhow::ensure!(
@@ -67,8 +79,16 @@ async fn writes_labels(
     repo_id: i64,
 ) -> Result<bool> {
     Ok(
-        super::credentials::repository(tx, actor, repo_id, "issues", true).await?
-            || super::credentials::repository(tx, actor, repo_id, "pull_requests", true).await?,
+        crate::backend::db::sqlite::credentials::repository(tx, actor, repo_id, "issues", true)
+            .await?
+            || crate::backend::db::sqlite::credentials::repository(
+                tx,
+                actor,
+                repo_id,
+                "pull_requests",
+                true,
+            )
+            .await?,
     )
 }
 
@@ -164,7 +184,7 @@ pub async fn get_label_by_id(pool: &SqlitePool, id: i64) -> Result<Option<Label>
 
 pub async fn count_repo_labels(pool: &SqlitePool, repo_id: i64, query: &str) -> Result<i64> {
     Ok(sqlx::query_scalar("SELECT COUNT(*) FROM labels l WHERE l.repo_id=?1 AND (l.name REGEXP ?2 OR COALESCE(l.description,'') REGEXP ?2)")
-        .bind(repo_id).bind(super::search::contains(query.trim())).fetch_one(pool).await?)
+        .bind(repo_id).bind(crate::backend::db::sqlite::search::contains(query.trim())).fetch_one(pool).await?)
 }
 
 pub async fn list_repo_labels_page(
@@ -187,7 +207,7 @@ pub async fn list_repo_labels_page(
         _ => "LOWER(l.name), l.id",
     };
     Ok(sqlx::query_as(&format!(r"SELECT l.id,l.repo_id,l.name,l.color,substr(l.description,1,{PAGE_DESCRIPTION_CHARS}) AS description,l.created_at,l.updated_at FROM labels l WHERE l.repo_id=?1 AND (l.name REGEXP ?2 OR COALESCE(l.description,'') REGEXP ?2) ORDER BY {order} LIMIT ?3 OFFSET ?4"))
-        .bind(repo_id).bind(super::search::contains(query.trim())).bind(limit).bind(offset).fetch_all(pool).await?)
+        .bind(repo_id).bind(crate::backend::db::sqlite::search::contains(query.trim())).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
 /// Each label of the repository with the number of issues and pull requests it is on, as
@@ -201,7 +221,7 @@ pub async fn list_milestone_labels(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Label>> {
-    Ok(sqlx::query_as(&format!("SELECT l.* FROM labels l WHERE l.repo_id=?1 AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?5 WHERE r.id=l.repo_id AND {}) AND (EXISTS (SELECT 1 FROM issue_labels il JOIN issues i ON i.id=il.issue_id WHERE il.label_id=l.id AND i.milestone_id=?2) OR EXISTS (SELECT 1 FROM pr_labels pl JOIN pull_requests p ON p.id=pl.pull_request_id WHERE pl.label_id=l.id AND p.milestone_id=?2)) ORDER BY lower(l.name),l.id LIMIT ?3 OFFSET ?4", super::repositories::access::readable_condition()))
+    Ok(sqlx::query_as(&format!("SELECT l.* FROM labels l WHERE l.repo_id=?1 AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?5 WHERE r.id=l.repo_id AND {}) AND (EXISTS (SELECT 1 FROM issue_labels il JOIN issues i ON i.id=il.issue_id WHERE il.label_id=l.id AND i.milestone_id=?2) OR EXISTS (SELECT 1 FROM pr_labels pl JOIN pull_requests p ON p.id=pl.pull_request_id WHERE pl.label_id=l.id AND p.milestone_id=?2)) ORDER BY lower(l.name),l.id LIMIT ?3 OFFSET ?4", crate::backend::db::sqlite::repositories::access::readable_condition()))
         .bind(repo_id).bind(milestone_id).bind(limit).bind(offset).bind(viewer).fetch_all(pool).await?)
 }
 
@@ -476,7 +496,9 @@ pub(crate) async fn touch_subject(
         .bind(id)
         .fetch_one(&mut **tx)
         .await?;
-    let next = super::time::next_revision(super::time::decode(&stored)?)?;
+    let next = crate::backend::db::sqlite::time::next_revision(
+        crate::backend::db::sqlite::time::decode(&stored)?,
+    )?;
     sqlx::query(&format!("UPDATE {table} SET updated_at=?2 WHERE id=?1"))
         .bind(id)
         .bind(next)
@@ -665,7 +687,7 @@ async fn record_label_changes(
             .iter()
             .filter(|label| !new.iter().any(|other| other.id == label.id))
         {
-            super::timeline::append(
+            crate::backend::db::sqlite::timeline::append(
                 tx,
                 repo,
                 subject,

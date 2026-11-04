@@ -1,13 +1,15 @@
-use super::{container_owner as owner, package, tokens, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        packages::{Blob, Publish, Upload},
-    },
-    packages,
-    storage::{Download, MAX_OBJECT_BYTES},
-};
+use crate::backend::api::packages::container_owner as owner;
+use crate::backend::api::packages::package;
+
+use crate::backend::api::packages::Error;
+use crate::backend::api::packages::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::packages::Blob;
+use crate::backend::db::packages::Publish;
+use crate::backend::db::packages::Upload;
+
+use crate::backend::storage::Download;
 use axum::{
     body::{to_bytes, Body},
     extract::{Request, State},
@@ -16,6 +18,7 @@ use axum::{
     routing::any,
     Json, Router,
 };
+use codeyard_support::object_limits::MAX_OBJECT_BYTES;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -101,7 +104,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
         .ok_or_else(Error::invalid)?
         .to_owned();
     if path.is_empty() && read {
-        tokens::authenticate(state, &headers, "", false).await?;
+        crate::backend::api::packages::tokens::authenticate(state, &headers, "", false).await?;
         if !headers.contains_key(header::AUTHORIZATION) {
             return Err(Error(
                 StatusCode::UNAUTHORIZED,
@@ -116,7 +119,12 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
             .into_owned()
             .collect();
     if path == "token" && method == Method::GET {
-        return tokens::exchange(state, &headers, request.uri().query().unwrap_or("")).await;
+        return crate::backend::api::packages::tokens::exchange(
+            state,
+            &headers,
+            request.uri().query().unwrap_or(""),
+        )
+        .await;
     }
     let (name, resource, reference) = if let Some((name, id)) = path.rsplit_once("/blobs/uploads/")
     {
@@ -130,7 +138,13 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
     } else {
         return Err(Error::missing());
     };
-    let auth = tokens::authenticate(state, &headers, name, !read || resource == "uploads").await?;
+    let auth = crate::backend::api::packages::tokens::authenticate(
+        state,
+        &headers,
+        name,
+        !read || resource == "uploads",
+    )
+    .await?;
     let (namespace, package_name) = name.split_once('/').ok_or_else(Error::invalid)?;
     let owner = owner(state, namespace).await?;
     let create = (method == Method::POST && resource == "uploads" && reference.is_empty())
@@ -154,24 +168,28 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
     };
     match (resource, method.as_str()) {
         ("blobs", "GET" | "HEAD") => {
-            if !packages::valid_digest(reference) {
+            if !crate::backend::packages::valid_digest(reference) {
                 return Err(Error::invalid());
             }
-            let blob = db::packages::blob(&state.pool, package.id, token, reference)
-                .await
-                .map_err(Error::db)?;
+            let blob =
+                crate::backend::db::packages::blob(&state.pool, package.id, token, reference)
+                    .await
+                    .map_err(Error::db)?;
             download(state, &blob, &method, &headers).await
         }
         ("uploads", "POST") if reference.is_empty() => {
             let token = write_token()?;
             if let (Some(digest), Some(from)) = (query.get("mount"), query.get("from")) {
-                if packages::valid_digest(digest) {
+                if crate::backend::packages::valid_digest(digest) {
                     if let Some((namespace, source)) = from.split_once('/') {
                         let mount = async {
-                            let source_auth =
-                                tokens::authenticate(state, &headers, from, false).await?;
-                            let owner = super::owner(state, namespace).await?;
-                            let source = super::package(
+                            let source_auth = crate::backend::api::packages::tokens::authenticate(
+                                state, &headers, from, false,
+                            )
+                            .await?;
+                            let owner =
+                                crate::backend::api::packages::owner(state, namespace).await?;
+                            let source = crate::backend::api::packages::package(
                                 state,
                                 &owner,
                                 "container",
@@ -180,7 +198,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                                 false,
                             )
                             .await?;
-                            let blob = db::packages::blob(
+                            let blob = crate::backend::db::packages::blob(
                                 &state.pool,
                                 source.id,
                                 Some(token.into()),
@@ -188,12 +206,12 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                             )
                             .await
                             .map_err(Error::db)?;
-                            db::packages::reserve_blob(
+                            crate::backend::db::packages::reserve_blob(
                                 &state.pool,
                                 package.id,
                                 token,
                                 &blob,
-                                db::packages::Charge::Upload,
+                                crate::backend::db::packages::Charge::Upload,
                             )
                             .await
                             .map_err(Error::db)?;
@@ -219,9 +237,10 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                 }
             }
             let id = uuid::Uuid::new_v4().to_string();
-            let upload = db::packages::start_upload(&state.pool, package.id, token, &id)
-                .await
-                .map_err(Error::db)?;
+            let upload =
+                crate::backend::db::packages::start_upload(&state.pool, package.id, token, &id)
+                    .await
+                    .map_err(Error::db)?;
             if let Some(digest) = query.get("digest") {
                 finish(
                     state,
@@ -247,19 +266,25 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
         }
         ("uploads", "GET" | "HEAD" | "PATCH" | "PUT" | "DELETE") => {
             let token = write_token()?;
-            let upload = db::packages::upload(&state.pool, package.id, token, reference)
-                .await
-                .map_err(Error::db)?;
+            let upload =
+                crate::backend::db::packages::upload(&state.pool, package.id, token, reference)
+                    .await
+                    .map_err(Error::db)?;
             match method.as_str() {
                 "GET" | "HEAD" => upload_response(StatusCode::NO_CONTENT, name, &upload),
                 "DELETE" => {
-                    db::packages::cancel_upload(&state.pool, package.id, token, reference)
-                        .await
-                        .map_err(Error::db)?;
+                    crate::backend::db::packages::cancel_upload(
+                        &state.pool,
+                        package.id,
+                        token,
+                        reference,
+                    )
+                    .await
+                    .map_err(Error::db)?;
                     response(StatusCode::NO_CONTENT, None, None)
                 }
                 "PATCH" => {
-                    let _slot = super::upload_slot(state)?;
+                    let _slot = crate::backend::api::packages::upload_slot(state)?;
                     let upload = append(
                         state,
                         package.id,
@@ -288,9 +313,10 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
             }
         }
         ("manifests", "GET" | "HEAD") => {
-            let version = db::packages::version(&state.pool, package.id, token, reference)
-                .await
-                .map_err(Error::db)?;
+            let version =
+                crate::backend::db::packages::version(&state.pool, package.id, token, reference)
+                    .await
+                    .map_err(Error::db)?;
             let mut response = response(StatusCode::OK, None, Some(&version.digest))?;
             response.headers_mut().insert(
                 header::CONTENT_TYPE,
@@ -309,9 +335,9 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
             Ok(response)
         }
         ("manifests", "PUT") => {
-            let _slot = super::upload_slot(state)?;
+            let _slot = crate::backend::api::packages::upload_slot(state)?;
             let token = write_token()?;
-            if !valid_tag(reference) && !packages::valid_digest(reference) {
+            if !valid_tag(reference) && !crate::backend::packages::valid_digest(reference) {
                 return Err(Error::invalid());
             }
             let media_type = headers
@@ -332,7 +358,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                     "Invalid manifest",
                 )
             })?;
-            let digest = packages::digest(&bytes);
+            let digest = crate::backend::packages::digest(&bytes);
             if reference.starts_with("sha256:") && reference != digest {
                 return Err(Error(
                     StatusCode::BAD_REQUEST,
@@ -341,13 +367,13 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                 ));
             }
             let blobs = manifest_blobs(state, package.id, token, &media_type, &manifest).await?;
-            let manifest_blob = packages::store(
+            let manifest_blob = crate::backend::packages::store(
                 &state.pool,
                 &state.storage,
                 package.id,
                 token,
                 bytes.to_vec(),
-                db::packages::Charge::Upload,
+                crate::backend::db::packages::Charge::Upload,
             )
             .await
             .map_err(Error::db)?;
@@ -359,7 +385,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                 vec![reference.into()]
             };
             let text = std::str::from_utf8(&bytes).map_err(|_| Error::invalid())?;
-            db::packages::publish(
+            crate::backend::db::packages::publish(
                 &state.pool,
                 token,
                 Publish {
@@ -381,13 +407,14 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
             )
         }
         ("manifests", "DELETE") => {
-            if !packages::valid_digest(reference) {
+            if !crate::backend::packages::valid_digest(reference) {
                 return Err(Error::invalid());
             }
-            let version = db::packages::version(&state.pool, package.id, token, reference)
-                .await
-                .map_err(Error::db)?;
-            db::packages::set_deleted(
+            let version =
+                crate::backend::db::packages::version(&state.pool, package.id, token, reference)
+                    .await
+                    .map_err(Error::db)?;
+            crate::backend::db::packages::set_deleted(
                 &state.pool,
                 package.id,
                 Some(version.id),
@@ -406,7 +433,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                 .map_err(|_| Error::invalid())?
                 .unwrap_or(100)
                 .clamp(1, 1000);
-            let mut tags: Vec<String> = db::packages::tag_page(
+            let mut tags: Vec<String> = crate::backend::db::packages::tag_page(
                 &state.pool,
                 package.id,
                 token,
@@ -506,17 +533,17 @@ async fn append(
     if bytes.is_empty() {
         return Ok(upload);
     }
-    let chunk = packages::store(
+    let chunk = crate::backend::packages::store(
         &state.pool,
         &state.storage,
         package,
         token,
         bytes.to_vec(),
-        db::packages::Charge::Chunk(&upload.id),
+        crate::backend::db::packages::Charge::Chunk(&upload.id),
     )
     .await
     .map_err(Error::db)?;
-    db::packages::append_upload(
+    crate::backend::db::packages::append_upload(
         &state.pool,
         package,
         token,
@@ -534,7 +561,7 @@ async fn append(
 )]
 async fn finish(
     state: &AppState,
-    package: &db::packages::Package,
+    package: &crate::backend::db::packages::Package,
     token: i64,
     upload: &Upload,
     digest: &str,
@@ -542,30 +569,30 @@ async fn finish(
     headers: &HeaderMap,
     body: Body,
 ) -> Result<Response> {
-    if !packages::valid_digest(digest) {
+    if !crate::backend::packages::valid_digest(digest) {
         return Err(Error::invalid());
     }
-    let _slot = super::upload_slot(state)?;
-    let current = db::packages::upload(&state.pool, package.id, token, &upload.id)
+    let _slot = crate::backend::api::packages::upload_slot(state)?;
+    let current = crate::backend::db::packages::upload(&state.pool, package.id, token, &upload.id)
         .await
         .map_err(Error::db)?;
     let upload = append(state, package.id, token, current, headers, body, true).await?;
     let chunks: Vec<Blob> =
         serde_json::from_str(&upload.chunks).map_err(|_| Error::unavailable())?;
     let blob = if chunks.len() == 1 && chunks[0].digest == digest {
-        db::packages::blob(&state.pool, package.id, Some(token.into()), digest)
+        crate::backend::db::packages::blob(&state.pool, package.id, Some(token.into()), digest)
             .await
             .map_err(Error::db)?
     } else {
         let mut bytes = Vec::with_capacity(upload.offset as usize);
         for chunk in chunks {
             bytes.extend(
-                packages::read(&state.storage, &chunk)
+                crate::backend::packages::read(&state.storage, &chunk)
                     .await
                     .map_err(Error::db)?,
             );
         }
-        if packages::digest(&bytes) != digest {
+        if crate::backend::packages::digest(&bytes) != digest {
             return Err(Error(
                 StatusCode::BAD_REQUEST,
                 "DIGEST_INVALID",
@@ -573,20 +600,26 @@ async fn finish(
             ));
         }
         // The chunks were charged as they arrived.
-        packages::store(
+        crate::backend::packages::store(
             &state.pool,
             &state.storage,
             package.id,
             token,
             bytes,
-            db::packages::Charge::Assembled,
+            crate::backend::db::packages::Charge::Assembled,
         )
         .await
         .map_err(Error::db)?
     };
-    db::packages::finish_upload(&state.pool, package.id, token, &upload.id, upload.offset)
-        .await
-        .map_err(Error::db)?;
+    crate::backend::db::packages::finish_upload(
+        &state.pool,
+        package.id,
+        token,
+        &upload.id,
+        upload.offset,
+    )
+    .await
+    .map_err(Error::db)?;
     response(
         StatusCode::CREATED,
         Some(&format!("/v2/{name}/blobs/{}", blob.digest)),
@@ -640,12 +673,17 @@ async fn manifest_blobs(
     for descriptor in descriptors {
         let digest = descriptor["digest"]
             .as_str()
-            .filter(|digest| packages::valid_digest(digest))
+            .filter(|digest| crate::backend::packages::valid_digest(digest))
             .ok_or_else(Error::invalid)?;
         if index {
-            let child = db::packages::version(&state.pool, package, Some(token.into()), digest)
-                .await
-                .map_err(Error::db)?;
+            let child = crate::backend::db::packages::version(
+                &state.pool,
+                package,
+                Some(token.into()),
+                digest,
+            )
+            .await
+            .map_err(Error::db)?;
             if descriptor["mediaType"] != child.media_type {
                 return Err(Error::invalid());
             }
@@ -683,9 +721,10 @@ async fn manifest_blobs(
             }
             continue;
         }
-        let blob = db::packages::blob(&state.pool, package, Some(token.into()), digest)
-            .await
-            .map_err(Error::db)?;
+        let blob =
+            crate::backend::db::packages::blob(&state.pool, package, Some(token.into()), digest)
+                .await
+                .map_err(Error::db)?;
         if blob.size != size {
             return Err(Error(
                 StatusCode::BAD_REQUEST,
@@ -751,7 +790,11 @@ pub(super) async fn download(
         .ok_or_else(Error::unavailable)?;
     match state
         .storage
-        .download(&db::packages::object_key(&blob.digest), &blob.digest, None)
+        .download(
+            &crate::backend::db::packages::object_key(&blob.digest),
+            &blob.digest,
+            None,
+        )
         .await
         .map_err(|_| Error::unavailable())?
     {

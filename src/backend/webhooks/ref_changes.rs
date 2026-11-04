@@ -1,6 +1,8 @@
 //! Webhook events for published branch and tag changes: `create`, `delete` and `push`.
-use super::payloads::{self, Scope};
-use super::{emit, events};
+
+use crate::backend::webhooks::emit;
+use crate::backend::webhooks::payloads::Scope;
+
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
 use std::path::Path;
@@ -52,7 +54,10 @@ fn previous_tips(path: &Path, moves: &[RefMove]) -> Option<Vec<String>> {
 #[derive(Default)]
 struct History {
     bytes: usize,
-    listed: std::collections::HashMap<(String, String), payloads::PushedCommits>,
+    listed: std::collections::HashMap<
+        (String, String),
+        crate::backend::webhooks::payloads::PushedCommits,
+    >,
     /// Read once, on the first listing; the outer `None` means not read yet.
     previous: Option<Option<Vec<String>>>,
 }
@@ -77,9 +82,25 @@ pub async fn emit_ref_moves(
             .then(|| (name.clone(), new.clone()));
         let push_path = path.to_owned();
         if is_zero(&old) {
-            emit_ref_change(pool, repo, events::CREATE, ref_type, name, pusher_id).await;
+            emit_ref_change(
+                pool,
+                repo,
+                codeyard_model::webhook_events::CREATE,
+                ref_type,
+                name,
+                pusher_id,
+            )
+            .await;
         } else if is_zero(&new) {
-            emit_ref_change(pool, repo, events::DELETE, ref_type, name, pusher_id).await;
+            emit_ref_change(
+                pool,
+                repo,
+                codeyard_model::webhook_events::DELETE,
+                ref_type,
+                name,
+                pusher_id,
+            )
+            .await;
         }
         let repo_for_hook = repo.clone();
         let (head_sender, head_receiver) = tokio::sync::oneshot::channel();
@@ -88,7 +109,7 @@ pub async fn emit_ref_moves(
         emit(
             pool,
             repo,
-            events::PUSH,
+            codeyard_model::webhook_events::PUSH,
             vec![pusher_id],
             move |owner, people| {
                 let sender = people.get(pusher_id);
@@ -97,7 +118,7 @@ pub async fn emit_ref_moves(
                 let mut history = history.lock().unwrap_or_else(|error| error.into_inner());
                 let history = &mut *history;
                 let commits = if is_zero(&new) {
-                    payloads::PushedCommits::default()
+                    crate::backend::webhooks::payloads::PushedCommits::default()
                 } else if let Some(commits) = history.listed.get(&key) {
                     commits.clone()
                 } else {
@@ -105,8 +126,9 @@ pub async fn emit_ref_moves(
                         .previous
                         .get_or_insert_with(|| previous_tips(&push_path, &all_moves))
                         .as_deref();
-                    let commits = match payloads::pushed_commits(&push_path, before, &new, previous)
-                    {
+                    let commits = match crate::backend::webhooks::payloads::pushed_commits(
+                        &push_path, before, &new, previous,
+                    ) {
                         Ok(commits) => commits,
                         Err(error) => {
                             tracing::warn!(%error, "could not read push webhook history");
@@ -118,7 +140,7 @@ pub async fn emit_ref_moves(
                         .iter()
                         .chain(commits.head.iter())
                         .map(|commit| {
-                            std::mem::size_of::<payloads::PushedCommit>()
+                            std::mem::size_of::<crate::backend::webhooks::payloads::PushedCommit>()
                                 + commit.id.len()
                                 + commit.tree_id.len()
                                 + commit.message.len()
@@ -126,10 +148,10 @@ pub async fn emit_ref_moves(
                                 + commit.author_email.len()
                                 + commit.committer_name.len()
                                 + commit.committer_email.len()
-                                + commit
-                                    .files
-                                    .as_ref()
-                                    .map_or(0, payloads::ChangedFiles::bytes)
+                                + commit.files.as_ref().map_or(
+                                    0,
+                                    crate::backend::webhooks::payloads::ChangedFiles::bytes,
+                                )
                         })
                         .sum();
                     if history.bytes.saturating_add(bytes) <= 16 * 1024 * 1024 {
@@ -139,7 +161,7 @@ pub async fn emit_ref_moves(
                     commits
                 };
                 let _ = head_sender.send(commits.head.clone());
-                payloads::push(
+                crate::backend::webhooks::payloads::push(
                     &reference,
                     &old,
                     &new,
@@ -179,7 +201,7 @@ async fn emit_ref_change(
     let repo_for_hook = repo.clone();
     emit(pool, repo, event, vec![pusher_id], move |owner, people| {
         let sender = people.get(pusher_id);
-        payloads::ref_change(
+        crate::backend::webhooks::payloads::ref_change(
             ref_type,
             &name,
             Scope {

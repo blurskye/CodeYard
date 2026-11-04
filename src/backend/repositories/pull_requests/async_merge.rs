@@ -1,11 +1,11 @@
 //! Durable asynchronous requests, executed by the server's bounded, shutdown-drained Git tasks.
-use super::{database_error, merge, OperationError};
-use crate::backend::{
-    app::AppState,
-    ci::CiRuns,
-    db::{self, pull_requests::async_merge as records},
-    notifications::NotificationBroadcaster,
-};
+use crate::backend::repositories::pull_requests::database_error;
+
+use crate::backend::app::AppState;
+use crate::backend::ci::CiRuns;
+use crate::backend::repositories::pull_requests::OperationError;
+
+use crate::backend::notifications::NotificationBroadcaster;
 use serde_json::{json, Value};
 
 pub struct Job {
@@ -13,11 +13,11 @@ pub struct Job {
     pub pull_request_id: i64,
     /// The token the request came with. The job runs on this server, so the credential stays
     /// in memory and is rechecked before preparation and publication.
-    pub authority: db::credentials::Actor,
+    pub authority: crate::backend::db::credentials::Actor,
     pub owner: String,
     pub name: String,
     pub number: i32,
-    pub merge: merge::MergeRequest,
+    pub merge: crate::backend::repositories::pull_requests::merge::MergeRequest,
     pub action: String,
 }
 fn denied() -> OperationError {
@@ -32,21 +32,21 @@ async fn execute(
     broadcaster: &std::sync::Arc<NotificationBroadcaster>,
     uuid: &str,
     job: Job,
-) -> Result<merge::MergeResponse, OperationError> {
+) -> Result<crate::backend::repositories::pull_requests::merge::MergeResponse, OperationError> {
     let token_id = job.authority.token_id().ok_or_else(denied)?;
-    let actor = db::users::tokens::token_user(pool, token_id, true)
+    let actor = crate::backend::db::users::tokens::token_user(pool, token_id, true)
         .await
         .map_err(database_error)?
         .filter(|u| u.id == job.authority.user_id)
         .ok_or_else(denied)?;
-    let repo = db::repositories::records::get_repository_by_id(pool, job.repo_id)
+    let repo = crate::backend::db::repositories::records::get_repository_by_id(pool, job.repo_id)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".into(),
         })?;
-    let owner = db::repositories::records::repository_owner_names(pool, &[repo.id])
+    let owner = crate::backend::db::repositories::records::repository_owner_names(pool, &[repo.id])
         .await
         .map_err(database_error)?
         .remove(&repo.id)
@@ -54,14 +54,15 @@ async fn execute(
             code: "not_found",
             message: "Repository owner not found".into(),
         })?;
-    let mut prepared = merge::prepare_pull_request_merge(
-        pool,
-        ci,
-        job.authority.clone(),
-        (owner, repo.name, job.number),
-        job.merge,
-    )
-    .await?;
+    let mut prepared =
+        crate::backend::repositories::pull_requests::merge::prepare_pull_request_merge(
+            pool,
+            ci,
+            job.authority.clone(),
+            (owner, repo.name, job.number),
+            job.merge,
+        )
+        .await?;
     if !prepared.matches_request(job.repo_id, job.pull_request_id) {
         return Err(OperationError::Conflict {
             code: "revision_conflict",
@@ -70,23 +71,34 @@ async fn execute(
     }
     prepared.bind_async_request(uuid, token_id);
     // Preparation can wait on Git. Recheck the original credential immediately before publication.
-    db::users::tokens::token_user(pool, token_id, true)
+    crate::backend::db::users::tokens::token_user(pool, token_id, true)
         .await
         .map_err(database_error)?
         .filter(|u| u.id == actor.id)
         .ok_or_else(denied)?;
-    let row = records::get(pool, job.repo_id, job.pull_request_id, uuid)
-        .await
-        .map_err(database_error)?
-        .filter(|row| row.status == "pending")
-        .ok_or_else(|| OperationError::Conflict {
-            code: "merge_cancelled",
-            message: "The merge request is no longer pending".into(),
-        })?;
+    let row = crate::backend::db::pull_requests::async_merge::get(
+        pool,
+        job.repo_id,
+        job.pull_request_id,
+        uuid,
+    )
+    .await
+    .map_err(database_error)?
+    .filter(|row| row.status == "pending")
+    .ok_or_else(|| OperationError::Conflict {
+        code: "merge_cancelled",
+        message: "The merge request is no longer pending".into(),
+    })?;
     if row.token_id != Some(token_id) {
         return Err(denied());
     }
-    merge::publish_prepared_merge(pool, ci, broadcaster, prepared).await
+    crate::backend::repositories::pull_requests::merge::publish_prepared_merge(
+        pool,
+        ci,
+        broadcaster,
+        prepared,
+    )
+    .await
 }
 pub async fn start(state: &AppState, job: Job) -> Result<Value, OperationError> {
     if !matches!(job.action.as_str(), "default" | "direct_merge") {
@@ -96,27 +108,31 @@ pub async fn start(state: &AppState, job: Job) -> Result<Value, OperationError> 
         });
     }
     let token_id = job.authority.token_id().ok_or_else(denied)?;
-    let actor = db::users::tokens::token_user(&state.pool, token_id, true)
+    let actor = crate::backend::db::users::tokens::token_user(&state.pool, token_id, true)
         .await
         .map_err(database_error)?
         .filter(|u| u.id == job.authority.user_id)
         .ok_or_else(denied)?;
-    let repo = db::repositories::records::get_repository_by_id(&state.pool, job.repo_id)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Repository not found".into(),
-        })?;
-    super::require_write(&state.pool, &actor, &repo).await?;
-    let pull = db::pull_requests::records::get_pull_request_by_id(&state.pool, job.pull_request_id)
-        .await
-        .map_err(database_error)?
-        .filter(|p| p.repo_id == job.repo_id && p.number == job.number)
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".into(),
-        })?;
+    let repo =
+        crate::backend::db::repositories::records::get_repository_by_id(&state.pool, job.repo_id)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Repository not found".into(),
+            })?;
+    crate::backend::repositories::pull_requests::require_write(&state.pool, &actor, &repo).await?;
+    let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+        &state.pool,
+        job.pull_request_id,
+    )
+    .await
+    .map_err(database_error)?
+    .filter(|p| p.repo_id == job.repo_id && p.number == job.number)
+    .ok_or_else(|| OperationError::Missing {
+        code: "not_found",
+        message: "Pull request not found".into(),
+    })?;
     if pull.state != "open" || pull.merged || pull.is_draft {
         return Err(OperationError::Invalid {
             code: "invalid_state",
@@ -132,9 +148,9 @@ pub async fn start(state: &AppState, job: Job) -> Result<Value, OperationError> 
     let uuid = uuid::Uuid::new_v4().to_string();
     let details = json!({"message":"Merge request accepted","uuid":uuid,"merge_method":job.merge.merge_method.as_str(),"merge_action":job.action,"expected_head_sha":job.merge.expected_head,"bypass_rules":false});
     let request = serde_json::to_value(&job.merge).map_err(database_error)?;
-    if !records::insert(
+    if !crate::backend::db::pull_requests::async_merge::insert(
         &state.pool,
-        records::NewAsyncMerge {
+        crate::backend::db::pull_requests::async_merge::NewAsyncMerge {
             uuid: &uuid,
             repo_id: job.repo_id,
             pull_request_id: job.pull_request_id,
@@ -170,7 +186,7 @@ pub async fn start(state: &AppState, job: Job) -> Result<Value, OperationError> 
         };
         finish_with_retry(&pool, &task_uuid, status, &details).await;
     }) {
-        records::finish(&state.pool,&uuid,"failed",&json!({"message":"The merge worker is unavailable"})).await.map_err(database_error)?;
+        crate::backend::db::pull_requests::async_merge::finish(&state.pool,&uuid,"failed",&json!({"message":"The merge worker is unavailable"})).await.map_err(database_error)?;
         return Err(OperationError::Unavailable{code:"merge_worker_unavailable",message:"The merge worker is unavailable".into()});
     }
     Ok(json!({"status":"pending","details":details}))
@@ -186,7 +202,9 @@ async fn finish_with_retry(
     const ATTEMPTS: u32 = 8;
     let mut delay = std::time::Duration::from_millis(250);
     for attempt in 1..=ATTEMPTS {
-        match records::finish(pool, uuid, status, details).await {
+        match crate::backend::db::pull_requests::async_merge::finish(pool, uuid, status, details)
+            .await
+        {
             Ok(()) => return,
             Err(error) if attempt == ATTEMPTS => {
                 tracing::error!(%error, uuid, "could not persist asynchronous merge result")
@@ -202,7 +220,7 @@ async fn finish_with_retry(
 /// Only this node's abandoned requests fail; starting another web node never cancels live work.
 /// A request whose pull request is already recorded as merged reports that merge instead.
 pub async fn recover(pool: &codeyard_db_core::DbPool, node_id: Option<i64>) -> anyhow::Result<u64> {
-    records::recover(
+    crate::backend::db::pull_requests::async_merge::recover(
         pool,
         node_id,
         &json!({"message":"The server restarted before this merge request completed"}),

@@ -1,8 +1,8 @@
 //! Snapshot history and completed SBOM reports survive process restarts.
-use crate::backend::dependency_graph::Snapshot;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
+use codeyard_model::dependency_graph::Snapshot;
 
 /// A generated SBOM report can be downloaded for a day, and a repository keeps this many.
 pub(crate) const SBOM_REPORT_LIFETIME_SECONDS: i64 = 24 * 60 * 60;
@@ -56,27 +56,9 @@ pub(crate) fn snapshot_ids(rows: Vec<(i64, i64)>) -> Result<Vec<i64>, GraphError
     Ok(rows.into_iter().map(|(id, _)| id).collect())
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum GraphError {
-    #[error("Dependency graph access denied")]
-    Denied,
-    #[error("Invalid dependency snapshot")]
-    Invalid,
-    #[error("Dependency snapshot catalogue exceeds its limits")]
-    Limit,
-    #[error("Dependency graph is disabled")]
-    Disabled,
-    #[error("Dependency graph database unavailable")]
-    Database(#[from] sqlx::Error),
-    #[error("Dependency graph authority unavailable")]
-    Authority(#[source] anyhow::Error),
-    #[error("Invalid stored dependency graph")]
-    Stored(#[from] serde_json::Error),
-}
-
 /// HTTP readers retain the original credential. Scan generations are trusted worker inputs only.
 pub enum Reader {
-    Viewer(Option<super::credentials::Actor>),
+    Viewer(Option<crate::backend::db::credentials::Actor>),
     Scan(i64),
 }
 
@@ -88,36 +70,38 @@ pub struct Submission {
     pub updated: bool,
 }
 
-native_operation!(super::postgres::dependency_graph::check_read,
-    super::sqlite::dependency_graph::check_read,
+native_operation!(crate::backend::db::postgres::dependency_graph::check_read,
+    crate::backend::db::sqlite::dependency_graph::check_read,
     fn check_read(pool: &DbPool, reader: &Reader, repo: i64) -> Result<(), GraphError>);
 
-native_operation!(super::postgres::dependency_graph::submit,
-    super::sqlite::dependency_graph::submit,
-    fn submit(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, snapshot: &Snapshot)
+native_operation!(crate::backend::db::postgres::dependency_graph::submit,
+    crate::backend::db::sqlite::dependency_graph::submit,
+    fn submit(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, snapshot: &Snapshot)
     -> Result<Submission, GraphError>);
 
-native_operation!(super::postgres::dependency_graph::snapshots,
-    super::sqlite::dependency_graph::snapshots,
+native_operation!(crate::backend::db::postgres::dependency_graph::snapshots,
+    crate::backend::db::sqlite::dependency_graph::snapshots,
     fn snapshots(pool: &DbPool, reader: &Reader, repo: i64, reference: Option<&str>, sha: Option<&str>)
     -> Result<Vec<Snapshot>, GraphError>);
 
-native_operation!(super::postgres::dependency_graph::latest_snapshots,
-    super::sqlite::dependency_graph::latest_snapshots,
+native_operation!(crate::backend::db::postgres::dependency_graph::latest_snapshots,
+    crate::backend::db::sqlite::dependency_graph::latest_snapshots,
     fn latest_snapshots(pool: &DbPool, reader: &Reader, repo: i64, reference: &str)
     -> Result<Vec<Snapshot>, GraphError>);
 
-native_operation!(super::postgres::dependency_graph::save_report,
-    super::sqlite::dependency_graph::save_report,
+native_operation!(crate::backend::db::postgres::dependency_graph::save_report,
+    crate::backend::db::sqlite::dependency_graph::save_report,
     fn save_report(pool: &DbPool, reader: &Reader, repo: i64, id: &str, body: &str)
     -> Result<(), GraphError>);
 
-native_operation!(super::postgres::dependency_graph::prune_expired_reports,
-    super::sqlite::dependency_graph::prune_expired_reports,
+native_operation!(crate::backend::db::postgres::dependency_graph::prune_expired_reports,
+    crate::backend::db::sqlite::dependency_graph::prune_expired_reports,
     /// Removes expired SBOM reports of every repository; maintenance calls it.
     fn prune_expired_reports(pool: &DbPool) -> Result<u64, GraphError>);
 
-native_operation!(super::postgres::dependency_graph::report,
-    super::sqlite::dependency_graph::report,
+native_operation!(crate::backend::db::postgres::dependency_graph::report,
+    crate::backend::db::sqlite::dependency_graph::report,
     fn report(pool: &DbPool, reader: &Reader, repo: i64, id: &str)
     -> Result<Option<String>, GraphError>);
+
+use codeyard_model::dependency_graph::GraphError;

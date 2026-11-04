@@ -1,5 +1,5 @@
 //! Accepted ref activity shared by editor/branch/merge publication and Git HTTP/SSH hooks.
-use crate::backend::db;
+
 use crate::backend::db::repositories::activity::Kind;
 use crate::backend::db::repositories::activity::RefActivity;
 use crate::backend::webhooks::ref_changes::RefMove;
@@ -40,8 +40,10 @@ pub async fn record_moves(
                 changes.push(RefActivity::new(reference, before, after, kind)?);
             }
             if !changes.is_empty() {
-                db::repositories::activity::record(&pool, repo, actor, &operation, &changes)
-                    .await?;
+                crate::backend::db::repositories::activity::record(
+                    &pool, repo, actor, &operation, &changes,
+                )
+                .await?;
             }
             Ok::<(), anyhow::Error>(())
         })
@@ -68,7 +70,7 @@ pub struct Query {
 #[error("{0}")]
 pub struct InvalidQuery(pub &'static str);
 pub struct Page {
-    pub rows: Vec<db::repositories::activity::Activity>,
+    pub rows: Vec<crate::backend::db::repositories::activity::Activity>,
     pub previous: Option<String>,
     pub next: Option<String>,
 }
@@ -167,7 +169,7 @@ pub async fn page(pool: &DbPool, repo: i64, input: &Query, viewer: Option<i64>) 
     };
     let reverse = input.before.is_some();
     let limit = input.per_page.unwrap_or(30).clamp(1, 100);
-    let filter = db::repositories::activity::Filter {
+    let filter = crate::backend::db::repositories::activity::Filter {
         boundary,
         descending: descending != reverse,
         reference: input.reference.as_deref().filter(|value| !value.is_empty()),
@@ -175,8 +177,14 @@ pub async fn page(pool: &DbPool, repo: i64, input: &Query, viewer: Option<i64>) 
         kind,
         since,
     };
-    let mut rows =
-        db::repositories::activity::list(pool, repo, &filter, (limit + 1) as i64, viewer).await?;
+    let mut rows = crate::backend::db::repositories::activity::list(
+        pool,
+        repo,
+        &filter,
+        (limit + 1) as i64,
+        viewer,
+    )
+    .await?;
     let more = rows.len() > limit;
     rows.truncate(limit);
     if reverse {

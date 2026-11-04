@@ -1,7 +1,6 @@
 use super::{call, db, json, sarif, Client, Router, Value};
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard::backend::code_scanning;
 
 pub(super) async fn contract(
     router: &Router,
@@ -66,7 +65,9 @@ pub(super) async fn contract(
         202,
     )
     .await;
-    assert!(code_scanning::process_next(pool).await.unwrap());
+    assert!(codeyard::backend::code_scanning::process_next(pool)
+        .await
+        .unwrap());
     call(
         router,
         "POST",
@@ -83,7 +84,9 @@ pub(super) async fn contract(
     assert_eq!(status, StatusCode::OK, "{html}");
     assert!(html.contains("SARIF upload"));
     assert!(html.contains("pending"));
-    assert!(code_scanning::process_next(pool).await.unwrap());
+    assert!(codeyard::backend::code_scanning::process_next(pool)
+        .await
+        .unwrap());
     let (status, html) = client.send("GET", &checks, "", String::new()).await;
     assert_eq!(status, StatusCode::OK, "{html}");
     assert!(
@@ -134,7 +137,9 @@ pub(super) async fn contract(
         202,
     )
     .await;
-    assert!(code_scanning::process_next(pool).await.unwrap());
+    assert!(codeyard::backend::code_scanning::process_next(pool)
+        .await
+        .unwrap());
     let (status, html) = client.send("GET", &checks, "", String::new()).await;
     assert_eq!(status, StatusCode::OK);
     assert!(
@@ -153,7 +158,9 @@ pub(super) async fn contract(
         202,
     )
     .await;
-    assert!(code_scanning::process_next(pool).await.unwrap());
+    assert!(codeyard::backend::code_scanning::process_next(pool)
+        .await
+        .unwrap());
     let (_, html) = client.send("GET", &checks, "", String::new()).await;
     assert!(html.contains("No matching analysis exists for the base revision"));
     assert!(html.contains("neutral"));

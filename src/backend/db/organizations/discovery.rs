@@ -1,5 +1,5 @@
 //! Public organization discovery and membership visibility for REST and profile pages.
-use super::OrganizationOutcome;
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::Result;
 use codeyard_db_core::models::Organization;
 use codeyard_db_core::models::User;

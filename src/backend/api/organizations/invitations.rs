@@ -1,11 +1,16 @@
 //! The invitee's answer to an organization invitation. Membership starts only on accept.
 
-use super::organization::{self, unavailable, unit, Fields};
-use super::INDEX;
 use crate::backend::api::http::context::PageContext;
+use crate::backend::api::organizations::organization::unavailable;
+use crate::backend::api::organizations::organization::unit;
+use crate::backend::api::organizations::organization::Fields;
+use crate::backend::api::organizations::INDEX;
 use crate::backend::app::AppState;
-use crate::backend::db::organizations;
-use crate::backend::db::organizations::OrganizationOutcome::{Applied, Denied, Missing, Suspended};
+
+use crate::backend::db::organizations::OrganizationOutcome::Applied;
+use crate::backend::db::organizations::OrganizationOutcome::Denied;
+use crate::backend::db::organizations::OrganizationOutcome::Missing;
+use crate::backend::db::organizations::OrganizationOutcome::Suspended;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -54,7 +59,7 @@ async fn answer(
     let invitation = match form.get("invitation_id").map(|id| id.parse::<i64>()) {
         Some(Ok(id)) => Some(id),
         Some(Err(_)) => {
-            return organization::respond(
+            return crate::backend::api::organizations::organization::respond(
                 &ctx,
                 None,
                 StatusCode::NOT_FOUND,
@@ -67,7 +72,7 @@ async fn answer(
     };
     let pool = &ctx.state.pool;
     let outcome = if accept {
-        organizations::accept_organization_invitation(
+        crate::backend::db::organizations::accept_organization_invitation(
             pool,
             ctx.database_actor(actor),
             org,
@@ -76,7 +81,7 @@ async fn answer(
         .await
         .map(unit)
     } else {
-        organizations::decline_organization_invitation(
+        crate::backend::db::organizations::decline_organization_invitation(
             pool,
             ctx.database_actor(actor),
             org,
@@ -102,5 +107,12 @@ async fn answer(
         ),
         _ => (StatusCode::CONFLICT, "The invitation changed. Try again."),
     };
-    organization::respond(&ctx, None, status, Some(message.into()), Fields::new()).await
+    crate::backend::api::organizations::organization::respond(
+        &ctx,
+        None,
+        status,
+        Some(message.into()),
+        Fields::new(),
+    )
+    .await
 }

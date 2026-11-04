@@ -1,5 +1,5 @@
 use super::*;
-use crate::backend::db::notifications::threads as model;
+
 use crate::backend::db::notifications::threads::NotificationThread;
 use crate::backend::db::notifications::threads::ThreadAction;
 use crate::backend::db::notifications::threads::ThreadFilter;
@@ -13,14 +13,16 @@ pub(super) async fn ensure(
     connection: &mut sqlx::PgConnection,
     input: &NewNotification<'_>,
 ) -> Result<Option<i64>> {
-    let Some((kind, key)) = model::subject(input) else {
+    let Some((kind, key)) = crate::backend::db::notifications::threads::subject(input) else {
         return Ok(None);
     };
     let id:i64=sqlx::query_scalar("INSERT INTO notification_threads(user_id,scope_repository_id,subject_type,subject_key) VALUES($1,$2,$3,$4) ON CONFLICT(user_id,scope_repository_id,subject_type,subject_key) DO UPDATE SET subject_key=EXCLUDED.subject_key RETURNING id").bind(input.user_id).bind(input.repo_id).bind(kind).bind(key).fetch_one(&mut *connection).await?;
     sqlx::query("INSERT INTO notification_thread_subscriptions(thread_id) VALUES($1) ON CONFLICT(thread_id) DO NOTHING").bind(id).execute(&mut *connection).await?;
     let (subscribed,ignored):(bool,bool)=sqlx::query_as("SELECT subscribed,ignored FROM notification_thread_subscriptions WHERE thread_id=$1 FOR SHARE").bind(id).fetch_one(connection).await?;
     anyhow::ensure!(
-        model::allows_delivery(subscribed, ignored, input.kind),
+        crate::backend::db::notifications::threads::allows_delivery(
+            subscribed, ignored, input.kind
+        ),
         crate::backend::db::notifications::records::NotificationSuppressed
     );
     Ok(Some(id))
@@ -31,7 +33,7 @@ pub(crate) async fn subscribers(
     kind: &str,
     key: &str,
 ) -> Result<Vec<i64>> {
-    let scope = super::scope_readable_condition();
+    let scope = crate::backend::db::postgres::notifications::records::scope_readable_condition();
     Ok(sqlx::query_scalar(&format!("SELECT t.user_id FROM notification_threads t JOIN notification_thread_subscriptions s ON s.thread_id=t.id JOIN users u ON u.id=t.user_id JOIN repositories r ON r.id=t.scope_repository_id WHERE t.scope_repository_id=$1 AND t.subject_type=$2 AND t.subject_key=$3 AND s.subscribed AND NOT s.ignored AND NOT u.is_banned AND NOT u.must_change_password AND {scope} AND NOT EXISTS(SELECT 1 FROM watches w WHERE w.repo_id=$1 AND w.user_id=t.user_id AND w.level='ignoring') ORDER BY t.user_id")).bind(repo_id).bind(kind).bind(key).fetch_all(pool).await?)
 }
 pub(crate) async fn attach_existing(connection: &mut sqlx::PgConnection, id: i64) -> Result<bool> {
@@ -87,7 +89,10 @@ async fn decide_threads(
         let Some(last) = ids.last().copied() else {
             break;
         };
-        super::decide_scopes(connection, user, scopes, &ids).await?;
+        crate::backend::db::postgres::notifications::records::decide_scopes(
+            connection, user, scopes, &ids,
+        )
+        .await?;
         after = last;
         if ids.len() < 100 {
             break;
@@ -110,7 +115,13 @@ async fn decide_thread_scope(
     .fetch_optional(&mut *connection)
     .await?;
     if let Some(scope) = scope {
-        super::decide_scopes(connection, user, scopes, &[scope]).await?;
+        crate::backend::db::postgres::notifications::records::decide_scopes(
+            connection,
+            user,
+            scopes,
+            &[scope],
+        )
+        .await?;
     }
     Ok(())
 }
@@ -191,13 +202,17 @@ async fn views(
             .await?;
     let mut notifications: Vec<Notification> = sqlx::query_as("SELECT n.* FROM notifications n JOIN notification_threads t ON t.id=n.thread_id AND t.scope_repository_id=n.scope_repository_id WHERE n.id=ANY($1) AND n.user_id=$2 AND t.user_id=$2 AND t.id=ANY($3)")
         .bind(&latest).bind(user).bind(&ids).fetch_all(&mut *connection).await?;
-    super::refresh_links(connection, &mut notifications).await?;
+    crate::backend::db::postgres::notifications::records::refresh_links(
+        connection,
+        &mut notifications,
+    )
+    .await?;
     let repositories: Vec<Repository> =
         sqlx::query_as("SELECT * FROM repositories WHERE id=ANY($1)")
             .bind(&repos)
             .fetch_all(&mut *connection)
             .await?;
-    let projections: Vec<model::ThreadProjection> = sqlx::query_as(r#"
+    let projections: Vec<crate::backend::db::notifications::threads::ThreadProjection> = sqlx::query_as(r#"
         SELECT t.id AS thread_id,CASE WHEN r.owner_kind='user' THEN u.username ELSE o.name END AS owner,
           p.number AS pull_number,i.number AS issue_number,e.id AS release_id,
           COALESCE(p.title,i.title,NULLIF(e.name,''),e.tag_name) AS title,COALESCE(p.author_id,i.author_id,e.author_id) AS author,
@@ -212,7 +227,7 @@ async fn views(
           AND (c.review_id IS NULL OR EXISTS(SELECT 1 FROM pr_reviews v WHERE v.id=c.review_id AND v.state<>'pending'))
         WHERE t.id=ANY($1) AND t.user_id=$2
     "#).bind(&ids).bind(user).bind(&latest).fetch_all(connection).await?;
-    Ok(model::hydrate(
+    Ok(crate::backend::db::notifications::threads::hydrate(
         summaries,
         threads,
         notifications,
@@ -247,7 +262,13 @@ async fn manage_subscription(
     let Some(thread) = thread else {
         return Ok(ThreadInbox::default());
     };
-    super::decide_scopes(connection, user, scopes, &[thread.scope_repository_id]).await?;
+    crate::backend::db::postgres::notifications::records::decide_scopes(
+        connection,
+        user,
+        scopes,
+        &[thread.scope_repository_id],
+    )
+    .await?;
     if !scopes
         .readable
         .get(&thread.scope_repository_id)
@@ -282,7 +303,13 @@ pub(super) async fn perform(
         _ => None,
     };
     if let Some(repo) = repository {
-        super::decide_scopes(connection, user, scopes, &[repo]).await?;
+        crate::backend::db::postgres::notifications::records::decide_scopes(
+            connection,
+            user,
+            scopes,
+            &[repo],
+        )
+        .await?;
         if !scopes.readable.get(&repo).copied().unwrap_or(false) {
             return Ok(ThreadInbox::default());
         }

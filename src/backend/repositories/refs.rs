@@ -1,15 +1,17 @@
 //! Branch and tag mutations shared by JSON and native forms.
-use crate::backend::{
-    ci::{CiRuns, RefUpdate},
-    cluster::NodeContext,
-    db,
-    repositories::{
-        access,
-        protection::{check_branch_write, BranchWrite, History, Refusal, WriteVia, ANY_TIP},
-        pull_requests,
-        store::{repo_store, TagInfo},
-    },
-};
+use crate::backend::ci::CiRuns;
+use crate::backend::ci::RefUpdate;
+use crate::backend::cluster::NodeContext;
+
+use crate::backend::repositories::protection::check_branch_write;
+use crate::backend::repositories::protection::BranchWrite;
+use crate::backend::repositories::protection::History;
+use crate::backend::repositories::protection::Refusal;
+use crate::backend::repositories::protection::WriteVia;
+use crate::backend::repositories::protection::ANY_TIP;
+
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::TagInfo;
 use codeyard_git::{
     self as git,
     error::{ErrorKind, RepoError, MERGE_COMMIT_BLOCKED},
@@ -17,7 +19,7 @@ use codeyard_git::{
 
 #[derive(Debug)]
 pub enum RefError {
-    Access(access::AccessError),
+    Access(crate::backend::repositories::access::AccessError),
     Invalid(&'static str),
     /// A rule of the branch refuses the change; the text says which.
     Protected(&'static str),
@@ -28,7 +30,7 @@ pub enum RefError {
 
 async fn writable(
     pool: &codeyard_db_core::DbPool,
-    actor: &db::credentials::Actor,
+    actor: &crate::backend::db::credentials::Actor,
     repo_id: i64,
 ) -> Result<
     (
@@ -37,10 +39,11 @@ async fn writable(
     ),
     RefError,
 > {
-    let (repository, user) = access::check_write(pool, repo_id, actor.user_id)
-        .await
-        .map_err(RefError::Access)?;
-    access::check_publication_actor(pool, actor, &repository)
+    let (repository, user) =
+        crate::backend::repositories::access::check_write(pool, repo_id, actor.user_id)
+            .await
+            .map_err(RefError::Access)?;
+    crate::backend::repositories::access::check_publication_actor(pool, actor, &repository)
         .await
         .map_err(|error| publication_error(RepoError::from(error)))?;
     Ok((repository, user))
@@ -51,12 +54,12 @@ pub(super) fn publication_error(error: RepoError) -> RefError {
         RefError::AppliedFollowupFailed
     } else if error.is_protected_branch() {
         RefError::Protected("This branch is protected")
-    } else if error.message == super::releases::immutable::TAG_PROTECTED {
-        RefError::Protected(super::releases::immutable::TAG_PROTECTED)
+    } else if error.message == crate::backend::repositories::releases::immutable::TAG_PROTECTED {
+        RefError::Protected(crate::backend::repositories::releases::immutable::TAG_PROTECTED)
     } else if error.is_merge_commit_blocked() {
         RefError::Protected(MERGE_COMMIT_BLOCKED)
     } else if error.is_write_denied() {
-        RefError::Access(access::AccessError::WriteDenied)
+        RefError::Access(crate::backend::repositories::access::AccessError::WriteDenied)
     } else {
         RefError::Git(error)
     }
@@ -92,7 +95,7 @@ pub async fn create_branch(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     owner: &str,
     repo_id: i64,
     branch: &str,
@@ -116,7 +119,7 @@ pub async fn create_branch(
         .create_branch_as(pool, repository.id, authority, branch, source)
         .await
         .map_err(publication_error)?;
-    let refreshed = pull_requests::refresh_open_pull_requests(
+    let refreshed = crate::backend::repositories::pull_requests::refresh_open_pull_requests(
         pool,
         &repository,
         Some(&[branch][..]),
@@ -152,7 +155,7 @@ pub async fn update_reference(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     owner: &str,
     repo_id: i64,
     reference: &str,
@@ -170,7 +173,7 @@ pub async fn update_reference(
         return Ok(sha);
     }
     let refreshed = if let Some(branch) = reference.strip_prefix("refs/heads/") {
-        pull_requests::refresh_open_pull_requests(
+        crate::backend::repositories::pull_requests::refresh_open_pull_requests(
             pool,
             &repository,
             Some(&[branch][..]),
@@ -206,7 +209,7 @@ pub async fn update_reference(
 pub async fn set_default_branch(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repository: &codeyard_db_core::models::Repository,
     branch: &str,
 ) -> Result<(), RefError> {
@@ -223,7 +226,7 @@ pub async fn delete_branch(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     branch: &str,
 ) -> Result<(), RefError> {
@@ -255,7 +258,7 @@ pub async fn delete_branch(
         .delete_branch_as(pool, repository.id, authority, branch)
         .await
         .map_err(publication_error)?;
-    pull_requests::refresh_open_pull_requests(
+    crate::backend::repositories::pull_requests::refresh_open_pull_requests(
         pool,
         &repository,
         Some(&[branch][..]),
@@ -276,7 +279,7 @@ pub async fn create_tag(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     owner: &str,
     repo_id: i64,
     tag: &str,
@@ -326,7 +329,7 @@ pub async fn create_tag(
 pub async fn delete_tag(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     tag: &str,
 ) -> Result<(), RefError> {

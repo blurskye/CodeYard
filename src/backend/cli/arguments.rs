@@ -1,4 +1,3 @@
-use crate::backend::{node, ssh};
 use clap::{Parser, Subcommand};
 use std::{net::SocketAddr, path::PathBuf};
 
@@ -26,7 +25,7 @@ pub(super) enum Commands {
         /// (Actions jobs). A runner may run alone on another machine. In cluster mode the
         /// server's parts are the web, storage and ssh roles, on separate machines.
         #[arg(long, env = "GITSERV_NODE_ROLES", default_value = "server,runner")]
-        roles: node::NodeRoles,
+        roles: crate::backend::node::NodeRoles,
 
         /// Turn cluster mode on first (PostgreSQL only), so this node can take the web,
         /// storage and ssh roles. Same as running `cluster enable` before `serve`.
@@ -35,10 +34,10 @@ pub(super) enum Commands {
 
         /// SSH transport: auto, openssh, builtin or disabled
         #[arg(long, env = "SSH_MODE", value_enum, default_value = "auto")]
-        ssh_mode: ssh::mode::SshMode,
+        ssh_mode: codeyard_support::ssh_mode::SshMode,
 
         /// Private app broker socket for host OpenSSH helpers
-        #[arg(long, env = "SSH_SOCKET_PATH", default_value = ssh::mode::DEFAULT_SOCKET)]
+        #[arg(long, env = "SSH_SOCKET_PATH", default_value = codeyard_support::ssh_mode::DEFAULT_SOCKET)]
         ssh_socket: PathBuf,
 
         /// Dedicated host SSH login, distinct from any existing Git login
@@ -46,7 +45,7 @@ pub(super) enum Commands {
         ssh_git_user: String,
 
         /// Root-owned marker created by the opt-in OpenSSH installer
-        #[arg(long, env = "SSH_INSTALL_MANIFEST", default_value = ssh::mode::DEFAULT_MANIFEST)]
+        #[arg(long, env = "SSH_INSTALL_MANIFEST", default_value = codeyard_support::ssh_mode::DEFAULT_MANIFEST)]
         ssh_install_manifest: PathBuf,
 
         /// Built-in SSH bind address (unused in openssh/disabled mode)
@@ -66,7 +65,7 @@ pub(super) enum Commands {
     #[cfg(unix)]
     Ssh {
         #[command(subcommand)]
-        action: ssh::openssh::Commands,
+        action: crate::backend::ssh::openssh::Commands,
     },
 
     /// User management
@@ -90,7 +89,7 @@ pub(super) enum Commands {
     /// Cluster membership: keys, invites and approvals
     Cluster {
         #[command(subcommand)]
-        action: super::cluster::Command,
+        action: crate::backend::cli::cluster::Command,
     },
 
     /// Database tools that do not start the server

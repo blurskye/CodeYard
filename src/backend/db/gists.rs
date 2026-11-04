@@ -1,5 +1,5 @@
 //! Gist metadata, live account authority and durable Git-publication admission.
-use super::users::accounts::AccountCredential;
+use crate::backend::db::users::accounts::AccountCredential;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::models::Repository;

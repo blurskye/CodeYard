@@ -1,9 +1,11 @@
 //! Verified browser request context, setup admission and form protection.
-use super::origin::same_origin_submission;
-use super::render::{public_error, public_error_returning_to, redirect_response};
-use super::session;
+use crate::backend::api::http::origin::same_origin_submission;
+use crate::backend::api::http::render::public_error;
+use crate::backend::api::http::render::public_error_returning_to;
+use crate::backend::api::http::render::redirect_response;
+
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use axum::{
     http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     response::Response,
@@ -17,7 +19,7 @@ use subtle::ConstantTimeEq;
 const CSRF_TTL_SECONDS: i64 = 2 * 60 * 60;
 
 fn admission_redirect(page: &str, location: &str) -> String {
-    if super::origin::safe_redirect_path(location) {
+    if crate::backend::api::http::origin::safe_redirect_path(location) {
         format!(
             "{page}?redirect={}",
             codeyard_webui::encode_component(location)
@@ -37,11 +39,11 @@ async fn csrf_token_for_session(
     state: &AppState,
     browser_session: &codeyard_db_core::models::BrowserSession,
 ) -> anyhow::Result<Option<String>> {
-    let candidate = session::generate_session_id();
+    let candidate = crate::backend::api::http::session::generate_session_id();
     let ttl = CSRF_TTL_SECONDS
         .min((browser_session.expires_at - chrono::Utc::now()).num_seconds())
         .max(1);
-    db::users::sessions::get_or_create_csrf_token(
+    crate::backend::db::users::sessions::get_or_create_csrf_token(
         &state.pool,
         &browser_session.id,
         browser_session.user_id,
@@ -55,10 +57,10 @@ pub(crate) async fn csrf_token_for_existing_session(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<String, ExistingCsrfError> {
-    let id = session::extract_session_id(headers)
+    let id = crate::backend::api::http::session::extract_session_id(headers)
         .filter(|id| is_hex_token(id, 64))
         .ok_or(ExistingCsrfError::Missing)?;
-    let session = db::users::sessions::get_browser_session(&state.pool, &id)
+    let session = crate::backend::db::users::sessions::get_browser_session(&state.pool, &id)
         .await
         .map_err(|_| ExistingCsrfError::Unavailable)?
         .ok_or(ExistingCsrfError::Missing)?;
@@ -92,10 +94,11 @@ pub struct PageContext {
 }
 
 impl PageContext {
-    pub(crate) fn database_actor(&self, user_id: i64) -> db::credentials::Actor {
+    pub(crate) fn database_actor(&self, user_id: i64) -> crate::backend::db::credentials::Actor {
         (
             user_id,
-            session::extract_session_id(&self.headers).unwrap_or_default(),
+            crate::backend::api::http::session::extract_session_id(&self.headers)
+                .unwrap_or_default(),
         )
             .into()
     }
@@ -111,23 +114,24 @@ impl PageContext {
                 "The service is temporarily unavailable. Please try again.",
             )
         };
-        let config = db::node_config::get_node_configuration(&state.pool)
+        let config = crate::backend::db::node_config::get_node_configuration(&state.pool)
             .await
             .map_err(|_| unavailable())?;
         let setup_completed = config.as_ref().is_some_and(|c| c.setup_completed);
         let private_mode = config.as_ref().is_some_and(|c| c.is_private());
 
         // Do not treat a failed lookup as anonymous, or a missing setup row as an outage.
-        let supplied_id = session::extract_session_id(&headers).filter(|id| is_hex_token(id, 64));
+        let supplied_id = crate::backend::api::http::session::extract_session_id(&headers)
+            .filter(|id| is_hex_token(id, 64));
         let existing_session = match supplied_id.as_deref() {
-            Some(id) => db::users::sessions::get_browser_session(&state.pool, id)
+            Some(id) => crate::backend::db::users::sessions::get_browser_session(&state.pool, id)
                 .await
                 .map_err(|_| unavailable())?,
             None => None,
         };
         let user = match existing_session.as_ref().and_then(|s| s.user_id) {
             Some(id) => {
-                let user = db::users::accounts::get_user_by_id(&state.pool, id)
+                let user = crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
                     .await
                     .map_err(|_| unavailable())?
                     .ok_or_else(|| {
@@ -179,7 +183,7 @@ impl PageContext {
         // nothing and carry an empty token; the theme switch accepts that. A stale cookie
         // still gets a fresh session so its owner can sign in again.
         let mints_session = existing_session.is_some()
-            || session::has_session_cookie(&headers)
+            || crate::backend::api::http::session::has_session_cookie(&headers)
             || anonymous_form_path(&path);
         let (csrf_token, pending_session_cookie) = if mints_session {
             let (verified_session, pending_session_cookie) = match existing_session {
@@ -187,7 +191,7 @@ impl PageContext {
                 None => {
                     match crate::backend::identity::admission::admit_anonymous_session(
                         &state.pool,
-                        session::client_address(&headers),
+                        crate::backend::api::http::session::client_address(&headers),
                     )
                     .await
                     {
@@ -201,23 +205,25 @@ impl PageContext {
                         Err(_) => return Err(unavailable()),
                     }
                     // Never adopt an attacker-supplied unknown cookie ID.
-                    let id = session::generate_session_id();
-                    let agent = session::extract_user_agent(&headers);
-                    let s = db::users::sessions::create_browser_session(
+                    let id = crate::backend::api::http::session::generate_session_id();
+                    let agent = crate::backend::api::http::session::extract_user_agent(&headers);
+                    let s = crate::backend::db::users::sessions::create_browser_session(
                         &state.pool,
                         &id,
                         agent.as_deref(),
                         None,
                         chrono::Utc::now()
-                            + chrono::Duration::days(session::session_duration_days()),
+                            + chrono::Duration::days(
+                                crate::backend::api::http::session::session_duration_days(),
+                            ),
                     )
                     .await
                     .map_err(|_| unavailable())?;
                     (
                         s,
-                        Some(session::build_session_cookie(
+                        Some(crate::backend::api::http::session::build_session_cookie(
                             &id,
-                            session::session_duration_days(),
+                            crate::backend::api::http::session::session_duration_days(),
                         )),
                     )
                 }
@@ -240,7 +246,12 @@ impl PageContext {
         // header, so its requests skip the count. A failed count hides the badge, not the page.
         let unread_notifications = match user.as_ref() {
             Some(user) if !path.starts_with("/api/") => {
-                match db::notifications::records::count_header_unread(&state.pool, user.id).await {
+                match crate::backend::db::notifications::records::count_header_unread(
+                    &state.pool,
+                    user.id,
+                )
+                .await
+                {
                     Ok(count) => Some(count),
                     Err(error) => {
                         tracing::warn!(%error, "Header notification count skipped");
@@ -402,7 +413,8 @@ fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 mod tests {
     use super::*;
     use crate::backend::api::http::origin::safe_redirect_path;
-    use crate::backend::api::http::render::{accepts_page_model, error_model_response};
+    use crate::backend::api::http::render::accepts_page_model;
+    use crate::backend::api::http::render::error_model_response;
     #[tokio::test]
     async fn forms_require_a_preexisting_verified_session_and_preserve_cookie() {
         let mut ctx = PageContext {

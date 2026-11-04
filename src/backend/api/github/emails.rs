@@ -1,13 +1,13 @@
 //! Account email privacy never makes an unverified address public.
-use super::{auth, pagination::Pagination, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::users::{
-        accounts::AccountCredential,
-        profiles::{self, ProfilePatch},
-    },
-    identity,
-};
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use crate::backend::db::users::accounts::AccountCredential;
+
+use crate::backend::db::users::profiles::ProfilePatch;
+
 use axum::{
     extract::{OriginalUri, Query, State},
     http::{HeaderMap, StatusCode},
@@ -39,7 +39,7 @@ async fn documents(
     user: &codeyard_db_core::models::User,
     public: bool,
 ) -> Result<Vec<Value>> {
-    let settings = profiles::get_profile_settings(&state.pool, user.id)
+    let settings = crate::backend::db::users::profiles::get_profile_settings(&state.pool, user.id)
         .await
         .map_err(Error::unavailable)?;
     let mut values = Vec::new();
@@ -87,9 +87,9 @@ async fn read(
     uri: axum::http::Uri,
     public: bool,
 ) -> Result<Response> {
-    let actor = auth::authenticate(state, headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     let values = documents(state, &actor.user, public).await?;
     let (offset, limit) = page.window()?;
     let more = values.len() > offset + limit;
@@ -114,13 +114,13 @@ impl Addresses {
         }
     }
 }
-fn email_failure(error: identity::emails::EmailError) -> Error {
+fn email_failure(error: crate::backend::identity::emails::EmailError) -> Error {
     match error {
-        identity::emails::EmailError::Denied => {
+        crate::backend::identity::emails::EmailError::Denied => {
             Error::new(StatusCode::FORBIDDEN, "Account is restricted")
         }
-        identity::emails::EmailError::Unavailable => Error::unavailable(error),
-        identity::emails::EmailError::Taken => {
+        crate::backend::identity::emails::EmailError::Unavailable => Error::unavailable(error),
+        crate::backend::identity::emails::EmailError::Taken => {
             Error::validation("Email", "email", "already_exists")
         }
         _ => Error::validation("Email", "emails", "invalid"),
@@ -131,12 +131,12 @@ async fn add(
     headers: HeaderMap,
     input: std::result::Result<Json<Addresses>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(StatusCode, Json<Vec<Value>>)> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
     let Json(input) = input.map_err(|_| Error::validation("Email", "emails", "invalid"))?;
-    let added = identity::emails::change(
+    let added = crate::backend::identity::emails::change(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
@@ -165,12 +165,12 @@ async fn remove(
     headers: HeaderMap,
     input: std::result::Result<Json<Addresses>, axum::extract::rejection::JsonRejection>,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
     let Json(input) = input.map_err(|_| Error::validation("Email", "emails", "invalid"))?;
-    identity::emails::change(
+    crate::backend::identity::emails::change(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
@@ -191,15 +191,15 @@ async fn visibility(
     headers: HeaderMap,
     input: std::result::Result<Json<Visibility>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Vec<Value>>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
     let Json(input) = input.map_err(|_| Error::validation("Email", "visibility", "invalid"))?;
     if !matches!(input.visibility.as_str(), "public" | "private") {
         return Err(Error::validation("Email", "visibility", "invalid"));
     }
-    let user = identity::profiles::save(
+    let user = crate::backend::identity::profiles::save(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
@@ -210,7 +210,7 @@ async fn visibility(
     )
     .await
     .map_err(|error| match error {
-        identity::profiles::ProfileError::Denied => {
+        crate::backend::identity::profiles::ProfileError::Denied => {
             Error::new(StatusCode::FORBIDDEN, "Account is restricted")
         }
         _ => Error::unavailable(error),

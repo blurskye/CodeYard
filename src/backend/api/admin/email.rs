@@ -1,13 +1,14 @@
 //! Admin email settings and test-mail forms.
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::session;
-use crate::backend::api::user::responses::{field, mutation_guard, require_account, Fields};
+
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::require_account;
+use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
-use crate::backend::db::{self, email::NewEmailSettings};
-use crate::backend::email::{
-    self,
-    config::{self, Security, SmtpConfig, Source},
-};
+
+use crate::backend::db::email::NewEmailSettings;
+
 use axum::{
     extract::{DefaultBodyLimit, Form, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -15,6 +16,9 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use codeyard_model::mail_config::Security;
+use codeyard_model::mail_config::SmtpConfig;
+use codeyard_model::mail_config::Source;
 use codeyard_webui::{app::Page, pages::admin::email as view};
 use std::sync::Arc;
 
@@ -34,7 +38,7 @@ fn parse_fields(fields: &Fields) -> Result<SmtpConfig, String> {
     };
     let config = SmtpConfig {
         host: text("host"),
-        port: config::parse_port(field(fields, "port"), security)?,
+        port: codeyard_model::mail_config::parse_port(field(fields, "port"), security)?,
         security,
         username: text("username"),
         password: None,
@@ -67,7 +71,7 @@ async fn save(
     // Inherit credentials only for an authenticated relay and only from valid environment
     // settings. An invalid old environment must not prevent saving its replacement.
     if password.is_empty() && !server.username.is_empty() {
-        let saved = db::email::get_email_settings(&state.pool)
+        let saved = crate::backend::db::email::get_email_settings(&state.pool)
             .await
             .map_err(|_| {
                 (
@@ -76,7 +80,7 @@ async fn save(
                 )
             })?;
         if saved.is_none() {
-            if let Ok(Some(env)) = config::from_env() {
+            if let Ok(Some(env)) = codeyard_model::mail_config::from_env() {
                 password = env.password.unwrap_or_default();
             }
         }
@@ -96,7 +100,7 @@ async fn save(
         })?;
         Some(sealed)
     };
-    let saved = db::email::save_email_settings(
+    let saved = crate::backend::db::email::save_email_settings(
         &state.pool,
         actor,
         session,
@@ -135,7 +139,7 @@ async fn current(
     pool: &codeyard_db_core::DbPool,
     submitted: Option<&Fields>,
 ) -> Result<view::Settings, String> {
-    let mut settings = match config::describe(pool).await? {
+    let mut settings = match crate::backend::email::config::describe(pool).await? {
         Some((config, source, password_set)) => view::Settings {
             source: match source {
                 Source::Database => "database",
@@ -198,7 +202,7 @@ async fn render(
         csrf_token: ctx.csrf_token.clone(),
         settings,
         can_store_password: ctx.state.secret_encryptor.is_some(),
-        public_url: crate::backend::api::http::config::public_origin(),
+        public_url: codeyard_model::http_config::public_origin(),
         message: problem.or(message),
         is_error,
     };
@@ -234,7 +238,8 @@ async fn save_form(
         return response;
     }
     let actor = ctx.user.as_ref().expect("admin guard").id;
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     match save(&ctx.state, actor, &session, &form).await {
         Ok(()) => ctx.redirect("/admin/email?saved=1"),
         Err((status, message)) => render(&ctx, status, Some(message), Some(&form)).await,
@@ -256,8 +261,9 @@ async fn test_form(
     }
     // The result page's own forms, such as the theme, return to the page and not the POST URL.
     ctx.return_to = Some("/admin/email".into());
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match email::send_test(
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    match crate::backend::email::send_test(
         &ctx.state.pool,
         ctx.state.secret_encryptor.as_deref(),
         &session,
@@ -275,12 +281,12 @@ async fn test_form(
         }
         Err(error) => {
             let status = match &error {
-                email::TestMailError::Authority(
+                crate::backend::email::TestMailError::Authority(
                     crate::backend::identity::sessions::AccountAuthorityError::SessionUnavailable,
                 ) => StatusCode::SERVICE_UNAVAILABLE,
-                email::TestMailError::Authority(_) => StatusCode::FORBIDDEN,
-                email::TestMailError::NoAddress => StatusCode::BAD_REQUEST,
-                email::TestMailError::Delivery(_) => StatusCode::BAD_GATEWAY,
+                crate::backend::email::TestMailError::Authority(_) => StatusCode::FORBIDDEN,
+                crate::backend::email::TestMailError::NoAddress => StatusCode::BAD_REQUEST,
+                crate::backend::email::TestMailError::Delivery(_) => StatusCode::BAD_GATEWAY,
             };
             render(
                 &ctx,

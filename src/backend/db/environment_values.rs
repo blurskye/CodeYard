@@ -1,10 +1,11 @@
 //! Environment values are delivered only to jobs targeting that environment.
-pub use super::organization_values::Kind;
-use crate::backend::crypto::{SecretEncryptor, SecretError};
+pub use crate::backend::db::organization_values::Kind;
 use chrono::{DateTime, Utc};
 use codeyard_actions::values::MAX_SCOPE_VALUES;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
+use codeyard_support::secrets::SecretEncryptor;
+use codeyard_support::secrets::SecretError;
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct EnvironmentValue {
@@ -70,7 +71,7 @@ pub fn validate(name: &str, value: &str) -> Result<(), ValueError> {
 
 native_operation!(crate::backend::db::postgres::environment_values::create,
     crate::backend::db::sqlite::environment_values::create,
-    fn create(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, name: &str) -> Result<(), ValueError>);
+    fn create(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, name: &str) -> Result<(), ValueError>);
 pub const ENVIRONMENTS_PER_PAGE: usize = 50;
 native_operation!(crate::backend::db::postgres::environment_values::environments,
     crate::backend::db::sqlite::environment_values::environments,
@@ -83,10 +84,10 @@ native_operation!(crate::backend::db::postgres::environment_values::list,
     fn list(pool: &DbPool, actor: i64, repo: i64, environment: &str, kind: Kind) -> Result<Vec<EnvironmentValue>, ValueError>);
 native_operation!(crate::backend::db::postgres::environment_values::save,
     crate::backend::db::sqlite::environment_values::save,
-    fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: impl Into<super::credentials::Actor>, repo: i64, environment: &str, input: &Save<'_>) -> Result<bool, ValueError>);
+    fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, environment: &str, input: &Save<'_>) -> Result<bool, ValueError>);
 native_operation!(crate::backend::db::postgres::environment_values::delete,
     crate::backend::db::sqlite::environment_values::delete,
-    fn delete(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, environment: &str, kind: Kind, name: &str) -> Result<(), ValueError>);
+    fn delete(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, environment: &str, kind: Kind, name: &str) -> Result<(), ValueError>);
 
 #[derive(sqlx::FromRow)]
 pub struct StoredValue {
@@ -120,7 +121,7 @@ pub async fn for_run(
     if variables.len() > MAX_SCOPE_VALUES {
         return Err(ValueError::Limit);
     }
-    super::variables::validate_all(&variables).map_err(|_| ValueError::Size)?;
+    crate::backend::db::variables::validate_all(&variables).map_err(|_| ValueError::Size)?;
     let mut secrets = Vec::new();
     if !fork {
         for row in workflow_values(pool, repo, environment, Kind::Secret).await? {
@@ -137,7 +138,8 @@ pub async fn for_run(
             ));
         }
     }
-    super::secrets::validate_repository_secrets(&secrets).map_err(|_| ValueError::SecretsSize)?;
+    crate::backend::db::secrets::validate_repository_secrets(&secrets)
+        .map_err(|_| ValueError::SecretsSize)?;
     Ok(WorkflowValues {
         secrets: secrets.into_iter().collect(),
         variables: variables.into_iter().collect(),

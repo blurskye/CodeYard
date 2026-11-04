@@ -1,8 +1,18 @@
 pub(crate) mod pages;
-use crate::backend::db::artifact_metadata::{
-    cacheable, Actor, Admission, Artifact, ClusterInput, Deployment, DeploymentInput, Environment,
-    Job, JobInput, Mutation, Record, Refusal, StorageInput,
-};
+use crate::backend::db::artifact_metadata::cacheable;
+use crate::backend::db::artifact_metadata::Actor;
+use crate::backend::db::artifact_metadata::Admission;
+use crate::backend::db::artifact_metadata::Artifact;
+use crate::backend::db::artifact_metadata::ClusterInput;
+use crate::backend::db::artifact_metadata::Deployment;
+use crate::backend::db::artifact_metadata::DeploymentInput;
+use crate::backend::db::artifact_metadata::Environment;
+use crate::backend::db::artifact_metadata::Job;
+use crate::backend::db::artifact_metadata::JobInput;
+use crate::backend::db::artifact_metadata::Mutation;
+use crate::backend::db::artifact_metadata::Record;
+use crate::backend::db::artifact_metadata::Refusal;
+use crate::backend::db::artifact_metadata::StorageInput;
 use anyhow::Result;
 use serde_json::{json, Value};
 use sqlx::{Sqlite, SqlitePool, Transaction};
@@ -20,7 +30,7 @@ async fn credential(tx: &mut Tx<'_>, actor: Actor) -> Result<()> {
         let job: Option<(i64,String)> = sqlx::query_as("SELECT r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=?1 AND (t.revoked_at IS NULL OR t.revoked_at>CAST(strftime('%s','now') AS INTEGER)-60) AND (r.status='running' OR julianday(r.completed_at)>julianday('now','-1 minute'))")
             .bind(actor.token).fetch_optional(&mut **tx).await?;
         let (repo, permissions) = job.ok_or(Refusal::Denied)?;
-        let permissions: crate::backend::ci::tokens::Permissions =
+        let permissions: codeyard_model::permissions::Permissions =
             serde_json::from_str(&permissions)?;
         anyhow::ensure!(
             actor.repo == Some(repo) && permissions.allows("artifact-metadata", true),
@@ -39,10 +49,10 @@ async fn writable(tx: &mut Tx<'_>, admission: &mut Admission, org: i64, repo: i6
     let actor = admission.actor;
     let result: Result<()> = async {
         anyhow::ensure!(actor.repo.is_none_or(|scope| scope == repo), Refusal::Missing);
-        let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND r.owner_kind='org' AND r.owner_org_id=?3 AND {})",super::repositories::access::readable_condition()))
+        let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND r.owner_kind='org' AND r.owner_org_id=?3 AND {})",crate::backend::db::sqlite::repositories::access::readable_condition()))
             .bind(actor.user).bind(repo).bind(org).fetch_one(&mut **tx).await?;
         anyhow::ensure!(readable, Refusal::Missing);
-        anyhow::ensure!(super::discussions::lock_write_authority(tx, actor.user, repo).await?, Refusal::Denied);
+        anyhow::ensure!(crate::backend::db::sqlite::discussions::lock_write_authority(tx, actor.user, repo).await?, Refusal::Denied);
         let belongs: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=?1 AND owner_kind='org' AND owner_org_id=?2)").bind(repo).bind(org).fetch_one(&mut **tx).await?;
         anyhow::ensure!(belongs, Refusal::Missing);
         Ok(())
@@ -72,7 +82,7 @@ async fn targets(
     }
     let actor = admission.actor;
     let result: Result<Vec<(i64, Option<i64>)>> = async {
-        let sql = crate::backend::db::artifact_metadata::target_candidates_sql(false, super::repositories::access::USER_REPO_ACCESS_SQL);
+        let sql = crate::backend::db::artifact_metadata::target_candidates_sql(false, crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL);
         let mut rows: Vec<(i64,Option<i64>)> = sqlx::query_as(&sql)
             .bind(org).bind(&artifact.digest).bind(actor.user).bind(actor.repo).bind(maximum as i64).fetch_all(&mut **tx).await?;
         if rows.is_empty() {
@@ -132,7 +142,7 @@ async fn put(tx: &mut Tx<'_>, record: NewRecord<'_>) -> Result<Record> {
     previous_authority(tx, record.actor, record.org, record.kind, &record.identity).await?;
     let artifact: i64 = sqlx::query_scalar("INSERT INTO artifact_metadata(repo_id,digest,name,version) VALUES(?1,?2,?3,?4) ON CONFLICT(repo_id,digest) DO UPDATE SET digest=excluded.digest RETURNING id")
         .bind(record.repo).bind(&record.artifact.digest).bind(&record.artifact.name).bind(&record.artifact.version).fetch_one(&mut **tx).await?;
-    let now = super::time::encode(super::time::now());
+    let now = crate::backend::db::sqlite::time::encode(crate::backend::db::sqlite::time::now());
     let id: i64 = sqlx::query_scalar("INSERT INTO artifact_metadata_records(org_id,artifact_id,kind,identity,cluster,logical_environment,physical_environment,document,attestation_id,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10) ON CONFLICT(org_id,kind,identity) DO UPDATE SET artifact_id=excluded.artifact_id,document=excluded.document,attestation_id=excluded.attestation_id,updated_at=excluded.updated_at RETURNING id")
         .bind(record.org).bind(artifact).bind(record.kind).bind(record.identity).bind(record.cluster).bind(record.environment.map_or("",|env|env.logical_environment.as_str())).bind(record.environment.map_or("",|env|env.physical_environment.as_str())).bind(serde_json::to_string(&record.document)?).bind(record.attestation).bind(now).fetch_one(&mut **tx).await?;
     Ok(sqlx::query_as("SELECT d.id,a.repo_id,d.kind,a.digest,a.name,a.version,d.document,d.attestation_id,d.created_at,d.updated_at FROM artifact_metadata_records d JOIN artifact_metadata a ON a.id=d.artifact_id WHERE d.id=?1").bind(id).fetch_one(&mut **tx).await?)
@@ -363,7 +373,7 @@ pub async fn list(
     kind: &str,
 ) -> Result<Vec<Record>> {
     use futures_util::TryStreamExt;
-    let sql = format!("SELECT d.id,a.repo_id,d.kind,a.digest,a.name,a.version,d.document,d.attestation_id,d.created_at,d.updated_at FROM artifact_metadata_records d JOIN artifact_metadata a ON a.id=d.artifact_id JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=?1 WHERE d.org_id=?2 AND r.owner_kind='org' AND r.owner_org_id=?2 AND a.digest=?3 AND d.kind=?4 AND (?5 IS NULL OR r.id=?5) AND {} ORDER BY d.id LIMIT 10001",super::repositories::access::readable_condition());
+    let sql = format!("SELECT d.id,a.repo_id,d.kind,a.digest,a.name,a.version,d.document,d.attestation_id,d.created_at,d.updated_at FROM artifact_metadata_records d JOIN artifact_metadata a ON a.id=d.artifact_id JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=?1 WHERE d.org_id=?2 AND r.owner_kind='org' AND r.owner_org_id=?2 AND a.digest=?3 AND d.kind=?4 AND (?5 IS NULL OR r.id=?5) AND {} ORDER BY d.id LIMIT 10001",crate::backend::db::sqlite::repositories::access::readable_condition());
     let mut stream = sqlx::query_as(&sql)
         .bind(actor.user)
         .bind(org)
@@ -380,11 +390,12 @@ pub async fn list(
 }
 
 async fn prune_jobs(tx: &mut Tx<'_>, scope: Option<(i64, i64, Option<i64>)>) -> Result<()> {
-    use crate::backend::db::artifact_metadata::{
-        JOB_GC_BATCH, JOB_HISTORY_LIMIT, JOB_HISTORY_SECONDS,
-    };
-    let cutoff =
-        super::time::encode(super::time::now() - chrono::Duration::seconds(JOB_HISTORY_SECONDS));
+    use crate::backend::db::artifact_metadata::JOB_GC_BATCH;
+    use crate::backend::db::artifact_metadata::JOB_HISTORY_LIMIT;
+    use crate::backend::db::artifact_metadata::JOB_HISTORY_SECONDS;
+    let cutoff = crate::backend::db::sqlite::time::encode(
+        crate::backend::db::sqlite::time::now() - chrono::Duration::seconds(JOB_HISTORY_SECONDS),
+    );
     sqlx::query("DELETE FROM artifact_metadata_jobs WHERE id IN (SELECT id FROM artifact_metadata_jobs WHERE status IN ('completed','failed') AND completed_at<?1 ORDER BY completed_at,id LIMIT ?2)")
         .bind(cutoff).bind(JOB_GC_BATCH).execute(&mut **tx).await?;
     if let Some((actor, org, repo)) = scope {
@@ -426,7 +437,9 @@ pub async fn enqueue(
     if noop {
         sqlx::query("UPDATE artifact_metadata_jobs SET started_at=?2,total_count=0 WHERE id=?1")
             .bind(id)
-            .bind(super::time::encode(super::time::now()))
+            .bind(crate::backend::db::sqlite::time::encode(
+                crate::backend::db::sqlite::time::now(),
+            ))
             .execute(&mut *tx)
             .await?;
     }
@@ -459,7 +472,7 @@ pub async fn process_job(pool: &SqlitePool, id: Option<i64>) -> Result<bool> {
         token: job.token_id,
         repo: job.scoped_repo,
     };
-    let started = super::time::encode(super::time::now());
+    let started = crate::backend::db::sqlite::time::encode(crate::backend::db::sqlite::time::now());
     let result = async {
         credential(&mut tx, actor).await?;
         let saved: JobInput = serde_json::from_str(&job.input)?;

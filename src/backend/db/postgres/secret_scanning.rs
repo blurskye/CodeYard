@@ -15,7 +15,8 @@ pub async fn protection(
 ) -> Result<Option<Bypass>> {
     let mut tx = pool.begin().await?;
     ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::postgres::discussions::lock_write_authority(&mut tx, actor, repo)
+            .await?,
         Refusal::Denied
     );
     // Serialize placeholder lookup and insertion for concurrent retries of a protected push.
@@ -66,7 +67,8 @@ pub async fn bypass(
     );
     let mut tx = pool.begin().await?;
     ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::postgres::discussions::lock_write_authority(&mut tx, actor, repo)
+            .await?,
         Refusal::Denied
     );
     let protected: bool = sqlx::query_scalar("SELECT COALESCE((SELECT push_protection FROM secret_scanning_settings WHERE repo_id=$1),false)").bind(repo).fetch_one(&mut *tx).await?;
@@ -91,7 +93,7 @@ pub async fn bypass(
 }
 
 async fn org_authority(tx: &mut Transaction<'_, Postgres>, actor: i64, org: i64) -> Result<()> {
-    super::users::transitions::lock_accounts_shared(tx, &[actor]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(tx, &[actor]).await?;
     let exists: Option<i64> =
         sqlx::query_scalar("SELECT id FROM organizations WHERE id=$1 FOR UPDATE")
             .bind(org)
@@ -99,7 +101,9 @@ async fn org_authority(tx: &mut Transaction<'_, Postgres>, actor: i64, org: i64)
             .await?;
     ensure!(exists.is_some(), Refusal::Missing);
     let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND m.user_id=$2 AND m.role IN ('owner','admin') AND NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM org_memberships owners JOIN users active ON active.id=owners.user_id WHERE owners.org_id=m.org_id AND owners.role='owner' AND NOT active.is_banned AND NOT active.must_change_password))").bind(org).bind(actor).fetch_one(&mut **tx).await?;
-    let allowed = allowed || super::organizations::roles::manages_security(tx, actor, org).await?;
+    let allowed = allowed
+        || crate::backend::db::postgres::organizations::roles::manages_security(tx, actor, org)
+            .await?;
     ensure!(allowed, Refusal::Denied);
     Ok(())
 }
@@ -162,7 +166,7 @@ pub async fn settings(pool: &PgPool, repo: i64) -> Result<Settings> {
 }
 
 async fn authorize(tx: &mut Transaction<'_, Postgres>, actor: i64, repo: i64) -> Result<()> {
-    if !super::discussions::lock_archive_authority(tx, actor, repo).await? {
+    if !crate::backend::db::postgres::discussions::lock_archive_authority(tx, actor, repo).await? {
         // The owning organization's security managers handle alerts without administering
         // the repository.
         let org = sqlx::query_scalar::<_, Option<i64>>("SELECT owner_org_id FROM repositories WHERE id=$1 AND owner_kind='org' AND NOT EXISTS(SELECT 1 FROM repository_migration_locks l WHERE l.repo_id=repositories.id)")
@@ -171,7 +175,10 @@ async fn authorize(tx: &mut Transaction<'_, Postgres>, actor: i64, repo: i64) ->
             .await?
             .flatten();
         let manager = match org {
-            Some(org) => super::organizations::roles::manages_security(tx, actor, org).await?,
+            Some(org) => {
+                crate::backend::db::postgres::organizations::roles::manages_security(tx, actor, org)
+                    .await?
+            }
             None => false,
         };
         ensure!(manager, Refusal::Denied);
@@ -198,7 +205,10 @@ pub async fn save_settings(
     );
     let mut tx = pool.begin().await?;
     ensure!(
-        super::discussions::lock_repository_mutation_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::postgres::discussions::lock_repository_mutation_authority(
+            &mut tx, actor, repo
+        )
+        .await?,
         Refusal::Denied
     );
     // An enforced organization configuration fixes the settings it sets.
@@ -347,7 +357,7 @@ pub async fn update_alert(
                 .await?
                 .ok_or(Refusal::Invalid)?;
             ensure!(
-                super::repositories::access::user_repo_access_in_transaction(&mut tx, id, repo)
+                crate::backend::db::postgres::repositories::access::user_repo_access_in_transaction(&mut tx, id, repo)
                     .await?
                     .can_write(),
                 Refusal::Invalid

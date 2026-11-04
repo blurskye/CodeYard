@@ -1,11 +1,10 @@
 //! Stored state that GitHub sends with webhook objects: topics, labels, assignees, milestones,
 //! counts and reactions. The payload builders run without the database, so `complete` reads
 //! these fields before a delivery is recorded and sent.
-use crate::backend::db;
+
 use crate::backend::db::assignees::AssignedItem;
 use crate::backend::db::reactions::Subject;
-use crate::backend::repositories::access;
-use crate::backend::webhooks::payloads;
+
 use codeyard_db_core::models::Release;
 use codeyard_db_core::models::ReleaseAsset;
 use codeyard_db_core::models::Repository;
@@ -30,11 +29,12 @@ async fn fill(
         .filter(|value| value.is_object())
     {
         // A source subscription does not grant access to its private remediation forks.
-        let forks = db::repositories::discovery::public_fork_counts(pool, &[repo.id])
-            .await?
-            .remove(&repo.id)
-            .unwrap_or_default();
-        payloads::set_fork_counts(repository, forks);
+        let forks =
+            crate::backend::db::repositories::discovery::public_fork_counts(pool, &[repo.id])
+                .await?
+                .remove(&repo.id)
+                .unwrap_or_default();
+        crate::backend::webhooks::payloads::set_fork_counts(repository, forks);
         repository["topics"] = json!(topics(pool, repo.id).await?);
     }
     if let Some(item) = issue_item(&payload["issue"]) {
@@ -87,19 +87,21 @@ async fn fill(
     // A review comment comes with its pull request and no issue, so the issue branch skipped it.
     if payload["issue"].is_null() && payload["pull_request"].is_object() {
         if let Some(user) = payload["comment"]["user"]["id"].as_i64() {
-            payload["comment"]["author_association"] =
-                json!(access::author_association(pool, repo, user).await?);
+            payload["comment"]["author_association"] = json!(
+                crate::backend::repositories::access::author_association(pool, repo, user).await?
+            );
         }
         if payload["comment"].is_object() {
             review_comment(pool, repo, &mut payload["comment"]).await?;
         }
     }
     if let Some(user) = payload["review"]["user"]["id"].as_i64() {
-        payload["review"]["author_association"] =
-            json!(access::author_association(pool, repo, user).await?);
+        payload["review"]["author_association"] = json!(
+            crate::backend::repositories::access::author_association(pool, repo, user).await?
+        );
     }
     if let Some(id) = payload["release"]["id"].as_i64() {
-        if let Some(row) = db::releases::get_release(pool, repo.id, id).await? {
+        if let Some(row) = crate::backend::db::releases::get_release(pool, repo.id, id).await? {
             payload["release"]["assets"] =
                 json!(release_assets(pool, repo, owner, &row.release).await?);
         }
@@ -109,7 +111,7 @@ async fn fill(
 
 async fn topics(pool: &DbPool, repo_id: i64) -> anyhow::Result<Vec<String>> {
     Ok(
-        db::repositories::topics::repository_topics(pool, &[repo_id])
+        crate::backend::db::repositories::topics::repository_topics(pool, &[repo_id])
             .await?
             .remove(&repo_id)
             .unwrap_or_default(),
@@ -126,7 +128,7 @@ async fn still_here(
     let AssignedItem::Issue(id) = item else {
         return Ok(true);
     };
-    Ok(db::issues::get_issue_by_id(pool, id)
+    Ok(crate::backend::db::issues::get_issue_by_id(pool, id)
         .await?
         .is_some_and(|issue| {
             issue.repo_id == repo.id && Some(i64::from(issue.number)) == event["number"].as_i64()
@@ -150,7 +152,9 @@ async fn comment(
     comment: &mut Value,
 ) -> anyhow::Result<()> {
     if let Some(user) = comment["user"]["id"].as_i64() {
-        comment["author_association"] = json!(access::author_association(pool, repo, user).await?);
+        comment["author_association"] = json!(
+            crate::backend::repositories::access::author_association(pool, repo, user).await?
+        );
     }
     if comment.get("performed_via_github_app").is_none() {
         comment["performed_via_github_app"] = Value::Null;
@@ -166,9 +170,11 @@ async fn comment(
         AssignedItem::PullRequest(_) => Subject::PullRequestComment,
     };
     // Conversation comment ids interleave the issue and pull request tables; see
-    // `payloads::conversation_comment_id`.
-    let counts = db::reactions::reaction_counts(pool, subject.name(), &[id / 2], 0).await?;
-    comment["reactions"] = payloads::reaction_rollup(&format!("{url}/reactions"), &counts);
+    // `codeyard_model::webhook_ids::conversation_comment_id`.
+    let counts =
+        crate::backend::db::reactions::reaction_counts(pool, subject.name(), &[id / 2], 0).await?;
+    comment["reactions"] =
+        crate::backend::webhooks::payloads::reaction_rollup(&format!("{url}/reactions"), &counts);
     Ok(())
 }
 
@@ -180,9 +186,14 @@ pub(crate) async fn review_comment_reactions(
     let (Some(id), Some(url)) = (comment["id"].as_i64(), comment["url"].as_str()) else {
         return Ok(Value::Null);
     };
-    let counts =
-        db::reactions::reaction_counts(pool, Subject::PullRequestComment.name(), &[id], 0).await?;
-    Ok(payloads::reaction_rollup(
+    let counts = crate::backend::db::reactions::reaction_counts(
+        pool,
+        Subject::PullRequestComment.name(),
+        &[id],
+        0,
+    )
+    .await?;
+    Ok(crate::backend::webhooks::payloads::reaction_rollup(
         &format!("{url}/reactions"),
         &counts,
     ))
@@ -202,26 +213,34 @@ async fn review_comment(
         return Ok(());
     };
     let Some(comment) =
-        db::pull_requests::reviews::get_pull_request_comment_by_id(pool, id).await?
+        crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(pool, id)
+            .await?
     else {
         return Ok(());
     };
     let Some(path) = comment.path.as_deref() else {
         return Ok(());
     };
-    let Some(pull) =
-        db::pull_requests::records::get_pull_request_by_id(pool, comment.pull_request_id)
-            .await?
-            .filter(|pull| pull.repo_id == repo.id)
-    else {
+    let Some(pull) = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+        pool,
+        comment.pull_request_id,
+    )
+    .await?
+    .filter(|pull| pull.repo_id == repo.id) else {
         return Ok(());
     };
-    let (base, head) = payloads::review_comment_revisions(&comment, &pull);
+    let (base, head) =
+        crate::backend::webhooks::payloads::review_comment_revisions(&comment, &pull);
     match crate::backend::repositories::store::repo_store(repo, None)
         .diff_file(base, head, path)
         .await
     {
-        Ok(diff) => payloads::review_comment_diff(document, &comment, &pull, &diff.files),
+        Ok(diff) => crate::backend::webhooks::payloads::review_comment_diff(
+            document,
+            &comment,
+            &pull,
+            &diff.files,
+        ),
         Err(error) => {
             tracing::warn!(repo_id = repo.id, comment_id = id, %error, "review comment diff could not be read for a webhook")
         }
@@ -236,14 +255,16 @@ async fn pull_request(
     id: i64,
     document: &mut Value,
 ) -> anyhow::Result<()> {
-    let Some(pull) = db::pull_requests::records::get_pull_request_by_id(pool, id)
+    let Some(pull) = crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, id)
         .await?
         .filter(|pull| pull.repo_id == repo.id)
     else {
         return Ok(());
     };
-    document["author_association"] =
-        json!(access::author_association(pool, repo, pull.author_id).await?);
+    document["author_association"] = json!(
+        crate::backend::repositories::access::author_association(pool, repo, pull.author_id)
+            .await?
+    );
     let base_user = document["base"]["repo"]["owner"].clone();
     let base_branch = document["base"]["ref"]
         .as_str()
@@ -259,10 +280,14 @@ async fn pull_request(
     let head = match pull.head_repo_id {
         Some(head_id) if head_id == repo.id => Some((repo.clone(), owner.to_owned())),
         Some(head_id) => {
-            match db::repositories::records::get_repository_by_id(pool, head_id).await? {
-                Some(head) => db::repositories::records::repository_owner_name(pool, head.id)
-                    .await?
-                    .map(|name| (head, name)),
+            match crate::backend::db::repositories::records::get_repository_by_id(pool, head_id)
+                .await?
+            {
+                Some(head) => {
+                    crate::backend::db::repositories::records::repository_owner_name(pool, head.id)
+                        .await?
+                        .map(|name| (head, name))
+                }
                 None => None,
             }
         }
@@ -270,7 +295,7 @@ async fn pull_request(
     };
     match head {
         Some((head, head_owner)) => {
-            let mut value = payloads::repository(&head, &head_owner);
+            let mut value = crate::backend::webhooks::payloads::repository(&head, &head_owner);
             document["head"]["label"] = json!(format!("{head_owner}:{head_branch}"));
             document["head"]["user"] = value["owner"].clone();
             // A private fork is described only to its own readers. The base repository's
@@ -282,13 +307,16 @@ async fn pull_request(
                 value["topics"] = json!(topics(pool, head.id).await?);
                 // The fork may have turned private while its topics were read.
                 let public = !fork
-                    || db::repositories::records::get_repository_by_id(pool, head.id)
-                        .await?
-                        .is_some_and(|now| !now.is_private);
+                    || crate::backend::db::repositories::records::get_repository_by_id(
+                        pool, head.id,
+                    )
+                    .await?
+                    .is_some_and(|now| !now.is_private);
                 if public {
                     if fork {
                         let mut payload = json!({"repository":value});
-                        super::set_open_issues(pool, head.id, &mut payload).await;
+                        crate::backend::webhooks::set_open_issues(pool, head.id, &mut payload)
+                            .await;
                         value = payload["repository"].take();
                     }
                     value
@@ -308,48 +336,70 @@ async fn pull_request(
         document["head"]["user"] = Value::Null;
         document["head"]["label"] = json!(head_branch);
     }
-    let labels = db::labels::get_pull_request_labels(pool, pull.repo_id, pull.id).await?;
+    let labels =
+        crate::backend::db::labels::get_pull_request_labels(pool, pull.repo_id, pull.id).await?;
     document["labels"] = json!(labels
         .iter()
-        .map(|label| payloads::label(label, owner, &repo.name))
+        .map(|label| crate::backend::webhooks::payloads::label(label, owner, &repo.name))
         .collect::<Vec<_>>());
     if let Some(milestone) = pull.milestone_id {
-        if let Some(summary) = db::milestones::get_milestone_by_id(pool, repo.id, milestone).await?
+        if let Some(summary) =
+            crate::backend::db::milestones::get_milestone_by_id(pool, repo.id, milestone).await?
         {
             let creator = match summary.milestone.creator_id {
-                Some(id) => db::users::accounts::get_user_by_id(pool, id).await?,
+                Some(id) => crate::backend::db::users::accounts::get_user_by_id(pool, id).await?,
                 None => None,
             };
-            document["milestone"] =
-                payloads::milestone(&summary, creator.as_ref(), owner, &repo.name);
+            document["milestone"] = crate::backend::webhooks::payloads::milestone(
+                &summary,
+                creator.as_ref(),
+                owner,
+                &repo.name,
+            );
         }
     }
     let mut assignees = Vec::new();
-    for name in db::assignees::list_assignees(pool, AssignedItem::PullRequest(pull.id)).await? {
-        if let Some(user) = db::users::accounts::get_user_by_username(pool, &name).await? {
-            assignees.push(payloads::user(&user));
+    for name in
+        crate::backend::db::assignees::list_assignees(pool, AssignedItem::PullRequest(pull.id))
+            .await?
+    {
+        if let Some(user) =
+            crate::backend::db::users::accounts::get_user_by_username(pool, &name).await?
+        {
+            assignees.push(crate::backend::webhooks::payloads::user(&user));
         }
     }
     document["assignee"] = assignees.first().cloned().unwrap_or(Value::Null);
     document["assignees"] = json!(assignees);
-    let reviewers = db::pull_requests::reviews::list_pull_request_reviewers(pool, pull.id).await?;
-    document["requested_reviewers"] =
-        json!(reviewers.iter().map(payloads::user).collect::<Vec<_>>());
-    let teams = db::pull_requests::team_reviewers::list(pool, repo.id, Some(pull.id), None).await?;
+    let reviewers =
+        crate::backend::db::pull_requests::reviews::list_pull_request_reviewers(pool, pull.id)
+            .await?;
+    document["requested_reviewers"] = json!(reviewers
+        .iter()
+        .map(crate::backend::webhooks::payloads::user)
+        .collect::<Vec<_>>());
+    let teams =
+        crate::backend::db::pull_requests::team_reviewers::list(pool, repo.id, Some(pull.id), None)
+            .await?;
     document["requested_teams"] = json!(teams
         .iter()
-        .map(|row| payloads::team_document(&row.team, &row.org_slug, row.permission))
+        .map(|row| crate::backend::webhooks::payloads::team_document(
+            &row.team,
+            &row.org_slug,
+            row.permission
+        ))
         .collect::<Vec<_>>());
     let (comments, review_comments) =
-        db::pull_requests::reviews::pull_request_comment_counts(pool, pull.id).await?;
+        crate::backend::db::pull_requests::reviews::pull_request_comment_counts(pool, pull.id)
+            .await?;
     document["comments"] = json!(comments);
     document["review_comments"] = json!(review_comments);
     document["auto_merge"] = auto_merge(pool, pull.id).await?;
     document["merged_by"] = match pull.merged_by_id {
-        Some(id) => db::users::accounts::get_user_by_id(pool, id)
+        Some(id) => crate::backend::db::users::accounts::get_user_by_id(pool, id)
             .await?
             .as_ref()
-            .map_or(Value::Null, payloads::user),
+            .map_or(Value::Null, crate::backend::webhooks::payloads::user),
         None => Value::Null,
     };
     Ok(())
@@ -357,12 +407,18 @@ async fn pull_request(
 
 /// A pull request's `auto_merge` object, or null when auto-merge is not enabled.
 pub(crate) async fn auto_merge(pool: &DbPool, pull_request_id: i64) -> anyhow::Result<Value> {
-    let Some(entry) = db::pull_requests::auto_merge::get_auto_merge(pool, pull_request_id).await?
+    let Some(entry) =
+        crate::backend::db::pull_requests::auto_merge::get_auto_merge(pool, pull_request_id)
+            .await?
     else {
         return Ok(Value::Null);
     };
-    let enabled_by = db::users::accounts::get_user_by_id(pool, entry.request.enabled_by).await?;
-    Ok(payloads::auto_merge(&entry.request, enabled_by.as_ref()))
+    let enabled_by =
+        crate::backend::db::users::accounts::get_user_by_id(pool, entry.request.enabled_by).await?;
+    Ok(crate::backend::webhooks::payloads::auto_merge(
+        &entry.request,
+        enabled_by.as_ref(),
+    ))
 }
 
 /// The documents of a release's assets whose stored files remain.
@@ -372,27 +428,31 @@ pub(crate) async fn release_assets(
     owner: &str,
     release: &Release,
 ) -> anyhow::Result<Vec<Value>> {
-    Ok(db::releases::list_asset_files(pool, release.id)
-        .await?
-        .into_iter()
-        .map(|row| {
-            let uploader = row.uploader_id.zip(row.uploader_name).map(|(id, login)| {
-                payloads::simple_person(&payloads::Person {
-                    id,
-                    login,
-                    site_admin: row.uploader_is_admin.unwrap_or(false),
-                })
-            });
-            payloads::release_asset(
-                &row.asset,
-                release,
-                owner,
-                &repo.name,
-                uploader,
-                &row.sha256_hex,
-            )
-        })
-        .collect())
+    Ok(
+        crate::backend::db::releases::list_asset_files(pool, release.id)
+            .await?
+            .into_iter()
+            .map(|row| {
+                let uploader = row.uploader_id.zip(row.uploader_name).map(|(id, login)| {
+                    crate::backend::webhooks::payloads::simple_person(
+                        &crate::backend::webhooks::payloads::Person {
+                            id,
+                            login,
+                            site_admin: row.uploader_is_admin.unwrap_or(false),
+                        },
+                    )
+                });
+                crate::backend::webhooks::payloads::release_asset(
+                    &row.asset,
+                    release,
+                    owner,
+                    &repo.name,
+                    uploader,
+                    &row.sha256_hex,
+                )
+            })
+            .collect(),
+    )
 }
 
 /// A release asset as REST and webhooks show it. `None` when its stored file is gone.
@@ -403,16 +463,20 @@ pub(crate) async fn release_asset(
     release: &Release,
     asset: &ReleaseAsset,
 ) -> anyhow::Result<Option<Value>> {
-    let Some(file) = db::files::get_file_by_id(pool, asset.file_id).await? else {
+    let Some(file) = crate::backend::db::files::get_file_by_id(pool, asset.file_id).await? else {
         return Ok(None);
     };
     let uploader = match file.user_id {
-        Some(id) => db::users::accounts::get_user_by_id(pool, id)
+        Some(id) => crate::backend::db::users::accounts::get_user_by_id(pool, id)
             .await?
-            .map(|user| payloads::simple_person(&payloads::Person::of(&user))),
+            .map(|user| {
+                crate::backend::webhooks::payloads::simple_person(
+                    &crate::backend::webhooks::payloads::Person::of(&user),
+                )
+            }),
         None => None,
     };
-    Ok(Some(payloads::release_asset(
+    Ok(Some(crate::backend::webhooks::payloads::release_asset(
         asset,
         release,
         owner,

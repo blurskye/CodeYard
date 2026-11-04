@@ -70,7 +70,7 @@ pub fn state(value: &str) -> (&'static str, Option<&'static str>) {
         .unwrap_or(("completed", None))
 }
 pub(crate) fn state_sql(pg: bool, run: &str) -> String {
-    let protection = super::deployment_protection::waiting_sql(pg, run);
+    let protection = crate::backend::db::deployment_protection::waiting_sql(pg, run);
     format!("CASE WHEN {run}.status='queued' AND ({run}.approval_required OR {protection}) THEN 'waiting' ELSE {run}.status END")
 }
 

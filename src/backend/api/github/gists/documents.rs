@@ -1,5 +1,6 @@
 use super::*;
-use crate::backend::{gists::LoadedGist, webhooks::payloads};
+use crate::backend::gists::LoadedGist;
+
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -43,11 +44,20 @@ pub(super) async fn base(state: &AppState, loaded: &LoadedGist, contents: bool) 
         });
         files.insert(
             entry.path.clone(),
-            payloads::gist_file(&loaded.gist.id, &loaded.snapshot.sha, entry, inline),
+            crate::backend::webhooks::payloads::gist_file(
+                &loaded.gist.id,
+                &loaded.snapshot.sha,
+                entry,
+                inline,
+            ),
         );
     }
     // The entire file list is present; content truncation belongs to each file.
-    Ok(payloads::gist(&loaded.gist, &owner, Value::Object(files)))
+    Ok(crate::backend::webhooks::payloads::gist(
+        &loaded.gist,
+        &owner,
+        Value::Object(files),
+    ))
 }
 pub(super) async fn detail(state: &AppState, loaded: &LoadedGist) -> Result<Value> {
     let mut value = base(state, loaded, true).await?;
@@ -70,8 +80,8 @@ pub(super) async fn detail(state: &AppState, loaded: &LoadedGist) -> Result<Valu
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
         // GitHub lists each fork's owner as a full public profile.
-        let user = super::super::users::document(state, &user, None).await?;
-        entries.push(json!({"id":fork.id,"url":super::super::api_url(&format!("/gists/{}",fork.id)),"user":user,"created_at":fork.created_at,"updated_at":fork.updated_at}));
+        let user = crate::backend::api::github::users::document(state, &user, None).await?;
+        entries.push(json!({"id":fork.id,"url":crate::backend::api::github::api_url(&format!("/gists/{}",fork.id)),"user":user,"created_at":fork.created_at,"updated_at":fork.updated_at}));
     }
     value["forks"] = json!(entries);
     value["fork_of"] = Value::Null;
@@ -114,7 +124,7 @@ pub(super) async fn history(
     let mut entries = Vec::new();
     for revision in revisions {
         entries.push(
-            payloads::gist_revision(
+            crate::backend::webhooks::payloads::gist_revision(
                 &loaded.gist.id,
                 &revision,
                 authors.get(&revision.author_email),
@@ -135,7 +145,7 @@ pub(super) async fn comment(
             .map_err(Error::unavailable)?,
         None => None,
     };
-    Ok(payloads::gist_comment(
+    Ok(crate::backend::webhooks::payloads::gist_comment(
         &gist.id,
         gist.owner_id,
         comment,

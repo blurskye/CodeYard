@@ -1,6 +1,7 @@
 //! One bounded length-prefixed JSON request, then directional binary frames.
 //! No pack is accumulated: each frame is at most 32 KiB and IO is backpressured.
-use super::validation::{RefUpdate, MAX_HEADER};
+use crate::backend::repositories::git_sessions::validation::RefUpdate;
+use crate::backend::repositories::git_sessions::validation::MAX_HEADER;
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -34,7 +35,7 @@ pub(crate) enum Request {
         serve_command: String,
     },
     Serve {
-        credential: super::ReceiveCredential,
+        credential: crate::backend::repositories::git_sessions::ReceiveCredential,
         command: String,
         git_protocol: Option<String>,
     },

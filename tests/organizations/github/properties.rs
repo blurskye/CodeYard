@@ -1,8 +1,8 @@
 use super::request;
-use crate::support::{database::Database, http_client::Client, organizations::applied};
-use codeyard::backend::db;
-use codeyard::backend::db::organizations;
-use codeyard::backend::db::organizations::properties;
+use crate::support::{
+    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+};
+
 use codeyard::backend::db::organizations::properties::PropertyValue;
 use codeyard::backend::db::organizations::properties::ValueInput;
 use codeyard::backend::db::organizations::NewOrganization;
@@ -10,7 +10,7 @@ use codeyard::backend::db::organizations::OrganizationProfile;
 use codeyard::backend::db::repositories::creation::NewRepository;
 use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
 use codeyard::backend::db::repositories::creation::RepositoryTarget;
-use codeyard::backend::identity::tokens;
+
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
@@ -34,7 +34,7 @@ async fn repository(
     let disk = uuid::Uuid::new_v4().to_string();
     let git = git2::Repository::init_bare(root.join(&disk)).unwrap();
     git.set_head("refs/heads/main").unwrap();
-    db::repositories::creation::insert_repository(
+    codeyard::backend::db::repositories::creation::insert_repository(
         f.pool(),
         NewRepository {
             owner: RepositoryCreationOwner {
@@ -62,7 +62,7 @@ async fn contract(pg: bool) {
     let outside = f.actor("outside").await;
     let delegated = f.actor("delegated").await;
     let org = applied(
-        organizations::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -71,7 +71,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let other = applied(
-        organizations::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("foreign", OrganizationProfile::new(None, None).unwrap())
@@ -82,9 +82,15 @@ async fn contract(pg: bool) {
     );
     for (user, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
         applied(
-            organizations::add_organization_member(f.pool(), owner, org.id, user, role)
-                .await
-                .unwrap(),
+            codeyard::backend::db::organizations::add_organization_member(
+                f.pool(),
+                owner,
+                org.id,
+                user,
+                role,
+            )
+            .await
+            .unwrap(),
         );
     }
     let root = tempfile::tempdir().unwrap();
@@ -101,7 +107,7 @@ async fn contract(pg: bool) {
         (delegated, "write"),
     ] {
         let browser = Client::login(&router, f.pool(), user).await;
-        let token = tokens::create(
+        let token = codeyard::backend::identity::tokens::create(
             f.pool(),
             user,
             Some(&browser.session),
@@ -298,7 +304,7 @@ async fn contract(pg: bool) {
         &[outside, first.id],
     )
     .await;
-    properties::set_repository_values(
+    codeyard::backend::db::organizations::properties::set_repository_values(
         f.pool(),
         outside,
         first.id,
@@ -309,25 +315,37 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(properties::set_repository_values(
+    assert!(
+        codeyard::backend::db::organizations::properties::set_repository_values(
+            f.pool(),
+            outside,
+            first.id,
+            &[ValueInput {
+                property_name: "label".into(),
+                value: Some(PropertyValue::String("denied".into()))
+            }]
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        codeyard::backend::db::organizations::properties::repository(
+            f.pool(),
+            Some(outside),
+            second.id
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+    let visible = codeyard::backend::db::organizations::properties::repository(
         f.pool(),
-        outside,
+        Some(outside),
         first.id,
-        &[ValueInput {
-            property_name: "label".into(),
-            value: Some(PropertyValue::String("denied".into()))
-        }]
     )
     .await
-    .is_err());
-    assert!(properties::repository(f.pool(), Some(outside), second.id)
-        .await
-        .unwrap()
-        .is_none());
-    let visible = properties::repository(f.pool(), Some(outside), first.id)
-        .await
-        .unwrap()
-        .unwrap();
+    .unwrap()
+    .unwrap();
     assert!(visible.repository_admin);
     assert!(!visible.organization_owner);
     // PUT and batch PATCH replace optional definition fields rather than merging old values.
@@ -335,17 +353,19 @@ async fn contract(pg: bool) {
     assert_eq!(reset["values_editable_by"], "org_actors");
     assert!(reset["default_value"].is_null());
     assert!(reset["description"].is_null());
-    assert!(properties::set_repository_values(
-        f.pool(),
-        outside,
-        first.id,
-        &[ValueInput {
-            property_name: "env".into(),
-            value: Some(PropertyValue::String("prod".into()))
-        }]
-    )
-    .await
-    .is_err());
+    assert!(
+        codeyard::backend::db::organizations::properties::set_repository_values(
+            f.pool(),
+            outside,
+            first.id,
+            &[ValueInput {
+                property_name: "env".into(),
+                value: Some(PropertyValue::String("prod".into()))
+            }]
+        )
+        .await
+        .is_err()
+    );
     // Incompatible select changes and invalid bulk definitions preserve every previous definition/value.
     request(&router,MANY,"PATCH",schema,write,json!({"properties":[{"property_name":"temporary","value_type":"string"},{"property_name":"env","value_type":"single_select","allowed_values":["only"]}]}),422).await;
     request(
@@ -378,7 +398,7 @@ async fn contract(pg: bool) {
         422,
     )
     .await;
-    let denied = db::repositories::creation::insert_repository_with_properties(
+    let denied = codeyard::backend::db::repositories::creation::insert_repository_with_properties(
         f.pool(),
         NewRepository {
             owner: RepositoryCreationOwner {
@@ -400,8 +420,8 @@ async fn contract(pg: bool) {
     .await
     .unwrap_err();
     assert!(matches!(
-        denied.downcast_ref::<properties::Refusal>(),
-        Some(properties::Refusal::Denied)
+        denied.downcast_ref::<codeyard::backend::db::organizations::properties::Refusal>(),
+        Some(codeyard::backend::db::organizations::properties::Refusal::Denied)
     ));
     assert_eq!(
         f.scalar(
@@ -447,7 +467,7 @@ async fn contract(pg: bool) {
         source_id: None,
     };
     assert!(
-        db::repositories::creation::insert_repository(f.pool(), input())
+        codeyard::backend::db::repositories::creation::insert_repository(f.pool(), input())
             .await
             .is_err()
     );
@@ -459,7 +479,7 @@ async fn contract(pg: bool) {
         .await,
         0
     );
-    let future = db::repositories::creation::insert_repository_with_properties(
+    let future = codeyard::backend::db::repositories::creation::insert_repository_with_properties(
         f.pool(),
         input(),
         &[ValueInput {
@@ -471,16 +491,20 @@ async fn contract(pg: bool) {
     .unwrap()
     .unwrap();
     assert_eq!(
-        properties::repository(f.pool(), Some(owner), future.id)
-            .await
-            .unwrap()
-            .unwrap()
-            .values
-            .properties
-            .iter()
-            .find(|value| value.property_name == "ticket")
-            .unwrap()
-            .value,
+        codeyard::backend::db::organizations::properties::repository(
+            f.pool(),
+            Some(owner),
+            future.id
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .values
+        .properties
+        .iter()
+        .find(|value| value.property_name == "ticket")
+        .unwrap()
+        .value,
         Some(PropertyValue::String("new".into()))
     );
     assert_eq!(

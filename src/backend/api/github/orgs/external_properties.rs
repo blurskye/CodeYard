@@ -1,6 +1,12 @@
 //! External property values remain separate from organization-defined custom properties.
-use super::{auth, outcome, target, AppState, Error, Result};
-use crate::backend::db::organizations::external_properties::{self as data, RepositoryValue};
+use crate::backend::api::github::orgs::auth;
+use crate::backend::api::github::orgs::outcome;
+use crate::backend::api::github::orgs::target;
+use crate::backend::api::github::orgs::AppState;
+use crate::backend::api::github::orgs::Error;
+use crate::backend::api::github::orgs::Result;
+use crate::backend::db::organizations::external_properties as data;
+use crate::backend::db::organizations::external_properties::RepositoryValue;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},

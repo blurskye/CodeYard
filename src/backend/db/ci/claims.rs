@@ -44,7 +44,7 @@ pub(crate) fn candidates_sql(pg: bool) -> String {
     } else {
         "EXISTS(SELECT 1 FROM json_each(n.roles) role WHERE role.value='runner')"
     };
-    let blockers = super::super::action_concurrency::blockers_sql(true)
+    let blockers = crate::backend::db::action_concurrency::blockers_sql(true)
         .trim_start_matches("SELECT ")
         .replace("$1", "request.repo_id")
         .replace("$2", "request.name_key")

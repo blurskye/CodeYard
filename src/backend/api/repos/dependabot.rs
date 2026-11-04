@@ -1,16 +1,13 @@
 //! Native security forms share alert reconciliation and live mutation authority with REST.
-use super::{
-    chrome::{self, Loaded},
-    forms::authorize_post,
-};
-use crate::backend::{
-    api::http::{context::PageContext, render::redirect_response},
-    app::AppState,
-    db::{
-        self,
-        dependabot_alerts::{self as store, Update},
-    },
-};
+
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::render::redirect_response;
+use crate::backend::api::repos::chrome::Loaded;
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::app::AppState;
+
+use crate::backend::db::dependabot_alerts as store;
+use crate::backend::db::dependabot_alerts::Update;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -41,7 +38,7 @@ async fn open(
     name: &str,
 ) -> Result<(PageContext, Loaded), Response> {
     let ctx = PageContext::load(state, headers, uri).await?;
-    let loaded = chrome::load_database(&ctx, owner, name).await?;
+    let loaded = crate::backend::api::repos::chrome::load_database(&ctx, owner, name).await?;
     if ctx.user.is_none() {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Dependabot alerts not found."));
     }
@@ -54,11 +51,11 @@ fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
             "A live unrestricted credential is required.",
         );
     }
-    use db::advisories::Refusal;
+    use codeyard_model::advisories::Refusal;
     if let Some(
-        graph @ (db::dependency_graph::GraphError::Limit
-        | db::dependency_graph::GraphError::Disabled),
-    ) = error.downcast_ref::<db::dependency_graph::GraphError>()
+        graph @ (codeyard_model::dependency_graph::GraphError::Limit
+        | codeyard_model::dependency_graph::GraphError::Disabled),
+    ) = error.downcast_ref::<codeyard_model::dependency_graph::GraphError>()
     {
         return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, &graph.to_string());
     }
@@ -75,7 +72,7 @@ fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
             StatusCode::CONFLICT,
             "The dependency is no longer vulnerable.",
         ),
-        None => chrome::unavailable(ctx),
+        None => crate::backend::api::repos::chrome::unavailable(ctx),
     }
 }
 async fn list(
@@ -88,7 +85,12 @@ async fn list(
         Ok(v) => v,
         Err(r) => return r,
     };
-    let page = match super::paging::number(&ctx, "page", 1, 1..=super::paging::MAX_PAGE) {
+    let page = match crate::backend::api::repos::paging::number(
+        &ctx,
+        "page",
+        1,
+        1..=crate::backend::api::repos::paging::MAX_PAGE,
+    ) {
         Ok(p) => p,
         Err(r) => return r,
     };
@@ -120,7 +122,7 @@ async fn list(
             serde_json::from_str::<Value>(&row.advisory),
             serde_json::from_str::<Value>(&row.vulnerability),
         ) else {
-            return chrome::unavailable(&ctx);
+            return crate::backend::api::repos::chrome::unavailable(&ctx);
         };
         alerts.push(view::Alert {
             number: row.number,

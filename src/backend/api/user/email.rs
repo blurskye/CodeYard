@@ -2,16 +2,19 @@
 //! confirmation code for it, confirming it with that code, and choosing whether notifications are
 //! also sent by email.
 
-use crate::backend::api::auth::email_links::{link_failure, INVALID_CODE};
+use crate::backend::api::auth::email_links::link_failure;
+use crate::backend::api::auth::email_links::INVALID_CODE;
 use crate::backend::api::auth::errors::email_failure;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::session;
-use crate::backend::api::user::profile::{settings_response, settings_result};
-use crate::backend::api::user::responses::{field, mutation_guard, require_account, Fields};
+
+use crate::backend::api::user::profile::settings_response;
+use crate::backend::api::user::profile::settings_result;
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::require_account;
+use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::email::links;
-use crate::backend::identity;
+
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -30,8 +33,8 @@ pub(crate) async fn email_post(
     if let Err(response) = mutation_guard(&ctx, &form, false) {
         return response;
     }
-    let session_id = session::extract_session_id(&ctx.headers);
-    let result = identity::accounts::change_email(
+    let session_id = crate::backend::api::http::session::extract_session_id(&ctx.headers);
+    let result = crate::backend::identity::accounts::change_email(
         &ctx.state.pool,
         session_id.as_deref(),
         field(&form, "current_password"),
@@ -63,7 +66,7 @@ pub(crate) async fn verification_post(
     if user.email_verified {
         return ctx.redirect("/settings?tab=email");
     }
-    match links::send_verification(&ctx.state.pool, user).await {
+    match crate::backend::email::links::send_verification(&ctx.state.pool, user).await {
         Ok(()) => ctx.redirect("/settings?tab=email&saved=verification-sent"),
         Err(error) => {
             let (status, message) = link_failure(&error);
@@ -89,7 +92,9 @@ pub(crate) async fn verification_code_post(
     if let Err(response) = require_account(&ctx, false) {
         return response;
     }
-    match links::verify_address(&ctx.state.pool, field(&form, "code").trim()).await {
+    match crate::backend::email::links::verify_address(&ctx.state.pool, field(&form, "code").trim())
+        .await
+    {
         Ok(true) => ctx.redirect("/settings?tab=email&saved=email-verified"),
         Ok(false) => {
             settings_response(
@@ -125,28 +130,29 @@ pub(crate) async fn visibility_post(
         Ok(user) => user,
         Err(response) => return response,
     };
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let visibility = if field(&form, "public_email") == "yes" {
         "public"
     } else {
         "private"
     };
-    let result = identity::profiles::save(
+    let result = crate::backend::identity::profiles::save(
         &ctx.state.pool,
         user.id,
-        &db::users::accounts::AccountCredential::Session(&session),
-        &db::users::profiles::ProfilePatch {
+        &crate::backend::db::users::accounts::AccountCredential::Session(&session),
+        &crate::backend::db::users::profiles::ProfilePatch {
             primary_visibility: (!form.contains_key("public_address")).then_some(visibility),
             // Showing the primary address replaces a chosen secondary one.
             email: form
                 .get("public_address")
                 .map(String::as_str)
                 .or((visibility == "public").then_some("")),
-            ..db::users::profiles::ProfilePatch::default()
+            ..crate::backend::db::users::profiles::ProfilePatch::default()
         },
     )
     .await
-    .map_err(super::profile::profile_failure);
+    .map_err(crate::backend::api::user::profile::profile_failure);
     settings_result(&ctx, "email", &form, result, "email-visibility").await
 }
 
@@ -167,13 +173,14 @@ pub(crate) async fn secondary_post(
         Ok(user) => user,
         Err(response) => return response,
     };
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let remove = field(&form, "remove") == "yes";
     let address = field(&form, if remove { "email" } else { "secondary_email" }).to_owned();
-    match identity::emails::change(
+    match crate::backend::identity::emails::change(
         &ctx.state.pool,
         user.id,
-        &db::users::accounts::AccountCredential::Session(&session),
+        &crate::backend::db::users::accounts::AccountCredential::Session(&session),
         &[address],
         !remove,
     )
@@ -182,8 +189,10 @@ pub(crate) async fn secondary_post(
         Ok(_) => ctx.redirect("/settings?tab=email&saved=secondary-email"),
         Err(error) => {
             let status = match error {
-                identity::emails::EmailError::Denied => StatusCode::FORBIDDEN,
-                identity::emails::EmailError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+                crate::backend::identity::emails::EmailError::Denied => StatusCode::FORBIDDEN,
+                crate::backend::identity::emails::EmailError::Unavailable => {
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
                 _ => StatusCode::UNPROCESSABLE_ENTITY,
             };
             settings_response(&ctx, "email", None, status, Some(&error.to_string())).await
@@ -209,7 +218,9 @@ pub(crate) async fn secondary_verification_post(
         Err(response) => return response,
     };
     let email = [field(&form, "email").to_owned()];
-    match links::send_secondary_verifications(&ctx.state.pool, user, &email).await {
+    match crate::backend::email::links::send_secondary_verifications(&ctx.state.pool, user, &email)
+        .await
+    {
         Ok(()) => ctx.redirect("/settings?tab=email&saved=verification-sent"),
         Err(error) => {
             let (status, message) = link_failure(&error);
@@ -236,9 +247,17 @@ pub(crate) async fn notifications_post(
         Err(response) => return response,
     };
     let wanted = field(&form, "email_notifications") == "yes";
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let credential = db::users::accounts::AccountCredential::Session(&session);
-    match db::email::set_email_notifications(&ctx.state.pool, user.id, &credential, wanted).await {
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let credential = crate::backend::db::users::accounts::AccountCredential::Session(&session);
+    match crate::backend::db::email::set_email_notifications(
+        &ctx.state.pool,
+        user.id,
+        &credential,
+        wanted,
+    )
+    .await
+    {
         Ok(()) => ctx.redirect("/settings?tab=email&saved=email-notifications"),
         Err(error) if error.is::<codeyard_support::credentials::AccountRestricted>() => ctx.error(
             StatusCode::FORBIDDEN,

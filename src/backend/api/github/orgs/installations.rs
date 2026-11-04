@@ -1,14 +1,12 @@
 //! Organization owners see installations from the same store as app and user discovery.
-use super::owner_actor;
-use crate::backend::{
-    api::github::{
-        apps::installations::{document, installation_page, more},
-        pagination::Pagination,
-        Result,
-    },
-    app::AppState,
-    db::github_apps::InstallationFilter,
-};
+use crate::backend::api::github::apps::installations::document;
+use crate::backend::api::github::apps::installations::installation_page;
+use crate::backend::api::github::apps::installations::more;
+use crate::backend::api::github::orgs::owner_actor;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use crate::backend::db::github_apps::InstallationFilter;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::HeaderMap,

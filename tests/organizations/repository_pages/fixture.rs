@@ -8,8 +8,7 @@ use axum::{
 };
 use codeyard::backend::api::create_router;
 use codeyard::backend::app::AppState;
-use codeyard::backend::db;
-use codeyard::backend::db::organizations as orgs;
+
 use codeyard::backend::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use codeyard_webui::{
@@ -122,9 +121,11 @@ impl Fixture {
             (&unknown, OrgRole::Member),
         ] {
             applied(
-                orgs::add_organization_member(pool, owner.id, org, actor.id, role)
-                    .await
-                    .unwrap(),
+                codeyard::backend::db::organizations::add_organization_member(
+                    pool, owner.id, org, actor.id, role,
+                )
+                .await
+                .unwrap(),
             );
         }
         // Fixture-owned malformed membership; production never repairs it implicitly.
@@ -161,7 +162,7 @@ impl Fixture {
         }
     }
     pub async fn actor(pool: &codeyard_db_core::DbPool, username: &str) -> Actor {
-        let id = db::users::accounts::create_user(pool, username, None)
+        let id = codeyard::backend::db::users::accounts::create_user(pool, username, None)
             .await
             .unwrap()
             .id;
@@ -170,7 +171,7 @@ impl Fixture {
     async fn session(pool: &codeyard_db_core::DbPool, id: i64) -> Actor {
         let session = native::token();
         let csrf = native::token();
-        db::users::sessions::create_session(
+        codeyard::backend::db::users::sessions::create_session(
             pool,
             &session,
             id,
@@ -181,21 +182,28 @@ impl Fixture {
         .await
         .unwrap();
         assert_eq!(
-            db::users::sessions::get_or_create_csrf_token(pool, &session, Some(id), &csrf, 3600)
-                .await
-                .unwrap(),
+            codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+                pool,
+                &session,
+                Some(id),
+                &csrf,
+                3600
+            )
+            .await
+            .unwrap(),
             Some(csrf.clone())
         );
         Actor { id, session, csrf }
     }
     pub async fn organization(pool: &codeyard_db_core::DbPool, actor: i64, slug: &str) -> i64 {
         applied(
-            orgs::create_organization(
+            codeyard::backend::db::organizations::create_organization(
                 pool,
                 actor,
-                &orgs::NewOrganization::new(
+                &codeyard::backend::db::organizations::NewOrganization::new(
                     slug,
-                    orgs::OrganizationProfile::new(None, None).unwrap(),
+                    codeyard::backend::db::organizations::OrganizationProfile::new(None, None)
+                        .unwrap(),
                 )
                 .unwrap(),
             )
@@ -289,11 +297,14 @@ impl Fixture {
         org: Option<i64>,
         private: bool,
     ) -> codeyard_db_core::models::Repository {
-        let repository =
-            db::repositories::records::get_repository(self.database.pool(), owner, name)
-                .await
-                .unwrap()
-                .expect("canonical lookup of actual created repo");
+        let repository = codeyard::backend::db::repositories::records::get_repository(
+            self.database.pool(),
+            owner,
+            name,
+        )
+        .await
+        .unwrap()
+        .expect("canonical lookup of actual created repo");
         assert_eq!(
             repository.owner_kind,
             if org.is_some() { "org" } else { "user" }

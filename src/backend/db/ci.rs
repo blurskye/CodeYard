@@ -10,21 +10,6 @@ use uuid::Uuid;
 pub mod claims;
 pub(crate) mod log_chunks;
 
-/// Policy refusals from the native CI enqueue and cancellation transactions.
-#[derive(Debug, thiserror::Error)]
-pub enum CiAdmissionRefusal {
-    #[error("Workflow is disabled")]
-    WorkflowDisabled,
-    #[error("{0}")]
-    Missing(&'static str),
-    #[error("{0}")]
-    Denied(&'static str),
-    #[error("{0}")]
-    Conflict(&'static str),
-    #[error("{0}")]
-    Invalid(&'static str),
-}
-
 #[derive(Clone, Copy)]
 pub enum CiRunDeletion {
     Run,
@@ -206,10 +191,6 @@ pub struct CiRunOptions {
 native_operation!(crate::backend::db::postgres::ci::ci_run_options,crate::backend::db::sqlite::ci::ci_run_options,
     fn ci_run_options(pool:&DbPool,run:i64)->Result<Option<CiRunOptions>>);
 
-/// Recorded on queued runs that are cancelled because the person who started them
-/// lost access, and shown to the person who looks at the run.
-pub const ACCESS_LOST_MESSAGE: &str = "The person who started this run no longer has access";
-
 native_operation!(crate::backend::db::postgres::ci::accept_repository_dispatch,
     crate::backend::db::sqlite::ci::accept_repository_dispatch,
     fn accept_repository_dispatch(pool: &DbPool, actor: i64, repo: i64, credential: &CiCredential) -> Result<bool>);
@@ -232,10 +213,10 @@ pub type Enqueued = (CiRun, bool);
 
 native_operation!(crate::backend::db::postgres::ci::enqueue_ci_run_attempt,
     crate::backend::db::sqlite::ci::enqueue_ci_run_attempt,
-    fn enqueue_ci_run_attempt(pool:&DbPool,input:NewCiRun<'_>,trusted_ids:&[i64],attempt:NewCiAttempt,scheduling:&super::runners::Scheduling,event_payload:Option<&serde_json::Value>)->Result<Enqueued>);
+    fn enqueue_ci_run_attempt(pool:&DbPool,input:NewCiRun<'_>,trusted_ids:&[i64],attempt:NewCiAttempt,scheduling:&crate::backend::db::runners::Scheduling,event_payload:Option<&serde_json::Value>)->Result<Enqueued>);
 native_operation!(crate::backend::db::postgres::ci::enqueue_ci_run_for_runners,
     crate::backend::db::sqlite::ci::enqueue_ci_run_for_runners,
-    fn enqueue_ci_run_for_runners(pool: &DbPool, input: NewCiRun<'_>, trusted_ids: &[i64], scheduling: &super::runners::Scheduling, event_payload: Option<&serde_json::Value>, credential: Option<&CiCredential>) -> Result<Enqueued>);
+    fn enqueue_ci_run_for_runners(pool: &DbPool, input: NewCiRun<'_>, trusted_ids: &[i64], scheduling: &crate::backend::db::runners::Scheduling, event_payload: Option<&serde_json::Value>, credential: Option<&CiCredential>) -> Result<Enqueued>);
 
 native_operation!(crate::backend::db::postgres::ci::claim_ci_run,
     crate::backend::db::sqlite::ci::claim_ci_run,
@@ -309,7 +290,7 @@ native_operation!(crate::backend::db::postgres::ci::request_ci_cancellation_with
     fn request_ci_cancellation_with_credential(pool: &DbPool, run_id: Uuid, actor_id: i64, credential: &CiCredential) -> Result<Cancellation>);
 native_operation!(crate::backend::db::postgres::ci::delete_ci_run_data,
     crate::backend::db::sqlite::ci::delete_ci_run_data,
-    fn delete_ci_run_data(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, id: i64, kind: CiRunDeletion) -> Result<bool>);
+    fn delete_ci_run_data(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, id: i64, kind: CiRunDeletion) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::ci::get_ci_run_by_id,
     crate::backend::db::sqlite::ci::get_ci_run_by_id,
     fn get_ci_run_by_id(pool: &DbPool, repo_id: i64, id: i64) -> Result<Option<CiRun>>);
@@ -426,3 +407,5 @@ native_operation!(crate::backend::db::postgres::ci::has_ci_accepted_push,
     reference: &str,
     sha: &str,
 ) -> Result<bool>);
+
+use codeyard_db_core::ci_policy::CiAdmissionRefusal;

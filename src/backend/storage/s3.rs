@@ -1,6 +1,9 @@
 //! Uploaded files in an S3-compatible bucket. Clients upload and download
 //! directly with presigned URLs; the server only signs, checks and deletes.
-use super::{media_signature_matches, valid_key, StorageError, Upload, MAX_OBJECT_BYTES};
+use crate::backend::storage::media_signature_matches;
+use crate::backend::storage::valid_key;
+use crate::backend::storage::StorageError;
+use crate::backend::storage::Upload;
 use anyhow::{anyhow, ensure, Context, Result};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{
@@ -13,6 +16,7 @@ use aws_sdk_s3::{
 };
 use aws_smithy_types::timeout::TimeoutConfig;
 use base64::{engine::general_purpose::STANDARD, Engine};
+use codeyard_support::object_limits::MAX_OBJECT_BYTES;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, net::IpAddr, time::Duration};
 use tokio::io::AsyncReadExt;
@@ -83,7 +87,7 @@ fn optional_env(name: &str) -> Result<Option<String>> {
 }
 
 fn public_url_host(value: &str) -> Result<ConfiguredHost> {
-    let url = crate::backend::api::http::config::parse_public_url(value)?;
+    let url = codeyard_model::http_config::parse_public_url(value)?;
     ConfiguredHost::from_url(&url).ok_or_else(|| anyhow!("Invalid PUBLIC_URL"))
 }
 
@@ -379,7 +383,7 @@ impl S3Store {
         let Some(public_url) = optional_env("PUBLIC_URL")? else {
             return Ok(());
         };
-        let origin = crate::backend::api::http::config::parse_public_url(&public_url)?
+        let origin = codeyard_model::http_config::parse_public_url(&public_url)?
             .origin()
             .ascii_serialization();
         let rule = CorsRule::builder()
@@ -538,7 +542,7 @@ impl S3Store {
             .response_content_disposition(if inline_image.is_some() {
                 "inline".to_owned()
             } else {
-                super::attachment_disposition(filename)
+                crate::backend::storage::attachment_disposition(filename)
             })
             .presigned(PresigningConfig::expires_in(Duration::from_secs(seconds))?)
             .await?;

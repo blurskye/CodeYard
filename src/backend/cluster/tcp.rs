@@ -1,15 +1,16 @@
 //! Node connections over TCP. The listener takes TLS connections (see `tls`), checks the
 //! peer's key against membership, and passes the one request on the connection to the
 //! same protocol code that the iroh router serves.
-use super::{
-    ci::CiHandler,
-    identity::NodeKey,
-    link::Link,
-    pairing::{self, PairingHandler},
-    rpc::RpcHandler,
-    tls,
-    transport::{active_member, ALPN_PAIR, ALPN_RPC},
-};
+use crate::backend::cluster::ci::CiHandler;
+use crate::backend::cluster::link::Link;
+use codeyard_support::node_identity::NodeKey;
+
+use crate::backend::cluster::pairing::PairingHandler;
+use crate::backend::cluster::rpc::RpcHandler;
+
+use crate::backend::cluster::transport::active_member;
+use crate::backend::cluster::transport::ALPN_PAIR;
+use crate::backend::cluster::transport::ALPN_RPC;
 use anyhow::{bail, Context, Result};
 use codeyard_db_core::DbPool;
 use iroh::PublicKey;
@@ -72,7 +73,7 @@ pub async fn bind(address: SocketAddr, key: &NodeKey, services: Services) -> Res
         .await
         .with_context(|| format!("cannot listen for cluster connections on {address}"))?;
     let addr = listener.local_addr()?;
-    let acceptor = TlsAcceptor::from(tls::server_config(key)?);
+    let acceptor = TlsAcceptor::from(crate::backend::cluster::tls::server_config(key)?);
     let handshakes = Arc::new(Semaphore::new(MAX_HANDSHAKES));
     let (stop, stop_signal) = watch::channel(false);
     let (ended_sender, ended) = watch::channel(());
@@ -167,7 +168,7 @@ async fn serve_socket(
         .peer_certificates()
         .and_then(|certificates| certificates.first())
     {
-        Some(certificate) => match tls::peer_key(certificate) {
+        Some(certificate) => match crate::backend::cluster::tls::peer_key(certificate) {
             Ok(peer) => peer,
             Err(error) => {
                 debug!(%error, "cluster peer key rejected");
@@ -200,7 +201,11 @@ async fn serve_socket(
             Some(slot) => {
                 services
                     .pairing
-                    .serve_link(link, Instant::now() + pairing::EXCHANGE_TIMEOUT, slot)
+                    .serve_link(
+                        link,
+                        Instant::now() + crate::backend::cluster::pairing::EXCHANGE_TIMEOUT,
+                        slot,
+                    )
                     .await
             }
             None => debug!("too many pairing requests; closing a connection"),
@@ -251,7 +256,7 @@ pub async fn dial(
         .await
         .with_context(|| format!("cannot connect to {address}"))?;
     tune(&socket);
-    let config = tls::client_config(key, node, alpn)?;
+    let config = crate::backend::cluster::tls::client_config(key, node, alpn)?;
     let stream = TlsConnector::from(config)
         .connect(ServerName::IpAddress(address.ip().into()), socket)
         .await

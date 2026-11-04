@@ -1,7 +1,7 @@
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::notifications::broadcast::SocketSlot;
 use crate::backend::notifications::current_event;
 use crate::backend::notifications::NotificationBroadcaster;
@@ -54,7 +54,7 @@ pub async fn handle_socket(
                 if awaiting_pong { break; }
                 if !matches!(tokio::time::timeout(Duration::from_secs(5), sender.send(Message::Ping(b"heartbeat".to_vec()))).await, Ok(Ok(()))) { break; }
                 awaiting_pong = true;
-                let identity = tokio::time::timeout(Duration::from_secs(5), db::users::sessions::get_session_user(&pool, &session_id)).await;
+                let identity = tokio::time::timeout(Duration::from_secs(5), crate::backend::db::users::sessions::get_session_user(&pool, &session_id)).await;
                 if !matches!(identity, Ok(Ok(Some(user))) if user.id == user_id) { break; }
             }
             event = rx.recv() => {

@@ -1,8 +1,8 @@
 //! Mail waits in the `email_outbox` table until a node sends it. Several nodes may run the
 //! sender at once: each claims its own rows. A failed send is tried again later, a few times.
-use super::{config, send};
-use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db;
+
+use codeyard_support::secrets::SecretEncryptor;
+
 use codeyard_db_core::DbPool;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -26,7 +26,7 @@ pub fn retry_delay(attempts: i32) -> i64 {
 
 /// Sends a bounded batch, returning the sent and processed counts separately.
 pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> (usize, usize) {
-    let config = match config::load(pool, secrets).await {
+    let config = match crate::backend::email::config::load(pool, secrets).await {
         Ok(Some((config, _))) => config,
         Ok(None) => return (0, 0),
         Err(message) => {
@@ -37,30 +37,42 @@ pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> (usiz
     let mut sent = 0;
     let mut processed = 0;
     for _ in 0..PER_PASS {
-        let message = match db::email::claim_due_email(pool, MAX_ATTEMPTS, CLAIM_SECONDS).await {
-            Ok(Some(message)) => message,
-            Ok(None) => break,
-            Err(error) => {
-                warn!(%error, "could not read the email outbox");
-                break;
-            }
-        };
+        let message =
+            match crate::backend::db::email::claim_due_email(pool, MAX_ATTEMPTS, CLAIM_SECONDS)
+                .await
+            {
+                Ok(Some(message)) => message,
+                Ok(None) => break,
+                Err(error) => {
+                    warn!(%error, "could not read the email outbox");
+                    break;
+                }
+            };
         processed += 1;
         // Claims can outlive a link rotation or a notification's repository grant.
-        let allowed = match db::email::delivery_allowed(pool, message.id, message.attempts).await {
-            Ok(true) => match message.notification_id {
-                Some(notification) => {
-                    db::notifications::records::notification_email_allowed(pool, notification).await
-                }
-                None => Ok(true),
-            },
-            outcome => outcome,
-        };
+        let allowed =
+            match crate::backend::db::email::delivery_allowed(pool, message.id, message.attempts)
+                .await
+            {
+                Ok(true) => match message.notification_id {
+                    Some(notification) => {
+                        crate::backend::db::notifications::records::notification_email_allowed(
+                            pool,
+                            notification,
+                        )
+                        .await
+                    }
+                    None => Ok(true),
+                },
+                outcome => outcome,
+            };
         let refusal = match allowed {
             Ok(true) => None,
-            Ok(false) => Some(db::email::withdraw_email(pool, message.id, message.attempts).await),
+            Ok(false) => Some(
+                crate::backend::db::email::withdraw_email(pool, message.id, message.attempts).await,
+            ),
             Err(error) => Some(
-                db::email::mark_email_failed(
+                crate::backend::db::email::mark_email_failed(
                     pool,
                     message.id,
                     message.attempts,
@@ -77,7 +89,7 @@ pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> (usiz
             }
             continue;
         }
-        let outcome = match send::send(
+        let outcome = match crate::backend::email::send::send(
             &config,
             &message.to_address,
             &message.subject,
@@ -87,11 +99,11 @@ pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> (usiz
         {
             Ok(()) => {
                 sent += 1;
-                db::email::mark_email_sent(pool, message.id, message.attempts).await
+                crate::backend::db::email::mark_email_sent(pool, message.id, message.attempts).await
             }
             Err(error) => {
                 warn!(%error, id = message.id, attempts = message.attempts, "email send failed");
-                db::email::mark_email_failed(
+                crate::backend::db::email::mark_email_failed(
                     pool,
                     message.id,
                     message.attempts,
@@ -125,7 +137,8 @@ pub async fn run(
             info!(sent, "sent queued email");
         }
         if pass.is_multiple_of(PRUNE_EVERY) {
-            match db::email::remove_old_email(&pool, MAX_ATTEMPTS, KEEP_DAYS).await {
+            match crate::backend::db::email::remove_old_email(&pool, MAX_ATTEMPTS, KEEP_DAYS).await
+            {
                 Ok(0) => {}
                 Ok(removed) => info!(removed, "removed old queued email"),
                 Err(error) => warn!(%error, "could not remove old queued email"),

@@ -25,11 +25,11 @@ pub struct NodeCount {
     pub count: i64,
 }
 
-native_operation!(super::postgres::metrics::storage_nodes, super::sqlite::metrics::storage_nodes,
+native_operation!(crate::backend::db::postgres::metrics::storage_nodes, crate::backend::db::sqlite::metrics::storage_nodes,
     fn storage_nodes(pool: &DbPool) -> Result<Vec<StorageNode>>);
-native_operation!(super::postgres::metrics::replica_lag, super::sqlite::metrics::replica_lag,
+native_operation!(crate::backend::db::postgres::metrics::replica_lag, crate::backend::db::sqlite::metrics::replica_lag,
     fn replica_lag(pool: &DbPool) -> Result<i64>);
-native_operation!(super::postgres::metrics::ci_queue, super::sqlite::metrics::ci_queue,
+native_operation!(crate::backend::db::postgres::metrics::ci_queue, crate::backend::db::sqlite::metrics::ci_queue,
     fn ci_queue(pool: &DbPool) -> Result<CiQueue>);
-native_operation!(super::postgres::metrics::node_counts, super::sqlite::metrics::node_counts,
+native_operation!(crate::backend::db::postgres::metrics::node_counts, crate::backend::db::sqlite::metrics::node_counts,
     fn node_counts(pool: &DbPool) -> Result<Vec<NodeCount>>);

@@ -6,7 +6,7 @@ use crate::support::{
     http_client::Client,
 };
 use axum::http::StatusCode;
-use codeyard::backend::db;
+
 use codeyard::backend::db::organizations::*;
 use codeyard::backend::db::repositories::creation::*;
 use codeyard_db_core::models::OrgRole;
@@ -181,9 +181,13 @@ async fn discovery_and_deletion(pg: bool) {
     ] {
         f.execute(invalid, &[first_org, member]).await;
         assert_eq!(
-            db::repositories::access::get_user_repo_access(f.pool(), member, repositories[0].id)
-                .await
-                .unwrap(),
+            codeyard::backend::db::repositories::access::get_user_repo_access(
+                f.pool(),
+                member,
+                repositories[0].id
+            )
+            .await
+            .unwrap(),
             codeyard_db_core::models::AccessLevel::None
         );
         assert_eq!(
@@ -202,7 +206,7 @@ async fn discovery_and_deletion(pg: bool) {
         .unwrap()
         .is_empty());
     }
-    let deletion_session = db::users::sessions::create_session(
+    let deletion_session = codeyard::backend::db::users::sessions::create_session(
         f.pool(),
         &uuid::Uuid::new_v4().simple().to_string().repeat(2),
         owner,
@@ -212,14 +216,15 @@ async fn discovery_and_deletion(pg: bool) {
     )
     .await
     .unwrap();
-    let credential = db::users::accounts::AccountCredential::Session(&deletion_session.id);
+    let credential =
+        codeyard::backend::db::users::accounts::AccountCredential::Session(&deletion_session.id);
     let initial = applied(
         list_organization_deletion_repositories(f.pool(), (owner, &credential), first_org)
             .await
             .unwrap(),
     );
     let late = repository(&f, owner, first_org, "late-repository").await;
-    db::repositories::records::transfer_repository(
+    codeyard::backend::db::repositories::records::transfer_repository(
         f.pool(),
         owner,
         repositories[0].id,
@@ -238,9 +243,14 @@ async fn discovery_and_deletion(pg: bool) {
         .unwrap(),
         OrganizationOutcome::Conflict
     ));
-    db::repositories::records::set_repository_archived(f.pool(), owner, repositories[1].id, true)
-        .await
-        .unwrap();
+    codeyard::backend::db::repositories::records::set_repository_archived(
+        f.pool(),
+        owner,
+        repositories[1].id,
+        true,
+    )
+    .await
+    .unwrap();
     for id in initial.into_iter().filter(|id| *id != repositories[0].id) {
         applied(
             delete_organization_repository(f.pool(), (owner, &credential), first_org, id)
@@ -255,17 +265,20 @@ async fn discovery_and_deletion(pg: bool) {
         OrganizationOutcome::Conflict
     ));
     assert!(
-        db::repositories::records::get_repository_by_id(f.pool(), late.id)
+        codeyard::backend::db::repositories::records::get_repository_by_id(f.pool(), late.id)
             .await
             .unwrap()
             .is_some()
     );
     assert_eq!(
-        db::repositories::records::get_repository_by_id(f.pool(), repositories[0].id)
-            .await
-            .unwrap()
-            .unwrap()
-            .owner_org_id,
+        codeyard::backend::db::repositories::records::get_repository_by_id(
+            f.pool(),
+            repositories[0].id
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .owner_org_id,
         Some(second_org)
     );
     f.finish().await;
@@ -284,10 +297,16 @@ async fn release_upload_cleanup(pg: bool) {
     let owner = f.actor("release_owner").await;
     let org = org(&f, owner, "release_org").await;
     let repo = repository(&f, owner, org, "release_repo").await;
-    let release =
-        db::releases::create_release(f.pool(), owner, repo.id, "v1", "main", &Default::default())
-            .await
-            .unwrap();
+    let release = codeyard::backend::db::releases::create_release(
+        f.pool(),
+        owner,
+        repo.id,
+        "v1",
+        "main",
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     let id = uuid::Uuid::new_v4();
     let key = format!("uploads/{id}");
     let insert = "INSERT INTO files(id,user_id,filename,original_name,content_type,file_size,sha256_hex,object_key,reason,visibility,is_active,confirmed_at,upload_expires_at) VALUES($1,$2,'asset.bin','asset.bin','application/octet-stream',12,$3,$4,'release_asset','owner',FALSE,'2026-01-01T00:00:00.000000Z','2099-01-01T00:00:00.000000Z')";
@@ -313,15 +332,15 @@ async fn release_upload_cleanup(pg: bool) {
                 .unwrap();
         }
     }
-    db::releases::add_release_asset(
+    codeyard::backend::db::releases::add_release_asset(
         f.pool(),
         owner,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard::backend::db::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), owner).await,
         ),
         repo.id,
         release.id,
-        &db::releases::NewReleaseAsset {
+        &codeyard::backend::db::releases::NewReleaseAsset {
             file_id: id,
             name: "asset.bin",
             label: None,
@@ -331,7 +350,7 @@ async fn release_upload_cleanup(pg: bool) {
     )
     .await
     .unwrap();
-    let deletion_session = db::users::sessions::create_session(
+    let deletion_session = codeyard::backend::db::users::sessions::create_session(
         f.pool(),
         &uuid::Uuid::new_v4().simple().to_string().repeat(2),
         owner,
@@ -346,7 +365,9 @@ async fn release_upload_cleanup(pg: bool) {
             f.pool(),
             (
                 owner,
-                &db::users::accounts::AccountCredential::Session(&deletion_session.id),
+                &codeyard::backend::db::users::accounts::AccountCredential::Session(
+                    &deletion_session.id,
+                ),
             ),
             org,
             repo.id,

@@ -3,12 +3,20 @@
 //! transaction after all layers have replayed, so a conflict or a failed check moves nothing. A
 //! stack that changed while the layers replayed is refused too: see `publish_rebase`.
 
-use super::merge::{open_chain, prepare_error};
-use super::{actor, branches_moved, database_error, require_write, OperationError};
-use crate::backend::ci::{CiRuns, RefUpdate};
-use crate::backend::db;
+use crate::backend::ci::CiRuns;
+use crate::backend::ci::RefUpdate;
+use crate::backend::repositories::pull_requests::actor;
+use crate::backend::repositories::pull_requests::branches_moved;
+use crate::backend::repositories::pull_requests::database_error;
+use crate::backend::repositories::pull_requests::merge::open_chain;
+use crate::backend::repositories::pull_requests::merge::prepare_error;
+use crate::backend::repositories::pull_requests::require_write;
+use crate::backend::repositories::pull_requests::OperationError;
+
 use crate::backend::db::pull_requests::records::MAX_STACK_LAYERS;
-use crate::backend::repositories::store::{repo_store, RepoStore, RestackMove};
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::RepoStore;
+use crate::backend::repositories::store::RestackMove;
 use codeyard_db_core::models::PullRequest;
 use codeyard_git::error::{ErrorKind, RepoError};
 use serde::Serialize;
@@ -31,7 +39,7 @@ pub struct RestackResponse {
 pub async fn rebase_stack(
     pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    actor_id: impl Into<db::credentials::Actor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     target: (String, String, i32),
 ) -> Result<RestackResponse, OperationError> {
     match prepare_rebase(pool, ci, actor_id, target).await? {
@@ -42,7 +50,7 @@ pub async fn rebase_stack(
 
 /// The replayed layers of a rebase, ready to publish.
 pub struct PreparedRestack {
-    authority: db::credentials::Actor,
+    authority: crate::backend::db::credentials::Actor,
     owner: String,
     repository: codeyard_db_core::models::Repository,
     stack_id: i64,
@@ -58,13 +66,13 @@ pub struct PreparedRestack {
 pub async fn prepare_rebase(
     pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    authority: impl Into<db::credentials::Actor>,
+    authority: impl Into<crate::backend::db::credentials::Actor>,
     (owner, repo, number): (String, String, i32),
 ) -> Result<Option<PreparedRestack>, OperationError> {
     let authority = authority.into();
     let actor_id = authority.user_id;
     let deadline = tokio::time::Instant::now() + RESTACK_PREPARE_DEADLINE;
-    let repository = db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -79,25 +87,34 @@ pub async fn prepare_rebase(
             message: "Archived repositories cannot be restacked.".into(),
         });
     }
-    let target = db::pull_requests::records::get_pull_request(pool, repository.id, number)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".into(),
-        })?;
+    let target =
+        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".into(),
+            })?;
     check_stacked(&target)?;
     let Some(stack_id) = target.stack_id else {
         return Err(not_stacked());
     };
     // The versions are read before the layers, so a change between the two reads shows up when
     // the rebase is published.
-    let versions = db::pull_requests::records::list_stack_versions(pool, repository.id, stack_id)
-        .await
-        .map_err(database_error)?;
-    let members = db::pull_requests::records::list_stack_members(pool, repository.id, stack_id)
-        .await
-        .map_err(database_error)?;
+    let versions = crate::backend::db::pull_requests::records::list_stack_versions(
+        pool,
+        repository.id,
+        stack_id,
+    )
+    .await
+    .map_err(database_error)?;
+    let members = crate::backend::db::pull_requests::records::list_stack_members(
+        pool,
+        repository.id,
+        stack_id,
+    )
+    .await
+    .map_err(database_error)?;
     // The target is taken from the layers read after the versions, so a close or unstack before
     // the versions were read refuses the rebase here instead of passing publication.
     let pull = members
@@ -480,9 +497,13 @@ pub(super) async fn squashed_below(
     let Some(base_tip) = tip_of(refs, &bottom.base_branch) else {
         return Ok(false);
     };
-    let members = db::pull_requests::records::list_stack_members(pool, bottom.repo_id, stack_id)
-        .await
-        .map_err(database_error)?;
+    let members = crate::backend::db::pull_requests::records::list_stack_members(
+        pool,
+        bottom.repo_id,
+        stack_id,
+    )
+    .await
+    .map_err(database_error)?;
     for member in members.iter().filter(|member| member.state == "merged") {
         if is_ancestor(store, &member.head_sha, &bottom.head_sha).await?
             && !is_ancestor(store, &member.head_sha, base_tip).await?

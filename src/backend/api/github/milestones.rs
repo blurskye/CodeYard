@@ -1,7 +1,9 @@
-use super::{auth, pagination::Pagination, repository, Error, Result};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::webhooks::payloads;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -18,7 +20,7 @@ use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 
 fn write_error(error: anyhow::Error) -> Error {
-    use db::milestones::MilestoneWriteRefusal;
+    use crate::backend::db::milestones::MilestoneWriteRefusal;
     match error.downcast_ref::<MilestoneWriteRefusal>() {
         Some(MilestoneWriteRefusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Milestone mutation denied")
@@ -41,12 +43,17 @@ pub(super) async fn document(
     repo: &str,
 ) -> Result<Value> {
     let creator = match summary.milestone.creator_id {
-        Some(id) => db::users::accounts::get_user_by_id(pool, id)
+        Some(id) => crate::backend::db::users::accounts::get_user_by_id(pool, id)
             .await
             .map_err(Error::unavailable)?,
         None => None,
     };
-    Ok(payloads::milestone(summary, creator.as_ref(), owner, repo))
+    Ok(crate::backend::webhooks::payloads::milestone(
+        summary,
+        creator.as_ref(),
+        owner,
+        repo,
+    ))
 }
 
 async fn find(
@@ -54,10 +61,14 @@ async fn find(
     repo_id: i64,
     number: &str,
 ) -> Result<MilestoneSummary> {
-    db::milestones::get_milestone(pool, repo_id, number.parse().map_err(|_| Error::missing())?)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)
+    crate::backend::db::milestones::get_milestone(
+        pool,
+        repo_id,
+        number.parse().map_err(|_| Error::missing())?,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .ok_or_else(Error::missing)
 }
 
 async fn get_milestone(
@@ -66,7 +77,7 @@ async fn get_milestone(
     Path(p): Path<Params>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
-    let summary = db::milestones::read_milestones(
+    let summary = crate::backend::db::milestones::read_milestones(
         &state.pool,
         auth.as_ref().map(|auth| auth.user.id),
         repo.id,
@@ -105,7 +116,7 @@ async fn save(
     creating: bool,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?;
+    let actor = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let input: Input = serde_json::from_value(value.clone())
         .map_err(|_| Error::invalid("Invalid milestone fields"))?;
     let number = if creating {
@@ -121,10 +132,11 @@ async fn save(
         return Err(Error::invalid("Title is required"));
     }
     if let Some(title) = input.title.as_deref() {
-        crate::backend::issues::validate_milestone(title, "").map_err(Error::invalid)?;
+        codeyard_model::issue_input::validate_milestone(title, "").map_err(Error::invalid)?;
     }
     if let Some(description) = input.description.as_deref() {
-        crate::backend::issues::validate_milestone("title", description).map_err(Error::invalid)?;
+        codeyard_model::issue_input::validate_milestone("title", description)
+            .map_err(Error::invalid)?;
     }
     if input
         .state
@@ -133,12 +145,12 @@ async fn save(
     {
         return Err(Error::invalid("State must be open or closed"));
     }
-    let milestone = db::milestones::save_milestone(
+    let milestone = crate::backend::db::milestones::save_milestone(
         &state.pool,
         actor.database_actor(),
         repo.id,
         number,
-        db::milestones::MilestoneInput {
+        crate::backend::db::milestones::MilestoneInput {
             title: input.title.as_deref(),
             description: value
                 .get("description")
@@ -149,10 +161,11 @@ async fn save(
     )
     .await
     .map_err(write_error)?;
-    let summary = db::milestones::get_milestone(&state.pool, repo.id, milestone.number)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let summary =
+        crate::backend::db::milestones::get_milestone(&state.pool, repo.id, milestone.number)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     Ok((
         if creating {
             StatusCode::CREATED
@@ -186,9 +199,9 @@ async fn remove(
     Path(p): Path<Params>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?;
+    let actor = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let summary = find(&state.pool, repo.id, &p["milestone_number"]).await?;
-    db::milestones::delete_milestone(
+    crate::backend::db::milestones::delete_milestone(
         &state.pool,
         actor.database_actor(),
         repo.id,
@@ -234,7 +247,7 @@ async fn list(
         _ => return Err(Error::invalid("Invalid sort")),
     };
     let (offset, limit) = page.window()?;
-    let rows = db::milestones::read_milestones(
+    let rows = crate::backend::db::milestones::read_milestones(
         &state.pool,
         auth.as_ref().map(|auth| auth.user.id),
         repo.id,
@@ -254,16 +267,17 @@ async fn list(
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
-    let creators: HashMap<_, _> = db::users::accounts::get_users_by_ids(&state.pool, &ids)
-        .await
-        .map_err(Error::unavailable)?
-        .into_iter()
-        .map(|user| (user.id, user))
-        .collect();
+    let creators: HashMap<_, _> =
+        crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &ids)
+            .await
+            .map_err(Error::unavailable)?
+            .into_iter()
+            .map(|user| (user.id, user))
+            .collect();
     let items = rows
         .iter()
         .map(|row| {
-            payloads::milestone(
+            crate::backend::webhooks::payloads::milestone(
                 row,
                 row.milestone.creator_id.and_then(|id| creators.get(&id)),
                 &p["owner"],
@@ -282,7 +296,7 @@ async fn labels(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
-    let milestone = db::milestones::read_milestones(
+    let milestone = crate::backend::db::milestones::read_milestones(
         &state.pool,
         auth.as_ref().map(|auth| auth.user.id),
         repo.id,
@@ -301,7 +315,7 @@ async fn labels(
     .pop()
     .ok_or_else(Error::missing)?;
     let (offset, limit) = page.window()?;
-    let labels = db::labels::list_milestone_labels(
+    let labels = crate::backend::db::labels::list_milestone_labels(
         &state.pool,
         auth.as_ref().map(|auth| auth.user.id),
         repo.id,
@@ -316,7 +330,7 @@ async fn labels(
         &uri,
         labels
             .iter()
-            .map(|label| payloads::label(label, &p["owner"], &repo.name))
+            .map(|label| crate::backend::webhooks::payloads::label(label, &p["owner"], &repo.name))
             .collect(),
         next,
     )

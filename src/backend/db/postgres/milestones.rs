@@ -1,6 +1,6 @@
-use crate::backend::db::milestones::{
-    MilestoneDocumentFacts, MilestoneInput, MilestoneWriteRefusal,
-};
+use crate::backend::db::milestones::MilestoneDocumentFacts;
+use crate::backend::db::milestones::MilestoneInput;
+use crate::backend::db::milestones::MilestoneWriteRefusal;
 use anyhow::Result;
 use codeyard_db_core::models::Milestone;
 use codeyard_db_core::models::MilestoneSummary;
@@ -44,12 +44,22 @@ async fn begin_write(
     // The exclusive authority lock takes the membership lock before the repository row, the
     // order every other write uses.
     anyhow::ensure!(
-        super::discussions::lock_exclusive_write_authority(&mut tx, actor_id, repo_id).await?,
+        crate::backend::db::postgres::discussions::lock_exclusive_write_authority(
+            &mut tx, actor_id, repo_id
+        )
+        .await?,
         MilestoneWriteRefusal::Denied
     );
     // The request's own session or token must still be live and may still write issues here.
     anyhow::ensure!(
-        super::credentials::repository(&mut tx, &credential, repo_id, "issues", true).await?,
+        crate::backend::db::postgres::credentials::repository(
+            &mut tx,
+            &credential,
+            repo_id,
+            "issues",
+            true
+        )
+        .await?,
         MilestoneWriteRefusal::Denied
     );
     Ok(tx)
@@ -192,7 +202,7 @@ async fn save_milestone_in(
     let due_on = input
         .due_on
         .unwrap_or_else(|| existing.as_ref().and_then(|m| m.due_on));
-    crate::backend::issues::validate_milestone(title, description.unwrap_or(""))
+    codeyard_model::issue_input::validate_milestone(title, description.unwrap_or(""))
         .map_err(anyhow::Error::msg)?;
     ensure_unique_title(&mut tx, repo_id, title, number).await?;
     let creating = number.is_none();
@@ -311,7 +321,7 @@ pub async fn read_milestones(
     offset: i64,
 ) -> Result<Vec<MilestoneSummary>> {
     let order = crate::backend::db::milestones::milestone_order(sort);
-    let readable = super::repositories::access::readable_condition();
+    let readable = crate::backend::db::postgres::repositories::access::readable_condition();
     Ok(sqlx::query_as(&format!("SELECT * FROM ({SUMMARY_SELECT} WHERE m.repo_id=$1 AND ($3::INTEGER IS NULL OR m.number=$3) AND ($4::TEXT IS NULL OR m.state=$4) AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=m.repo_id AND {readable})) summaries ORDER BY {order} LIMIT $5 OFFSET $6"))
         .bind(repo).bind(viewer).bind(number).bind(state).bind(limit).bind(offset).fetch_all(pool).await?)
 }
@@ -565,8 +575,10 @@ pub(crate) async fn set_item_milestone_in_transaction(
                     .bind(repo_id)
                     .fetch_one(&mut **tx)
                     .await?;
-            super::timeline::append(tx, repo_id, subject, item_id, actor_id, kind, &title, "")
-                .await?;
+            crate::backend::db::postgres::timeline::append(
+                tx, repo_id, subject, item_id, actor_id, kind, &title, "",
+            )
+            .await?;
         }
     }
     sqlx::query(&format!(

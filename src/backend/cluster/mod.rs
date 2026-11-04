@@ -3,7 +3,6 @@
 //! starts only when cluster settings are present in the environment.
 pub mod ci;
 pub mod context;
-pub(crate) mod identity;
 pub mod link;
 mod pairing;
 pub mod placement;
@@ -18,7 +17,6 @@ pub use context::NodeContext;
 pub(crate) use transport::DIAL_TIMEOUT;
 pub use worker::{worker_context, CorePeer};
 
-pub use identity::{load_existing, load_or_create, parse_public_key, NodeKey};
 pub use pairing::{
     apply_declared_nodes, approve, create_invite, hash_secret, join, normalize_name,
     parse_declared_nodes, parse_duration, revoke, DeclaredNode, DeclaredSummary, InviteOptions,
@@ -29,7 +27,6 @@ pub use transport::{
     Relay, ALPN_EVENTS, ALPN_PAIR, ALPN_RPC, CLOSE_NOT_A_MEMBER, CLOSE_UNAVAILABLE,
 };
 
-use crate::backend::db;
 use crate::backend::node::NodeRole;
 use crate::backend::node::NodeRoles;
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -241,7 +238,7 @@ pub struct Cluster {
     events: ci::CiHandler,
     pub context: NodeContext,
     /// Held until [`Cluster::shutdown`], so a node with the same identity can start after it.
-    identity_lock: std::sync::Mutex<Option<db::cluster::ServingLock>>,
+    identity_lock: std::sync::Mutex<Option<crate::backend::db::cluster::ServingLock>>,
     repository_lock: std::sync::Mutex<Option<std::fs::File>>,
 }
 
@@ -337,7 +334,7 @@ impl Cluster {
             let _ = heartbeat.await;
         }
         let key = self.public_key().to_string();
-        let clear = db::cluster::clear_node_heartbeat(&self.pool, &key);
+        let clear = crate::backend::db::cluster::clear_node_heartbeat(&self.pool, &key);
         match tokio::time::timeout(WITHDRAW_TIMEOUT, clear).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => warn!(%error, "could not clear this node's heartbeat"),
@@ -396,7 +393,7 @@ pub async fn start(
 ) -> Result<Cluster> {
     require_postgres(pool)?;
     let key = load_or_create(state_dir)?;
-    let identity_lock = db::cluster::serving_lock(pool, &key.public_hex()).await?;
+    let identity_lock = crate::backend::db::cluster::serving_lock(pool, &key.public_hex()).await?;
     if !settings.declared.is_empty() {
         let summary = apply_declared_nodes(pool, &settings.declared).await?;
         info!(
@@ -411,7 +408,7 @@ pub async fn start(
         Some(ticket) => join_if_new(pool, &key, ticket, &settings, roles).await?,
         None => {
             // A node that holds the database credentials registers itself.
-            db::cluster::register_own_node(
+            crate::backend::db::cluster::register_own_node(
                 pool,
                 &key.public_hex(),
                 &settings.name,
@@ -442,7 +439,7 @@ pub async fn start(
     }
     let storage = roles.contains(NodeRole::Storage);
     ensure!(
-        storage || !db::cluster::has_storage_assignments(pool, node.id).await?,
+        storage || !crate::backend::db::cluster::has_storage_assignments(pool, node.id).await?,
         "move this node's primaries and replica assignments before removing its storage service"
     );
     let repos_path = if storage {
@@ -495,7 +492,7 @@ pub async fn start(
     let queue = crate::backend::ci::queue::RunQueue::Database {
         pool: pool.clone(),
         config: ci_config,
-        secrets: crate::backend::crypto::SecretEncryptor::configured_from_env()?
+        secrets: codeyard_support::secrets::SecretEncryptor::configured_from_env()?
             .map(std::sync::Arc::new),
         context: Some(context.clone()),
         notifications: std::sync::Arc::new(
@@ -563,17 +560,17 @@ pub async fn client_context(
 ) -> Result<Option<NodeContext>> {
     let Some(settings) = Settings::from_env()? else {
         ensure!(
-            !db::cluster::cluster_enabled(pool).await?,
+            !crate::backend::db::cluster::cluster_enabled(pool).await?,
             "this database is in cluster mode; set the CLUSTER_* settings to run repository commands"
         );
         return Ok(None);
     };
     require_postgres(pool)?;
-    crate::backend::fs::durable_dir(state_dir)?;
+    codeyard_support::fs::durable_dir(state_dir)?;
     let identity_lock = codeyard_support::locks::exclusive_file(&state_dir.join("serve.lock"))?;
     let key = load_existing(state_dir)?
         .ok_or_else(|| anyhow!("this node has not joined the cluster; start serve first"))?;
-    let node = db::cluster::get_node_by_public_key(pool, &key.public_hex())
+    let node = crate::backend::db::cluster::get_node_by_public_key(pool, &key.public_hex())
         .await?
         .filter(|node| node.status == "active")
         .ok_or_else(|| anyhow!("this node is not an active cluster member"))?;
@@ -604,12 +601,14 @@ async fn join_if_new(
     roles: &NodeRoles,
 ) -> Result<ClusterNode> {
     let public_key = key.public_hex();
-    if let Some(node) = db::cluster::get_node_by_public_key(pool, &public_key).await? {
+    if let Some(node) =
+        crate::backend::db::cluster::get_node_by_public_key(pool, &public_key).await?
+    {
         return Ok(node);
     }
     let membership = join(ticket, key, &settings.relay, &settings.name, Some(roles)).await?;
     info!(name = %membership.name, status = %membership.status, "joined the cluster");
-    db::cluster::get_node_by_public_key(pool, &public_key)
+    crate::backend::db::cluster::get_node_by_public_key(pool, &public_key)
         .await?
         .ok_or_else(|| {
             anyhow!("the cluster accepted this node but it is not in this database; CLUSTER_JOIN_TOKEN must come from a node that uses the same DATABASE_URL")
@@ -683,7 +682,13 @@ pub async fn report_alive(
     };
     tokio::time::timeout(
         Duration::from_secs(5),
-        db::cluster::record_node_heartbeat(pool, &key.to_string(), VERSION, &hint, free),
+        crate::backend::db::cluster::record_node_heartbeat(
+            pool,
+            &key.to_string(),
+            VERSION,
+            &hint,
+            free,
+        ),
     )
     .await
     .context("heartbeat database update timed out")?
@@ -727,7 +732,7 @@ pub async fn adopt_repositories(pool: &DbPool, node_id: i64, repos_path: &Path) 
     // A fork inserted while a family is being locked leaves that family untouched. Refresh
     // the directory snapshot to include it; never move the source without its current forks.
     for _ in 0..3 {
-        let local: Vec<_> = db::cluster::list_unplaced_repositories(pool)
+        let local: Vec<_> = crate::backend::db::cluster::list_unplaced_repositories(pool)
             .await?
             .into_iter()
             .filter(|(_, disk_path)| {
@@ -742,12 +747,15 @@ pub async fn adopt_repositories(pool: &DbPool, node_id: i64, repos_path: &Path) 
         for &id in &local {
             if attempted.insert(id) {
                 attempted.extend(
-                    db::cluster::list_fork_family(pool, id)
+                    crate::backend::db::cluster::list_fork_family(pool, id)
                         .await?
                         .into_iter()
                         .map(|(member, _, _)| member),
                 );
-                placed.extend(db::cluster::place_fork_family(pool, id, node_id, &local).await?);
+                placed.extend(
+                    crate::backend::db::cluster::place_fork_family(pool, id, node_id, &local)
+                        .await?,
+                );
             }
         }
         adopted += placed.len();

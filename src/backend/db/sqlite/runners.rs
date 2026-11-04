@@ -23,14 +23,16 @@ use sqlx::{Sqlite, SqliteConnection as Connection, SqlitePool as Pool, Transacti
 async fn authorize(c: &mut Transaction<'_, Sqlite>, actor: i64, scope: Scope) -> Result<()> {
     match scope {
         Scope::Organization(org) => {
-            let role = super::organizations::authority::authority(c, actor, org).await?;
+            let role =
+                crate::backend::db::sqlite::organizations::authority::authority(c, actor, org)
+                    .await?;
             anyhow::ensure!(
                 matches!(role,OrganizationOutcome::Applied(role) if administers(role)),
                 Refusal::Denied
             );
         }
         Scope::Repository(repo) => anyhow::ensure!(
-            super::discussions::lock_admin_authority(c, actor, repo).await?,
+            crate::backend::db::sqlite::discussions::lock_admin_authority(c, actor, repo).await?,
             Refusal::Denied
         ),
     }
@@ -69,7 +71,7 @@ async fn stop_runners(
     group: Option<i64>,
 ) -> Result<()> {
     let ids:Vec<i64>=sqlx::query_scalar("SELECT c.id FROM ci_runs c WHERE c.status='running' AND EXISTS(SELECT 1 FROM action_runners a JOIN nodes n ON n.id=a.node_id WHERE c.worker LIKE n.public_key || '/%' AND (a.id=?1 OR a.group_id=?2))").bind(runner).bind(group).fetch_all(&mut **tx).await?;
-    super::ci::stop_ci_runs(tx, &ids).await
+    crate::backend::db::sqlite::ci::stop_ci_runs(tx, &ids).await
 }
 pub async fn authorize_scope(pool: &Pool, actor: i64, scope: Scope) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -98,7 +100,9 @@ pub async fn list_groups(
         tx.commit().await?;
     }
     let mut tx = pool.begin().await?;
-    let role = super::organizations::authority::read_authority(&mut tx, actor, org).await?;
+    let role =
+        crate::backend::db::sqlite::organizations::authority::read_authority(&mut tx, actor, org)
+            .await?;
     anyhow::ensure!(
         matches!(role, OrganizationOutcome::Applied(role) if administers(role)),
         Refusal::Denied
@@ -301,7 +305,7 @@ pub async fn delete_group(pool: &Pool, actor: i64, org: i64, id: i64) -> Result<
     let default = default_group(&mut tx, org).await?;
     let queued: Vec<i64> = sqlx::query_scalar("SELECT c.id FROM ci_runs c JOIN repositories r ON r.id=c.repo_id WHERE c.status='queued' AND lower(c.runner_group)=lower(?2) AND r.owner_kind='org' AND r.owner_org_id=?1")
         .bind(org).bind(&row.name).fetch_all(&mut *tx).await?;
-    super::ci::stop_ci_runs(&mut tx, &queued).await?;
+    crate::backend::db::sqlite::ci::stop_ci_runs(&mut tx, &queued).await?;
     stop_runners(&mut tx, None, Some(id)).await?;
     sqlx::query("UPDATE action_runners SET group_id=?2 WHERE group_id=?1 AND org_id=?3")
         .bind(id)
@@ -336,7 +340,7 @@ pub async fn group_repositories(
     if !removed.is_empty() {
         let runs: Vec<i64> = sqlx::query_scalar("SELECT c.id FROM ci_runs c WHERE c.status='running' AND c.repo_id IN (SELECT value FROM json_each(?2)) AND EXISTS(SELECT 1 FROM action_runners a JOIN nodes n ON n.id=a.node_id WHERE a.group_id=?1 AND c.worker LIKE n.public_key || '/%')")
             .bind(id).bind(serde_json::to_string(&removed)?).fetch_all(&mut *tx).await?;
-        super::ci::stop_ci_runs(&mut tx, &runs).await?;
+        crate::backend::db::sqlite::ci::stop_ci_runs(&mut tx, &runs).await?;
     }
     tx.commit().await?;
     Ok(())
@@ -503,7 +507,8 @@ pub async fn registration(
     authorize(&mut tx, actor, scope).await?;
     if let Some(session) = input.session {
         anyhow::ensure!(
-            super::users::transitions::live_session(&mut tx, actor, session).await?,
+            crate::backend::db::sqlite::users::transitions::live_session(&mut tx, actor, session)
+                .await?,
             Refusal::Denied
         );
     }
@@ -538,7 +543,7 @@ pub async fn registration(
     } else {
         None
     };
-    sqlx::query("INSERT INTO join_tokens(token_hash,roles,reusable,requires_approval,expires_at,runner_scoped) VALUES(?1,'[\"runner\"]',?2,false,?3,true)").bind(input.hash).bind(runner_id.is_none()).bind(super::time::encode(input.expires)).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO join_tokens(token_hash,roles,reusable,requires_approval,expires_at,runner_scoped) VALUES(?1,'[\"runner\"]',?2,false,?3,true)").bind(input.hash).bind(runner_id.is_none()).bind(crate::backend::db::sqlite::time::encode(input.expires)).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO action_runner_tokens(token_hash,actor_id,org_id,repo_id,group_id,runner_id) VALUES(?1,?2,?3,?4,?5,?6)").bind(input.hash).bind(actor).bind(org).bind(repo).bind(group_id).bind(runner_id).execute(&mut *tx).await?;
     let row = match runner_id {
         Some(id) => Some(runner(&mut tx, scope, id).await?),
@@ -557,7 +562,7 @@ pub async fn remove_token(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize(&mut tx, actor, scope).await?;
     let (org, repo) = scope.ids();
-    sqlx::query("INSERT INTO action_runner_remove_tokens(token_hash,actor_id,org_id,repo_id,expires_at) VALUES(?1,?2,?3,?4,?5)").bind(hash).bind(actor).bind(org).bind(repo).bind(super::time::encode(expires)).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO action_runner_remove_tokens(token_hash,actor_id,org_id,repo_id,expires_at) VALUES(?1,?2,?3,?4,?5)").bind(hash).bind(actor).bind(org).bind(repo).bind(crate::backend::db::sqlite::time::encode(expires)).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }

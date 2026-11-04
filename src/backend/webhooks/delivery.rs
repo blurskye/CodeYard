@@ -1,13 +1,15 @@
 //! One webhook request: signed, sent with a timeout and no redirects, retried on server
 //! errors and timeouts, and recorded with what was sent and what came back.
-use super::outbound::{self, Refusal};
-use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db::webhooks::{self as hooks, NewDelivery};
+
+use crate::backend::db::webhooks as hooks;
+use crate::backend::db::webhooks::NewDelivery;
+use crate::backend::webhooks::outbound::Refusal;
 use base64::Engine as _;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::models::WebhookDelivery;
 use codeyard_db_core::DbPool;
 use codeyard_support::crypto::hmac_sha256;
+use codeyard_support::secrets::SecretEncryptor;
 use hmac::{Hmac, Mac};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -39,7 +41,7 @@ pub struct Outgoing {
 }
 
 pub(crate) fn json_payload(outgoing: &Outgoing) -> Option<serde_json::Value> {
-    if outgoing.content_type == super::settings::FORM_CONTENT_TYPE {
+    if outgoing.content_type == crate::backend::webhooks::settings::FORM_CONTENT_TYPE {
         let json = url::form_urlencoded::parse(outgoing.body.as_bytes())
             .find(|(key, _)| key == "payload")?
             .1
@@ -130,7 +132,7 @@ async fn current_hook(
     if let Some(app) = hook.app_id {
         let mut retries = RETRY_DELAYS.iter();
         loop {
-            match super::github_apps::current(pool, app, hook, outgoing).await {
+            match crate::backend::webhooks::github_apps::current(pool, app, hook, outgoing).await {
                 Ok(current) => return Ok(current),
                 Err(error) => {
                     tracing::warn!(webhook_id = hook.id, %error, "could not recheck a queued App webhook");
@@ -190,7 +192,8 @@ async fn current_hook(
         && current.password_nonce == hook.password_nonce
         && current.ssl_verify == hook.ssl_verify
         && (!outgoing.automatic
-            || (current.active && super::events::subscribes(&current.events, &outgoing.event))))
+            || (current.active
+                && codeyard_model::webhook_events::subscribes(&current.events, &outgoing.event))))
 }
 
 async fn transmit(
@@ -202,8 +205,11 @@ async fn transmit(
         return Ok(None);
     }
     let secret = open_secret(hook)?;
-    let url = outbound::validate_url(&hook.payload_url, outbound::allow_private())
-        .map_err(refusal_text)?;
+    let url = crate::backend::webhooks::outbound::validate_url(
+        &hook.payload_url,
+        crate::backend::webhooks::outbound::allow_private(),
+    )
+    .map_err(refusal_text)?;
     let mut headers = vec![
         ("Content-Type", outgoing.content_type.clone()),
         ("User-Agent", user_agent()),
@@ -255,7 +261,7 @@ async fn transmit(
     }
     let mut retries = RETRY_DELAYS.iter();
     let attempt = loop {
-        let slot = super::SLOTS
+        let slot = crate::backend::webhooks::SLOTS
             .acquire()
             .await
             .map_err(|_| "Webhook sends are stopped")?;
@@ -360,7 +366,12 @@ async fn attempt_inner(
     headers: &[(&str, String)],
     body: &str,
 ) -> Result<reqwest::Response, Attempt> {
-    let addresses = match outbound::resolve(url, outbound::allow_private()).await {
+    let addresses = match crate::backend::webhooks::outbound::resolve(
+        url,
+        crate::backend::webhooks::outbound::allow_private(),
+    )
+    .await
+    {
         Ok(addresses) => addresses,
         Err(refusal) => {
             return Err(Attempt::Failed {
@@ -418,7 +429,7 @@ fn client(
     addresses: &[SocketAddr],
     ssl_verify: bool,
 ) -> reqwest::Result<reqwest::Client> {
-    outbound::pinned_client(url, addresses)
+    crate::backend::webhooks::outbound::pinned_client(url, addresses)
         .timeout(TIMEOUT)
         .danger_accept_invalid_certs(!ssl_verify)
         .user_agent(user_agent())

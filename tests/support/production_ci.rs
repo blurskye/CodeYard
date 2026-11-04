@@ -1,7 +1,6 @@
 //! A throwaway PostgreSQL schema (from GITSERV_TEST_DATABASE_URL) with one user, one repository
 //! and a workflow commit, dropped when the fixture ends.
 use crate::support::native_database::PostgresDatabase;
-use codeyard::backend::db;
 
 pub struct Fixture {
     pub pool: codeyard_db_core::DbPool,
@@ -16,14 +15,14 @@ impl Fixture {
     pub async fn new() -> Self {
         let database = PostgresDatabase::new().await;
         let pool = database.pool.clone();
-        let owner = db::users::accounts::create_user(&pool, "ci_owner", None)
+        let owner = codeyard::backend::db::users::accounts::create_user(&pool, "ci_owner", None)
             .await
             .expect("fixture owner");
         let temp = tempfile::tempdir().expect("owned tempdir");
         let path = temp.path().join("repo.git");
         let git = git2::Repository::init_bare(&path).expect("owned bare Git");
         let sha = commit(&git, "refs/heads/main", None, "admitted-marker", None);
-        let repo = db::repositories::records::create_repository(
+        let repo = codeyard::backend::db::repositories::records::create_repository(
             &pool,
             owner.id,
             "fixture",

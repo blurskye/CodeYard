@@ -1,5 +1,8 @@
-use super::{auth, pagination::Pagination, Error, Result};
-use crate::backend::{app::AppState, db};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -21,8 +24,8 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 
-fn error(error: db::variables::VariableError) -> Error {
-    use db::variables::VariableError;
+fn error(error: crate::backend::db::variables::VariableError) -> Error {
+    use crate::backend::db::variables::VariableError;
     match error {
         VariableError::Denied => {
             Error::new(StatusCode::FORBIDDEN, "Resource not accessible by token")
@@ -41,9 +44,13 @@ async fn repository(
     owner: &str,
     name: &str,
     write: bool,
-) -> Result<(i64, auth::Authentication)> {
-    let (repo, auth) = super::repository(state, headers, owner, name, write).await?;
-    Ok((repo.id, auth.ok_or_else(auth::required)?))
+) -> Result<(i64, crate::backend::api::github::auth::Authentication)> {
+    let (repo, auth) =
+        crate::backend::api::github::repository(state, headers, owner, name, write).await?;
+    Ok((
+        repo.id,
+        auth.ok_or_else(crate::backend::api::github::auth::required)?,
+    ))
 }
 
 async fn list(
@@ -54,9 +61,10 @@ async fn list(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let variables = db::variables::list(&state.pool, actor.user.id, &actor.credential(), repo)
-        .await
-        .map_err(error)?;
+    let variables =
+        crate::backend::db::variables::list(&state.pool, actor.user.id, &actor.credential(), repo)
+            .await
+            .map_err(error)?;
     let total = variables.len();
     let (offset, limit) = page.window()?;
     let variables: Vec<_> = variables.into_iter().skip(offset).take(limit).collect();
@@ -74,12 +82,13 @@ async fn variable(
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &repo, false).await?;
     let name = name.to_ascii_uppercase();
-    let variable = db::variables::list(&state.pool, actor.user.id, &actor.credential(), repo)
-        .await
-        .map_err(error)?
-        .into_iter()
-        .find(|variable| variable.name == name)
-        .ok_or_else(Error::missing)?;
+    let variable =
+        crate::backend::db::variables::list(&state.pool, actor.user.id, &actor.credential(), repo)
+            .await
+            .map_err(error)?
+            .into_iter()
+            .find(|variable| variable.name == name)
+            .ok_or_else(Error::missing)?;
     Ok(Json(json!(variable)))
 }
 
@@ -98,7 +107,7 @@ async fn create(
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
     let Json(body) = body.map_err(|_| Error::invalid("Invalid variable input"))?;
-    db::variables::save(
+    crate::backend::db::variables::save(
         &state.pool,
         actor.user.id,
         &actor.credential(),
@@ -109,7 +118,7 @@ async fn create(
     )
     .await
     .map_err(|failure| match failure {
-        db::variables::VariableError::Exists => {
+        crate::backend::db::variables::VariableError::Exists => {
             Error::new(StatusCode::CONFLICT, "Variable already exists")
         }
         other => error(other),
@@ -141,7 +150,7 @@ async fn update(
         .name
         .unwrap_or_else(|| previous.clone())
         .to_ascii_uppercase();
-    db::variables::save(
+    crate::backend::db::variables::save(
         &state.pool,
         actor.user.id,
         &actor.credential(),
@@ -161,7 +170,7 @@ async fn remove(
     Path((owner, repo, name)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &repo, true).await?;
-    db::variables::delete(
+    crate::backend::db::variables::delete(
         &state.pool,
         actor.user.id,
         &actor.credential(),

@@ -2,15 +2,15 @@
 //! read, most recently updated first, and shows a few hits from each. The walk stops when a request
 //! runs out of time or repository bytes, and a page says how far it got. `repo:owner/name` names one
 //! repository, and its pages hold every hit in turn.
-use super::{owner_name, search::RESULTS_PER_PAGE, DiscoveryReadError};
-use crate::backend::{
-    app::AppState,
-    db,
-    repositories::{
-        access::{self, AccessError},
-        store::{repo_store, RepoStore, MAX_COMMIT_OFFSET},
-    },
-};
+use crate::backend::api::discovery::owner_name;
+use crate::backend::api::discovery::search::RESULTS_PER_PAGE;
+use crate::backend::api::discovery::DiscoveryReadError;
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::access::AccessError;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::RepoStore;
+use crate::backend::repositories::store::MAX_COMMIT_OFFSET;
 use codeyard_git::{error::RepoError, CommitFilter};
 use codeyard_webui::pages::discovery::{CodeHit, CommitHit, SearchScan};
 use futures_util::{stream, StreamExt};
@@ -218,13 +218,14 @@ async fn repository_page(
     skip: usize,
 ) -> Result<ContentPage, DiscoveryReadError> {
     let mut content = ContentPage::default();
-    let Some(repo) = db::repositories::records::get_repository(&state.pool, owner, name)
-        .await
-        .map_err(|_| DiscoveryReadError::Unavailable)?
+    let Some(repo) =
+        crate::backend::db::repositories::records::get_repository(&state.pool, owner, name)
+            .await
+            .map_err(|_| DiscoveryReadError::Unavailable)?
     else {
         return Ok(content);
     };
-    match access::check_read(&state.pool, repo.id, viewer).await {
+    match crate::backend::repositories::access::check_read(&state.pool, repo.id, viewer).await {
         Ok(_) => {}
         Err(AccessError::NotFound) => return Ok(content),
         Err(_) => return Err(DiscoveryReadError::Unavailable),
@@ -264,7 +265,7 @@ async fn repository_page(
             Vec::new()
         }
     };
-    match access::check_read(&state.pool, repo.id, viewer).await {
+    match crate::backend::repositories::access::check_read(&state.pool, repo.id, viewer).await {
         Ok(_) => {}
         Err(AccessError::NotFound) => return Ok(ContentPage::default()),
         Err(_) => return Err(DiscoveryReadError::Unavailable),
@@ -309,7 +310,7 @@ async fn walk(
     // again, and the hits are authorized again at the end.
     let candidates = timeout_at(
         deadline,
-        db::repositories::discovery::search_repository_ids(
+        crate::backend::db::repositories::discovery::search_repository_ids(
             &state.pool,
             viewer,
             scope.repository_query(),
@@ -321,10 +322,16 @@ async fn walk(
     .map_err(|_| DiscoveryReadError::Unavailable)?;
     'walk: for step in candidates.chunks(STEP) {
         let rows = timeout_at(deadline, async {
-            let repos =
-                db::repositories::records::get_repositories_by_ids(&state.pool, step).await?;
-            let owners =
-                db::repositories::records::repository_owner_names(&state.pool, step).await?;
+            let repos = crate::backend::db::repositories::records::get_repositories_by_ids(
+                &state.pool,
+                step,
+            )
+            .await?;
+            let owners = crate::backend::db::repositories::records::repository_owner_names(
+                &state.pool,
+                step,
+            )
+            .await?;
             anyhow::Ok((repos, owners))
         })
         .await;
@@ -431,7 +438,7 @@ async fn walk(
         if full && Instant::now() < deadline {
             let count = timeout_at(
                 deadline,
-                db::repositories::discovery::count_repositories(
+                crate::backend::db::repositories::discovery::count_repositories(
                     &state.pool,
                     viewer,
                     scope.repository_query(),
@@ -475,11 +482,15 @@ async fn readable_repositories(
 ) -> Result<HashSet<i64>, DiscoveryReadError> {
     let ids = ids.into_iter().collect::<Vec<_>>();
     Ok(
-        db::repositories::access::readable_repository_ids(&state.pool, viewer, &ids)
-            .await
-            .map_err(|_| DiscoveryReadError::Unavailable)?
-            .into_iter()
-            .collect(),
+        crate::backend::db::repositories::access::readable_repository_ids(
+            &state.pool,
+            viewer,
+            &ids,
+        )
+        .await
+        .map_err(|_| DiscoveryReadError::Unavailable)?
+        .into_iter()
+        .collect(),
     )
 }
 
@@ -492,13 +503,13 @@ mod tests {
         let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
         codeyard_db_core::run_migrations(&pool).await.unwrap();
         let root = tempfile::tempdir().unwrap();
-        let user = db::users::accounts::create_user(&pool, "alice", None)
+        let user = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
         let candidate = crate::backend::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(user.id),
+            crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(user.id),
             "proj",
             None,
             false,
@@ -523,13 +534,13 @@ mod tests {
             .await
             .unwrap()
             .contains(&candidate.id));
-        db::repositories::records::update_repository(
+        crate::backend::db::repositories::records::update_repository(
             &pool,
             user.id,
             candidate.id,
             None,
             true,
-            db::repositories::records::MergeMethodUpdate {
+            crate::backend::db::repositories::records::MergeMethodUpdate {
                 merge: None,
                 squash: None,
                 rebase: None,

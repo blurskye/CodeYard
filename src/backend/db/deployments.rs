@@ -51,7 +51,7 @@ pub struct Status {
 }
 
 pub struct NewDeployment<'a> {
-    pub actor: super::credentials::Actor,
+    pub actor: crate::backend::db::credentials::Actor,
     pub repo: i64,
     pub sha: &'a str,
     pub reference: &'a str,
@@ -163,11 +163,11 @@ native_operation!(crate::backend::db::postgres::deployments::list,
     fn list(pool: &DbPool, viewer: Option<i64>, repo: i64, filter: &Filter, offset: i64, limit: i64) -> Result<Vec<Deployment>>);
 native_operation!(crate::backend::db::postgres::deployments::delete,
     crate::backend::db::sqlite::deployments::delete,
-    fn delete(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, id: i64) -> Result<()>);
+    fn delete(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, id: i64) -> Result<()>);
 native_operation!(crate::backend::db::postgres::deployments::create_status,
     crate::backend::db::sqlite::deployments::create_status,
     /// Every status the call saved, each with its deployment after the change; the new status is last.
-    fn create_status(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, deployment: i64, input: &NewStatus) -> Result<Vec<(Deployment, Status)>>);
+    fn create_status(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, deployment: i64, input: &NewStatus) -> Result<Vec<(Deployment, Status)>>);
 /// Pairs the inactive statuses written for older deployments with those deployments.
 pub(in crate::backend::db) fn pair(
     deployments: Vec<Deployment>,

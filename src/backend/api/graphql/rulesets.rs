@@ -1,12 +1,21 @@
 //! `Repository.rulesets` and `Organization.rulesets` read the rule documents the REST API stores.
-use super::{
-    connection, missing, node_id, repository, unavailable, user, Arguments, RequestContext, Result,
-    Value,
-};
-use crate::backend::db::{
-    organizations::OrganizationOutcome,
-    rulesets::{self, ListFilter, Owner, Page, Ruleset, Target},
-};
+
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::node_id;
+
+use crate::backend::api::graphql::unavailable;
+
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
+use crate::backend::db::organizations::OrganizationOutcome;
+
+use crate::backend::db::rulesets::ListFilter;
+use crate::backend::db::rulesets::Owner;
+use crate::backend::db::rulesets::Page;
+use crate::backend::db::rulesets::Ruleset;
+use crate::backend::db::rulesets::Target;
 use async_graphql::Error;
 use serde_json::json;
 
@@ -62,7 +71,7 @@ pub(super) async fn list(
     let mut rows = Vec::new();
     loop {
         let page = Page::new(rows.len() as i64, 100).map_err(unavailable)?;
-        let found = match rulesets::list_rulesets(
+        let found = match crate::backend::db::rulesets::list_rulesets(
             &request.state.pool,
             Some(request.auth.user.id),
             owner,
@@ -87,14 +96,15 @@ pub(super) async fn list(
         let ruleset = row.value;
         nodes.push(object(ruleset, request).await?);
     }
-    connection::slice(ctx, nodes)
+    crate::backend::api::graphql::connection::slice(ctx, nodes)
 }
 
 pub(super) async fn node(id: i64, request: &RequestContext) -> Result<Value> {
-    let (repo, org) = super::db::graphql::ruleset_owner(&request.state.pool, id)
-        .await
-        .map_err(unavailable)?
-        .ok_or_else(missing)?;
+    let (repo, org) =
+        crate::backend::api::graphql::db::graphql::ruleset_owner(&request.state.pool, id)
+            .await
+            .map_err(unavailable)?
+            .ok_or_else(missing)?;
     let owner = match (repo, org) {
         (Some(repo), None) => {
             request.authorize(repo, "metadata", false).await?;
@@ -106,7 +116,7 @@ pub(super) async fn node(id: i64, request: &RequestContext) -> Result<Value> {
         }
         _ => return Err(missing()),
     };
-    match rulesets::get_ruleset(
+    match crate::backend::db::rulesets::get_ruleset(
         &request.state.pool,
         Some(request.auth.user.id),
         owner,
@@ -125,9 +135,11 @@ async fn object(ruleset: Ruleset, request: &RequestContext) -> Result<Value> {
     let source = match ruleset.owner {
         Owner::Organization(org) => {
             request.authorize_organization(org).await?;
-            user::organization_by_id(org, request).await?
+            crate::backend::api::graphql::user::organization_by_id(org, request).await?
         }
-        Owner::Repository(repo) => repository::object(&repository::by_id(repo, request).await?),
+        Owner::Repository(repo) => crate::backend::api::graphql::repository::object(
+            &crate::backend::api::graphql::repository::by_id(repo, request).await?,
+        ),
     };
     let mut rules = Vec::with_capacity(ruleset.definition.rules.len());
     for rule in &ruleset.definition.rules {
@@ -162,5 +174,5 @@ pub(super) fn rules(ctx: &Arguments, parent: &Value) -> Result<Value> {
         .filter(|rule| kind.is_none_or(|kind| rule["type"] == kind))
         .cloned()
         .collect();
-    connection::slice(ctx, rules)
+    crate::backend::api::graphql::connection::slice(ctx, rules)
 }

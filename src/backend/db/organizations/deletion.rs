@@ -1,4 +1,4 @@
-use super::OrganizationOutcome;
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::Result;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;

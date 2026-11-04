@@ -1,22 +1,17 @@
 //! Native participation in the same commit discussions exposed by REST.
-use super::commit::commit_page;
-use crate::backend::{
-    api::{
-        http::context::PageContext,
-        repos::{
-            chrome::{self, Loaded},
-            forms::{authorize_post, field, with_status},
-            paging,
-            refs::references::resolve_references_or_none,
-        },
-    },
-    app::AppState,
-    db::{self, repositories::commit_comments as records},
-    repositories::{
-        access,
-        commit_comments::{self as comments, CommentError},
-    },
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::repos::refs::commits::commit::commit_page;
+
+use crate::backend::api::repos::chrome::Loaded;
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::field;
+use crate::backend::api::repos::forms::with_status;
+
+use crate::backend::api::repos::refs::references::resolve_references_or_none;
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::commit_comments as comments;
+use crate::backend::repositories::commit_comments::CommentError;
 use axum::{
     extract::{MatchedPath, OriginalUri, Path, State},
     http::{HeaderMap, StatusCode},
@@ -60,16 +55,25 @@ pub(super) async fn discussion(
             .transpose()
             .map_err(|_| ctx.error(StatusCode::BAD_REQUEST, "Invalid comment ID."))?,
     };
-    let mut page = paging::number(ctx, "comments_page", 1, 1..=50_001)?;
+    let mut page = crate::backend::api::repos::paging::number(ctx, "comments_page", 1, 1..=50_001)?;
     if let Some(id) = target {
-        match records::get_comment(pool, loaded.repository.id, id)
-            .await
-            .map_err(|_| unavailable())?
+        match crate::backend::db::repositories::commit_comments::get_comment(
+            pool,
+            loaded.repository.id,
+            id,
+        )
+        .await
+        .map_err(|_| unavailable())?
         {
             Some(comment) if comment.sha == sha => {
-                let through = records::count_comments(pool, loaded.repository.id, sha, Some(id))
-                    .await
-                    .map_err(|_| unavailable())?;
+                let through = crate::backend::db::repositories::commit_comments::count_comments(
+                    pool,
+                    loaded.repository.id,
+                    sha,
+                    Some(id),
+                )
+                .await
+                .map_err(|_| unavailable())?;
                 page = usize::try_from((through.max(1) - 1) / PER_PAGE as i64 + 1)
                     .map_err(|_| unavailable())?;
             }
@@ -82,7 +86,7 @@ pub(super) async fn discussion(
         .checked_mul(PER_PAGE)
         .filter(|offset| *offset <= 1_000_000)
         .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Comment page exceeds its limit."))?;
-    let mut rows = records::list_comments(
+    let mut rows = crate::backend::db::repositories::commit_comments::list_comments(
         pool,
         loaded.repository.id,
         Some(sha),
@@ -93,18 +97,25 @@ pub(super) async fn discussion(
     .map_err(|_| unavailable())?;
     let has_more = rows.len() > PER_PAGE;
     rows.truncate(PER_PAGE);
-    let total = records::count_comments(pool, loaded.repository.id, sha, None)
-        .await
-        .map_err(|_| unavailable())?;
+    let total = crate::backend::db::repositories::commit_comments::count_comments(
+        pool,
+        loaded.repository.id,
+        sha,
+        None,
+    )
+    .await
+    .map_err(|_| unavailable())?;
     let can_comment = !loaded.repository.is_archived
         && ctx
             .user
             .as_ref()
             .is_some_and(|user| !user.is_banned && !user.must_change_password);
     let maintain = match ctx.user.as_ref() {
-        Some(user) => access::can_maintain(pool, user, &loaded.repository)
-            .await
-            .map_err(|_| unavailable())?,
+        Some(user) => {
+            crate::backend::repositories::access::can_maintain(pool, user, &loaded.repository)
+                .await
+                .map_err(|_| unavailable())?
+        }
         None => false,
     };
     let entries =
@@ -115,7 +126,7 @@ pub(super) async fn discussion(
         .iter()
         .map(|entry| entry.comment.id)
         .collect::<Vec<_>>();
-    let counts = db::reactions::reaction_counts(
+    let counts = crate::backend::db::reactions::reaction_counts(
         pool,
         "commit_comment",
         &ids,
@@ -142,7 +153,7 @@ pub(super) async fn discussion(
                         .map_or_else(|| path.clone(), |line| format!("{path}:{line}"))
                 }),
                 association: entry.association,
-                revision: db::discussions::comment_revision(&comment.body),
+                revision: crate::backend::db::discussions::comment_revision(&comment.body),
                 can_edit: can_comment && own,
                 can_delete: can_comment && (own || maintain),
                 reactions: counts
@@ -196,10 +207,13 @@ pub(super) async fn react(
     if let Err(response) = authorize_post(&ctx, &form) {
         return response;
     }
-    let loaded = match chrome::load(&ctx, &params["owner"], &params["repo"]).await {
-        Ok(loaded) => loaded,
-        Err(response) => return response,
-    };
+    let loaded =
+        match crate::backend::api::repos::chrome::load(&ctx, &params["owner"], &params["repo"])
+            .await
+        {
+            Ok(loaded) => loaded,
+            Err(response) => return response,
+        };
     let actor = match ctx.require_user() {
         Ok(actor) => actor.id,
         Err(response) => return response,
@@ -208,7 +222,13 @@ pub(super) async fn react(
         Ok(id) => id,
         Err(_) => return ctx.error(StatusCode::NOT_FOUND, "Commit comment not found."),
     };
-    let row = match records::get_comment(&ctx.state.pool, loaded.repository.id, id).await {
+    let row = match crate::backend::db::repositories::commit_comments::get_comment(
+        &ctx.state.pool,
+        loaded.repository.id,
+        id,
+    )
+    .await
+    {
         Ok(Some(row)) if row.sha == params["sha"] => row,
         Ok(_) => return ctx.error(StatusCode::NOT_FOUND, "Commit comment not found."),
         Err(_) => {
@@ -219,31 +239,34 @@ pub(super) async fn react(
         }
     };
     let content = field(&form, "content");
-    if !db::reactions::valid_content(db::reactions::Subject::CommitComment, &content) {
+    if !crate::backend::db::reactions::valid_content(
+        crate::backend::db::reactions::Subject::CommitComment,
+        &content,
+    ) {
         return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Unknown reaction.");
     }
-    if let Err(error) = db::reactions::toggle_reaction(
+    if let Err(error) = crate::backend::db::reactions::toggle_reaction(
         &ctx.state.pool,
         actor,
-        &db::users::accounts::AccountCredential::Session(
+        &crate::backend::db::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),
         loaded.repository.id,
         row.id,
-        db::reactions::Subject::CommitComment,
+        crate::backend::db::reactions::Subject::CommitComment,
         row.id,
         &content,
     )
     .await
     {
         return if error
-            .downcast_ref::<db::reactions::ReactionRefusal>()
+            .downcast_ref::<crate::backend::db::reactions::ReactionRefusal>()
             .is_some()
         {
             ctx.error(StatusCode::NOT_FOUND, "Commit comment not found.")
         } else if error
-            .downcast_ref::<db::discussions::DiscussionWriteRefusal>()
+            .downcast_ref::<crate::backend::db::discussions::DiscussionWriteRefusal>()
             .is_some()
         {
             ctx.error(StatusCode::FORBIDDEN, "Reaction mutation denied.")
@@ -283,7 +306,13 @@ pub(super) async fn submit(
     }
     // A Git outage must not replace the submitted text: the commit page then fails and the
     // draft is shown by the fallback below.
-    let loaded = match chrome::load_metadata(&ctx, &params["owner"], &params["repo"]).await {
+    let loaded = match crate::backend::api::repos::chrome::load_metadata(
+        &ctx,
+        &params["owner"],
+        &params["repo"],
+    )
+    .await
+    {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
@@ -340,17 +369,21 @@ pub(super) async fn submit(
             return Err(CommentError::Denied);
         }
         if let Some(id) = id {
-            let comment = records::get_comment(&ctx.state.pool, loaded.repository.id, id)
-                .await
-                .map_err(|_| CommentError::Unavailable)?
-                .ok_or(CommentError::Missing)?;
+            let comment = crate::backend::db::repositories::commit_comments::get_comment(
+                &ctx.state.pool,
+                loaded.repository.id,
+                id,
+            )
+            .await
+            .map_err(|_| CommentError::Unavailable)?
+            .ok_or(CommentError::Missing)?;
             if comment.sha != *sha {
                 return Err(CommentError::Missing);
             }
             let own = comment.author_id == Some(actor);
             if !own
                 && (!route.as_str().ends_with("/delete")
-                    || !access::can_maintain(
+                    || !crate::backend::repositories::access::can_maintain(
                         &ctx.state.pool,
                         ctx.user.as_ref().ok_or(CommentError::Denied)?,
                         &loaded.repository,
@@ -380,7 +413,7 @@ pub(super) async fn submit(
                     &ctx.state.pool,
                     ctx.state.cluster.as_ref(),
                     &ctx.state.notification_broadcaster,
-                    records::CommentEdit {
+                    crate::backend::db::repositories::commit_comments::CommentEdit {
                         actor: ctx.database_actor(actor),
                         repo_id: loaded.repository.id,
                         id,

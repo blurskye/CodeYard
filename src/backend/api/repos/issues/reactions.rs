@@ -2,11 +2,15 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::discussion_write_error;
 use crate::backend::api::repos::discussion::*;
 use crate::backend::api::repos::forms::authorize_post;
-use crate::backend::api::repos::paging;
+
 use crate::backend::api::repos::pulls::diff::diff_url;
-use crate::backend::db;
-use crate::backend::db::reactions::{ReactionRefusal, Subject, CONTENTS};
-use crate::backend::issues::{discussion_link_at, MAX_COMMENT_PAGE, MAX_REVIEW_COMMENT_OFFSET};
+
+use crate::backend::db::reactions::ReactionRefusal;
+use crate::backend::db::reactions::Subject;
+use crate::backend::db::reactions::CONTENTS;
+use crate::backend::issues::discussion_link_at;
+use crate::backend::issues::MAX_COMMENT_PAGE;
+use crate::backend::issues::MAX_REVIEW_COMMENT_OFFSET;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -38,7 +42,7 @@ pub(crate) async fn native_react(
         Kind::Issue => (
             Subject::Issue,
             Subject::IssueComment,
-            db::issues::get_issue(pool, repo.record.id, number)
+            crate::backend::db::issues::get_issue(pool, repo.record.id, number)
                 .await
                 .map_err(|_| unavailable(&ctx))?
                 .map(|issue| issue.id),
@@ -46,10 +50,14 @@ pub(crate) async fn native_react(
         Kind::Pull => (
             Subject::PullRequest,
             Subject::PullRequestComment,
-            db::pull_requests::records::get_pull_request(pool, repo.record.id, number)
-                .await
-                .map_err(|_| unavailable(&ctx))?
-                .map(|pull| pull.id),
+            crate::backend::db::pull_requests::records::get_pull_request(
+                pool,
+                repo.record.id,
+                number,
+            )
+            .await
+            .map_err(|_| unavailable(&ctx))?
+            .map(|pull| pull.id),
         ),
     };
     let item_id = item_id.ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Not found."))?;
@@ -79,15 +87,21 @@ pub(crate) async fn native_react(
     } else {
         // The discussion page and review comment offset the form was on, so the reaction comes
         // back to the same place.
-        let page = paging::number(&ctx, "page", 1, 1..=MAX_COMMENT_PAGE)?;
-        let offset = paging::number(&ctx, "review_comments", 0, 0..=MAX_REVIEW_COMMENT_OFFSET)?;
+        let page =
+            crate::backend::api::repos::paging::number(&ctx, "page", 1, 1..=MAX_COMMENT_PAGE)?;
+        let offset = crate::backend::api::repos::paging::number(
+            &ctx,
+            "review_comments",
+            0,
+            0..=MAX_REVIEW_COMMENT_OFFSET,
+        )?;
         discussion_link_at(&base, page, offset, &anchor)
     };
     // The write checks the reactor's access, the archive state and the target in its transaction.
-    db::reactions::toggle_reaction(
+    crate::backend::db::reactions::toggle_reaction(
         pool,
         ctx.require_user()?.id,
-        &db::users::accounts::AccountCredential::Session(
+        &crate::backend::db::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),
@@ -130,9 +144,14 @@ async fn reactions_on(
     ids: &[i64],
 ) -> ResultPage<HashMap<i64, Vec<Reaction>>> {
     let viewer = ctx.user.as_ref().map_or(0, |user| user.id);
-    let rows = db::reactions::reaction_counts(&ctx.state.pool, subject.name(), ids, viewer)
-        .await
-        .map_err(|_| unavailable(ctx))?;
+    let rows = crate::backend::db::reactions::reaction_counts(
+        &ctx.state.pool,
+        subject.name(),
+        ids,
+        viewer,
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?;
     let mut grouped: HashMap<i64, Vec<Reaction>> = HashMap::new();
     for row in rows {
         grouped.entry(row.subject_id).or_default().push(Reaction {

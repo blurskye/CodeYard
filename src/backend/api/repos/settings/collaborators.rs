@@ -1,9 +1,10 @@
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
-use crate::backend::api::repos::access::{check_repo_admin_access, find_repository};
+use crate::backend::api::repos::access::check_repo_admin_access;
+use crate::backend::api::repos::access::find_repository;
 use crate::backend::api::repos::responses::repository_unavailable;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
@@ -39,13 +40,15 @@ pub async fn list_collaborators(
         ));
     }
 
-    let collaborators =
-        db::repositories::access::list_repo_collaborators(&state.pool, repository.id)
-            .await
-            .map_err(|_| repository_unavailable())?;
+    let collaborators = crate::backend::db::repositories::access::list_repo_collaborators(
+        &state.pool,
+        repository.id,
+    )
+    .await
+    .map_err(|_| repository_unavailable())?;
 
     let user_ids: Vec<i64> = collaborators.iter().map(|access| access.user_id).collect();
-    let users = db::users::accounts::get_users_by_ids(&state.pool, &user_ids)
+    let users = crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &user_ids)
         .await
         .map_err(|_| repository_unavailable())?;
     let user_map: std::collections::HashMap<i64, codeyard_db_core::models::User> =

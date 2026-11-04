@@ -1,11 +1,11 @@
-use super::responses::WorkflowInfo;
-use crate::backend::{
-    api::{http::error::ApiError, http::session::get_current_user},
-    app::AppState,
-    ci::{admission::is_safe_owner, list_workflows_for_ref},
-    db,
-    repositories::store::repo_store,
-};
+use crate::backend::api::ci::responses::WorkflowInfo;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
+use crate::backend::app::AppState;
+use crate::backend::ci::admission::is_safe_owner;
+use crate::backend::ci::list_workflows_for_ref;
+
+use crate::backend::repositories::store::repo_store;
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
@@ -44,25 +44,26 @@ pub async fn list_ci_workflows(
         ));
     }
 
-    let repository = db::repositories::get_repository(&state.pool, &query.owner, &query.repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository data is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
+    let repository =
+        crate::backend::db::repositories::get_repository(&state.pool, &query.owner, &query.repo)
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiError::new(
+                        "database_error",
+                        "Repository data is unavailable",
+                    )),
+                )
+            })?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(ApiError::new("not_found", "Repository not found")),
+                )
+            })?;
 
-    super::jobs::ensure_repo_read_access(&state, &user, &repository).await?;
+    crate::backend::api::ci::jobs::ensure_repo_read_access(&state, &user, &repository).await?;
 
     let git_ref = query
         .git_ref
@@ -98,12 +99,12 @@ pub async fn list_ci_workflows(
         }
     };
     let user = get_current_user(&state.pool, &headers).await?;
-    super::jobs::ensure_repo_read_access(&state, &user, &repository).await?;
+    crate::backend::api::ci::jobs::ensure_repo_read_access(&state, &user, &repository).await?;
 
     Ok(Json(ListWorkflowsResponse {
         workflows: workflows
             .into_iter()
-            .map(super::responses::map_workflow_info)
+            .map(crate::backend::api::ci::responses::map_workflow_info)
             .collect(),
     }))
 }

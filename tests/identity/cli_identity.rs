@@ -1,6 +1,6 @@
 //! The public executable remains codeyard despite Cargo's identifier constraint.
 use crate::support::native_database as native;
-use codeyard::backend::db;
+
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -105,12 +105,12 @@ async fn user_create_requires_setup_without_blocking_web_bootstrap() {
         installation.path().join("data/gitserv.db").display()
     );
     let pool = codeyard_db_core::init_db(&url).await.unwrap();
-    assert!(db::users::accounts::list_users(&pool)
+    assert!(codeyard::backend::db::users::accounts::list_users(&pool)
         .await
         .unwrap()
         .is_empty());
     assert!(matches!(
-        db::users::transitions::complete_setup(
+        codeyard::backend::db::users::transitions::complete_setup(
             &pool,
             "root_admin",
             None,
@@ -120,7 +120,7 @@ async fn user_create_requires_setup_without_blocking_web_bootstrap() {
         )
         .await
         .unwrap(),
-        db::users::transitions::SetupClaim::Completed(_)
+        codeyard::backend::db::users::transitions::SetupClaim::Completed(_)
     ));
     let created = run(installation.path(), &["user", "create", "alice"]);
     assert!(created.status.success(), "{created:?}");
@@ -159,7 +159,7 @@ fn provision(
 }
 
 async fn cli_account_contract(pool: &codeyard_db_core::DbPool, url: &str) {
-    use db::users::{accounts, transitions};
+    use codeyard::backend::db::users::{accounts, transitions};
     let installation = tempfile::tempdir().unwrap();
     let refused = provision(
         installation.path(),
@@ -187,10 +187,12 @@ async fn cli_account_contract(pool: &codeyard_db_core::DbPool, url: &str) {
         );
         assert!(!output.status.success(), "{output:?}");
         assert_eq!(accounts::list_users(pool).await.unwrap().len(), 1);
-        assert!(db::node_config::get_node_configuration(pool)
-            .await
-            .unwrap()
-            .is_none_or(|config| !config.setup_completed));
+        assert!(
+            codeyard::backend::db::node_config::get_node_configuration(pool)
+                .await
+                .unwrap()
+                .is_none_or(|config| !config.setup_completed)
+        );
     }
     let output = provision(
         installation.path(),
@@ -208,7 +210,7 @@ async fn cli_account_contract(pool: &codeyard_db_core::DbPool, url: &str) {
     assert!(output.status.success(), "{output:?}");
     assert!(!String::from_utf8_lossy(&output.stdout).contains("bootstrap-password"));
     assert!(!String::from_utf8_lossy(&output.stderr).contains("bootstrap-password"));
-    let config = db::node_config::get_node_configuration(pool)
+    let config = codeyard::backend::db::node_config::get_node_configuration(pool)
         .await
         .unwrap()
         .unwrap();
@@ -299,7 +301,7 @@ async fn cli_account_validation_and_local_recovery_postgres() {
 
 #[tokio::test]
 async fn local_bootstrap_rolls_back_and_serializes_with_public_setup_on_both_engines() {
-    use db::users::transitions::{self, SetupClaim};
+    use codeyard::backend::db::users::transitions::{self, SetupClaim};
     let postgres = native::PostgresDatabase::new().await;
     let sqlite = native::NativeDatabase::new().await;
     for pool in [&postgres.pool, &sqlite.pool] {
@@ -308,14 +310,16 @@ async fn local_bootstrap_rolls_back_and_serializes_with_public_setup_on_both_eng
                 .await
                 .is_err()
         );
-        assert!(db::users::accounts::list_users(pool)
+        assert!(codeyard::backend::db::users::accounts::list_users(pool)
             .await
             .unwrap()
             .is_empty());
-        assert!(db::node_config::get_node_configuration(pool)
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            codeyard::backend::db::node_config::get_node_configuration(pool)
+                .await
+                .unwrap()
+                .is_none()
+        );
         let (local, public) = tokio::join!(
             transitions::bootstrap_admin(pool, "local_admin", "fixture", "private"),
             transitions::complete_setup(pool, "web_admin", None, "fixture", "public", None),
@@ -327,10 +331,13 @@ async fn local_bootstrap_rolls_back_and_serializes_with_public_setup_on_both_eng
         };
         assert!(winner.is_admin);
         assert_eq!(
-            db::users::accounts::list_users(pool).await.unwrap().len(),
+            codeyard::backend::db::users::accounts::list_users(pool)
+                .await
+                .unwrap()
+                .len(),
             1
         );
-        let config = db::node_config::get_node_configuration(pool)
+        let config = codeyard::backend::db::node_config::get_node_configuration(pool)
             .await
             .unwrap()
             .unwrap();

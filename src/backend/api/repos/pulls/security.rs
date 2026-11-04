@@ -3,7 +3,7 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::discussion::unavailable;
 use crate::backend::api::repos::discussion::RepositoryData;
 use crate::backend::api::repos::discussion::ResultPage;
-use crate::backend::db::code_scanning as records;
+
 use codeyard_db_core::models::PullRequest;
 use codeyard_webui::{encode_component, excerpt, pages::repos::security as view};
 use serde_json::Value;
@@ -24,10 +24,15 @@ pub(super) async fn checks(
     let pool = &ctx.state.pool;
     let branch = (pull.head_repo_id == Some(repo.record.id))
         .then(|| format!("refs/heads/{}", pull.head_branch));
-    let candidates =
-        records::pull_merge_candidates(pool, user.id, &session, repo.record.id, pull.number)
-            .await
-            .map_err(|_| unavailable(ctx))?;
+    let candidates = crate::backend::db::code_scanning::pull_merge_candidates(
+        pool,
+        user.id,
+        &session,
+        repo.record.id,
+        pull.number,
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?;
     let mut more = candidates.len() > 100;
     let store =
         crate::backend::repositories::store::repo_store(&repo.record, ctx.state.cluster.as_ref());
@@ -60,11 +65,11 @@ pub(super) async fn checks(
         }
     }
     let baseline_ref = format!("refs/heads/{}", pull.base_branch);
-    let snapshot = records::pull_snapshot(
+    let snapshot = crate::backend::db::code_scanning::pull_snapshot(
         pool,
         user.id,
         &session,
-        &records::PullSelection {
+        &crate::backend::db::code_scanning::PullSelection {
             repo: repo.record.id,
             head,
             base,

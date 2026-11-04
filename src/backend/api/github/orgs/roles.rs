@@ -1,13 +1,16 @@
 //! Predefined roles inherit native repository permissions without granting organization ownership.
-use super::{auth, outcome, target, AppState, Error, Result};
-use crate::backend::{
-    api::github::pagination::Pagination,
-    db::{
-        organizations::roles::{self, OrganizationRole, RoleTarget},
-        repositories::push_teams::TeamAccess,
-    },
-    webhooks::payloads,
-};
+use crate::backend::api::github::orgs::auth;
+use crate::backend::api::github::orgs::outcome;
+use crate::backend::api::github::orgs::target;
+use crate::backend::api::github::orgs::AppState;
+use crate::backend::api::github::orgs::Error;
+use crate::backend::api::github::orgs::Result;
+use crate::backend::api::github::pagination::Pagination;
+
+use crate::backend::db::organizations::roles::OrganizationRole;
+use crate::backend::db::organizations::roles::RoleTarget;
+use crate::backend::db::repositories::push_teams::TeamAccess;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, Method, StatusCode},
@@ -40,7 +43,7 @@ async fn required_role(
     id: i64,
 ) -> Result<OrganizationRole> {
     outcome(
-        roles::catalog(&state.pool, actor, org)
+        crate::backend::db::organizations::roles::catalog(&state.pool, actor, org)
             .await
             .map_err(Error::unavailable)?,
     )?
@@ -58,12 +61,12 @@ async fn list(
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
     let roles = outcome(
-        roles::catalog(&state.pool, actor.user.id, org.id)
+        crate::backend::db::organizations::roles::catalog(&state.pool, actor.user.id, org.id)
             .await
             .map_err(Error::unavailable)?,
     )?;
     Ok(Json(
-        json!({"total_count":roles.len(),"roles":roles.iter().map(payloads::organization_role).collect::<Vec<_>>()}),
+        json!({"total_count":roles.len(),"roles":roles.iter().map(crate::backend::webhooks::payloads::organization_role).collect::<Vec<_>>()}),
     ))
 }
 async fn get_role(
@@ -76,7 +79,9 @@ async fn get_role(
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
     let role = required_role(&state, actor.user.id, org.id, id).await?;
-    Ok(Json(payloads::organization_role(&role)))
+    Ok(Json(crate::backend::webhooks::payloads::organization_role(
+        &role,
+    )))
 }
 async fn users(
     State(state): State<Arc<AppState>>,
@@ -92,7 +97,7 @@ async fn users(
     let role = required_role(&state, actor.user.id, org.id, id).await?;
     let (offset, limit) = page.window()?;
     let mut users = outcome(
-        roles::users(
+        crate::backend::db::organizations::roles::users(
             &state.pool,
             actor.user.id,
             org.id,
@@ -109,7 +114,13 @@ async fn users(
         &uri,
         users
             .iter()
-            .map(|user| payloads::organization_role_user(user, &org.name, role.base_level))
+            .map(|user| {
+                crate::backend::webhooks::payloads::organization_role_user(
+                    user,
+                    &org.name,
+                    role.base_level,
+                )
+            })
             .collect(),
         more,
     )
@@ -128,7 +139,7 @@ async fn teams(
     let role = required_role(&state, actor.user.id, org.id, id).await?;
     let (offset, limit) = page.window()?;
     let mut teams = outcome(
-        roles::teams(
+        crate::backend::db::organizations::roles::teams(
             &state.pool,
             actor.user.id,
             org.id,
@@ -146,7 +157,7 @@ async fn teams(
         teams
             .into_iter()
             .map(|team| {
-                let mut value = payloads::team(&TeamAccess {
+                let mut value = crate::backend::webhooks::payloads::team(&TeamAccess {
                     team,
                     org_slug: org.name.clone(),
                     permission: role.base_level,
@@ -178,7 +189,7 @@ async fn change(
     } else {
         RoleTarget::Team(params["team_slug"].clone())
     };
-    let result = roles::change(
+    let result = crate::backend::db::organizations::roles::change(
         &state.pool,
         actor.database_actor(),
         org.id,

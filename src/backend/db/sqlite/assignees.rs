@@ -1,4 +1,6 @@
-use crate::backend::db::assignees::{AssignedItem, AssignmentRefusal, MAX_ASSIGNEES};
+use crate::backend::db::assignees::AssignedItem;
+use crate::backend::db::assignees::AssignmentRefusal;
+use crate::backend::db::assignees::MAX_ASSIGNEES;
 use anyhow::Result;
 use codeyard_db_core::models::User;
 use sqlx::{Sqlite, SqlitePool, Transaction};
@@ -47,19 +49,28 @@ async fn begin_write<'a>(
 ) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_triage_authority(&mut tx, authority.user_id, repo_id).await?,
+        crate::backend::db::sqlite::discussions::lock_triage_authority(
+            &mut tx,
+            authority.user_id,
+            repo_id
+        )
+        .await?,
         AssignmentRefusal::Denied
     );
     if let Some(credential) = authority.credential() {
-        super::users::transitions::require_account(&mut tx, authority.user_id, &credential)
-            .await
-            .map_err(|error| {
-                if error.is::<codeyard_support::credentials::AccountRestricted>() {
-                    AssignmentRefusal::Denied.into()
-                } else {
-                    error
-                }
-            })?;
+        crate::backend::db::sqlite::users::transitions::require_account(
+            &mut tx,
+            authority.user_id,
+            &credential,
+        )
+        .await
+        .map_err(|error| {
+            if error.is::<codeyard_support::credentials::AccountRestricted>() {
+                AssignmentRefusal::Denied.into()
+            } else {
+                error
+            }
+        })?;
     }
     Ok(tx)
 }
@@ -111,7 +122,7 @@ pub(crate) async fn candidate(
     let assignable: bool = sqlx::query_scalar(&format!(
         "SELECT EXISTS (SELECT 1 FROM repositories r JOIN users u ON u.id=?2
          WHERE r.id=?1 AND {CANDIDATES} AND ({})>=1)",
-        super::repositories::access::USER_REPO_ACCESS_SQL
+        crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL
     ))
     .bind(repo_id)
     .bind(user_id)
@@ -158,13 +169,17 @@ pub(crate) async fn assign_in_transaction(
             == 1;
     }
     if added {
-        super::labels::touch_subject(tx, tables(item).0, item_id(item)).await?;
+        crate::backend::db::sqlite::labels::touch_subject(tx, tables(item).0, item_id(item))
+            .await?;
         let name: String = sqlx::query_scalar("SELECT username FROM users WHERE id=?1")
             .bind(user_id)
             .fetch_one(&mut **tx)
             .await?;
         let (subject, id) = crate::backend::db::timeline::item_subject(item);
-        super::timeline::append(tx, repo_id, subject, id, actor_id, "assigned", &name, "").await?;
+        crate::backend::db::sqlite::timeline::append(
+            tx, repo_id, subject, id, actor_id, "assigned", &name, "",
+        )
+        .await?;
     }
     Ok(added)
 }
@@ -193,7 +208,7 @@ pub async fn unassign_users(
         .rows_affected();
         if deleted > 0 {
             let (subject, id) = crate::backend::db::timeline::item_subject(item);
-            super::timeline::append(
+            crate::backend::db::sqlite::timeline::append(
                 &mut tx,
                 repo_id,
                 subject,
@@ -208,7 +223,8 @@ pub async fn unassign_users(
         }
     }
     if !removed.is_empty() {
-        super::labels::touch_subject(&mut tx, tables(item).0, item_id(item)).await?;
+        crate::backend::db::sqlite::labels::touch_subject(&mut tx, tables(item).0, item_id(item))
+            .await?;
     }
     tx.commit().await?;
     Ok(removed)
@@ -255,7 +271,7 @@ pub async fn list_assignable_usernames(pool: &SqlitePool, repo_id: i64) -> Resul
     Ok(sqlx::query_scalar(&format!(
         "SELECT u.username FROM repositories r JOIN users u ON {CANDIDATES}
          WHERE r.id=?1 AND ({})>=1 ORDER BY u.username",
-        super::repositories::access::USER_REPO_ACCESS_SQL
+        crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL
     ))
     .bind(repo_id)
     .fetch_all(pool)
@@ -263,7 +279,7 @@ pub async fn list_assignable_usernames(pool: &SqlitePool, repo_id: i64) -> Resul
 }
 
 fn matching_candidates() -> String {
-    format!("FROM repositories r JOIN users u ON {CANDIDATES} WHERE r.id=?1 AND ({})>=1 AND (instr(lower(u.username),lower(?2))>0 OR instr(lower(COALESCE(u.display_name,'')),lower(?2))>0)", super::repositories::access::USER_REPO_ACCESS_SQL)
+    format!("FROM repositories r JOIN users u ON {CANDIDATES} WHERE r.id=?1 AND ({})>=1 AND (instr(lower(u.username),lower(?2))>0 OR instr(lower(COALESCE(u.display_name,'')),lower(?2))>0)", crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL)
 }
 
 pub async fn count_assignable_users(pool: &SqlitePool, repo_id: i64, query: &str) -> Result<i64> {
@@ -307,7 +323,7 @@ pub async fn assignable_user_ids(
     Ok(sqlx::query_scalar(&format!(
         "SELECT u.id FROM repositories r JOIN users u ON {CANDIDATES}
          WHERE r.id=?1 AND u.id IN (SELECT value FROM json_each(?2)) AND ({})>=1",
-        super::repositories::access::USER_REPO_ACCESS_SQL
+        crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL
     ))
     .bind(repo_id)
     .bind(serde_json::to_string(user_ids)?)

@@ -1,6 +1,10 @@
 //! Uploaded files stored as plain files under `<state_dir>/objects`.
-use super::{media_signature_matches, valid_key, StorageError, Upload, MAX_OBJECT_BYTES};
+use crate::backend::storage::media_signature_matches;
+use crate::backend::storage::valid_key;
+use crate::backend::storage::StorageError;
+use crate::backend::storage::Upload;
 use anyhow::{Context, Result};
+use codeyard_support::object_limits::MAX_OBJECT_BYTES;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::time::Duration;

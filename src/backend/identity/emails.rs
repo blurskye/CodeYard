@@ -1,10 +1,10 @@
 //! Secondary addresses require their own confirmation and never authorize a password reset.
-use crate::backend::db;
+
 use crate::backend::db::users::accounts::AccountCredential;
 use codeyard_support::credentials::AccountRestricted;
 
 use crate::backend::db::users::emails::EmailRefusal;
-use crate::backend::email::links;
+
 use codeyard_db_core::DbPool;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -36,14 +36,14 @@ pub async fn change(
     let mut emails = Vec::new();
     for address in input {
         let address = address.trim().to_ascii_lowercase();
-        if super::credentials::validate_email(&address).is_err() {
+        if codeyard_model::account_input::validate_email(&address).is_err() {
             return Err(EmailError::Invalid);
         }
         emails.push(address);
     }
     emails.sort();
     emails.dedup();
-    db::users::emails::change_emails(pool, actor, credential, &emails, add)
+    crate::backend::db::users::emails::change_emails(pool, actor, credential, &emails, add)
         .await
         .map_err(|error| {
             if error.is::<AccountRestricted>() {
@@ -57,12 +57,15 @@ pub async fn change(
             }
         })?;
     if add {
-        let user = db::users::accounts::get_user_by_id(pool, actor)
+        let user = crate::backend::db::users::accounts::get_user_by_id(pool, actor)
             .await
             .map_err(|_| EmailError::Unavailable)?
             .ok_or(EmailError::Denied)?;
-        if let Err(error @ (links::LinkError::Unavailable | links::LinkError::Limited)) =
-            links::send_secondary_verifications(pool, &user, &emails).await
+        if let Err(
+            error @ (crate::backend::email::links::LinkError::Unavailable
+            | crate::backend::email::links::LinkError::Limited),
+        ) =
+            crate::backend::email::links::send_secondary_verifications(pool, &user, &emails).await
         {
             tracing::warn!(
                 user_id = actor,

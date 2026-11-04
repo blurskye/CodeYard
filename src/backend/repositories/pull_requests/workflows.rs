@@ -1,13 +1,13 @@
-use super::OperationError;
-use crate::backend::ci::admission::AdmissionError;
 use crate::backend::ci::commit_message_for_ref;
 use crate::backend::ci::infer_pipeline_from_workflow_path;
 use crate::backend::ci::list_workflows_for_ref;
 use crate::backend::ci::should_skip_run_from_message;
-use crate::backend::ci::workflows::WorkflowMatchBudget;
 use crate::backend::ci::CiRunRequest;
 use crate::backend::ci::CiRuns;
-use crate::backend::db;
+use crate::backend::repositories::pull_requests::OperationError;
+use codeyard_db_core::ci_admission::AdmissionError;
+use codeyard_model::workflow_glob::WorkflowMatchBudget;
+
 use crate::backend::repositories::store::repo_store;
 use anyhow::Context;
 use codeyard_db_core::models::PullRequest;
@@ -53,17 +53,19 @@ pub async fn queue_pull_request_ci(
     if pull.state != "open" || pull.is_draft {
         return Ok(());
     }
-    let owner = db::ci::ci_repository_owner(pool, repository.id)
+    let owner = crate::backend::db::ci::ci_repository_owner(pool, repository.id)
         .await?
         .ok_or(AdmissionError::Unavailable)?;
-    let author = db::users::accounts::get_user_by_id(pool, pull.author_id)
+    let author = crate::backend::db::users::accounts::get_user_by_id(pool, pull.author_id)
         .await?
         .ok_or(AdmissionError::Unavailable)?;
-    let sender = db::users::accounts::get_user_by_id(pool, actor_id)
+    let sender = crate::backend::db::users::accounts::get_user_by_id(pool, actor_id)
         .await?
         .ok_or(AdmissionError::Unavailable)?;
-    use crate::backend::webhooks::payloads::{self, Person, Scope};
-    let mut payload = payloads::pull_request(
+
+    use crate::backend::webhooks::payloads::Person;
+    use crate::backend::webhooks::payloads::Scope;
+    let mut payload = crate::backend::webhooks::payloads::pull_request(
         "synchronize",
         pull,
         &Person::of(&author),
@@ -138,9 +140,13 @@ async fn queue_pull_request_workflow_event(
         && pull.head_repo_id != Some(repository.id)
         && pull.workflows_approved_sha.as_deref() != Some(&pull.head_sha);
     let may_discover = if awaiting_approval {
-        db::repositories::access::get_user_repo_access(pool, actor_id, repository.id)
-            .await
-            .map(|access| access.can_read())
+        crate::backend::db::repositories::access::get_user_repo_access(
+            pool,
+            actor_id,
+            repository.id,
+        )
+        .await
+        .map(|access| access.can_read())
     } else {
         ci.actor_may_discover_workflows(repository.id, actor_id)
             .await
@@ -166,9 +172,10 @@ async fn queue_pull_request_workflow_event(
     let (trunk, base_sha) = if target {
         (pull.base_branch.clone(), pull.base_sha.clone())
     } else {
-        let (branch, sha, _) = super::stacks::merge_target(pool, pull)
-            .await
-            .map_err(|_| AdmissionError::Unavailable)?;
+        let (branch, sha, _) =
+            crate::backend::repositories::pull_requests::stacks::merge_target(pool, pull)
+                .await
+                .map_err(|_| AdmissionError::Unavailable)?;
         (branch, sha)
     };
     let store = repo_store(repository, ci.cluster.as_ref());
@@ -287,7 +294,7 @@ async fn queue_pull_request_workflow_event(
     if matched.is_empty() {
         return first_failure.map_or(Ok(()), Err);
     }
-    let owner = match db::ci::ci_repository_owner(pool, repository.id)
+    let owner = match crate::backend::db::ci::ci_repository_owner(pool, repository.id)
         .await
         .context("CI owner unavailable")
     {
@@ -377,8 +384,8 @@ pub async fn run_pull_request_workflows(
     request: RunWorkflowsRequest,
 ) -> Result<PullRequest, OperationError> {
     // The caller resolved and authorized this repository; a rename must not switch it.
-    let user = super::actor(pool, actor_id).await?;
-    super::require_write(pool, &user, repository).await?;
+    let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
+    crate::backend::repositories::pull_requests::require_write(pool, &user, repository).await?;
     // Only trusted actors can queue these workflows, so no one else may record an
     // approval for them.
     if !user.is_admin && !ci.config.trusted_actor_ids.contains(&user.id) {
@@ -387,35 +394,38 @@ pub async fn run_pull_request_workflows(
             message: "CI host execution is not approved for your account".to_owned(),
         });
     }
-    let pull = db::pull_requests::records::get_pull_request(pool, repository.id, number)
+    let pull =
+        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+            .await
+            .map_err(crate::backend::repositories::pull_requests::write_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".to_owned(),
+            })?;
+    crate::backend::repositories::pull_requests::branches::refresh_open_pull_request(
+        pool, repository, ci, user.id, pull.id, None,
+    )
+    .await
+    .map_err(|_| OperationError::Unavailable {
+        code: "git_unavailable",
+        message: "Pull request revisions could not be refreshed; workflows were not approved."
+            .into(),
+    })?;
+    let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
         .await
-        .map_err(super::write_error)?
+        .map_err(crate::backend::repositories::pull_requests::write_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
         })?;
-    super::branches::refresh_open_pull_request(pool, repository, ci, user.id, pull.id, None)
-        .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "git_unavailable",
-            message: "Pull request revisions could not be refreshed; workflows were not approved."
-                .into(),
-        })?;
-    let pull = db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
-        .await
-        .map_err(super::write_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".to_owned(),
-        })?;
-    if !db::pull_requests::records::approve_pull_request_workflows(
+    if !crate::backend::db::pull_requests::records::approve_pull_request_workflows(
         pool,
         pull.id,
         user.id,
         &request.expected_head,
     )
     .await
-    .map_err(super::write_error)?
+    .map_err(crate::backend::repositories::pull_requests::write_error)?
     {
         return Err(OperationError::Conflict {
             code: "revision_conflict",
@@ -423,7 +433,7 @@ pub async fn run_pull_request_workflows(
                 .to_owned(),
         });
     }
-    let pull = db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
+    let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
         .await
         .map_err(|_| OperationError::Updated { number })?
         .ok_or(OperationError::Updated { number })?;
@@ -458,12 +468,18 @@ async fn release_awaiting_runs(
     pull: &PullRequest,
     actor_id: i64,
 ) -> Result<(), AdmissionError> {
-    let (trunk, _, _) = super::stacks::merge_target(pool, pull)
-        .await
-        .map_err(|_| AdmissionError::Unavailable)?;
-    let runs =
-        db::ci::latest_ci_runs_for_commit(pool, repository.id, &pull.head_sha, pull.id, &trunk)
-            .await?;
+    let (trunk, _, _) =
+        crate::backend::repositories::pull_requests::stacks::merge_target(pool, pull)
+            .await
+            .map_err(|_| AdmissionError::Unavailable)?;
+    let runs = crate::backend::db::ci::latest_ci_runs_for_commit(
+        pool,
+        repository.id,
+        &pull.head_sha,
+        pull.id,
+        &trunk,
+    )
+    .await?;
     let mut payloads: Vec<serde_json::Value> = Vec::new();
     for run in runs {
         if !run.approval_required

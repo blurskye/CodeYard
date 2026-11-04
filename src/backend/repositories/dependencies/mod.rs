@@ -4,16 +4,14 @@ pub mod npm;
 pub mod registry;
 pub(crate) mod updates;
 pub mod worker;
-use crate::backend::{
-    cluster::NodeContext,
-    db,
-    repositories::{access, store::repo_store},
-};
+use crate::backend::cluster::NodeContext;
+
+use crate::backend::db::repositories::dependencies::{self as records, Feature};
+use crate::backend::repositories::store::repo_store;
 use codeyard_git::error::{ErrorKind, RepoError};
-use db::repositories::dependencies::{self as records, Feature};
 #[derive(Debug)]
 pub enum DependencyError {
-    Access(access::AccessError),
+    Access(crate::backend::repositories::access::AccessError),
     Store(RepoError),
 }
 #[derive(Clone, Copy, serde::Serialize)]
@@ -29,11 +27,11 @@ async fn delegated_admin(
     let Some(actor) = actor else {
         return Ok(false);
     };
-    match access::check_admin(pool, repo, actor).await {
+    match crate::backend::repositories::access::check_admin(pool, repo, actor).await {
         Ok(_) => Ok(true),
-        Err(access::AccessError::Unavailable) => {
-            Err(DependencyError::Access(access::AccessError::Unavailable))
-        }
+        Err(crate::backend::repositories::access::AccessError::Unavailable) => Err(
+            DependencyError::Access(crate::backend::repositories::access::AccessError::Unavailable),
+        ),
         Err(_) => Ok(false),
     }
 }
@@ -43,7 +41,7 @@ pub async fn status(
     repo: i64,
     feature: Feature,
 ) -> Result<Status, DependencyError> {
-    let repository = access::check_admin(pool, repo, actor)
+    let repository = crate::backend::repositories::access::check_admin(pool, repo, actor)
         .await
         .map_err(DependencyError::Access)?;
     let current = records::state(pool, repo)
@@ -69,7 +67,7 @@ pub async fn status(
         || !current.same_owner(&repository)
         || (repository.is_private && !current.private_consent)
         || current.last_status == "unsupported";
-    if let Some(settings) = db::code_security::repository_settings(pool, repo)
+    if let Some(settings) = crate::backend::db::code_security::repository_settings(pool, repo)
         .await
         .map_err(|error| DependencyError::Store(store_error(error)))?
     {
@@ -95,13 +93,13 @@ pub async fn set_enabled(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     actor: i64,
-    credential: db::users::accounts::OwnedAccountCredential,
+    credential: crate::backend::db::users::accounts::OwnedAccountCredential,
     repo: i64,
     feature: Feature,
     enabled: bool,
     private_consent: bool,
 ) -> Result<(), DependencyError> {
-    let repository = access::check_admin(pool, repo, actor)
+    let repository = crate::backend::repositories::access::check_admin(pool, repo, actor)
         .await
         .map_err(DependencyError::Access)?;
     if repository.is_archived {
@@ -150,7 +148,7 @@ pub(crate) async fn observe_refs(
 pub(crate) fn check_publication(
     actor: i64,
     repo: &codeyard_db_core::models::Repository,
-    prepared: &super::store::PreparedFile,
+    prepared: &crate::backend::repositories::store::PreparedFile,
     publication: &records::Publication,
     refs: &std::collections::HashMap<String, String>,
 ) -> Result<(), RepoError> {

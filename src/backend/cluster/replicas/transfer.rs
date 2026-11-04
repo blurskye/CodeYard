@@ -3,14 +3,12 @@
 //! sets its refs and HEAD to the listing. Git does the object and ref work. A bundle is
 //! not used: it leaves out the refs that point into the copy's history, so a copy that is
 //! ahead of a tag would lose the tag.
-use crate::backend::{
-    cluster::{
-        rpc::{Operation, Request},
-        NodeContext,
-    },
-    repositories::store::{GitStreams, RepoStore},
-    storage::local::TEMP_PREFIX,
-};
+use crate::backend::cluster::rpc::Operation;
+use crate::backend::cluster::rpc::Request;
+use crate::backend::cluster::NodeContext;
+use crate::backend::repositories::store::GitStreams;
+use crate::backend::repositories::store::RepoStore;
+use crate::backend::storage::local::TEMP_PREFIX;
 use anyhow::{ensure, Context, Result};
 use serde::Deserialize;
 use std::{collections::HashMap, path::Path};
@@ -41,7 +39,7 @@ pub(super) async fn copy(
         biased;
         _ = stop.cancelled() => anyhow::bail!("replica assignment changed"),
         have = async {
-            if super::connected(mirror).await? {
+            if crate::backend::cluster::replicas::connected(mirror).await? {
                 tips(context, repository, mirror).await
             } else {
                 Ok(Vec::new())
@@ -125,7 +123,7 @@ async fn fetch(
     let _installation = tokio::select! {
         biased;
         _ = stop.cancelled() => anyhow::bail!("replica assignment changed"),
-        guards = super::moving(&primary_path, mirror) => guards,
+        guards = crate::backend::cluster::replicas::moving(&primary_path, mirror) => guards,
     };
     // From here cancellation is deferred until installation has ended. Copying retains
     // the task and its directory reservation until join, including during shutdown.
@@ -141,7 +139,7 @@ async fn fetch(
         "replica assignment changed before installation"
     );
     // `initialize` needs an empty path, so a directory Git cannot open is renamed aside first.
-    if !super::connected(mirror).await? {
+    if !crate::backend::cluster::replicas::connected(mirror).await? {
         if mirror.exists() {
             move_aside(mirror).await?;
         }
@@ -173,7 +171,7 @@ async fn move_aside(mirror: &Path) -> Result<()> {
     let directory = mirror
         .parent()
         .context("replica copy has no parent")?
-        .join(super::QUARANTINES)
+        .join(crate::backend::cluster::replicas::QUARANTINES)
         .join(name.as_ref());
     tokio::fs::create_dir_all(&directory).await?;
     let aside = directory.join(Uuid::new_v4().to_string());
@@ -186,7 +184,9 @@ async fn remove_aside_copies(mirror: &Path) {
     let (Some(directory), Some(name)) = (mirror.parent(), mirror.file_name()) else {
         return;
     };
-    let directory = directory.join(super::QUARANTINES).join(name);
+    let directory = directory
+        .join(crate::backend::cluster::replicas::QUARANTINES)
+        .join(name);
     let mut entries = match tokio::fs::read_dir(&directory).await {
         Ok(entries) => entries,
         Err(error) => {
@@ -212,8 +212,12 @@ async fn remove_aside_copies(mirror: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::cluster::{rpc, IrohDialer, NodeAddress, NodeKey, Relay};
-    use crate::backend::db;
+
+    use crate::backend::cluster::IrohDialer;
+    use crate::backend::cluster::NodeAddress;
+    use crate::backend::cluster::Relay;
+    use codeyard_support::node_identity::NodeKey;
+
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -255,15 +259,18 @@ mod tests {
             (server_key.public_hex(), "primary"),
         ] {
             let roles = ["storage".to_owned()];
-            let node = db::cluster::register_own_node(&pool, &node_key, name, &roles, "test").await;
+            let node = crate::backend::db::cluster::register_own_node(
+                &pool, &node_key, name, &roles, "test",
+            )
+            .await;
             nodes.push(node.unwrap().id);
         }
         let (copy_node, primary) = (nodes[0], nodes[1]);
-        let owner = db::users::accounts::create_user(&pool, "owner", None)
+        let owner = crate::backend::db::users::accounts::create_user(&pool, "owner", None)
             .await
             .unwrap();
         let repository = Uuid::new_v4();
-        let row = db::repositories::records::create_repository(
+        let row = crate::backend::db::repositories::records::create_repository(
             &pool,
             owner.id,
             "copied",
@@ -273,11 +280,13 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(db::cluster::place_repository(&pool, row.id, primary)
-            .await
-            .unwrap());
         assert!(
-            db::cluster::insert_replica(&pool, row.id, copy_node, primary)
+            crate::backend::db::cluster::place_repository(&pool, row.id, primary)
+                .await
+                .unwrap()
+        );
+        assert!(
+            crate::backend::db::cluster::insert_replica(&pool, row.id, copy_node, primary)
                 .await
                 .unwrap()
         );
@@ -299,7 +308,7 @@ mod tests {
         };
         let hint = serde_json::to_string(&address).unwrap();
         let pool = context.database().unwrap();
-        assert!(db::cluster::record_node_heartbeat(
+        assert!(crate::backend::db::cluster::record_node_heartbeat(
             pool,
             &server_key.public_hex(),
             "test",
@@ -317,35 +326,46 @@ mod tests {
             loop {
                 let (socket, _) = listener.accept().await.unwrap();
                 let mut stream = acceptor.accept(socket).await.unwrap();
-                let header = rpc::read_frame(&mut stream, rpc::MAX_JSON).await.unwrap();
+                let header = crate::backend::cluster::rpc::read_frame(
+                    &mut stream,
+                    codeyard_db_core::limits::MAX_JSON,
+                )
+                .await
+                .unwrap();
                 let request: Request = serde_json::from_slice(&header).unwrap();
                 let call = count.fetch_add(1, Ordering::SeqCst);
                 let Operation::ReplicaPack { have } = request.operation else {
                     panic!("not a pack");
                 };
                 assert_eq!(have.is_empty(), call > 0);
-                let reply = rpc::Reply {
+                let reply = crate::backend::cluster::rpc::Reply {
                     result: Ok(serde_json::json!({"head":null,"refs":{}})),
                 };
-                rpc::write_frame(
+                crate::backend::cluster::rpc::write_frame(
                     &mut stream,
                     &serde_json::to_vec(&reply).unwrap(),
-                    rpc::MAX_JSON,
+                    codeyard_db_core::limits::MAX_JSON,
                 )
                 .await
                 .unwrap();
                 // An invalid pack models a local indexing failure after a successful download.
-                rpc::write_frame(&mut stream, b"invalid pack", 32768)
+                crate::backend::cluster::rpc::write_frame(&mut stream, b"invalid pack", 32768)
                     .await
                     .unwrap();
-                rpc::write_frame(&mut stream, b"", 32768).await.unwrap();
+                crate::backend::cluster::rpc::write_frame(&mut stream, b"", 32768)
+                    .await
+                    .unwrap();
                 let code = i32::from(primary_rejects && call == 0);
                 let exit =
                     serde_json::to_vec(&serde_json::json!({"result":{"Ok":code},"stderr":""}))
                         .unwrap();
-                rpc::write_frame(&mut stream, &exit, rpc::MAX_JSON)
-                    .await
-                    .unwrap();
+                crate::backend::cluster::rpc::write_frame(
+                    &mut stream,
+                    &exit,
+                    codeyard_db_core::limits::MAX_JSON,
+                )
+                .await
+                .unwrap();
                 stream.shutdown().await.unwrap();
             }
         });

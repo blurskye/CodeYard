@@ -3,14 +3,15 @@
 //! sign-in state through the browser. A sealed token is AES-GCM under the master key, so the
 //! browser can carry it but cannot read or change it.
 
-use super::tokens::token_hash;
-use super::{
-    admission::AdmissionError,
-    passwords::{self, CurrentPasswordError, PasswordError},
-    sessions::{self, AccountAuthorityError},
-};
-use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db;
+use crate::backend::identity::admission::AdmissionError;
+use codeyard_support::token_hash::token_hash;
+
+use crate::backend::identity::passwords::CurrentPasswordError;
+use crate::backend::identity::passwords::PasswordError;
+
+use crate::backend::identity::sessions::AccountAuthorityError;
+use codeyard_support::secrets::SecretEncryptor;
+
 use crate::backend::db::users::two_factor::FactorAuthority;
 use crate::backend::db::users::two_factor::StoredTwoFactor;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -243,8 +244,8 @@ pub async fn begin_setup(
     if user.password_hash.is_none() {
         return Err(TwoFactorError::PasswordRequired);
     }
-    passwords::verify_current_password(pool, user, password).await?;
-    if db::users::two_factor::get_two_factor(pool, user.id)
+    crate::backend::identity::passwords::verify_current_password(pool, user, password).await?;
+    if crate::backend::db::users::two_factor::get_two_factor(pool, user.id)
         .await
         .map_err(|_| TwoFactorError::Unavailable)?
         .is_some()
@@ -311,7 +312,7 @@ pub async fn confirm_setup(
     if user.password_hash.is_none() {
         return Err(TwoFactorError::PasswordRequired);
     }
-    passwords::verify_current_password(pool, user, password).await?;
+    crate::backend::identity::passwords::verify_current_password(pool, user, password).await?;
     let now = now_unix();
     let setup = open_setup(encryptor, user, session, token, now)?;
     let secret = BASE32_NOPAD
@@ -330,10 +331,15 @@ pub async fn confirm_setup(
         last_used_step: Some(step),
     };
     let authority = password_authority(user, session)?;
-    let enabled =
-        db::users::two_factor::enable_two_factor(pool, user.id, authority, &enrollment, &hashes)
-            .await
-            .map_err(|_| TwoFactorError::Unavailable)?;
+    let enabled = crate::backend::db::users::two_factor::enable_two_factor(
+        pool,
+        user.id,
+        authority,
+        &enrollment,
+        &hashes,
+    )
+    .await
+    .map_err(|_| TwoFactorError::Unavailable)?;
     if !enabled {
         return Err(TwoFactorError::AlreadyEnabled);
     }
@@ -352,7 +358,7 @@ pub async fn verify_totp_code(
     if !is_totp_code(&code) {
         return Ok(None);
     }
-    let Some(stored) = db::users::two_factor::get_two_factor(pool, user_id)
+    let Some(stored) = crate::backend::db::users::two_factor::get_two_factor(pool, user_id)
         .await
         .map_err(|_| TwoFactorError::Unavailable)?
     else {
@@ -371,10 +377,10 @@ pub async fn regenerate_recovery_codes(
     session: &str,
     password: &str,
 ) -> Result<Vec<String>, TwoFactorError> {
-    passwords::verify_current_password(pool, user, password).await?;
+    crate::backend::identity::passwords::verify_current_password(pool, user, password).await?;
     let codes = new_recovery_codes();
     let hashes: Vec<String> = codes.iter().map(|code| recovery_code_hash(code)).collect();
-    if !db::users::two_factor::replace_recovery_codes(
+    if !crate::backend::db::users::two_factor::replace_recovery_codes(
         pool,
         user.id,
         password_authority(user, session)?,
@@ -395,7 +401,7 @@ pub async fn disable(
     session: &str,
     password: &str,
 ) -> Result<(), TwoFactorError> {
-    passwords::verify_current_password(pool, user, password).await?;
+    crate::backend::identity::passwords::verify_current_password(pool, user, password).await?;
     turn_off(pool, user.id, password_authority(user, session)?).await
 }
 
@@ -419,7 +425,7 @@ pub async fn admin_turn_off(
     administrator_session: Option<&str>,
     user_id: i64,
 ) -> Result<(), TwoFactorError> {
-    let actor = sessions::administrator(pool, administrator_session)
+    let actor = crate::backend::identity::sessions::administrator(pool, administrator_session)
         .await
         .map_err(TwoFactorError::Authority)?;
     let session = administrator_session.ok_or(TwoFactorError::Authority(
@@ -441,7 +447,7 @@ async fn turn_off(
     user_id: i64,
     authority: FactorAuthority<'_>,
 ) -> Result<(), TwoFactorError> {
-    if db::users::two_factor::disable_two_factor(pool, user_id, authority)
+    if crate::backend::db::users::two_factor::disable_two_factor(pool, user_id, authority)
         .await
         .map_err(|_| TwoFactorError::Unavailable)?
     {
@@ -452,10 +458,12 @@ async fn turn_off(
 }
 
 pub async fn is_enabled(pool: &DbPool, user_id: i64) -> Result<bool, TwoFactorError> {
-    Ok(db::users::two_factor::get_two_factor(pool, user_id)
-        .await
-        .map_err(|_| TwoFactorError::Unavailable)?
-        .is_some())
+    Ok(
+        crate::backend::db::users::two_factor::get_two_factor(pool, user_id)
+            .await
+            .map_err(|_| TwoFactorError::Unavailable)?
+            .is_some(),
+    )
 }
 
 #[cfg(test)]

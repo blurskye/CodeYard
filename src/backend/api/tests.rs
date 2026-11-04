@@ -1,7 +1,7 @@
 //! Router-level tests: the composed app's health, asset, error and form
 //! redirect behaviour, checked through `create_router` without a database.
 use super::*;
-use crate::backend::db;
+
 use axum::body::{to_bytes, Body};
 use axum::http::StatusCode;
 use std::path::PathBuf;
@@ -261,15 +261,15 @@ async fn incomplete_native_forms_are_bounded_and_expire_before_extraction() {
 async fn anonymous_slow_posts_cannot_block_authenticated_mutations() {
     let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
     codeyard_db_core::run_migrations(&pool).await.unwrap();
-    db::node_config::upsert_node_configuration(&pool, "public", true)
+    crate::backend::db::node_config::upsert_node_configuration(&pool, "public", true)
         .await
         .unwrap();
-    let user = db::users::accounts::create_user(&pool, "alice", None)
+    let user = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
         .await
         .unwrap();
     let session = "a".repeat(64);
     let csrf = "b".repeat(64);
-    db::users::sessions::create_session(
+    crate::backend::db::users::sessions::create_session(
         &pool,
         &session,
         user.id,
@@ -279,9 +279,15 @@ async fn anonymous_slow_posts_cannot_block_authenticated_mutations() {
     )
     .await
     .unwrap();
-    db::users::sessions::get_or_create_csrf_token(&pool, &session, Some(user.id), &csrf, 3600)
-        .await
-        .unwrap();
+    crate::backend::db::users::sessions::get_or_create_csrf_token(
+        &pool,
+        &session,
+        Some(user.id),
+        &csrf,
+        3600,
+    )
+    .await
+    .unwrap();
     let root = tempfile::tempdir().unwrap();
     let state = AppState::new(
         pool,

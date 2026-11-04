@@ -1303,7 +1303,7 @@ async fn hooks_contract(pg: bool) {
         f.pool().clone(),
         root.path().to_owned(),
         Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        Some(Arc::new(codeyard::backend::crypto::SecretEncryptor::new(
+        Some(Arc::new(codeyard_support::secrets::SecretEncryptor::new(
             &[7; 32],
         ))),
         CiConfig::default(),

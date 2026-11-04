@@ -1,16 +1,21 @@
-use super::{
-    contents::{commit_json, path_url, store_error},
-    pagination::Pagination,
-    repo_url, repository, Error, Result,
-};
-use crate::backend::{
-    app::AppState,
-    db,
-    repositories::store::{
-        repo_store, CommitFilter, CommitInfo, DiffFileInfo, DiffInfo, RepoStore,
-    },
-    webhooks::payloads::{self, Person},
-};
+use crate::backend::api::github::contents::commit_json;
+use crate::backend::api::github::contents::path_url;
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use codeyard_model::urls::repo_url;
+
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::CommitFilter;
+use crate::backend::repositories::store::CommitInfo;
+use crate::backend::repositories::store::DiffFileInfo;
+use crate::backend::repositories::store::DiffInfo;
+use crate::backend::repositories::store::RepoStore;
+
+use crate::backend::webhooks::payloads::Person;
 use axum::{
     extract::{MatchedPath, OriginalUri, Path, Query, State},
     http::{header, HeaderMap},
@@ -59,7 +64,7 @@ pub(super) async fn documents(
         .map(|commit| commit.sha.clone())
         .collect::<Vec<_>>();
     let counts: HashMap<_, _> =
-        db::repositories::commit_comments::comment_counts(&state.pool, repo, &shas)
+        crate::backend::db::repositories::commit_comments::comment_counts(&state.pool, repo, &shas)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
@@ -79,7 +84,7 @@ pub(super) async fn documents(
     let mut values = Vec::with_capacity(commits.len());
     let mut signers = crate::backend::identity::signatures::Signers::default();
     for commit in commits {
-        values.push(payloads::commit(
+        values.push(crate::backend::webhooks::payloads::commit(
             commit,
             git_document(state, &mut signers, commit, owner, name, repo).await?,
             owner,
@@ -191,8 +196,8 @@ pub(super) fn diff_files(
         let mut value = json!({
             "sha": file.blob_sha, "filename": file.filename, "status": file_status(&file.status),
             "additions": file.additions, "deletions": file.deletions, "changes": file.additions + file.deletions,
-            "blob_url": format!("{}/{owner}/{name}/blob/{sha}/{}", crate::backend::api::http::config::link_origin(), path_url(&file.filename)),
-            "raw_url": format!("{}/{owner}/{name}/raw/{sha}/{}", crate::backend::api::http::config::link_origin(), path_url(&file.filename)),
+            "blob_url": format!("{}/{owner}/{name}/blob/{sha}/{}", codeyard_model::http_config::link_origin(), path_url(&file.filename)),
+            "raw_url": format!("{}/{owner}/{name}/raw/{sha}/{}", codeyard_model::http_config::link_origin(), path_url(&file.filename)),
             "contents_url": format!("{}/contents/{}?ref={sha}", repo_url(owner, name), path_url(&file.filename)),
         });
         if !file.patch.is_empty() {
@@ -231,9 +236,13 @@ async fn read(
         )
         .into_response());
     }
-    if let Some(media) = super::diff_media::requested(&headers) {
+    if let Some(media) = crate::backend::api::github::diff_media::requested(&headers) {
         let diff = store.commit_diff(&commit.sha).await.map_err(store_error)?;
-        return Ok(super::diff_media::response(media, &commit, &diff.files));
+        return Ok(crate::backend::api::github::diff_media::response(
+            media,
+            &commit,
+            &diff.files,
+        ));
     }
     let mut value = read_document(&state, repo.id, &commit, owner, name).await?;
     let (offset, limit) = page.window()?;
@@ -281,13 +290,14 @@ async fn identity_emails(
         None | Some("") => Ok(Some(Vec::new())),
         Some(address) if address.contains('@') => Ok(Some(vec![address.to_owned()])),
         Some(username) => {
-            let Some(user) = db::users::accounts::get_user_by_username(pool, username)
-                .await
-                .map_err(Error::unavailable)?
+            let Some(user) =
+                crate::backend::db::users::accounts::get_user_by_username(pool, username)
+                    .await
+                    .map_err(Error::unavailable)?
             else {
                 return Ok(None);
             };
-            let mut emails = db::users::emails::list_emails(pool, user.id)
+            let mut emails = crate::backend::db::users::emails::list_emails(pool, user.id)
                 .await
                 .map_err(Error::unavailable)?
                 .into_iter()
@@ -379,7 +389,7 @@ async fn blob(
         return Ok(([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response());
     }
     Ok(Json(
-        json!({"sha":sha.to_ascii_lowercase(),"node_id":super::node_id::git_object("B", repo.id, &sha.to_ascii_lowercase()),"url":format!("{}/git/blobs/{sha}", repo_url(&owner, &name)),"size":bytes.len(),"encoding":"base64","content":STANDARD.encode(bytes)}),
+        json!({"sha":sha.to_ascii_lowercase(),"node_id":crate::backend::api::github::node_id::git_object("B", repo.id, &sha.to_ascii_lowercase()),"url":format!("{}/git/blobs/{sha}", repo_url(&owner, &name)),"size":bytes.len(),"encoding":"base64","content":STANDARD.encode(bytes)}),
     ).into_response())
 }
 

@@ -4,8 +4,11 @@ use crate::backend::api::http::session::extract_session_id;
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::notifications::reasons;
+
+use crate::backend::db::notifications::records::{
+    NotificationCursor, NotificationFilter, NotificationInbox, NotificationInboxAction,
+    NotificationView, ViewCounts,
+};
 use axum::extract::OriginalUri;
 use axum::extract::Query;
 use axum::extract::State;
@@ -16,10 +19,6 @@ use axum::response::Response;
 use axum::Json;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use codeyard_webui::pages::notifications as view;
-use db::notifications::records::{
-    NotificationCursor, NotificationFilter, NotificationInbox, NotificationInboxAction,
-    NotificationView, ViewCounts,
-};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -127,7 +126,7 @@ pub(crate) fn notification_session_denied() -> (StatusCode, Json<ApiError>) {
 pub(crate) struct ListParams {
     pub view: NotificationView,
     pub repository: Option<i64>,
-    /// The reason name, one of `reasons::REASONS`.
+    /// The reason name, one of `crate::backend::notifications::reasons::REASONS`.
     pub reason: Option<&'static str>,
     pub query: Option<String>,
     pub unread_only: bool,
@@ -161,7 +160,7 @@ impl ListParams {
         let reason = match text("reason") {
             None => None,
             Some(name) => Some(
-                reasons::REASONS
+                crate::backend::notifications::reasons::REASONS
                     .iter()
                     .find(|(known, _, _)| *known == name)
                     .map(|(known, _, _)| *known)
@@ -195,7 +194,7 @@ impl ListParams {
             repository_id: self.repository,
             kinds: self
                 .reason
-                .and_then(reasons::kinds)
+                .and_then(crate::backend::notifications::reasons::kinds)
                 .unwrap_or_default()
                 .iter()
                 .map(|kind| (*kind).to_owned())
@@ -281,7 +280,7 @@ pub async fn list_notifications(
         .into_iter()
         .collect();
     let actor_map: HashMap<i64, UserResponse> =
-        db::users::accounts::get_users_by_ids(&state.pool, &actor_ids)
+        crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &actor_ids)
             .await
             .map_err(notification_unavailable)?
             .into_iter()
@@ -331,10 +330,12 @@ pub(crate) async fn notification_update(
         )
     })?;
     let actor = match notification.actor_id {
-        Some(actor_id) => db::users::accounts::get_user_by_id(&state.pool, actor_id)
-            .await
-            .map_err(notification_unavailable)?
-            .map(UserResponse::from),
+        Some(actor_id) => {
+            crate::backend::db::users::accounts::get_user_by_id(&state.pool, actor_id)
+                .await
+                .map_err(notification_unavailable)?
+                .map(UserResponse::from)
+        }
         None => None,
     };
     Ok(Json(NotificationUpdateResponse {
@@ -367,7 +368,7 @@ pub(crate) async fn notification_list(
         Ok(params) => params,
         Err(message) => return ctx.error(StatusCode::BAD_REQUEST, message),
     };
-    let inbox = match db::notifications::records::notification_inbox(
+    let inbox = match crate::backend::db::notifications::records::notification_inbox(
         &ctx.state.pool,
         &session_id,
         user.id,
@@ -404,7 +405,9 @@ pub(crate) async fn notification_list(
         .into_iter()
         .collect();
     let actors: HashMap<i64, String> =
-        match db::users::accounts::get_users_by_ids(&ctx.state.pool, &actor_ids).await {
+        match crate::backend::db::users::accounts::get_users_by_ids(&ctx.state.pool, &actor_ids)
+            .await
+        {
             Ok(actors) => actors
                 .into_iter()
                 .map(|actor| (actor.id, actor.username))
@@ -438,7 +441,8 @@ pub(crate) async fn notification_list(
                     .get("subject")
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_owned),
-                reason: reasons::label_for_kind(&item.kind).map(str::to_owned),
+                reason: crate::backend::notifications::reasons::label_for_kind(&item.kind)
+                    .map(str::to_owned),
                 title: item.title,
                 body: item
                     .body
@@ -463,7 +467,7 @@ pub(crate) async fn notification_list(
         repository: params.repository,
         repositories,
         reason: params.reason.map(str::to_owned),
-        reasons: reasons::REASONS
+        reasons: crate::backend::notifications::reasons::REASONS
             .iter()
             .map(|(slug, label, _)| view::ReasonOption {
                 slug: (*slug).to_owned(),

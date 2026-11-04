@@ -2,7 +2,7 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::app::AppState;
 use crate::backend::db::webhooks::HookOwner;
-use crate::backend::webhooks::panel;
+
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, Uri};
 use axum::response::Response;
@@ -29,10 +29,13 @@ pub(super) async fn post(
         Err(response) => return response,
     };
     if !action.starts_with("webhook-") {
-        return super::organization::not_found(&ctx);
+        return crate::backend::api::organizations::organization::not_found(&ctx);
     }
-    let base = format!("{}/{org}?tab=webhooks", super::INDEX);
-    let outcome = panel::apply(
+    let base = format!(
+        "{}/{org}?tab=webhooks",
+        crate::backend::api::organizations::INDEX
+    );
+    let outcome = crate::backend::webhooks::panel::apply(
         &ctx.state.pool,
         ctx.state.secret_encryptor.as_deref(),
         actor,
@@ -50,8 +53,8 @@ pub(super) async fn post(
         Ok(notice) => ctx.redirect(&format!("{base}&notice={notice}")),
         Err((error, draft)) => {
             // The organization page shows the refusal in its webhooks section.
-            let (status, message) = panel::refusal(&error);
-            super::organization::respond_with_hook_draft(
+            let (status, message) = crate::backend::webhooks::panel::refusal(&error);
+            crate::backend::api::organizations::organization::respond_with_hook_draft(
                 &ctx,
                 Some(org),
                 status,

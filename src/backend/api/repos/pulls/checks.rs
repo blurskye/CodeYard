@@ -3,7 +3,7 @@ use crate::backend::api::ci::responses::map_run;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::discussion::*;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -27,11 +27,14 @@ async fn render_checks(
     repo: &RepositoryData,
     value: view::Item,
 ) -> ResultPage<Response> {
-    let pull =
-        db::pull_requests::records::get_pull_request(&ctx.state.pool, repo.record.id, value.number)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
+    let pull = crate::backend::db::pull_requests::records::get_pull_request(
+        &ctx.state.pool,
+        repo.record.id,
+        value.number,
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?
+    .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
     let head = value
         .comparison
         .as_ref()
@@ -42,15 +45,21 @@ async fn render_checks(
         .map_or(pull.base_sha.as_str(), |comparison| {
             comparison.base_sha.as_str()
         });
-    let code_scanning = super::security::checks(ctx, repo, &pull, head, base).await?;
+    let code_scanning =
+        crate::backend::api::repos::pulls::security::checks(ctx, repo, &pull, head, base).await?;
     let (target, _, _) =
         crate::backend::repositories::pull_requests::stacks::merge_target(&ctx.state.pool, &pull)
             .await
             .map_err(|_| unavailable(ctx))?;
-    let runs =
-        db::ci::latest_ci_runs_for_commit(&ctx.state.pool, repo.record.id, head, pull.id, &target)
-            .await
-            .map_err(|_| unavailable(ctx))?;
+    let runs = crate::backend::db::ci::latest_ci_runs_for_commit(
+        &ctx.state.pool,
+        repo.record.id,
+        head,
+        pull.id,
+        &target,
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?;
     // Check runs an integration published through the API, latest per name, link to their pages.
     // They come a page at a time and without their summaries and text, which this tab never shows.
     const CHECKS_PER_PAGE: usize = 100;
@@ -58,13 +67,13 @@ async fn render_checks(
     let check_page =
         crate::backend::api::repos::paging::number(ctx, "checks_page", 1, 1..=max_page)?;
     let offset = (check_page - 1) * CHECKS_PER_PAGE;
-    let check_total = db::checks::summary(&ctx.state.pool, repo.record.id, head)
+    let check_total = crate::backend::db::checks::summary(&ctx.state.pool, repo.record.id, head)
         .await
         .map_err(|_| unavailable(ctx))?
         .total;
     let more_checks = check_page < max_page
         && i64::try_from(offset + CHECKS_PER_PAGE).is_ok_and(|end| end < check_total);
-    let check_runs = db::checks::rollup_runs(
+    let check_runs = crate::backend::db::checks::rollup_runs(
         &ctx.state.pool,
         repo.record.id,
         head,
@@ -85,32 +94,35 @@ async fn render_checks(
         // The view links only absolute HTTP(S) addresses.
         target_url: Some(format!(
             "{}/{}/{}/runs/{}",
-            crate::backend::api::http::config::link_origin(),
+            codeyard_model::http_config::link_origin(),
             repo.view.owner,
             repo.record.name,
             run.id
         )),
         context: run.name,
     });
-    let statuses =
-        db::repositories::protection::list_commit_statuses(&ctx.state.pool, repo.record.id, head)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .into_iter()
-            .filter(|status| {
-                !db::repositories::protection::server_owned_status_context(&status.context)
-                    && !runs
-                        .iter()
-                        .any(|run| run.commit_status_context() == status.context)
-            })
-            .map(|status| codeyard_webui::pages::repos::pulls::CheckStatus {
-                context: status.context,
-                state: status.state,
-                description: status.description,
-                target_url: status.target_url,
-            })
-            .chain(check_runs)
-            .collect();
+    let statuses = crate::backend::db::repositories::protection::list_commit_statuses(
+        &ctx.state.pool,
+        repo.record.id,
+        head,
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?
+    .into_iter()
+    .filter(|status| {
+        !crate::backend::db::repositories::protection::server_owned_status_context(&status.context)
+            && !runs
+                .iter()
+                .any(|run| run.commit_status_context() == status.context)
+    })
+    .map(|status| codeyard_webui::pages::repos::pulls::CheckStatus {
+        context: status.context,
+        state: status.state,
+        description: status.description,
+        target_url: status.target_url,
+    })
+    .chain(check_runs)
+    .collect();
     let runs = runs
         .into_iter()
         .map(|run| map_run(run, &repo.record))
@@ -141,14 +153,14 @@ mod tests {
             unreachable!()
         };
         sqlx::query("INSERT INTO node_configuration(id, setup_completed) VALUES(1, TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(sqlite).await.unwrap();
-        let owner = db::users::accounts::create_user(&pool, "alice", None)
+        let owner = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
         let record = crate::backend::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+            crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
             "proj",
             None,
             false,
@@ -158,9 +170,9 @@ mod tests {
         .unwrap();
         let first = "1".repeat(40);
         let second = "2".repeat(40);
-        let pull = db::pull_requests::records::create_pull_request(
+        let pull = crate::backend::db::pull_requests::records::create_pull_request(
             &pool,
-            db::pull_requests::records::NewPullRequest {
+            crate::backend::db::pull_requests::records::NewPullRequest {
                 repo_id: record.id,
                 head_repo_id: Some(record.id),
                 author_id: owner.id,

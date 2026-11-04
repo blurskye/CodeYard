@@ -8,7 +8,7 @@ use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
 use base64::Engine;
-use codeyard::backend::db;
+
 use codeyard_webui::app::{Page, PageEnvelope};
 use codeyard_webui::pages::repos::issues::Page as Collaboration;
 use codeyard_webui::pages::repos::page::Page as RepositoryPage;
@@ -60,7 +60,9 @@ async fn references(pg: bool) {
         codeyard::backend::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+            codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+                alice_id,
+            ),
             name,
             None,
             private,
@@ -232,10 +234,11 @@ async fn references(pg: bool) {
         .collect();
     assert_eq!(names, vec!["open"]);
 
-    let notes = db::repositories::records::get_repository(f.pool(), "alice", "notes")
-        .await
-        .unwrap()
-        .unwrap();
+    let notes =
+        codeyard::backend::db::repositories::records::get_repository(f.pool(), "alice", "notes")
+            .await
+            .unwrap()
+            .unwrap();
     let notes_id = notes.id.to_string();
     let preview = alice
         .form_reply(

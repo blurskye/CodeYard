@@ -1,12 +1,14 @@
 //! Code scanning accepts open scanners rather than depending on GitHub's CodeQL service.
-use super::{auth, pagination::Pagination, repo_url, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    code_scanning,
-    db::{self, code_scanning as records},
-    repositories::{access, store::repo_store},
-    webhooks::payloads,
-};
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use codeyard_model::urls::repo_url;
+
+use crate::backend::repositories::store::repo_store;
+
 use axum::{
     extract::{DefaultBodyLimit, FromRequest, OriginalUri, Path, Query, Request, State},
     http::{header, HeaderMap, StatusCode},
@@ -23,7 +25,7 @@ pub(super) mod databases;
 
 pub(crate) const SARIF_ROUTE: &str = "/api/v3/repos/:owner/:repo/code-scanning/sarifs";
 pub(crate) const SARIF_ACTION_ROUTE: &str = "/api/v3/repos/:owner/:repo/code-scanning/analysis";
-const BODY_LIMIT: usize = code_scanning::MAX_COMPRESSED.div_ceil(3) * 4 + 64 * 1024;
+const BODY_LIMIT: usize = crate::backend::code_scanning::MAX_COMPRESSED.div_ceil(3) * 4 + 64 * 1024;
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
@@ -82,15 +84,18 @@ async fn scope(
     name: &str,
     write: bool,
     admin: bool,
-) -> Result<(codeyard_db_core::models::Repository, auth::Authentication)> {
+) -> Result<(
+    codeyard_db_core::models::Repository,
+    crate::backend::api::github::auth::Authentication,
+)> {
     let (repo, auth) = repository(state, headers, owner, name, write).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let allowed = if admin {
-        access::can_admin(&state.pool, &auth.user, &repo).await
+        crate::backend::repositories::access::can_admin(&state.pool, &auth.user, &repo).await
     } else if write {
-        access::can_write(&state.pool, &auth.user, &repo).await
+        crate::backend::repositories::access::can_write(&state.pool, &auth.user, &repo).await
     } else {
-        access::user_access(&state.pool, &auth.user, &repo)
+        crate::backend::repositories::access::user_access(&state.pool, &auth.user, &repo)
             .await
             .map(|level| level.can_write())
     }
@@ -105,13 +110,15 @@ async fn scope(
 }
 
 fn failure(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<records::Refusal>() {
-        Some(records::Refusal::Missing) => Error::missing(),
-        Some(records::Refusal::Denied) => {
+    match error.downcast_ref::<crate::backend::db::code_scanning::Refusal>() {
+        Some(crate::backend::db::code_scanning::Refusal::Missing) => Error::missing(),
+        Some(crate::backend::db::code_scanning::Refusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Repository write denied")
         }
-        Some(records::Refusal::RateLimited) => Error::new(StatusCode::FORBIDDEN, error.to_string()),
-        Some(records::Refusal::DeleteOrder) => {
+        Some(crate::backend::db::code_scanning::Refusal::RateLimited) => {
+            Error::new(StatusCode::FORBIDDEN, error.to_string())
+        }
+        Some(crate::backend::db::code_scanning::Refusal::DeleteOrder) => {
             Error::new(StatusCode::BAD_REQUEST, error.to_string())
         }
         None => Error::unavailable(error),
@@ -154,7 +161,7 @@ async fn upload(
     {
         return Err(Error::validation("Sarif", "commit_sha", "invalid"));
     }
-    if input.ref_name.len() > code_scanning::MAX_REFERENCE_BYTES
+    if input.ref_name.len() > crate::backend::code_scanning::MAX_REFERENCE_BYTES
         || !["refs/heads/", "refs/tags/", "refs/pull/"]
             .iter()
             .any(|p| input.ref_name.starts_with(p))
@@ -163,7 +170,7 @@ async fn upload(
     {
         return Err(Error::validation("Sarif", "ref", "invalid"));
     }
-    if input.sarif.len() > code_scanning::MAX_COMPRESSED.div_ceil(3) * 4
+    if input.sarif.len() > crate::backend::code_scanning::MAX_COMPRESSED.div_ceil(3) * 4
         || STANDARD.decode(&input.sarif).is_err()
     {
         return Err(Error::validation("Sarif", "sarif", "invalid"));
@@ -186,11 +193,11 @@ async fn upload(
             | codeyard_git::error::ErrorKind::Invalid => {
                 Error::validation("Sarif", "commit_sha", "invalid")
             }
-            _ => super::contents::store_error(error),
+            _ => crate::backend::api::github::contents::store_error(error),
         })?;
-    let upload = records::enqueue(
+    let upload = crate::backend::db::code_scanning::enqueue(
         &state.pool,
-        &records::NewUpload {
+        &crate::backend::db::code_scanning::NewUpload {
             actor: auth.database_actor(),
             repo: repo.id,
             ref_name: &input.ref_name,
@@ -210,7 +217,7 @@ async fn upload_status(
     Path((owner, name, id)): Path<(String, String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = scope(&state, &headers, &owner, &name, false, false).await?;
-    let upload = records::upload_status(&state.pool, repo.id, &id)
+    let upload = crate::backend::db::code_scanning::upload_status(&state.pool, repo.id, &id)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)?;
@@ -255,7 +262,7 @@ impl Filters {
             per_page: self.per_page,
         }
     }
-    fn analysis_filters(&self) -> Result<records::AnalysisFilters<'_>> {
+    fn analysis_filters(&self) -> Result<crate::backend::db::code_scanning::AnalysisFilters<'_>> {
         if self.sort.as_deref().is_some_and(|sort| sort != "created") {
             return Err(Error::validation("Analysis", "sort", "invalid"));
         }
@@ -266,7 +273,7 @@ impl Filters {
         {
             return Err(Error::validation("Analysis", "direction", "invalid"));
         }
-        Ok(records::AnalysisFilters {
+        Ok(crate::backend::db::code_scanning::AnalysisFilters {
             reference: None,
             tool_name: self.tool_name.as_deref(),
             tool_guid: self.tool_guid.as_deref(),
@@ -275,7 +282,7 @@ impl Filters {
             ascending: self.direction.as_deref() == Some("asc"),
         })
     }
-    fn alert_filters(&self) -> Result<records::AlertFilters<'_>> {
+    fn alert_filters(&self) -> Result<crate::backend::db::code_scanning::AlertFilters<'_>> {
         if self
             .state
             .as_deref()
@@ -309,12 +316,12 @@ impl Filters {
             self.sort.as_deref() == Some("updated"),
             self.direction.as_deref() == Some("asc"),
         ) {
-            (false, false) => records::AlertSort::CreatedDesc,
-            (false, true) => records::AlertSort::CreatedAsc,
-            (true, false) => records::AlertSort::UpdatedDesc,
-            (true, true) => records::AlertSort::UpdatedAsc,
+            (false, false) => crate::backend::db::code_scanning::AlertSort::CreatedDesc,
+            (false, true) => crate::backend::db::code_scanning::AlertSort::CreatedAsc,
+            (true, false) => crate::backend::db::code_scanning::AlertSort::UpdatedDesc,
+            (true, true) => crate::backend::db::code_scanning::AlertSort::UpdatedAsc,
         };
-        Ok(records::AlertFilters {
+        Ok(crate::backend::db::code_scanning::AlertFilters {
             reference: None,
             tool_name: self.tool_name.as_deref(),
             tool_guid: self.tool_guid.as_deref(),
@@ -326,7 +333,7 @@ impl Filters {
     }
 }
 fn analysis_document(
-    row: &records::Analysis,
+    row: &crate::backend::db::code_scanning::Analysis,
     owner: &str,
     name: &str,
     deletable: bool,
@@ -347,7 +354,7 @@ async fn analyses(
     let reference = query.ref_name.as_deref().map(normalize_ref);
     let mut filters = query.analysis_filters()?;
     filters.reference = reference.as_deref();
-    let rows = records::analyses(
+    let rows = crate::backend::db::code_scanning::analyses(
         &state.pool,
         repo.id,
         &filters,
@@ -370,7 +377,7 @@ async fn analysis(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Response> {
     let (repo, _) = scope(&state, &headers, &owner, &name, false, false).await?;
-    let entry = records::analysis(&state.pool, repo.id, id)
+    let entry = crate::backend::db::code_scanning::analysis(&state.pool, repo.id, id)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)?;
@@ -387,11 +394,11 @@ async fn analysis(
             crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
                 .await
                 .ok_or_else(|| Error::unavailable(()))?;
-        let raw = records::analysis_sarif(&state.pool, repo.id, id)
+        let raw = crate::backend::db::code_scanning::analysis_sarif(&state.pool, repo.id, id)
             .await
             .map_err(failure)?
             .ok_or_else(Error::missing)?;
-        let alerts = records::analysis_alerts(&state.pool, row.id)
+        let alerts = crate::backend::db::code_scanning::analysis_alerts(&state.pool, row.id)
             .await
             .map_err(failure)?;
         let alerts_url = format!("{}/code-scanning/alerts", repo_url(&owner, &name));
@@ -445,7 +452,7 @@ async fn delete_analysis(
     Query(query): Query<Filters>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = scope(&state, &headers, &owner, &name, true, true).await?;
-    let next = records::delete_analysis(
+    let next = crate::backend::db::code_scanning::delete_analysis(
         &state.pool,
         auth.database_actor(),
         repo.id,
@@ -472,34 +479,49 @@ async fn alert_repository(
     Ok(repo)
 }
 
-async fn find_alert(state: &AppState, repo: i64, number: i64) -> Result<records::Alert> {
-    records::alert(&state.pool, repo, number)
+async fn find_alert(
+    state: &AppState,
+    repo: i64,
+    number: i64,
+) -> Result<crate::backend::db::code_scanning::Alert> {
+    crate::backend::db::code_scanning::alert(&state.pool, repo, number)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)
 }
 async fn alert_document(
     state: &AppState,
-    row: &records::Alert,
+    row: &crate::backend::db::code_scanning::Alert,
     owner: &str,
     name: &str,
     reference: Option<&str>,
     pull_request: Option<i32>,
 ) -> Result<Value> {
-    let instance = records::instance_filtered(&state.pool, row.id, reference, pull_request)
-        .await
-        .map_err(failure)?
-        .ok_or_else(Error::missing)?;
+    let instance = crate::backend::db::code_scanning::instance_filtered(
+        &state.pool,
+        row.id,
+        reference,
+        pull_request,
+    )
+    .await
+    .map_err(failure)?
+    .ok_or_else(Error::missing)?;
     let dismissed = match row.dismissed_by {
-        Some(id) => db::users::accounts::get_user_by_id(&state.pool, id)
+        Some(id) => crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .as_ref()
-            .map(payloads::user),
+            .map(crate::backend::webhooks::payloads::user),
         None => None,
     };
-    payloads::code_scanning_alert(row, std::slice::from_ref(&instance), owner, name, dismissed)
-        .map_err(Error::unavailable)
+    crate::backend::webhooks::payloads::code_scanning_alert(
+        row,
+        std::slice::from_ref(&instance),
+        owner,
+        name,
+        dismissed,
+    )
+    .map_err(Error::unavailable)
 }
 async fn alerts(
     State(state): State<Arc<AppState>>,
@@ -513,9 +535,9 @@ async fn alerts(
     let reference = query.ref_name.as_deref().map(normalize_ref);
     let mut filters = query.alert_filters()?;
     filters.reference = reference.as_deref();
-    let rows = records::alert_page(
+    let rows = crate::backend::db::code_scanning::alert_page(
         &state.pool,
-        records::AlertScope::Repository(repo.id),
+        crate::backend::db::code_scanning::AlertScope::Repository(repo.id),
         &filters,
         offset as i64,
         (limit + 1) as i64,
@@ -541,7 +563,7 @@ async fn alerts(
 }
 async fn listed_alert(
     state: &AppState,
-    row: &records::Alert,
+    row: &crate::backend::db::code_scanning::Alert,
     repo: &codeyard_db_core::models::Repository,
     owner: &str,
     reference: Option<&str>,
@@ -567,15 +589,15 @@ async fn org_alerts(
     Query(query): Query<Filters>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let auth = auth::authenticate(&state, &headers, true)
+    let auth = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
-    let org = super::orgs::target(&state, &name).await?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
+    let org = crate::backend::api::github::orgs::target(&state, &name).await?;
     let (offset, limit) = query.pagination().window()?;
     let reference = query.ref_name.as_deref().map(normalize_ref);
     let mut filters = query.alert_filters()?;
     filters.reference = reference.as_deref();
-    let rows = records::organization_alert_page(
+    let rows = crate::backend::db::code_scanning::organization_alert_page(
         &state.pool,
         auth.user.id,
         org.id,
@@ -589,15 +611,17 @@ async fn org_alerts(
     let mut values = Vec::new();
     for row in rows.iter().take(limit) {
         let repo = &row.repository;
-        let mut alert = payloads::code_scanning_alert(
+        let mut alert = crate::backend::webhooks::payloads::code_scanning_alert(
             &row.alert,
             std::slice::from_ref(&row.instance),
             &name,
             &repo.name,
-            row.dismissed_by.as_ref().map(payloads::user),
+            row.dismissed_by
+                .as_ref()
+                .map(crate::backend::webhooks::payloads::user),
         )
         .map_err(Error::unavailable)?;
-        alert["repository"] = payloads::repository(repo, &name);
+        alert["repository"] = crate::backend::webhooks::payloads::repository(repo, &name);
         values.push(alert);
     }
     query.pagination().response(&uri, values, next)
@@ -626,7 +650,7 @@ async fn update_alert(
     Json(input): Json<UpdateAlert>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = scope(&state, &headers, &owner, &name, true, false).await?;
-    let input = records::Dismissal {
+    let input = crate::backend::db::code_scanning::Dismissal {
         state: &input.state,
         reason: input.dismissed_reason.as_deref(),
         comment: input.dismissed_comment.as_deref(),
@@ -634,9 +658,15 @@ async fn update_alert(
     input
         .validate()
         .map_err(|e| Error::invalid(e.to_string()))?;
-    let row = code_scanning::dismiss(&state.pool, auth.database_actor(), repo.id, number, &input)
-        .await
-        .map_err(failure)?;
+    let row = crate::backend::code_scanning::dismiss(
+        &state.pool,
+        auth.database_actor(),
+        repo.id,
+        number,
+        &input,
+    )
+    .await
+    .map_err(failure)?;
     Ok(Json(
         alert_document(&state, &row, &owner, &name, None, None).await?,
     ))
@@ -652,7 +682,7 @@ async fn instances(
     let row = find_alert(&state, repo.id, number).await?;
     let (offset, limit) = query.pagination().window()?;
     let reference = query.ref_name.as_deref().map(normalize_ref);
-    let rows = records::instances_filtered(
+    let rows = crate::backend::db::code_scanning::instances_filtered(
         &state.pool,
         row.id,
         reference.as_deref(),
@@ -667,8 +697,10 @@ async fn instances(
         .iter()
         .take(limit)
         .map(|instance| {
-            payloads::code_scanning_instance(instance, &owner, &name, number)
-                .map_err(Error::unavailable)
+            crate::backend::webhooks::payloads::code_scanning_instance(
+                instance, &owner, &name, number,
+            )
+            .map_err(Error::unavailable)
         })
         .collect::<Result<Vec<_>>>()?;
     query.pagination().response(&uri, values, next)

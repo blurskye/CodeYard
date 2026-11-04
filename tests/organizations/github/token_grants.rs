@@ -1,28 +1,29 @@
 //! Organization-owned fine-grained tokens: the owners' policy, approval, revocation and
 //! membership, through the REST grant endpoints and the settings page on both engines.
 use super::request;
-use crate::support::{database::Database, http_client::Client, organizations::applied};
+use crate::support::{
+    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+};
 use chrono::{Duration, Utc};
-use codeyard::backend::db;
-use codeyard::backend::db::organizations;
+
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::OrganizationProfile;
 use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
 use codeyard::backend::db::repositories::creation::RepositoryTarget;
-use codeyard::backend::identity::fine_grained;
+
 use codeyard::backend::identity::fine_grained::Access;
 use codeyard::backend::identity::fine_grained::Owner;
 use codeyard::backend::identity::fine_grained::TokenError;
-use codeyard::backend::identity::tokens;
+
 use codeyard::backend::identity::tokens::TokenInput;
-use codeyard::backend::repositories::lifecycle;
+
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
 use codeyard_webui::app::Page;
 use serde_json::{json, Value};
 
 async fn classic(pool: &codeyard_db_core::DbPool, user: i64, session: &str) -> String {
-    let token = tokens::create(
+    let token = codeyard::backend::identity::tokens::create(
         pool,
         user,
         Some(session),
@@ -44,11 +45,11 @@ async fn fine(
     org: i64,
     days: i64,
 ) -> Result<(i64, String, String), TokenError> {
-    fine_grained::create(
+    codeyard::backend::identity::fine_grained::create(
         pool,
         user,
         Some(session),
-        fine_grained::Request {
+        codeyard::backend::identity::fine_grained::Request {
             name: format!("token-{user}-{days}"),
             description: "Release automation".into(),
             owner: Owner::Organization(org),
@@ -76,7 +77,7 @@ async fn contract(pg: bool) {
     let carol = f.actor("carol").await;
     let dave = f.actor("dave").await;
     let org = applied(
-        organizations::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             alice,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -87,16 +88,22 @@ async fn contract(pg: bool) {
     .id;
     for user in [carol, dave] {
         applied(
-            organizations::add_organization_member(f.pool(), alice, org, user, OrgRole::Member)
-                .await
-                .unwrap(),
+            codeyard::backend::db::organizations::add_organization_member(
+                f.pool(),
+                alice,
+                org,
+                user,
+                OrgRole::Member,
+            )
+            .await
+            .unwrap(),
         );
     }
     let root = tempfile::tempdir().unwrap();
     let mut repos = Vec::new();
     for (name, private) in [("internal", true), ("open", false), ("secret", true)] {
         repos.push(
-            lifecycle::provision(
+            codeyard::backend::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 RepositoryCreationOwner {
@@ -113,9 +120,14 @@ async fn contract(pg: bool) {
         );
     }
     for user in [carol, dave] {
-        db::repositories::access::grant_repo_access(f.pool(), user, repos[0].id, AccessLevel::Read)
-            .await
-            .unwrap();
+        codeyard::backend::db::repositories::access::grant_repo_access(
+            f.pool(),
+            user,
+            repos[0].id,
+            AccessLevel::Read,
+        )
+        .await
+        .unwrap();
     }
     let router = f.router(root.path()).await;
     let owner = Client::login(&router, f.pool(), alice).await;
@@ -143,7 +155,7 @@ async fn contract(pg: bool) {
     let reply = owner.form_reply(&settings, &policy).await;
     assert_eq!(reply.status, 303, "{}", reply.text());
     assert_eq!(reply.location.as_deref(), Some(tab.as_str()));
-    let saved = db::fine_grained_tokens::policy(f.pool(), org)
+    let saved = codeyard::backend::db::fine_grained_tokens::policy(f.pool(), org)
         .await
         .unwrap();
     assert_eq!(saved.max_lifetime_days, Some(30));
@@ -277,14 +289,20 @@ async fn contract(pg: bool) {
     // A banned owner keeps the membership row but cannot review requests or set the policy.
     let erin = f.actor("erin").await;
     applied(
-        organizations::add_organization_member(f.pool(), alice, org, erin, OrgRole::Owner)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::add_organization_member(
+            f.pool(),
+            alice,
+            org,
+            erin,
+            OrgRole::Owner,
+        )
+        .await
+        .unwrap(),
     );
     f.execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[erin])
         .await;
     assert_eq!(
-        db::fine_grained_tokens::review(
+        codeyard::backend::db::fine_grained_tokens::review(
             f.pool(),
             org,
             erin,
@@ -297,16 +315,16 @@ async fn contract(pg: bool) {
         .unwrap(),
         0
     );
-    assert!(!db::fine_grained_tokens::set_policy(
+    assert!(!codeyard::backend::db::fine_grained_tokens::set_policy(
         f.pool(),
         (
             erin,
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard::backend::db::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), erin).await
             ),
         ),
         org,
-        &db::fine_grained_tokens::policy(f.pool(), org)
+        &codeyard::backend::db::fine_grained_tokens::policy(f.pool(), org)
             .await
             .unwrap()
     )
@@ -446,9 +464,14 @@ async fn contract(pg: bool) {
     )
     .await;
     applied(
-        organizations::remove_organization_member(f.pool(), alice, org, carol)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::remove_organization_member(
+            f.pool(),
+            alice,
+            org,
+            carol,
+        )
+        .await
+        .unwrap(),
     );
     request(
         &router,
@@ -501,7 +524,7 @@ async fn contract(pg: bool) {
         202,
     )
     .await;
-    let token = db::fine_grained_tokens::get(f.pool(), denied)
+    let token = codeyard::backend::db::fine_grained_tokens::get(f.pool(), denied)
         .await
         .unwrap()
         .unwrap();

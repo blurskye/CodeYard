@@ -10,15 +10,14 @@ mod pages;
 pub(super) use pages::router as browser_router;
 mod tokens;
 
-use super::github::auth::{self, Authentication};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        packages::{Owner, Package, Permission, Refusal},
-    },
-    packages,
-};
+use crate::backend::api::github::auth::Authentication;
+use crate::backend::app::AppState;
+
+use crate::backend::db::packages::Owner;
+use crate::backend::db::packages::Package;
+use crate::backend::db::packages::Permission;
+use crate::backend::db::packages::Refusal;
+
 use axum::{
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -115,7 +114,7 @@ impl IntoResponse for Error {
         if self.0 == StatusCode::UNAUTHORIZED {
             if let Ok(challenge) = format!(
                 "Bearer realm=\"{}/v2/token\",service=\"codeyard\"",
-                crate::backend::api::http::config::link_origin()
+                codeyard_model::http_config::link_origin()
             )
             .parse()
             {
@@ -142,7 +141,8 @@ async fn authenticate(
             .get(..6)
             .is_some_and(|v| v.eq_ignore_ascii_case("basic "))
         {
-            let (_, token) = super::http::credentials::basic(headers).ok_or_else(Error::invalid)?;
+            let (_, token) = crate::backend::api::http::credentials::basic(headers)
+                .ok_or_else(Error::invalid)?;
             normalized.insert(
                 header::AUTHORIZATION,
                 format!("Bearer {token}")
@@ -151,7 +151,7 @@ async fn authenticate(
             );
         }
     }
-    auth::authenticate(state, &normalized, required)
+    crate::backend::api::github::auth::authenticate(state, &normalized, required)
         .await
         .map_err(|error| {
             let status = error.into_response().status();
@@ -175,14 +175,14 @@ fn writer(auth: Option<&Authentication>) -> Result<&Authentication> {
 }
 
 async fn owner(state: &AppState, name: &str) -> Result<Owner> {
-    db::packages::owner(&state.pool, name, None)
+    crate::backend::db::packages::owner(&state.pool, name, None)
         .await
         .map_err(Error::db)?
         .ok_or_else(Error::missing)
 }
 
 async fn container_owner(state: &AppState, name: &str) -> Result<Owner> {
-    db::packages::container_owner(&state.pool, name)
+    crate::backend::db::packages::container_owner(&state.pool, name)
         .await
         .map_err(Error::db)?
         .ok_or_else(Error::missing)
@@ -196,30 +196,34 @@ async fn package(
     auth: Option<&Authentication>,
     create: bool,
 ) -> Result<Package> {
-    if !packages::valid_package_name(kind, name) {
+    if !crate::backend::packages::valid_package_name(kind, name) {
         return Err(Error::invalid());
     }
     if create {
         let auth = writer(auth)?;
-        let repo = if auth.user.username == db::ci_tokens::BOT {
+        let repo = if auth.user.username == crate::backend::db::ci_tokens::BOT {
             Some(
-                db::ci_tokens::get(&state.pool, auth.token.id)
+                crate::backend::db::ci_tokens::get(&state.pool, auth.token.id)
                     .await
                     .map_err(Error::db)?
                     .ok_or_else(Error::missing)?
                     .repo_id,
             )
         } else {
-            db::repositories::records::get_repository(&state.pool, &owner.name, name)
-                .await
-                .map_err(Error::db)?
-                .map(|repo| repo.id)
+            crate::backend::db::repositories::records::get_repository(
+                &state.pool,
+                &owner.name,
+                name,
+            )
+            .await
+            .map_err(Error::db)?
+            .map(|repo| repo.id)
         };
-        db::packages::create(&state.pool, owner, kind, name, auth.token.id, repo)
+        crate::backend::db::packages::create(&state.pool, owner, kind, name, auth.token.id, repo)
             .await
             .map_err(Error::db)
     } else {
-        db::packages::find(
+        crate::backend::db::packages::find(
             &state.pool,
             owner,
             kind,
@@ -237,7 +241,7 @@ async fn all_versions(
     state: &AppState,
     package: i64,
     auth: Option<&Authentication>,
-) -> Result<Vec<db::packages::Version>> {
+) -> Result<Vec<crate::backend::db::packages::Version>> {
     all_version_fields(state, package, auth, false).await
 }
 
@@ -246,12 +250,12 @@ async fn all_version_fields(
     package: i64,
     auth: Option<&Authentication>,
     names_only: bool,
-) -> Result<Vec<db::packages::Version>> {
+) -> Result<Vec<crate::backend::db::packages::Version>> {
     let mut versions = Vec::new();
     let mut before = i64::MAX;
     let mut bytes = 0usize;
     loop {
-        let page = db::packages::version_page(
+        let page = crate::backend::db::packages::version_page(
             &state.pool,
             package,
             auth.map(|a| a.token.id.into()),
@@ -263,7 +267,7 @@ async fn all_version_fields(
         let done = page.len() < 100;
         for version in page {
             bytes = bytes.saturating_add(version.manifest.len() + version.name.len() + 512);
-            if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES {
+            if bytes > crate::backend::db::packages::MAX_METADATA_RESPONSE_BYTES {
                 return Err(Error::unavailable());
             }
             before = version.id;
@@ -285,7 +289,7 @@ async fn owner_packages(
     let mut before = i64::MAX;
     let mut bytes = 0usize;
     loop {
-        let page = db::packages::owner_page(
+        let page = crate::backend::db::packages::owner_page(
             &state.pool,
             auth.map(|a| a.token.id.into()),
             owner,
@@ -297,7 +301,7 @@ async fn owner_packages(
         let done = page.len() < 100;
         for package in page {
             bytes = bytes.saturating_add(package.name.len() + 512);
-            if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES {
+            if bytes > crate::backend::db::packages::MAX_METADATA_RESPONSE_BYTES {
                 return Err(Error::unavailable());
             }
             before = package.id;

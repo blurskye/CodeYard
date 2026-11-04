@@ -89,7 +89,7 @@ pub async fn list_for_session(
         _ => return list(pool, input).await,
     };
     let mut tx = pool.begin().await?;
-    super::users::transitions::require_account(
+    crate::backend::db::sqlite::users::transitions::require_account(
         &mut tx,
         actor,
         &AccountCredential::Session(session),
@@ -107,7 +107,7 @@ async fn list_on(connection: &mut sqlx::SqliteConnection, input: &GistList) -> R
         ListScope::Forks(id) => (3, id, true),
     };
     // Date functions round away the microseconds used by monotonic gist revisions.
-    let since = input.since.map(super::time::encode);
+    let since = input.since.map(crate::backend::db::sqlite::time::encode);
     Ok(sqlx::query_as(&format!("SELECT {FIELDS} {FROM} WHERE g.ready AND (?1 IS NULL OR g.updated_at>?1) AND ((?2=0 AND g.is_public) OR (?2=1 AND r.owner_user_id=?3 AND (?4 OR g.is_public)) OR (?2=2 AND EXISTS(SELECT 1 FROM gist_stars s WHERE s.repo_id=g.repo_id AND s.user_id=?3)) OR (?2=3 AND r.forked_from_id=?3)) ORDER BY g.updated_at DESC,g.id DESC LIMIT ?5 OFFSET ?6")).bind(since).bind(mode).bind(id).bind(secret).bind(input.limit.clamp(0,101)).bind(input.offset.max(0)).fetch_all(connection).await?)
 }
 const OWNED: &str = "WHERE g.ready AND r.owner_user_id=?1 AND (?2 OR g.is_public) AND (?3 IS NULL OR g.is_public=?3)";
@@ -167,7 +167,10 @@ async fn authority(
     }
     if interact {
         anyhow::ensure!(
-            !super::users::blocks::repository_interaction_blocked(tx, actor, repo).await?,
+            !crate::backend::db::sqlite::users::blocks::repository_interaction_blocked(
+                tx, actor, repo
+            )
+            .await?,
             GistRefusal::Denied
         );
     }
@@ -190,7 +193,8 @@ pub async fn reserve(
         GistRefusal::Invalid
     );
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     let repo = authority(&mut tx, actor, input.repo_id, true, false).await?;
     if let Some(source) = repo.forked_from_id {
         let public: bool = sqlx::query_scalar(&format!(
@@ -202,8 +206,10 @@ pub async fn reserve(
         .ok_or(GistRefusal::Missing)?;
         anyhow::ensure!(
             public == input.is_public
-                && !super::users::blocks::repository_interaction_blocked(&mut tx, actor, source)
-                    .await?,
+                && !crate::backend::db::sqlite::users::blocks::repository_interaction_blocked(
+                    &mut tx, actor, source
+                )
+                .await?,
             GistRefusal::Denied
         );
     }
@@ -234,7 +240,8 @@ pub async fn admit(
     input: &Admission<'_>,
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     let repo = authority(&mut tx, actor, input.repo_id, true, false).await?;
     anyhow::ensure!(
         repo.disk_path == input.disk_path
@@ -255,7 +262,8 @@ pub async fn check_write(
     repo: i64,
 ) -> Result<Repository> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     let repository = authority(&mut tx, actor, repo, true, false).await?;
     tx.commit().await?;
     Ok(repository)
@@ -289,7 +297,9 @@ pub async fn finish(
         .await?
         .ok_or(GistRefusal::Missing)?;
     let updated = if published {
-        super::time::next_revision(super::time::decode(&previous)?)?
+        crate::backend::db::sqlite::time::next_revision(crate::backend::db::sqlite::time::decode(
+            &previous,
+        )?)?
     } else {
         previous
     };
@@ -323,7 +333,9 @@ pub async fn pushed(pool: &SqlitePool, repo: i64, placement: Option<Option<i64>>
             .fetch_optional(&mut *tx)
             .await?
             .ok_or(GistRefusal::Missing)?;
-    let updated = super::time::next_revision(super::time::decode(&previous)?)?;
+    let updated = crate::backend::db::sqlite::time::next_revision(
+        crate::backend::db::sqlite::time::decode(&previous)?,
+    )?;
     sqlx::query("UPDATE gists SET updated_at=?2 WHERE repo_id=?1")
         .bind(repo)
         .bind(updated)
@@ -339,7 +351,8 @@ pub async fn delete(
     repo: i64,
 ) -> Result<Repository> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     let repo = authority(&mut tx, actor, repo, true, false).await?;
     sqlx::query("DELETE FROM repositories WHERE id=?1")
         .bind(repo.id)
@@ -375,7 +388,8 @@ pub async fn star(
     adding: bool,
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     authority(&mut tx, actor, repo, false, adding).await?;
     if adding {
         sqlx::query("INSERT INTO gist_stars(repo_id,user_id) VALUES(?1,?2) ON CONFLICT DO NOTHING")
@@ -436,7 +450,8 @@ pub async fn create_comment(
 ) -> Result<Comment> {
     validate_comment(body)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     authority(&mut tx, actor, repo, false, true).await?;
     let comment = sqlx::query_as(
         "INSERT INTO gist_comments(repo_id,user_id,body) VALUES(?1,?2,?3) RETURNING *",
@@ -461,7 +476,8 @@ pub async fn change_comment(
         validate_comment(body)?;
     }
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     let repository = authority(&mut tx, actor, repo, false, body.is_some()).await?;
     let comment: Comment = sqlx::query_as("SELECT * FROM gist_comments WHERE repo_id=?1 AND id=?2")
         .bind(repo)
@@ -475,7 +491,7 @@ pub async fn change_comment(
         GistRefusal::Denied
     );
     let comment = if let Some(body) = body {
-        let updated = super::time::next_revision(comment.updated_at)?;
+        let updated = crate::backend::db::sqlite::time::next_revision(comment.updated_at)?;
         sqlx::query_as("UPDATE gist_comments SET body=?2,updated_at=?3 WHERE id=?1 RETURNING *")
             .bind(id)
             .bind(body)

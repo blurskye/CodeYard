@@ -162,11 +162,7 @@ pub fn profile_from_user_info(provider: &str, data: &Value) -> Option<OAuthProfi
 pub(crate) fn supports_pkce(provider: &str) -> bool {
     matches!(provider, "github" | "google" | "gitlab")
 }
-pub(crate) use crate::backend::identity::tokens::token_hash as browser_binding;
-/// The RFC 7636 S256 challenge for a PKCE verifier.
-pub(crate) fn pkce_challenge(verifier: &str) -> String {
-    URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
-}
+pub(crate) use codeyard_support::token_hash::token_hash as browser_binding;
 
 pub(crate) fn authorization_with_pkce(
     meta: &ProviderMeta,
@@ -533,3 +529,5 @@ mod tests {
         let _ = task.await;
     }
 }
+
+use codeyard_model::oauth_apps::pkce_challenge;

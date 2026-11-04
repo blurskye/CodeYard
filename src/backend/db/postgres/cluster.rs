@@ -1,10 +1,14 @@
 //! Cluster membership on PostgreSQL. Roles are a `TEXT[]` column.
 pub(crate) mod writes;
-use crate::backend::db::cluster::{
-    Authority, DeclaredMember, FamilyOutcome, JoinRequest, NewJoinToken, PrimaryReplicaRow,
-    PromoteOutcome,
-};
-use crate::backend::db::postgres::users::transitions::{active_admin, live_session};
+use crate::backend::db::cluster::Authority;
+use crate::backend::db::cluster::DeclaredMember;
+use crate::backend::db::cluster::FamilyOutcome;
+use crate::backend::db::cluster::JoinRequest;
+use crate::backend::db::cluster::NewJoinToken;
+use crate::backend::db::cluster::PrimaryReplicaRow;
+use crate::backend::db::cluster::PromoteOutcome;
+use crate::backend::db::postgres::users::transitions::active_admin;
+use crate::backend::db::postgres::users::transitions::live_session;
 use anyhow::{anyhow, bail, ensure, Result};
 use codeyard_db_core::models::ClusterNode;
 use codeyard_db_core::models::HeldReplica;
@@ -173,7 +177,13 @@ pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(node) = inserted {
-        super::runners::bind_registration(&mut tx, request.token_hash, &node, request.name).await?;
+        crate::backend::db::postgres::runners::bind_registration(
+            &mut tx,
+            request.token_hash,
+            &node,
+            request.name,
+        )
+        .await?;
         tx.commit().await?;
         return Ok(JoinOutcome::Joined(node));
     }
@@ -281,9 +291,17 @@ pub async fn admin_node_page(
     after: &str,
 ) -> Result<Vec<ClusterNode>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_accounts_shared(&mut tx, &[administrator.user_id]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(
+        &mut tx,
+        &[administrator.user_id],
+    )
+    .await?;
     anyhow::ensure!(
-        super::users::transitions::active_admin_session(&mut tx, administrator).await?,
+        crate::backend::db::postgres::users::transitions::active_admin_session(
+            &mut tx,
+            administrator
+        )
+        .await?,
         codeyard_support::credentials::AccountRestricted
     );
     let rows = sqlx::query_as("SELECT *,clock_timestamp() AS observed_at FROM nodes WHERE name>$1 ORDER BY name LIMIT 101")

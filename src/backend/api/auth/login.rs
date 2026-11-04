@@ -1,21 +1,26 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiFailure;
-use crate::backend::api::user::responses::{
-    api_error, field, optional_field, public_api_message, safe_redirect, within_bounds, Fields,
-};
-use crate::backend::api::{auth, http::session};
+use crate::backend::api::user::responses::api_error;
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::optional_field;
+use crate::backend::api::user::responses::public_api_message;
+use crate::backend::api::user::responses::safe_redirect;
+use crate::backend::api::user::responses::within_bounds;
+use crate::backend::api::user::responses::Fields;
+
 use crate::backend::app::AppState;
-use crate::backend::identity;
+
 use crate::backend::identity::credentials::PasswordAccount;
-use crate::backend::identity::login::{FirstFactor, PasswordCredentials};
+use crate::backend::identity::login::FirstFactor;
+use crate::backend::identity::login::PasswordCredentials;
 use crate::backend::identity::registration::RegistrationOutcome;
 use crate::backend::identity::setup::SetupInput;
 use axum::extract::{Form, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::response::Response;
 use codeyard_webui::pages::{
+    crate::backend::api::auth::AuthMode,
     account,
-    auth::AuthMode,
     fields::{preserved_values, FormValues},
 };
 use std::sync::Arc;
@@ -31,9 +36,11 @@ pub(crate) fn auth_mode(path: &str, mode: Option<&str>) -> AuthMode {
 
 /// Project only the ids of configured providers; credentials never enter SSR/hydration data.
 pub(crate) fn auth_providers() -> Vec<String> {
-    identity::oauth::providers::PROVIDERS
+    crate::backend::identity::oauth::providers::PROVIDERS
         .iter()
-        .filter(|provider| identity::oauth::providers::provider_credentials(provider).is_some())
+        .filter(|provider| {
+            crate::backend::identity::oauth::providers::provider_credentials(provider).is_some()
+        })
         .map(|provider| (*provider).to_owned())
         .collect()
 }
@@ -62,9 +69,9 @@ pub(crate) async fn auth_get(
     };
     let mode = auth_mode(uri.path(), ctx.query.get("mode").map(String::as_str));
     let redirect = safe_redirect(ctx.query.get("redirect").map(String::as_str));
-    let setup = match identity::setup::status(&ctx.state.pool).await {
+    let setup = match crate::backend::identity::setup::status(&ctx.state.pool).await {
         Ok(setup) => setup,
-        Err(_) => return api_error(&ctx, auth::errors::database_failure()),
+        Err(_) => return api_error(&ctx, crate::backend::api::auth::errors::database_failure()),
     };
     if !setup.setup_completed && mode != AuthMode::Setup {
         return ctx.redirect("/setup");
@@ -109,9 +116,9 @@ pub(crate) async fn auth_failure(
     status: StatusCode,
     message: &str,
 ) -> Response {
-    let setup = match identity::setup::status(&ctx.state.pool).await {
+    let setup = match crate::backend::identity::setup::status(&ctx.state.pool).await {
         Ok(setup) => setup,
-        Err(_) => return api_error(ctx, auth::errors::database_failure()),
+        Err(_) => return api_error(ctx, crate::backend::api::auth::errors::database_failure()),
     };
     let redirect = safe_redirect(form.get("redirect").map(String::as_str));
     ctx.page_model_status(
@@ -189,7 +196,7 @@ pub(crate) async fn auth_post(
         password: field(&form, "password"),
     };
     let result: Result<Option<String>, ApiFailure> = match mode {
-        AuthMode::Login => match identity::login::password_login(
+        AuthMode::Login => match crate::backend::identity::login::password_login(
             &ctx.state.pool,
             ctx.state.secret_encryptor.as_deref(),
             PasswordCredentials {
@@ -203,11 +210,17 @@ pub(crate) async fn auth_post(
             Ok(FirstFactor::Authenticated(authenticated)) => Ok(Some(authenticated.session_id)),
             Ok(FirstFactor::SecondFactor { pending }) => {
                 let redirect = safe_redirect(form.get("redirect").map(String::as_str));
-                return auth::two_factor::challenge(&ctx, &redirect, pending, None, StatusCode::OK);
+                return crate::backend::api::auth::two_factor::challenge(
+                    &ctx,
+                    &redirect,
+                    pending,
+                    None,
+                    StatusCode::OK,
+                );
             }
-            Err(error) => Err(auth::errors::login_failure(error)),
+            Err(error) => Err(crate::backend::api::auth::errors::login_failure(error)),
         },
-        AuthMode::Register => identity::registration::register_password(
+        AuthMode::Register => crate::backend::identity::registration::register_password(
             &ctx.state.pool,
             account,
             session_request.context(),
@@ -217,10 +230,10 @@ pub(crate) async fn auth_post(
             RegistrationOutcome::Registered(authenticated) => Some(authenticated.session_id),
             RegistrationOutcome::Requested => None,
         })
-        .map_err(auth::errors::registration_failure),
+        .map_err(crate::backend::api::auth::errors::registration_failure),
         AuthMode::Setup => {
             let supplied_secret = optional_field(&form, "admin_secret");
-            let expected_secret = match identity::setup::configured_admin_secret() {
+            let expected_secret = match crate::backend::identity::setup::configured_admin_secret() {
                 Ok(secret) => secret,
                 Err(_) => {
                     return ctx.error(
@@ -229,7 +242,7 @@ pub(crate) async fn auth_post(
                     )
                 }
             };
-            identity::setup::complete_setup(
+            crate::backend::identity::setup::complete_setup(
                 &ctx.state.pool,
                 SetupInput {
                     account,
@@ -241,7 +254,7 @@ pub(crate) async fn auth_post(
             )
             .await
             .map(|authenticated| Some(authenticated.session_id))
-            .map_err(auth::errors::setup_failure)
+            .map_err(crate::backend::api::auth::errors::setup_failure)
         }
     };
     match result {
@@ -259,7 +272,10 @@ pub(crate) async fn auth_post(
             match session_id {
                 Some(id) => append_auth_cookie(
                     redirect,
-                    &session::build_session_cookie(&id, session::session_duration_days()),
+                    &crate::backend::api::http::session::build_session_cookie(
+                        &id,
+                        crate::backend::api::http::session::session_duration_days(),
+                    ),
                 )
                 .unwrap_or_else(|_| {
                     ctx.error(
@@ -287,13 +303,13 @@ pub(crate) async fn auth_post(
 #[cfg(test)]
 mod tests {
     use crate::backend::api::http::error::ApiError;
-    use crate::backend::db;
 
     use super::*;
     use crate::backend::api::user::profile::profile_model;
-    use crate::backend::api::user::responses::{
-        account_permission, public_api_message, safe_redirect, within_bounds,
-    };
+    use crate::backend::api::user::responses::account_permission;
+    use crate::backend::api::user::responses::public_api_message;
+    use crate::backend::api::user::responses::safe_redirect;
+    use crate::backend::api::user::responses::within_bounds;
     use axum::response::IntoResponse;
     use std::collections::HashMap;
 
@@ -401,7 +417,7 @@ mod tests {
         let page = account::Page::Profile {
             profile: profile_model(
                 &user,
-                &db::users::profiles::ProfileSettings::default(),
+                &crate::backend::db::users::profiles::ProfileSettings::default(),
                 vec![],
             ),
             repositories: vec![],

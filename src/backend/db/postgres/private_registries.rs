@@ -1,10 +1,9 @@
-use crate::backend::{
-    crypto::SecretEncryptor,
-    db::{
-        private_registries::{self, Configuration, Registry, RegistryError},
-        secrets::SecretsError,
-    },
-};
+use codeyard_support::secrets::SecretEncryptor;
+
+use crate::backend::db::private_registries::Configuration;
+use crate::backend::db::private_registries::Registry;
+use crate::backend::db::private_registries::RegistryError;
+use crate::backend::db::secrets::SecretsError;
 use serde_json::Value;
 use sqlx::PgPool;
 
@@ -43,7 +42,8 @@ pub async fn list(
     if offset < 0 || !(1..=101).contains(&limit) {
         return Err(RegistryError::Invalid("page"));
     }
-    let mut tx = super::dependabot::authorized(pool, actor, org, false).await?;
+    let mut tx =
+        crate::backend::db::postgres::dependabot::authorized(pool, actor, org, false).await?;
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM org_private_registries WHERE org_id=$1 AND ($2::text IS NULL OR lower(name)=lower($2))")
         .bind(org).bind(name).fetch_one(&mut *tx).await?;
     let mut registries: Vec<Registry> = sqlx::query_as("SELECT name,configuration,created_at,updated_at FROM org_private_registries WHERE org_id=$1 AND ($2::text IS NULL OR lower(name)=lower($2)) ORDER BY name LIMIT $3 OFFSET $4")
@@ -74,7 +74,9 @@ pub async fn save(
     input: &Value,
     value: Option<&str>,
 ) -> Result<Registry, RegistryError> {
-    let mut tx = super::dependabot::authorized(pool, (actor, credential), org, true).await?;
+    let mut tx =
+        crate::backend::db::postgres::dependabot::authorized(pool, (actor, credential), org, true)
+            .await?;
     let mut stored: Option<String> = match name {
         Some(name) => Some(
             sqlx::query_scalar(
@@ -98,10 +100,10 @@ pub async fn save(
             *document = serde_json::to_string(&config)?;
         }
     }
-    let config = private_registries::configuration(stored.as_deref(), input)?;
+    let config = crate::backend::db::private_registries::configuration(stored.as_deref(), input)?;
     config.validate(value, stored.is_some())?;
     if let Some(ids) = &config.selected_repository_ids {
-        super::dependabot::check_repositories(&mut tx, org, ids).await?;
+        crate::backend::db::postgres::dependabot::check_repositories(&mut tx, org, ids).await?;
     }
     let generated = format!(
         "{}_{}",
@@ -147,7 +149,9 @@ pub async fn delete(
     org: i64,
     name: &str,
 ) -> Result<(), RegistryError> {
-    let mut tx = super::dependabot::authorized(pool, (actor, credential), org, true).await?;
+    let mut tx =
+        crate::backend::db::postgres::dependabot::authorized(pool, (actor, credential), org, true)
+            .await?;
     let deleted = sqlx::query("DELETE FROM org_private_registries WHERE org_id=$1 AND name=$2")
         .bind(org)
         .bind(name)

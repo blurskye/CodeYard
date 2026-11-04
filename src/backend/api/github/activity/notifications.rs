@@ -1,14 +1,17 @@
 //! Token-native projections and mutations of the same persisted inbox used by the web UI.
-use super::{auth, repository, Error, Pagination, Result};
-use crate::backend::{
-    app::AppState,
-    db::notifications::{
-        records::NotificationInboxAction,
-        threads::{ThreadAction, ThreadFilter, ThreadInbox},
-    },
-    notifications::inbox::{self, InboxError},
-    webhooks::payloads,
-};
+use crate::backend::api::github::activity::auth;
+use crate::backend::api::github::activity::repository;
+use crate::backend::api::github::activity::Error;
+use crate::backend::api::github::activity::Pagination;
+use crate::backend::api::github::activity::Result;
+use crate::backend::app::AppState;
+use crate::backend::db::notifications::records::NotificationInboxAction;
+use crate::backend::db::notifications::threads::ThreadAction;
+use crate::backend::db::notifications::threads::ThreadFilter;
+use crate::backend::db::notifications::threads::ThreadInbox;
+
+use crate::backend::notifications::inbox::InboxError;
+
 use axum::{
     body::Bytes,
     extract::{rejection::QueryRejection, OriginalUri, Path, Query, State},
@@ -21,7 +24,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::sync::Arc;
 
-use super::super::empty;
+use crate::backend::api::github::empty;
 // These ten operations document no JSON representation for errors.
 fn response(result: Result<Response>) -> Response {
     result.unwrap_or_else(|error| empty(error.0))
@@ -39,7 +42,7 @@ async fn act(state: &AppState, headers: &HeaderMap, action: ThreadAction) -> Res
     if action.requires_write() {
         actor.require_write()?;
     }
-    inbox::token_inbox(
+    crate::backend::notifications::inbox::token_inbox(
         &state.pool,
         &state.notification_broadcaster,
         actor.token.id,
@@ -110,7 +113,7 @@ async fn collection(
         .threads
         .iter()
         .take(limit)
-        .map(payloads::notification_thread_json)
+        .map(crate::backend::webhooks::payloads::notification_thread_json)
         .collect();
     Ok(polling(page.response(&uri, values, more)?))
 }
@@ -193,7 +196,8 @@ async fn get_thread(
             let mut inbox = act(&state, &headers, ThreadAction::Get(thread_id(&id)?)).await?;
             let view = inbox.threads.pop().ok_or_else(Error::missing)?;
             Ok(polling(
-                Json(payloads::notification_thread_json(&view)).into_response(),
+                Json(crate::backend::webhooks::payloads::notification_thread_json(&view))
+                    .into_response(),
             ))
         }
         .await,
@@ -247,10 +251,9 @@ async fn done_thread(
 fn subscription(inbox: ThreadInbox) -> Result<Response> {
     let thread = inbox.thread.ok_or_else(Error::missing)?;
     let subscription = inbox.subscription.ok_or_else(Error::missing)?;
-    Ok(Json(payloads::notification_subscription_json(
-        &thread,
-        &subscription,
-    ))
+    Ok(Json(
+        crate::backend::webhooks::payloads::notification_subscription_json(&thread, &subscription),
+    )
     .into_response())
 }
 async fn get_subscription(

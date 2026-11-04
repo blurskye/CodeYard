@@ -1,8 +1,15 @@
 //! Checks and legacy statuses share a rollup, while their credential scopes remain distinct.
-use super::{
-    connection, db, git, missing, node_id, repository, unavailable, Arguments, RequestContext,
-    Result, Value,
-};
+
+use crate::backend::api::graphql::db;
+
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::node_id;
+
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
 use serde_json::json;
 
 fn suite_object(repo: i64, id: i64) -> Value {
@@ -80,7 +87,7 @@ pub(super) async fn contexts(
     request: &RequestContext,
     parent: &Value,
 ) -> Result<Value> {
-    connection::validate(args)?;
+    crate::backend::api::graphql::connection::validate(args)?;
     let repo = parent["_repo"].as_i64().ok_or_else(missing)?;
     let oid = parent["_oid"].as_str().ok_or_else(missing)?;
     let viewer = request.private_viewer(repo, "statuses").await?;
@@ -91,7 +98,10 @@ pub(super) async fn contexts(
         serde_json::from_value(parent["_checkCounts"].clone()).map_err(unavailable)?;
     let status_total: i64 = statuses.iter().map(|(_, count)| count).sum();
     let check_total: i64 = checks.iter().map(|(_, count)| count).sum();
-    let page = connection::Page::new(args, status_total.saturating_add(check_total))?;
+    let page = crate::backend::api::graphql::connection::Page::new(
+        args,
+        status_total.saturating_add(check_total),
+    )?;
     let status_limit = page
         .limit
         .min(status_total.saturating_sub(page.offset).max(0));
@@ -110,7 +120,7 @@ pub(super) async fn contexts(
         .map_err(unavailable)?
         .ok_or_else(missing)?;
         for row in rows.statuses {
-            nodes.push(git::status(repo, &row));
+            nodes.push(crate::backend::api::graphql::git::status(repo, &row));
         }
     }
     let check_limit = page.limit - status_limit;
@@ -150,7 +160,7 @@ pub(super) async fn node(kind: &str, id: i64, request: &RequestContext) -> Resul
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;
-    repository::by_id(repo, request).await?;
+    crate::backend::api::graphql::repository::by_id(repo, request).await?;
     request.authorize(repo, "checks", false).await?;
     let value = if kind == "CSU" {
         db::checks::suite(pool, repo, id)
@@ -185,7 +195,9 @@ pub(super) async fn resolve(
     }
     let repo = parent["_repo"].as_i64().ok_or_else(missing)?;
     match (ty, field) {
-        ("CheckRun", "isRequired") => git::resolve(ty, field, args, request, parent).await,
+        ("CheckRun", "isRequired") => {
+            crate::backend::api::graphql::git::resolve(ty, field, args, request, parent).await
+        }
         ("CheckRun", "checkSuite") => Ok(suite_object(
             repo,
             parent["_suite"].as_i64().ok_or_else(missing)?,
@@ -208,7 +220,11 @@ pub(super) async fn resolve(
             }))
         }
         ("CheckSuite", "workflowRun") => {
-            if !repository::optional_authority(repo, "actions", request).await? {
+            if !crate::backend::api::graphql::repository::optional_authority(
+                repo, "actions", request,
+            )
+            .await?
+            {
                 return Ok(Value::Null);
             }
             let row = db::checks::workflow_metadata(
@@ -221,7 +237,7 @@ pub(super) async fn resolve(
             request.authorize(repo, "actions", false).await?;
             Ok(row.map_or(Value::Null, |(event,path,name)| json!({"__typename":"WorkflowRun","_repo":repo,"_scope":"actions","event":event,"workflow":{"__typename":"Workflow","_repo":repo,"_scope":"actions","name":name.unwrap_or_else(|| crate::backend::ci::workflow_name_from_path(&path))}})))
         }
-        _ => Err(super::error(
+        _ => Err(crate::backend::api::graphql::error(
             format!("Codeyard does not support {ty}.{field} yet"),
             "UNPROCESSABLE",
         )),

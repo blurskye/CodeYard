@@ -1,5 +1,6 @@
 //! Borrowed views over already validated, typed GraphQL arguments.
-use super::{unavailable, Result};
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::Result;
 use async_graphql::{indexmap::IndexMap, Error, Name, Value};
 use serde::de::DeserializeOwned;
 

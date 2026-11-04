@@ -1,14 +1,13 @@
 //! JWT-authorized app webhook configuration, history and real background redelivery.
-use super::{
-    super::{api_url, Error, Result},
-    installations::jwt,
-};
+use crate::backend::api::github::apps::super::api_url;
+use crate::backend::api::github::apps::super::Error;
+use crate::backend::api::github::apps::super::Result;
+use crate::backend::api::github::apps::installations::jwt;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::db::github_app_hooks::Delivery;
 use crate::backend::db::webhooks::WebhookPatch;
-use crate::backend::webhooks;
-use crate::backend::webhooks::settings;
+
 use crate::backend::webhooks::settings::HookError;
 use crate::backend::webhooks::settings::HookForm;
 use axum::{
@@ -33,7 +32,7 @@ fn hook_error(error: HookError) -> Error {
 fn configuration(hook: Option<&Webhook>) -> Value {
     match hook {
         Some(hook) => {
-            json!({"url":hook.payload_url,"content_type":if hook.content_type==settings::JSON_CONTENT_TYPE{"json"}else{"form"},"insecure_ssl":if hook.ssl_verify{"0"}else{"1"}})
+            json!({"url":hook.payload_url,"content_type":if hook.content_type==crate::backend::webhooks::settings::JSON_CONTENT_TYPE{"json"}else{"form"},"insecure_ssl":if hook.ssl_verify{"0"}else{"1"}})
         }
         None => json!({"content_type":"form","insecure_ssl":"0"}),
     }
@@ -43,7 +42,7 @@ pub(super) async fn get_config(
     headers: HeaderMap,
 ) -> Result<Json<Value>> {
     let app = jwt(&state, &headers).await?;
-    let hook = db::github_app_hooks::hook(&state.pool, app.id)
+    let hook = crate::backend::db::github_app_hooks::hook(&state.pool, app.id)
         .await
         .map_err(Error::unavailable)?;
     Ok(Json(configuration(hook.as_ref())))
@@ -67,8 +66,8 @@ pub(super) async fn update_config(
     };
     let url = string("url")?;
     let content = match string("content_type")? {
-        Some("json") => Some(settings::JSON_CONTENT_TYPE),
-        Some("form") => Some(settings::FORM_CONTENT_TYPE),
+        Some("json") => Some(crate::backend::webhooks::settings::JSON_CONTENT_TYPE),
+        Some("form") => Some(crate::backend::webhooks::settings::FORM_CONTENT_TYPE),
         Some(_) => return Err(Error::invalid("Choose json or form")),
         None => None,
     };
@@ -83,7 +82,7 @@ pub(super) async fn update_config(
     let secret = string("secret")?;
     // The stored hook fills the fields the request leaves out only for validation. The save
     // writes just the named fields, so a concurrent edit of another field stands.
-    let old = db::github_app_hooks::hook(&state.pool, app.id)
+    let old = crate::backend::db::github_app_hooks::hook(&state.pool, app.id)
         .await
         .map_err(Error::unavailable)?;
     let creating = old.is_none();
@@ -98,14 +97,14 @@ pub(super) async fn update_config(
             .into(),
         content_type: content
             .or_else(|| old.as_ref().map(|h| h.content_type.as_str()))
-            .unwrap_or(settings::FORM_CONTENT_TYPE)
+            .unwrap_or(crate::backend::webhooks::settings::FORM_CONTENT_TYPE)
             .into(),
         events: vec!["*".into()],
         active: true,
         ssl_verify: ssl.unwrap_or(true),
         secret: secret.unwrap_or("").into(),
     };
-    let fields = settings::validated(&form).map_err(hook_error)?;
+    let fields = crate::backend::webhooks::settings::validated(&form).map_err(hook_error)?;
     let patch = WebhookPatch {
         payload_url: (creating || url.is_some()).then_some(fields.payload_url),
         content_type: (creating || content.is_some()).then_some(fields.content_type),
@@ -115,8 +114,9 @@ pub(super) async fn update_config(
         ..WebhookPatch::default()
     };
     let sealed =
-        settings::seal(state.secret_encryptor.as_deref(), &form.secret).map_err(hook_error)?;
-    if !db::github_app_hooks::save(
+        crate::backend::webhooks::settings::seal(state.secret_encryptor.as_deref(), &form.secret)
+            .map_err(hook_error)?;
+    if !crate::backend::db::github_app_hooks::save(
         &state.pool,
         app.id,
         &patch,
@@ -128,7 +128,7 @@ pub(super) async fn update_config(
     {
         return Err(Error::validation("Hook", "url", "missing_field"));
     }
-    let hook = db::github_app_hooks::hook(&state.pool, app.id)
+    let hook = crate::backend::db::github_app_hooks::hook(&state.pool, app.id)
         .await
         .map_err(Error::unavailable)?;
     Ok(Json(configuration(hook.as_ref())))
@@ -147,7 +147,7 @@ fn document(delivery: &Delivery, detail: bool) -> Value {
     let code = record.status_code.unwrap_or(0);
     let mut value = json!({"id":record.id,"guid":record.guid,"delivered_at":record.delivered_at,"redelivery":delivery.redelivery,"duration":f64::from(record.duration_ms)/1000.0,"status":record.error.clone().unwrap_or_else(||StatusCode::from_u16(code.try_into().unwrap_or(0)).ok().and_then(|status|status.canonical_reason().map(str::to_owned)).unwrap_or_else(||"Unknown response".into())),"status_code":code,"event":record.event,"action":record.action,"installation_id":delivery.installation_id,"repository_id":delivery.repository_id});
     if detail {
-        let outgoing = webhooks::delivery::redelivery(record);
+        let outgoing = crate::backend::webhooks::delivery::redelivery(record);
         value["url"] = json!(delivery.url);
         value["request"] = json!({"headers":headers(&record.request_headers),"payload":webhooks::delivery::json_payload(&outgoing).filter(Value::is_object)});
         value["response"] = json!({"headers":record.response_headers.as_deref().map(headers),"payload":record.response_body});
@@ -176,7 +176,7 @@ pub(super) async fn list_deliveries(
             "Invalid delivery status",
         ));
     }
-    let mut all = db::github_app_hooks::deliveries(&state.pool, app.id)
+    let mut all = crate::backend::db::github_app_hooks::deliveries(&state.pool, app.id)
         .await
         .map_err(Error::unavailable)?;
     all.retain(|delivery| match query.status.as_deref() {
@@ -210,7 +210,7 @@ pub(super) async fn list_deliveries(
             ))
         })
         .transpose()?;
-    let limit = super::super::pagination::page_size(query.per_page);
+    let limit = crate::backend::api::github::pagination::page_size(query.per_page);
     let mut rows = all
         .iter()
         .filter(|delivery| {
@@ -275,7 +275,7 @@ pub(super) async fn get_delivery(
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
     let app = jwt(&state, &headers).await?;
-    let record = db::github_app_hooks::delivery(&state.pool, app.id, id)
+    let record = crate::backend::db::github_app_hooks::delivery(&state.pool, app.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -287,17 +287,17 @@ pub(super) async fn redeliver(
     Path(id): Path<i64>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let app = jwt(&state, &headers).await?;
-    let hook = db::github_app_hooks::hook(&state.pool, app.id)
+    let hook = crate::backend::db::github_app_hooks::hook(&state.pool, app.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let record = db::github_app_hooks::delivery(&state.pool, app.id, id)
+    let record = crate::backend::db::github_app_hooks::delivery(&state.pool, app.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let mut outgoing = webhooks::delivery::redelivery(&record.recorded);
+    let mut outgoing = crate::backend::webhooks::delivery::redelivery(&record.recorded);
     outgoing.guid = record.recorded.guid;
-    if !webhooks::enqueue(&state.pool, hook, outgoing) {
+    if !crate::backend::webhooks::enqueue(&state.pool, hook, outgoing) {
         return Err(Error::unavailable(()));
     }
     Ok((StatusCode::ACCEPTED, Json(json!({}))))

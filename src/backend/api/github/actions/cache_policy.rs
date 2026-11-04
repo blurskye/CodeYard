@@ -1,13 +1,13 @@
 //! Repository cache policies are administrative changes to the runtime's existing limits.
-use crate::backend::{
-    api::github::{auth, repository, Error, Result},
-    app::AppState,
-    db::{
-        self,
-        actions::{CacheLimit, CachePolicyError},
-    },
-    repositories::access,
-};
+
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::actions::CacheLimit;
+use crate::backend::db::actions::CachePolicyError;
+
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -26,8 +26,10 @@ async fn get_policy(
     kind: CacheLimit,
 ) -> Result<Json<Value>> {
     let (repo, authentication) = repository(state, headers, owner, name, false).await?;
-    let actor = authentication.ok_or_else(auth::required)?.user;
-    if !access::can_admin(&state.pool, &actor, &repo)
+    let actor = authentication
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
+    if !crate::backend::repositories::access::can_admin(&state.pool, &actor, &repo)
         .await
         .map_err(Error::unavailable)?
     {
@@ -36,10 +38,10 @@ async fn get_policy(
             "Repository administration denied",
         ));
     }
-    let site = db::actions::get_actions_settings(&state.pool)
+    let site = crate::backend::db::actions::get_actions_settings(&state.pool)
         .await
         .map_err(Error::unavailable)?;
-    let own = db::actions::get_repo_actions_settings(&state.pool, repo.id)
+    let own = crate::backend::db::actions::get_repo_actions_settings(&state.pool, repo.id)
         .await
         .map_err(Error::unavailable)?;
     Ok(Json(match kind {
@@ -75,9 +77,12 @@ async fn set_policy(
     input: Input,
 ) -> Result<StatusCode> {
     let (repo, authentication) = repository(state, headers, owner, name, true).await?;
-    let actor = authentication.ok_or_else(auth::required)?.user.id;
+    let actor = authentication
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user
+        .id;
     let value = input.value(kind)?;
-    db::actions::set_cache_limit(&state.pool, actor, repo.id, kind, value)
+    crate::backend::db::actions::set_cache_limit(&state.pool, actor, repo.id, kind, value)
         .await
         .map_err(|error| match error.downcast_ref::<CachePolicyError>() {
             Some(CachePolicyError::Denied) => {

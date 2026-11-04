@@ -11,9 +11,7 @@ use axum::{
 use codeyard::backend::api::create_router;
 use codeyard::backend::app::AppState;
 use codeyard::backend::ci::CiConfig;
-use codeyard::backend::db;
-use codeyard::backend::db::organizations as orgs;
-use codeyard::backend::identity::tokens;
+
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard::backend::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
@@ -73,12 +71,12 @@ async fn contract(pg: bool) {
     let eve = f.actor("eve").await;
     let charlie = f.actor("charlie").await;
     let org = applied(
-        orgs::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             alice,
-            &orgs::NewOrganization::new(
+            &codeyard::backend::db::organizations::NewOrganization::new(
                 "team-org",
-                orgs::OrganizationProfile::new(None, None).unwrap(),
+                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
             )
             .unwrap(),
         )
@@ -86,14 +84,26 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        orgs::add_organization_member(f.pool(), alice, org.id, bob, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::add_organization_member(
+            f.pool(),
+            alice,
+            org.id,
+            bob,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     applied(
-        orgs::add_organization_member(f.pool(), alice, org.id, charlie, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::add_organization_member(
+            f.pool(),
+            alice,
+            org.id,
+            charlie,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let router = create_router(AppState::new(
@@ -116,7 +126,7 @@ async fn contract(pg: bool) {
         let client = Client::login(&router, f.pool(), user).await;
         tokens.push(format!(
             "Bearer {}",
-            tokens::create(
+            codeyard::backend::identity::tokens::create(
                 f.pool(),
                 user,
                 Some(&client.session),
@@ -609,12 +619,13 @@ async fn contract(pg: bool) {
         ] {
             assert_eq!(repo["permissions"][field], level >= minimum);
         }
-        let row = db::repositories::records::get_repository_by_id(f.pool(), repo_id)
-            .await
-            .unwrap()
-            .unwrap();
+        let row =
+            codeyard::backend::db::repositories::records::get_repository_by_id(f.pool(), repo_id)
+                .await
+                .unwrap()
+                .unwrap();
         assert_eq!(
-            orgs::get_organization_repo_access(f.pool(), bob, &row)
+            codeyard::backend::db::organizations::get_organization_repo_access(f.pool(), bob, &row)
                 .await
                 .unwrap(),
             codeyard_db_core::models::AccessLevel::from(level)
@@ -633,16 +644,15 @@ async fn contract(pg: bool) {
         .as_i64()
         .unwrap();
     {
-        use codeyard::backend::identity::fine_grained;
-        let created = fine_grained::create(
+        let created = codeyard::backend::identity::fine_grained::create(
             f.pool(),
             alice,
             Some(&session.session),
-            fine_grained::Request {
+            codeyard::backend::identity::fine_grained::Request {
                 name: "team-admin".into(),
                 description: "Team administration".into(),
-                owner: fine_grained::Owner::Organization(org.id),
-                access: fine_grained::Access::Selected,
+                owner: codeyard::backend::identity::fine_grained::Owner::Organization(org.id),
+                access: codeyard::backend::identity::fine_grained::Access::Selected,
                 repositories: vec![other_repo],
                 permissions: json!({"members":"write","administration":"write"})
                     .as_object()
@@ -653,7 +663,7 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap();
-        db::fine_grained_tokens::review(
+        codeyard::backend::db::fine_grained_tokens::review(
             f.pool(),
             org.id,
             alice,
@@ -1013,7 +1023,7 @@ async fn contract(pg: bool) {
     );
     // Deleting a team never deletes the organization's repository or membership.
     assert!(
-        db::repositories::records::get_repository_by_id(f.pool(), repo_id)
+        codeyard::backend::db::repositories::records::get_repository_by_id(f.pool(), repo_id)
             .await
             .unwrap()
             .is_some()

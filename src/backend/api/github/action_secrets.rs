@@ -1,6 +1,11 @@
 //! Sealed-box input is opened once, then stored with the site's encryption key.
-use super::{auth, pagination::Pagination, Error, Result};
-use crate::backend::{app::AppState, db, db::secrets::SecretKind};
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::secrets::SecretKind;
 use axum::{
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -39,8 +44,8 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
         .collect()
 }
 
-pub(super) fn error(error: db::secrets::SecretsError) -> Error {
-    use db::secrets::SecretsError;
+pub(super) fn error(error: crate::backend::db::secrets::SecretsError) -> Error {
+    use crate::backend::db::secrets::SecretsError;
     match error {
         SecretsError::Denied => {
             Error::new(StatusCode::FORBIDDEN, "Resource not accessible by token")
@@ -72,9 +77,13 @@ async fn repository(
     owner: &str,
     name: &str,
     write: bool,
-) -> Result<(i64, auth::Authentication)> {
-    let (repo, auth) = super::repository(state, headers, owner, name, write).await?;
-    Ok((repo.id, auth.ok_or_else(auth::required)?))
+) -> Result<(i64, crate::backend::api::github::auth::Authentication)> {
+    let (repo, auth) =
+        crate::backend::api::github::repository(state, headers, owner, name, write).await?;
+    Ok((
+        repo.id,
+        auth.ok_or_else(crate::backend::api::github::auth::required)?,
+    ))
 }
 
 async fn list(
@@ -86,9 +95,10 @@ async fn list(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &repo, false).await?;
-    let secrets = db::secrets::list_secrets_for(&state.pool, kind, actor.user.id, repo)
-        .await
-        .map_err(error)?;
+    let secrets =
+        crate::backend::db::secrets::list_secrets_for(&state.pool, kind, actor.user.id, repo)
+            .await
+            .map_err(error)?;
     let (offset, limit) = page.window()?;
     let total = secrets.len();
     let secrets: Vec<_> = secrets.into_iter().skip(offset).take(limit).collect();
@@ -116,7 +126,7 @@ async fn public_key(
         .secret_encryptor
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
-    let (key_id, key) = db::secrets::repository_secret_key_for(
+    let (key_id, key) = crate::backend::db::secrets::repository_secret_key_for(
         &state.pool,
         kind,
         encryptor,
@@ -137,12 +147,13 @@ async fn secret(
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &repo, false).await?;
     let name = name.to_ascii_uppercase();
-    let secret = db::secrets::list_secrets_for(&state.pool, kind, actor.user.id, repo)
-        .await
-        .map_err(error)?
-        .into_iter()
-        .find(|secret| secret.name == name)
-        .ok_or_else(Error::missing)?;
+    let secret =
+        crate::backend::db::secrets::list_secrets_for(&state.pool, kind, actor.user.id, repo)
+            .await
+            .map_err(error)?
+            .into_iter()
+            .find(|secret| secret.name == name)
+            .ok_or_else(Error::missing)?;
     Ok(Json(json!(secret)))
 }
 
@@ -162,12 +173,12 @@ async fn save(
     let (repo, actor) = repository(&state, &headers, &owner, &repo, true).await?;
     let Json(body) = body.map_err(|_| Error::invalid("Invalid secret input"))?;
     let name = name.to_ascii_uppercase();
-    db::secrets::validate_repository_secret(&name, "").map_err(error)?;
+    crate::backend::db::secrets::validate_repository_secret(&name, "").map_err(error)?;
     let encryptor = state
         .secret_encryptor
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
-    let (key_id, key) = db::secrets::repository_secret_key_for(
+    let (key_id, key) = crate::backend::db::secrets::repository_secret_key_for(
         &state.pool,
         kind,
         encryptor,
@@ -178,7 +189,7 @@ async fn save(
     .await
     .map_err(error)?;
     let value = open_value(&key, &key_id, &body.key_id, &body.encrypted_value)?;
-    let created = db::secrets::create_or_update_secret_for(
+    let created = crate::backend::db::secrets::create_or_update_secret_for(
         &state.pool,
         encryptor,
         (repo, kind),
@@ -206,7 +217,9 @@ pub(super) fn open_value(
         return Err(Error::validation("Secret", "key_id", "invalid"));
     }
     // Bound the decoded box before allocating or attempting decryption.
-    if encrypted_value.len() > (db::secrets::MAX_SECRET_VALUE_BYTES + 48).div_ceil(3) * 4 {
+    if encrypted_value.len()
+        > (crate::backend::db::secrets::MAX_SECRET_VALUE_BYTES + 48).div_ceil(3) * 4
+    {
         return Err(Error::validation("Secret", "encrypted_value", "invalid"));
     }
     let invalid = || Error::validation("Secret", "encrypted_value", "invalid");
@@ -222,7 +235,7 @@ async fn remove(
     Path((owner, repo, name)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &repo, true).await?;
-    if !db::secrets::delete_secret_for(
+    if !crate::backend::db::secrets::delete_secret_for(
         &state.pool,
         kind,
         actor.user.id,

@@ -1,6 +1,4 @@
-use super::in_pending_review;
-use crate::backend::db;
-use crate::backend::db::pull_requests::{records, reviews};
+use crate::backend::repositories::pull_requests::comments::in_pending_review;
 
 #[tokio::test]
 async fn discarded_review_cannot_authorize_comment_publication() {
@@ -12,13 +10,13 @@ async fn discarded_review_cannot_authorize_comment_publication() {
     .await
     .unwrap();
     codeyard_db_core::run_migrations(&pool).await.unwrap();
-    let user = db::users::accounts::create_user(&pool, "alice", None)
+    let user = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
         .await
         .unwrap();
     let repo = crate::backend::repositories::lifecycle::provision(
         (&pool, None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(user.id),
+        crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(user.id),
         "proj",
         None,
         false,
@@ -27,9 +25,9 @@ async fn discarded_review_cannot_authorize_comment_publication() {
     .await
     .unwrap();
     let head = "a".repeat(40);
-    let pull = records::create_pull_request(
+    let pull = crate::backend::db::pull_requests::records::create_pull_request(
         &pool,
-        records::NewPullRequest {
+        crate::backend::db::pull_requests::records::NewPullRequest {
             repo_id: repo.id,
             head_repo_id: Some(repo.id),
             author_id: user.id,
@@ -46,9 +44,9 @@ async fn discarded_review_cannot_authorize_comment_publication() {
     )
     .await
     .unwrap();
-    let comment = reviews::add_pending_pull_request_comment(
+    let comment = crate::backend::db::pull_requests::reviews::add_pending_pull_request_comment(
         &pool,
-        reviews::NewPullRequestComment {
+        crate::backend::db::pull_requests::reviews::NewPullRequestComment {
             pr_id: pull.id,
             author_id: user.id,
             body: "Private draft",
@@ -65,19 +63,25 @@ async fn discarded_review_cannot_authorize_comment_publication() {
     .await
     .unwrap();
     assert!(in_pending_review(&pool, &comment).await.unwrap());
-    assert!(reviews::discard_pending_review(&pool, pull.id, user.id)
-        .await
-        .unwrap());
-    assert!(reviews::get_pull_request_comment_by_id(&pool, comment.id)
+    assert!(
+        crate::backend::db::pull_requests::reviews::discard_pending_review(&pool, pull.id, user.id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
+            &pool, comment.id
+        )
         .await
         .unwrap()
-        .is_none());
+        .is_none()
+    );
     // Creation still holds its insertion result after the other request's discard.
     assert!(in_pending_review(&pool, &comment).await.unwrap());
 
-    let submitted = reviews::add_pending_pull_request_comment(
+    let submitted = crate::backend::db::pull_requests::reviews::add_pending_pull_request_comment(
         &pool,
-        reviews::NewPullRequestComment {
+        crate::backend::db::pull_requests::reviews::NewPullRequestComment {
             pr_id: pull.id,
             author_id: user.id,
             body: "Submitted comment",
@@ -93,7 +97,7 @@ async fn discarded_review_cannot_authorize_comment_publication() {
     )
     .await
     .unwrap();
-    reviews::add_pull_request_review(
+    crate::backend::db::pull_requests::reviews::add_pull_request_review(
         &pool,
         pull.id,
         user.id,

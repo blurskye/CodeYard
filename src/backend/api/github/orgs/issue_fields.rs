@@ -1,9 +1,13 @@
 //! Organization fields share inherited native definitions, typed values and stable select IDs.
-use super::{auth, target, AppState, Error, Result};
-use crate::backend::{
-    db::issue_attributes::{self, Definition, FieldChanges},
-    webhooks::payloads,
-};
+use crate::backend::api::github::orgs::auth;
+use crate::backend::api::github::orgs::target;
+use crate::backend::api::github::orgs::AppState;
+use crate::backend::api::github::orgs::Error;
+use crate::backend::api::github::orgs::Result;
+
+use crate::backend::db::issue_attributes::Definition;
+use crate::backend::db::issue_attributes::FieldChanges;
+
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -16,7 +20,7 @@ use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 
 fn field_error(error: anyhow::Error) -> Error {
-    let error = super::super::issue_attributes::error(error);
+    let error = crate::backend::api::github::issue_attributes::error(error);
     // Organization field errors use strings; issue field-value errors use structured objects.
     if error.0 == StatusCode::UNPROCESSABLE_ENTITY {
         Error::invalid_simple(error.1)
@@ -46,7 +50,7 @@ struct SelectOption {
     color: String,
     priority: i64,
 }
-impl From<SelectOption> for issue_attributes::OptionInput {
+impl From<SelectOption> for crate::backend::db::issue_attributes::OptionInput {
     fn from(option: SelectOption) -> Self {
         Self {
             id: option.id,
@@ -89,12 +93,19 @@ async fn list(
         .await?
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
-    let fields =
-        issue_attributes::organization_catalog(&state.pool, org.id, actor.user.id, "field")
-            .await
-            .map_err(field_error)?;
+    let fields = crate::backend::db::issue_attributes::organization_catalog(
+        &state.pool,
+        org.id,
+        actor.user.id,
+        "field",
+    )
+    .await
+    .map_err(field_error)?;
     Ok(Json(Value::Array(
-        fields.iter().map(payloads::issue_field).collect(),
+        fields
+            .iter()
+            .map(crate::backend::webhooks::payloads::issue_field)
+            .collect(),
     )))
 }
 async fn create(
@@ -108,13 +119,14 @@ async fn create(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    let Json(input) = input.map_err(|error| super::super::json_error(error).simple())?;
+    let Json(input) =
+        input.map_err(|error| crate::backend::api::github::json_error(error).simple())?;
     if matches!(input.data_type.as_str(), "single_select" | "multi_select")
         && input.options.is_none()
     {
         return Err(Error::invalid_simple("Select fields require options"));
     }
-    let field = issue_attributes::create_organization_field(
+    let field = crate::backend::db::issue_attributes::create_organization_field(
         &state.pool,
         org.id,
         actor.database_actor(),
@@ -140,7 +152,9 @@ async fn create(
     )
     .await
     .map_err(field_error)?;
-    Ok(Json(payloads::issue_field(&field)))
+    Ok(Json(crate::backend::webhooks::payloads::issue_field(
+        &field,
+    )))
 }
 async fn update(
     State(state): State<Arc<AppState>>,
@@ -156,8 +170,9 @@ async fn update(
     let id = params["issue_field_id"]
         .parse()
         .map_err(|_| Error::missing())?;
-    let Json(input) = input.map_err(|error| super::super::json_error(error).simple())?;
-    let field = issue_attributes::patch_organization_field(
+    let Json(input) =
+        input.map_err(|error| crate::backend::api::github::json_error(error).simple())?;
+    let field = crate::backend::db::issue_attributes::patch_organization_field(
         &state.pool,
         org.id,
         actor.database_actor(),
@@ -173,7 +188,9 @@ async fn update(
     )
     .await
     .map_err(field_error)?;
-    Ok(Json(payloads::issue_field(&field)))
+    Ok(Json(crate::backend::webhooks::payloads::issue_field(
+        &field,
+    )))
 }
 async fn remove(
     State(state): State<Arc<AppState>>,
@@ -185,7 +202,7 @@ async fn remove(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    issue_attributes::delete_organization_definition(
+    crate::backend::db::issue_attributes::delete_organization_definition(
         &state.pool,
         org.id,
         actor.database_actor(),

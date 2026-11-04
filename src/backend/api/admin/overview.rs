@@ -2,7 +2,7 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::user::responses::require_account;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -20,7 +20,7 @@ async fn load_admin(ctx: &PageContext, days: i32) -> Result<Admin, Response> {
         )
     };
     // Reads persisted facts only: repository sizes are recorded after pushes, never by a GET.
-    let points = db::users::accounts::list_admin_activity_points(pool, days)
+    let points = crate::backend::db::users::accounts::list_admin_activity_points(pool, days)
         .await
         .map_err(|_| unavailable())?;
     let storage_bytes = points
@@ -39,9 +39,10 @@ async fn load_admin(ctx: &PageContext, days: i32) -> Result<Admin, Response> {
             runs: point.runs,
         })
         .collect();
-    let pending = db::users::signup_requests::count_signup_requests(pool, "pending")
-        .await
-        .map_err(|_| unavailable())?;
+    let pending =
+        crate::backend::db::users::signup_requests::count_signup_requests(pool, "pending")
+            .await
+            .map_err(|_| unavailable())?;
     let pending_requests = Some(pending as usize);
     Ok(Admin {
         pending_requests,

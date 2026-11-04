@@ -1,7 +1,7 @@
 mod exports;
-use super::super::repositories::access::USER_REPO_ACCESS_SQL;
-use super::invitations::RECIPIENT;
 use crate::backend::db::organizations::*;
+use crate::backend::db::sqlite::organizations::invitations::RECIPIENT;
+use crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Team;
@@ -13,7 +13,7 @@ pub use exports::{
 use sqlx::SqlitePool;
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing};
 
-use super::authority::*;
+use crate::backend::db::sqlite::organizations::authority::*;
 
 /// One page of a team's members who are still active members of its organization.
 const TEAM_MEMBERS_PAGE: &str = "SELECT tm.* FROM effective_team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=?1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=?2 AND tm.id>?3 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password ORDER BY tm.id LIMIT ?4";
@@ -101,11 +101,13 @@ pub async fn create_organization_team(
     let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
-    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+    if !crate::backend::db::sqlite::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
     if let Some(token) = token {
-        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? {
+        if !crate::backend::db::sqlite::users::tokens::team_write_on(&mut tx, token, actor, org)
+            .await?
+        {
             return Ok(Denied);
         }
     }
@@ -127,7 +129,7 @@ pub async fn create_organization_team(
     }
     for &repo in &input.repositories {
         if let Some(token) = token {
-            if !super::super::users::tokens::repository_write_on(
+            if !crate::backend::db::sqlite::users::tokens::repository_write_on(
                 &mut tx,
                 token,
                 actor,
@@ -172,11 +174,13 @@ pub async fn update_organization_team(
     let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
-    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+    if !crate::backend::db::sqlite::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
     if let Some(token) = token {
-        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? {
+        if !crate::backend::db::sqlite::users::tokens::team_write_on(&mut tx, token, actor, org)
+            .await?
+        {
             return Ok(Denied);
         }
     }
@@ -239,7 +243,7 @@ pub async fn update_organization_team(
             .into_iter()
             .filter(|run| !denied_before.contains(run))
             .collect();
-        super::super::ci::stop_ci_runs(&mut tx, &runs).await?;
+        crate::backend::db::sqlite::ci::stop_ci_runs(&mut tx, &runs).await?;
     }
     tx.commit().await?;
     Ok(Applied(team))
@@ -254,11 +258,13 @@ pub async fn delete_organization_team(
     let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
-    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+    if !crate::backend::db::sqlite::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
     if let Some(token) = token {
-        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? {
+        if !crate::backend::db::sqlite::users::tokens::team_write_on(&mut tx, token, actor, org)
+            .await?
+        {
             return Ok(Denied);
         }
     }
@@ -271,7 +277,7 @@ pub async fn delete_organization_team(
     // The runs of everyone on the team or a child team, on repositories that any of them reach.
     let runs: Vec<i64> = sqlx::query_scalar(&format!("SELECT id FROM ci_runs WHERE (status IN ('queued','running') OR completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) AND triggered_by_id IN (SELECT user_id FROM effective_team_memberships WHERE team_id IN ({SUBTREE})) AND repo_id IN (SELECT r.id FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=?2 AND r.owner_user_id IS NULL AND (EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id IN ({SUBTREE}) AND a.repo_id=r.id AND a.permission>=3) OR EXISTS(SELECT 1 FROM organization_role_assignments a JOIN organization_roles role ON role.id=a.role_id AND role.base_level BETWEEN 3 AND 5 JOIN team_ancestors lineage ON lineage.ancestor_id=a.team_id WHERE lineage.team_id IN ({SUBTREE}) AND a.org_id=?2 AND a.user_id IS NULL)))"))
         .bind(team).bind(org).fetch_all(&mut *tx).await?;
-    super::super::ci::stop_ci_runs(&mut tx, &runs).await?;
+    crate::backend::db::sqlite::ci::stop_ci_runs(&mut tx, &runs).await?;
     let teams: Vec<i64> = sqlx::query_scalar(SUBTREE)
         .bind(team)
         .fetch_all(&mut *tx)
@@ -378,11 +384,13 @@ pub async fn add_organization_team_member(
     let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let actor_role = require_org!(tx, actor, org);
-    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+    if !crate::backend::db::sqlite::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
     if let Some(token) = token {
-        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? {
+        if !crate::backend::db::sqlite::users::tokens::team_write_on(&mut tx, token, actor, org)
+            .await?
+        {
             return Ok(Denied);
         }
     }
@@ -418,11 +426,13 @@ pub async fn remove_organization_team_member(
     let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
-    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+    if !crate::backend::db::sqlite::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
     if let Some(token) = token {
-        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? {
+        if !crate::backend::db::sqlite::users::tokens::team_write_on(&mut tx, token, actor, org)
+            .await?
+        {
             return Ok(Denied);
         }
     }
@@ -450,7 +460,7 @@ pub async fn remove_organization_team_member(
     }
     // Only repositories reached through this team's grants or inherited organization roles.
     let runs:Vec<i64>=sqlx::query_scalar("SELECT id FROM ci_runs WHERE triggered_by_id=?1 AND (status IN ('queued','running') OR completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) AND repo_id IN (SELECT r.id FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=?3 AND r.owner_user_id IS NULL AND (EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id=?2 AND a.repo_id=r.id AND a.permission>=3) OR EXISTS(SELECT 1 FROM organization_role_assignments a JOIN organization_roles role ON role.id=a.role_id AND role.base_level BETWEEN 3 AND 5 JOIN team_ancestors lineage ON lineage.ancestor_id=a.team_id WHERE lineage.team_id=?2 AND a.org_id=?3 AND a.user_id IS NULL)))").bind(target).bind(team).bind(org).fetch_all(&mut *tx).await?;
-    super::super::ci::stop_ci_runs(&mut tx, &runs).await?;
+    crate::backend::db::sqlite::ci::stop_ci_runs(&mut tx, &runs).await?;
     tx.commit().await?;
     Ok(Applied(()))
 }
@@ -466,12 +476,13 @@ pub async fn grant_organization_team_repository(
     let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
-    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+    if !crate::backend::db::sqlite::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
     if let Some(token) = token {
-        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await?
-            || !super::super::users::tokens::repository_write_on(
+        if !crate::backend::db::sqlite::users::tokens::team_write_on(&mut tx, token, actor, org)
+            .await?
+            || !crate::backend::db::sqlite::users::tokens::repository_write_on(
                 &mut tx,
                 token,
                 actor,
@@ -518,12 +529,13 @@ pub async fn revoke_organization_team_repository(
     let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
-    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+    if !crate::backend::db::sqlite::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
     if let Some(token) = token {
-        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await?
-            || !super::super::users::tokens::repository_write_on(
+        if !crate::backend::db::sqlite::users::tokens::team_write_on(&mut tx, token, actor, org)
+            .await?
+            || !crate::backend::db::sqlite::users::tokens::repository_write_on(
                 &mut tx,
                 token,
                 actor,
@@ -815,7 +827,8 @@ pub async fn team_identity(
     token: i64,
     identity: crate::backend::db::organizations::teams::TeamIdentity<'_>,
 ) -> Result<Option<Team>> {
-    use crate::backend::{db::organizations::teams::TeamIdentity, identity::oauth_apps};
+    use crate::backend::db::organizations::teams::TeamIdentity;
+
     let mut tx = begin_read(pool).await?;
     let scopes: Option<Option<String>> = sqlx::query_scalar("SELECT oa.scopes FROM personal_access_tokens t JOIN users u ON u.id=t.user_id LEFT JOIN oauth_app_tokens oa ON oa.token_id=t.id WHERE t.id=?1 AND t.user_id=?2 AND NOT u.is_banned AND NOT u.must_change_password AND (t.expires_at IS NULL OR julianday(t.expires_at)>julianday('now')) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens f WHERE f.token_id=t.id) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens j WHERE j.token_id=t.id) AND NOT EXISTS(SELECT 1 FROM github_app_tokens a WHERE a.token_id=t.id) AND NOT EXISTS(SELECT 1 FROM github_apps a WHERE a.client_id=oa.client_id) AND (oa.client_id IS NULL OR oa.client_id=?3 OR EXISTS(SELECT 1 FROM oauth_applications a WHERE a.client_id=oa.client_id))")
         .bind(token).bind(actor).bind(codeyard_model::identity::CLI_CLIENT).fetch_optional(&mut *tx).await?;
@@ -824,7 +837,7 @@ pub async fn team_identity(
     };
     if scopes
         .as_ref()
-        .is_some_and(|scopes| !oauth_apps::has_scope(scopes, "read:org"))
+        .is_some_and(|scopes| !codeyard_model::oauth_apps::has_scope(scopes, "read:org"))
     {
         return Ok(None);
     }

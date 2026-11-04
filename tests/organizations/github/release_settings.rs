@@ -1,10 +1,11 @@
 use super::{request, roles::repo};
-use crate::support::{database::Database, http_client::Client, organizations::applied};
-use codeyard::backend::db;
-use codeyard::backend::db::organizations;
+use crate::support::{
+    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+};
+
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::OrganizationProfile;
-use codeyard::backend::identity::tokens;
+
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
@@ -18,7 +19,7 @@ async fn contract(pg: bool) {
     let mut orgs = Vec::new();
     for name in ["acme", "other"] {
         orgs.push(applied(
-            organizations::create_organization(
+            codeyard::backend::db::organizations::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -28,7 +29,7 @@ async fn contract(pg: bool) {
         ));
     }
     applied(
-        organizations::add_organization_member(
+        codeyard::backend::db::organizations::add_organization_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -46,7 +47,7 @@ async fn contract(pg: bool) {
     let mut credentials = Vec::new();
     for (actor, scope) in [(owner, "write"), (owner, "read"), (member, "write")] {
         let session = Client::login(&router, f.pool(), actor).await;
-        let token = tokens::create(
+        let token = codeyard::backend::identity::tokens::create(
             f.pool(),
             actor,
             Some(&session.session),
@@ -244,11 +245,11 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(response.status, 200, "{}", response.text());
-    let app = db::github_apps::app(f.pool(), "scanner")
+    let app = codeyard::backend::db::github_apps::app(f.pool(), "scanner")
         .await
         .unwrap()
         .unwrap();
-    let installation = db::github_apps::install(
+    let installation = codeyard::backend::db::github_apps::install(
         f.pool(),
         owner,
         &browser.session,

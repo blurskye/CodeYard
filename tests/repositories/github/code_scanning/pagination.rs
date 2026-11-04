@@ -7,7 +7,6 @@ use super::Client;
 use super::Router;
 use super::StatusCode;
 use super::Value;
-use codeyard::backend::code_scanning;
 
 async fn remove_upload(router: &Router, token: &str, upload: &str) {
     let analyses = call(
@@ -72,7 +71,9 @@ pub(super) async fn contract(
         202,
     )
     .await;
-    assert!(code_scanning::process_next(pool).await.unwrap());
+    assert!(codeyard::backend::code_scanning::process_next(pool)
+        .await
+        .unwrap());
     let status = call(
         router,
         "GET",
@@ -241,7 +242,9 @@ pub(super) async fn contract(
         202,
     )
     .await;
-    assert!(code_scanning::process_next(pool).await.unwrap());
+    assert!(codeyard::backend::code_scanning::process_next(pool)
+        .await
+        .unwrap());
     let alerts = call(
         router,
         "GET",

@@ -1,7 +1,8 @@
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::{ApiError, ApiFailure};
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::ApiFailure;
 use crate::backend::api::http::origin::safe_redirect_path;
-use crate::backend::db;
+
 use axum::http::StatusCode;
 use axum::response::Response;
 use serde::Serialize;
@@ -26,7 +27,7 @@ pub struct PublicUserResponse {
 }
 
 impl PublicUserResponse {
-    pub fn from_display(author: &db::users::accounts::AuthorDisplay) -> Self {
+    pub fn from_display(author: &crate::backend::db::users::accounts::AuthorDisplay) -> Self {
         Self {
             id: author.id,
             username: author.username.clone(),

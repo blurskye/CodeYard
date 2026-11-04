@@ -1,15 +1,22 @@
-use super::mutations::issue_error as operation;
-use super::{
-    bindings::boxed,
-    connection::{self, Page},
-    db, missing, node_id, repository, unavailable, url, user, Arguments, RequestContext, Result,
-    Value,
-};
-use crate::backend::issues::{
-    self,
-    comments::CreateCommentRequest,
-    mutations::{CreateIssueRequest, UpdateIssueRequest},
-};
+use crate::backend::api::graphql::bindings::boxed;
+use crate::backend::api::graphql::mutations::issue_error as operation;
+
+use crate::backend::api::graphql::connection::Page;
+use crate::backend::api::graphql::db;
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::node_id;
+
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::url;
+
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
+
+use crate::backend::issues::comments::CreateCommentRequest;
+use crate::backend::issues::mutations::CreateIssueRequest;
+use crate::backend::issues::mutations::UpdateIssueRequest;
 use async_graphql::Error;
 use serde_json::json;
 
@@ -64,11 +71,18 @@ pub(super) async fn resolve(
     if let Some(value) = parent.get(field) {
         return Ok(value.clone());
     }
-    let repo = repository::by_id(parent["_repo"].as_i64().ok_or_else(missing)?, request).await?;
+    let repo = crate::backend::api::graphql::repository::by_id(
+        parent["_repo"].as_i64().ok_or_else(missing)?,
+        request,
+    )
+    .await?;
     let id = parent["databaseId"].as_i64().ok_or_else(missing)?;
     let pool = &request.state.pool;
     match field {
-        "projectItems" => boxed(|| super::projects::content_items(ty, id, ctx, request)).await,
+        "projectItems" => {
+            boxed(|| crate::backend::api::graphql::projects::content_items(ty, id, ctx, request))
+                .await
+        }
         "isPinned" | "linkedBranches" | "closedByPullRequestsReferences" if ty == "Issue" => {
             boxed(|| management::resolve(field, ctx, request, &repo, id)).await
         }
@@ -78,27 +92,31 @@ pub(super) async fn resolve(
             boxed(|| metadata::resolve(ty, field, ctx, request, parent, &repo, id)).await
         }
         "author" => {
-            user::retained_author(parent["_author"].as_i64().ok_or_else(missing)?, request).await
+            crate::backend::api::graphql::user::retained_author(
+                parent["_author"].as_i64().ok_or_else(missing)?,
+                request,
+            )
+            .await
         }
         "url" => Ok(json!(url(&format!(
             "/{}/{}/{}/{}",
-            repository::owner(&repo, request).await?,
+            crate::backend::api::graphql::repository::owner(&repo, request).await?,
             repo.name,
             if ty == "Issue" { "issues" } else { "pull" },
             parent["number"]
         )))),
         "reviewRequests" if ty == "PullRequest" => {
-            super::review_requests::list(ctx, request, id).await
+            crate::backend::api::graphql::review_requests::list(ctx, request, id).await
         }
         "labels" => {
-            connection::validate(ctx)?;
+            crate::backend::api::graphql::connection::validate(ctx)?;
             let labels = if ty == "Issue" {
                 db::labels::get_issue_labels(pool, repo.id, id).await
             } else {
                 db::labels::get_pull_request_labels(pool, repo.id, id).await
             }
             .map_err(unavailable)?;
-            repository::label_connection(
+            crate::backend::api::graphql::repository::label_connection(
                 ctx,
                 labels,
                 if ty == "PullRequest" {
@@ -109,7 +127,7 @@ pub(super) async fn resolve(
             )
         }
         "comments" => {
-            connection::validate(ctx)?;
+            crate::backend::api::graphql::connection::validate(ctx)?;
             let (updated, descending) =
                 if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
                     let order = order.object()?;
@@ -169,9 +187,21 @@ pub(super) async fn resolve(
             Ok(page.finish(nodes))
         }
         _ if ty == "PullRequest" => {
-            boxed(|| super::pull_request::resolve(field, ctx, request, parent, &repo)).await
+            boxed(|| {
+                crate::backend::api::graphql::pull_request::resolve(
+                    field, ctx, request, parent, &repo,
+                )
+            })
+            .await
         }
-        _ => boxed(|| super::collaboration::resolve(ty, field, ctx, request, parent, &repo)).await,
+        _ => {
+            boxed(|| {
+                crate::backend::api::graphql::collaboration::resolve(
+                    ty, field, ctx, request, parent, &repo,
+                )
+            })
+            .await
+        }
     }
 }
 
@@ -183,10 +213,10 @@ pub(super) async fn comment(
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;
-    repository::by_id(issue.repo_id, request).await?;
+    crate::backend::api::graphql::repository::by_id(issue.repo_id, request).await?;
     request.charge(comment.body.len().saturating_mul(4))?;
     Ok(
-        json!({"__typename":"IssueComment","id":node_id::encode("IC",crate::backend::webhooks::payloads::conversation_comment_id(comment.id,false)),"databaseId":crate::backend::webhooks::payloads::conversation_comment_id(comment.id,false),"_comment":comment.id,
+        json!({"__typename":"IssueComment","id":node_id::encode("IC",codeyard_model::webhook_ids::conversation_comment_id(comment.id,false)),"databaseId":codeyard_model::webhook_ids::conversation_comment_id(comment.id,false),"_comment":comment.id,
         "_repo":issue.repo_id,"_number":issue.number,"_pull":false,"_author":comment.author_id,
         "viewerDidAuthor":comment.author_id==request.auth.user.id,"includesCreatedEdit":comment.updated_at>comment.created_at,"isMinimized":false,"minimizedReason":null,
         "body":comment.body,"createdAt":comment.created_at,"updatedAt":comment.updated_at,"author":user::retained_author(comment.author_id,request).await?}),
@@ -204,10 +234,10 @@ pub(super) async fn pull_comment(
     .await
     .map_err(unavailable)?
     .ok_or_else(missing)?;
-    repository::by_id(pull.repo_id, request).await?;
+    crate::backend::api::graphql::repository::by_id(pull.repo_id, request).await?;
     request.charge(comment.body.len().saturating_mul(4))?;
     Ok(
-        json!({"__typename":"IssueComment","id":node_id::encode("IC",crate::backend::webhooks::payloads::conversation_comment_id(comment.id,true)),"databaseId":crate::backend::webhooks::payloads::conversation_comment_id(comment.id,true),"_comment":comment.id,
+        json!({"__typename":"IssueComment","id":node_id::encode("IC",codeyard_model::webhook_ids::conversation_comment_id(comment.id,true)),"databaseId":codeyard_model::webhook_ids::conversation_comment_id(comment.id,true),"_comment":comment.id,
         "_repo":pull.repo_id,"_number":pull.number,"_pull":true,"_author":comment.author_id,
         "viewerDidAuthor":comment.author_id==request.auth.user.id,"includesCreatedEdit":comment.updated_at>comment.created_at,"isMinimized":false,"minimizedReason":null,
         "body":comment.body,"createdAt":comment.created_at,"updatedAt":comment.updated_at,"author":user::retained_author(comment.author_id,request).await?}),
@@ -220,7 +250,7 @@ pub(super) async fn list(
     request: &RequestContext,
     repo: i64,
 ) -> Result<Value> {
-    connection::validate(ctx)?;
+    crate::backend::api::graphql::connection::validate(ctx)?;
     if ["filterBy", "baseRefName", "headRefName"]
         .iter()
         .any(|name| ctx.args.get(name).is_some_and(|value| !value.is_null()))
@@ -406,17 +436,19 @@ pub(super) async fn mutation(
         if kind != "R" {
             return Err(missing());
         }
-        let repo = repository::by_id(id, request).await?;
+        let repo = crate::backend::api::graphql::repository::by_id(id, request).await?;
         request.authorize(repo.id, "issues", true).await?;
         crate::backend::identity::interactions::prepare(&request.state, &request.auth.user, &repo)
             .await
             .map_err(unavailable)?;
-        let metadata = super::metadata_mutations::prepare(&input, &repo, request).await?;
-        let issue = issues::mutations::create_issue_with_metadata(
+        let metadata =
+            crate::backend::api::graphql::metadata_mutations::prepare(&input, &repo, request)
+                .await?;
+        let issue = crate::backend::issues::mutations::create_issue_with_metadata(
             pool,
             broadcaster,
             request.auth.database_actor(),
-            repository::owner(&repo, request).await?,
+            crate::backend::api::graphql::repository::owner(&repo, request).await?,
             repo.name.clone(),
             CreateIssueRequest {
                 title: string("title")?.to_owned(),
@@ -435,7 +467,7 @@ pub(super) async fn mutation(
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
-        let repo = repository::by_id(pull.repo_id, request).await?;
+        let repo = crate::backend::api::graphql::repository::by_id(pull.repo_id, request).await?;
         request.authorize(repo.id, "pull-requests", true).await?;
         crate::backend::identity::interactions::prepare(&request.state, &request.auth.user, &repo)
             .await
@@ -449,7 +481,7 @@ pub(super) async fn mutation(
                 request.state.cluster.as_ref(),
                 broadcaster,
                 actor,
-                repository::owner(&repo, request).await?,
+                crate::backend::api::graphql::repository::owner(&repo, request).await?,
                 repo.name.clone(),
                 pull.number,
                 body,
@@ -477,16 +509,22 @@ pub(super) async fn mutation(
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
-        let repo = repository::by_id(issue.repo_id, request).await?;
+        let repo = crate::backend::api::graphql::repository::by_id(issue.repo_id, request).await?;
         request.authorize(repo.id, "issues", true).await?;
         crate::backend::identity::interactions::prepare(&request.state, &request.auth.user, &repo)
             .await
             .map_err(unavailable)?;
-        let owner = repository::owner(&repo, request).await?;
-        let state_error =
-            |error| super::mutations::issue_change_error(error, issue.author_id, field, request);
+        let owner = crate::backend::api::graphql::repository::owner(&repo, request).await?;
+        let state_error = |error| {
+            crate::backend::api::graphql::mutations::issue_change_error(
+                error,
+                issue.author_id,
+                field,
+                request,
+            )
+        };
         if field == "addComment" {
-            let saved = issues::comments::create_issue_comment(
+            let saved = crate::backend::issues::comments::create_issue_comment(
                 pool,
                 broadcaster,
                 actor,
@@ -514,10 +552,10 @@ pub(super) async fn mutation(
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-            repository::by_id(target.repo_id, request).await?;
+            crate::backend::api::graphql::repository::by_id(target.repo_id, request).await?;
             request.authorize(target.repo_id, "issues", false).await?;
             payload["issue"] = object(
-                &issues::mutations::close_duplicate(
+                &crate::backend::issues::mutations::close_duplicate(
                     pool,
                     broadcaster,
                     request.actor.clone(),
@@ -529,7 +567,7 @@ pub(super) async fn mutation(
                 .map_err(state_error)?,
             );
         } else {
-            let saved = issues::mutations::update_issue_latest(
+            let saved = crate::backend::issues::mutations::update_issue_latest(
                 pool,
                 broadcaster,
                 actor,

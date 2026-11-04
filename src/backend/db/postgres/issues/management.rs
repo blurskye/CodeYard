@@ -24,7 +24,7 @@ pub async fn closing_candidates(
         "SELECT p.* FROM pull_requests p JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$1
          WHERE (p.body LIKE $2 OR p.body LIKE $5) AND (p.repo_id=$3 OR p.body ILIKE $4) AND p.base_branch=r.default_branch AND ($6<=0 OR p.id<$6) AND {}
          ORDER BY p.id DESC LIMIT 100",
-        super::super::repositories::access::readable_condition()
+        crate::backend::db::postgres::repositories::access::readable_condition()
     ))
     .bind(viewer)
     .bind(format!("%#{number}%"))
@@ -45,7 +45,7 @@ pub async fn pinned(pool: &PgPool, repo: i64) -> Result<Vec<Issue>> {
 }
 
 async fn require_actor(tx: &mut Transaction<'_, Postgres>, actor: &Actor) -> Result<()> {
-    super::super::credentials::require_account(tx, actor)
+    crate::backend::db::postgres::credentials::require_account(tx, actor)
         .await
         .map_err(|error| {
             if error.is::<AccountRestricted>() {
@@ -76,7 +76,10 @@ pub async fn pin(
     let actor = authority.user_id;
     let mut tx = pool.begin().await?;
     ensure!(
-        super::super::discussions::lock_exclusive_write_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::postgres::discussions::lock_exclusive_write_authority(
+            &mut tx, actor, repo
+        )
+        .await?,
         Refusal::Denied
     );
     require_actor(&mut tx, &authority).await?;
@@ -118,7 +121,8 @@ pub async fn delete(pool: &PgPool, actor: impl Into<Actor>, repo: i64, id: i64) 
     let actor = authority.user_id;
     let mut tx = pool.begin().await?;
     ensure!(
-        super::super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::postgres::discussions::lock_admin_authority(&mut tx, actor, repo)
+            .await?,
         Refusal::Denied
     );
     require_actor(&mut tx, &authority).await?;
@@ -155,7 +159,10 @@ pub async fn transfer(
     let mut tx = pool.begin().await?;
     for repo in [repo.min(destination), repo.max(destination)] {
         ensure!(
-            super::super::discussions::lock_exclusive_write_authority(&mut tx, actor, repo).await?,
+            crate::backend::db::postgres::discussions::lock_exclusive_write_authority(
+                &mut tx, actor, repo
+            )
+            .await?,
             Refusal::Denied
         );
     }
@@ -222,7 +229,7 @@ pub async fn transfer(
             .fetch_all(&mut *tx)
             .await?;
     for user in assignees {
-        match super::super::assignees::candidate(&mut tx, destination, user).await {
+        match crate::backend::db::postgres::assignees::candidate(&mut tx, destination, user).await {
             Ok(()) => {}
             Err(error)
                 if matches!(
@@ -275,16 +282,18 @@ pub async fn close_duplicate_with_previous(
     for current in [repo.min(target_repo), repo.max(target_repo)] {
         if current == repo {
             ensure!(
-                super::super::discussions::lock_exclusive_write_authority(&mut tx, actor, repo)
-                    .await?,
+                crate::backend::db::postgres::discussions::lock_exclusive_write_authority(
+                    &mut tx, actor, repo
+                )
+                .await?,
                 Refusal::Denied
             );
         } else {
-            let access = super::super::repositories::access::lock_user_repo_access_in_transaction(
+            let access = crate::backend::db::postgres::repositories::access::lock_user_repo_access_in_transaction(
                 &mut tx,
                 actor,
                 current,
-                super::super::repositories::access::RepositoryRowLock::Shared,
+                crate::backend::db::postgres::repositories::access::RepositoryRowLock::Shared,
                 true,
             )
             .await?;
@@ -305,8 +314,10 @@ pub async fn close_duplicate_with_previous(
         &result.title,
         &result.state,
     ) {
-        super::super::timeline::append(&mut tx, repo, "issue", id, actor, kind, detail, old)
-            .await?;
+        crate::backend::db::postgres::timeline::append(
+            &mut tx, repo, "issue", id, actor, kind, detail, old,
+        )
+        .await?;
     }
     tx.commit().await?;
     Ok((previous, result))
@@ -334,7 +345,10 @@ pub async fn link_branch(
     let mut tx = pool.begin().await?;
     for repo in [repo.min(branch_repo), repo.max(branch_repo)] {
         ensure!(
-            super::super::discussions::lock_exclusive_write_authority(&mut tx, actor, repo).await?,
+            crate::backend::db::postgres::discussions::lock_exclusive_write_authority(
+                &mut tx, actor, repo
+            )
+            .await?,
             Refusal::Denied
         );
     }

@@ -1,12 +1,17 @@
 //! Organization repository property definitions and values share native transactions.
-use super::super::pagination::Pagination;
-use super::{auth, outcome, target, AppState, Error, Result};
-use crate::backend::{
-    db::organizations::properties::{
-        self, query::RepositoryQuery, DefinitionInput, Refusal, ValueInput,
-    },
-    webhooks::payloads,
-};
+use crate::backend::api::github::orgs::auth;
+use crate::backend::api::github::orgs::outcome;
+use crate::backend::api::github::orgs::target;
+use crate::backend::api::github::orgs::AppState;
+use crate::backend::api::github::orgs::Error;
+use crate::backend::api::github::orgs::Result;
+use crate::backend::api::github::pagination::Pagination;
+
+use crate::backend::db::organizations::properties::query::RepositoryQuery;
+use crate::backend::db::organizations::properties::DefinitionInput;
+use crate::backend::db::organizations::properties::Refusal;
+use crate::backend::db::organizations::properties::ValueInput;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -104,14 +109,16 @@ async fn list(
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
     let definitions = outcome(
-        properties::catalog(&state.pool, actor.user.id, org.id)
+        crate::backend::db::organizations::properties::catalog(&state.pool, actor.user.id, org.id)
             .await
             .map_err(error)?,
     )?;
     Ok(Json(Value::Array(
         definitions
             .iter()
-            .map(|definition| payloads::repository_property(definition, &org.name))
+            .map(|definition| {
+                crate::backend::webhooks::payloads::repository_property(definition, &org.name)
+            })
             .collect(),
     )))
 }
@@ -125,7 +132,7 @@ async fn get_definition(
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
     let definitions = outcome(
-        properties::catalog(&state.pool, actor.user.id, org.id)
+        crate::backend::db::organizations::properties::catalog(&state.pool, actor.user.id, org.id)
             .await
             .map_err(error)?,
     )?;
@@ -138,7 +145,9 @@ async fn get_definition(
                 .eq_ignore_ascii_case(&property)
         })
         .ok_or_else(Error::missing)?;
-    Ok(Json(payloads::repository_property(definition, &org.name)))
+    Ok(Json(
+        crate::backend::webhooks::payloads::repository_property(definition, &org.name),
+    ))
 }
 async fn define_one(
     State(state): State<Arc<AppState>>,
@@ -151,15 +160,22 @@ async fn define_one(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    let Json(input) = input.map_err(super::super::json_error)?;
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     let input = definition(input, Some(&property))?;
     let definitions = outcome(
-        properties::define(&state.pool, actor.database_actor(), org.id, &[input])
-            .await
-            .map_err(error)?,
+        crate::backend::db::organizations::properties::define(
+            &state.pool,
+            actor.database_actor(),
+            org.id,
+            &[input],
+        )
+        .await
+        .map_err(error)?,
     )?;
     let definition = definitions.first().ok_or_else(|| Error::unavailable(()))?;
-    Ok(Json(payloads::repository_property(definition, &org.name)))
+    Ok(Json(
+        crate::backend::webhooks::payloads::repository_property(definition, &org.name),
+    ))
 }
 #[derive(Deserialize)]
 struct Definitions {
@@ -176,21 +192,28 @@ async fn define_many(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    let Json(input) = input.map_err(super::super::json_error)?;
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     let inputs = input
         .properties
         .into_iter()
         .map(|value| definition(value, None))
         .collect::<Result<Vec<_>>>()?;
     let definitions = outcome(
-        properties::define(&state.pool, actor.database_actor(), org.id, &inputs)
-            .await
-            .map_err(error)?,
+        crate::backend::db::organizations::properties::define(
+            &state.pool,
+            actor.database_actor(),
+            org.id,
+            &inputs,
+        )
+        .await
+        .map_err(error)?,
     )?;
     Ok(Json(Value::Array(
         definitions
             .iter()
-            .map(|definition| payloads::repository_property(definition, &org.name))
+            .map(|definition| {
+                crate::backend::webhooks::payloads::repository_property(definition, &org.name)
+            })
             .collect(),
     )))
 }
@@ -205,9 +228,15 @@ async fn remove(
     actor.require_write()?;
     let org = target(&state, &name).await?;
     outcome(
-        properties::remove(&state.pool, actor.database_actor(), org.id, &property, None)
-            .await
-            .map_err(error)?,
+        crate::backend::db::organizations::properties::remove(
+            &state.pool,
+            actor.database_actor(),
+            org.id,
+            &property,
+            None,
+        )
+        .await
+        .map_err(error)?,
     )?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -227,7 +256,7 @@ async fn values(
         .map_err(error)?;
     let (offset, limit) = page.window()?;
     let mut rows = outcome(
-        properties::list_values(
+        crate::backend::db::organizations::properties::list_values(
             &state.pool,
             actor.user.id,
             org.id,
@@ -242,7 +271,9 @@ async fn values(
     page.response(
         &uri,
         rows.iter()
-            .map(|row| payloads::repository_property_values(row, &org.name))
+            .map(|row| {
+                crate::backend::webhooks::payloads::repository_property_values(row, &org.name)
+            })
             .collect::<Vec<_>>(),
         more,
     )
@@ -263,9 +294,9 @@ async fn set_values(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    let Json(input) = input.map_err(super::super::json_error)?;
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     outcome(
-        properties::set_values(
+        crate::backend::db::organizations::properties::set_values(
             &state.pool,
             actor.database_actor(),
             org.id,

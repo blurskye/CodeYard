@@ -1,10 +1,16 @@
 mod exports;
-use crate::backend::db::projects::{
-    validate_project, Field, NewField, NewView, Owner, Project, ProjectContents, Refusal,
-    SelectOption, Settings,
-};
+use crate::backend::db::projects::validate_project;
+use crate::backend::db::projects::Field;
+use crate::backend::db::projects::NewField;
+use crate::backend::db::projects::NewView;
+use crate::backend::db::projects::Owner;
+use crate::backend::db::projects::Project;
+use crate::backend::db::projects::ProjectContents;
+use crate::backend::db::projects::SelectOption;
+use crate::backend::db::projects::Settings;
 use crate::backend::db::users::accounts::AccountCredential;
 use anyhow::Result;
+use codeyard_model::project_query::Refusal;
 pub use exports::{fields_page, fields_window, list_page, list_window};
 use sqlx::{PgPool, Postgres, Transaction};
 mod extended;
@@ -21,7 +27,7 @@ async fn owner_authority(
     if let Owner::User(user) = owner {
         anyhow::ensure!(user == actor, Refusal::Denied);
     }
-    super::users::transitions::lock_accounts_shared(tx, &[actor]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(tx, &[actor]).await?;
     let (kind, id) = owner.parts();
     let table = if kind == "user" {
         "users"
@@ -66,7 +72,7 @@ async fn write_project(
     credential: &AccountCredential<'_>,
     id: i64,
 ) -> Result<Project> {
-    super::users::transitions::lock_accounts_shared(tx, &[actor]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(tx, &[actor]).await?;
     let project: Project =
         sqlx::query_as("SELECT * FROM projects WHERE id=$1 AND deleted_at IS NULL")
             .bind(id)
@@ -80,7 +86,10 @@ async fn write_project(
     };
     owner_authority(tx, actor, owner, false).await?;
     anyhow::ensure!(
-        super::users::transitions::credential_live(tx, actor, credential, true).await?,
+        crate::backend::db::postgres::users::transitions::credential_live(
+            tx, actor, credential, true
+        )
+        .await?,
         Refusal::Denied
     );
     let project =
@@ -102,8 +111,11 @@ async fn readable_at(
     id: i64,
     include_deleted: bool,
 ) -> Result<()> {
-    super::users::transitions::lock_accounts_shared(tx, &viewer.into_iter().collect::<Vec<_>>())
-        .await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(
+        tx,
+        &viewer.into_iter().collect::<Vec<_>>(),
+    )
+    .await?;
     let visible: Option<i64> = sqlx::query_scalar(&format!(
         "SELECT p.id FROM projects p WHERE p.id=$1 AND ($3 OR p.deleted_at IS NULL) AND {} FOR SHARE",
         crate::backend::db::projects::readable_owner_condition("$2")
@@ -131,7 +143,10 @@ pub async fn create(
     owner_authority(&mut tx, actor, owner, true).await?;
     let (kind, id) = owner.parts();
     anyhow::ensure!(
-        super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        crate::backend::db::postgres::users::transitions::credential_live(
+            &mut tx, actor, credential, true
+        )
+        .await?,
         Refusal::Denied
     );
     let now = chrono::Utc::now();
@@ -224,7 +239,7 @@ pub async fn list(
 pub async fn get(pool: &PgPool, viewer: Option<i64>, owner: Owner, number: i64) -> Result<Project> {
     let mut tx = pool.begin().await?;
     let (kind, id) = owner.parts();
-    super::users::transitions::lock_accounts_shared(
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &viewer.into_iter().collect::<Vec<_>>(),
     )

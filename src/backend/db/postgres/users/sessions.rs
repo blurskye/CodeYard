@@ -514,7 +514,7 @@ pub async fn session_page(
     before: i64,
 ) -> Result<Vec<crate::backend::db::users::sessions::SessionPageRow>> {
     let mut tx = pool.begin().await?;
-    super::transitions::require_account(
+    crate::backend::db::postgres::users::transitions::require_account(
         &mut tx,
         user,
         &crate::backend::db::users::accounts::AccountCredential::Session(current),

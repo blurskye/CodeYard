@@ -1,9 +1,9 @@
-use super::{auth, pagination::Pagination, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::users::{accounts::AccountCredential, social_accounts},
-    identity::profiles,
-};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use crate::backend::db::users::accounts::AccountCredential;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -38,8 +38,8 @@ async fn public(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    auth::authenticate(&state, &headers, false).await?;
-    let user = super::users::target(&state, &username).await?;
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
+    let user = crate::backend::api::github::users::target(&state, &username).await?;
     list(&state, user.id, page, uri).await
 }
 async fn own(
@@ -48,9 +48,9 @@ async fn own(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     list(&state, actor.user.id, page, uri).await
 }
 async fn list(
@@ -60,9 +60,10 @@ async fn list(
     uri: axum::http::Uri,
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
-    let accounts = social_accounts::list_social_accounts(&state.pool, user)
-        .await
-        .map_err(Error::unavailable)?;
+    let accounts =
+        crate::backend::db::users::social_accounts::list_social_accounts(&state.pool, user)
+            .await
+            .map_err(Error::unavailable)?;
     let more = accounts.len() > offset + limit;
     page.response(
         &uri,
@@ -81,7 +82,7 @@ struct Input {
 }
 
 fn failure(error: anyhow::Error) -> Error {
-    if error.is::<social_accounts::TooManyAccounts>() {
+    if error.is::<crate::backend::db::users::social_accounts::TooManyAccounts>() {
         Error::validation("SocialAccount", "account_urls", "invalid")
     } else if error.is::<AccountRestricted>() {
         Error::new(StatusCode::FORBIDDEN, "Account is restricted")
@@ -94,12 +95,12 @@ async fn change(
     headers: &HeaderMap,
     input: std::result::Result<Json<Input>, axum::extract::rejection::JsonRejection>,
     add: bool,
-) -> Result<Vec<social_accounts::SocialAccount>> {
-    let actor = auth::authenticate(state, headers, true)
+) -> Result<Vec<crate::backend::db::users::social_accounts::SocialAccount>> {
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
-    let Json(input) = input.map_err(super::json_error)?;
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     if input.account_urls.is_empty() || input.account_urls.len() > 4 {
         return Err(Error::validation(
             "SocialAccount",
@@ -110,10 +111,10 @@ async fn change(
     let accounts = input
         .account_urls
         .iter()
-        .map(|url| profiles::social_account(url))
+        .map(|url| crate::backend::identity::profiles::social_account(url))
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|_| Error::validation("SocialAccount", "account_urls", "invalid"))?;
-    social_accounts::change_social_accounts(
+    crate::backend::db::users::social_accounts::change_social_accounts(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
@@ -127,7 +128,10 @@ async fn add(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     input: std::result::Result<Json<Input>, axum::extract::rejection::JsonRejection>,
-) -> Result<(StatusCode, Json<Vec<social_accounts::SocialAccount>>)> {
+) -> Result<(
+    StatusCode,
+    Json<Vec<crate::backend::db::users::social_accounts::SocialAccount>>,
+)> {
     Ok((
         StatusCode::CREATED,
         Json(change(&state, &headers, input, true).await?),

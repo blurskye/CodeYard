@@ -1,8 +1,8 @@
 //! Bounded lexical catalog searches. Repository visibility is part of every SQL predicate,
 //! count and ordering operation, never a filter on an already paginated collection.
-use super::discussion_search;
-use super::discussion_search::Expr;
-use super::discussion_search::Statement;
+
+use crate::backend::db::discussion_search::Expr;
+use crate::backend::db::discussion_search::Statement;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
@@ -60,8 +60,11 @@ impl Search {
     }
 
     pub fn parse(kind: Kind, text: &str) -> Result<Self, &'static str> {
-        Self::from_expression(kind, discussion_search::expression(text)?)
-            .map(Self::with_default_fork_filter)
+        Self::from_expression(
+            kind,
+            crate::backend::db::discussion_search::expression(text)?,
+        )
+        .map(Self::with_default_fork_filter)
     }
     pub fn with_default_fork_filter(mut self) -> Self {
         if self.kind == Kind::Repositories
@@ -158,7 +161,7 @@ impl Search {
         let readable = sql.repository_policy(readable, self.policy_token);
         let predicate = self.expr(&mut sql, &self.expr)?;
         let mut words = Vec::new();
-        discussion_search::positive_text(&self.expr, false, &mut words);
+        crate::backend::db::discussion_search::positive_text(&self.expr, false, &mut words);
         let mut scores = Vec::new();
         for word in words {
             scores.push(format!(
@@ -190,7 +193,7 @@ impl Search {
             UNION ALL SELECT 'o:'||CAST(o.id AS TEXT),o.name,o.display_name,o.description,NULL,o.created_at,o.updated_at,'org',NULL,0,
             (SELECT COUNT(*) FROM repositories x WHERE x.owner_kind='org' AND x.owner_org_id=o.id AND NOT x.is_private AND NOT x.is_gist)
             FROM organizations o WHERE EXISTS(SELECT 1 FROM org_memberships m JOIN users own ON own.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT own.is_banned AND NOT own.must_change_password))"#,
-                bot = super::ci_tokens::BOT
+                bot = crate::backend::db::ci_tokens::BOT
             )
         } else {
             String::new()
@@ -316,7 +319,7 @@ impl Search {
                     "stars" | "forks" | "size" | "followers" if repo => sql.range(
                         &match key.as_str() {
                             "stars" => format!("{r}.stars_count"),
-                            "forks" => super::repositories::discovery::public_fork_count_sql(r),
+                            "forks" => crate::backend::db::repositories::discovery::public_fork_count_sql(r),
                             "followers" => format!("(SELECT COUNT(*) FROM watches w WHERE w.repo_id={r}.id AND w.level IN ('watching','custom'))"),
                             _ => format!("({r}.size_bytes/1024)"),
                         },
@@ -373,7 +376,7 @@ impl Search {
         let field: std::borrow::Cow<'_, str> = match (self.kind, sort) {
             (_, "") => return Ok(format!("m.score {direction},m.key ASC")),
             (Kind::Repositories, "stars") => "i.stars_count".into(),
-            (Kind::Repositories, "forks") => super::repositories::discovery::public_fork_count_sql("i").into(),
+            (Kind::Repositories, "forks") => crate::backend::db::repositories::discovery::public_fork_count_sql("i").into(),
             (Kind::Repositories, "updated") => "i.updated_at".into(),
             (Kind::Repositories, "help-wanted-issues") => "(SELECT COUNT(*) FROM issues x WHERE x.repo_id=i.id AND x.state='open' AND EXISTS(SELECT 1 FROM issue_labels il JOIN labels l ON l.id=il.label_id WHERE il.issue_id=x.id AND lower(l.name)='help wanted'))".into(),
             (Kind::Labels, "created") => "i.created_at".into(),

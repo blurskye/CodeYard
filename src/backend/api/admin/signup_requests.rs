@@ -1,14 +1,16 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::user::responses::require_account;
-use crate::backend::{db, identity};
+
 use axum::http::StatusCode;
 use axum::response::Response;
 use codeyard_webui::pages::admin::{Signup, SIGNUP_REQUESTS_PER_PAGE};
 
-pub(crate) fn signup_decision(action: &str) -> Option<identity::accounts::SignupDecision> {
+pub(crate) fn signup_decision(
+    action: &str,
+) -> Option<crate::backend::identity::accounts::SignupDecision> {
     match action.trim().to_ascii_lowercase().as_str() {
-        "approve" => Some(identity::accounts::SignupDecision::Approve),
-        "reject" => Some(identity::accounts::SignupDecision::Reject),
+        "approve" => Some(crate::backend::identity::accounts::SignupDecision::Approve),
+        "reject" => Some(crate::backend::identity::accounts::SignupDecision::Reject),
         _ => None,
     }
 }
@@ -22,7 +24,7 @@ pub(crate) async fn load_requests(
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let authority = (admin.id, session).into();
-    let snapshot = db::users::signup_requests::admin_pending_page(
+    let snapshot = crate::backend::db::users::signup_requests::admin_pending_page(
         &ctx.state.pool,
         &authority,
         SIGNUP_REQUESTS_PER_PAGE as i64,
@@ -31,8 +33,8 @@ pub(crate) async fn load_requests(
     .await
     .map_err(|error| {
         if matches!(
-            error.downcast_ref::<db::users::signup_requests::ReviewError>(),
-            Some(db::users::signup_requests::ReviewError::Denied)
+            error.downcast_ref::<crate::backend::db::users::signup_requests::ReviewError>(),
+            Some(crate::backend::db::users::signup_requests::ReviewError::Denied)
         ) {
             ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.")
         } else {

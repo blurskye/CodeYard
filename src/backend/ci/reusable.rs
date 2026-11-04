@@ -1,6 +1,9 @@
 //! Admission snapshots called workflows so workers never fetch a moving ref or another repository.
-use super::admission::{is_safe_ref, is_safe_workflow_path, AdmissionError};
-use crate::backend::{db, repositories::store::repo_store};
+use crate::backend::ci::admission::is_safe_ref;
+use crate::backend::ci::admission::is_safe_workflow_path;
+use codeyard_db_core::ci_admission::AdmissionError;
+
+use crate::backend::repositories::store::repo_store;
 use codeyard_git::error::ErrorKind;
 use serde_yaml::Value;
 use sha2::{Digest, Sha256};
@@ -20,7 +23,7 @@ pub(super) async fn authorize(
         || caller.owner_kind != called.owner_kind
         || caller.owner_user_id != called.owner_user_id
         || caller.owner_org_id != called.owner_org_id
-        || !db::repositories::access::get_user_repo_access(pool, actor, called.id)
+        || !crate::backend::db::repositories::access::get_user_repo_access(pool, actor, called.id)
             .await?
             .can_read()
     {
@@ -28,8 +31,9 @@ pub(super) async fn authorize(
     }
     // The called repository's Actions access setting decides whether other repositories in its
     // namespace may call it. As on GitHub, an unset setting shares nothing.
-    let (called_settings, _) = db::action_settings::effective(pool, called.id).await?;
-    let access = db::action_settings::Setting::Access;
+    let (called_settings, _) =
+        crate::backend::db::action_settings::effective(pool, called.id).await?;
+    let access = crate::backend::db::action_settings::Setting::Access;
     let level = called_settings
         .get(access.key())
         .unwrap_or(&access.defaults())
@@ -50,7 +54,7 @@ pub(super) struct Resolver<'a> {
     pub actor: i64,
     pub files: BTreeMap<String, serde_json::Value>,
     pub environment: Option<String>,
-    pub scheduling: db::runners::Scheduling,
+    pub scheduling: crate::backend::db::runners::Scheduling,
     active: BTreeSet<String>,
     called: BTreeSet<String>,
     /// Each called ref's commit and the full ref name OIDC claims carry.
@@ -107,7 +111,7 @@ impl<'a> Resolver<'a> {
             actor,
             files: BTreeMap::new(),
             environment,
-            scheduling: db::runners::Scheduling::default(),
+            scheduling: crate::backend::db::runners::Scheduling::default(),
             active: BTreeSet::new(),
             called: BTreeSet::new(),
             refs: BTreeMap::new(),
@@ -163,7 +167,7 @@ impl<'a> Resolver<'a> {
             let mut yaml = if let Some(yaml) = yaml {
                 yaml
             } else {
-                let parsed = super::admission::parse_admission_workflow(
+                let parsed = crate::backend::ci::admission::parse_admission_workflow(
                     path.clone(),
                     content,
                     self.environment.clone(),
@@ -172,7 +176,10 @@ impl<'a> Resolver<'a> {
                 codeyard_actions::workflow::validate_called_concurrency(&parsed.yaml).map_err(
                     |_| AdmissionError::Invalid("Called workflow concurrency is unsupported"),
                 )?;
-                super::admission::merge_scheduling(&mut self.scheduling, parsed.scheduling)?;
+                crate::backend::ci::admission::merge_scheduling(
+                    &mut self.scheduling,
+                    parsed.scheduling,
+                )?;
                 self.environment = parsed.environment;
                 parsed.yaml
             };
@@ -218,16 +225,18 @@ impl<'a> Resolver<'a> {
                     let owner = parts.next().unwrap_or("");
                     let name = parts.next().unwrap_or("");
                     let path = parts.next().unwrap_or("");
-                    if !super::admission::is_safe_owner(owner)
+                    if !crate::backend::ci::admission::is_safe_owner(owner)
                         || crate::backend::repositories::lifecycle::validate_name(name).is_err()
                         || !is_safe_workflow_path(path)
                         || !(is_safe_ref(reference) || codeyard_git::is_full_commit_id(reference))
                     {
                         return Err(AdmissionError::Invalid("Invalid called workflow reference"));
                     }
-                    let target = db::repositories::records::get_repository(self.pool, owner, name)
-                        .await?
-                        .ok_or(AdmissionError::Denied("Called workflow access denied"))?;
+                    let target = crate::backend::db::repositories::records::get_repository(
+                        self.pool, owner, name,
+                    )
+                    .await?
+                    .ok_or(AdmissionError::Denied("Called workflow access denied"))?;
                     authorize(self.pool, self.caller, self.actor, &target).await?;
                     let key = (target.id, reference.to_owned());
                     let (target_sha, full_ref) = if let Some(found) = self.refs.get(&key) {

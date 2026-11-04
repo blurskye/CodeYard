@@ -1,8 +1,7 @@
-use crate::backend::{
-    api::http::{context::PageContext, render::redirect_response},
-    app::AppState,
-    db::code_security as records,
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::render::redirect_response;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -24,19 +23,20 @@ pub(super) fn router() -> Router<Arc<AppState>> {
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
 }
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
-    let (status, message) = match error.downcast_ref::<records::Refusal>() {
-        Some(records::Refusal::Missing) => {
+    let (status, message) = match error.downcast_ref::<crate::backend::db::code_security::Refusal>()
+    {
+        Some(crate::backend::db::code_security::Refusal::Missing) => {
             (StatusCode::NOT_FOUND, "Security configuration not found.")
         }
-        Some(records::Refusal::Denied) => (
+        Some(crate::backend::db::code_security::Refusal::Denied) => (
             StatusCode::FORBIDDEN,
             "Organization security access is required.",
         ),
-        Some(records::Refusal::Duplicate) => (
+        Some(crate::backend::db::code_security::Refusal::Duplicate) => (
             StatusCode::UNPROCESSABLE_ENTITY,
             "A configuration with this name already exists.",
         ),
-        Some(records::Refusal::Invalid) => (
+        Some(crate::backend::db::code_security::Refusal::Invalid) => (
             StatusCode::UNPROCESSABLE_ENTITY,
             "Check the configuration name, scope and repository IDs.",
         ),
@@ -71,7 +71,15 @@ async fn show(
     let Some(session) = ctx.session_id.as_deref() else {
         return ctx.error(StatusCode::FORBIDDEN, "A live account session is required.");
     };
-    let loaded = match records::settings_page(&ctx.state.pool, actor, session, org, before).await {
+    let loaded = match crate::backend::db::code_security::settings_page(
+        &ctx.state.pool,
+        actor,
+        session,
+        org,
+        before,
+    )
+    .await
+    {
         Ok(page) => page,
         Err(error) => return failure(&ctx, error),
     };
@@ -148,12 +156,14 @@ async fn post(
             for (name, _) in view::TOGGLES {
                 patch[name] = json!(values.get(name).map_or("not_set", String::as_str));
             }
-            records::save(&ctx.state.pool, actor, org, id, &patch)
+            crate::backend::db::code_security::save(&ctx.state.pool, actor, org, id, &patch)
                 .await
                 .map(|_| ())
         }
-        ("delete", Some(id)) => records::delete(&ctx.state.pool, actor, org, id).await,
-        ("defaults", Some(id)) => records::set_default(
+        ("delete", Some(id)) => {
+            crate::backend::db::code_security::delete(&ctx.state.pool, actor, org, id).await
+        }
+        ("defaults", Some(id)) => crate::backend::db::code_security::set_default(
             &ctx.state.pool,
             actor,
             org,
@@ -182,7 +192,7 @@ async fn post(
                     )
                 }
             };
-            records::attach(
+            crate::backend::db::code_security::attach(
                 &ctx.state.pool,
                 actor,
                 org,

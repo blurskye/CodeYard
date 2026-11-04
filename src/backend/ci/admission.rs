@@ -1,72 +1,17 @@
-use super::config::{CiConfig, CiPipelineKind};
-use super::dispatch_inputs;
-use super::runs::CiRunRequest;
-use super::workflows::{infer_pipeline_from_workflow_path, workflow_definition_from_yaml};
-use crate::backend::db;
+use crate::backend::ci::config::CiConfig;
+use crate::backend::ci::config::CiPipelineKind;
+use crate::backend::ci::dispatch_inputs;
+use crate::backend::ci::runs::CiRunRequest;
+use crate::backend::ci::workflows::infer_pipeline_from_workflow_path;
+use crate::backend::ci::workflows::workflow_definition_from_yaml;
+
 use crate::backend::repositories::store::repo_store;
 use anyhow::Result;
 use codeyard_git::error::{ErrorKind, RepoError};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Debug, thiserror::Error)]
-pub enum AdmissionError {
-    /// The workflow, or Actions for the repository, is turned off: nothing runs, and event
-    /// paths skip it quietly.
-    #[error("{0}")]
-    WorkflowDisabled(&'static str),
-    #[error("{0}")]
-    Missing(&'static str),
-    #[error("{0}")]
-    Denied(&'static str),
-    #[error("{0}")]
-    Conflict(&'static str),
-    #[error("{0}")]
-    Invalid(&'static str),
-    #[error("{0}")]
-    InvalidRequest(&'static str),
-    #[error("CI is unavailable right now; check run history before retrying")]
-    Unavailable,
-}
-
-impl From<anyhow::Error> for AdmissionError {
-    fn from(error: anyhow::Error) -> Self {
-        let error = match error.downcast::<Self>() {
-            Ok(error) => return error,
-            Err(error) => error,
-        };
-        match error.downcast::<db::ci::CiAdmissionRefusal>() {
-            Ok(db::ci::CiAdmissionRefusal::WorkflowDisabled) => {
-                Self::WorkflowDisabled("Workflow is disabled")
-            }
-            Ok(db::ci::CiAdmissionRefusal::Missing(message)) => Self::Missing(message),
-            Ok(db::ci::CiAdmissionRefusal::Denied(message)) => Self::Denied(message),
-            Ok(db::ci::CiAdmissionRefusal::Conflict(message)) => Self::Conflict(message),
-            Ok(db::ci::CiAdmissionRefusal::Invalid(message)) => Self::Invalid(message),
-            Err(_) => Self::Unavailable,
-        }
-    }
-}
-
-impl From<tokio::time::error::Elapsed> for AdmissionError {
-    fn from(_: tokio::time::error::Elapsed) -> Self {
-        Self::Unavailable
-    }
-}
-
-impl From<RepoError> for AdmissionError {
-    fn from(error: RepoError) -> Self {
-        match error.kind {
-            ErrorKind::Invalid | ErrorKind::MissingPath => {
-                Self::Invalid("CI revision or workflow is invalid")
-            }
-            ErrorKind::NotFound | ErrorKind::Conflict => Self::Conflict("CI ref unavailable"),
-            ErrorKind::Unavailable => Self::Unavailable,
-        }
-    }
-}
-
 pub fn is_safe_owner(value: &str) -> bool {
-    crate::backend::identity::credentials::validate_namespace(value, 3).is_ok()
+    codeyard_model::account_input::validate_namespace(value, 3).is_ok()
         // Also accept the names the repository rules allow, such as short or dotted namespaces.
         || crate::backend::repositories::lifecycle::validate_name(value).is_ok()
 }
@@ -75,7 +20,7 @@ pub(super) struct AdmittedRevision {
     pub request: CiRunRequest,
     pub blobs: serde_json::Value,
     pub definitions: BTreeMap<String, String>,
-    pub scheduling: db::runners::Scheduling,
+    pub scheduling: crate::backend::db::runners::Scheduling,
 }
 
 /// The events a run can be queued for.
@@ -83,7 +28,7 @@ pub fn is_supported_event(event: &str) -> bool {
     matches!(
         event,
         "push" | "pull_request" | "pull_request_target" | "workflow_dispatch" | "schedule"
-    ) || super::events::is_repository_event(event)
+    ) || crate::backend::ci::events::is_repository_event(event)
 }
 
 /// An instance admin acts as the owner of personal repositories only, not of organization ones.
@@ -134,16 +79,18 @@ pub(crate) async fn fork_approval_required(
     let Some(id) = request.pull_request_id else {
         return Ok(false);
     };
-    Ok(db::pull_requests::records::get_pull_request_by_id(pool, id)
-        .await?
-        .is_some_and(|pull| {
-            pull.repo_id == request.repo_id
-                && pull.state == "open"
-                && !pull.is_draft
-                && request.head_sha.as_deref() == Some(pull.head_sha.as_str())
-                && pull.head_repo_id != Some(pull.repo_id)
-                && pull.workflows_approved_sha.as_deref() != Some(pull.head_sha.as_str())
-        }))
+    Ok(
+        crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, id)
+            .await?
+            .is_some_and(|pull| {
+                pull.repo_id == request.repo_id
+                    && pull.state == "open"
+                    && !pull.is_draft
+                    && request.head_sha.as_deref() == Some(pull.head_sha.as_str())
+                    && pull.head_repo_id != Some(pull.repo_id)
+                    && pull.workflows_approved_sha.as_deref() != Some(pull.head_sha.as_str())
+            }),
+    )
 }
 
 pub(super) async fn resolve(
@@ -190,12 +137,12 @@ pub(super) async fn resolve(
     let lookup_timeout = std::time::Duration::from_secs(5);
     let actor = tokio::time::timeout(
         lookup_timeout,
-        db::users::accounts::get_user_by_id(pool, request.triggered_by_id),
+        crate::backend::db::users::accounts::get_user_by_id(pool, request.triggered_by_id),
     )
     .await??
     .ok_or(AdmissionError::Unavailable)?;
     if !rerun
-        && actor.username == db::ci_tokens::BOT
+        && actor.username == crate::backend::db::ci_tokens::BOT
         && !matches!(
             request.event.as_str(),
             "workflow_dispatch" | "repository_dispatch"
@@ -207,13 +154,13 @@ pub(super) async fn resolve(
     }
     let repo = tokio::time::timeout(
         lookup_timeout,
-        db::repositories::records::get_repository_by_id(pool, request.repo_id),
+        crate::backend::db::repositories::records::get_repository_by_id(pool, request.repo_id),
     )
     .await??
     .ok_or(AdmissionError::Unavailable)?;
     let access = tokio::time::timeout(
         lookup_timeout,
-        db::repositories::access::get_user_repo_access(pool, actor.id, repo.id),
+        crate::backend::db::repositories::access::get_user_repo_access(pool, actor.id, repo.id),
     )
     .await??;
     let awaiting_approval = !rerun && fork_approval_required(pool, &request).await?;
@@ -228,7 +175,7 @@ pub(super) async fn resolve(
     // is queued.
     let enabled = tokio::time::timeout(
         lookup_timeout,
-        db::action_settings::actions_enabled(pool, repo.id),
+        crate::backend::db::action_settings::actions_enabled(pool, repo.id),
     )
     .await??;
     if !enabled {
@@ -238,10 +185,12 @@ pub(super) async fn resolve(
     }
     // Never trust the caller's repository name.
     request.repo_name = repo.name.clone();
-    request.repo_owner =
-        tokio::time::timeout(lookup_timeout, db::ci::ci_repository_owner(pool, repo.id))
-            .await??
-            .ok_or(AdmissionError::Unavailable)?;
+    request.repo_owner = tokio::time::timeout(
+        lookup_timeout,
+        crate::backend::db::ci::ci_repository_owner(pool, repo.id),
+    )
+    .await??
+    .ok_or(AdmissionError::Unavailable)?;
     if request.workflow_paths.is_empty() {
         request.workflow_paths = config.workflow_paths(request.pipeline);
     }
@@ -262,7 +211,7 @@ pub(super) async fn resolve(
         return Err(AdmissionError::Invalid("invalid CI workflow path"));
     }
     if let Some(environment) = &request.environment {
-        if db::environment_values::environment_key(environment).is_err() {
+        if crate::backend::db::environment_values::environment_key(environment).is_err() {
             return Err(AdmissionError::Invalid("invalid CI environment"));
         }
     }
@@ -287,7 +236,9 @@ pub(super) async fn resolve(
         if let Some(sha) = request.head_sha.as_deref() {
             tokio::time::timeout(
                 lookup_timeout,
-                db::ci::has_ci_accepted_push(pool, repo.id, actor.id, &reference, sha),
+                crate::backend::db::ci::has_ci_accepted_push(
+                    pool, repo.id, actor.id, &reference, sha,
+                ),
             )
             .await??
         } else {
@@ -297,7 +248,7 @@ pub(super) async fn resolve(
         false
     };
     let accepted_event = event_payload.is_some()
-        && super::events::is_repository_event(&request.event)
+        && crate::backend::ci::events::is_repository_event(&request.event)
         && request.head_sha.is_some();
     let configured_cd = config.workflow_cd.clone();
     if pr_revision && request.head_sha.is_none() {
@@ -328,9 +279,9 @@ pub(super) async fn resolve(
     let mut blobs = BTreeMap::new();
     // A rerun replays the called commits its source admitted instead of resolving moving references.
     let pinned = source_blobs
-        .map(super::reusable::pinned_commits)
+        .map(crate::backend::ci::reusable::pinned_commits)
         .unwrap_or_default();
-    let mut called = super::reusable::Resolver::new(
+    let mut called = crate::backend::ci::reusable::Resolver::new(
         pool,
         context,
         &repo,
@@ -339,7 +290,7 @@ pub(super) async fn resolve(
         pinned,
     );
     let mut definitions = BTreeMap::new();
-    let mut scheduling = db::runners::Scheduling::default();
+    let mut scheduling = crate::backend::db::runners::Scheduling::default();
     for path in &request.workflow_paths {
         let file =
             store
@@ -393,11 +344,11 @@ pub(super) async fn resolve(
                 ));
             }
             let pull = if let Some(id) = request.pull_request_id {
-                db::pull_requests::records::get_pull_request_by_id(pool, id).await?
+                crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, id).await?
             } else {
                 None
             };
-            let variables = super::queue::run_variables(pool, repo.id)
+            let variables = crate::backend::ci::queue::run_variables(pool, repo.id)
                 .await
                 .map_err(|_| AdmissionError::Unavailable)?;
             let reference = pull.as_ref().filter(|_| pr_revision).map_or_else(
@@ -512,7 +463,12 @@ pub(super) async fn resolve(
         let registration = [(path.to_owned(), definition.name.clone())];
         tokio::time::timeout(
             lookup_timeout,
-            db::action_workflows::register_workflows(pool, repo.id, &registration, false),
+            crate::backend::db::action_workflows::register_workflows(
+                pool,
+                repo.id,
+                &registration,
+                false,
+            ),
         )
         .await??;
         let has_calls = yaml
@@ -584,8 +540,8 @@ pub(super) async fn resolve(
 
 /// Labels accumulate across a run's workflows, and a run has at most one runner group.
 pub(super) fn merge_scheduling(
-    into: &mut db::runners::Scheduling,
-    from: db::runners::Scheduling,
+    into: &mut crate::backend::db::runners::Scheduling,
+    from: crate::backend::db::runners::Scheduling,
 ) -> Result<(), AdmissionError> {
     if let Some(group) = from.group {
         if into
@@ -602,9 +558,9 @@ pub(super) fn merge_scheduling(
 }
 
 pub(super) struct ParsedWorkflow {
-    pub definition: super::workflows::WorkflowDefinition,
+    pub definition: crate::backend::ci::workflows::WorkflowDefinition,
     pub environment: Option<String>,
-    pub scheduling: db::runners::Scheduling,
+    pub scheduling: crate::backend::db::runners::Scheduling,
     pub(super) concurrency: Option<serde_yaml::Value>,
     pub(super) yaml: serde_yaml::Value,
 }
@@ -614,13 +570,13 @@ pub(super) async fn parse_admission_workflow(
     content: String,
     mut environment: Option<String>,
 ) -> Result<ParsedWorkflow, AdmissionError> {
-    let permit = super::workflows::PARSING_SLOTS
+    let permit = codeyard_model::workflow_yaml::PARSING_SLOTS
         .acquire()
         .await
         .map_err(|_| AdmissionError::Unavailable)?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let yaml = super::workflows::parse_yaml(content.as_bytes())
+        let yaml = codeyard_model::workflow_yaml::parse_yaml(content.as_bytes())
             .map_err(|_| AdmissionError::Invalid("CI workflow YAML is invalid"))?;
         let jobs = yaml
             .get("jobs")
@@ -654,14 +610,16 @@ pub(super) async fn parse_admission_workflow(
                     .ok_or(AdmissionError::Invalid(
                         "CI dynamic workflow environments are unsupported",
                     ))?;
-                if db::environment_values::environment_key(name).is_err() || name.contains("${{") {
+                if crate::backend::db::environment_values::environment_key(name).is_err()
+                    || name.contains("${{")
+                {
                     return Err(AdmissionError::Invalid(
                         "CI dynamic workflow environments are unsupported",
                     ));
                 }
                 if let Some(environment) = &environment {
-                    if db::environment_values::environment_key(environment).ok()
-                        != db::environment_values::environment_key(name).ok()
+                    if crate::backend::db::environment_values::environment_key(environment).ok()
+                        != crate::backend::db::environment_values::environment_key(name).ok()
                     {
                         return Err(AdmissionError::Invalid(
                             "CI workflow environment differs from requested target",
@@ -674,7 +632,7 @@ pub(super) async fn parse_admission_workflow(
         }
         let definition = workflow_definition_from_yaml(&path, &yaml)
             .map_err(|_| AdmissionError::Invalid("CI workflow YAML is invalid"))?;
-        let scheduling = super::runner_labels::scheduling_from_value(&yaml, false)
+        let scheduling = crate::backend::ci::runner_labels::scheduling_from_value(&yaml, false)
             .map_err(|_| AdmissionError::Invalid("CI runner selection is invalid"))?;
         Ok(ParsedWorkflow {
             definition,
@@ -715,10 +673,22 @@ mod tests {
             AdmissionError::InvalidRequest("request")
         ));
         for (refusal, expected) in [
-            (db::ci::CiAdmissionRefusal::Missing("missing"), "missing"),
-            (db::ci::CiAdmissionRefusal::Denied("denied"), "denied"),
-            (db::ci::CiAdmissionRefusal::Conflict("conflict"), "conflict"),
-            (db::ci::CiAdmissionRefusal::Invalid("invalid"), "invalid"),
+            (
+                codeyard_db_core::ci_policy::CiAdmissionRefusal::Missing("missing"),
+                "missing",
+            ),
+            (
+                codeyard_db_core::ci_policy::CiAdmissionRefusal::Denied("denied"),
+                "denied",
+            ),
+            (
+                codeyard_db_core::ci_policy::CiAdmissionRefusal::Conflict("conflict"),
+                "conflict",
+            ),
+            (
+                codeyard_db_core::ci_policy::CiAdmissionRefusal::Invalid("invalid"),
+                "invalid",
+            ),
         ] {
             let error = AdmissionError::from(anyhow::Error::new(refusal).context("enqueue CI"));
             assert!(matches!(
@@ -798,7 +768,7 @@ mod tests {
 
     #[tokio::test]
     async fn admission_waits_for_shared_parsing_capacity() {
-        let permits = super::super::workflows::PARSING_SLOTS
+        let permits = crate::backend::ci::admission::codeyard_model::workflow_yaml::PARSING_SLOTS
             .acquire_many(2)
             .await
             .unwrap();
@@ -834,3 +804,5 @@ mod tests {
         }
     }
 }
+
+use codeyard_db_core::ci_admission::AdmissionError;

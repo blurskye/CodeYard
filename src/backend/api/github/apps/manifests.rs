@@ -1,14 +1,15 @@
 //! One-time, session-bound manifest conversion. Only public verification keys persist.
-use super::{
-    super::{Error, Result},
-    installations::app_value,
-};
-use crate::backend::{
-    app::AppState,
-    db::{self, github_apps::App},
-    identity::{github_apps as apps, tokens::token_hash},
-    webhooks::settings::{self, HookError, HookForm},
-};
+use crate::backend::api::github::apps::super::Error;
+use crate::backend::api::github::apps::super::Result;
+use crate::backend::api::github::apps::installations::app_value;
+use crate::backend::app::AppState;
+
+use crate::backend::db::github_apps::App;
+
+use codeyard_support::token_hash::token_hash;
+
+use crate::backend::webhooks::settings::HookError;
+use crate::backend::webhooks::settings::HookForm;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -25,12 +26,12 @@ pub(super) async fn convert(
         return Err(Error::missing());
     }
     let hash = token_hash(&code);
-    let draft = db::github_app_manifests::draft(&state.pool, &hash, true)
+    let draft = crate::backend::db::github_app_manifests::draft(&state.pool, &hash, true)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let value: Value = serde_json::from_str(&draft.manifest).map_err(Error::unavailable)?;
-    let manifest = apps::manifest(&value).ok_or_else(|| {
+    let manifest = crate::backend::identity::github_apps::manifest(&value).ok_or_else(|| {
         Error::invalid_simple(
             "Invalid manifest or unsupported permissions, events or setup automation",
         )
@@ -46,34 +47,39 @@ pub(super) async fn convert(
             clear_password: false,
             clear_secret: false,
             payload_url: url.clone(),
-            content_type: settings::JSON_CONTENT_TYPE.into(),
+            content_type: crate::backend::webhooks::settings::JSON_CONTENT_TYPE.into(),
             events: vec!["*".into()],
             active: manifest.hook_active,
             ssl_verify: true,
             secret: webhook_secret.clone().unwrap_or_default(),
         };
-        let mut fields = settings::validated(&form).map_err(|error| match error {
-            HookError::Invalid(message) => Error::invalid_simple(message),
-            _ => Error::unavailable(()),
-        })?;
+        let mut fields =
+            crate::backend::webhooks::settings::validated(&form).map_err(|error| match error {
+                HookError::Invalid(message) => Error::invalid_simple(message),
+                _ => Error::unavailable(()),
+            })?;
         fields.events = manifest.events.clone();
         Some(fields)
     } else {
         None
     };
-    let sealed = settings::seal(
+    let sealed = crate::backend::webhooks::settings::seal(
         state.secret_encryptor.as_deref(),
         webhook_secret.as_deref().unwrap_or(""),
     )
     .map_err(|_| Error::unavailable(()))?;
     // The response is built without database reads after conversion, which deletes the code:
     // a failed read then would lose the only copy of the new credentials.
-    let owner =
-        db::users::accounts::get_user_by_id(&state.pool, draft.user_id.ok_or_else(Error::missing)?)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-    let (private, public) = apps::generate_key().await.map_err(Error::unavailable)?;
+    let owner = crate::backend::db::users::accounts::get_user_by_id(
+        &state.pool,
+        draft.user_id.ok_or_else(Error::missing)?,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .ok_or_else(Error::missing)?;
+    let (private, public) = crate::backend::identity::github_apps::generate_key()
+        .await
+        .map_err(Error::unavailable)?;
     let client_secret = codeyard_support::crypto::random_hex();
     let app = App {
         id: 0,
@@ -88,16 +94,20 @@ pub(super) async fn convert(
         public_key: public,
         permissions: manifest.permissions.to_string(),
         events: manifest.events,
-        access_level: if apps::allows(&manifest.permissions, "administration", true) {
+        access_level: if codeyard_model::github_apps::allows(
+            &manifest.permissions,
+            "administration",
+            true,
+        ) {
             5
-        } else if apps::write(&manifest.permissions) {
+        } else if crate::backend::identity::github_apps::write(&manifest.permissions) {
             3
         } else {
             1
         },
         created_at: chrono::Utc::now(),
     };
-    let app = db::github_app_manifests::convert(
+    let app = crate::backend::db::github_app_manifests::convert(
         &state.pool,
         &hash,
         &app,

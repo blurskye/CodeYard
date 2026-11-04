@@ -1,5 +1,13 @@
 //! Immutable Git node lookup and refs use RepoStore, including remote repositories.
-use super::{db, git, missing, node_id, repository, unavailable, RequestContext, Result, Value};
+use crate::backend::api::graphql::db;
+
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::node_id;
+
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
 use crate::backend::repositories::store::repo_store;
 use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
@@ -47,7 +55,7 @@ pub(super) async fn load(
         }
     })?;
     match kind.as_str() {
-        "commit" => git::load(repo, oid, "contents", request).await,
+        "commit" => crate::backend::api::graphql::git::load(repo, oid, "contents", request).await,
         "blob" => {
             let blob = store
                 .blob_by_id_range(
@@ -115,7 +123,11 @@ pub(super) async fn blob_text(parent: &Value, request: &RequestContext) -> Resul
     if parent["isBinary"] == true || parent["isTruncated"] == true {
         return Ok(Value::Null);
     }
-    let repo = repository::by_id(parent["_repo"].as_i64().ok_or_else(missing)?, request).await?;
+    let repo = crate::backend::api::graphql::repository::by_id(
+        parent["_repo"].as_i64().ok_or_else(missing)?,
+        request,
+    )
+    .await?;
     request.authorize(repo.id, "contents", false).await?;
     let bytes = repo_store(&repo, request.state.cluster.as_ref())
         .blob_by_id(parent["oid"].as_str().ok_or_else(missing)?)
@@ -178,11 +190,15 @@ pub(super) async fn reference_at(
 
 pub(super) async fn reference_field(
     field: &str,
-    args: &super::Arguments,
+    args: &crate::backend::api::graphql::Arguments,
     parent: &Value,
     request: &RequestContext,
 ) -> Result<Value> {
-    let repo = repository::by_id(parent["_repo"].as_i64().ok_or_else(missing)?, request).await?;
+    let repo = crate::backend::api::graphql::repository::by_id(
+        parent["_repo"].as_i64().ok_or_else(missing)?,
+        request,
+    )
+    .await?;
     if field == "target" {
         return load(&repo, parent["_oid"].as_str().ok_or_else(missing)?, request).await;
     }
@@ -204,7 +220,7 @@ pub(super) async fn reference_field(
             "requiredApprovingReviewCount":rules.iter().map(|r| r.required_approving_reviews).max(),
         }));
     }
-    let head = super::arg(args, "headRef")?;
+    let head = crate::backend::api::graphql::arg(args, "headRef")?;
     let (source, head) = if let Some((owner, branch)) = head.split_once(':') {
         let source = crate::backend::repositories::pull_requests::branches::owner_head_repository(
             &request.state.pool,
@@ -214,7 +230,7 @@ pub(super) async fn reference_field(
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;
-        let source = repository::by_id(source.id, request).await?;
+        let source = crate::backend::api::graphql::repository::by_id(source.id, request).await?;
         if !crate::backend::repositories::reads::same_fork_network(
             &request.state.pool,
             &repo,
@@ -264,16 +280,16 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
         if !codeyard_git::is_full_commit_id(oid) {
             return Err(missing());
         }
-        repository::by_id(repo, request).await?;
+        crate::backend::api::graphql::repository::by_id(repo, request).await?;
         request.authorize(repo, "statuses", false).await?;
-        return git::resolve(
+        return crate::backend::api::graphql::git::resolve(
             "Commit",
             if kind == "STAT" {
                 "status"
             } else {
                 "statusCheckRollup"
             },
-            &super::Arguments::new([]),
+            &crate::backend::api::graphql::Arguments::new([]),
             request,
             &json!({"_repo":repo,"oid":oid}),
         )
@@ -292,7 +308,11 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
             .ok()
             .filter(|id| *id > 0)
             .ok_or_else(missing)?;
-        Box::pin(super::node(&node_id::encode("PR", pull), request)).await?;
+        Box::pin(crate::backend::api::graphql::node(
+            &node_id::encode("PR", pull),
+            request,
+        ))
+        .await?;
         let row = db::pull_requests::records::get_pull_request_by_id(&request.state.pool, pull)
             .await
             .map_err(unavailable)?
@@ -304,11 +324,14 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
                 .into_iter()
                 .find(|row| row.id == user)
                 .ok_or_else(missing)?;
-        return super::pull_request::review_request(&row, &reviewer, request).await;
+        return crate::backend::api::graphql::pull_request::review_request(
+            &row, &reviewer, request,
+        )
+        .await;
     }
     if kind == "REF" {
         let (id, name) = decode_reference(value).ok_or_else(missing)?;
-        let repo = repository::by_id(id, request).await?;
+        let repo = crate::backend::api::graphql::repository::by_id(id, request).await?;
         return reference(&repo, &name, request).await;
     }
     if !matches!(kind, "C" | "B" | "TAG" | "T") {
@@ -338,12 +361,12 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
     if !codeyard_git::is_full_commit_id(oid) {
         return Err(missing());
     }
-    let repo = repository::by_id(repo, request).await?;
+    let repo = crate::backend::api::graphql::repository::by_id(repo, request).await?;
     checked(&repo, kind, oid, request).await
 }
 pub(super) async fn resolve(
     field: &str,
-    args: &super::Arguments,
+    args: &crate::backend::api::graphql::Arguments,
     repo: &codeyard_db_core::models::Repository,
     request: &RequestContext,
 ) -> Result<Value> {
@@ -413,7 +436,7 @@ pub(super) async fn resolve(
             Ok(value)
         }
         "refs" => {
-            super::connection::validate(args)?;
+            crate::backend::api::graphql::connection::validate(args)?;
             let prefix = args.args.try_get("refPrefix")?.string()?.to_owned();
             let query = args
                 .args
@@ -453,7 +476,8 @@ pub(super) async fn resolve(
             if direction == Some("DESC") {
                 names.reverse();
             }
-            let page = super::connection::Page::new(args, names.len() as i64)?;
+            let page =
+                crate::backend::api::graphql::connection::Page::new(args, names.len() as i64)?;
             let mut nodes = vec![];
             for name in names
                 .into_iter()

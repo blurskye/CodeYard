@@ -3,7 +3,7 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::user::responses::require_account;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -39,7 +39,7 @@ async fn load_audit(
             "Unable to load the audit log.",
         )
     };
-    let (total, entries) = db::audit::page(
+    let (total, entries) = crate::backend::db::audit::page(
         pool,
         (user.id, session).into(),
         action,

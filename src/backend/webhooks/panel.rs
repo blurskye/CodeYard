@@ -1,13 +1,16 @@
 //! The webhook section of a settings page: the view model it renders, built after the viewer
 //! has been checked, and the form fields it posts back as a hook draft.
-use super::events;
-use super::settings::{self, HookError, HookForm, JSON_CONTENT_TYPE};
-use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db::webhooks::{self as hooks, HookOwner};
+
+use crate::backend::db::webhooks as hooks;
+use crate::backend::db::webhooks::HookOwner;
+use crate::backend::webhooks::settings::HookError;
+use crate::backend::webhooks::settings::HookForm;
+use crate::backend::webhooks::settings::JSON_CONTENT_TYPE;
 use codeyard_db_core::models::User;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::models::WebhookDelivery;
 use codeyard_db_core::DbPool;
+use codeyard_support::secrets::SecretEncryptor;
 use codeyard_webui::components::webhooks::{
     DeliveryDetail, DeliveryRow, HookDetail, HookDraft, HookRow, WebhookPanel,
 };
@@ -87,7 +90,7 @@ pub async fn build(
                 expected_updated: String::new(),
                 payload_url: String::new(),
                 content_type: JSON_CONTENT_TYPE.to_owned(),
-                events: vec![events::PUSH.to_owned()],
+                events: vec![codeyard_model::webhook_events::PUSH.to_owned()],
                 active: true,
                 ssl_verify: true,
                 has_secret: false,
@@ -131,8 +134,8 @@ fn draft_of(hook: &Webhook) -> HookDraft {
         expected_updated: hook.updated_at.to_rfc3339(),
         payload_url: hook.payload_url.clone(),
         content_type: hook.content_type.clone(),
-        events: if hook.events == events::EVERYTHING {
-            vec![events::EVERYTHING.to_owned()]
+        events: if hook.events == codeyard_model::webhook_events::EVERYTHING {
+            vec![codeyard_model::webhook_events::EVERYTHING.to_owned()]
         } else {
             hook.events.split(',').map(str::to_owned).collect()
         },
@@ -166,7 +169,7 @@ fn hook_row(place: &Place<'_>, hook: &hooks::WebhookSummary) -> HookRow {
 }
 
 fn events_label(stored: &str) -> String {
-    if stored == events::EVERYTHING {
+    if stored == codeyard_model::webhook_events::EVERYTHING {
         "Everything".to_owned()
     } else {
         stored.replace(',', ", ")
@@ -330,7 +333,7 @@ pub async fn apply(
                     Some(draft),
                 ));
             }
-            match settings::save_with_revision(
+            match crate::backend::webhooks::settings::save_with_revision(
                 pool, encryptor, owner, actor, credential, draft.id, &submitted, revision,
             )
             .await
@@ -349,14 +352,14 @@ pub async fn apply(
                 )));
             }
             let id = hook_id.ok_or(HookError::NotFound).map_err(refused)?;
-            settings::delete(pool, owner, actor, credential, id)
+            crate::backend::webhooks::settings::delete(pool, owner, actor, credential, id)
                 .await
                 .map(|_| "deleted")
                 .map_err(refused)
         }
         "webhook-ping" => {
             let id = hook_id.ok_or(HookError::NotFound).map_err(refused)?;
-            settings::ping(pool, owner, actor, credential, id)
+            crate::backend::webhooks::settings::ping(pool, owner, actor, credential, id)
                 .await
                 .map(|_| "pinged")
                 .map_err(refused)
@@ -368,10 +371,12 @@ pub async fn apply(
             let (Some(hook), Some(delivery)) = (hook_id, delivery) else {
                 return Err(refused(HookError::NotFound));
             };
-            settings::redeliver(pool, owner, actor, credential, hook, delivery)
-                .await
-                .map(|_| "redelivered")
-                .map_err(refused)
+            crate::backend::webhooks::settings::redeliver(
+                pool, owner, actor, credential, hook, delivery,
+            )
+            .await
+            .map(|_| "redelivered")
+            .map_err(refused)
         }
     }
 }

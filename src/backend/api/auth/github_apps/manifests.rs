@@ -1,15 +1,18 @@
 //! Posting a manifest saves only a short-lived draft; approval is a separate CSRF form.
-use super::{field, model, page, Fields};
-use crate::backend::{
-    api::http::{context::PageContext, render::public_error, session},
-    app::AppState,
-    db,
-    identity::{admission, github_apps, tokens::token_hash},
-};
+use crate::backend::api::auth::github_apps::field;
+use crate::backend::api::auth::github_apps::model;
+use crate::backend::api::auth::github_apps::page;
+use crate::backend::api::auth::github_apps::Fields;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::render::public_error;
+
+use crate::backend::app::AppState;
+
 use axum::{
     http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Redirect, Response},
 };
+use codeyard_support::token_hash::token_hash;
 use codeyard_webui::{app::Page, pages::account};
 use serde_json::Value;
 use std::sync::Arc;
@@ -19,7 +22,7 @@ pub(super) async fn manifest_start(
     uri: Uri,
     form: &Fields,
 ) -> Response {
-    match db::node_config::get_node_configuration(&state.pool).await {
+    match crate::backend::db::node_config::get_node_configuration(&state.pool).await {
         Ok(Some(config)) if config.setup_completed => {}
         Ok(_) => return Redirect::to("/setup").into_response(),
         Err(_) => {
@@ -27,8 +30,8 @@ pub(super) async fn manifest_start(
         }
     }
     // Keyed by client, so one client cannot spend everyone's manifest budget.
-    let client = session::client_address(&headers);
-    match admission::admit_operation(
+    let client = crate::backend::api::http::session::client_address(&headers);
+    match crate::backend::identity::admission::admit_operation(
         &state.pool,
         client,
         "app-manifest",
@@ -37,7 +40,7 @@ pub(super) async fn manifest_start(
     .await
     {
         Ok(_) => {}
-        Err(admission::AdmissionError::Limited) => {
+        Err(crate::backend::identity::admission::AdmissionError::Limited) => {
             return public_error(StatusCode::TOO_MANY_REQUESTS, "Too many manifest requests")
         }
         Err(_) => {
@@ -48,7 +51,11 @@ pub(super) async fn manifest_start(
         }
     }
     let value = serde_json::from_str::<Value>(field(form, "manifest")).ok();
-    if value.as_ref().and_then(github_apps::manifest).is_none() {
+    if value
+        .as_ref()
+        .and_then(crate::backend::identity::github_apps::manifest)
+        .is_none()
+    {
         return public_error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "Invalid app manifest or unsupported permissions, events or setup automation",
@@ -62,7 +69,7 @@ pub(super) async fn manifest_start(
         return public_error(StatusCode::UNPROCESSABLE_ENTITY, "State is too long");
     }
     let code = codeyard_support::crypto::random_hex();
-    if db::github_app_manifests::save(
+    if crate::backend::db::github_app_manifests::save(
         &state.pool,
         &token_hash(&code),
         &value.unwrap().to_string(),
@@ -79,15 +86,20 @@ pub(super) async fn manifest_start(
     Redirect::to(&format!("/settings/apps/new?manifest={code}")).into_response()
 }
 pub(super) async fn manifest_preview(ctx: &PageContext, code: &str) -> Response {
-    let draft =
-        match db::github_app_manifests::draft(&ctx.state.pool, &token_hash(code), false).await {
-            Ok(Some(draft)) => draft,
-            _ => return ctx.error(StatusCode::NOT_FOUND, "Manifest expired or not found"),
-        };
+    let draft = match crate::backend::db::github_app_manifests::draft(
+        &ctx.state.pool,
+        &token_hash(code),
+        false,
+    )
+    .await
+    {
+        Ok(Some(draft)) => draft,
+        _ => return ctx.error(StatusCode::NOT_FOUND, "Manifest expired or not found"),
+    };
     let Some(manifest) = serde_json::from_str::<Value>(&draft.manifest)
         .ok()
         .as_ref()
-        .and_then(github_apps::manifest)
+        .and_then(crate::backend::identity::github_apps::manifest)
     else {
         return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid manifest");
     };
@@ -123,22 +135,24 @@ pub(super) async fn manifest_preview(ctx: &PageContext, code: &str) -> Response 
 }
 pub(super) async fn manifest_approve(ctx: &PageContext, form: &Fields) -> Response {
     let hash = token_hash(field(form, "manifest_code"));
-    let draft = match db::github_app_manifests::draft(&ctx.state.pool, &hash, false).await {
+    let draft = match crate::backend::db::github_app_manifests::draft(&ctx.state.pool, &hash, false)
+        .await
+    {
         Ok(Some(draft)) => draft,
         _ => return ctx.error(StatusCode::NOT_FOUND, "Manifest expired or not found"),
     };
     let Some(manifest) = serde_json::from_str::<Value>(&draft.manifest)
         .ok()
         .as_ref()
-        .and_then(github_apps::manifest)
+        .and_then(crate::backend::identity::github_apps::manifest)
     else {
         return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid manifest");
     };
-    let Some(session) = session::extract_session_id(&ctx.headers) else {
+    let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
     let code = codeyard_support::crypto::random_hex();
-    match db::github_app_manifests::approve(
+    match crate::backend::db::github_app_manifests::approve(
         &ctx.state.pool,
         &hash,
         ctx.user.as_ref().unwrap().id,

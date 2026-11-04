@@ -14,7 +14,7 @@ pub async fn window(pool: &SqlitePool, page: &Window<'_>) -> Result<Vec<Link>> {
         page.offset >= 0 && (1..=101).contains(&page.limit),
         Refusal::Invalid
     );
-    let readable = super::repositories::access::readable_condition();
+    let readable = crate::backend::db::sqlite::repositories::access::readable_condition();
     let sql = window_sql(
         page,
         &readable,
@@ -39,7 +39,7 @@ pub async fn repository_counts(
     root: i64,
     kind: Kind,
 ) -> Result<Vec<(i64, i64)>> {
-    let readable = super::repositories::access::readable_condition();
+    let readable = crate::backend::db::sqlite::repositories::access::readable_condition();
     let sql = format!(
         "SELECT i.repo_id,COUNT(*) {} GROUP BY i.repo_id ORDER BY i.repo_id",
         related_sql(kind, &readable, "1")
@@ -121,9 +121,9 @@ async fn authority(
     triage: bool,
 ) -> Result<bool> {
     if triage {
-        super::discussions::lock_triage_authority(tx, actor, repo).await
+        crate::backend::db::sqlite::discussions::lock_triage_authority(tx, actor, repo).await
     } else {
-        super::discussions::lock_write_authority(tx, actor, repo).await
+        crate::backend::db::sqlite::discussions::lock_write_authority(tx, actor, repo).await
     }
 }
 pub(crate) async fn change_in_transaction<'a>(
@@ -160,7 +160,7 @@ pub(crate) async fn change_in_transaction<'a>(
     if let Some(token) = token {
         for affected in [repo, target_repo] {
             anyhow::ensure!(
-                super::users::tokens::repository_write_on(
+                crate::backend::db::sqlite::users::tokens::repository_write_on(
                     &mut tx, token, actor, affected, "issues"
                 )
                 .await?,
@@ -168,7 +168,7 @@ pub(crate) async fn change_in_transaction<'a>(
             );
         }
     }
-    let visible:bool=sqlx::query_scalar(&format!("SELECT EXISTS (SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?1 WHERE r.id=?2 AND {})",super::repositories::access::readable_condition())).bind(actor).bind(target_repo).fetch_one(&mut *tx).await?;
+    let visible:bool=sqlx::query_scalar(&format!("SELECT EXISTS (SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?1 WHERE r.id=?2 AND {})",crate::backend::db::sqlite::repositories::access::readable_condition())).bind(actor).bind(target_repo).fetch_one(&mut *tx).await?;
     anyhow::ensure!(visible, Refusal::Missing);
     let ids: Vec<i64> = sqlx::query_scalar(
         "SELECT id FROM issues WHERE (id=?1 AND repo_id=?3) OR (id=?2 AND repo_id=?4) ORDER BY id",
@@ -232,7 +232,7 @@ pub(crate) async fn change_in_transaction<'a>(
                         anyhow::ensure!(replace, Refusal::HasParent);
                         if let Some(token) = token {
                             anyhow::ensure!(
-                                super::users::tokens::repository_write_on(
+                                crate::backend::db::sqlite::users::tokens::repository_write_on(
                                     &mut tx, token, actor, old_repo, "issues"
                                 )
                                 .await?,
@@ -324,7 +324,7 @@ async fn touch(tx: &mut Transaction<'_, Sqlite>, a: i64, b: i64) -> Result<()> {
             .fetch_all(&mut **tx)
             .await?;
     for (id, updated) in rows {
-        let next = super::time::next_revision(updated)?;
+        let next = crate::backend::db::sqlite::time::next_revision(updated)?;
         sqlx::query("UPDATE issues SET updated_at=?2 WHERE id=?1")
             .bind(id)
             .bind(next)

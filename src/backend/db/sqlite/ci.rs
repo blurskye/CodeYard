@@ -1,8 +1,11 @@
 //! CI runs as a job queue: triggers enqueue, worker nodes claim, heartbeat and
 //! finish runs.
-use crate::backend::db::action_settings::{organization_allows, Setting};
-use crate::backend::db::ci::{CiAdmissionRefusal, NewCiRun, ACCESS_LOST_MESSAGE};
+use crate::backend::db::action_settings::organization_allows;
+use crate::backend::db::action_settings::Setting;
+use crate::backend::db::ci::NewCiRun;
 use anyhow::{bail, ensure, Result};
+use codeyard_db_core::ci_policy::CiAdmissionRefusal;
+use codeyard_db_core::ci_policy::ACCESS_LOST_MESSAGE;
 use codeyard_db_core::models::CiDeployment;
 use codeyard_db_core::models::CiLogLine;
 use codeyard_db_core::models::CiRun;
@@ -71,8 +74,10 @@ async fn ci_actor_has_permission(
             return Ok(false);
         }
     }
-    let access =
-        super::repositories::access::user_repo_access_in_transaction(tx, actor, repo_id).await?;
+    let access = crate::backend::db::sqlite::repositories::access::user_repo_access_in_transaction(
+        tx, actor, repo_id,
+    )
+    .await?;
     let personal_admin = user.is_admin
         && repo.owner_kind == "user"
         && repo.owner_user_id.is_some()
@@ -122,8 +127,10 @@ pub async fn accept_repository_dispatch(
     credential: &crate::backend::db::ci::CiCredential,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let allowed = super::discussions::lock_write_authority(&mut tx, actor, repo).await?
-        && super::credentials::ci(&mut tx, actor, repo, credential).await?;
+    let allowed =
+        crate::backend::db::sqlite::discussions::lock_write_authority(&mut tx, actor, repo).await?
+            && crate::backend::db::sqlite::credentials::ci(&mut tx, actor, repo, credential)
+                .await?;
     tx.commit().await?;
     Ok(allowed)
 }
@@ -217,7 +224,7 @@ async fn enqueue_ci_run_inner(
         .bind(input.pull_request_id).bind(input.repo_id).bind(input.head_sha).fetch_one(&mut *tx).await?;
     ensure!(
         if awaiting_approval {
-            super::discussions::lock_contribution_authority(
+            crate::backend::db::sqlite::discussions::lock_contribution_authority(
                 &mut tx,
                 input.triggered_by_id,
                 input.repo_id,
@@ -241,7 +248,13 @@ async fn enqueue_ci_run_inner(
             .and_then(|attempt| attempt.credential.as_ref())
     }) {
         ensure!(
-            super::credentials::ci(&mut tx, input.triggered_by_id, input.repo_id, proof).await?,
+            crate::backend::db::sqlite::credentials::ci(
+                &mut tx,
+                input.triggered_by_id,
+                input.repo_id,
+                proof
+            )
+            .await?,
             CiAdmissionRefusal::Denied("CI credential is no longer authorized")
         );
     }
@@ -309,7 +322,8 @@ async fn enqueue_ci_run_inner(
             CiAdmissionRefusal::Conflict("Source workflow metadata is unavailable")
         );
         parent_run = Some(source.id);
-        replay = super::action_replays::prepare(&mut tx, &source, request).await?;
+        replay =
+            crate::backend::db::sqlite::action_replays::prepare(&mut tx, &source, request).await?;
     }
     if input.event == "pull_request_target" {
         let id = input.pull_request_id.ok_or(CiAdmissionRefusal::Invalid(
@@ -361,7 +375,12 @@ async fn enqueue_ci_run_inner(
         ))?;
         is_fork = fork;
         ensure!(
-            !fork || super::action_settings::fork_runs_allowed(&mut tx, input.repo_id).await?,
+            !fork
+                || crate::backend::db::sqlite::action_settings::fork_runs_allowed(
+                    &mut tx,
+                    input.repo_id
+                )
+                .await?,
             CiAdmissionRefusal::Denied(
                 "Workflows from fork pull requests are turned off for this private repository"
             )
@@ -431,8 +450,9 @@ async fn enqueue_ci_run_inner(
             .bind(awaiting_approval)
             .fetch_one(&mut *tx)
             .await?;
-    let mut run = super::action_runs::record(&mut tx, &run, parent_run).await?;
-    super::checks::insert_workflow_suite(&mut tx, &run).await?;
+    let mut run =
+        crate::backend::db::sqlite::action_runs::record(&mut tx, &run, parent_run).await?;
+    crate::backend::db::sqlite::checks::insert_workflow_suite(&mut tx, &run).await?;
     if let Some(request) = &requested_attempt {
         sqlx::query("INSERT INTO actions_replays(run_id,source_id,data,debug) VALUES($1,$2,$3,$4)")
             .bind(run.id)
@@ -451,7 +471,7 @@ async fn enqueue_ci_run_inner(
             .execute(&mut *tx)
             .await?;
     }
-    super::deployment_protection::snapshot(&mut tx, &run).await?;
+    crate::backend::db::sqlite::deployment_protection::snapshot(&mut tx, &run).await?;
     let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "r");
     run.deployment_waiting =
         sqlx::query_scalar(&format!("SELECT {waiting} FROM ci_runs r WHERE r.id=?1"))
@@ -477,13 +497,15 @@ async fn schedule_concurrency(
     let config = if let Some((expression, contexts)) = &scheduling.concurrency_expression {
         let actor: Option<(i64, String)> = sqlx::query_as("SELECT u.id,u.username FROM ci_runs origin JOIN users u ON u.id=origin.triggered_by_id WHERE origin.id=$1")
             .bind(run.workflow_run_id.unwrap_or(run.id)).fetch_optional(&mut **tx).await?;
-        let contexts = crate::backend::ci::concurrency::run_contexts(contexts.clone(), run, actor);
-        Some(crate::backend::ci::concurrency::resolve(expression.clone(), contexts).await?)
+        let contexts =
+            codeyard_db_core::ci_concurrency_resolve::run_contexts(contexts.clone(), run, actor);
+        Some(codeyard_db_core::ci_concurrency_resolve::resolve(expression.clone(), contexts).await?)
     } else {
         scheduling.concurrency.clone()
     };
     if let Some(config) = &config {
-        let victims = super::action_concurrency::record(tx, run, config).await?;
+        let victims =
+            crate::backend::db::sqlite::action_concurrency::record(tx, run, config).await?;
         for victim in victims {
             if victim.status == "queued" {
                 finish_in_tx(
@@ -500,7 +522,7 @@ async fn schedule_concurrency(
                     .await?;
             }
         }
-        super::action_concurrency::eligible(tx, run).await?;
+        crate::backend::db::sqlite::action_concurrency::eligible(tx, run).await?;
     }
     Ok(())
 }
@@ -608,8 +630,12 @@ async fn claim_queued_run(
             .await?;
     for run in candidates {
         // A private repository's fork switch may have been turned off after admission.
-        let fork_refused =
-            run.is_fork && !super::action_settings::fork_runs_allowed(&mut tx, run.repo_id).await?;
+        let fork_refused = run.is_fork
+            && !crate::backend::db::sqlite::action_settings::fork_runs_allowed(
+                &mut tx,
+                run.repo_id,
+            )
+            .await?;
         let permitted = match run.triggered_by_id {
             Some(actor) if !run.cancel_requested && !fork_refused => {
                 ci_actor_has_permission(
@@ -634,7 +660,9 @@ async fn claim_queued_run(
             finish_in_tx(&mut tx, &run, "cancelled", Some(message)).await?;
             continue;
         }
-        if let Some(state) = super::deployment_protection::blocked(&mut tx, &run).await? {
+        if let Some(state) =
+            crate::backend::db::sqlite::deployment_protection::blocked(&mut tx, &run).await?
+        {
             if state == "rejected" {
                 finish_in_tx(
                     &mut tx,
@@ -646,13 +674,15 @@ async fn claim_queued_run(
             }
             continue;
         }
-        if !super::runners::eligible(&mut tx, node_key, &run, mode, platforms).await? {
+        if !crate::backend::db::sqlite::runners::eligible(&mut tx, node_key, &run, mode, platforms)
+            .await?
+        {
             continue;
         }
-        if !super::action_concurrency::eligible(&mut tx, &run).await? {
+        if !crate::backend::db::sqlite::action_concurrency::eligible(&mut tx, &run).await? {
             continue;
         }
-        super::runners::mark_claimed(&mut tx, node_key).await?;
+        crate::backend::db::sqlite::runners::mark_claimed(&mut tx, node_key).await?;
         let run = sqlx::query_as::<_, CiRun>(
             "UPDATE ci_runs SET status = 'running', worker = ?2, mode = ?3, started_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), heartbeat_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now')
              WHERE id = ?1 RETURNING *",
@@ -668,7 +698,8 @@ async fn claim_queued_run(
                 .execute(&mut *tx)
                 .await?;
         }
-        super::deployment_reviews::sync_execution(&mut tx, run.id, "running").await?;
+        crate::backend::db::sqlite::deployment_reviews::sync_execution(&mut tx, run.id, "running")
+            .await?;
         ci_commit_status(&mut tx, &run, "pending", "CI run in progress").await?;
         tx.commit().await?;
         return Ok(Some(run));
@@ -748,9 +779,9 @@ pub(super) async fn finish_in_tx(
     let Some(finished) = finished else {
         return Ok(None);
     };
-    super::action_logs::retain_completed(tx, run.repo_id, run.id).await?;
-    let closed_jobs = super::action_jobs::close_active(tx, run.id).await?;
-    super::runners::retire(tx, run.worker.as_deref()).await?;
+    crate::backend::db::sqlite::action_logs::retain_completed(tx, run.repo_id, run.id).await?;
+    let closed_jobs = crate::backend::db::sqlite::action_jobs::close_active(tx, run.id).await?;
+    crate::backend::db::sqlite::runners::retire(tx, run.worker.as_deref()).await?;
     if is_deployment(run) {
         sqlx::query("UPDATE ci_deployments SET status = ?2, completed_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE run_id = ?1 AND status IN ('pending','in_progress','approved')")
             .bind(run.id)
@@ -758,13 +789,13 @@ pub(super) async fn finish_in_tx(
             .execute(&mut **tx)
             .await?;
     }
-    super::deployment_reviews::sync_execution(tx, run.id, status).await?;
+    crate::backend::db::sqlite::deployment_reviews::sync_execution(tx, run.id, status).await?;
     let state = if status == "success" {
         "success"
     } else {
         "failure"
     };
-    let description = crate::backend::ci::visible_run_error(message);
+    let description = codeyard_db_core::ci_messages::visible_run_error(message);
     ci_commit_status(
         tx,
         run,
@@ -774,7 +805,7 @@ pub(super) async fn finish_in_tx(
     .await?;
     // Only a failed run tells its starter. Successes and cancellations stay quiet.
     let notifications = if let Some(actor) = run.triggered_by_id.filter(|_| status == "failed") {
-        let (title, body) = crate::backend::ci::failure_notification(run, message);
+        let (title, body) = codeyard_db_core::ci_messages::failure_notification(run, message);
         sqlx::query_as::<_, (i64, i64)>(r#"INSERT INTO notifications(user_id, repo_id, scope_repository_id, kind, title, body, link, metadata)
             SELECT ?1, r.id, r.id, 'ci_completed', ?2, ?3,
                 '/' || COALESCE(u.username, o.name) || '/' || r.name || '/actions?job=' || ?4,
@@ -796,7 +827,9 @@ pub(super) async fn finish_in_tx(
     };
     let mut threaded = Vec::with_capacity(notifications.len());
     for (user, id) in notifications {
-        if super::notifications::records::threads::attach_existing(tx, id).await? {
+        if crate::backend::db::sqlite::notifications::records::threads::attach_existing(tx, id)
+            .await?
+        {
             threaded.push((user, id));
         }
     }
@@ -996,13 +1029,14 @@ async fn request_cancellation(
     .bind(run.repo_id)
     .fetch_one(&mut *tx)
     .await?;
-    let access =
-        super::repositories::access::user_repo_access_in_transaction(&mut tx, actor_id, repo.id)
-            .await?;
+    let access = crate::backend::db::sqlite::repositories::access::user_repo_access_in_transaction(
+        &mut tx, actor_id, repo.id,
+    )
+    .await?;
     let personal_admin = user.is_admin && repo.owner_kind == "user" && repo.owner_org_id.is_none();
     if let Some(proof) = credential {
         ensure!(
-            super::credentials::ci(&mut tx, actor_id, repo.id, proof).await?,
+            crate::backend::db::sqlite::credentials::ci(&mut tx, actor_id, repo.id, proof).await?,
             CiAdmissionRefusal::Denied("CI credential is no longer authorized")
         );
     }
@@ -1071,11 +1105,18 @@ pub async fn delete_ci_run_data(
     let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::sqlite::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         CiAdmissionRefusal::Denied("CI run deletion permission denied")
     );
     ensure!(
-        super::credentials::writes(&mut tx, &credential, Some(repo), None, "actions").await?,
+        crate::backend::db::sqlite::credentials::writes(
+            &mut tx,
+            &credential,
+            Some(repo),
+            None,
+            "actions"
+        )
+        .await?,
         CiAdmissionRefusal::Denied("CI credential is no longer authorized")
     );
     let statuses: Vec<(i64, String)> = sqlx::query_as("SELECT id,status FROM ci_runs WHERE repo_id=$1 AND COALESCE(workflow_run_id,id)=$2 ORDER BY id").bind(repo).bind(id).fetch_all(&mut *tx).await?;
@@ -1098,7 +1139,7 @@ pub async fn delete_ci_run_data(
         }
         CiRunDeletion::Logs => {
             let runs: Vec<i64> = statuses.iter().map(|(id, _)| *id).collect();
-            super::action_logs::clear(&mut tx, &runs).await?;
+            crate::backend::db::sqlite::action_logs::clear(&mut tx, &runs).await?;
             "delete_logs"
         }
     };
@@ -1205,7 +1246,7 @@ pub async fn list_filtered_ci_runs(
     limit: i64,
 ) -> Result<Vec<CiRun>> {
     ensure!(limit >= 0, "Result limit must be nonnegative");
-    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     let columns = crate::backend::db::ci::RUN_METADATA_COLUMNS;
     Ok(sqlx::query_as::<_, CiRun>(&format!(
         "WITH history AS (
@@ -1336,7 +1377,7 @@ pub async fn list_ci_runs_for_user(
     limit: i64,
 ) -> Result<Vec<CiRun>> {
     ensure!(limit >= 0, "Result limit must be nonnegative");
-    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     // Visibility is decided once per repository the user has runs in, in the same
     // statement that orders and limits the runs.
     let columns = crate::backend::db::ci::RUN_METADATA_COLUMNS;
@@ -1365,7 +1406,7 @@ pub async fn append_ci_logs(
         (0..100_000).contains(&sequence),
         "invalid CI upload sequence"
     );
-    let lines = crate::backend::ci::queue::prepare_logs(lines)?;
+    let lines = codeyard_db_core::ci_logs::prepare_logs(lines)?;
     let hash = crate::backend::db::ci::log_chunks::request_hash(&lines)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let totals: Option<(i64, i64)> = sqlx::query_as(
@@ -1426,7 +1467,7 @@ pub async fn append_ci_logs(
             .await?;
     ensure!(sequence == next, "CI upload sequence is out of order");
     let (kept, lines_total, bytes_total) =
-        crate::backend::ci::logs::admit_log_lines(stored_lines, stored_bytes, &lines);
+        codeyard_db_core::ci_logs::admit_log_lines(stored_lines, stored_bytes, &lines);
     let (data, size) = crate::backend::db::ci::log_chunks::encode(&kept)?;
     // Mixed-job batches keep their job and step tags in the compressed payload.
     let job = crate::backend::db::ci::log_chunks::batch_job(&kept);

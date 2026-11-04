@@ -5,7 +5,7 @@ mod webhooks;
 
 use super::{checked, db, json, tokens, Client, Database, Router, StatusCode, TokenInput, Value};
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard::backend::code_scanning;
+
 use std::io::Write;
 
 fn sarif_document(category: &str, present: bool, line: i64) -> Value {
@@ -170,7 +170,9 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(status["processing_status"], "pending");
-    assert!(code_scanning::process_next(f.pool()).await.unwrap());
+    assert!(codeyard::backend::code_scanning::process_next(f.pool())
+        .await
+        .unwrap());
     let status = call(
         &router,
         "GET",
@@ -361,7 +363,9 @@ async fn contract(pg: bool) {
             202,
         )
         .await;
-        assert!(code_scanning::process_next(f.pool()).await.unwrap());
+        assert!(codeyard::backend::code_scanning::process_next(f.pool())
+            .await
+            .unwrap());
         let alert = call(
             &router,
             "GET",
@@ -395,7 +399,9 @@ async fn contract(pg: bool) {
         202,
     )
     .await;
-    assert!(code_scanning::process_next(f.pool()).await.unwrap());
+    assert!(codeyard::backend::code_scanning::process_next(f.pool())
+        .await
+        .unwrap());
     let reopened = call(
         &router,
         "GET",
@@ -565,7 +571,9 @@ async fn contract(pg: bool) {
         202,
     )
     .await;
-    assert!(code_scanning::process_next(f.pool()).await.unwrap());
+    assert!(codeyard::backend::code_scanning::process_next(f.pool())
+        .await
+        .unwrap());
     let status = call(
         &router,
         "GET",
@@ -677,7 +685,6 @@ async fn workflow_tokens(
     sha: &str,
     base: &str,
 ) {
-    use codeyard::backend::ci;
     use std::collections::BTreeMap;
     let run = db::ci::enqueue_ci_run(
         pool,
@@ -716,7 +723,7 @@ async fn workflow_tokens(
             ".github/workflows/security.yml".into(),
             b"permissions: {contents: read, actions: read, security-events: write}\njobs: {scanner: {}}".to_vec(),
         )]);
-        let tokens = ci::tokens::issue(pool, &run, &definitions, false)
+        let tokens = codeyard::backend::ci::tokens::issue(pool, &run, &definitions, false)
             .await
             .unwrap();
         let token = if engine == "act" {
@@ -782,7 +789,9 @@ async fn workflow_tokens(
             202,
         )
         .await;
-        assert!(code_scanning::process_next(pool).await.unwrap());
+        assert!(codeyard::backend::code_scanning::process_next(pool)
+            .await
+            .unwrap());
         let analyses = call(
             router,
             "GET",
@@ -801,7 +810,7 @@ async fn workflow_tokens(
             ".github/workflows/security.yml".into(),
             b"permissions: {contents: write}\njobs: {scanner: {}}".to_vec(),
         )]);
-        let tokens = ci::tokens::issue(pool, &run, &definitions, false)
+        let tokens = codeyard::backend::ci::tokens::issue(pool, &run, &definitions, false)
             .await
             .unwrap();
         let token = if engine == "act" {

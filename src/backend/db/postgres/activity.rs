@@ -1,4 +1,6 @@
-use crate::backend::db::activity::{self, ActivityBatch, ActivityViewer, ScannedActivity};
+use crate::backend::db::activity::ActivityBatch;
+use crate::backend::db::activity::ActivityViewer;
+use crate::backend::db::activity::ScannedActivity;
 use anyhow::Result;
 use sqlx::PgPool;
 
@@ -31,9 +33,9 @@ pub async fn list_user_activity(
     limit: i64,
     offset: i64,
 ) -> Result<ActivityBatch> {
-    let (limit, offset, prefix) = activity::scan_window(limit, offset);
-    let readable = super::repositories::access::readable_condition();
-    let rows = sqlx::query_as::<_, ScannedActivity>(&activity::activity_sql(
+    let (limit, offset, prefix) = crate::backend::db::activity::scan_window(limit, offset);
+    let readable = crate::backend::db::postgres::repositories::access::readable_condition();
+    let rows = sqlx::query_as::<_, ScannedActivity>(&crate::backend::db::activity::activity_sql(
         &readable,
         "s.expires_at>NOW()",
     ))

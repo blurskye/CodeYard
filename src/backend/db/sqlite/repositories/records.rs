@@ -1,7 +1,7 @@
 use crate::backend::db::repositories::discovery::public_fork_count_sql;
-use crate::backend::db::repositories::records::{
-    MergeMethodUpdate, RepositoryFilter, RepositorySort,
-};
+use crate::backend::db::repositories::records::MergeMethodUpdate;
+use crate::backend::db::repositories::records::RepositoryFilter;
+use crate::backend::db::repositories::records::RepositorySort;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::SharedRepository;
@@ -198,14 +198,14 @@ pub async fn list_trending_repositories(
          ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT ?3",
     )
     .bind(viewer)
-    .bind(super::super::search::contains(text.trim()))
+    .bind(crate::backend::db::sqlite::search::contains(text.trim()))
     .bind(limit.min(100))
     .fetch_all(pool)
     .await?)
 }
 
 fn shared_repository_condition() -> String {
-    format!("NOT r.is_gist AND NOT (r.owner_kind='user' AND r.owner_user_id=u.id) AND ({})>=1 AND (EXISTS(SELECT 1 FROM org_memberships m JOIN organization_settings s ON s.org_id=m.org_id AND s.default_repository_permission IN (1,3,5) WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member')) OR EXISTS(SELECT 1 FROM org_memberships m JOIN organization_role_assignments assigned ON assigned.org_id=m.org_id JOIN organization_roles role ON role.id=assigned.role_id AND role.base_level BETWEEN 1 AND 5 WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member') AND ((assigned.user_id=u.id AND assigned.team_id IS NULL) OR (assigned.user_id IS NULL AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') WHERE t.id=assigned.team_id AND t.org_id=assigned.org_id AND t.privacy IN ('visible','secret'))))) OR EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=u.id AND a.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') JOIN team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 1 AND 5 WHERE t.org_id=m.org_id AND t.privacy IN ('visible','secret'))))))", super::access::USER_REPO_ACCESS_SQL)
+    format!("NOT r.is_gist AND NOT (r.owner_kind='user' AND r.owner_user_id=u.id) AND ({})>=1 AND (EXISTS(SELECT 1 FROM org_memberships m JOIN organization_settings s ON s.org_id=m.org_id AND s.default_repository_permission IN (1,3,5) WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member')) OR EXISTS(SELECT 1 FROM org_memberships m JOIN organization_role_assignments assigned ON assigned.org_id=m.org_id JOIN organization_roles role ON role.id=assigned.role_id AND role.base_level BETWEEN 1 AND 5 WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member') AND ((assigned.user_id=u.id AND assigned.team_id IS NULL) OR (assigned.user_id IS NULL AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') WHERE t.id=assigned.team_id AND t.org_id=assigned.org_id AND t.privacy IN ('visible','secret'))))) OR EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=u.id AND a.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') JOIN team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 1 AND 5 WHERE t.org_id=m.org_id AND t.privacy IN ('visible','secret'))))))", crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL)
 }
 
 /// Repositories shared directly or through organization and team authority.
@@ -214,7 +214,7 @@ pub async fn list_shared_repositories(
     user_id: i64,
 ) -> Result<Vec<SharedRepository>> {
     Ok(sqlx::query_as::<_, SharedRepository>(
-        &format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=?1 WHERE {} ORDER BY r.name,r.id", super::access::USER_REPO_ACCESS_SQL, shared_repository_condition()),
+        &format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=?1 WHERE {} ORDER BY r.name,r.id", crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL, shared_repository_condition()),
     )
     .bind(user_id)
     .fetch_all(pool)
@@ -239,7 +239,7 @@ pub async fn list_user_repository_page(
             " AND NOT is_archived"
         }
     );
-    let needle = super::super::search::contains(text.trim());
+    let needle = crate::backend::db::sqlite::search::contains(text.trim());
     let count = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM repositories WHERE {condition}"
     ))
@@ -278,7 +278,7 @@ pub async fn list_shared_repository_page(
             " AND NOT r.is_archived"
         }
     );
-    let needle = super::super::search::contains(text.trim());
+    let needle = crate::backend::db::sqlite::search::contains(text.trim());
     let count = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM repositories r JOIN users u ON u.id=?1 WHERE {condition}"
     ))
@@ -286,7 +286,7 @@ pub async fn list_shared_repository_page(
     .bind(&needle)
     .fetch_one(pool)
     .await?;
-    let rows = sqlx::query_as(&format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=?1 WHERE {condition} ORDER BY r.name,r.id LIMIT ?3 OFFSET ?4", super::access::USER_REPO_ACCESS_SQL))
+    let rows = sqlx::query_as(&format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=?1 WHERE {condition} ORDER BY r.name,r.id LIMIT ?3 OFFSET ?4", crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL))
         .bind(user).bind(&needle).bind(limit.clamp(1,100)).bind(offset.max(0)).fetch_all(pool).await?;
     Ok((rows, count))
 }
@@ -304,7 +304,7 @@ pub async fn search_public_repositories(
 ) -> Result<Vec<Repository>> {
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
     anyhow::ensure!(offset >= 0, "Result offset must be nonnegative");
-    let pattern = super::super::search::contains(text);
+    let pattern = crate::backend::db::sqlite::search::contains(text);
     let (index, order): (&str, std::borrow::Cow<'_, str>) = match sort {
         RepositorySort::Recent => ("", "created_at DESC, id DESC".into()),
         RepositorySort::Stars => (
@@ -357,7 +357,12 @@ async fn require_settings_actor(
     actor: &crate::backend::db::credentials::Actor,
 ) -> Result<()> {
     if let Some(credential) = actor.credential() {
-        super::super::users::transitions::require_account(tx, actor.user_id, &credential).await?;
+        crate::backend::db::sqlite::users::transitions::require_account(
+            tx,
+            actor.user_id,
+            &credential,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -421,9 +426,8 @@ async fn patch_core(
     default_branch: Option<&str>,
     expected_owner: Option<&str>,
 ) -> Result<Repository> {
-    use crate::backend::db::repositories::records::{
-        validate_repository_alias, RepositorySettingsRefusal as Refusal,
-    };
+    use crate::backend::db::repositories::records::validate_repository_alias;
+    use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
     let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     require_settings_actor(&mut tx, &authority).await?;
@@ -434,7 +438,7 @@ async fn patch_core(
     );
     if let Some(token) = changes.token {
         anyhow::ensure!(
-            super::super::users::tokens::repository_write_on(
+            crate::backend::db::sqlite::users::tokens::repository_write_on(
                 &mut tx,
                 token,
                 actor,
@@ -453,7 +457,7 @@ async fn patch_core(
         validate_repository_alias(name)?;
         // Under a legacy `gists` owner an issued gist identifier names the gist, not this.
         anyhow::ensure!(
-            super::super::gists::ordinary_name_available(
+            crate::backend::db::sqlite::gists::ordinary_name_available(
                 &mut tx,
                 previous.owner_user_id,
                 previous.owner_org_id,
@@ -513,7 +517,7 @@ async fn patch_core(
     let updated=sqlx::query_as::<_,Repository>("UPDATE repositories SET name=COALESCE(?2,name),description=CASE WHEN ?3 THEN ?4 ELSE description END,website=CASE WHEN ?5 THEN ?6 ELSE website END,is_private=?7,is_archived=?8,is_template=COALESCE(?9,is_template),default_branch=COALESCE(?10,default_branch),is_internal=?11,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND NOT is_archived RETURNING *")
         .bind(repo_id).bind(changes.name).bind(changes.description.is_some()).bind(changes.description.flatten()).bind(website.is_some()).bind(website.as_ref().and_then(|value|value.as_deref())).bind(private).bind(changes.archived.unwrap_or(previous.is_archived)).bind(changes.is_template).bind(default_branch).bind(internal).fetch_one(&mut *tx).await.map_err(name_conflict_error)?;
     if private != previous.is_private {
-        super::super::secrets::delivery_budget(&mut tx, repo_id).await?;
+        crate::backend::db::sqlite::secrets::delivery_budget(&mut tx, repo_id).await?;
     }
     tx.commit().await?;
     Ok(updated)
@@ -682,7 +686,7 @@ pub async fn delete_repository(
         .bind(repo_id)
         .execute(&mut *tx)
         .await?;
-    super::super::runners::remove_repository_runners(&mut tx, repo_id).await?;
+    crate::backend::db::sqlite::runners::remove_repository_runners(&mut tx, repo_id).await?;
     let deleted =
         sqlx::query_as::<_, Repository>("DELETE FROM repositories WHERE id=?1 RETURNING *")
             .bind(repo_id)
@@ -703,9 +707,8 @@ pub async fn rename_repository(
     repo_id: i64,
     new_name: &str,
 ) -> Result<Repository> {
-    use crate::backend::db::repositories::records::{
-        validate_repository_alias, RepositorySettingsRefusal as Refusal,
-    };
+    use crate::backend::db::repositories::records::validate_repository_alias;
+    use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
     let authority = actor_id.into();
     let actor_id = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -722,7 +725,8 @@ pub async fn rename_repository(
             .fetch_one(&mut *tx)
             .await?;
     anyhow::ensure!(
-        super::super::gists::ordinary_name_available(&mut tx, user, org, new_name).await?,
+        crate::backend::db::sqlite::gists::ordinary_name_available(&mut tx, user, org, new_name)
+            .await?,
         Refusal::NameConflict
     );
     // A name that an immutable release reserved stays with the repository that published it.
@@ -795,7 +799,8 @@ async fn transfer_repository_inner(
     target: crate::backend::db::repositories::creation::RepositoryTarget,
     expected: Option<(&str, &str)>,
 ) -> Result<Repository> {
-    use crate::backend::db::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
+    use crate::backend::db::repositories::creation::RepositoryCreationOwner;
+    use crate::backend::db::repositories::creation::RepositoryTarget;
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
     let actor_id = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -814,7 +819,7 @@ async fn transfer_repository_inner(
         .bind(repo_id)
         .fetch_one(&mut *tx)
         .await?;
-    super::creation::validate_creation_visibility(
+    crate::backend::db::sqlite::repositories::creation::validate_creation_visibility(
         &mut tx,
         RepositoryCreationOwner { actor_id, target },
         private,
@@ -849,7 +854,7 @@ async fn transfer_repository_inner(
     let changed = previous != (kind.to_owned(), user, org);
     if changed {
         if let Some(org) = org {
-            super::super::organizations::properties::creation_values_on(
+            crate::backend::db::sqlite::organizations::properties::creation_values_on(
                 &mut tx,
                 actor_id,
                 org,
@@ -879,7 +884,8 @@ async fn transfer_repository_inner(
         .fetch_one(&mut *tx)
         .await?;
     anyhow::ensure!(
-        super::super::gists::ordinary_name_available(&mut tx, user, org, &name).await?,
+        crate::backend::db::sqlite::gists::ordinary_name_available(&mut tx, user, org, &name)
+            .await?,
         Refusal::NameConflict
     );
     let result = sqlx::query_as::<_, Repository>(
@@ -912,7 +918,7 @@ async fn transfer_repository_inner(
             .await?;
         sqlx::query("UPDATE issue_suggestions SET state='invalidated',updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE state='pending' AND action='add_field' AND issue_id IN (SELECT id FROM issues WHERE repo_id=?1)")
             .bind(repo_id).execute(&mut *tx).await?;
-        super::creation::grant_creator(
+        crate::backend::db::sqlite::repositories::creation::grant_creator(
             &mut tx,
             RepositoryCreationOwner { actor_id, target },
             repo_id,
@@ -921,7 +927,9 @@ async fn transfer_repository_inner(
         let pulls: Vec<(i64, String)> = sqlx::query_as("SELECT id,updated_at FROM pull_requests WHERE head_repo_id=?1 AND maintainer_can_modify")
             .bind(repo_id).fetch_all(&mut *tx).await?;
         for (id, revision) in pulls {
-            let next = super::super::time::next_revision(super::super::time::decode(&revision)?)?;
+            let next = crate::backend::db::sqlite::time::next_revision(
+                crate::backend::db::sqlite::time::decode(&revision)?,
+            )?;
             sqlx::query("UPDATE pull_requests SET maintainer_can_modify=0,maintainer_edit_granted_by_id=NULL,updated_at=?2 WHERE id=?1")
                 .bind(id).bind(next).execute(&mut *tx).await?;
         }
@@ -937,7 +945,7 @@ async fn transfer_repository_inner(
         .bind(repo_id)
         .execute(&mut *tx)
         .await?;
-        super::super::code_security::apply_default(&mut tx, &result).await?;
+        crate::backend::db::sqlite::code_security::apply_default(&mut tx, &result).await?;
         sqlx::query("DELETE FROM secret_scanning_commits WHERE repo_id=?1")
             .bind(repo_id)
             .execute(&mut *tx)
@@ -963,10 +971,10 @@ async fn transfer_repository_inner(
             .await?;
         let runs: Vec<i64> = sqlx::query_scalar("SELECT id FROM ci_runs WHERE repo_id=?1 AND (status IN ('queued','running') OR completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) ORDER BY id")
             .bind(repo_id).fetch_all(&mut *tx).await?;
-        super::super::ci::stop_ci_runs(&mut tx, &runs).await?;
-        super::super::runners::remove_repository_runners(&mut tx, repo_id).await?;
+        crate::backend::db::sqlite::ci::stop_ci_runs(&mut tx, &runs).await?;
+        crate::backend::db::sqlite::runners::remove_repository_runners(&mut tx, repo_id).await?;
     }
-    super::super::secrets::delivery_budget(&mut tx, repo_id).await?;
+    crate::backend::db::sqlite::secrets::delivery_budget(&mut tx, repo_id).await?;
     tx.commit().await?;
     Ok(result)
 }
@@ -1120,7 +1128,8 @@ pub async fn set_repository_wiki(
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::super::discussions::lock_admin_authority(&mut tx, actor, repo_id).await?,
+        crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo_id)
+            .await?,
         crate::backend::db::repositories::records::RepositorySettingsRefusal::Denied
     );
     features_on(&mut tx, repo_id, Some(enabled), None).await?;

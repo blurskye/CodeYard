@@ -1,15 +1,23 @@
 //! gh's gist picker uses creation order and loads file text only when requested.
-use super::{connection, db, missing, unavailable, Arguments, RequestContext, Result, Value};
-use crate::backend::{
-    api::github::node_id, db::gists::Gist, gists as domain, repositories::store::repo_store,
-};
+
+use crate::backend::api::graphql::db;
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
+
+use crate::backend::db::gists::Gist;
+
+use crate::backend::repositories::store::repo_store;
 use async_graphql::Error;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde_json::json;
 
 async fn authorize(request: &RequestContext) -> Result<()> {
     if !request.account_permission("gists", "gist").await? {
-        return Err(super::token_denied());
+        return Err(crate::backend::api::graphql::token_denied());
     }
     Ok(())
 }
@@ -36,7 +44,7 @@ pub(super) async fn node(key: &str, request: &RequestContext) -> Result<Value> {
 
 pub(super) async fn list(ctx: &Arguments, request: &RequestContext, user: &Value) -> Result<Value> {
     authorize(request).await?;
-    connection::validate(ctx)?;
+    crate::backend::api::graphql::connection::validate(ctx)?;
     if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
         let order = order.object()?;
         if order.try_get("field")?.enum_name()? != "CREATED_AT"
@@ -58,7 +66,7 @@ pub(super) async fn list(ctx: &Arguments, request: &RequestContext, user: &Value
         None => None,
     };
     if secret {
-        domain::recover_owned(&request.state, owner)
+        crate::backend::gists::recover_owned(&request.state, owner)
             .await
             .map_err(unavailable)?;
     }
@@ -66,7 +74,7 @@ pub(super) async fn list(ctx: &Arguments, request: &RequestContext, user: &Value
     let total = db::gists::count_owned(pool, owner, secret, privacy)
         .await
         .map_err(unavailable)?;
-    let page = connection::Page::new(ctx, total)?;
+    let page = crate::backend::api::graphql::connection::Page::new(ctx, total)?;
     let entries = db::gists::list_created(pool, owner, secret, privacy, page.limit, page.offset)
         .await
         .map_err(unavailable)?;
@@ -86,7 +94,7 @@ pub(super) async fn files(
         .filter(|value| !value.is_null())
         .map(|value| value.string())
         .transpose()?;
-    let loaded = domain::load(&request.state, id, revision)
+    let loaded = crate::backend::gists::load(&request.state, id, revision)
         .await
         .map_err(unavailable)?;
     let limit = ctx
@@ -136,5 +144,8 @@ pub(super) async fn text(ctx: &Arguments, request: &RequestContext, file: &Value
         .await
         .map_err(unavailable)?;
     request.charge(bytes.len())?;
-    Ok(json!(domain::text_preview(&bytes, limit as usize)))
+    Ok(json!(crate::backend::gists::text_preview(
+        &bytes,
+        limit as usize
+    )))
 }

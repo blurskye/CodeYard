@@ -1,5 +1,3 @@
-use crate::backend::db;
-use crate::backend::repositories::access;
 pub mod async_merge;
 pub mod auto_merge;
 pub mod branches;
@@ -78,7 +76,7 @@ pub(crate) async fn emit_pull_request_event(
     crate::backend::webhooks::emit(
         pool,
         repository,
-        crate::backend::webhooks::events::PULL_REQUEST,
+        codeyard_model::webhook_events::PULL_REQUEST,
         vec![author_id, sender_id],
         move |owner, people| {
             let mut payload = webhook_payload(
@@ -138,7 +136,8 @@ pub(super) async fn repository(
     pool: &codeyard_db_core::DbPool,
     id: i64,
 ) -> Result<(codeyard_db_core::models::Repository, String), OperationError> {
-    use crate::backend::repositories::access::{current_repository_with_owner, AccessError};
+    use crate::backend::repositories::access::current_repository_with_owner;
+    use crate::backend::repositories::access::AccessError;
     current_repository_with_owner(pool, id)
         .await
         .map_err(|error| match error {
@@ -154,7 +153,7 @@ pub(super) async fn actor(
     pool: &codeyard_db_core::DbPool,
     id: i64,
 ) -> Result<codeyard_db_core::models::User, OperationError> {
-    db::users::accounts::get_user_by_id(pool, id)
+    crate::backend::db::users::accounts::get_user_by_id(pool, id)
         .await
         .map_err(write_error)?
         .filter(|user| !user.is_banned)
@@ -169,7 +168,7 @@ async fn can_read(
     user: &codeyard_db_core::models::User,
     repo: &codeyard_db_core::models::Repository,
 ) -> Result<bool, OperationError> {
-    access::can_read(pool, Some(user), repo)
+    crate::backend::repositories::access::can_read(pool, Some(user), repo)
         .await
         .map_err(|_| OperationError::Unavailable {
             code: "database_error",
@@ -197,7 +196,7 @@ pub(super) async fn require_write(
     user: &codeyard_db_core::models::User,
     repo: &codeyard_db_core::models::Repository,
 ) -> Result<(), OperationError> {
-    if access::can_write(pool, user, repo)
+    if crate::backend::repositories::access::can_write(pool, user, repo)
         .await
         .map_err(|_| OperationError::Unavailable {
             code: "database_error",
@@ -225,7 +224,7 @@ pub(super) async fn require_admin(
     user: &codeyard_db_core::models::User,
     repo: &codeyard_db_core::models::Repository,
 ) -> Result<(), OperationError> {
-    if access::can_admin(pool, user, repo)
+    if crate::backend::repositories::access::can_admin(pool, user, repo)
         .await
         .map_err(|_| OperationError::Unavailable {
             code: "database_error",
@@ -242,15 +241,15 @@ pub(super) async fn require_admin(
 }
 
 pub(crate) fn write_error(error: anyhow::Error) -> OperationError {
-    if error.is::<db::pull_caps::PullCapReached>() {
+    if error.is::<crate::backend::db::pull_caps::PullCapReached>() {
         return OperationError::Invalid {
             code: "pull_request_creation_cap",
             message: error.to_string(),
         };
     }
-    use db::discussions::DiscussionWriteRefusal;
+    use crate::backend::db::discussions::DiscussionWriteRefusal;
     if let Some(refusal) =
-        error.downcast_ref::<db::pull_requests::records::IssueConversionRefusal>()
+        error.downcast_ref::<crate::backend::db::pull_requests::records::IssueConversionRefusal>()
     {
         return OperationError::Invalid {
             code: "invalid_issue_conversion",

@@ -1,4 +1,3 @@
-use crate::backend::db;
 use axum::{http::StatusCode, Json};
 use serde::Serialize;
 
@@ -52,8 +51,8 @@ pub(crate) fn protection_write_error(
 /// The status of a refused native OIDC settings save: a denial is 403, any other typed refusal
 /// is 422, and an untyped failure is 503.
 pub(crate) fn oidc_settings_status(error: &anyhow::Error) -> StatusCode {
-    match error.downcast_ref::<db::oidc::Refusal>() {
-        Some(db::oidc::Refusal::Denied) => StatusCode::FORBIDDEN,
+    match error.downcast_ref::<crate::backend::db::oidc::Refusal>() {
+        Some(crate::backend::db::oidc::Refusal::Denied) => StatusCode::FORBIDDEN,
         Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
         None => StatusCode::SERVICE_UNAVAILABLE,
     }
@@ -208,7 +207,7 @@ mod tests {
 }
 
 pub(crate) fn discussion_write_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
-    use db::discussions::DiscussionWriteRefusal;
+    use crate::backend::db::discussions::DiscussionWriteRefusal;
     let (status, code, message) = match error.downcast_ref::<DiscussionWriteRefusal>() {
         Some(DiscussionWriteRefusal::Denied) => (
             StatusCode::FORBIDDEN,
@@ -281,7 +280,7 @@ mod discussion_errors {
 
     #[test]
     fn typed_refusals_survive_context_and_driver_details_are_never_disclosed() {
-        use db::discussions::DiscussionWriteRefusal;
+        use crate::backend::db::discussions::DiscussionWriteRefusal;
         for (refusal, status, code, message) in [
             (
                 DiscussionWriteRefusal::Denied,

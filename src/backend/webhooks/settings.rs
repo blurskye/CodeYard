@@ -1,11 +1,17 @@
 //! Managing webhooks: who may, what a form may save, and the ping, test and redelivery
 //! actions. Every action checks the actor before it reads or changes a hook.
-use super::{enqueue, events, outbound, outgoing, payloads};
-use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db;
+use crate::backend::webhooks::enqueue;
+
+use crate::backend::webhooks::outgoing;
+
+use codeyard_support::secrets::SecretEncryptor;
+
 use crate::backend::db::organizations::OrganizationOutcome;
-use crate::backend::db::webhooks::{self as hooks, HookOwner, SealedSecret, WebhookFields};
-use crate::backend::repositories::access;
+use crate::backend::db::webhooks as hooks;
+use crate::backend::db::webhooks::HookOwner;
+use crate::backend::db::webhooks::SealedSecret;
+use crate::backend::db::webhooks::WebhookFields;
+
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
@@ -84,18 +90,20 @@ fn write_error(owner: HookOwner, error: anyhow::Error) -> HookError {
 pub async fn authorize(pool: &DbPool, actor: &User, owner: HookOwner) -> Result<(), HookError> {
     let allowed = match owner {
         HookOwner::Repository(id) => {
-            let repo = db::repositories::records::get_repository_by_id(pool, id)
+            let repo = crate::backend::db::repositories::records::get_repository_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or(HookError::NotFound)?;
-            access::can_admin(pool, actor, &repo)
+            crate::backend::repositories::access::can_admin(pool, actor, &repo)
                 .await
                 .map_err(unavailable)?
         }
         HookOwner::Organization(org) => matches!(
-            db::organizations::membership::get_organization_role(pool, actor.id, org)
-                .await
-                .map_err(unavailable)?,
+            crate::backend::db::organizations::membership::get_organization_role(
+                pool, actor.id, org
+            )
+            .await
+            .map_err(unavailable)?,
             OrganizationOutcome::Applied(OrgRole::Owner)
         ),
     };
@@ -108,12 +116,14 @@ pub async fn authorize(pool: &DbPool, actor: &User, owner: HookOwner) -> Result<
 
 fn validate_url(text: &str) -> Result<String, HookError> {
     let payload_url = text.trim();
-    outbound::validate_url(payload_url, outbound::allow_private()).map_err(
-        |refusal| match refusal {
-            outbound::Refusal::Invalid(text) => HookError::Invalid(text),
-            _ => HookError::Invalid("Payload URL is not allowed"),
-        },
-    )?;
+    crate::backend::webhooks::outbound::validate_url(
+        payload_url,
+        crate::backend::webhooks::outbound::allow_private(),
+    )
+    .map_err(|refusal| match refusal {
+        crate::backend::webhooks::outbound::Refusal::Invalid(text) => HookError::Invalid(text),
+        _ => HookError::Invalid("Payload URL is not allowed"),
+    })?;
     Ok(payload_url.to_owned())
 }
 
@@ -141,7 +151,8 @@ pub(crate) fn validated(form: &HookForm) -> Result<WebhookFields, HookError> {
         password: None,
         payload_url: validate_url(&form.payload_url)?,
         content_type: validate_content_type(&form.content_type)?,
-        events: events::subscription(&form.events).map_err(HookError::Invalid)?,
+        events: codeyard_model::webhook_events::subscription(&form.events)
+            .map_err(HookError::Invalid)?,
         active: form.active,
         ssl_verify: form.ssl_verify,
     })
@@ -175,7 +186,7 @@ pub async fn save(
     encryptor: Option<&SecretEncryptor>,
     owner: HookOwner,
     actor: &User,
-    credential: &db::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     id: Option<i64>,
     form: &HookForm,
 ) -> Result<i64, HookError> {
@@ -191,7 +202,7 @@ pub async fn save_with_revision(
     encryptor: Option<&SecretEncryptor>,
     owner: HookOwner,
     actor: &User,
-    credential: &db::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     id: Option<i64>,
     form: &HookForm,
     expected_updated: Option<chrono::DateTime<chrono::Utc>>,
@@ -264,7 +275,7 @@ pub async fn update(
     encryptor: Option<&SecretEncryptor>,
     owner: HookOwner,
     actor: &User,
-    credential: &db::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     id: i64,
     patch: &HookPatch,
 ) -> Result<(), HookError> {
@@ -291,7 +302,9 @@ pub async fn update(
         events: patch
             .events
             .as_ref()
-            .map(|events| events::subscription(events).map_err(HookError::Invalid))
+            .map(|events| {
+                codeyard_model::webhook_events::subscription(events).map_err(HookError::Invalid)
+            })
             .transpose()?,
         add_events: patch.add_events.clone(),
         remove_events: patch.remove_events.clone(),
@@ -327,7 +340,7 @@ pub async fn delete(
     pool: &DbPool,
     owner: HookOwner,
     actor: &User,
-    credential: &db::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), HookError> {
     authorize(pool, actor, owner).await?;
@@ -347,7 +360,7 @@ pub async fn ping(
     pool: &DbPool,
     owner: HookOwner,
     actor: &User,
-    credential: &db::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), HookError> {
     let snapshot = hooks::read_settings(
@@ -366,7 +379,7 @@ pub async fn ping(
     let hook = snapshot.hook.ok_or(HookError::NotFound)?;
     let payload = ping_payload(pool, owner, actor, &hook).await?;
     let json = payload.to_string();
-    let mut outgoing = outgoing(events::PING, None, &hook, &json);
+    let mut outgoing = outgoing(codeyard_model::webhook_events::PING, None, &hook, &json);
     outgoing.manual_actor = Some(actor.id);
     if enqueue(pool, hook, outgoing) {
         Ok(())
@@ -380,7 +393,7 @@ pub async fn redeliver(
     pool: &DbPool,
     owner: HookOwner,
     actor: &User,
-    credential: &db::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     hook_id: i64,
     delivery_id: i64,
 ) -> Result<(), HookError> {
@@ -399,7 +412,7 @@ pub async fn redeliver(
     .ok_or(HookError::Denied)?;
     let hook = snapshot.hook.ok_or(HookError::NotFound)?;
     let recorded = snapshot.delivery.ok_or(HookError::NotFound)?;
-    let mut outgoing = super::delivery::redelivery(&recorded);
+    let mut outgoing = crate::backend::webhooks::delivery::redelivery(&recorded);
     outgoing.manual_actor = Some(actor.id);
     if enqueue(pool, hook, outgoing) {
         Ok(())
@@ -413,7 +426,7 @@ pub async fn test_push(
     pool: &DbPool,
     owner: HookOwner,
     actor: &User,
-    credential: &db::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), HookError> {
     let snapshot = hooks::read_settings(
@@ -430,7 +443,10 @@ pub async fn test_push(
     .map_err(unavailable)?
     .ok_or(HookError::Denied)?;
     let hook = snapshot.hook.ok_or(HookError::NotFound)?;
-    if !events::subscribes(&hook.events, events::PUSH) {
+    if !codeyard_model::webhook_events::subscribes(
+        &hook.events,
+        codeyard_model::webhook_events::PUSH,
+    ) {
         return Ok(());
     }
     let HookOwner::Repository(repo) = owner else {
@@ -442,7 +458,7 @@ pub async fn test_push(
         credential,
         repo,
         id,
-        super::MAX_PAYLOAD_BYTES as i64,
+        crate::backend::webhooks::MAX_PAYLOAD_BYTES as i64,
     )
     .await
     .map_err(|error| {
@@ -459,7 +475,7 @@ pub async fn test_push(
     if payload["repository"]["id"].as_i64() != Some(repo) {
         return Err(HookError::Unavailable);
     }
-    let mut send = outgoing(events::PUSH, None, &hook, &body);
+    let mut send = outgoing(codeyard_model::webhook_events::PUSH, None, &hook, &body);
     send.automatic = false;
     send.manual_actor = Some(actor.id);
     if enqueue(pool, hook, send) {
@@ -476,39 +492,42 @@ async fn ping_payload(
     hook: &Webhook,
 ) -> Result<Value, HookError> {
     let mut payload = json!({"zen": ZEN, "hook_id": hook.id,
-        "sender": payloads::person(&payloads::Person::of(actor))});
+        "sender": crate::backend::webhooks::payloads::person(&crate::backend::webhooks::payloads::Person::of(actor))});
     let url = match owner {
         HookOwner::Repository(id) => {
-            let repo: Repository = db::repositories::records::get_repository_by_id(pool, id)
-                .await
-                .map_err(unavailable)?
-                .ok_or(HookError::NotFound)?;
-            let owner_name = db::repositories::records::repository_owner_names(pool, &[id])
-                .await
-                .map_err(unavailable)?
-                .remove(&id)
-                .unwrap_or_default();
-            payload["repository"] = payloads::repository(&repo, &owner_name);
-            super::set_open_issues(pool, id, &mut payload).await;
+            let repo: Repository =
+                crate::backend::db::repositories::records::get_repository_by_id(pool, id)
+                    .await
+                    .map_err(unavailable)?
+                    .ok_or(HookError::NotFound)?;
+            let owner_name =
+                crate::backend::db::repositories::records::repository_owner_names(pool, &[id])
+                    .await
+                    .map_err(unavailable)?
+                    .remove(&id)
+                    .unwrap_or_default();
+            payload["repository"] =
+                crate::backend::webhooks::payloads::repository(&repo, &owner_name);
+            crate::backend::webhooks::set_open_issues(pool, id, &mut payload).await;
             format!(
                 "{}/hooks/{}",
-                crate::backend::api::github::repo_url(&owner_name, &repo.name),
+                codeyard_model::urls::repo_url(&owner_name, &repo.name),
                 hook.id
             )
         }
         HookOwner::Organization(id) => {
-            let org = db::organizations::get_public_organization_by_id(pool, id)
+            let org = crate::backend::db::organizations::get_public_organization_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or(HookError::NotFound)?;
-            payload["organization"] = payloads::organization(&org);
-            crate::backend::api::github::api_url(&format!(
+            payload["organization"] = crate::backend::webhooks::payloads::organization(&org);
+            codeyard_model::urls::api_url(&format!(
                 "/orgs/{}/hooks/{}",
                 codeyard_webui::encode_component(&org.name),
                 hook.id
             ))
         }
     };
-    payload["hook"] = payloads::webhook(hook, &url);
+    payload["hook"] = crate::backend::webhooks::payloads::webhook(hook, &url);
     Ok(payload)
 }

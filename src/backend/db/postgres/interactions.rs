@@ -52,8 +52,8 @@ async fn authorize(
     }
     let allowed = match scope {
         InteractionScope::User(user) => user==actor && sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)").bind(actor).fetch_one(&mut *connection).await?,
-        InteractionScope::Organization(org) => match super::organizations::authority::authority(&mut *connection,actor,org).await? {OrganizationOutcome::Applied(OrgRole::Owner)=>true,OrganizationOutcome::Applied(OrgRole::Admin)=>!write,_=>false},
-        InteractionScope::Repository(repo) => super::repositories::access::lock_user_repo_access_in_transaction(&mut *connection,actor,repo,super::repositories::access::RepositoryRowLock::Exclusive,true).await?.is_some_and(|authority|(!authority.organization || authority.organization_usable) && (authority.access.can_admin() || (!authority.organization && (authority.is_admin || authority.owner_user_id==Some(actor))))),
+        InteractionScope::Organization(org) => match crate::backend::db::postgres::organizations::authority::authority(&mut *connection,actor,org).await? {OrganizationOutcome::Applied(OrgRole::Owner)=>true,OrganizationOutcome::Applied(OrgRole::Admin)=>!write,_=>false},
+        InteractionScope::Repository(repo) => crate::backend::db::postgres::repositories::access::lock_user_repo_access_in_transaction(&mut *connection,actor,repo,crate::backend::db::postgres::repositories::access::RepositoryRowLock::Exclusive,true).await?.is_some_and(|authority|(!authority.organization || authority.organization_usable) && (authority.access.can_admin() || (!authority.organization && (authority.is_admin || authority.owner_user_id==Some(actor))))),
     };
     anyhow::ensure!(allowed, InteractionRefusal::Denied);
     Ok(())
@@ -64,7 +64,8 @@ pub async fn get_restriction(
     scope: InteractionScope,
 ) -> Result<Option<Restriction>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
+        .await?;
     authorize(&mut tx, actor, scope, false).await?;
     let result = scoped(&mut tx, scope).await?;
     tx.commit().await?;
@@ -79,15 +80,18 @@ pub async fn set_restriction(
 ) -> Result<Option<Restriction>> {
     let mut tx = pool.begin().await?;
     if let InteractionScope::User(user) = scope {
-        super::users::transitions::lock_accounts(&mut tx, &[actor, user]).await?;
+        crate::backend::db::postgres::users::transitions::lock_accounts(&mut tx, &[actor, user])
+            .await?;
         // New personal repositories require this owner's account lock too.
         sqlx::query("SELECT id FROM repositories WHERE owner_kind='user' AND owner_user_id=$1 ORDER BY id FOR UPDATE")
             .bind(user).execute(&mut *tx).await?;
     } else {
-        super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
+        crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
+            .await?;
     }
     authorize(&mut tx, actor, scope, true).await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, actor, credential)
+        .await?;
     if let InteractionScope::Repository(repo) = scope {
         let overridden: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM interaction_limits l JOIN repositories r ON (r.owner_kind='user' AND r.owner_user_id=l.user_id) OR (r.owner_kind='org' AND r.owner_org_id=l.org_id) WHERE r.id=$1 AND NOT r.is_private AND l.repo_id IS NULL AND l.expires_at>clock_timestamp())").bind(repo).fetch_one(&mut *tx).await?;
         anyhow::ensure!(!overridden, InteractionRefusal::Conflict);
@@ -148,14 +152,15 @@ pub async fn save_proof(
     contributed: bool,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    let access = super::repositories::access::lock_user_repo_access_in_transaction(
-        &mut tx,
-        actor,
-        source.repo_id,
-        super::repositories::access::RepositoryRowLock::Shared,
-        true,
-    )
-    .await?;
+    let access =
+        crate::backend::db::postgres::repositories::access::lock_user_repo_access_in_transaction(
+            &mut tx,
+            actor,
+            source.repo_id,
+            crate::backend::db::postgres::repositories::access::RepositoryRowLock::Shared,
+            true,
+        )
+        .await?;
     if !access
         .is_some_and(|access| access.access.can_read() || (!access.organization && access.is_admin))
     {

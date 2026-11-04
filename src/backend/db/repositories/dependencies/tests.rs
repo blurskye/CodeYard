@@ -1,7 +1,7 @@
 use super::*;
-use crate::backend::db::dependabot_alerts;
-fn row(version: &str, state: &str) -> dependabot_alerts::Alert {
-    dependabot_alerts::Alert {
+
+fn row(version: &str, state: &str) -> crate::backend::db::dependabot_alerts::Alert {
+    crate::backend::db::dependabot_alerts::Alert {
         repo_id: 1, number: 1, ghsa_id: "GHSA-2345-6789-cfgh".into(),
         manifest: "package-lock.json".into(), ecosystem: "npm".into(), package: "foo".into(),
         version: version.into(), scope: "runtime".into(), state: state.into(),

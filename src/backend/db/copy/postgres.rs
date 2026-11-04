@@ -1,6 +1,10 @@
 //! PostgreSQL side of a database copy.
 
-use super::{quote, Catalog, Column, Sequence, Table};
+use crate::backend::db::copy::quote;
+use crate::backend::db::copy::Catalog;
+use crate::backend::db::copy::Column;
+use crate::backend::db::copy::Sequence;
+use crate::backend::db::copy::Table;
 use anyhow::{bail, Result};
 use codeyard_db_core::postgres::migrations::validate_history;
 use sqlx::{Postgres, Transaction};

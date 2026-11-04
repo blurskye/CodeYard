@@ -1,4 +1,3 @@
-use crate::backend::db::users::sessions as stored;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::models::User;
 use codeyard_db_core::DbPool;
@@ -32,7 +31,7 @@ pub async fn issue_authenticated_session<'a>(
     pool: &DbPool,
     context: SessionContext<'_>,
     user_id: i64,
-    credential: impl Into<stored::SessionCredential<'a>>,
+    credential: impl Into<crate::backend::db::users::sessions::SessionCredential<'a>>,
 ) -> Result<String, SessionIssueError> {
     let old = match context.initiating {
         InitiatingSession::Missing => None,
@@ -41,13 +40,13 @@ pub async fn issue_authenticated_session<'a>(
     };
     // One named transaction revalidates setup/account/credentials, rejects active
     // rebinds, and invalidates the initiating anonymous identity and its CSRF.
-    let issued = stored::rotate_authenticated_session(
+    let issued = crate::backend::db::users::sessions::rotate_authenticated_session(
         pool,
         old,
         context.fresh_id,
         user_id,
         credential,
-        stored::SessionClient {
+        crate::backend::db::users::sessions::SessionClient {
             user_agent: context.user_agent,
             ip_address: context.client,
         },
@@ -75,7 +74,7 @@ pub(crate) async fn password_change_account(
     session_id: Option<&str>,
 ) -> Result<User, AccountAuthorityError> {
     let id = session_id.ok_or(AccountAuthorityError::NotAuthenticated)?;
-    stored::get_session_account(pool, id)
+    crate::backend::db::users::sessions::get_session_account(pool, id)
         .await
         .map_err(|_| AccountAuthorityError::SessionUnavailable)?
         .ok_or(AccountAuthorityError::SessionExpired)
@@ -103,7 +102,7 @@ pub async fn end_session(
     session_id: Option<&str>,
 ) -> Result<(), SessionStorageUnavailable> {
     if let Some(id) = session_id {
-        stored::delete_session(pool, id)
+        crate::backend::db::users::sessions::delete_session(pool, id)
             .await
             .map_err(|_| SessionStorageUnavailable)?;
     }

@@ -7,7 +7,7 @@ use crate::support::database;
 use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::db;
+
 use database::Database;
 use pulls::Client;
 
@@ -24,7 +24,7 @@ async fn contract(pg: bool) {
     let repository = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner_id),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(owner_id),
         "proj",
         None,
         false,
@@ -34,7 +34,7 @@ async fn contract(pg: bool) {
     .unwrap();
     assert_eq!(repository.size_bytes, 0);
     // A repository whose files are missing must not fail the list either.
-    db::repositories::records::create_repository(
+    codeyard::backend::db::repositories::records::create_repository(
         f.pool(),
         owner_id,
         "gone",
@@ -55,18 +55,25 @@ async fn contract(pg: bool) {
     };
     assert!(model.storage_bytes.iter().all(|bytes| *bytes == 0));
     assert!(model.activity.iter().all(|point| point.commits == 0));
-    let accounts = db::users::accounts::list_admin_account_summaries(f.pool(), 100, 0)
-        .await
-        .unwrap();
+    let accounts =
+        codeyard::backend::db::users::accounts::list_admin_account_summaries(f.pool(), 100, 0)
+            .await
+            .unwrap();
     let owner = accounts
         .iter()
         .find(|account| account.username == "owner")
         .unwrap();
     assert_eq!(owner.total_bytes, 0);
     assert_eq!(owner.commits_total, 0);
-    db::activity::record_repository_push(f.pool(), repository.id, owner_id, "main", 5)
-        .await
-        .unwrap();
+    codeyard::backend::db::activity::record_repository_push(
+        f.pool(),
+        repository.id,
+        owner_id,
+        "main",
+        5,
+    )
+    .await
+    .unwrap();
     let (status, page) = admin.model("/admin").await;
     assert_eq!(status, StatusCode::OK);
     let codeyard_webui::app::Page::Identity(codeyard_webui::pages::account::Page::Admin { model }) =
@@ -83,24 +90,26 @@ async fn contract(pg: bool) {
             .sum::<i64>(),
         5
     );
-    let recorded = db::users::accounts::list_admin_account_summaries(f.pool(), 100, 0)
-        .await
-        .unwrap();
+    let recorded =
+        codeyard::backend::db::users::accounts::list_admin_account_summaries(f.pool(), 100, 0)
+            .await
+            .unwrap();
     let recorded = recorded
         .iter()
         .find(|account| account.username == "owner")
         .unwrap();
     assert_eq!(recorded.commits_total, 5);
     assert_eq!(recorded.pushes_total, 0, "the push counter counts CI runs");
-    let chart = db::users::accounts::list_admin_activity_points(f.pool(), 7)
+    let chart = codeyard::backend::db::users::accounts::list_admin_activity_points(f.pool(), 7)
         .await
         .unwrap();
     assert!(chart.last().unwrap().commits >= 5);
     // The GET did not scan the repository or record its size.
-    let stored = db::repositories::records::get_repository_by_id(f.pool(), repository.id)
-        .await
-        .unwrap()
-        .unwrap();
+    let stored =
+        codeyard::backend::db::repositories::records::get_repository_by_id(f.pool(), repository.id)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(stored.size_bytes, 0);
     let (status, page) = admin.model("/admin/email").await;
     assert_eq!(status, StatusCode::OK);

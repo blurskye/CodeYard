@@ -6,10 +6,7 @@ pub mod arguments;
 pub mod cluster;
 use arguments::{Cli, Commands, DbAction, KeyAction, RepoAction, UserAction};
 
-use crate::backend::cluster as cluster_runtime;
-use crate::backend::fs::private_dir as prepare_state_directory;
-use crate::backend::node;
-use crate::backend::ssh;
+use codeyard_support::fs::private_dir as prepare_state_directory;
 
 use anyhow::{bail, Result};
 use clap::Parser;
@@ -175,7 +172,7 @@ pub fn run() -> Result<()> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let status = runtime.block_on(ssh::openssh::run_command(action))?;
+        let status = runtime.block_on(crate::backend::ssh::openssh::run_command(action))?;
         std::process::exit(status.clamp(0, 255));
     }
     #[cfg(not(unix))]
@@ -204,7 +201,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
         cli.command,
         Commands::Serve { cluster: true, .. }
             | Commands::Cluster {
-                action: self::cluster::Command::Enable,
+                action: crate::backend::cli::cluster::Command::Enable,
             }
     ) {
         anyhow::ensure!(
@@ -213,7 +210,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
         );
     }
     if let Commands::Cluster {
-        action: self::cluster::Command::Join { ticket, .. },
+        action: crate::backend::cli::cluster::Command::Join { ticket, .. },
     } = &mut cli.command
     {
         *ticket = cluster_join_ticket_from_env()?;
@@ -224,7 +221,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
             DbAction::Copy {
                 from: Some(from),
                 to: Some(to),
-            } => self::copy_database_cmd(from, to).await,
+            } => crate::backend::cli::copy_database_cmd(from, to).await,
             DbAction::Copy { .. } => bail!(
                 "db copy needs --from and --to, or COPY_FROM_DATABASE_URL and COPY_TO_DATABASE_URL"
             ),
@@ -234,7 +231,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
     // Making a key and joining a cluster work on a machine with no database.
     if let Commands::Cluster { action } = &cli.command {
         if !action.needs_database() {
-            return self::cluster::run_offline(
+            return crate::backend::cli::cluster::run_offline(
                 action,
                 &cli.state_dir,
                 configured_database_url.as_deref(),
@@ -245,10 +242,10 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
     if let Commands::Serve { roles, .. } = &cli.command {
         if roles.worker_only() && configured_database_url.is_none() {
             prepare_state_directory(&cli.state_dir)?;
-            return node::serve_worker(&cli.state_dir).await;
+            return crate::backend::node::serve_worker(&cli.state_dir).await;
         }
         if configured_database_url.is_none() {
-            anyhow::ensure!(roles.single_node() && cluster_runtime::Settings::from_env()?.is_none(),
+            anyhow::ensure!(roles.single_node() && crate::backend::cluster::Settings::from_env()?.is_none(),
                 "a server and the cluster roles require DATABASE_URL (PostgreSQL for a cluster, sqlite://... for a single node); only a runner can run without a database");
         }
     }
@@ -318,14 +315,14 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                 host_key,
             } => {
                 if cluster {
-                    cluster_runtime::require_postgres(&pool)?;
+                    crate::backend::cluster::require_postgres(&pool)?;
                     if crate::backend::db::cluster::enable_cluster(&pool).await? {
                         info!("cluster mode is on");
                     }
                 }
-                node::serve(
+                crate::backend::node::serve(
                     pool.clone(),
-                    node::ServeConfig {
+                    crate::backend::node::ServeConfig {
                         roles,
                         repos_path: cli.repos_path,
                         state_dir: cli.state_dir,
@@ -343,17 +340,18 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
 
             Commands::User { action } => match action {
                 UserAction::Create { username, email } => {
-                    self::create_user_cmd(&pool, &username, email.as_deref()).await?;
+                    crate::backend::cli::create_user_cmd(&pool, &username, email.as_deref())
+                        .await?;
                 }
                 UserAction::Bootstrap {
                     username,
                     password_stdin: _,
                     mode,
                 } => {
-                    self::bootstrap_user_cmd(&pool, &username, &mode).await?;
+                    crate::backend::cli::bootstrap_user_cmd(&pool, &username, &mode).await?;
                 }
                 UserAction::List => {
-                    self::list_users_cmd(&pool).await?;
+                    crate::backend::cli::list_users_cmd(&pool).await?;
                 }
             },
 
@@ -365,20 +363,25 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                     file,
                 } => {
                     if let Some(key_path) = file {
-                        self::add_key_from_file_cmd(&pool, &username, &name, &key_path).await?;
+                        crate::backend::cli::add_key_from_file_cmd(
+                            &pool, &username, &name, &key_path,
+                        )
+                        .await?;
                     } else if let Some(public_key) = key {
-                        self::add_key_cmd(&pool, &username, &name, &public_key).await?;
+                        crate::backend::cli::add_key_cmd(&pool, &username, &name, &public_key)
+                            .await?;
                     } else {
                         return Err(anyhow::anyhow!("Must provide --key or --file"));
                     }
                 }
                 KeyAction::List { username } => {
-                    self::list_keys_cmd(&pool, &username).await?;
+                    crate::backend::cli::list_keys_cmd(&pool, &username).await?;
                 }
             },
 
             Commands::Cluster { action } => {
-                self::cluster::run(&action, &pool, &cli.state_dir, &cli.repos_path).await?;
+                crate::backend::cli::cluster::run(&action, &pool, &cli.state_dir, &cli.repos_path)
+                    .await?;
             }
 
             Commands::Repo { action } => match action {
@@ -388,7 +391,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                     description,
                     private,
                 } => {
-                    self::create_repo_cmd(
+                    crate::backend::cli::create_repo_cmd(
                         &pool,
                         &cli.state_dir,
                         &cli.repos_path,
@@ -400,11 +403,17 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                     .await?;
                 }
                 RepoAction::List { owner } => {
-                    self::list_repos_cmd(&pool, &owner).await?;
+                    crate::backend::cli::list_repos_cmd(&pool, &owner).await?;
                 }
                 RepoAction::Info { owner, name } => {
-                    self::repo_info_cmd(&pool, &cli.state_dir, &cli.repos_path, &owner, &name)
-                        .await?;
+                    crate::backend::cli::repo_info_cmd(
+                        &pool,
+                        &cli.state_dir,
+                        &cli.repos_path,
+                        &owner,
+                        &name,
+                    )
+                    .await?;
                 }
                 RepoAction::Verify { repair } => {
                     let problems = crate::backend::backups::verify(&pool, repair).await?;
@@ -421,7 +430,8 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                     username,
                     level,
                 } => {
-                    self::grant_access_cmd(&pool, &owner, &repo, &username, &level).await?;
+                    crate::backend::cli::grant_access_cmd(&pool, &owner, &repo, &username, &level)
+                        .await?;
                 }
             },
         }

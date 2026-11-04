@@ -1,5 +1,5 @@
 //! A user's public activity, filtered to the repositories the viewer may read.
-use crate::backend::db;
+
 use crate::backend::db::activity::ActivityRow;
 use crate::backend::db::activity::ActivityViewer;
 use crate::backend::db::activity::SCAN_ROWS;
@@ -35,8 +35,10 @@ pub async fn profile_activity(
     let mut items = Vec::with_capacity(wanted);
     let mut offset = 0i64;
     'scan: while offset < MAX_SCAN_ROWS {
-        let batch =
-            db::activity::list_user_activity(pool, user_id, viewer, SCAN_ROWS, offset).await?;
+        let batch = crate::backend::db::activity::list_user_activity(
+            pool, user_id, viewer, SCAN_ROWS, offset,
+        )
+        .await?;
         let exhausted = batch.scanned < SCAN_ROWS as usize;
         for row in batch.rows {
             if visible_before >= skip {

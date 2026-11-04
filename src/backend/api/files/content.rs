@@ -1,8 +1,8 @@
-use crate::backend::{
-    api::http::session::{extract_session_id, get_current_user},
-    app::AppState,
-    files::{self, LocalUploadError},
-};
+use crate::backend::api::http::session::extract_session_id;
+use crate::backend::api::http::session::get_current_user;
+use crate::backend::app::AppState;
+
+use crate::backend::files::LocalUploadError;
 use axum::{
     body::Body,
     extract::{Path, State},
@@ -18,7 +18,8 @@ use std::{
 use tokio::io::{AsyncRead, ReadBuf};
 use uuid::Uuid;
 
-use crate::backend::api::http::error::{ApiError, ApiFailure};
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::ApiFailure;
 
 /// Receives upload bytes when files are stored locally (cookie-authenticated).
 pub async fn put_upload_content(
@@ -55,7 +56,7 @@ pub async fn put_upload_content(
         stream: Box::pin(body.into_data_stream()),
         chunk: Bytes::new(),
     };
-    files::put_local_upload(
+    crate::backend::files::put_local_upload(
         &state.pool,
         &state.storage,
         (user.id, extract_session_id(&headers).unwrap_or_default()),

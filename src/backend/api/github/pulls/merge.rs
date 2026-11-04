@@ -1,9 +1,10 @@
-use super::{repository, target, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db,
-    repositories::{access, pull_requests, store::MergeMethod},
-};
+use crate::backend::api::github::pulls::repository;
+use crate::backend::api::github::pulls::target;
+use crate::backend::api::github::pulls::Error;
+use crate::backend::api::github::pulls::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::store::MergeMethod;
 use axum::{
     body::Bytes,
     extract::{Path, State},
@@ -23,8 +24,8 @@ struct Merge {
     commit_message: Option<String>,
 }
 
-fn operation_error(error: pull_requests::OperationError) -> Error {
-    use pull_requests::OperationError;
+fn operation_error(error: crate::backend::repositories::pull_requests::OperationError) -> Error {
+    use crate::backend::repositories::pull_requests::OperationError;
     match error {
         OperationError::Conflict {
             code: "revision_conflict",
@@ -39,7 +40,7 @@ fn operation_error(error: pull_requests::OperationError) -> Error {
             code: "branch_protection",
             message,
         } => Error::new(StatusCode::METHOD_NOT_ALLOWED, message),
-        error => super::mutations::operation_error(error),
+        error => crate::backend::api::github::pulls::mutations::operation_error(error),
     }
 }
 
@@ -50,15 +51,15 @@ async fn merge_pull(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     // The merge moves the base branch, so the credential needs contents write as well as the
     // pull request grant the route asked for.
     auth.repository_scope(&state.pool, repo.id, "contents", true)
         .await
-        .map_err(super::super::auth::scope_error)?;
+        .map_err(crate::backend::api::github::auth::scope_error)?;
     let authority = auth.database_actor();
     let actor = auth.user;
-    if !access::can_write(&state.pool, &actor, &repo)
+    if !crate::backend::repositories::access::can_write(&state.pool, &actor, &repo)
         .await
         .map_err(Error::unavailable)?
     {
@@ -67,13 +68,13 @@ async fn merge_pull(
     let input: Merge = if body.is_empty() {
         Merge::default()
     } else {
-        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?
+        serde_json::from_slice(&body).map_err(crate::backend::api::github::json_parse_error)?
     };
     let method = MergeMethod::parse(input.merge_method.as_deref().unwrap_or("merge"))
         .ok_or_else(|| Error::invalid("Invalid merge method"))?;
     let (_, mut pull) = target(&state, &headers, &owner, &name, number).await?;
     if pull.state == "open" {
-        pull_requests::refresh_open_pull_request(
+        crate::backend::repositories::pull_requests::refresh_open_pull_request(
             &state.pool,
             &repo,
             &state.ci_runs,
@@ -83,10 +84,13 @@ async fn merge_pull(
         )
         .await
         .map_err(Error::unavailable)?;
-        pull = db::pull_requests::records::get_pull_request_by_id(&state.pool, pull.id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+            &state.pool,
+            pull.id,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
     }
     if input
         .sha
@@ -106,11 +110,11 @@ async fn merge_pull(
             json!({"sha": sha, "merged": true, "message": "Pull request is already merged"}),
         ));
     }
-    let result = pull_requests::merge::merge_pull_request(
+    let result = crate::backend::repositories::pull_requests::merge::merge_pull_request(
         &state,
         authority,
         (owner, name, number),
-        pull_requests::merge::MergeRequest {
+        crate::backend::repositories::pull_requests::merge::MergeRequest {
             expected_head: pull.head_sha,
             expected_base: pull.base_sha,
             expected_base_branch: Some(pull.base_branch),
@@ -140,13 +144,14 @@ async fn update_branch(
     body: Bytes,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = viewer.ok_or_else(super::super::auth::required)?;
+    let auth = viewer.ok_or_else(crate::backend::api::github::auth::required)?;
     // The update moves the head branch, which may live in a fork, so the credential needs
     // contents write on the head repository.
-    let pull = db::pull_requests::records::get_pull_request(&state.pool, repo.id, number)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let pull =
+        crate::backend::db::pull_requests::records::get_pull_request(&state.pool, repo.id, number)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     auth.repository_scope(
         &state.pool,
         pull.head_repo_id
@@ -155,16 +160,16 @@ async fn update_branch(
         true,
     )
     .await
-    .map_err(super::super::auth::scope_error)?;
+    .map_err(crate::backend::api::github::auth::scope_error)?;
     let token = auth.token.id;
     let actor = auth.user;
     let input: Option<UpdateBranch> = if body.is_empty() {
         None
     } else {
-        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?
+        serde_json::from_slice(&body).map_err(crate::backend::api::github::json_parse_error)?
     };
     let input = input.unwrap_or_default();
-    pull_requests::update_branch::update_branch(
+    crate::backend::repositories::pull_requests::update_branch::update_branch(
         &state.pool,
         &state.ci_runs,
         actor.id,
@@ -174,11 +179,11 @@ async fn update_branch(
         Some(token),
     )
     .await
-    .map_err(super::mutations::operation_error)?;
+    .map_err(crate::backend::api::github::pulls::mutations::operation_error)?;
     Ok((
         StatusCode::ACCEPTED,
         Json(
-            json!({"message":"Pull request branch is up to date.","url":format!("{}/pulls/{number}",super::repo_url(&owner,&name))}),
+            json!({"message":"Pull request branch is up to date.","url":format!("{}/pulls/{number}",crate::backend::api::github::pulls::repo_url(&owner,&name))}),
         ),
     ))
 }

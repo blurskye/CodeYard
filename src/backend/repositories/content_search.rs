@@ -1,12 +1,15 @@
 //! Live default-branch search using the bounded native Git/RPC operations. No independent index.
-use super::store::{repo_store, BlobRange, CommitFilter, CommitInfo, RepoStore};
 use crate::backend::cluster::NodeContext;
-use crate::backend::db;
-use crate::backend::db::catalog_search;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::BlobRange;
+use crate::backend::repositories::store::CommitFilter;
+use crate::backend::repositories::store::CommitInfo;
+use crate::backend::repositories::store::RepoStore;
+
 use crate::backend::db::catalog_search::Kind;
 use crate::backend::db::catalog_search::Options;
 use crate::backend::db::catalog_search::Search;
-use crate::backend::db::discussion_search;
+
 use crate::backend::db::discussion_search::Expr;
 use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDate, Utc};
@@ -68,9 +71,9 @@ pub struct Query {
 }
 impl Query {
     pub fn parse(kind: KindOfSearch, text: &str) -> std::result::Result<Self, &'static str> {
-        let mut expr = discussion_search::expression(text)?;
+        let mut expr = crate::backend::db::discussion_search::expression(text)?;
         let mut fields = Vec::new();
-        catalog_search::extract_fields(&mut expr, &mut fields)?;
+        crate::backend::db::catalog_search::extract_fields(&mut expr, &mut fields)?;
         if kind == KindOfSearch::Commits && !fields.is_empty() {
             return Err("Unsupported commit search field");
         }
@@ -85,7 +88,7 @@ impl Query {
             Search::from_expression(Kind::Repositories, scope.unwrap_or(Expr::And(Vec::new())))?
                 .with_default_fork_filter();
         let mut words = Vec::new();
-        discussion_search::positive_text(&expr, false, &mut words);
+        crate::backend::db::discussion_search::positive_text(&expr, false, &mut words);
         let words: HashSet<_> = words.into_iter().map(str::to_lowercase).collect();
         let highlights = words
             .into_iter()
@@ -121,8 +124,8 @@ impl Query {
     }
     pub fn needs_viewer(&self) -> bool {
         self.scope.needs_viewer()
-            || catalog_search::has(&self.expr, "author", Some("@me"))
-            || catalog_search::has(&self.expr, "committer", Some("@me"))
+            || crate::backend::db::catalog_search::has(&self.expr, "author", Some("@me"))
+            || crate::backend::db::catalog_search::has(&self.expr, "committer", Some("@me"))
     }
     fn validate(&self, expr: &Expr) -> std::result::Result<(), &'static str> {
         match expr {
@@ -335,7 +338,11 @@ impl Scan<'_> {
         }
         let paths = if self.query.file && !self.query.path && requires_text(&self.query.expr) {
             let mut positive = Vec::new();
-            discussion_search::positive_text(&self.query.expr, false, &mut positive);
+            crate::backend::db::discussion_search::positive_text(
+                &self.query.expr,
+                false,
+                &mut positive,
+            );
             let mut paths = BTreeSet::new();
             let mut bytes = 0usize;
             for word in positive {
@@ -413,7 +420,11 @@ impl Scan<'_> {
             match evaluate(&self.query.expr, &|key, value| context.term(key, value)) {
                 Some(true) => {
                     let mut positive = Vec::new();
-                    discussion_search::positive_text(&self.query.expr, false, &mut positive);
+                    crate::backend::db::discussion_search::positive_text(
+                        &self.query.expr,
+                        false,
+                        &mut positive,
+                    );
                     let score = positive
                         .into_iter()
                         .filter(|word| context.term("text", word) == Some(true))
@@ -443,8 +454,9 @@ impl Scan<'_> {
         scope: &Arc<Scope>,
         tip: &CommitInfo,
     ) -> Result<()> {
-        let needs_people = catalog_search::has(&self.query.expr, "author", None)
-            || catalog_search::has(&self.query.expr, "committer", None);
+        let needs_people =
+            crate::backend::db::catalog_search::has(&self.query.expr, "author", None)
+                || crate::backend::db::catalog_search::has(&self.query.expr, "committer", None);
         let mut offset = 0usize;
         while offset < HISTORY && !self.full() {
             let Some(commits) = until(
@@ -469,7 +481,7 @@ impl Scan<'_> {
                     .iter()
                     .flat_map(|c| [c.author_email.clone(), c.committer_email.clone()])
                     .collect::<Vec<_>>();
-                super::reads::commit_authors(pool, &emails).await?
+                crate::backend::repositories::reads::commit_authors(pool, &emails).await?
             } else {
                 HashMap::new()
             };
@@ -493,7 +505,11 @@ impl Scan<'_> {
                 if evaluate(&self.query.expr, &|key, value| context.term(key, value)) == Some(true)
                 {
                     let mut positive = Vec::new();
-                    discussion_search::positive_text(&self.query.expr, false, &mut positive);
+                    crate::backend::db::discussion_search::positive_text(
+                        &self.query.expr,
+                        false,
+                        &mut positive,
+                    );
                     let score = positive
                         .into_iter()
                         .filter(|word| context.term("text", word) == Some(true))
@@ -702,7 +718,7 @@ pub async fn search(
 ) -> Result<Results> {
     let deadline = Instant::now() + BUDGET;
     let (scopes, mut records, owners) = timeout_at(deadline, async {
-        let scopes = catalog_search::search(
+        let scopes = crate::backend::db::catalog_search::search(
             pool,
             viewer,
             &query.scope,
@@ -720,12 +736,14 @@ pub async fn search(
             .iter()
             .map(|hit| hit.key.parse::<i64>())
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let records = db::repositories::records::get_repositories_by_ids(pool, &ids)
-            .await?
-            .into_iter()
-            .map(|r| (r.id, r))
-            .collect::<HashMap<_, _>>();
-        let owners = db::repositories::records::repository_owner_names(pool, &ids).await?;
+        let records =
+            crate::backend::db::repositories::records::get_repositories_by_ids(pool, &ids)
+                .await?
+                .into_iter()
+                .map(|r| (r.id, r))
+                .collect::<HashMap<_, _>>();
+        let owners =
+            crate::backend::db::repositories::records::repository_owner_names(pool, &ids).await?;
         Ok::<_, anyhow::Error>((scopes, records, owners))
     })
     .await
@@ -870,7 +888,7 @@ mod tests {
     use super::*;
     #[test]
     fn incomplete_negative_terms_never_become_false_positive_matches() {
-        let expr = discussion_search::expression("needle -secret").unwrap();
+        let expr = crate::backend::db::discussion_search::expression("needle -secret").unwrap();
         assert_eq!(
             evaluate(&expr, &|k, v| if k == "text" && v == "needle" {
                 Some(true)

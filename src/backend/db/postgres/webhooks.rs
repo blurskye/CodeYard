@@ -1,9 +1,12 @@
 use crate::backend::db::organizations::OrganizationOutcome;
 use crate::backend::db::postgres::discussions::lock_policy_authority;
 use crate::backend::db::postgres::organizations::authority::authority;
-use crate::backend::db::webhooks::{
-    DeliveryWindow, HookOwner, NewDelivery, SealedSecret, WebhookFields, WebhookPatch,
-};
+use crate::backend::db::webhooks::DeliveryWindow;
+use crate::backend::db::webhooks::HookOwner;
+use crate::backend::db::webhooks::NewDelivery;
+use crate::backend::db::webhooks::SealedSecret;
+use crate::backend::db::webhooks::WebhookFields;
+use crate::backend::db::webhooks::WebhookPatch;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Webhook;
@@ -136,7 +139,10 @@ async fn may_manage_hooks(
     write: bool,
 ) -> Result<bool> {
     Ok(account_manages_hooks(tx, owner, actor_id).await?
-        && super::users::transitions::credential_live(tx, actor_id, credential, write).await?)
+        && crate::backend::db::postgres::users::transitions::credential_live(
+            tx, actor_id, credential, write,
+        )
+        .await?)
 }
 
 /// The account half of `may_manage_hooks`, for a queued send that kept only its actor.

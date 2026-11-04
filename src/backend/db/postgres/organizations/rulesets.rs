@@ -1,4 +1,4 @@
-use super::authority::*;
+use crate::backend::db::postgres::organizations::authority::*;
 mod access;
 mod suites;
 use crate::backend::db::organizations::OrganizationOutcome;

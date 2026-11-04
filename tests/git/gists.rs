@@ -7,8 +7,7 @@ use crate::support::{
     github_spec::assert_github_schema,
     native_database as native,
 };
-use codeyard::backend::cluster::replicas;
-use codeyard::backend::db;
+
 use codeyard::backend::db::users::accounts::AccountCredential;
 use codeyard_model::repositories::DeployKeyError;
 use reqwest::{Client, Method, StatusCode};
@@ -119,7 +118,7 @@ async fn current_copies(database: &native::PostgresDatabase, repositories: &[i64
                         .fetch_one(&database.raw)
                         .await
                         .unwrap();
-                current &= db::cluster::list_replicas(&database.pool, *id)
+                current &= codeyard::backend::db::cluster::list_replicas(&database.pool, *id)
                     .await
                     .unwrap()
                     .iter()
@@ -141,13 +140,14 @@ async fn gists_http_ssh_remote_and_promotion() {
     codeyard::backend::db::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard::backend::db::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
-    let alice = db::users::accounts::create_user(&database.pool, "gist_alice", None)
-        .await
-        .unwrap();
-    let bob = db::users::accounts::create_user(&database.pool, "gist_bob", None)
+    let alice =
+        codeyard::backend::db::users::accounts::create_user(&database.pool, "gist_alice", None)
+            .await
+            .unwrap();
+    let bob = codeyard::backend::db::users::accounts::create_user(&database.pool, "gist_bob", None)
         .await
         .unwrap();
     sqlx::query("UPDATE users SET is_admin=TRUE WHERE id=$1")
@@ -157,9 +157,14 @@ async fn gists_http_ssh_remote_and_promotion() {
         .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (key, public) = keypair(root.path(), "alice-key").await;
-    let account_key = db::users::ssh_keys::add_ssh_key(&database.pool, alice.id, "gists", &public)
-        .await
-        .unwrap();
+    let account_key = codeyard::backend::db::users::ssh_keys::add_ssh_key(
+        &database.pool,
+        alice.id,
+        "gists",
+        &public,
+    )
+    .await
+    .unwrap();
     let (deploy, deploy_public) = keypair(root.path(), "deploy-key").await;
     let token = write_token(&database.pool, alice.id).await;
     let bob_token = write_token(&database.pool, bob.id).await;
@@ -192,11 +197,17 @@ async fn gists_http_ssh_remote_and_promotion() {
     .await;
     let id = created["id"].as_str().unwrap();
     let path = format!("/api/v3/gists/{id}");
-    let metadata = db::gists::get(&database.pool, id).await.unwrap().unwrap();
-    let repo = db::repositories::records::get_repository_by_id(&database.pool, metadata.repo_id)
+    let metadata = codeyard::backend::db::gists::get(&database.pool, id)
         .await
         .unwrap()
         .unwrap();
+    let repo = codeyard::backend::db::repositories::records::get_repository_by_id(
+        &database.pool,
+        metadata.repo_id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(repo.storage_node_id, Some(storage.node_id));
     let uuid = codeyard::backend::cluster::rpc::repository_uuid(&repo.disk_path).unwrap();
     let disk = storage_root.join("repos").join(format!("{uuid}.git"));
@@ -367,12 +378,14 @@ async fn gists_http_ssh_remote_and_promotion() {
         assert_eq!(current["updated_at"], stable_updated);
     }
     // Gists do not expose ordinary deploy-key administration; imported keys cannot gain access.
-    let sessions = db::users::sessions::list_user_sessions(&database.pool, alice.id)
-        .await
-        .unwrap();
+    let sessions =
+        codeyard::backend::db::users::sessions::list_user_sessions(&database.pool, alice.id)
+            .await
+            .unwrap();
     let session = &sessions[0].id;
-    let fingerprint = db::users::ssh_keys::calculate_fingerprint(&deploy_public).unwrap();
-    let deployment = db::deploy_keys::NewDeployKey {
+    let fingerprint =
+        codeyard::backend::db::users::ssh_keys::calculate_fingerprint(&deploy_public).unwrap();
+    let deployment = codeyard::backend::db::deploy_keys::NewDeployKey {
         repo_id: repo.id,
         title: "legacy".into(),
         fingerprint: fingerprint.clone(),
@@ -380,10 +393,11 @@ async fn gists_http_ssh_remote_and_promotion() {
         can_write: true,
         created_by_id: alice.id,
     };
-    let refusal = db::deploy_keys::insert_deploy_key(&database.pool, &deployment, session)
-        .await
-        .err()
-        .unwrap();
+    let refusal =
+        codeyard::backend::db::deploy_keys::insert_deploy_key(&database.pool, &deployment, session)
+            .await
+            .err()
+            .unwrap();
     assert!(matches!(
         refusal.downcast_ref::<DeployKeyError>(),
         Some(DeployKeyError::Denied)
@@ -408,7 +422,7 @@ async fn gists_http_ssh_remote_and_promotion() {
     )
     .await;
     let fork_id = fork["id"].as_str().unwrap();
-    let fork_meta = db::gists::get(&database.pool, fork_id)
+    let fork_meta = codeyard::backend::db::gists::get(&database.pool, fork_id)
         .await
         .unwrap()
         .unwrap();
@@ -421,17 +435,17 @@ async fn gists_http_ssh_remote_and_promotion() {
         alice.id,
     )
     .await;
-    db::cluster::set_replicas(&database.pool, "2")
+    codeyard::backend::db::cluster::set_replicas(&database.pool, "2")
         .await
         .unwrap();
     current_copies(&database, &[repo.id, fork_meta.repo_id], copy.node_id).await;
     // Simulate a crash after exact Git publication but before final metadata acknowledgement.
     let sha = detached(&disk, stable);
-    db::gists::admit(
+    codeyard::backend::db::gists::admit(
         &database.pool,
         alice.id,
         &AccountCredential::Token(
-            db::users::tokens::find_token(
+            codeyard::backend::db::users::tokens::find_token(
                 &database.pool,
                 &hex::encode(Sha256::digest(token.as_bytes())),
             )
@@ -441,7 +455,7 @@ async fn gists_http_ssh_remote_and_promotion() {
             .id,
             &hex::encode(Sha256::digest(token.as_bytes())),
         ),
-        &db::gists::Admission {
+        &codeyard::backend::db::gists::Admission {
             repo_id: repo.id,
             disk_path: &repo.disk_path,
             storage_node_id: Some(Some(storage.node_id)),
@@ -464,23 +478,30 @@ async fn gists_http_ssh_remote_and_promotion() {
         .unwrap();
     // The fixture cannot hold the child process's mutation guard: advance the version only
     // after publishing so its copy loop cannot advertise the old tree at the new version.
-    assert!(
-        db::cluster::bump_write_version(&database.pool, repo.id, Some(Some(storage.node_id)))
-            .await
-            .unwrap()
-    );
+    assert!(codeyard::backend::db::cluster::bump_write_version(
+        &database.pool,
+        repo.id,
+        Some(Some(storage.node_id))
+    )
+    .await
+    .unwrap());
     current_copies(&database, &[repo.id, fork_meta.repo_id], copy.node_id).await;
     assert_eq!(
-        db::gists::pending(&database.pool, repo.id)
+        codeyard::backend::db::gists::pending(&database.pool, repo.id)
             .await
             .unwrap()
             .unwrap()
             .storage_node_id,
         Some(storage.node_id)
     );
-    let moved = replicas::promote(&database.pool, repo.id, Some(copy.node_id), false)
-        .await
-        .unwrap();
+    let moved = codeyard::backend::cluster::replicas::promote(
+        &database.pool,
+        repo.id,
+        Some(copy.node_id),
+        false,
+    )
+    .await
+    .unwrap();
     assert_eq!(moved.len(), 2);
     let recovered = api(
         &web,
@@ -498,10 +519,12 @@ async fn gists_http_ssh_remote_and_promotion() {
         recovered["files"]["recovered.txt"]["content"],
         "published before promotion\n"
     );
-    assert!(db::gists::pending(&database.pool, repo.id)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        codeyard::backend::db::gists::pending(&database.pool, repo.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
     api(
         &web,
         Some(&token),
@@ -512,14 +535,14 @@ async fn gists_http_ssh_remote_and_promotion() {
         StatusCode::OK,
     )
     .await;
-    db::users::ssh_keys::delete_ssh_key(&database.pool, account_key.id)
+    codeyard::backend::db::users::ssh_keys::delete_ssh_key(&database.pool, account_key.id)
         .await
         .unwrap();
     assert!(!git(root.path(), &["ls-remote", &ssh], None, &key)
         .await
         .status
         .success());
-    let token_id = db::users::tokens::find_token(
+    let token_id = codeyard::backend::db::users::tokens::find_token(
         &database.pool,
         &hex::encode(Sha256::digest(token.as_bytes())),
     )
@@ -527,7 +550,7 @@ async fn gists_http_ssh_remote_and_promotion() {
     .unwrap()
     .unwrap()
     .id;
-    db::users::tokens::delete_token(&database.pool, alice.id, session, token_id)
+    codeyard::backend::db::users::tokens::delete_token(&database.pool, alice.id, session, token_id)
         .await
         .unwrap();
     assert!(!git(&work, &["push", "origin", "main"], Some(&token), &key)

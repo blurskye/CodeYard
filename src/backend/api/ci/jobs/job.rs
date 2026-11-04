@@ -1,5 +1,7 @@
-use super::super::responses::{map_job_info, JobInfo};
-use super::{authorized_run, CiReadError};
+use crate::backend::api::ci::jobs::authorized_run;
+use crate::backend::api::ci::jobs::CiReadError;
+use crate::backend::api::ci::responses::map_job_info;
+use crate::backend::api::ci::responses::JobInfo;
 use crate::backend::app::AppState;
 use axum::{
     extract::{Path, State},

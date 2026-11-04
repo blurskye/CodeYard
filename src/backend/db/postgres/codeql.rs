@@ -1,4 +1,6 @@
-use crate::backend::db::{code_scanning::Refusal, codeql::*, credentials::Actor};
+use crate::backend::db::code_scanning::Refusal;
+use crate::backend::db::codeql::*;
+use crate::backend::db::credentials::Actor;
 use anyhow::{ensure, Result};
 use sqlx::PgPool;
 
@@ -9,19 +11,27 @@ async fn authorized(
     write: bool,
 ) -> Result<()> {
     let allowed = if write {
-        super::discussions::lock_write_authority(tx, actor.user_id, repo).await?
+        crate::backend::db::postgres::discussions::lock_write_authority(tx, actor.user_id, repo)
+            .await?
     } else {
-        super::repositories::access::lock_readable_repository_in_transaction(
+        crate::backend::db::postgres::repositories::access::lock_readable_repository_in_transaction(
             tx,
             actor.user_id,
             repo,
-            super::repositories::access::RepositoryRowLock::Shared,
+            crate::backend::db::postgres::repositories::access::RepositoryRowLock::Shared,
         )
         .await?
     };
     ensure!(
         allowed
-            && super::credentials::repository(tx, actor, repo, "security_events", write).await?,
+            && crate::backend::db::postgres::credentials::repository(
+                tx,
+                actor,
+                repo,
+                "security_events",
+                write
+            )
+            .await?,
         Refusal::Denied
     );
     Ok(())

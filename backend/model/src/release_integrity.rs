@@ -1,7 +1,7 @@
 //! A signed release statement binds the tag, commit and asset digests, not editable notes.
-use crate::backend::cluster::NodeKey;
 use anyhow::{ensure, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
+use codeyard_support::node_identity::NodeKey;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, str::FromStr};
 const PAYLOAD_TYPE: &str = "application/vnd.in-toto+json";
@@ -129,7 +129,7 @@ impl Statement {
             previous = Some(&asset.name);
             ensure!(
                 asset.size > 0
-                    && asset.size <= super::MAX_ASSET_BYTES as i64
+                    && asset.size <= crate::release_integrity::MAX_ASSET_BYTES as i64
                     && hex_digest(&asset.sha256, 64),
                 "Invalid release asset digest"
             );
@@ -257,3 +257,4 @@ mod tests {
         assert!(tampered.verify(&key.public_hex()).is_err());
     }
 }
+pub const MAX_ASSET_BYTES: usize = codeyard_support::object_limits::MAX_OBJECT_BYTES as usize;

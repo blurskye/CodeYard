@@ -1,5 +1,5 @@
 //! Owner-inherited issue types and organization custom fields.
-use super::credentials::Actor;
+use crate::backend::db::credentials::Actor;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::native_operation;
@@ -227,7 +227,7 @@ impl Attribute {
             Some("date") => {
                 let text = value.as_str().ok_or_else(invalid)?;
                 anyhow::ensure!(
-                    crate::backend::issues::calendar_day(text).is_some(),
+                    codeyard_model::issue_input::calendar_day(text).is_some(),
                     Refusal::Invalid
                 );
                 value.clone()

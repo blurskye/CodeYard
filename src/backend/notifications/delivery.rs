@@ -1,5 +1,5 @@
-use super::NotificationEvent;
-use crate::backend::db;
+use crate::backend::notifications::NotificationEvent;
+
 #[derive(Debug, thiserror::Error)]
 pub enum DeliveryError {
     #[error("Notification session no longer authorizes delivery")]
@@ -28,11 +28,12 @@ pub async fn current_event(
         } => Some(*notification_id),
         NotificationEvent::ReadAll { .. } | NotificationEvent::UnreadCount { .. } => None,
     };
-    let projection =
-        db::notifications::records::notification_delivery(pool, session_id, user_id, id)
-            .await
-            .map_err(|_| DeliveryError::Unavailable)?
-            .ok_or(DeliveryError::Denied)?;
+    let projection = crate::backend::db::notifications::records::notification_delivery(
+        pool, session_id, user_id, id,
+    )
+    .await
+    .map_err(|_| DeliveryError::Unavailable)?
+    .ok_or(DeliveryError::Denied)?;
     let unread_count = projection.unread_count;
     Ok(match event {
         NotificationEvent::Created { .. } => {

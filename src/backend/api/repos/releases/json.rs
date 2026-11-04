@@ -1,16 +1,20 @@
 //! The release JSON API, shaped like GitHub's `/repos/{owner}/{repo}/releases`. Writers create,
 //! change and delete releases; drafts are shown only to writers.
-use super::pages::refused;
-use crate::backend::api::http::config::public_origin;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::http::session::{get_current_user, get_optional_user};
+use crate::backend::api::http::session::get_current_user;
+use crate::backend::api::http::session::get_optional_user;
 use crate::backend::api::repos::access::find_repository;
-use crate::backend::api::repos::paging::{json_page, PageQuery};
+use crate::backend::api::repos::paging::json_page;
+use crate::backend::api::repos::paging::PageQuery;
+use crate::backend::api::repos::releases::pages::refused;
 use crate::backend::app::AppState;
+use codeyard_model::http_config::public_origin;
 
-use crate::backend::repositories::releases::{
-    self as releases, ReleaseChanges, ReleaseError, ReleaseFields, ReleaseInput,
-};
+use crate::backend::repositories::releases as releases;
+use crate::backend::repositories::releases::ReleaseChanges;
+use crate::backend::repositories::releases::ReleaseError;
+use crate::backend::repositories::releases::ReleaseFields;
+use crate::backend::repositories::releases::ReleaseInput;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
@@ -181,7 +185,7 @@ pub(super) async fn list(
     let listing = releases::list(
         &state.pool,
         viewer,
-        super::super::access::find_repository(&state.pool, &owner, &name)
+        crate::backend::api::repos::access::find_repository(&state.pool, &owner, &name)
             .await?
             .id,
         page,
@@ -214,7 +218,7 @@ pub(super) async fn get_one(
     let found = releases::detail_by_id(
         &state.pool,
         viewer,
-        super::super::access::find_repository(&state.pool, &owner, &name)
+        crate::backend::api::repos::access::find_repository(&state.pool, &owner, &name)
             .await?
             .id,
         id,
@@ -240,7 +244,7 @@ pub(super) async fn get_by_tag(
     let found = releases::detail_by_tag(
         &state.pool,
         viewer,
-        super::super::access::find_repository(&state.pool, &owner, &name)
+        crate::backend::api::repos::access::find_repository(&state.pool, &owner, &name)
             .await?
             .id,
         &tag,
@@ -327,7 +331,7 @@ pub(super) async fn update(
         let current = releases::detail_by_id(
             &state.pool,
             Some(actor.id),
-            super::super::access::find_repository(&state.pool, &owner, &name)
+            crate::backend::api::repos::access::find_repository(&state.pool, &owner, &name)
                 .await?
                 .id,
             id,

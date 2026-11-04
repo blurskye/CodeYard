@@ -7,7 +7,7 @@ use axum::{
     Router,
 };
 use base64::Engine;
-use codeyard::backend::db;
+
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -89,7 +89,7 @@ impl Client {
     pub async fn login(router: &Router, pool: &codeyard_db_core::DbPool, user: i64) -> Self {
         let session = native::token();
         let csrf = native::token();
-        db::users::sessions::create_session(
+        codeyard::backend::db::users::sessions::create_session(
             pool,
             &session,
             user,
@@ -100,9 +100,15 @@ impl Client {
         .await
         .unwrap();
         assert_eq!(
-            db::users::sessions::get_or_create_csrf_token(pool, &session, Some(user), &csrf, 3600)
-                .await
-                .unwrap(),
+            codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+                pool,
+                &session,
+                Some(user),
+                &csrf,
+                3600
+            )
+            .await
+            .unwrap(),
             Some(csrf.clone())
         );
         Self {

@@ -1,8 +1,9 @@
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
-use crate::backend::api::repos::access::{check_repo_admin_access, find_repository};
+use crate::backend::api::repos::access::check_repo_admin_access;
+use crate::backend::api::repos::access::find_repository;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
@@ -31,55 +32,57 @@ fn secrets_unavailable() -> (StatusCode, Json<ApiError>) {
     )
 }
 
-pub(crate) fn secret_error(error: db::secrets::SecretsError) -> (StatusCode, Json<ApiError>) {
+pub(crate) fn secret_error(
+    error: crate::backend::db::secrets::SecretsError,
+) -> (StatusCode, Json<ApiError>) {
     match error {
-        db::secrets::SecretsError::Denied => (
+        crate::backend::db::secrets::SecretsError::Denied => (
             StatusCode::FORBIDDEN,
             Json(ApiError::new(
                 "forbidden",
                 "Repository secret access denied",
             )),
         ),
-        db::secrets::SecretsError::NotFound => (
+        crate::backend::db::secrets::SecretsError::NotFound => (
             StatusCode::NOT_FOUND,
             Json(ApiError::new("not_found", "Secret not found")),
         ),
-        db::secrets::SecretsError::InvalidName => (
+        crate::backend::db::secrets::SecretsError::InvalidName => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
                 "Secret names must be 1 to 255 ASCII letters, digits, or underscores and start with a letter or underscore",
             )),
         ),
-        db::secrets::SecretsError::ReservedName => (
+        crate::backend::db::secrets::SecretsError::ReservedName => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
                 "Secret names beginning with GITHUB_ are reserved",
             )),
         ),
-        db::secrets::SecretsError::ValueContainsNul => (
+        crate::backend::db::secrets::SecretsError::ValueContainsNul => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
                 "Secret values cannot contain NUL",
             )),
         ),
-        db::secrets::SecretsError::ValueTooLarge => (
+        crate::backend::db::secrets::SecretsError::ValueTooLarge => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
                 "Secret values cannot exceed 48 KiB",
             )),
         ),
-        db::secrets::SecretsError::TooManySecrets => (
+        crate::backend::db::secrets::SecretsError::TooManySecrets => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
                 "A repository can have at most 100 secrets",
             )),
         ),
-        db::secrets::SecretsError::TotalTooLarge => (
+        crate::backend::db::secrets::SecretsError::TotalTooLarge => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
@@ -104,14 +107,14 @@ pub async fn create_or_update_secret(
         .as_ref()
         .ok_or_else(secrets_unavailable)?;
 
-    db::secrets::create_or_update_secret(
+    crate::backend::db::secrets::create_or_update_secret(
         &state.pool,
         encryptor,
         repository.id,
         &name,
         &body.value,
         Some(user.id),
-        &db::users::accounts::AccountCredential::Session(
+        &crate::backend::db::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         ),
     )
@@ -129,7 +132,7 @@ pub async fn list_secrets(
     let user = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
-    let secrets = db::secrets::list_secrets(&state.pool, user.id, repository.id)
+    let secrets = crate::backend::db::secrets::list_secrets(&state.pool, user.id, repository.id)
         .await
         .map_err(secret_error)?;
 
@@ -153,12 +156,12 @@ pub async fn delete_secret(
     let user = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
-    let deleted = db::secrets::delete_secret(
+    let deleted = crate::backend::db::secrets::delete_secret(
         &state.pool,
         user.id,
         repository.id,
         &name,
-        &db::users::accounts::AccountCredential::Session(
+        &crate::backend::db::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         ),
     )
@@ -186,8 +189,11 @@ pub(crate) async fn form(
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to manage secrets.");
     };
     let (kind, tab) = match field(form, "secret_kind").as_str() {
-        "" | "actions" => (db::secrets::SecretKind::Actions, "secrets"),
-        "dependabot" => (db::secrets::SecretKind::Dependabot, "dependabot-secrets"),
+        "" | "actions" => (crate::backend::db::secrets::SecretKind::Actions, "secrets"),
+        "dependabot" => (
+            crate::backend::db::secrets::SecretKind::Dependabot,
+            "dependabot-secrets",
+        ),
         _ => return ctx.error(StatusCode::BAD_REQUEST, "Invalid secret kind."),
     };
     // Saving stores the name uppercase. Deleting uses the exact stored name the form lists, so
@@ -195,10 +201,10 @@ pub(crate) async fn form(
     let name = field(form, "name");
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let credential = db::users::accounts::AccountCredential::Session(&session);
+    let credential = crate::backend::db::users::accounts::AccountCredential::Session(&session);
     let result = if action == "secret-save" {
         match ctx.state.secret_encryptor.as_deref() {
-            Some(encryptor) => db::secrets::create_or_update_secret_for(
+            Some(encryptor) => crate::backend::db::secrets::create_or_update_secret_for(
                 &ctx.state.pool,
                 encryptor,
                 (loaded.repository.id, kind),
@@ -213,7 +219,7 @@ pub(crate) async fn form(
             None => Err(secrets_unavailable()),
         }
     } else {
-        db::secrets::delete_secret_for(
+        crate::backend::db::secrets::delete_secret_for(
             &ctx.state.pool,
             kind,
             actor.id,
@@ -227,7 +233,9 @@ pub(crate) async fn form(
             if deleted {
                 Ok(())
             } else {
-                Err(secret_error(db::secrets::SecretsError::NotFound))
+                Err(secret_error(
+                    crate::backend::db::secrets::SecretsError::NotFound,
+                ))
             }
         })
     };
@@ -243,32 +251,32 @@ mod tests {
 
     #[test]
     fn secret_errors_are_typed_and_sanitized() {
-        let (status, Json(error)) = secret_error(db::secrets::SecretsError::Denied);
+        let (status, Json(error)) = secret_error(crate::backend::db::secrets::SecretsError::Denied);
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(error.error, "forbidden");
         for (error, message) in [
             (
-                db::secrets::SecretsError::InvalidName,
+                crate::backend::db::secrets::SecretsError::InvalidName,
                 "Secret names must be 1 to 255 ASCII letters, digits, or underscores and start with a letter or underscore",
             ),
             (
-                db::secrets::SecretsError::ReservedName,
+                crate::backend::db::secrets::SecretsError::ReservedName,
                 "Secret names beginning with GITHUB_ are reserved",
             ),
             (
-                db::secrets::SecretsError::ValueContainsNul,
+                crate::backend::db::secrets::SecretsError::ValueContainsNul,
                 "Secret values cannot contain NUL",
             ),
             (
-                db::secrets::SecretsError::ValueTooLarge,
+                crate::backend::db::secrets::SecretsError::ValueTooLarge,
                 "Secret values cannot exceed 48 KiB",
             ),
             (
-                db::secrets::SecretsError::TooManySecrets,
+                crate::backend::db::secrets::SecretsError::TooManySecrets,
                 "A repository can have at most 100 secrets",
             ),
             (
-                db::secrets::SecretsError::TotalTooLarge,
+                crate::backend::db::secrets::SecretsError::TotalTooLarge,
                 "A repository's secrets can total at most 1 MiB",
             ),
         ] {
@@ -282,11 +290,11 @@ mod tests {
             }
         }
         for error in [
-            db::secrets::SecretsError::Authority(anyhow::anyhow!(
+            crate::backend::db::secrets::SecretsError::Authority(anyhow::anyhow!(
                 "private SQL encrypted_value nonce plaintext /filesystem/key"
             )),
-            db::secrets::SecretsError::Encryption(
-                crate::backend::crypto::SecretError::EncryptionFailed,
+            crate::backend::db::secrets::SecretsError::Encryption(
+                codeyard_support::secrets::SecretError::EncryptionFailed,
             ),
         ] {
             let (status, Json(error)) = secret_error(error);

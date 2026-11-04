@@ -1,11 +1,14 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::access::readable_repository;
-use crate::backend::api::repos::chrome::{
-    date, default_ref, load_refs_from_repo, repository_default_branch, store_error, Loaded,
-};
+use crate::backend::api::repos::chrome::date;
+use crate::backend::api::repos::chrome::default_ref;
+use crate::backend::api::repos::chrome::load_refs_from_repo;
+use crate::backend::api::repos::chrome::repository_default_branch;
+use crate::backend::api::repos::chrome::store_error;
+use crate::backend::api::repos::chrome::Loaded;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::repositories::store::repo_store;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -82,7 +85,7 @@ pub async fn create_branch(
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
         &owner,
-        super::repository_id(&state, &owner, &repo).await?,
+        crate::backend::api::repos::refs::repository_id(&state, &owner, &repo).await?,
         &req.name,
         &req.sha,
     )
@@ -108,7 +111,7 @@ pub async fn delete_branch(
             actor.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
-        super::repository_id(&state, &owner, &repo).await?,
+        crate::backend::api::repos::refs::repository_id(&state, &owner, &repo).await?,
         &branch,
     )
     .await
@@ -162,7 +165,7 @@ async fn fill_open_pulls(
     loaded: &Loaded,
     branches: &mut [view::branches::RefRow],
 ) -> Result<(), Response> {
-    let pulls = db::pull_requests::records::list_open_pull_requests_from_branches(
+    let pulls = crate::backend::db::pull_requests::records::list_open_pull_requests_from_branches(
         &ctx.state.pool,
         loaded.repository.id,
         None,

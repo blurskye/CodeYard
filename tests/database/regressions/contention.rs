@@ -129,7 +129,7 @@ async fn postgres_privileged_node_and_crawler_writes_retain_their_session() {
     db::node_config::upsert_node_configuration(f.pool(), "public", true)
         .await
         .unwrap();
-    let key = codeyard::backend::cluster::NodeKey::generate().public_hex();
+    let key = codeyard_support::node_identity::NodeKey::generate().public_hex();
     let node = db::cluster::register_own_node(
         f.pool(),
         &key,
@@ -427,7 +427,7 @@ async fn postgres_family_promotion_refuses_a_fork_committed_during_its_lock_wait
         nodes.push(
             db::cluster::register_own_node(
                 f.pool(),
-                &codeyard::backend::cluster::NodeKey::generate().public_hex(),
+                &codeyard_support::node_identity::NodeKey::generate().public_hex(),
                 name,
                 &["storage".to_owned()],
                 "test",

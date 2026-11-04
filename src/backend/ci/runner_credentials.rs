@@ -1,8 +1,7 @@
 //! Runner credentials use cluster pairing unchanged; removal has its own hash domain.
-use crate::backend::{
-    cluster::{JoinTicket, NodeContext},
-    db,
-};
+use crate::backend::cluster::JoinTicket;
+use crate::backend::cluster::NodeContext;
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -55,7 +54,7 @@ pub(crate) fn valid_work_folder(folder: &str) -> bool {
 pub fn save_work_folder(state: &std::path::Path, folder: &str) -> Result<()> {
     use std::io::Write;
     anyhow::ensure!(valid_work_folder(folder), "invalid runner work folder");
-    let _state = crate::backend::fs::lock_state_dir(state)?;
+    let _state = codeyard_support::fs::lock_state_dir(state)?;
     let previous = work_root(state)?;
     if previous != state.join("runner-workspaces").join(folder) {
         match std::fs::read_dir(previous.join("ci-containers")) {
@@ -113,7 +112,7 @@ pub async fn ticket(
     context: Option<&NodeContext>,
 ) -> Result<JoinTicket> {
     let core = context.context("runner registration requires a serving PostgreSQL cluster core")?;
-    let node = db::cluster::get_node_by_id(pool, core.node_id)
+    let node = crate::backend::db::cluster::get_node_by_id(pool, core.node_id)
         .await?
         .filter(|n| n.status == "active")
         .context("runner core is unavailable")?;
@@ -131,7 +130,7 @@ mod tests {
     #[test]
     fn jit_credentials_reuse_pairing_and_validate_local_paths() {
         use base64::Engine;
-        let key = crate::backend::cluster::NodeKey::generate();
+        let key = codeyard_support::node_identity::NodeKey::generate();
         let ticket = JoinTicket::new(
             key.public_key(),
             crate::backend::cluster::NodeAddress {

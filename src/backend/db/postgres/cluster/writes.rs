@@ -1,5 +1,5 @@
 //! PostgreSQL is the arbiter; no transaction here spans Git or network work.
-use crate::backend::db::cluster::writes as rules;
+
 use crate::backend::db::cluster::writes::MAX_FAMILY;
 use crate::backend::db::cluster::writes::MAX_REFS;
 use crate::backend::db::cluster::writes::MAX_VOTERS;
@@ -63,7 +63,10 @@ pub async fn write_settings(pool: &PgPool) -> Result<WriteSettings> {
 async fn quorum(conn: &mut PgConnection, repo: i64, term: i64) -> Result<i64> {
     let settings = settings(conn).await?;
     let setting = settings.write_quorum.context("write quorum is disabled")?;
-    rules::required_votes(&setting, voter_count(conn, repo, term).await?)
+    crate::backend::db::cluster::writes::required_votes(
+        &setting,
+        voter_count(conn, repo, term).await?,
+    )
 }
 
 async fn voter_count(conn: &mut PgConnection, repo: i64, term: i64) -> Result<usize> {
@@ -80,7 +83,7 @@ async fn voter_count(conn: &mut PgConnection, repo: i64, term: i64) -> Result<us
 async fn canonical_refs(conn: &mut PgConnection, repo: i64) -> Result<Vec<RefValue>> {
     let refs = sqlx::query_as("SELECT name,kind,target FROM repository_committed_refs WHERE repository_id=$1 ORDER BY name LIMIT $2")
         .bind(repo).bind((MAX_REFS + 1) as i64).fetch_all(conn).await?;
-    rules::validate_values(&refs)?;
+    crate::backend::db::cluster::writes::validate_values(&refs)?;
     Ok(refs)
 }
 
@@ -89,7 +92,7 @@ async fn record(conn: &mut PgConnection, id: &str) -> Result<Option<WriteRecord>
         .bind(id).fetch_optional(&mut *conn).await? else { return Ok(None); };
     write.changes = sqlx::query_as("SELECT name,kind,old_target,new_target FROM repository_write_refs WHERE write_id=$1 ORDER BY name LIMIT $2")
         .bind(id).bind((MAX_REFS + 1) as i64).fetch_all(&mut *conn).await?;
-    rules::validate_changes(&write.changes)?;
+    crate::backend::db::cluster::writes::validate_changes(&write.changes)?;
     write.votes = sqlx::query_as::<_, WriteVote>("SELECT node_id,durable_at FROM repository_write_votes WHERE write_id=$1 ORDER BY node_id LIMIT $2")
         .bind(id).bind((MAX_VOTERS + 1) as i64).fetch_all(conn).await?;
     ensure!(write.votes.len() <= MAX_VOTERS, "too many write votes");
@@ -125,8 +128,8 @@ pub async fn bootstrap_writes(
     voters: &[i64],
     refs: &[RefValue],
 ) -> Result<()> {
-    rules::validate_voters(primary, voters)?;
-    rules::validate_values(refs)?;
+    crate::backend::db::cluster::writes::validate_voters(primary, voters)?;
+    crate::backend::db::cluster::writes::validate_values(refs)?;
     let mut tx = pool.begin().await?;
     let placed: Option<i64> =
         sqlx::query_scalar("SELECT storage_node_id FROM repositories WHERE id=$1 FOR UPDATE")
@@ -167,8 +170,8 @@ pub async fn begin_write(
     id: &str,
     refs: &[RefChange],
 ) -> Result<WriteRecord> {
-    rules::validate_id(id)?;
-    rules::validate_changes(refs)?;
+    crate::backend::db::cluster::writes::validate_id(id)?;
+    crate::backend::db::cluster::writes::validate_changes(refs)?;
     let mut tx = pool.begin().await?;
     let control = lock_control(&mut tx, repo).await?;
     ensure!(
@@ -184,9 +187,18 @@ pub async fn begin_write(
     ensure!(current, "primary has not applied committed refs");
     let settings = settings(&mut tx).await?;
     let setting = settings.write_quorum.context("write quorum is disabled")?;
-    let required = rules::required_votes(&setting, voter_count(&mut tx, repo, term).await?)?;
-    rules::changed_refs(canonical_refs(&mut tx, repo).await?, refs)?;
-    let hash = rules::manifest_hash(repo, primary, term, control.committed_version, refs)?;
+    let required = crate::backend::db::cluster::writes::required_votes(
+        &setting,
+        voter_count(&mut tx, repo, term).await?,
+    )?;
+    crate::backend::db::cluster::writes::changed_refs(canonical_refs(&mut tx, repo).await?, refs)?;
+    let hash = crate::backend::db::cluster::writes::manifest_hash(
+        repo,
+        primary,
+        term,
+        control.committed_version,
+        refs,
+    )?;
     sqlx::query("INSERT INTO repository_writes(id,repository_id,term,primary_id,base_version,required_votes,deadline,decision,manifest_hash)
         VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()+($8::bigint * INTERVAL '1 second'),'pending',$7)")
         .bind(id).bind(repo).bind(term).bind(primary).bind(control.committed_version).bind(required).bind(hash).bind(settings.write_timeout_seconds).execute(&mut *tx).await?;
@@ -200,7 +212,7 @@ pub async fn begin_write(
 }
 
 pub async fn vote_write(pool: &PgPool, id: &str, node: i64, term: i64) -> Result<bool> {
-    rules::validate_id(id)?;
+    crate::backend::db::cluster::writes::validate_id(id)?;
     let mut tx = pool.begin().await?;
     let control = write_control(&mut tx, id).await?;
     if control.term != term || !control.serving || !active_node(&mut tx, node).await? {
@@ -224,7 +236,7 @@ pub async fn decide_write(
     term: i64,
     commit: bool,
 ) -> Result<WriteRecord> {
-    rules::validate_id(id)?;
+    crate::backend::db::cluster::writes::validate_id(id)?;
     let mut tx = pool.begin().await?;
     let control = write_control(&mut tx, id).await?;
     let write = record(&mut tx, id).await?.context("write disappeared")?;
@@ -264,7 +276,7 @@ pub async fn decide_write(
               AND EXISTS(SELECT 1 FROM repository_writes WHERE id=$5 AND decision='pending' AND deadline>clock_timestamp())")
             .bind(write.repository_id).bind(term).bind(write.base_version).bind(next).bind(id).execute(&mut *tx).await?.rows_affected() == 1;
         if changed {
-            rules::changed_refs(
+            crate::backend::db::cluster::writes::changed_refs(
                 canonical_refs(&mut tx, write.repository_id).await?,
                 &write.changes,
             )?;
@@ -294,7 +306,7 @@ pub async fn decide_write(
 }
 
 pub async fn load_write(pool: &PgPool, id: &str) -> Result<Option<WriteRecord>> {
-    rules::validate_id(id)?;
+    crate::backend::db::cluster::writes::validate_id(id)?;
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
@@ -363,7 +375,7 @@ pub async fn mark_write_applied(
 }
 
 pub async fn finish_write(pool: &PgPool, id: &str, current_term: i64) -> Result<bool> {
-    rules::validate_id(id)?;
+    crate::backend::db::cluster::writes::validate_id(id)?;
     let mut tx = pool.begin().await?;
     let control = write_control(&mut tx, id).await?;
     if control.term != current_term {
@@ -401,7 +413,7 @@ async fn lock_family(
 ) -> Result<Option<Vec<(i64, Control)>>> {
     let family: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(&format!(
         "{} LIMIT {} FOR UPDATE OF r",
-        super::FORK_FAMILY,
+        crate::backend::db::postgres::cluster::FORK_FAMILY,
         MAX_FAMILY + 1
     ))
     .bind(repo)
@@ -414,11 +426,14 @@ async fn lock_family(
     {
         return Ok(None);
     }
-    let current: Vec<(i64, Option<i64>, i64)> =
-        sqlx::query_as(&format!("{} LIMIT {}", super::FORK_FAMILY, MAX_FAMILY + 1))
-            .bind(repo)
-            .fetch_all(&mut *conn)
-            .await?;
+    let current: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(&format!(
+        "{} LIMIT {}",
+        crate::backend::db::postgres::cluster::FORK_FAMILY,
+        MAX_FAMILY + 1
+    ))
+    .bind(repo)
+    .fetch_all(&mut *conn)
+    .await?;
     if current != family {
         return Ok(None);
     }
@@ -434,11 +449,14 @@ async fn lock_family(
 }
 
 pub async fn write_family(pool: &PgPool, repo: i64) -> Result<Vec<(i64, Option<i64>, i64)>> {
-    let family: Vec<(i64, Option<i64>, i64)> =
-        sqlx::query_as(&format!("{} LIMIT {}", super::FORK_FAMILY, MAX_FAMILY + 1))
-            .bind(repo)
-            .fetch_all(pool)
-            .await?;
+    let family: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(&format!(
+        "{} LIMIT {}",
+        crate::backend::db::postgres::cluster::FORK_FAMILY,
+        MAX_FAMILY + 1
+    ))
+    .bind(repo)
+    .fetch_all(pool)
+    .await?;
     ensure!(
         !family.is_empty() && family.len() <= MAX_FAMILY,
         "invalid fork family size"
@@ -454,8 +472,8 @@ pub async fn switch_write_family(
     target: i64,
     voters: &[i64],
 ) -> Result<bool> {
-    rules::validate_terms(terms)?;
-    rules::validate_voters(target, voters)?;
+    crate::backend::db::cluster::writes::validate_terms(terms)?;
+    crate::backend::db::cluster::writes::validate_voters(target, voters)?;
     let mut tx = pool.begin().await?;
     let Some(controls) = lock_family(&mut tx, repo, terms).await? else {
         return Ok(false);
@@ -477,7 +495,7 @@ pub async fn switch_write_family(
         .await?
         .write_quorum
         .context("write quorum is disabled")?;
-    rules::required_votes(&setting, voters.len())?;
+    crate::backend::db::cluster::writes::required_votes(&setting, voters.len())?;
     for (repo, control) in &controls {
         // Replacing failed voters must not silently lower the denominator.
         if voters.len() < voter_count(&mut tx, *repo, control.term).await? {
@@ -518,7 +536,7 @@ pub async fn switch_write_family(
 }
 
 pub async fn enable_write_family(pool: &PgPool, terms: &[(i64, i64)]) -> Result<bool> {
-    rules::validate_terms(terms)?;
+    crate::backend::db::cluster::writes::validate_terms(terms)?;
     let mut tx = pool.begin().await?;
     let Some(controls) = lock_family(&mut tx, terms[0].0, terms).await? else {
         return Ok(false);

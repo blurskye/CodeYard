@@ -1,8 +1,12 @@
-use super::blob::file_context;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::repos::chrome::{
-    date, is_branch, load, ref_names_under, resolve, store_error, Loaded,
-};
+use crate::backend::api::repos::chrome::date;
+use crate::backend::api::repos::chrome::is_branch;
+use crate::backend::api::repos::chrome::load;
+use crate::backend::api::repos::chrome::ref_names_under;
+use crate::backend::api::repos::chrome::resolve;
+use crate::backend::api::repos::chrome::store_error;
+use crate::backend::api::repos::chrome::Loaded;
+use crate::backend::api::repos::code::blob::file_context;
 use crate::backend::app::AppState;
 use crate::backend::repositories::store::repo_store;
 use axum::extract::{OriginalUri, State};
@@ -81,7 +85,7 @@ pub(in crate::backend::api::repos) async fn page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
-    super::GitPathParams(params): super::GitPathParams,
+    crate::backend::api::repos::code::GitPathParams(params): crate::backend::api::repos::code::GitPathParams,
 ) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,

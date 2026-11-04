@@ -10,29 +10,34 @@ mod runners;
 pub mod trigger;
 pub mod workflows;
 
-use crate::backend::{
-    api::{http::csrf, http::error::ApiError, http::middleware},
-    app::AppState,
-    ci::admission::AdmissionError,
-};
+use crate::backend::api::http::error::ApiError;
+
+use crate::backend::app::AppState;
 use axum::{
+    crate::backend::api::http::middleware::from_fn,
     http::StatusCode,
-    middleware::from_fn,
     routing::{get, post},
     Json, Router,
 };
+use codeyard_db_core::ci_admission::AdmissionError;
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {
     let json = Router::new()
         .route(
             "/api/ci/trigger",
-            post(trigger::trigger_ci).layer(from_fn(csrf::cookie_api_submission)),
+            post(trigger::trigger_ci).layer(from_fn(
+                crate::backend::api::http::csrf::cookie_api_submission,
+            )),
         )
         .route("/api/ci/workflows", get(workflows::list_ci_workflows))
         .merge(jobs::router())
-        .route_layer(from_fn(middleware::require_node_access))
-        .layer(from_fn(middleware::private_sensitive_response));
+        .route_layer(from_fn(
+            crate::backend::api::http::middleware::require_node_access,
+        ))
+        .layer(from_fn(
+            crate::backend::api::http::middleware::private_sensitive_response,
+        ));
     repository_router()
         .merge(json)
         .merge(runners::router())
@@ -110,7 +115,7 @@ mod tests {
     }
     #[test]
     fn database_refusals_keep_public_http_categories() {
-        use crate::backend::db::ci::CiAdmissionRefusal;
+        use codeyard_db_core::ci_policy::CiAdmissionRefusal;
         for (refusal, expected) in [
             (
                 CiAdmissionRefusal::Missing("Run not found"),

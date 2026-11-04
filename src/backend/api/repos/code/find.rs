@@ -1,7 +1,11 @@
 //! The "Go to file" page: match the complete tree before retaining bounded paths.
 //! Complete unfiltered listings can also be narrowed without a round trip.
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::repos::chrome::{default_ref, load, resolve, store_error, Loaded};
+use crate::backend::api::repos::chrome::default_ref;
+use crate::backend::api::repos::chrome::load;
+use crate::backend::api::repos::chrome::resolve;
+use crate::backend::api::repos::chrome::store_error;
+use crate::backend::api::repos::chrome::Loaded;
 use crate::backend::app::AppState;
 use crate::backend::repositories::store::repo_store;
 use axum::extract::{OriginalUri, State};
@@ -30,7 +34,7 @@ async fn find_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         return Err(ctx.error(StatusCode::NOT_FOUND, "Repository is empty."));
     }
     let store = repo_store(&loaded.repository, ctx.state.cluster.as_ref());
-    let reference = if !super::super::chrome::is_branch(loaded, &resolved.reference)
+    let reference = if !crate::backend::api::repos::chrome::is_branch(loaded, &resolved.reference)
         && !resolved.reference.starts_with("refs/")
     {
         store
@@ -50,9 +54,13 @@ async fn find_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         .file_paths_matching(&reference, &query, view::find::MAX_LISTED_FILES)
         .await
         .map_err(|error| store_error(ctx, Some(&loaded.chrome), error))?;
-    super::super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
-        .await
-        .map_err(|_| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
+    crate::backend::api::repos::access::check_repo_read_access(
+        &ctx.state.pool,
+        &loaded.repository,
+        &ctx.headers,
+    )
+    .await
+    .map_err(|_| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
     let page = view::find::FindPage {
         reference,
         paths: files.paths,
@@ -75,7 +83,7 @@ pub(in crate::backend::api::repos) async fn page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
-    super::GitPathParams(params): super::GitPathParams,
+    crate::backend::api::repos::code::GitPathParams(params): crate::backend::api::repos::code::GitPathParams,
 ) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,

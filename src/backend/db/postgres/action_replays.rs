@@ -1,11 +1,11 @@
 use crate::backend::db::action_jobs::Job;
-use crate::backend::db::action_replays;
-use crate::backend::db::ci::CiAdmissionRefusal as Refusal;
+
 use crate::backend::db::ci::CiReplaySelection;
 use crate::backend::db::ci::CiRunOptions;
 use crate::backend::db::ci::NewCiAttempt;
 use anyhow::{ensure, Result};
 use codeyard_actions::progress::{Replay, State};
+use codeyard_db_core::ci_policy::CiAdmissionRefusal as Refusal;
 use codeyard_db_core::models::CiRun;
 use sqlx::{types::Json, PgConnection};
 
@@ -36,12 +36,12 @@ pub(crate) async fn prepare(
             "Native dependency state is unavailable; re-run the whole workflow",
         ))?
         .0;
-    let state = action_replays::compose(
+    let state = crate::backend::db::action_replays::compose(
         options
             .and_then(|options| options.replay)
             .map(|data| data.0),
         fresh,
     );
     let observations:Vec<Job>=sqlx::query_as("SELECT j.* FROM actions_jobs j JOIN ci_runs c ON c.id=j.run_id JOIN actions_runtime_tokens t ON t.run_id=j.run_id AND t.token_hash=j.generation WHERE c.repo_id=$1 AND COALESCE(c.workflow_run_id,c.id)=$2 AND COALESCE(c.workflow_run_attempt,1)<=$3 AND j.workflow_path=$4 ORDER BY COALESCE(c.workflow_run_attempt,1),j.id").bind(source.repo_id).bind(root).bind(source.workflow_run_attempt.unwrap_or(1)).bind(&source.workflow_path).fetch_all(&mut *connection).await?;
-    action_replays::build(source, request, state, observations)
+    crate::backend::db::action_replays::build(source, request, state, observations)
 }

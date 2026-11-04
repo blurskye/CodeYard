@@ -101,6 +101,6 @@ impl Manifest {
 }
 
 native_operation!(crate::backend::db::postgres::action_logs::issue,crate::backend::db::sqlite::action_logs::issue,
-    fn issue(pool:&DbPool,actor:impl Into<super::credentials::Actor>,repo:i64,resource:&str,target:Target,hash:&str)->Result<bool>);
+    fn issue(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,repo:i64,resource:&str,target:Target,hash:&str)->Result<bool>);
 native_operation!(crate::backend::db::postgres::action_logs::read,crate::backend::db::sqlite::action_logs::read,
     fn read(pool:&DbPool,hash:&str,resource:&str)->Result<Option<Snapshot>>);

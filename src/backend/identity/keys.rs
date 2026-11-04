@@ -1,6 +1,5 @@
 //! SSH key management shared by browser forms, JSON and operator commands.
 
-use crate::backend::db::users::ssh_keys;
 use codeyard_db_core::models::SshKey;
 use codeyard_db_core::DbPool;
 
@@ -39,25 +38,25 @@ pub async fn enroll(
 ) -> Result<SshKey, KeyError> {
     validate_name(name)?;
     let session_id = session_id.ok_or(KeyError::InvalidSession)?;
-    ssh_keys::add_ssh_key_for_session(pool, actor, session_id, name, public_key)
-        .await
-        .map_err(|error| {
-            match error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>() {
-                Some(codeyard_model::identity::SshKeyWriteRefusal::InvalidKey) => {
-                    KeyError::InvalidKey
-                }
-                Some(codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed) => {
-                    KeyError::AlreadyUsed
-                }
-                Some(codeyard_model::identity::SshKeyWriteRefusal::InvalidSession) => {
-                    KeyError::InvalidSession
-                }
-                Some(codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted) => {
-                    KeyError::AccountRestricted
-                }
-                None => KeyError::Unavailable,
+    crate::backend::db::users::ssh_keys::add_ssh_key_for_session(
+        pool, actor, session_id, name, public_key,
+    )
+    .await
+    .map_err(|error| {
+        match error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>() {
+            Some(codeyard_model::identity::SshKeyWriteRefusal::InvalidKey) => KeyError::InvalidKey,
+            Some(codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed) => {
+                KeyError::AlreadyUsed
             }
-        })
+            Some(codeyard_model::identity::SshKeyWriteRefusal::InvalidSession) => {
+                KeyError::InvalidSession
+            }
+            Some(codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted) => {
+                KeyError::AccountRestricted
+            }
+            None => KeyError::Unavailable,
+        }
+    })
 }
 
 pub async fn delete(
@@ -66,19 +65,20 @@ pub async fn delete(
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     key: i64,
 ) -> Result<(), KeyError> {
-    let deleted = ssh_keys::delete_user_ssh_key(pool, actor, credential, key)
-        .await
-        .map_err(|error| {
-            match error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>() {
-                Some(codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted) => {
-                    KeyError::AccountRestricted
+    let deleted =
+        crate::backend::db::users::ssh_keys::delete_user_ssh_key(pool, actor, credential, key)
+            .await
+            .map_err(|error| {
+                match error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>() {
+                    Some(codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted) => {
+                        KeyError::AccountRestricted
+                    }
+                    Some(codeyard_model::identity::SshKeyWriteRefusal::InvalidSession) => {
+                        KeyError::InvalidSession
+                    }
+                    _ => KeyError::Unavailable,
                 }
-                Some(codeyard_model::identity::SshKeyWriteRefusal::InvalidSession) => {
-                    KeyError::InvalidSession
-                }
-                _ => KeyError::Unavailable,
-            }
-        })?;
+            })?;
     if deleted {
         Ok(())
     } else {
@@ -132,7 +132,7 @@ pub async fn delete_signing(
 mod tests {
     #[test]
     fn names_reject_nul() {
-        assert!(super::validate_name("ci\0key").is_err());
-        assert!(super::validate_name("ci key").is_ok());
+        assert!(crate::backend::identity::keys::validate_name("ci\0key").is_err());
+        assert!(crate::backend::identity::keys::validate_name("ci key").is_ok());
     }
 }

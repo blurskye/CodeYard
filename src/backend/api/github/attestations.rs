@@ -1,12 +1,18 @@
 //! Repository, user and organization endpoints share bundles, subject indexes and live repository access.
-use super::{auth, orgs, pagination::Cursor, repository, users, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        attestation_validation::PreparedBundle,
-        attestations::{self, Attestation, Filter, Owner, Refusal, MAX_RESPONSE_BUNDLE_BYTES},
-    },
-};
+
+use crate::backend::api::github::pagination::Cursor;
+use crate::backend::api::github::repository;
+
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use crate::backend::db::attestation_validation::PreparedBundle;
+
+use crate::backend::db::attestations::Attestation;
+use crate::backend::db::attestations::Filter;
+use crate::backend::db::attestations::Owner;
+use crate::backend::db::attestations::Refusal;
+use crate::backend::db::attestations::MAX_RESPONSE_BUNDLE_BYTES;
 use axum::{
     extract::{OriginalUri, Path, Query, Request, State},
     http::{HeaderMap, Method, StatusCode},
@@ -35,7 +41,7 @@ fn failure(error: anyhow::Error) -> Error {
 fn checked_predicate(value: Option<&str>) -> Result<Option<&str>> {
     value
         .map(|value| {
-            if !attestations::valid_predicate(value) {
+            if !crate::backend::db::attestations::valid_predicate(value) {
                 return Err(Error::validation(
                     "Attestation",
                     "predicate_type",
@@ -97,9 +103,12 @@ fn trim_bundles(
 }
 
 async fn body(request: Request) -> Result<Value> {
-    let bytes = axum::body::to_bytes(request.into_body(), attestations::MAX_BUNDLE_BYTES + 1024)
-        .await
-        .map_err(|_| Error::validation("Attestation", "bundle", "invalid"))?;
+    let bytes = axum::body::to_bytes(
+        request.into_body(),
+        crate::backend::db::attestations::MAX_BUNDLE_BYTES + 1024,
+    )
+    .await
+    .map_err(|_| Error::validation("Attestation", "bundle", "invalid"))?;
     serde_json::from_slice(&bytes).map_err(|_| Error::validation("Attestation", "body", "invalid"))
 }
 
@@ -109,22 +118,22 @@ async fn scope(
     params: &Params,
 ) -> Result<(Option<i64>, Option<Owner>, Option<i64>)> {
     if let Some(org) = params.get("org") {
-        let actor = auth::authenticate(state, headers, true)
+        let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
             .await?
-            .ok_or_else(auth::required)?;
-        let org = orgs::target(state, org).await?;
+            .ok_or_else(crate::backend::api::github::auth::required)?;
+        let org = crate::backend::api::github::orgs::target(state, org).await?;
         Ok((Some(actor.user.id), Some(Owner::Organization(org.id)), None))
     } else if let Some(username) = params.get("user_id") {
-        let actor = auth::authenticate(state, headers, true)
+        let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
             .await?
-            .ok_or_else(auth::required)?;
-        let user = users::target(state, username).await?;
+            .ok_or_else(crate::backend::api::github::auth::required)?;
+        let user = crate::backend::api::github::users::target(state, username).await?;
         Ok((Some(actor.user.id), Some(Owner::User(user.id)), None))
     } else {
         let (repo, actor) =
             repository(state, headers, &params["owner"], &params["repo"], false).await?;
         // These endpoints require a credential, even for a public repository.
-        let actor = actor.ok_or_else(auth::required)?;
+        let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
         Ok((Some(actor.user.id), None, Some(repo.id)))
     }
 }
@@ -141,7 +150,7 @@ async fn list(
         .get("subject_digest")
         .or_else(|| params.get("attestation_id"))
         .ok_or_else(Error::missing)?;
-    if !attestations::valid_digest(digest) {
+    if !crate::backend::db::attestations::valid_digest(digest) {
         return Err(Error::validation(
             "Attestation",
             "subject_digest",
@@ -161,7 +170,7 @@ async fn list(
         before,
         limit: (limit + 1) as i64,
     };
-    let mut rows = attestations::list(&state.pool, &filter)
+    let mut rows = crate::backend::db::attestations::list(&state.pool, &filter)
         .await
         .map_err(Error::unavailable)?;
     let more = trim_bundles(&page, &mut rows, None)?;
@@ -197,7 +206,7 @@ async fn bulk_list(
         || input
             .subject_digests
             .iter()
-            .any(|digest| !attestations::valid_digest(digest))
+            .any(|digest| !crate::backend::db::attestations::valid_digest(digest))
     {
         return Err(Error::validation(
             "Attestation",
@@ -217,7 +226,7 @@ async fn bulk_list(
         before,
         limit: (limit + 1) as i64,
     };
-    let mut rows = attestations::list(&state.pool, &filter)
+    let mut rows = crate::backend::db::attestations::list(&state.pool, &filter)
         .await
         .map_err(Error::unavailable)?;
     let more = trim_bundles(&page, &mut rows, Some(&input.subject_digests))?;
@@ -268,7 +277,7 @@ async fn repositories(
         before,
         limit: (limit + 1) as i64,
     };
-    let mut rows = attestations::repositories(&state.pool, &filter)
+    let mut rows = crate::backend::db::attestations::repositories(&state.pool, &filter)
         .await
         .map_err(Error::unavailable)?;
     let more = page.trim(&mut rows)?;
@@ -298,14 +307,22 @@ async fn remove(
     Path(params): Path<Params>,
     request: Request,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
     let owner = if let Some(org) = params.get("org") {
-        Owner::Organization(orgs::target(&state, org).await?.id)
+        Owner::Organization(
+            crate::backend::api::github::orgs::target(&state, org)
+                .await?
+                .id,
+        )
     } else {
-        Owner::User(users::target(&state, &params["user_id"]).await?.id)
+        Owner::User(
+            crate::backend::api::github::users::target(&state, &params["user_id"])
+                .await?
+                .id,
+        )
     };
     let bulk = request.method() == Method::POST;
     let (ids, digests) = if bulk {
@@ -322,7 +339,7 @@ async fn remove(
                     && digests.len() <= 1024
                     && digests
                         .iter()
-                        .all(|digest| attestations::valid_digest(digest)) =>
+                        .all(|digest| crate::backend::db::attestations::valid_digest(digest)) =>
             {
                 (vec![], digests)
             }
@@ -339,7 +356,7 @@ async fn remove(
         )
     } else {
         let digest = &params["subject_digest"];
-        if !attestations::valid_digest(digest) {
+        if !crate::backend::db::attestations::valid_digest(digest) {
             return Err(Error::validation(
                 "Attestation",
                 "subject_digest",
@@ -348,9 +365,15 @@ async fn remove(
         }
         (vec![], vec![digest.clone()])
     };
-    let count = attestations::delete(&state.pool, actor.database_actor(), owner, &ids, &digests)
-        .await
-        .map_err(failure)?;
+    let count = crate::backend::db::attestations::delete(
+        &state.pool,
+        actor.database_actor(),
+        owner,
+        &ids,
+        &digests,
+    )
+    .await
+    .map_err(failure)?;
     if count == 0 {
         return Err(Error::missing());
     }
@@ -407,7 +430,12 @@ mod tests {
     #[test]
     fn bundle_bytes_limit_pages_without_skipping_associations() {
         let mut rows: Vec<_> = (1..=20)
-            .map(|id| row(id, "x".repeat(attestations::MAX_BUNDLE_BYTES)))
+            .map(|id| {
+                row(
+                    id,
+                    "x".repeat(crate::backend::db::attestations::MAX_BUNDLE_BYTES),
+                )
+            })
             .collect();
         assert!(trim_bundles(&page(), &mut rows, None).unwrap());
         assert_eq!(rows.first().unwrap().id, 1);

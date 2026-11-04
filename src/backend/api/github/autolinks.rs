@@ -1,9 +1,12 @@
-use super::{auth, pagination::Pagination, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::repositories::autolinks::{self, NewAutolink, Refusal},
-    webhooks::payloads,
-};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::repositories::autolinks::NewAutolink;
+use crate::backend::db::repositories::autolinks::Refusal;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -41,17 +44,26 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(auth::required)?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     let input = NewAutolink::new(
         &input.key_prefix,
         &input.url_template,
         input.is_alphanumeric,
     )
     .map_err(|error| Error::invalid(error.to_string()))?;
-    let row = autolinks::create(&state.pool, actor.database_actor(), repo.id, &input)
-        .await
-        .map_err(failure)?;
-    Ok((StatusCode::CREATED, Json(payloads::autolink(&row))).into_response())
+    let row = crate::backend::db::repositories::autolinks::create(
+        &state.pool,
+        actor.database_actor(),
+        repo.id,
+        &input,
+    )
+    .await
+    .map_err(failure)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(crate::backend::webhooks::payloads::autolink(&row)),
+    )
+        .into_response())
 }
 async fn list(
     State(state): State<Arc<AppState>>,
@@ -61,9 +73,11 @@ async fn list(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = actor.ok_or_else(auth::required)?.user;
+    let actor = actor
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
     let (offset, limit) = page.window()?;
-    let rows = autolinks::list(
+    let rows = crate::backend::db::repositories::autolinks::list(
         &state.pool,
         actor.id,
         repo.id,
@@ -73,7 +87,13 @@ async fn list(
     .await
     .map_err(failure)?;
     let more = rows.len() > limit;
-    page.response(&uri, rows.iter().map(payloads::autolink).collect(), more)
+    page.response(
+        &uri,
+        rows.iter()
+            .map(crate::backend::webhooks::payloads::autolink)
+            .collect(),
+        more,
+    )
 }
 async fn get_one(
     State(state): State<Arc<AppState>>,
@@ -81,9 +101,11 @@ async fn get_one(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = actor.ok_or_else(auth::required)?.user;
-    Ok(Json(payloads::autolink(
-        &autolinks::get(&state.pool, actor.id, repo.id, id)
+    let actor = actor
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
+    Ok(Json(crate::backend::webhooks::payloads::autolink(
+        &crate::backend::db::repositories::autolinks::get(&state.pool, actor.id, repo.id, id)
             .await
             .map_err(failure)?,
     )))
@@ -94,10 +116,15 @@ async fn remove(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(auth::required)?;
-    autolinks::remove(&state.pool, actor.database_actor(), repo.id, id)
-        .await
-        .map_err(failure)?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
+    crate::backend::db::repositories::autolinks::remove(
+        &state.pool,
+        actor.database_actor(),
+        repo.id,
+        id,
+    )
+    .await
+    .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)
 }
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

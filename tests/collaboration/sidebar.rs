@@ -7,7 +7,7 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::db;
+
 use database::Database;
 use pulls::Client;
 use serde_json::json;
@@ -32,7 +32,7 @@ async fn contract(pg: bool) {
     let proj = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -43,7 +43,7 @@ async fn contract(pg: bool) {
     codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "secret",
         None,
         true,
@@ -51,7 +51,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         f.pool(),
         bob_id,
         proj.id,
@@ -426,7 +426,7 @@ async fn contract(pg: bool) {
     assert_eq!(closed.status, StatusCode::SEE_OTHER);
     let (_, closed_list) = alice.page("/alice/proj/milestones?state=closed").await;
     assert!(closed_list.contains("v1"), "{closed_list}");
-    let milestone_id = db::milestones::get_milestone(f.pool(), proj.id, 1)
+    let milestone_id = codeyard::backend::db::milestones::get_milestone(f.pool(), proj.id, 1)
         .await
         .unwrap()
         .unwrap()
@@ -484,7 +484,7 @@ async fn new_issue_picks(pg: bool) {
     let proj = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -492,7 +492,7 @@ async fn new_issue_picks(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         f.pool(),
         bob_id,
         proj.id,
@@ -500,7 +500,7 @@ async fn new_issue_picks(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         f.pool(),
         carol_id,
         proj.id,
@@ -637,7 +637,7 @@ async fn new_issue_chooser(pg: bool) {
     let _proj = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,

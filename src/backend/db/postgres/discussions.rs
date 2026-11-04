@@ -1,5 +1,5 @@
 // The caller's revision is never replaced by a freshly loaded revision.
-use super::repositories::access::RepositoryRowLock as RepositoryLock;
+use crate::backend::db::postgres::repositories::access::RepositoryRowLock as RepositoryLock;
 use anyhow::Result;
 use codeyard_db_core::models::AccessLevel;
 use sqlx::{PgPool, Postgres, Transaction};
@@ -41,14 +41,15 @@ async fn lock_discussion_authority(
     lock: RepositoryLock,
     include_archived: bool,
 ) -> Result<Option<DiscussionAuthority>> {
-    let Some(authority) = super::repositories::access::lock_user_repo_access_in_transaction(
-        tx,
-        actor_id,
-        repo_id,
-        lock,
-        include_archived,
-    )
-    .await?
+    let Some(authority) =
+        crate::backend::db::postgres::repositories::access::lock_user_repo_access_in_transaction(
+            tx,
+            actor_id,
+            repo_id,
+            lock,
+            include_archived,
+        )
+        .await?
     else {
         return Ok(None);
     };
@@ -67,7 +68,10 @@ async fn lock_discussion_authority(
         return Ok(None);
     }
     if !authority.is_admin
-        && super::users::blocks::repository_interaction_blocked(tx, actor_id, repo_id).await?
+        && crate::backend::db::postgres::users::blocks::repository_interaction_blocked(
+            tx, actor_id, repo_id,
+        )
+        .await?
     {
         return Ok(None);
     }
@@ -209,7 +213,10 @@ pub(crate) async fn lock_security_authority(
         .fetch_one(&mut **tx)
         .await?;
     match org {
-        Some(org) => super::organizations::roles::manages_security(tx, actor_id, org).await,
+        Some(org) => {
+            crate::backend::db::postgres::organizations::roles::manages_security(tx, actor_id, org)
+                .await
+        }
         None => Ok(false),
     }
 }
@@ -234,11 +241,11 @@ pub(crate) async fn lock_settings_read_authority(
     if admin {
         lock_policy_authority(tx, actor_id, repo_id, false).await
     } else {
-        super::repositories::access::lock_readable_repository_in_transaction(
+        crate::backend::db::postgres::repositories::access::lock_readable_repository_in_transaction(
             tx,
             actor_id,
             repo_id,
-            super::repositories::access::RepositoryRowLock::Shared,
+            crate::backend::db::postgres::repositories::access::RepositoryRowLock::Shared,
         )
         .await
     }
@@ -260,10 +267,11 @@ pub(crate) async fn lock_policy_authority_with(
     lock: RepositoryLock,
     maintain: bool,
 ) -> Result<bool> {
-    let authority = super::repositories::access::lock_user_repo_access_in_transaction(
-        tx, actor_id, repo_id, lock, true,
-    )
-    .await?;
+    let authority =
+        crate::backend::db::postgres::repositories::access::lock_user_repo_access_in_transaction(
+            tx, actor_id, repo_id, lock, true,
+        )
+        .await?;
     let locked: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=$1)",
     )
@@ -293,11 +301,14 @@ async fn lock_contribution_authority_with(
         return Ok(false);
     };
     if !(authority.access.can_read() || authority.personal_override)
-        || super::users::blocks::repository_interaction_blocked(tx, actor_id, repo_id).await?
+        || crate::backend::db::postgres::users::blocks::repository_interaction_blocked(
+            tx, actor_id, repo_id,
+        )
+        .await?
     {
         return Ok(false);
     }
-    super::interactions::allows_contribution(
+    crate::backend::db::postgres::interactions::allows_contribution(
         tx,
         actor_id,
         repo_id,
@@ -359,7 +370,8 @@ pub async fn set_lock(
     locked: bool,
     reason: Option<&str>,
 ) -> Result<()> {
-    use crate::backend::db::{assignees::AssignedItem, discussions::LockRefusal};
+    use crate::backend::db::assignees::AssignedItem;
+    use crate::backend::db::discussions::LockRefusal;
     anyhow::ensure!(
         crate::backend::db::discussions::valid_lock_reason(reason),
         LockRefusal::InvalidReason
@@ -374,7 +386,10 @@ pub async fn set_lock(
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
         lock_triage_authority(&mut tx, actor_id, repo_id).await?
-            && super::credentials::repository(&mut tx, &actor, repo_id, permission, true).await?,
+            && crate::backend::db::postgres::credentials::repository(
+                &mut tx, &actor, repo_id, permission, true
+            )
+            .await?,
         LockRefusal::Denied
     );
     let (previous, previous_reason): (bool, Option<String>) = sqlx::query_as(&format!(
@@ -387,7 +402,7 @@ pub async fn set_lock(
     .ok_or(LockRefusal::Missing)?;
     if previous != locked || previous_reason.as_deref() != reason {
         sqlx::query(&format!("UPDATE {table} SET locked=$2,lock_reason=$3,updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1")).bind(id).bind(locked).bind(reason).execute(&mut *tx).await?;
-        super::timeline::append(
+        crate::backend::db::postgres::timeline::append(
             &mut tx,
             repo_id,
             subject,

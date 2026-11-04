@@ -1,7 +1,10 @@
-use super::super::environment_values::{
-    self, EnvironmentValue, Kind, Save, StoredValue, ValueError,
-};
-use crate::backend::crypto::{SecretEncryptor, SecretError};
+use crate::backend::db::environment_values::EnvironmentValue;
+use crate::backend::db::environment_values::Kind;
+use crate::backend::db::environment_values::Save;
+use crate::backend::db::environment_values::StoredValue;
+use crate::backend::db::environment_values::ValueError;
+use codeyard_support::secrets::SecretEncryptor;
+use codeyard_support::secrets::SecretError;
 use sqlx::{SqliteConnection as Connection, SqlitePool as Pool};
 
 async fn authorize(
@@ -11,12 +14,18 @@ async fn authorize(
     permission: &str,
 ) -> Result<(), ValueError> {
     let actor = actor.into();
-    let allowed = super::discussions::lock_admin_authority(connection, actor.user_id, repo)
+    let allowed = crate::backend::db::sqlite::discussions::lock_admin_authority(
+        connection,
+        actor.user_id,
+        repo,
+    )
+    .await
+    .map_err(ValueError::Authority)?
+        && crate::backend::db::sqlite::credentials::repository(
+            connection, &actor, repo, permission, true,
+        )
         .await
-        .map_err(ValueError::Authority)?
-        && super::credentials::repository(connection, &actor, repo, permission, true)
-            .await
-            .map_err(ValueError::Authority)?;
+        .map_err(ValueError::Authority)?;
     if allowed {
         Ok(())
     } else {
@@ -31,10 +40,14 @@ async fn authorize_read(
     repo: i64,
     admin: bool,
 ) -> Result<(), ValueError> {
-    if super::discussions::lock_settings_read_authority(connection, actor, repo, admin)
-        .await
-        .map_err(ValueError::Authority)?
-        && (admin || super::variables::is_collaborator(connection, actor, repo).await?)
+    if crate::backend::db::sqlite::discussions::lock_settings_read_authority(
+        connection, actor, repo, admin,
+    )
+    .await
+    .map_err(ValueError::Authority)?
+        && (admin
+            || crate::backend::db::sqlite::variables::is_collaborator(connection, actor, repo)
+                .await?)
     {
         Ok(())
     } else {
@@ -67,7 +80,7 @@ pub async fn create(
     repo: i64,
     name: &str,
 ) -> Result<(), ValueError> {
-    let key = environment_values::environment_key(name)?;
+    let key = crate::backend::db::environment_values::environment_key(name)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize(&mut tx, actor, repo, "administration").await?;
     sqlx::query("INSERT INTO deployment_environments(repo_id,name_key,name) VALUES($1,$2,$3) ON CONFLICT(repo_id,name_key) DO NOTHING").bind(repo).bind(key).bind(name).execute(&mut *tx).await?;
@@ -87,7 +100,7 @@ pub async fn environments(
         "SELECT name FROM deployment_environments WHERE repo_id=$1 ORDER BY name_key LIMIT $2 OFFSET $3",
     )
     .bind(repo)
-    .bind((environment_values::ENVIRONMENTS_PER_PAGE + 1) as i64)
+    .bind((crate::backend::db::environment_values::ENVIRONMENTS_PER_PAGE + 1) as i64)
     .bind(offset.max(0))
     .fetch_all(&mut *tx)
     .await?;
@@ -101,7 +114,7 @@ pub async fn environment(
     repo: i64,
     name: &str,
 ) -> Result<Option<String>, ValueError> {
-    let key = environment_values::environment_key(name)?;
+    let key = crate::backend::db::environment_values::environment_key(name)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize_read(&mut tx, actor, repo, true).await?;
     let name = sqlx::query_scalar(
@@ -122,7 +135,7 @@ pub async fn list(
     environment: &str,
     kind: Kind,
 ) -> Result<Vec<EnvironmentValue>, ValueError> {
-    let key = environment_values::environment_key(environment)?;
+    let key = crate::backend::db::environment_values::environment_key(environment)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize_read(&mut tx, actor, repo, kind == Kind::Secret).await?;
     require_environment(&mut tx, repo, &key).await?;
@@ -139,8 +152,8 @@ pub async fn save(
     environment: &str,
     input: &Save<'_>,
 ) -> Result<bool, ValueError> {
-    let key = environment_values::environment_key(environment)?;
-    environment_values::validate(input.name, input.value.unwrap_or_default())?;
+    let key = crate::backend::db::environment_values::environment_key(environment)?;
+    crate::backend::db::environment_values::validate(input.name, input.value.unwrap_or_default())?;
     let name = input.name.to_ascii_uppercase();
     let previous = input.previous.unwrap_or(input.name).to_ascii_uppercase();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -170,7 +183,7 @@ pub async fn save(
         return Err(ValueError::Limit);
     }
     if input.kind == Kind::Secret {
-        super::super::secrets::ensure_room_for_secret(count, bytes, &name, value)
+        crate::backend::db::secrets::ensure_room_for_secret(count, bytes, &name, value)
             .map_err(|_| ValueError::SecretsSize)?;
     }
     if input.kind == Kind::Variable
@@ -205,7 +218,7 @@ pub async fn delete(
     kind: Kind,
     name: &str,
 ) -> Result<(), ValueError> {
-    let key = environment_values::environment_key(environment)?;
+    let key = crate::backend::db::environment_values::environment_key(environment)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize(&mut tx, actor, repo, "environments").await?;
     require_environment(&mut tx, repo, &key).await?;
@@ -223,6 +236,6 @@ pub async fn workflow_values(
     environment: &str,
     kind: Kind,
 ) -> Result<Vec<StoredValue>, ValueError> {
-    let key = environment_values::environment_key(environment)?;
+    let key = crate::backend::db::environment_values::environment_key(environment)?;
     Ok(sqlx::query_as("SELECT name,value,encrypted_value,nonce FROM repo_environment_values WHERE repo_id=$1 AND environment=$2 AND kind=$3 ORDER BY name").bind(repo).bind(key).bind(kind.as_str()).fetch_all(pool).await?)
 }

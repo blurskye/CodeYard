@@ -1,5 +1,7 @@
 //! Analyses and new findings for one pull request revision, compared with its exact base.
-use crate::backend::db::code_scanning::{Analysis, NewFinding, ANALYSIS_COLUMNS};
+use crate::backend::db::code_scanning::Analysis;
+use crate::backend::db::code_scanning::NewFinding;
+use crate::backend::db::code_scanning::ANALYSIS_COLUMNS;
 use anyhow::Result;
 use sqlx::PgPool;
 

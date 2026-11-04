@@ -1,15 +1,12 @@
 //! The native repository-event form calls the same admission service as REST.
-use crate::backend::{
-    api::{
-        http::context::PageContext,
-        repos::{
-            chrome::{self, Loaded},
-            forms::{authorize_post, field, with_status},
-        },
-    },
-    app::AppState,
-    ci::events::valid_dispatch,
-};
+use crate::backend::api::http::context::PageContext;
+
+use crate::backend::api::repos::chrome::Loaded;
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::field;
+use crate::backend::api::repos::forms::with_status;
+use crate::backend::app::AppState;
+use crate::backend::ci::events::valid_dispatch;
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -28,7 +25,7 @@ async fn open(
     name: &str,
 ) -> Result<(PageContext, Loaded), Response> {
     let ctx = PageContext::load(state, headers, uri).await?;
-    let loaded = chrome::load_database(&ctx, owner, name).await?;
+    let loaded = crate::backend::api::repos::chrome::load_database(&ctx, owner, name).await?;
     if ctx.user.is_none() {
         return Err(ctx.error(
             StatusCode::UNAUTHORIZED,
@@ -160,7 +157,7 @@ pub(super) async fn send(
         )),
         Err(error) => {
             let message = error.to_string();
-            let status = super::admission_error(error).0;
+            let status = crate::backend::api::ci::admission_error(error).0;
             show(
                 &ctx,
                 loaded,

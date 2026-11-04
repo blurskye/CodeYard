@@ -1,8 +1,7 @@
 use crate::backend::db::email::secondary_link_condition;
-use crate::backend::db::users::{
-    accounts::AccountCredential,
-    emails::{EmailAddress, EmailRefusal},
-};
+use crate::backend::db::users::accounts::AccountCredential;
+use crate::backend::db::users::emails::EmailAddress;
+use crate::backend::db::users::emails::EmailRefusal;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -21,7 +20,8 @@ pub async fn list_account_emails(
     credential: &AccountCredential<'_>,
 ) -> Result<Vec<EmailAddress>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::transitions::require_account(&mut tx, user, credential).await?;
+    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, user, credential)
+        .await?;
     let emails = sqlx::query_as(LIST_EMAILS)
         .bind(user)
         .fetch_all(&mut *tx)
@@ -38,7 +38,8 @@ pub async fn change_emails(
     add: bool,
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::transitions::require_account(&mut tx, user, credential).await?;
+    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, user, credential)
+        .await?;
     let primary: Option<String> = sqlx::query_scalar("SELECT email FROM users WHERE id=?1")
         .bind(user)
         .fetch_one(&mut *tx)
@@ -91,7 +92,7 @@ pub async fn save_verification(
     body_text: &str,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::super::email::lock_link_recipient(&mut tx, user).await? {
+    if !crate::backend::db::sqlite::email::lock_link_recipient(&mut tx, user).await? {
         return Ok(false);
     }
     let saved = sqlx::query("UPDATE user_emails SET verification_hash=?3,verification_expires_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 day'),last_sent_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE user_id=?1 AND lower(email)=lower(?2) AND NOT verified AND (last_sent_at IS NULL OR last_sent_at<strftime('%Y-%m-%dT%H:%M:%f000Z','now','-60 seconds')) AND EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)")

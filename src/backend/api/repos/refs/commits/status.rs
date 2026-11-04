@@ -1,10 +1,12 @@
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::access::readable_repository;
-use crate::backend::api::repos::paging::{json_page, PageQuery};
-use crate::backend::api::repos::refs::commits::statuses::{status_responses, CommitStatusResponse};
+use crate::backend::api::repos::paging::json_page;
+use crate::backend::api::repos::paging::PageQuery;
+use crate::backend::api::repos::refs::commits::statuses::status_responses;
+use crate::backend::api::repos::refs::commits::statuses::CommitStatusResponse;
 use crate::backend::api::repos::responses::repository_unavailable;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
@@ -56,7 +58,7 @@ pub async fn get_combined_commit_status(
     let sha = sha.to_ascii_lowercase();
 
     let (offset, limit) = json_page(query.page, query.per_page)?;
-    let statuses = db::repositories::protection::list_commit_statuses_page(
+    let statuses = crate::backend::db::repositories::protection::list_commit_statuses_page(
         &state.pool,
         repository.id,
         &sha,
@@ -67,18 +69,21 @@ pub async fn get_combined_commit_status(
     .await
     .map_err(|_| repository_unavailable())?;
 
-    let counts =
-        db::repositories::protection::commit_status_counts(&state.pool, repository.id, &sha)
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(ApiError::new(
-                        "database_error",
-                        "Status counts are unavailable",
-                    )),
-                )
-            })?;
+    let counts = crate::backend::db::repositories::protection::commit_status_counts(
+        &state.pool,
+        repository.id,
+        &sha,
+    )
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiError::new(
+                "database_error",
+                "Status counts are unavailable",
+            )),
+        )
+    })?;
     let combined_state = combined_commit_status_state(&counts);
     let total_count = counts.iter().map(|(_, count)| *count as usize).sum();
     let responses = status_responses(&state.pool, statuses).await?;

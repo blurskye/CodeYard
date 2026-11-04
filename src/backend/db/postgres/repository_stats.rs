@@ -2,7 +2,9 @@ use anyhow::Result;
 use codeyard_db_core::models::RepoLanguage;
 use sqlx::PgPool;
 
-use crate::backend::db::repository_stats::{LanguageSource, RepoActivityPoint, WorkflowUsage};
+use crate::backend::db::repository_stats::LanguageSource;
+use crate::backend::db::repository_stats::RepoActivityPoint;
+use crate::backend::db::repository_stats::WorkflowUsage;
 
 pub(crate) const DOCUMENT_FACTS: &str = "(SELECT COUNT(*) FROM issues WHERE repo_id=r.id AND state='open')+(SELECT COUNT(*) FROM pull_requests WHERE repo_id=r.id AND state='open') AS open_items,(SELECT MAX(accepted_at) FROM ci_accepted_pushes WHERE repo_id=r.id) AS pushed_at,(SELECT language FROM repo_languages WHERE repo_id=r.id ORDER BY bytes DESC,language LIMIT 1) AS language";
 
@@ -12,7 +14,7 @@ pub async fn readable_snapshots(
     ids: &[i64],
 ) -> Result<Vec<crate::backend::db::repository_stats::RepositorySnapshot>> {
     anyhow::ensure!(ids.len() <= 500, "Repository page exceeds its limit");
-    Ok(sqlx::query_as(&format!("SELECT r.*,{DOCUMENT_FACTS},COALESCE(person.username,org.name) AS owner FROM repositories r LEFT JOIN users person ON person.id=r.owner_user_id LEFT JOIN organizations org ON org.id=r.owner_org_id LEFT JOIN users u ON u.id=$1 WHERE r.id=ANY($2) AND {}", super::repositories::access::readable_condition()))
+    Ok(sqlx::query_as(&format!("SELECT r.*,{DOCUMENT_FACTS},COALESCE(person.username,org.name) AS owner FROM repositories r LEFT JOIN users person ON person.id=r.owner_user_id LEFT JOIN organizations org ON org.id=r.owner_org_id LEFT JOIN users u ON u.id=$1 WHERE r.id=ANY($2) AND {}", crate::backend::db::postgres::repositories::access::readable_condition()))
         .bind(viewer).bind(ids).fetch_all(pool).await?)
 }
 

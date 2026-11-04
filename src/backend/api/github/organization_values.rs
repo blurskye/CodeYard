@@ -1,14 +1,16 @@
 //! Organization Actions values share visibility checks with workflow delivery.
-use super::{auth, pagination::Pagination, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        organization_values::{
-            self as values, Kind, OrganizationValue, Save, Selection, ValueError,
-        },
-    },
-};
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::organization_values as values;
+use crate::backend::db::organization_values::Kind;
+use crate::backend::db::organization_values::OrganizationValue;
+use crate::backend::db::organization_values::Save;
+use crate::backend::db::organization_values::Selection;
+use crate::backend::db::organization_values::ValueError;
 use axum::{
     extract::{rejection::JsonRejection, MatchedPath, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -115,23 +117,27 @@ async fn organization(
     headers: &HeaderMap,
     name: &str,
     write: bool,
-) -> Result<(i64, auth::Authentication)> {
-    let auth = auth::authenticate(state, headers, true)
+) -> Result<(i64, crate::backend::api::github::auth::Authentication)> {
+    let auth = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     if write {
         auth.require_write()?;
     }
-    let org = db::organizations::get_public_organization(&state.pool, name)
+    let org = crate::backend::db::organizations::get_public_organization(&state.pool, name)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    match db::organizations::get_organization_role(&state.pool, auth.user.id, org.id)
-        .await
-        .map_err(Error::unavailable)?
+    match crate::backend::db::organizations::get_organization_role(
+        &state.pool,
+        auth.user.id,
+        org.id,
+    )
+    .await
+    .map_err(Error::unavailable)?
     {
-        db::organizations::OrganizationOutcome::Applied(role)
-            if db::organizations::administers(role) => {}
+        crate::backend::db::organizations::OrganizationOutcome::Applied(role)
+            if crate::backend::db::organizations::administers(role) => {}
         _ => {
             return Err(Error::new(
                 StatusCode::FORBIDDEN,
@@ -142,7 +148,7 @@ async fn organization(
     Ok((org.id, auth))
 }
 fn document(org: &str, kind: Kind, row: &OrganizationValue) -> Value {
-    let mut value = super::environment_values::base_document(
+    let mut value = crate::backend::api::github::environment_values::base_document(
         kind,
         &row.name,
         &row.value,
@@ -152,7 +158,7 @@ fn document(org: &str, kind: Kind, row: &OrganizationValue) -> Value {
     value["visibility"] = json!(row.visibility);
     // As on GitHub, only a value shared with selected repositories links to that list.
     if row.visibility == "selected" {
-        value["selected_repositories_url"] = json!(super::api_url(&format!(
+        value["selected_repositories_url"] = json!(crate::backend::api::github::api_url(&format!(
             "/orgs/{org}/actions/{}/{}/repositories",
             plural(kind),
             codeyard_webui::encode_component(&row.name)
@@ -208,9 +214,9 @@ async fn public_key(
     let (key_id, key) = values::key(&state.pool, encryptor, auth.user.id, org)
         .await
         .map_err(error)?;
-    Ok(Json(super::action_secrets::public_key_document(
-        &key_id, &key,
-    )))
+    Ok(Json(
+        crate::backend::api::github::action_secrets::public_key_document(&key_id, &key),
+    ))
 }
 async fn value(
     State(state): State<Arc<AppState>>,
@@ -248,7 +254,7 @@ async fn save_secret(
     body: std::result::Result<Json<SecretInput>, JsonRejection>,
 ) -> Result<Response> {
     let (org, auth) = organization(&state, &headers, &params["org"], true).await?;
-    let Json(body) = body.map_err(super::json_error)?;
+    let Json(body) = body.map_err(crate::backend::api::github::json_error)?;
     let encryptor = state
         .secret_encryptor
         .as_deref()
@@ -256,7 +262,12 @@ async fn save_secret(
     let (id, key) = values::key(&state.pool, encryptor, auth.user.id, org)
         .await
         .map_err(error)?;
-    let value = super::action_secrets::open_value(&key, &id, &body.key_id, &body.encrypted_value)?;
+    let value = crate::backend::api::github::action_secrets::open_value(
+        &key,
+        &id,
+        &body.key_id,
+        &body.encrypted_value,
+    )?;
     let created = values::save(
         &state.pool,
         Some(encryptor),
@@ -295,7 +306,7 @@ async fn create_variable(
     body: std::result::Result<Json<CreateVariable>, JsonRejection>,
 ) -> Result<Response> {
     let (org, auth) = organization(&state, &headers, &org, true).await?;
-    let Json(body) = body.map_err(super::json_error)?;
+    let Json(body) = body.map_err(crate::backend::api::github::json_error)?;
     values::save(
         &state.pool,
         None,
@@ -332,7 +343,7 @@ async fn update_variable(
     body: std::result::Result<Json<UpdateVariable>, JsonRejection>,
 ) -> Result<StatusCode> {
     let (org, auth) = organization(&state, &headers, &org, true).await?;
-    let Json(body) = body.map_err(super::json_error)?;
+    let Json(body) = body.map_err(crate::backend::api::github::json_error)?;
     let previous = previous.to_ascii_uppercase();
     let value = body.value.as_deref().or_else(|| {
         (body.name.is_none() && body.visibility.is_none() && body.selected_repository_ids.is_none())
@@ -424,7 +435,7 @@ async fn set_repositories(
     body: std::result::Result<Json<Repositories>, JsonRejection>,
 ) -> Result<StatusCode> {
     let (org, auth) = organization(&state, &headers, &params["org"], true).await?;
-    let Json(body) = body.map_err(super::json_error)?;
+    let Json(body) = body.map_err(crate::backend::api::github::json_error)?;
     values::select(
         &state.pool,
         auth.user.id,
@@ -490,8 +501,9 @@ async fn inherited(
     OriginalUri(uri): OriginalUri,
     Query(pagination): Query<Pagination>,
 ) -> Result<Response> {
-    let (repo, auth) = super::repository(&state, &headers, &owner, &name, false).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let (repo, auth) =
+        crate::backend::api::github::repository(&state, &headers, &owner, &name, false).await?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let kind = kind(&route);
     let rows = values::inherited(&state.pool, auth.user.id, repo.id, kind)
         .await
@@ -502,7 +514,7 @@ async fn inherited(
         plural(kind),
         rows.into_iter()
             .map(|row| {
-                super::environment_values::base_document(
+                crate::backend::api::github::environment_values::base_document(
                     kind,
                     &row.name,
                     &row.value,

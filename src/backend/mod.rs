@@ -10,13 +10,13 @@ pub mod ci;
 pub mod cli;
 pub mod cluster;
 pub mod code_scanning;
-pub mod crypto;
+
 pub mod dashboard;
 pub mod db;
-pub mod dependency_graph;
+
 pub mod email;
 pub mod files;
-pub(crate) mod fs;
+
 pub mod gists;
 pub mod identity;
 pub mod issues;

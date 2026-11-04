@@ -1,4 +1,4 @@
-use super::accounts::AccountCredential;
+use crate::backend::db::users::accounts::AccountCredential;
 use anyhow::Result;
 use codeyard_db_core::models::User;
 use codeyard_db_core::native_operation;

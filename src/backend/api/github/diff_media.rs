@@ -1,5 +1,7 @@
 //! The `.diff` and `.patch` media types, which `gh pr diff` and `git am` read.
-use crate::backend::repositories::store::{CommitInfo, DiffFileInfo, RepoStore};
+use crate::backend::repositories::store::CommitInfo;
+use crate::backend::repositories::store::DiffFileInfo;
+use crate::backend::repositories::store::RepoStore;
 use axum::{
     http::{header, HeaderMap},
     response::{IntoResponse, Response},

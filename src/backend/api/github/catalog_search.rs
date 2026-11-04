@@ -1,13 +1,14 @@
-use super::{auth, pagination::Pagination, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        catalog_search::{Kind, Options, Search},
-    },
-    repositories::access::{self, AccessError},
-    webhooks::payloads,
-};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::catalog_search::Kind;
+use crate::backend::db::catalog_search::Options;
+use crate::backend::db::catalog_search::Search;
+
+use crate::backend::repositories::access::AccessError;
+
 use axum::{
     extract::{OriginalUri, Query, State},
     http::{HeaderMap, StatusCode},
@@ -24,7 +25,8 @@ async fn catalog(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let authentication = auth::authenticate(&state, &headers, false).await?;
+    let authentication =
+        crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     let viewer = authentication.as_ref().map(|a| a.user.id);
     let kind = match uri.path().rsplit('/').next() {
         Some("repositories") => Kind::Repositories,
@@ -37,7 +39,7 @@ async fn catalog(
         .map_err(Error::invalid)?
         .with_classic_policy(authentication.as_ref().map(|auth| auth.token.id));
     if search.needs_viewer() && viewer.is_none() {
-        return Err(auth::required());
+        return Err(crate::backend::api::github::auth::required());
     }
     let ascending = match q.get("order").map_or("desc", String::as_str) {
         "asc" => true,
@@ -62,7 +64,7 @@ async fn catalog(
         if id <= 0 {
             return Err(Error::invalid("Invalid repository_id"));
         }
-        access::check_read(&state.pool, id, viewer)
+        crate::backend::repositories::access::check_read(&state.pool, id, viewer)
             .await
             .map_err(|e| {
                 if e == AccessError::NotFound {
@@ -75,15 +77,16 @@ async fn catalog(
     } else {
         None
     };
-    let _permit =
-        crate::backend::api::http::middleware::wait_for_static_slot(&super::search::SEARCHES)
-            .await
-            .ok_or_else(|| {
-                Error::new(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Search is busy. Try again shortly.",
-                )
-            })?;
+    let _permit = crate::backend::api::http::middleware::wait_for_static_slot(
+        &crate::backend::api::github::search::SEARCHES,
+    )
+    .await
+    .ok_or_else(|| {
+        Error::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Search is busy. Try again shortly.",
+        )
+    })?;
     let deadline = tokio::time::Instant::now() + state.search_time_budget;
     let (search, git_incomplete) = if search.needs_git() {
         crate::backend::repositories::catalog_search::prepare(
@@ -97,7 +100,7 @@ async fn catalog(
     } else {
         (search, false)
     };
-    let results = db::catalog_search::search(
+    let results = crate::backend::db::catalog_search::search(
         &state.pool,
         viewer,
         &search,
@@ -118,8 +121,13 @@ async fn catalog(
         .collect();
     ids.sort_unstable();
     ids.dedup();
-    let readable =
-        auth::readable_repositories(&state, authentication.as_ref(), &ids, "metadata").await?;
+    let readable = crate::backend::api::github::auth::readable_repositories(
+        &state,
+        authentication.as_ref(),
+        &ids,
+        "metadata",
+    )
+    .await?;
     let mut items = Vec::new();
     let licenses = search.git_licenses();
     let mut incomplete = git_incomplete;
@@ -131,16 +139,19 @@ async fn catalog(
                     incomplete = true;
                     continue;
                 }
-                let repo = match access::check_read(&state.pool, id, viewer).await {
-                    Ok(repo) => repo,
-                    Err(AccessError::NotFound) => {
-                        incomplete = true;
-                        continue;
-                    }
-                    Err(error) => return Err(Error::unavailable(error)),
-                };
+                let repo =
+                    match crate::backend::repositories::access::check_read(&state.pool, id, viewer)
+                        .await
+                    {
+                        Ok(repo) => repo,
+                        Err(AccessError::NotFound) => {
+                            incomplete = true;
+                            continue;
+                        }
+                        Err(error) => return Err(Error::unavailable(error)),
+                    };
                 if kind == Kind::Repositories {
-                    super::repos::search_document(
+                    crate::backend::api::github::repos::search_document(
                         &state,
                         &repo,
                         authentication.as_ref(),
@@ -150,7 +161,7 @@ async fn catalog(
                     .await?
                 } else {
                     let id = hit.key.parse().map_err(|_| Error::unavailable(()))?;
-                    let Some(label) = db::labels::get_label_by_id(&state.pool, id)
+                    let Some(label) = crate::backend::db::labels::get_label_by_id(&state.pool, id)
                         .await
                         .map_err(Error::unavailable)?
                         .filter(|l| l.repo_id == repo.id)
@@ -158,12 +169,14 @@ async fn catalog(
                         incomplete = true;
                         continue;
                     };
-                    let owner =
-                        db::repositories::records::repository_owner_name(&state.pool, repo.id)
-                            .await
-                            .map_err(Error::unavailable)?
-                            .ok_or_else(|| Error::unavailable(()))?;
-                    payloads::label(&label, &owner, &repo.name)
+                    let owner = crate::backend::db::repositories::records::repository_owner_name(
+                        &state.pool,
+                        repo.id,
+                    )
+                    .await
+                    .map_err(Error::unavailable)?
+                    .ok_or_else(|| Error::unavailable(()))?;
+                    crate::backend::webhooks::payloads::label(&label, &owner, &repo.name)
                 }
             }
             Kind::Users => {
@@ -173,15 +186,16 @@ async fn catalog(
                     .ok_or_else(|| Error::unavailable(()))?;
                 let id = id.parse().map_err(|_| Error::unavailable(()))?;
                 if kind == "u" {
-                    let Some(user) = db::users::accounts::get_user_by_id(&state.pool, id)
-                        .await
-                        .map_err(Error::unavailable)?
-                        .filter(|u| !u.is_banned && !u.must_change_password)
+                    let Some(user) =
+                        crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+                            .await
+                            .map_err(Error::unavailable)?
+                            .filter(|u| !u.is_banned && !u.must_change_password)
                     else {
                         incomplete = true;
                         continue;
                     };
-                    let mut value = payloads::user(&user);
+                    let mut value = crate::backend::webhooks::payloads::user(&user);
                     value["name"] = json!(user.display_name);
                     value["bio"] = json!(user.bio);
                     value["location"] = json!(user.location);
@@ -190,18 +204,21 @@ async fn catalog(
                     value
                 } else {
                     let Some(org) =
-                        db::organizations::get_public_organization_by_id(&state.pool, id)
-                            .await
-                            .map_err(Error::unavailable)?
+                        crate::backend::db::organizations::get_public_organization_by_id(
+                            &state.pool,
+                            id,
+                        )
+                        .await
+                        .map_err(Error::unavailable)?
                     else {
                         incomplete = true;
                         continue;
                     };
-                    payloads::organization_person(org.id, &org.name)
+                    crate::backend::webhooks::payloads::organization_person(org.id, &org.name)
                 }
             }
             Kind::Topics => {
-                let Some(topic) = db::catalog_search::topic(
+                let Some(topic) = crate::backend::db::catalog_search::topic(
                     &state.pool,
                     viewer,
                     &hit.key,
@@ -213,7 +230,7 @@ async fn catalog(
                     incomplete = true;
                     continue;
                 };
-                payloads::topic(&topic)
+                crate::backend::webhooks::payloads::topic(&topic)
             }
         };
         let mut value = value;

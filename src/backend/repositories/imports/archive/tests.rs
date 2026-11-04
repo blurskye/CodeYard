@@ -231,7 +231,9 @@ async fn repacks_loose_git_history_and_tags_without_source_configuration() {
     writer.repository("owner/project", &bytes).unwrap();
     let source = read(&writer.finish().unwrap(), None).unwrap();
     assert!(!source.git_files.contains_key("config"));
-    let prepared = super::git::prepare(&source).await.unwrap();
+    let prepared = crate::backend::repositories::imports::archive::git::prepare(&source)
+        .await
+        .unwrap();
     assert_eq!(prepared.default_branch.as_deref(), Some("trunk"));
     assert_eq!(prepared.refs["refs/heads/trunk"], tip.to_string());
     assert_eq!(prepared.refs["refs/pull/7/head"], tip.to_string());
@@ -283,6 +285,14 @@ async fn refuses_a_missing_object_instead_of_publishing_partial_history() {
         )
         .unwrap();
     let source = read(&writer.finish().unwrap(), None).unwrap();
-    assert!(super::git::prepare(&source).await.is_err());
-    assert!(super::git::prepare(&source).await.is_err());
+    assert!(
+        crate::backend::repositories::imports::archive::git::prepare(&source)
+            .await
+            .is_err()
+    );
+    assert!(
+        crate::backend::repositories::imports::archive::git::prepare(&source)
+            .await
+            .is_err()
+    );
 }

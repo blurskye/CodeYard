@@ -3,11 +3,12 @@
 mod traffic;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::activity::forks::visible_forks;
-use crate::backend::api::repos::chrome::{self, Loaded};
+
+use crate::backend::api::repos::chrome::Loaded;
 use crate::backend::api::repos::code::contributors::contributor_accounts;
 use crate::backend::api::repos::responses::repository_owners;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::repositories::store::repo_store;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Uri};
@@ -36,9 +37,12 @@ pub fn page_router() -> Router<Arc<AppState>> {
 }
 
 async fn show(ctx: &PageContext, loaded: Loaded, title: &str, page: InsightsPage) -> Response {
-    if let Err((status, _)) =
-        super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
-            .await
+    if let Err((status, _)) = crate::backend::api::repos::access::check_repo_read_access(
+        &ctx.state.pool,
+        &loaded.repository,
+        &ctx.headers,
+    )
+    .await
     {
         return ctx.error(status, "Repository not found.");
     }
@@ -60,7 +64,7 @@ async fn open(
     name: &str,
 ) -> Result<(PageContext, Loaded), Response> {
     let ctx = PageContext::load(state, headers, uri).await?;
-    let loaded = chrome::load_database(&ctx, owner, name).await?;
+    let loaded = crate::backend::api::repos::chrome::load_database(&ctx, owner, name).await?;
     Ok((ctx, loaded))
 }
 
@@ -73,13 +77,12 @@ async fn ref_activity(
         crate::backend::repositories::activity::Query,
     >,
 ) -> Response {
-    use crate::backend::repositories::activity;
     use codeyard_webui::pages::repos::insights::activity::{Page as ActivityPage, Row};
     let (ctx, loaded) = match open(state, headers, &uri, &owner, &name).await {
         Ok(opened) => opened,
         Err(response) => return response,
     };
-    let page = match activity::page(
+    let page = match crate::backend::repositories::activity::page(
         &ctx.state.pool,
         loaded.repository.id,
         &input,
@@ -89,12 +92,14 @@ async fn ref_activity(
     {
         Ok(page) => page,
         Err(error) => {
-            return match error.downcast_ref::<activity::InvalidQuery>() {
+            return match error
+                .downcast_ref::<crate::backend::repositories::activity::InvalidQuery>()
+            {
                 Some(invalid) => ctx.error(
                     axum::http::StatusCode::UNPROCESSABLE_ENTITY,
                     &invalid.to_string(),
                 ),
-                None => chrome::unavailable(&ctx),
+                None => crate::backend::api::repos::chrome::unavailable(&ctx),
             }
         }
     };
@@ -102,13 +107,13 @@ async fn ref_activity(
     let previous = page.previous.as_ref().map(|cursor| {
         format!(
             "{base}?{}",
-            activity::query_string(&input, Some(cursor), None)
+            crate::backend::repositories::activity::query_string(&input, Some(cursor), None)
         )
     });
     let next = page.next.as_ref().map(|cursor| {
         format!(
             "{base}?{}",
-            activity::query_string(&input, None, Some(cursor))
+            crate::backend::repositories::activity::query_string(&input, None, Some(cursor))
         )
     });
     let rows = page
@@ -156,11 +161,12 @@ async fn dependencies(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let loaded = match chrome::load_database(&ctx, &owner, &name).await {
+    let loaded = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await
+    {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
-    let reader = db::dependency_graph::Reader::Viewer(
+    let reader = crate::backend::db::dependency_graph::Reader::Viewer(
         ctx.user.as_ref().map(|user| ctx.database_actor(user.id)),
     );
     let reference = ctx
@@ -187,7 +193,7 @@ async fn dependencies(
         );
     }
     let snapshots = match if let Some(sha) = revision.as_deref() {
-        db::dependency_graph::snapshots(
+        crate::backend::db::dependency_graph::snapshots(
             &ctx.state.pool,
             &reader,
             loaded.repository.id,
@@ -196,7 +202,7 @@ async fn dependencies(
         )
         .await
     } else {
-        db::dependency_graph::latest_snapshots(
+        crate::backend::db::dependency_graph::latest_snapshots(
             &ctx.state.pool,
             &reader,
             loaded.repository.id,
@@ -205,7 +211,7 @@ async fn dependencies(
         .await
     } {
         Ok(snapshots) => snapshots,
-        Err(_) => return chrome::unavailable(&ctx),
+        Err(_) => return crate::backend::api::repos::chrome::unavailable(&ctx),
     };
     let page = ctx
         .query
@@ -214,7 +220,7 @@ async fn dependencies(
         .unwrap_or(1)
         .clamp(1, 10_000);
     let revision = revision.or_else(|| snapshots.first().map(|snapshot| snapshot.sha.clone()));
-    let packages = crate::backend::dependency_graph::packages(&snapshots);
+    let packages = codeyard_model::dependency_graph::packages(&snapshots);
     let offset = (page as usize - 1) * 30;
     let has_more = offset + 30 < packages.len();
     let rows = packages
@@ -255,7 +261,7 @@ async fn pulse(
         Err(response) => return response,
     };
     let days = normalize_days(ctx.query.get("days").map(String::as_str));
-    let points = match db::repository_stats::list_repo_activity_points(
+    let points = match crate::backend::db::repository_stats::list_repo_activity_points(
         &ctx.state.pool,
         loaded.repository.id,
         days,
@@ -263,7 +269,7 @@ async fn pulse(
     .await
     {
         Ok(points) => points,
-        Err(_) => return chrome::unavailable(&ctx),
+        Err(_) => return crate::backend::api::repos::chrome::unavailable(&ctx),
     };
     let activity = points
         .into_iter()
@@ -306,7 +312,13 @@ async fn community(
     .await
     {
         Ok(profile) => profile,
-        Err(error) => return chrome::store_error(&ctx, Some(&loaded.chrome), error),
+        Err(error) => {
+            return crate::backend::api::repos::chrome::store_error(
+                &ctx,
+                Some(&loaded.chrome),
+                error,
+            )
+        }
     };
     let mut checks = vec![CommunityCheck {
         name: "Description".to_owned(),
@@ -378,13 +390,19 @@ async fn contributors(
         .await
     {
         Ok(found) => found,
-        Err(error) => return chrome::store_error(&ctx, Some(&loaded.chrome), error),
+        Err(error) => {
+            return crate::backend::api::repos::chrome::store_error(
+                &ctx,
+                Some(&loaded.chrome),
+                error,
+            )
+        }
     };
     found.sort_by(|a, b| b.commits.cmp(&a.commits).then_with(|| a.name.cmp(&b.name)));
     let omitted = found.len().saturating_sub(CONTRIBUTORS_SHOWN);
     found.truncate(CONTRIBUTORS_SHOWN);
     let Ok(accounts) = contributor_accounts(&ctx.state.pool, &found).await else {
-        return chrome::unavailable(&ctx);
+        return crate::backend::api::repos::chrome::unavailable(&ctx);
     };
     let rows: Vec<Contributor> = found
         .into_iter()
@@ -416,7 +434,7 @@ async fn code_frequency(
         Err(response) => return response,
     };
     // The chart follows the default branch, so this page needs Git for its name.
-    let loaded = match chrome::load(&ctx, &owner, &name).await {
+    let loaded = match crate::backend::api::repos::chrome::load(&ctx, &owner, &name).await {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
@@ -425,7 +443,13 @@ async fn code_frequency(
         .await
     {
         Ok(weeks) => weeks,
-        Err(error) => return chrome::store_error(&ctx, Some(&loaded.chrome), error),
+        Err(error) => {
+            return crate::backend::api::repos::chrome::store_error(
+                &ctx,
+                Some(&loaded.chrome),
+                error,
+            )
+        }
     };
     let weeks = weeks
         .into_iter()
@@ -455,7 +479,7 @@ async fn actions(
         Err(response) => return response,
     };
     let days = normalize_days(ctx.query.get("days").map(String::as_str));
-    let usage = match db::repository_stats::list_workflow_usage(
+    let usage = match crate::backend::db::repository_stats::list_workflow_usage(
         &ctx.state.pool,
         loaded.repository.id,
         days,
@@ -463,7 +487,7 @@ async fn actions(
     .await
     {
         Ok(usage) => usage,
-        Err(_) => return chrome::unavailable(&ctx),
+        Err(_) => return crate::backend::api::repos::chrome::unavailable(&ctx),
     };
     let workflows = usage
         .into_iter()
@@ -514,20 +538,20 @@ async fn forks(
     )
     .await
     else {
-        return chrome::unavailable(&ctx);
+        return crate::backend::api::repos::chrome::unavailable(&ctx);
     };
     let ids: Vec<i64> = found.iter().map(|fork| fork.id).collect();
     let Ok(mut owners) = repository_owners(&ctx.state.pool, &ids).await else {
-        return chrome::unavailable(&ctx);
+        return crate::backend::api::repos::chrome::unavailable(&ctx);
     };
     let viewer =
         match crate::backend::api::http::session::get_optional_user(&ctx.state.pool, &ctx.headers)
             .await
         {
             Ok(user) => user.map(|user| user.id),
-            Err(_) => return chrome::unavailable(&ctx),
+            Err(_) => return crate::backend::api::repos::chrome::unavailable(&ctx),
         };
-    let readable = match db::repositories::access::readable_repository_ids(
+    let readable = match crate::backend::db::repositories::access::readable_repository_ids(
         &ctx.state.pool,
         viewer,
         &ids,
@@ -535,7 +559,7 @@ async fn forks(
     .await
     {
         Ok(ids) => ids,
-        Err(_) => return chrome::unavailable(&ctx),
+        Err(_) => return crate::backend::api::repos::chrome::unavailable(&ctx),
     };
     let rows = found
         .into_iter()

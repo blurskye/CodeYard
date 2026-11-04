@@ -2,10 +2,8 @@
 use codeyard_git::error::ErrorKind;
 use codeyard_model::vulnerabilities::ECOSYSTEMS;
 use codeyard_model::vulnerabilities::MAX_AFFECTED_PACKAGES;
-pub(crate) mod versions;
+
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::repositories::dependency_graph;
 
 use anyhow::{ensure, Result};
 use codeyard_model::repositories::Package;
@@ -13,383 +11,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{cmp::Ordering, io::Read, sync::Arc, time::Duration};
 
-pub fn ecosystem(name: &str) -> Option<&'static str> {
-    Some(match name {
-        "npm" => "npm",
-        "cargo" | "rust" => "crates.io",
-        "golang" | "go" => "Go",
-        "pypi" | "pip" => "PyPI",
-        "gem" | "rubygems" => "RubyGems",
-        "composer" => "Packagist",
-        "maven" => "Maven",
-        "nuget" => "NuGet",
-        "pub" => "Pub",
-        "hex" => "Hex",
-        _ => return None,
-    })
-}
-/// Python package names compare case-insensitively with each run of `-`, `_` and `.`
-/// read as one hyphen.
-pub(crate) fn python_name(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    for c in name.chars() {
-        if matches!(c, '-' | '_' | '.') {
-            if !out.ends_with('-') {
-                out.push('-');
-            }
-        } else {
-            out.push(c.to_ascii_lowercase());
-        }
-    }
-    out
-}
-pub(crate) fn name(ecosystem: &str, name: &str) -> String {
-    match ecosystem {
-        "PyPI" => python_name(name),
-        "NuGet" => name.to_ascii_lowercase(),
-        "Maven" => name.replace('/', ":"),
-        _ => name.into(),
-    }
-}
-/// Whether `version` lies in a range as advisory documents write it, such as
-/// `>= 1.0.0, < 1.2.0 || = 2.0.1`, under the ecosystem's version ordering.
-pub(crate) fn in_range(ecosystem: &str, version: &str, range: &str) -> bool {
-    range.split("||").any(|part| {
-        let bounds: Vec<&str> = part.split(',').map(str::trim).collect();
-        !bounds.iter().any(|bound| bound.is_empty())
-            && bounds.iter().all(|bound| {
-                let (operator, value) = [">=", "<=", ">", "<", "="]
-                    .into_iter()
-                    .find_map(|operator| {
-                        bound
-                            .strip_prefix(operator)
-                            .map(|value| (operator, value.trim()))
-                    })
-                    .unwrap_or(("=", bound));
-                if operator == ">=" && value == "0" {
-                    return true;
-                }
-                let Some(order) = versions::compare(ecosystem, version, value) else {
-                    return false;
-                };
-                match operator {
-                    ">=" => order != Ordering::Less,
-                    "<=" => order != Ordering::Greater,
-                    ">" => order == Ordering::Greater,
-                    "<" => order == Ordering::Less,
-                    _ => order == Ordering::Equal,
-                }
-            })
-    })
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Advisory {
-    pub id: String,
-    #[serde(default)]
-    pub aliases: Vec<String>,
-    #[serde(default)]
-    pub summary: String,
-    #[serde(default)]
-    pub details: String,
-    #[serde(default)]
-    pub severity: Vec<Value>,
-    #[serde(default)]
-    pub affected: Vec<Affected>,
-    #[serde(default)]
-    pub references: Vec<Value>,
-    pub published: Option<chrono::DateTime<chrono::Utc>>,
-    pub modified: chrono::DateTime<chrono::Utc>,
-    pub withdrawn: Option<chrono::DateTime<chrono::Utc>>,
-    #[serde(default)]
-    pub database_specific: Value,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Affected {
-    pub package: OsvPackage,
-    #[serde(default)]
-    pub ranges: Vec<Range>,
-    #[serde(default)]
-    pub versions: Vec<String>,
-    #[serde(default)]
-    pub ecosystem_specific: Value,
-    #[serde(default)]
-    pub database_specific: Value,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct OsvPackage {
-    pub ecosystem: String,
-    pub name: String,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Range {
-    pub r#type: String,
-    #[serde(default)]
-    pub events: Vec<Value>,
-}
-/// The validated catalogue projection paired with its original OSV record.
-pub struct PreparedAdvisory {
-    pub(crate) advisory: Advisory,
-    pub(crate) document: Value,
-}
-
-impl Advisory {
-    pub fn prepare(self) -> Result<PreparedAdvisory> {
-        let document = self.global_document()?;
-        Ok(PreparedAdvisory {
-            advisory: self,
-            document,
-        })
-    }
-
-    pub fn parse(bytes: &[u8]) -> Result<Self> {
-        ensure!(
-            bytes.len() <= 4 * 1024 * 1024,
-            "OSV record exceeds its limit"
-        );
-        let record: Self = serde_json::from_slice(bytes)?;
-        ensure!(
-            !record.id.is_empty()
-                && record.id.len() <= 256
-                && !record.id.chars().any(char::is_control)
-                && record.affected.len() <= MAX_AFFECTED_PACKAGES
-                && record
-                    .affected
-                    .iter()
-                    .all(|affected| !affected.package.name.contains('\0')
-                        && !affected.package.ecosystem.contains('\0')),
-            "Invalid OSV record"
-        );
-        Ok(record)
-    }
-    pub fn matches(&self, package: &Package) -> bool {
-        if self.withdrawn.is_some() {
-            return false;
-        }
-        let Some(ecosystem) = ecosystem(&package.ecosystem) else {
-            return false;
-        };
-        self.affected.iter().any(|affected| {
-            if affected.package.ecosystem != ecosystem
-                || name(ecosystem, &affected.package.name) != name(ecosystem, &package.name)
-            {
-                return false;
-            }
-            if affected
-                .versions
-                .iter()
-                .any(|v| versions::compare(ecosystem, &package.version, v) == Some(Ordering::Equal))
-            {
-                return true;
-            }
-            affected
-                .ranges
-                .iter()
-                .filter(|r| matches!(r.r#type.as_str(), "SEMVER" | "ECOSYSTEM"))
-                .any(|range| {
-                    let ecosystem = if range.r#type == "SEMVER" {
-                        "SEMVER"
-                    } else {
-                        ecosystem
-                    };
-                    let mut introduced = None;
-                    for event in &range.events {
-                        if let Some(start) = event["introduced"].as_str() {
-                            introduced = Some(start);
-                            continue;
-                        }
-                        if let Some(start) = introduced {
-                            let lower = start == "0"
-                                || versions::compare(ecosystem, &package.version, start)
-                                    .is_some_and(|o| o != Ordering::Less);
-                            let upper = if let Some(end) =
-                                event["fixed"].as_str().or_else(|| event["limit"].as_str())
-                            {
-                                versions::compare(ecosystem, &package.version, end)
-                                    == Some(Ordering::Less)
-                            } else if let Some(end) = event["last_affected"].as_str() {
-                                versions::compare(ecosystem, &package.version, end)
-                                    .is_some_and(|o| o != Ordering::Greater)
-                            } else {
-                                false
-                            };
-                            if lower && upper {
-                                return true;
-                            }
-                            introduced = None;
-                        }
-                    }
-                    introduced.is_some_and(|start| {
-                        start == "0"
-                            || versions::compare(ecosystem, &package.version, start)
-                                .is_some_and(|o| o != Ordering::Less)
-                    })
-                })
-        })
-    }
-    pub fn severity(&self) -> String {
-        // Labels other than these fall through to the scores below.
-        match self.database_specific["severity"]
-            .as_str()
-            .map(str::to_ascii_lowercase)
-            .as_deref()
-        {
-            Some("moderate" | "medium") => return "medium".into(),
-            Some(label @ ("low" | "high" | "critical")) => return label.into(),
-            _ => {}
-        }
-        for severity in &self.severity {
-            if let Some(score) = severity["score"]
-                .as_str()
-                .and_then(|v| v.parse::<f64>().ok())
-            {
-                return if score >= 9.0 {
-                    "critical"
-                } else if score >= 7.0 {
-                    "high"
-                } else if score >= 4.0 {
-                    "medium"
-                } else {
-                    "low"
-                }
-                .into();
-            }
-            if let Some(vector) = severity["score"].as_str() {
-                if let Ok(score) = db::advisories::cvss_score(vector) {
-                    return if score >= 9.0 {
-                        "critical"
-                    } else if score >= 7.0 {
-                        "high"
-                    } else if score >= 4.0 {
-                        "medium"
-                    } else {
-                        "low"
-                    }
-                    .into();
-                }
-            }
-        }
-        "unknown".into()
-    }
-    pub fn catalogue_id(&self) -> String {
-        use sha2::{Digest, Sha256};
-        if let Some(id) = self
-            .aliases
-            .iter()
-            .chain(std::iter::once(&self.id))
-            .find(|id| id.starts_with("GHSA-"))
-        {
-            return id.clone();
-        }
-        let hash = Sha256::digest(self.id.as_bytes());
-        let alphabet = b"23456789cfghjmpqrvwx";
-        let id: String = hash[..12]
-            .iter()
-            .map(|b| alphabet[*b as usize % alphabet.len()] as char)
-            .collect();
-        format!("GHSA-{}-{}-{}", &id[..4], &id[4..8], &id[8..])
-    }
-
-    pub fn global_document(&self) -> Result<Value> {
-        let mut value = self.document();
-        value["ghsa_id"] = json!(self.catalogue_id());
-        if self.summary.trim().is_empty() {
-            value["summary"] = json!(self.id);
-        }
-        let bounded = |text: &str, limit: usize| {
-            let mut end = text.len().min(limit);
-            while !text.is_char_boundary(end) {
-                end -= 1;
-            }
-            text[..end].to_owned()
-        };
-        value["summary"] = json!(bounded(value["summary"].as_str().unwrap_or(&self.id), 1024));
-        value["description"] = json!(bounded(&self.details, 65535));
-        value["published_at"] = json!(self.published.unwrap_or(self.modified));
-        value["references"] = json!(self
-            .references
-            .iter()
-            .filter_map(|r| r["url"].as_str())
-            .collect::<Vec<_>>());
-        if value["cvss"]["vector_string"].is_null() {
-            value["cvss"] = Value::Null;
-        }
-        let mut vulnerabilities = Vec::new();
-        for affected in &self.affected {
-            let ecosystem = match affected.package.ecosystem.as_str() {
-                "crates.io" => "rust",
-                "PyPI" => "pip",
-                "Go" => "go",
-                "RubyGems" => "rubygems",
-                "Packagist" => "composer",
-                "Maven" => "maven",
-                "NuGet" => "nuget",
-                "Pub" => "pub",
-                "Hex" => "hex",
-                other => other,
-            };
-            let mut entry = |range: String, patched: Option<&str>, kind: &str| {
-                vulnerabilities.push(json!({"package":{"ecosystem":ecosystem,"name":affected.package.name},"vulnerable_version_range":range,"first_patched_version":patched,"vulnerable_functions":[],"osv_range_type":kind}));
-            };
-            for version in &affected.versions {
-                entry(format!("= {version}"), None, "ECOSYSTEM");
-            }
-            for range in &affected.ranges {
-                if !matches!(range.r#type.as_str(), "SEMVER" | "ECOSYSTEM") {
-                    continue;
-                }
-                let mut lower = None;
-                for event in &range.events {
-                    if let Some(start) = event["introduced"].as_str() {
-                        lower = Some(format!(">= {start}"));
-                    } else if let Some(start) = lower.take() {
-                        if let Some(end) =
-                            event["fixed"].as_str().or_else(|| event["limit"].as_str())
-                        {
-                            entry(
-                                format!("{start}, < {end}"),
-                                event["fixed"].as_str(),
-                                &range.r#type,
-                            );
-                        } else if let Some(end) = event["last_affected"].as_str() {
-                            entry(format!("{start}, <= {end}"), None, &range.r#type);
-                        }
-                    }
-                }
-                if let Some(start) = lower {
-                    entry(start, None, &range.r#type);
-                }
-            }
-        }
-        value["vulnerabilities"] = json!(vulnerabilities);
-        db::dependabot_alerts::osv_document(&value)
-    }
-    pub fn document(&self) -> Value {
-        let ghsa = self
-            .aliases
-            .iter()
-            .chain(std::iter::once(&self.id))
-            .find(|s| s.starts_with("GHSA-"));
-        let cve = self
-            .aliases
-            .iter()
-            .chain(std::iter::once(&self.id))
-            .find(|s| s.starts_with("CVE-"));
-        let vector = self
-            .severity
-            .iter()
-            .find_map(|s| s["score"].as_str().filter(|s| s.starts_with("CVSS:3.")));
-        let vector = vector.filter(|s| db::advisories::cvss_score(s).is_ok());
-        let score = vector.and_then(|s| db::advisories::cvss_score(s).ok());
-        json!({"ghsa_id":ghsa,"cve_id":cve,"summary":self.summary,"description":self.details,"severity":self.severity(),"identifiers":self.aliases.iter().chain(std::iter::once(&self.id)).filter(|id|id.starts_with("CVE-")||id.starts_with("GHSA-")).map(|id|json!({"type":if id.starts_with("CVE-"){"CVE"}else{"GHSA"},"value":id})).collect::<Vec<_>>(),"references":self.references.iter().filter_map(|r|r["url"].as_str().map(|url|json!({"url":url}))).collect::<Vec<_>>(),"published_at":self.published,"updated_at":self.modified,"withdrawn_at":self.withdrawn,"vulnerabilities":[],"cvss":{"score":score,"vector_string":vector},"cwes":[]})
-    }
-}
-
 pub async fn ingest(pool: &codeyard_db_core::DbPool, bytes: &[u8]) -> Result<bool> {
     let bytes = bytes.to_vec();
     let record = tokio::task::spawn_blocking(move || Advisory::parse(&bytes)?.prepare()).await??;
-    let changed = db::vulnerabilities::upsert(pool, &record).await?;
+    let changed = crate::backend::db::vulnerabilities::upsert(pool, &record).await?;
     if changed {
-        db::vulnerabilities::rescan_all(pool).await?;
+        crate::backend::db::vulnerabilities::rescan_all(pool).await?;
     }
     Ok(changed)
 }
@@ -401,8 +28,12 @@ pub async fn findings(pool: &codeyard_db_core::DbPool, package: &Package) -> Res
         versions::compare(ecosystem, &package.version, &package.version).is_some(),
         "Unsupported locked package version"
     );
-    let rows =
-        db::vulnerabilities::advisories(pool, ecosystem, &name(ecosystem, &package.name)).await?;
+    let rows = crate::backend::db::vulnerabilities::advisories(
+        pool,
+        ecosystem,
+        &name(ecosystem, &package.name),
+    )
+    .await?;
     rows.into_iter()
         .map(|row| serde_json::from_str::<Advisory>(&row).map_err(Into::into))
         .filter_map(|r| match r {
@@ -417,27 +48,32 @@ pub async fn scan(
     repo: &codeyard_db_core::models::Repository,
     generation: i64,
 ) -> Result<()> {
-    let reader = db::dependency_graph::Reader::Scan(generation);
+    let reader = crate::backend::db::dependency_graph::Reader::Scan(generation);
     let reference = format!("refs/heads/{}", repo.default_branch);
-    let (sha, packages) =
-        match dependency_graph::native_inventory(state, &reader, repo, &reference).await {
-            Ok(result) => result,
-            Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath) => {
-                return Ok(())
-            }
-            Err(error) => return Err(error.into()),
-        };
-    let snapshot = dependency_graph::snapshot(sha, reference, packages);
-    db::vulnerabilities::save_snapshot(&state.pool, repo.id, generation, &snapshot).await
+    let (sha, packages) = match crate::backend::repositories::dependency_graph::native_inventory(
+        state, &reader, repo, &reference,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath) => {
+            return Ok(())
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let snapshot =
+        crate::backend::repositories::dependency_graph::snapshot(sha, reference, packages);
+    crate::backend::db::vulnerabilities::save_snapshot(&state.pool, repo.id, generation, &snapshot)
+        .await
 }
 async fn sync(state: &AppState) -> Result<()> {
-    let settings = db::vulnerabilities::settings(&state.pool).await?;
+    let settings = crate::backend::db::vulnerabilities::settings(&state.pool).await?;
     synchronize(&state.pool, &settings).await
 }
 /// Downloads each enabled ecosystem's `all.zip` from the OSV mirror and stores its records.
 pub async fn synchronize(
     pool: &codeyard_db_core::DbPool,
-    settings: &db::vulnerabilities::Settings,
+    settings: &crate::backend::db::vulnerabilities::Settings,
 ) -> Result<()> {
     let enabled: Vec<String> = serde_json::from_str(&settings.ecosystems)?;
     let client = reqwest::Client::builder()
@@ -510,10 +146,10 @@ pub async fn synchronize(
             // Repositories are rescanned once per archive, not once per changed record.
             let mut changed = false;
             for record in records {
-                changed |= db::vulnerabilities::upsert(pool, &record).await?;
+                changed |= crate::backend::db::vulnerabilities::upsert(pool, &record).await?;
             }
             if changed {
-                db::vulnerabilities::rescan_all(pool).await?;
+                crate::backend::db::vulnerabilities::rescan_all(pool).await?;
             }
             Ok::<_, anyhow::Error>(())
         }
@@ -537,22 +173,26 @@ pub async fn run(state: Arc<AppState>, mut stop: tokio::sync::watch::Receiver<bo
     loop {
         tokio::select! {_ = stop.changed()=>break,_=interval.tick()=>{}}
         let work = async {
-            if db::vulnerabilities::claim_sync(&state.pool).await? {
+            if crate::backend::db::vulnerabilities::claim_sync(&state.pool).await? {
                 if let Err(error) = sync(&state).await {
                     tracing::warn!(%error,"OSV synchronization failed");
                 }
             }
             if !discovered {
-                db::vulnerabilities::queue_changed(&state.pool).await?;
+                crate::backend::db::vulnerabilities::queue_changed(&state.pool).await?;
                 discovered = true;
             }
             for _ in 0..20 {
-                let Some((repo, generation)) = db::vulnerabilities::claim(&state.pool).await?
+                let Some((repo, generation)) =
+                    crate::backend::db::vulnerabilities::claim(&state.pool).await?
                 else {
                     break;
                 };
-                if let Some(repo) =
-                    db::repositories::records::get_repository_by_id(&state.pool, repo).await?
+                if let Some(repo) = crate::backend::db::repositories::records::get_repository_by_id(
+                    &state.pool,
+                    repo,
+                )
+                .await?
                 {
                     match tokio::time::timeout(
                         Duration::from_secs(540),
@@ -615,14 +255,17 @@ mod tests {
             package_url: "pkg:pypi/example-package@1.0rc1".into(),
             scope: "runtime".into(),
         };
-        let snapshot =
-            dependency_graph::snapshot("a".repeat(40), "refs/heads/main".into(), vec![package]);
+        let snapshot = crate::backend::repositories::dependency_graph::snapshot(
+            "a".repeat(40),
+            "refs/heads/main".into(),
+            vec![package],
+        );
         snapshot.validate().unwrap();
         let mut osv = std::collections::BTreeMap::from([(
             document["ghsa_id"].as_str().unwrap().to_owned(),
             advisory,
         )]);
-        let matches = db::dependabot_alerts::matches(
+        let matches = crate::backend::db::dependabot_alerts::matches(
             std::slice::from_ref(&snapshot),
             std::slice::from_ref(&document),
             &osv,
@@ -632,7 +275,7 @@ mod tests {
         assert_eq!(matches[0].0.version, "1.0rc1");
         osv.values_mut().next().unwrap().withdrawn = Some(chrono::Utc::now());
         assert!(
-            db::dependabot_alerts::matches(&[snapshot], &[document], &osv)
+            crate::backend::db::dependabot_alerts::matches(&[snapshot], &[document], &osv)
                 .unwrap()
                 .is_empty()
         );
@@ -650,9 +293,12 @@ mod tests {
             package_url: "pkg:maven/org.example/parser@1.0.0".into(),
             scope: "runtime".into(),
         };
-        let snapshot =
-            dependency_graph::snapshot("a".repeat(40), "refs/heads/main".into(), vec![package]);
-        let matches = db::dependabot_alerts::matches(
+        let snapshot = crate::backend::repositories::dependency_graph::snapshot(
+            "a".repeat(40),
+            "refs/heads/main".into(),
+            vec![package],
+        );
+        let matches = crate::backend::db::dependabot_alerts::matches(
             &[snapshot],
             &[document],
             &std::collections::BTreeMap::new(),
@@ -680,3 +326,15 @@ mod tests {
         assert!(!a.matches(&p));
     }
 }
+
+use codeyard_model::vulnerabilities::Advisory;
+
+use codeyard_model::vulnerabilities::OsvPackage;
+
+use codeyard_model::vulnerabilities::PreparedAdvisory;
+
+use codeyard_model::vulnerabilities::ecosystem;
+
+use codeyard_model::vulnerabilities::in_range;
+
+use codeyard_model::vulnerabilities::name;

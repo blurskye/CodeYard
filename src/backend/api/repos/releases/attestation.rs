@@ -1,17 +1,15 @@
-use crate::backend::{
-    api::http::context::PageContext,
-    app::AppState,
-    db,
-    repositories::{
-        access::AccessError,
-        releases::{self, integrity::Attestation, ReleaseError},
-    },
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::access::AccessError;
+
+use crate::backend::repositories::releases::ReleaseError;
 use axum::{
     extract::{Path, State},
     http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
+use codeyard_model::release_integrity::Attestation;
 use std::sync::Arc;
 pub(super) async fn download(
     State(state): State<Arc<AppState>>,
@@ -23,11 +21,12 @@ pub(super) async fn download(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let loaded = match super::super::chrome::load_database(&ctx, &owner, &name).await {
+    let loaded = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await
+    {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
-    let found = match releases::detail_by_id(
+    let found = match crate::backend::repositories::releases::detail_by_id(
         &ctx.state.pool,
         ctx.user.as_ref().map(|user| user.id),
         loaded.repository.id,
@@ -49,7 +48,7 @@ pub(super) async fn download(
     if !found.release.release.is_immutable {
         return ctx.error(StatusCode::NOT_FOUND, "Release attestation not found.");
     }
-    let (key, body) = match db::repositories::immutable_releases::attestation(
+    let (key, body) = match crate::backend::db::repositories::immutable_releases::attestation(
         &ctx.state.pool,
         found.repository.id,
         id,

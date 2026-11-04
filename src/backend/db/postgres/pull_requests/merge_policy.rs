@@ -1,4 +1,5 @@
-use crate::backend::db::pull_requests::merge_policy::{Changed, Snapshot};
+use crate::backend::db::pull_requests::merge_policy::Changed;
+use crate::backend::db::pull_requests::merge_policy::Snapshot;
 use anyhow::{ensure, Result};
 use sqlx::PgPool;
 

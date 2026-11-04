@@ -1,14 +1,12 @@
-use crate::backend::{
-    api::{
-        http::context::PageContext,
-        repos::{
-            discussion::{kind, repository, unavailable, ResultPage},
-            forms::{authorize_post, field},
-        },
-    },
-    app::AppState,
-    db,
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::repos::discussion::kind;
+use crate::backend::api::repos::discussion::repository;
+use crate::backend::api::repos::discussion::unavailable;
+use crate::backend::api::repos::discussion::ResultPage;
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::field;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -27,14 +25,16 @@ pub(crate) async fn native_lock(
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
     let kind = kind(&uri);
-    let item = super::assignees::assigned_item(&ctx, &repo, kind, number).await?;
+    let item =
+        crate::backend::api::repos::issues::assignees::assigned_item(&ctx, &repo, kind, number)
+            .await?;
     let locked = match field(&form, "locked").as_str() {
         "true" => true,
         "false" => false,
         _ => return Err(ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid lock state.")),
     };
     let reason = field(&form, "lock_reason");
-    db::discussions::set_lock(
+    crate::backend::db::discussions::set_lock(
         &ctx.state.pool,
         ctx.database_actor(ctx.require_user()?.id),
         repo.record.id,
@@ -43,20 +43,20 @@ pub(crate) async fn native_lock(
         (!reason.is_empty()).then_some(reason.as_str()),
     )
     .await
-    .map_err(
-        |error| match error.downcast_ref::<db::discussions::LockRefusal>() {
-            Some(db::discussions::LockRefusal::Denied) => ctx.error(
+    .map_err(|error| {
+        match error.downcast_ref::<crate::backend::db::discussions::LockRefusal>() {
+            Some(crate::backend::db::discussions::LockRefusal::Denied) => ctx.error(
                 StatusCode::FORBIDDEN,
                 "Triage access is required to lock this conversation.",
             ),
-            Some(db::discussions::LockRefusal::Missing) => {
+            Some(crate::backend::db::discussions::LockRefusal::Missing) => {
                 ctx.error(StatusCode::NOT_FOUND, "Discussion not found.")
             }
-            Some(db::discussions::LockRefusal::InvalidReason) => {
+            Some(crate::backend::db::discussions::LockRefusal::InvalidReason) => {
                 ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid lock reason.")
             }
             None => unavailable(&ctx),
-        },
-    )?;
+        }
+    })?;
     Ok(ctx.redirect(&format!("{}/{number}", repo.view.family_url(kind))))
 }

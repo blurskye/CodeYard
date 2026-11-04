@@ -1,17 +1,23 @@
-use super::tree::view_entries;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::{check_repo_read_access, readable_repository};
-use crate::backend::api::repos::chrome::{
-    is_branch, ref_names_under, resolve, root_if_missing, store_error, Loaded,
-};
+use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::chrome::is_branch;
+use crate::backend::api::repos::chrome::ref_names_under;
+use crate::backend::api::repos::chrome::resolve;
+use crate::backend::api::repos::chrome::root_if_missing;
+use crate::backend::api::repos::chrome::store_error;
+use crate::backend::api::repos::chrome::Loaded;
+use crate::backend::api::repos::code::tree::view_entries;
 use crate::backend::api::repos::paging::number;
 use crate::backend::api::repos::refs::references::resolve_references;
 use crate::backend::app::AppState;
-use crate::backend::repositories::files;
-use crate::backend::repositories::store::{
-    repo_store, BlobBytes, BlobRange, RepoStore, MAX_EDITOR_BYTES,
-};
+
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::BlobBytes;
+use crate::backend::repositories::store::BlobRange;
+use crate::backend::repositories::store::RepoStore;
+use crate::backend::repositories::store::MAX_EDITOR_BYTES;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
@@ -347,12 +353,11 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         && size <= MAX_EDITOR_BYTES as u64
     {
         if start == 0 && end == size {
-            files::editor_text(&bytes, false).is_ok()
+            crate::backend::repositories::files::editor_text(&bytes, false).is_ok()
         } else {
-            store
-                .blob_by_id(&id)
-                .await
-                .is_ok_and(|bytes| files::editor_text(&bytes, binary).is_ok())
+            store.blob_by_id(&id).await.is_ok_and(|bytes| {
+                crate::backend::repositories::files::editor_text(&bytes, binary).is_ok()
+            })
         }
     } else {
         false
@@ -367,7 +372,7 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         content,
         binary,
         size,
-        download_limit: Some(super::raw::download_limit()),
+        download_limit: Some(crate::backend::api::repos::code::raw::download_limit()),
         offset: start,
         first_line: Some(first_line),
         next: if end < size && !binary {
@@ -498,7 +503,7 @@ pub(super) async fn file_context(
     };
     let permalink = format!(
         "{}{}",
-        crate::backend::api::http::config::public_origin(),
+        codeyard_model::http_config::public_origin(),
         view::ref_path::file_url(&loaded.chrome.base(), "blob", commit, path)
     );
     Ok((folders, latest_commit, permalink))
@@ -510,7 +515,7 @@ pub(in crate::backend::api::repos) async fn page(
     >,
     headers: axum::http::HeaderMap,
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
-    super::GitPathParams(params): super::GitPathParams,
+    crate::backend::api::repos::code::GitPathParams(params): crate::backend::api::repos::code::GitPathParams,
 ) -> axum::response::Response {
     let ctx =
         match crate::backend::api::http::context::PageContext::load(state, headers, &uri).await {
@@ -533,20 +538,19 @@ pub(in crate::backend::api::repos) async fn page(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::db;
 
     #[tokio::test]
     async fn binary_json_previews_hold_download_slots_until_consumed_or_timed_out() {
         let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
         codeyard_db_core::run_migrations(&pool).await.unwrap();
         let root = tempfile::tempdir().unwrap();
-        let user = db::users::accounts::create_user(&pool, "alice", None)
+        let user = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
         let repository = crate::backend::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(user.id),
+            crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(user.id),
             "proj",
             None,
             false,

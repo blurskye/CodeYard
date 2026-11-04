@@ -64,8 +64,9 @@ async fn set_setting(
     value: &str,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::users::transitions::active_admin(&mut tx, actor).await?
-        || !super::users::transitions::live_session(&mut tx, actor, session).await?
+    if !crate::backend::db::sqlite::users::transitions::active_admin(&mut tx, actor).await?
+        || !crate::backend::db::sqlite::users::transitions::live_session(&mut tx, actor, session)
+            .await?
     {
         return Ok(false);
     }

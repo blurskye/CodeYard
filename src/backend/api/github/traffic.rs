@@ -1,9 +1,11 @@
-use super::{repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    repositories::traffic::{self, Kind, Refusal},
-    webhooks::payloads,
-};
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::traffic::Kind;
+use crate::backend::repositories::traffic::Refusal;
+
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -32,16 +34,18 @@ async fn views(
     Query(period): Query<Period>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let data = traffic::summary(
+    let data = crate::backend::repositories::traffic::summary(
         &state.pool,
         actor.as_ref().map(|actor| &actor.user),
         &repo,
         Kind::Views,
-        traffic::weekly(period.per.as_deref()).map_err(failure)?,
+        crate::backend::repositories::traffic::weekly(period.per.as_deref()).map_err(failure)?,
     )
     .await
     .map_err(failure)?;
-    Ok(Json(payloads::repository_traffic(Kind::Views, &data)))
+    Ok(Json(
+        crate::backend::webhooks::payloads::repository_traffic(Kind::Views, &data),
+    ))
 }
 async fn clones(
     State(state): State<Arc<AppState>>,
@@ -50,16 +54,18 @@ async fn clones(
     Query(period): Query<Period>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let data = traffic::summary(
+    let data = crate::backend::repositories::traffic::summary(
         &state.pool,
         actor.as_ref().map(|actor| &actor.user),
         &repo,
         Kind::Clones,
-        traffic::weekly(period.per.as_deref()).map_err(failure)?,
+        crate::backend::repositories::traffic::weekly(period.per.as_deref()).map_err(failure)?,
     )
     .await
     .map_err(failure)?;
-    Ok(Json(payloads::repository_traffic(Kind::Clones, &data)))
+    Ok(Json(
+        crate::backend::webhooks::payloads::repository_traffic(Kind::Clones, &data),
+    ))
 }
 async fn paths(
     State(state): State<Arc<AppState>>,
@@ -67,11 +73,17 @@ async fn paths(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let data = traffic::paths(&state.pool, actor.as_ref().map(|actor| &actor.user), &repo)
-        .await
-        .map_err(failure)?;
+    let data = crate::backend::repositories::traffic::paths(
+        &state.pool,
+        actor.as_ref().map(|actor| &actor.user),
+        &repo,
+    )
+    .await
+    .map_err(failure)?;
     Ok(Json(Value::Array(
-        data.iter().map(payloads::content_traffic).collect(),
+        data.iter()
+            .map(crate::backend::webhooks::payloads::content_traffic)
+            .collect(),
     )))
 }
 async fn referrers(
@@ -80,11 +92,17 @@ async fn referrers(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let data = traffic::referrers(&state.pool, actor.as_ref().map(|actor| &actor.user), &repo)
-        .await
-        .map_err(failure)?;
+    let data = crate::backend::repositories::traffic::referrers(
+        &state.pool,
+        actor.as_ref().map(|actor| &actor.user),
+        &repo,
+    )
+    .await
+    .map_err(failure)?;
     Ok(Json(Value::Array(
-        data.iter().map(payloads::referrer_traffic).collect(),
+        data.iter()
+            .map(crate::backend::webhooks::payloads::referrer_traffic)
+            .collect(),
     )))
 }
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

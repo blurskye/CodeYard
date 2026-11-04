@@ -1,17 +1,17 @@
 //! Organization Dependabot credentials and repository access settings.
-use super::{
-    action_secrets::{error, open_value},
-    api_url, auth, orgs,
-    pagination::Pagination,
-    repos, Error, Result,
-};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        dependabot::{OrganizationSecret, OrganizationSecretInput, RepositorySelection},
-    },
-};
+use crate::backend::api::github::action_secrets::error;
+use crate::backend::api::github::action_secrets::open_value;
+use codeyard_model::urls::api_url;
+
+use crate::backend::api::github::pagination::Pagination;
+
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::dependabot::OrganizationSecret;
+use crate::backend::db::dependabot::OrganizationSecretInput;
+use crate::backend::db::dependabot::RepositorySelection;
 use axum::{
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -67,14 +67,14 @@ pub(super) async fn organization(
     headers: &HeaderMap,
     name: &str,
     write: bool,
-) -> Result<(i64, auth::Authentication)> {
-    let actor = auth::authenticate(state, headers, write)
+) -> Result<(i64, crate::backend::api::github::auth::Authentication)> {
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, write)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     if write {
         actor.require_write()?;
     }
-    let org = orgs::target(state, name).await?;
+    let org = crate::backend::api::github::orgs::target(state, name).await?;
     Ok((org.id, actor))
 }
 
@@ -98,10 +98,13 @@ async fn list(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let (org, actor) = organization(&state, &headers, &name, false).await?;
-    let secrets =
-        db::dependabot::list_organization_secrets(&state.pool, actor.database_actor(), org)
-            .await
-            .map_err(error)?;
+    let secrets = crate::backend::db::dependabot::list_organization_secrets(
+        &state.pool,
+        actor.database_actor(),
+        org,
+    )
+    .await
+    .map_err(error)?;
     let (offset, limit) = page.window()?;
     let total = secrets.len();
     let secrets: Vec<_> = secrets
@@ -127,10 +130,14 @@ pub(super) async fn public_key(
         .secret_encryptor
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
-    let (id, key) =
-        db::dependabot::organization_key(&state.pool, encryptor, actor.database_actor(), org)
-            .await
-            .map_err(error)?;
+    let (id, key) = crate::backend::db::dependabot::organization_key(
+        &state.pool,
+        encryptor,
+        actor.database_actor(),
+        org,
+    )
+    .await
+    .map_err(error)?;
     Ok(Json(
         json!({"key_id":id,"key":STANDARD.encode(key.public_key().as_bytes())}),
     ))
@@ -142,13 +149,16 @@ async fn secret(
     Path((org_name, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (org, actor) = organization(&state, &headers, &org_name, false).await?;
-    let secret =
-        db::dependabot::list_organization_secrets(&state.pool, actor.database_actor(), org)
-            .await
-            .map_err(error)?
-            .into_iter()
-            .find(|s| s.name == name.to_ascii_uppercase())
-            .ok_or_else(Error::missing)?;
+    let secret = crate::backend::db::dependabot::list_organization_secrets(
+        &state.pool,
+        actor.database_actor(),
+        org,
+    )
+    .await
+    .map_err(error)?
+    .into_iter()
+    .find(|s| s.name == name.to_ascii_uppercase())
+    .ok_or_else(Error::missing)?;
     Ok(Json(document(&org_name, secret)))
 }
 
@@ -190,10 +200,14 @@ async fn save(
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
     // The key operation checks live organization authority even for metadata-only updates.
-    let (id, key) =
-        db::dependabot::organization_key(&state.pool, encryptor, actor.database_actor(), org)
-            .await
-            .map_err(error)?;
+    let (id, key) = crate::backend::db::dependabot::organization_key(
+        &state.pool,
+        encryptor,
+        actor.database_actor(),
+        org,
+    )
+    .await
+    .map_err(error)?;
     let value = match (body.encrypted_value, body.key_id) {
         (Some(value), Some(key_id)) => Some(open_value(&key, &id, &key_id, &value)?),
         (None, None) => None,
@@ -207,7 +221,7 @@ async fn save(
                 .collect::<Result<Vec<_>>>()
         })
         .transpose()?;
-    let created = db::dependabot::save_organization_secret(
+    let created = crate::backend::db::dependabot::save_organization_secret(
         &state.pool,
         encryptor,
         actor.database_actor(),
@@ -234,7 +248,7 @@ async fn remove(
     Path((org_name, name)): Path<(String, String)>,
 ) -> Result<StatusCode> {
     let (org, actor) = organization(&state, &headers, &org_name, true).await?;
-    if !db::dependabot::delete_organization_secret(
+    if !crate::backend::db::dependabot::delete_organization_secret(
         &state.pool,
         actor.database_actor(),
         org,
@@ -256,7 +270,7 @@ async fn selected(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let (org, actor) = organization(&state, &headers, &org_name, false).await?;
-    let repositories = db::dependabot::selected_repositories(
+    let repositories = crate::backend::db::dependabot::selected_repositories(
         &state.pool,
         actor.database_actor(),
         org,
@@ -268,7 +282,8 @@ async fn selected(
     let (offset, limit) = page.window()?;
     let mut documents = Vec::new();
     for repo in repositories.into_iter().skip(offset).take(limit) {
-        documents.push(repos::document(&state, &repo, Some(&actor)).await?);
+        documents
+            .push(crate::backend::api::github::repos::document(&state, &repo, Some(&actor)).await?);
     }
     Ok((
         page.headers(&uri, offset.saturating_add(limit) < total)?,
@@ -295,7 +310,7 @@ async fn set_selected(
         .into_iter()
         .map(RepositoryId::value)
         .collect::<Result<Vec<_>>>()?;
-    db::dependabot::select_repositories(
+    crate::backend::db::dependabot::select_repositories(
         &state.pool,
         actor.database_actor(),
         org,
@@ -316,7 +331,7 @@ async fn repository_access(
 ) -> Result<Response> {
     let (org, actor) = organization(&state, &headers, &name, false).await?;
     let (offset, limit) = page.window()?;
-    let (level, mut repositories) = db::dependabot::repository_access(
+    let (level, mut repositories) = crate::backend::db::dependabot::repository_access(
         &state.pool,
         actor.database_actor(),
         org,
@@ -328,7 +343,9 @@ async fn repository_access(
     repositories.truncate(limit);
     let mut documents = Vec::new();
     for repository in repositories {
-        documents.push(repos::document(&state, &repository, Some(&actor)).await?);
+        documents.push(
+            crate::backend::api::github::repos::document(&state, &repository, Some(&actor)).await?,
+        );
     }
     Ok((
         page.headers(&uri, has_more)?,
@@ -353,7 +370,7 @@ async fn update_repository_access(
 ) -> Result<StatusCode> {
     let (org, actor) = organization(&state, &headers, &name, true).await?;
     let Json(body) = body.map_err(|_| Error::invalid("Invalid repository selection"))?;
-    db::dependabot::update_repository_access(
+    crate::backend::db::dependabot::update_repository_access(
         &state.pool,
         actor.database_actor(),
         org,
@@ -382,7 +399,7 @@ async fn set_default_level(
     if !matches!(body.default_level.as_str(), "public" | "internal") {
         return Err(Error::validation("Dependabot", "default_level", "invalid"));
     }
-    db::dependabot::set_repository_access_default(
+    crate::backend::db::dependabot::set_repository_access_default(
         &state.pool,
         actor.database_actor(),
         org,
@@ -399,7 +416,7 @@ async fn add_selected(
     Path((org_name, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (org, actor) = organization(&state, &headers, &org_name, true).await?;
-    db::dependabot::select_repositories(
+    crate::backend::db::dependabot::select_repositories(
         &state.pool,
         actor.database_actor(),
         org,
@@ -417,7 +434,7 @@ async fn remove_selected(
     Path((org_name, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (org, actor) = organization(&state, &headers, &org_name, true).await?;
-    db::dependabot::select_repositories(
+    crate::backend::db::dependabot::select_repositories(
         &state.pool,
         actor.database_actor(),
         org,

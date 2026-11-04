@@ -1,13 +1,13 @@
 //! Traffic means observed native navigations and completed initial Git object transfers.
 pub(crate) mod clone;
-use crate::backend::db;
+
+pub use crate::backend::db::repositories::traffic::{
+    Bucket, Identity, Kind, Metric, PopularPath, PopularReferrer, Summary, Totals, Window,
+};
 use anyhow::{ensure, Result};
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
 use codeyard_db_core::DbPool;
-pub use db::repositories::traffic::{
-    Bucket, Identity, Kind, Metric, PopularPath, PopularReferrer, Summary, Totals, Window,
-};
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
     #[error("Repository not found")]
@@ -26,12 +26,12 @@ pub fn weekly(per: Option<&str>) -> Result<bool> {
 }
 async fn authorize(pool: &DbPool, viewer: Option<&User>, repo: &Repository) -> Result<()> {
     ensure!(
-        super::access::can_read(pool, viewer, repo).await?,
+        crate::backend::repositories::access::can_read(pool, viewer, repo).await?,
         Refusal::Missing
     );
     let viewer = viewer.ok_or(Refusal::Denied)?;
     ensure!(
-        super::access::user_access(pool, viewer, repo)
+        crate::backend::repositories::access::user_access(pool, viewer, repo)
             .await?
             .can_write(),
         Refusal::Denied
@@ -46,7 +46,14 @@ pub async fn summary(
     weekly: bool,
 ) -> Result<Summary> {
     authorize(pool, viewer, repo).await?;
-    db::repositories::traffic::summary(pool, repo.id, kind, &Window::current(), weekly).await
+    crate::backend::db::repositories::traffic::summary(
+        pool,
+        repo.id,
+        kind,
+        &Window::current(),
+        weekly,
+    )
+    .await
 }
 pub async fn paths(
     pool: &DbPool,
@@ -54,7 +61,7 @@ pub async fn paths(
     repo: &Repository,
 ) -> Result<Vec<PopularPath>> {
     authorize(pool, viewer, repo).await?;
-    db::repositories::traffic::paths(pool, repo.id, &Window::current()).await
+    crate::backend::db::repositories::traffic::paths(pool, repo.id, &Window::current()).await
 }
 pub async fn referrers(
     pool: &DbPool,
@@ -62,11 +69,11 @@ pub async fn referrers(
     repo: &Repository,
 ) -> Result<Vec<PopularReferrer>> {
     authorize(pool, viewer, repo).await?;
-    db::repositories::traffic::referrers(pool, repo.id, &Window::current()).await
+    crate::backend::db::repositories::traffic::referrers(pool, repo.id, &Window::current()).await
 }
 /// One bounded cleanup batch, shared by the live service and maintenance tests.
 pub async fn purge_expired(pool: &DbPool) -> Result<u64> {
-    db::repositories::traffic::prune(pool, &Window::current().first).await
+    crate::backend::db::repositories::traffic::prune(pool, &Window::current().first).await
 }
 pub(crate) async fn maintain(pool: DbPool, mut stop: tokio::sync::watch::Receiver<bool>) {
     use tokio::time::{Duration, Instant, MissedTickBehavior};
@@ -101,7 +108,7 @@ const OBSERVE_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 pub async fn observe(pool: &DbPool, repo: i64, identity: &Identity, metric: &Metric) {
     match tokio::time::timeout(
         OBSERVE_BUDGET,
-        db::repositories::traffic::record(pool, repo, identity, metric),
+        crate::backend::db::repositories::traffic::record(pool, repo, identity, metric),
     )
     .await
     {

@@ -1,9 +1,12 @@
 //! Organization issue types are the same definitions inherited by repository issues.
-use super::{auth, target, AppState, Error, Result};
-use crate::backend::{
-    db::issue_attributes::{self, Definition},
-    webhooks::payloads,
-};
+use crate::backend::api::github::orgs::auth;
+use crate::backend::api::github::orgs::target;
+use crate::backend::api::github::orgs::AppState;
+use crate::backend::api::github::orgs::Error;
+use crate::backend::api::github::orgs::Result;
+
+use crate::backend::db::issue_attributes::Definition;
+
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -32,11 +35,19 @@ async fn list(
         .await?
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
-    let types = issue_attributes::organization_catalog(&state.pool, org.id, actor.user.id, "type")
-        .await
-        .map_err(|error| super::super::issue_attributes::error(error).simple())?;
+    let types = crate::backend::db::issue_attributes::organization_catalog(
+        &state.pool,
+        org.id,
+        actor.user.id,
+        "type",
+    )
+    .await
+    .map_err(|error| crate::backend::api::github::issue_attributes::error(error).simple())?;
     Ok(Json(Value::Array(
-        types.iter().map(payloads::issue_type).collect(),
+        types
+            .iter()
+            .map(crate::backend::webhooks::payloads::issue_type)
+            .collect(),
     )))
 }
 #[derive(Deserialize)]
@@ -57,12 +68,13 @@ async fn save(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &params["org"]).await?;
-    let Json(input) = input.map_err(|error| super::super::json_error(error).simple())?;
+    let Json(input) =
+        input.map_err(|error| crate::backend::api::github::json_error(error).simple())?;
     let id = params
         .get("issue_type_id")
         .map(|id| id.parse::<i64>().map_err(|_| Error::missing()))
         .transpose()?;
-    let value = issue_attributes::configure_organization(
+    let value = crate::backend::db::issue_attributes::configure_organization(
         &state.pool,
         org.id,
         actor.database_actor(),
@@ -80,8 +92,8 @@ async fn save(
         },
     )
     .await
-    .map_err(|error| super::super::issue_attributes::error(error).simple())?;
-    Ok(Json(payloads::issue_type(&value)))
+    .map_err(|error| crate::backend::api::github::issue_attributes::error(error).simple())?;
+    Ok(Json(crate::backend::webhooks::payloads::issue_type(&value)))
 }
 async fn remove(
     State(state): State<Arc<AppState>>,
@@ -93,7 +105,7 @@ async fn remove(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    issue_attributes::delete_organization_definition(
+    crate::backend::db::issue_attributes::delete_organization_definition(
         &state.pool,
         org.id,
         actor.database_actor(),
@@ -101,6 +113,6 @@ async fn remove(
         "type",
     )
     .await
-    .map_err(|error| super::super::issue_attributes::error(error).simple())?;
+    .map_err(|error| crate::backend::api::github::issue_attributes::error(error).simple())?;
     Ok(StatusCode::NO_CONTENT)
 }

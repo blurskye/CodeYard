@@ -1,10 +1,16 @@
 //! Uploaded file records. A file is pending until its bytes are confirmed,
 //! then active; pending uploads expire.
-use crate::backend::db::files::{
-    AdmissionError, DeleteFileOutcome, DeleteUnreferencedOutcome, FileAuthority, ReserveUpload,
-    DOWNLOAD_CHARGE_DAYS, IN_FLIGHT_PUT_GRACE_SECONDS, PUT_LIFETIME_SECONDS, SWEEP_BATCH,
-    SWEEP_BATCHES, UPLOAD_CHARGE_DAYS,
-};
+use crate::backend::db::files::AdmissionError;
+use crate::backend::db::files::DeleteFileOutcome;
+use crate::backend::db::files::DeleteUnreferencedOutcome;
+use crate::backend::db::files::FileAuthority;
+use crate::backend::db::files::ReserveUpload;
+use crate::backend::db::files::DOWNLOAD_CHARGE_DAYS;
+use crate::backend::db::files::IN_FLIGHT_PUT_GRACE_SECONDS;
+use crate::backend::db::files::PUT_LIFETIME_SECONDS;
+use crate::backend::db::files::SWEEP_BATCH;
+use crate::backend::db::files::SWEEP_BATCHES;
+use crate::backend::db::files::UPLOAD_CHARGE_DAYS;
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 use std::net::IpAddr;
 use uuid::Uuid;
@@ -215,7 +221,7 @@ async fn require_file_actor(
         return Ok(false);
     };
     if let Some(session) = &actor.session {
-        match super::users::transitions::require_account(
+        match crate::backend::db::postgres::users::transitions::require_account(
             tx,
             user,
             &crate::backend::db::users::accounts::AccountCredential::Session(session),
@@ -229,7 +235,7 @@ async fn require_file_actor(
             Err(error) => return Err(file_authority_error(error)),
         }
     }
-    super::users::transitions::lock_accounts_shared(tx, &[user])
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(tx, &[user])
         .await
         .map_err(file_authority_error)?;
     Ok(sqlx::query_scalar::<_, bool>(
@@ -415,7 +421,7 @@ pub async fn delete_file(
     let mut tx = pool.begin().await?;
     // Organization assignment and account transitions take membership, organizations,
     // accounts, then files. File deletion must not invert that order.
-    super::users::transitions::lock_accounts_shared(
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &user_id.into_iter().collect::<Vec<_>>(),
     )

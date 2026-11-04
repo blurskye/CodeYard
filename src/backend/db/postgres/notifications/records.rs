@@ -1,12 +1,14 @@
 pub(crate) mod threads;
-use crate::backend::db::notifications::records::{
-    NotificationCounts, NotificationCredential, NotificationCursor, NotificationFilter,
-    NotificationMark, NotificationScopes,
-};
+use crate::backend::db::notifications::records::NotificationCounts;
+use crate::backend::db::notifications::records::NotificationCredential;
+use crate::backend::db::notifications::records::NotificationCursor;
+use crate::backend::db::notifications::records::NotificationFilter;
+use crate::backend::db::notifications::records::NotificationMark;
+use crate::backend::db::notifications::records::NotificationScopes;
 use crate::backend::db::notifications::threads::ThreadAction;
-use crate::backend::db::notifications::{
-    NewNotification, NotificationInbox, NotificationInboxAction,
-};
+use crate::backend::db::notifications::NewNotification;
+use crate::backend::db::notifications::NotificationInbox;
+use crate::backend::db::notifications::NotificationInboxAction;
 use crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL;
 use crate::backend::db::postgres::users::transitions::lock_accounts_shared;
 use anyhow::Result;
@@ -44,16 +46,22 @@ pub async fn create_notification(
     }
     if let Some(actor) = input.actor_id {
         anyhow::ensure!(
-            !super::super::users::blocks::interaction_blocked(&mut tx, input.user_id, actor)
-                .await?,
+            !crate::backend::db::postgres::users::blocks::interaction_blocked(
+                &mut tx,
+                input.user_id,
+                actor
+            )
+            .await?,
             NotificationSuppressed
         );
     }
     if let Some(repo) = input.repo_id {
         for user in [Some(input.user_id), input.actor_id].into_iter().flatten() {
             anyhow::ensure!(
-                !super::super::users::blocks::repository_interaction_blocked(&mut tx, user, repo)
-                    .await?,
+                !crate::backend::db::postgres::users::blocks::repository_interaction_blocked(
+                    &mut tx, user, repo
+                )
+                .await?,
                 NotificationSuppressed
             );
         }
@@ -199,14 +207,15 @@ async fn lock_notification_scope_readable(
     if scope_repository_id == 0 {
         return Ok(true);
     }
-    let Some(authority) = super::super::repositories::access::lock_user_repo_access_in_transaction(
-        connection,
-        user_id,
-        scope_repository_id,
-        super::super::repositories::access::RepositoryRowLock::Shared,
-        true,
-    )
-    .await?
+    let Some(authority) =
+        crate::backend::db::postgres::repositories::access::lock_user_repo_access_in_transaction(
+            connection,
+            user_id,
+            scope_repository_id,
+            crate::backend::db::postgres::repositories::access::RepositoryRowLock::Shared,
+            true,
+        )
+        .await?
     else {
         return Ok(false);
     };

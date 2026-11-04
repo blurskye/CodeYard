@@ -1,7 +1,9 @@
-use super::responses::{map_run, workflow_view};
+use crate::backend::api::ci::responses::map_run;
+use crate::backend::api::ci::responses::workflow_view;
 use crate::backend::api::http::context::PageContext;
+use crate::backend::app::AppState;
 use crate::backend::repositories::store::repo_store;
-use crate::backend::{app::AppState, db};
+
 use axum::{
     extract::{OriginalUri, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -196,31 +198,37 @@ async fn actions(
                     return ctx.error(StatusCode::BAD_REQUEST, "Run identifier must be a UUID.")
                 }
             };
-            let run = match db::ci::get_ci_run_by_run_id(&ctx.state.pool, run_id).await {
-                Ok(Some(run)) => run,
-                Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Run not found."),
-                Err(_) => return unavailable(&ctx),
-            };
-            let repo =
-                match db::repositories::records::get_repository_by_id(&ctx.state.pool, run.repo_id)
-                    .await
-                {
-                    Ok(Some(repo)) => repo,
-                    Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Repository not found."),
+            let run =
+                match crate::backend::db::ci::get_ci_run_by_run_id(&ctx.state.pool, run_id).await {
+                    Ok(Some(run)) => run,
+                    Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Run not found."),
                     Err(_) => return unavailable(&ctx),
                 };
+            let repo = match crate::backend::db::repositories::records::get_repository_by_id(
+                &ctx.state.pool,
+                run.repo_id,
+            )
+            .await
+            {
+                Ok(Some(repo)) => repo,
+                Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Repository not found."),
+                Err(_) => return unavailable(&ctx),
+            };
             if let Err((status, _)) =
-                super::jobs::ensure_repo_read_access(&ctx.state, user, &repo).await
+                crate::backend::api::ci::jobs::ensure_repo_read_access(&ctx.state, user, &repo)
+                    .await
             {
                 return read_error(&ctx, status);
             }
-            let owner =
-                match db::repositories::records::repository_owner_name(&ctx.state.pool, repo.id)
-                    .await
-                {
-                    Ok(Some(owner)) => owner,
-                    _ => return unavailable(&ctx),
-                };
+            let owner = match crate::backend::db::repositories::records::repository_owner_name(
+                &ctx.state.pool,
+                repo.id,
+            )
+            .await
+            {
+                Ok(Some(owner)) => owner,
+                _ => return unavailable(&ctx),
+            };
             let path = format!(
                 "/{}/{}/actions",
                 codeyard_webui::encode_component(&owner),
@@ -303,7 +311,7 @@ async fn actions(
     } else {
         view_actions::logs::normalize_status(value("status"))
     };
-    let filters = db::ci::CiRunFilter {
+    let filters = crate::backend::db::ci::CiRunFilter {
         workflow: value("workflow").to_owned(),
         event: value("event").to_owned(),
         status: status.to_owned(),
@@ -312,7 +320,7 @@ async fn actions(
         text: value("q").to_owned(),
         before: (before > 0).then_some(before),
     };
-    let mut persisted_runs = match db::ci::list_filtered_ci_runs(
+    let mut persisted_runs = match crate::backend::db::ci::list_filtered_ci_runs(
         &ctx.state.pool,
         user.id,
         repository.as_ref().map(|repo| repo.id),
@@ -341,8 +349,12 @@ async fn actions(
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
-        match db::repositories::access::readable_repositories_by_ids(&ctx.state.pool, user.id, &ids)
-            .await
+        match crate::backend::db::repositories::access::readable_repositories_by_ids(
+            &ctx.state.pool,
+            user.id,
+            &ids,
+        )
+        .await
         {
             Ok(repositories) => repositories
                 .into_iter()
@@ -379,7 +391,8 @@ async fn actions(
             Ok(id) => id,
             Err(_) => return ctx.error(StatusCode::BAD_REQUEST, "Run identifier must be a UUID."),
         };
-        let run = match db::ci::get_ci_run_by_run_id(&ctx.state.pool, run_id).await {
+        let run = match crate::backend::db::ci::get_ci_run_by_run_id(&ctx.state.pool, run_id).await
+        {
             Ok(Some(run)) => run,
             Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Run not found."),
             Err(_) => return unavailable(&ctx),
@@ -387,20 +400,26 @@ async fn actions(
         if !run_matches_repository(run.repo_id, repository.as_ref().map(|repo| repo.id)) {
             return ctx.error(StatusCode::NOT_FOUND, "Run not found in this repository.");
         }
-        let run_repository =
-            match db::repositories::records::get_repository_by_id(&ctx.state.pool, run.repo_id)
-                .await
-            {
-                Ok(Some(repo)) => repo,
-                Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Repository not found."),
-                Err(_) => return unavailable(&ctx),
-            };
-        if let Err((status, _)) =
-            super::jobs::ensure_repo_read_access(&ctx.state, user, &run_repository).await
+        let run_repository = match crate::backend::db::repositories::records::get_repository_by_id(
+            &ctx.state.pool,
+            run.repo_id,
+        )
+        .await
+        {
+            Ok(Some(repo)) => repo,
+            Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Repository not found."),
+            Err(_) => return unavailable(&ctx),
+        };
+        if let Err((status, _)) = crate::backend::api::ci::jobs::ensure_repo_read_access(
+            &ctx.state,
+            user,
+            &run_repository,
+        )
+        .await
         {
             return read_error(&ctx, status);
         }
-        let access = match db::repositories::access::get_user_repo_access(
+        let access = match crate::backend::db::repositories::access::get_user_repo_access(
             &ctx.state.pool,
             user.id,
             run_repository.id,
@@ -415,12 +434,19 @@ async fn actions(
             && run_repository.owner_org_id.is_none();
         can_cancel = !user.is_banned
             && !user.must_change_password
-            && db::ci::may_cancel_run(user.id, run.triggered_by_id, personal_admin, access);
+            && crate::backend::db::ci::may_cancel_run(
+                user.id,
+                run.triggered_by_id,
+                personal_admin,
+                access,
+            );
         if run.pipeline != "ci" || run.environment.is_some() {
             can_manage_runs &= personal_admin || access.can_admin();
         }
         let persisted_logs =
-            match db::ci::list_ci_logs(&ctx.state.pool, run.id, log_limit as i64).await {
+            match crate::backend::db::ci::list_ci_logs(&ctx.state.pool, run.id, log_limit as i64)
+                .await
+            {
                 Ok(lines) => lines,
                 Err(_) => return unavailable(&ctx),
             };
@@ -435,7 +461,12 @@ async fn actions(
                 timestamp: line.created_at.timestamp(),
             })
             .collect();
-        let deployment = match db::ci::get_ci_deployment_by_run_id(&ctx.state.pool, run.id).await {
+        let deployment = match crate::backend::db::ci::get_ci_deployment_by_run_id(
+            &ctx.state.pool,
+            run.id,
+        )
+        .await
+        {
             Ok(Some(deployment)) if deployment.repo_id == run.repo_id => {
                 Some(view_actions::Deployment {
                     environment: deployment.environment,
@@ -461,23 +492,29 @@ async fn actions(
             )
             .await
         };
-        let artifacts =
-            match db::action_objects::list_artifacts(&ctx.state.pool, run.id, None, None).await {
-                Ok(artifacts) => artifacts
-                    .into_iter()
-                    .map(|artifact| view_actions::Artifact {
-                        can_delete: !run_repository.is_archived
-                            && !user.is_banned
-                            && !user.must_change_password
-                            && (personal_admin || access.can_write()),
-                        id: artifact.id,
-                        name: artifact.name,
-                        size: artifact.size,
-                    })
-                    .collect(),
-                Err(_) => return unavailable(&ctx),
-            };
-        let groups = match db::action_concurrency::groups(
+        let artifacts = match crate::backend::db::action_objects::list_artifacts(
+            &ctx.state.pool,
+            run.id,
+            None,
+            None,
+        )
+        .await
+        {
+            Ok(artifacts) => artifacts
+                .into_iter()
+                .map(|artifact| view_actions::Artifact {
+                    can_delete: !run_repository.is_archived
+                        && !user.is_banned
+                        && !user.must_change_password
+                        && (personal_admin || access.can_write()),
+                    id: artifact.id,
+                    name: artifact.name,
+                    size: artifact.size,
+                })
+                .collect(),
+            Err(_) => return unavailable(&ctx),
+        };
+        let groups = match crate::backend::db::action_concurrency::groups(
             &ctx.state.pool,
             run.repo_id,
             Some(run.workflow_run_id.unwrap_or(run.id)),
@@ -489,30 +526,38 @@ async fn actions(
         };
         let mut waiting_for_concurrency = false;
         for group in &groups {
-            let members =
-                match db::action_concurrency::members(&ctx.state.pool, run.repo_id, &group.name)
-                    .await
-                {
-                    Ok(members) => members,
-                    Err(_) => return unavailable(&ctx),
-                };
+            let members = match crate::backend::db::action_concurrency::members(
+                &ctx.state.pool,
+                run.repo_id,
+                &group.name,
+            )
+            .await
+            {
+                Ok(members) => members,
+                Err(_) => return unavailable(&ctx),
+            };
             waiting_for_concurrency |= members
                 .iter()
                 .any(|member| member.run.id == run.id && !member.holding);
         }
         let approval_pull = if run.approval_required {
             if let Some(id) = run.pull_request_id {
-                let pull =
-                    match db::pull_requests::records::get_pull_request_by_id(&ctx.state.pool, id)
+                let pull = match crate::backend::db::pull_requests::records::get_pull_request_by_id(
+                    &ctx.state.pool,
+                    id,
+                )
+                .await
+                {
+                    Ok(pull) => pull,
+                    Err(_) => return unavailable(&ctx),
+                };
+                let owner =
+                    match crate::backend::db::ci::ci_repository_owner(&ctx.state.pool, run.repo_id)
                         .await
                     {
-                        Ok(pull) => pull,
-                        Err(_) => return unavailable(&ctx),
+                        Ok(Some(owner)) => owner,
+                        _ => return unavailable(&ctx),
                     };
-                let owner = match db::ci::ci_repository_owner(&ctx.state.pool, run.repo_id).await {
-                    Ok(Some(owner)) => owner,
-                    _ => return unavailable(&ctx),
-                };
                 pull.map(|pull| {
                     format!(
                         "/{}/{}/pulls/{}",
@@ -527,18 +572,20 @@ async fn actions(
         } else {
             None
         };
-        let summaries = match db::action_jobs::summaries(&ctx.state.pool, run.repo_id, run.id).await
-        {
-            Ok(summaries) => summaries
-                .into_iter()
-                .map(|summary| view_actions::Summary {
-                    job: summary.job,
-                    number: summary.number,
-                    markdown: summary.markdown,
-                })
-                .collect(),
-            Err(_) => return unavailable(&ctx),
-        };
+        let summaries =
+            match crate::backend::db::action_jobs::summaries(&ctx.state.pool, run.repo_id, run.id)
+                .await
+            {
+                Ok(summaries) => summaries
+                    .into_iter()
+                    .map(|summary| view_actions::Summary {
+                        job: summary.job,
+                        number: summary.number,
+                        markdown: summary.markdown,
+                    })
+                    .collect(),
+                Err(_) => return unavailable(&ctx),
+            };
         let mut run_view = map_run(run, &run_repository);
         run_view.approval_pull = approval_pull;
         run_view.concurrency_groups = groups.into_iter().map(|group| group.name).collect();

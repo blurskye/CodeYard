@@ -1,7 +1,8 @@
-use super::authority::*;
-use super::invitations::{LIVE, RECIPIENT};
 use crate::backend::db::organizations::invitations::InvitationOffer;
 use crate::backend::db::organizations::*;
+use crate::backend::db::postgres::organizations::authority::*;
+use crate::backend::db::postgres::organizations::invitations::LIVE;
+use crate::backend::db::postgres::organizations::invitations::RECIPIENT;
 use anyhow::Result;
 use codeyard_db_core::models::OrgInvitation;
 use codeyard_db_core::models::OrgRole;
@@ -31,7 +32,7 @@ pub async fn invite_team_member(
     if scoped_team(&mut tx, org, team).await?.is_none() {
         return Ok(Missing);
     }
-    let outcome = super::invitations::save_in_transaction(
+    let outcome = crate::backend::db::postgres::organizations::invitations::save_in_transaction(
         &mut tx,
         grant,
         org,

@@ -1,5 +1,7 @@
 //! Repository read selection shared by browser and JSON adapters.
-use crate::backend::{cluster::NodeContext, db, repositories::store::repo_store};
+use crate::backend::cluster::NodeContext;
+
+use crate::backend::repositories::store::repo_store;
 use codeyard_git::error::RepoError;
 use std::collections::HashMap;
 
@@ -10,11 +12,13 @@ pub async fn commit_authors(
     emails: &[String],
 ) -> anyhow::Result<HashMap<String, codeyard_db_core::models::User>> {
     anyhow::ensure!(emails.len() <= 512, "Too many commit email addresses");
-    Ok(db::users::accounts::commit_authors(pool, emails)
-        .await?
-        .into_iter()
-        .map(|author| (author.address, author.user))
-        .collect())
+    Ok(
+        crate::backend::db::users::accounts::commit_authors(pool, emails)
+            .await?
+            .into_iter()
+            .map(|author| (author.address, author.user))
+            .collect(),
+    )
 }
 
 /// Prefer `stored` when Git has that branch, then `database`, then `main`, `master`, or the
@@ -66,7 +70,7 @@ pub async fn same_fork_network(
             let Some(parent) = current.forked_from_id else {
                 return Ok(current.id);
             };
-            current = db::repositories::records::get_repository_by_id(pool, parent)
+            current = crate::backend::db::repositories::records::get_repository_by_id(pool, parent)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Fork parent not found"))?;
         }

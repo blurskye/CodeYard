@@ -2,7 +2,7 @@ use super::*;
 use crate::support::git_server::{self, Server};
 use axum::extract::ConnectInfo;
 use chrono::Datelike;
-use codeyard::backend::repositories::traffic;
+
 use std::net::SocketAddr;
 #[derive(Clone, Copy)]
 enum Mode {
@@ -411,7 +411,12 @@ async fn traffic_contract(pg: bool) {
     f.execute("INSERT INTO repository_traffic_visitors(repo_id,day,fingerprint,visitor) SELECT repo_id,'2000-01-01',fingerprint,visitor FROM repository_traffic_visitors WHERE repo_id=$1 LIMIT 1",&[repo.id]).await;
     f.execute("INSERT INTO repository_traffic_counts(repo_id,day,kind,visitor,path_hash,path,title,referrer,count,last_seen) SELECT repo_id,'2000-01-01',kind,visitor,path_hash,path,title,referrer,count,last_seen FROM repository_traffic_counts WHERE repo_id=$1 LIMIT 1",&[repo.id]).await;
     assert_eq!(views(&router, &reader).await["count"], 19);
-    assert!(traffic::purge_expired(f.pool()).await.unwrap() >= 3);
+    assert!(
+        codeyard::backend::repositories::traffic::purge_expired(f.pool())
+            .await
+            .unwrap()
+            >= 3
+    );
     for table in [
         "repository_traffic_keys",
         "repository_traffic_visitors",

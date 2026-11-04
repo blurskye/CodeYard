@@ -1,13 +1,18 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::http::session::{extract_session_id, get_current_user};
-use crate::backend::api::repos::access::{
-    check_repo_admin_access, find_repository, readable_repository,
-};
-use crate::backend::api::repos::discussion::{label, page, repository, unavailable, ResultPage};
+use crate::backend::api::http::session::extract_session_id;
+use crate::backend::api::http::session::get_current_user;
+use crate::backend::api::repos::access::check_repo_admin_access;
+use crate::backend::api::repos::access::find_repository;
+use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::discussion::label;
+use crate::backend::api::repos::discussion::page;
+use crate::backend::api::repos::discussion::repository;
+use crate::backend::api::repos::discussion::unavailable;
+use crate::backend::api::repos::discussion::ResultPage;
 use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;
@@ -47,33 +52,34 @@ pub struct CreateLabelRequest {
 }
 
 pub(crate) fn label_write_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
-    let (status, code, message) = match error.downcast_ref::<db::labels::LabelWriteRefusal>() {
-        Some(db::labels::LabelWriteRefusal::Denied) => (
-            StatusCode::FORBIDDEN,
-            "label_write_denied",
-            "Label mutation denied",
-        ),
-        Some(db::labels::LabelWriteRefusal::InvalidLabels) => (
-            StatusCode::CONFLICT,
-            "invalid_labels",
-            "Invalid label scope or batch",
-        ),
-        Some(db::labels::LabelWriteRefusal::Conflict) => (
-            StatusCode::CONFLICT,
-            "label_changed",
-            "The label changed. Your draft is preserved; reload before saving.",
-        ),
-        Some(db::labels::LabelWriteRefusal::DuplicateName) => (
-            StatusCode::CONFLICT,
-            "duplicate_label",
-            "A label with this name already exists. Choose another name.",
-        ),
-        None => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "database_unavailable",
-            "Label storage unavailable",
-        ),
-    };
+    let (status, code, message) =
+        match error.downcast_ref::<crate::backend::db::labels::LabelWriteRefusal>() {
+            Some(crate::backend::db::labels::LabelWriteRefusal::Denied) => (
+                StatusCode::FORBIDDEN,
+                "label_write_denied",
+                "Label mutation denied",
+            ),
+            Some(crate::backend::db::labels::LabelWriteRefusal::InvalidLabels) => (
+                StatusCode::CONFLICT,
+                "invalid_labels",
+                "Invalid label scope or batch",
+            ),
+            Some(crate::backend::db::labels::LabelWriteRefusal::Conflict) => (
+                StatusCode::CONFLICT,
+                "label_changed",
+                "The label changed. Your draft is preserved; reload before saving.",
+            ),
+            Some(crate::backend::db::labels::LabelWriteRefusal::DuplicateName) => (
+                StatusCode::CONFLICT,
+                "duplicate_label",
+                "A label with this name already exists. Choose another name.",
+            ),
+            None => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "database_unavailable",
+                "Label storage unavailable",
+            ),
+        };
     (status, Json(ApiError::new(code, message)))
 }
 
@@ -89,7 +95,7 @@ pub async fn list_labels(
 ) -> Result<Json<Vec<LabelResponse>>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
-    let labels = db::labels::list_repo_labels(&state.pool, repository.id)
+    let labels = crate::backend::db::labels::list_repo_labels(&state.pool, repository.id)
         .await
         .map_err(|_| storage_unavailable())?;
 
@@ -107,7 +113,7 @@ pub async fn create_label(
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
 
     if let Err(message) =
-        crate::backend::issues::validate_label(&req.name, req.description.as_deref())
+        codeyard_model::issue_input::validate_label(&req.name, req.description.as_deref())
     {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -125,7 +131,7 @@ pub async fn create_label(
         ));
     };
 
-    let label = db::labels::create_label(
+    let label = crate::backend::db::labels::create_label(
         &state.pool,
         (actor.id, extract_session_id(&headers).unwrap_or_default()),
         repository.id,
@@ -148,7 +154,7 @@ pub async fn delete_label(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
 
-    db::labels::delete_label(
+    crate::backend::db::labels::delete_label(
         &state.pool,
         (actor.id, extract_session_id(&headers).unwrap_or_default()),
         repository.id,
@@ -182,9 +188,9 @@ pub(crate) async fn native_index(
     let ctx = PageContext::load(state, headers, &uri).await?;
     let repo = repository(&ctx, &owner, &name).await?;
     let page_number = query.page.unwrap_or(1);
-    let (offset, limit) = super::paging::page_window(page_number, 100)
+    let (offset, limit) = crate::backend::api::repos::paging::page_window(page_number, 100)
         .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid label page."))?;
-    let mut items: Vec<_> = db::labels::list_repo_labels_page(
+    let mut items: Vec<_> = crate::backend::db::labels::list_repo_labels_page(
         &ctx.state.pool,
         repo.record.id,
         &query.q,
@@ -197,10 +203,14 @@ pub(crate) async fn native_index(
     .into_iter()
     .map(label)
     .collect();
-    let has_next =
-        super::paging::has_next_page(page_number, items.len(), limit, super::paging::MAX_PAGE);
+    let has_next = crate::backend::api::repos::paging::has_next_page(
+        page_number,
+        items.len(),
+        limit,
+        crate::backend::api::repos::paging::MAX_PAGE,
+    );
     items.truncate(limit);
-    let usage: std::collections::BTreeMap<i64, i64> = db::labels::list_label_usage(
+    let usage: std::collections::BTreeMap<i64, i64> = crate::backend::db::labels::list_label_usage(
         &ctx.state.pool,
         repo.record.id,
         &items.iter().map(|item| item.id).collect::<Vec<_>>(),
@@ -250,9 +260,12 @@ mod tests {
     #[test]
     fn write_errors_are_typed_and_sanitized() {
         for (refusal, status) in [
-            (db::labels::LabelWriteRefusal::Denied, StatusCode::FORBIDDEN),
             (
-                db::labels::LabelWriteRefusal::InvalidLabels,
+                crate::backend::db::labels::LabelWriteRefusal::Denied,
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                crate::backend::db::labels::LabelWriteRefusal::InvalidLabels,
                 StatusCode::CONFLICT,
             ),
         ] {

@@ -1,6 +1,5 @@
-use super::NotificationBroadcaster;
-use crate::backend::db;
-use crate::backend::db::notifications::records;
+use crate::backend::notifications::NotificationBroadcaster;
+
 /// The invitation stands even if its notification cannot be stored. Its email was queued in the
 /// transaction that saved it.
 pub async fn organization_invitation(
@@ -12,11 +11,18 @@ pub async fn organization_invitation(
     let Some(user_id) = invitation.user_id else {
         return;
     };
-    let name =
-        match db::organizations::get_organization_metadata(pool, actor, invitation.org_id).await {
-            Ok(db::organizations::OrganizationOutcome::Applied(metadata)) => metadata.name,
-            _ => return,
-        };
+    let name = match crate::backend::db::organizations::get_organization_metadata(
+        pool,
+        actor,
+        invitation.org_id,
+    )
+    .await
+    {
+        Ok(crate::backend::db::organizations::OrganizationOutcome::Applied(metadata)) => {
+            metadata.name
+        }
+        _ => return,
+    };
     let request = NotificationRequest {
         user_id,
         actor_id: Some(actor),
@@ -45,8 +51,8 @@ pub struct NotificationRequest<'a> {
 }
 
 impl NotificationRequest<'_> {
-    fn as_native(&self) -> records::NewNotification<'_> {
-        records::NewNotification {
+    fn as_native(&self) -> crate::backend::db::notifications::records::NewNotification<'_> {
+        crate::backend::db::notifications::records::NewNotification {
             user_id: self.user_id,
             actor_id: self.actor_id,
             repo_id: self.repo_id,
@@ -68,13 +74,19 @@ pub async fn notify_subscribers(
     request: NotificationRequest<'_>,
     notified: &[i64],
 ) -> Vec<i64> {
-    let Some((kind, key)) = db::notifications::threads::subject(&request.as_native()) else {
+    let Some((kind, key)) =
+        crate::backend::db::notifications::threads::subject(&request.as_native())
+    else {
         return Vec::new();
     };
     let Some(repo) = request.repo_id else {
         return Vec::new();
     };
-    let recipients = match db::notifications::threads::subscribers(pool, repo, kind, &key).await {
+    let recipients = match crate::backend::db::notifications::threads::subscribers(
+        pool, repo, kind, &key,
+    )
+    .await
+    {
         Ok(recipients) => recipients,
         Err(error) => {
             tracing::warn!(%error,"Thread subscriber lookup failed after the native mutation committed");
@@ -117,7 +129,8 @@ pub async fn create_and_broadcast_notification(
     if let Some(repo_id) = request.repo_id {
         // A repository notice carries its content into the inbox and the email, so the
         // recipient must still be able to read the repository.
-        use crate::backend::repositories::access::{check_read, AccessError};
+        use crate::backend::repositories::access::check_read;
+        use crate::backend::repositories::access::AccessError;
         match check_read(pool, repo_id, Some(request.user_id)).await {
             Ok(_) => {}
             Err(AccessError::Unavailable) => return Err(CreateError::Unavailable),
@@ -125,15 +138,17 @@ pub async fn create_and_broadcast_notification(
         }
     }
     // The insert rechecks Read, the fork's Read and repository ignores in its transaction.
-    let notification = records::create_notification(pool, request.as_native())
-        .await
-        .map_err(|error| {
-            if error.is::<records::NotificationSuppressed>() {
-                CreateError::Suppressed
-            } else {
-                CreateError::Unavailable
-            }
-        })?;
+    let notification =
+        crate::backend::db::notifications::records::create_notification(pool, request.as_native())
+            .await
+            .map_err(|error| {
+                if error.is::<crate::backend::db::notifications::records::NotificationSuppressed>()
+                {
+                    CreateError::Suppressed
+                } else {
+                    CreateError::Unavailable
+                }
+            })?;
     deliver(pool, broadcaster, &notification).await;
     Ok(notification)
 }
@@ -147,7 +162,7 @@ pub(super) async fn deliver(
 ) {
     // Delivery reloads the count under the recipient's current authority.
     broadcaster
-        .send(super::NotificationEvent::Created {
+        .send(crate::backend::notifications::NotificationEvent::Created {
             user_id: notification.user_id,
             notification_id: notification.id,
             kind: notification.kind.clone(),

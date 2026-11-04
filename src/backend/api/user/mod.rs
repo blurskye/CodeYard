@@ -25,7 +25,6 @@ fn back_to_settings(
 }
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
-    use crate::backend::api::auth::change_password;
     use axum::{
         extract::DefaultBodyLimit,
         routing::{get, post},
@@ -57,7 +56,8 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
                 )
                 .route(
                     "/settings/password",
-                    back_to_settings("password").post(change_password::password_post),
+                    back_to_settings("password")
+                        .post(crate::backend::api::auth::change_password::password_post),
                 )
                 .route(
                     "/settings/gpg-keys/:id/delete",

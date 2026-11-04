@@ -1,4 +1,5 @@
-use crate::backend::db::users::two_factor::{FactorAuthority, StoredTwoFactor};
+use crate::backend::db::users::two_factor::FactorAuthority;
+use crate::backend::db::users::two_factor::StoredTwoFactor;
 
 async fn authorized(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -7,17 +8,26 @@ async fn authorized(
 ) -> Result<bool> {
     match authority {
         FactorAuthority::Password { session, expected } => {
-            super::transitions::current_password(tx, target, expected, session, false).await
+            crate::backend::db::postgres::users::transitions::current_password(
+                tx, target, expected, session, false,
+            )
+            .await
         }
         FactorAuthority::Administrator { user_id, session } => {
             // Resets serialize before locking either account, then follow account-before-factor order.
-            super::transitions::lock_accounts(tx, &[user_id, target]).await?;
+            crate::backend::db::postgres::users::transitions::lock_accounts(tx, &[user_id, target])
+                .await?;
             sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
                 .bind(target)
                 .fetch_optional(&mut **tx)
                 .await?;
-            Ok(super::transitions::active_admin(tx, user_id).await?
-                && super::transitions::live_session(tx, user_id, session).await?)
+            Ok(
+                crate::backend::db::postgres::users::transitions::active_admin(tx, user_id).await?
+                    && crate::backend::db::postgres::users::transitions::live_session(
+                        tx, user_id, session,
+                    )
+                    .await?,
+            )
         }
     }
 }

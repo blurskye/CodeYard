@@ -2,9 +2,11 @@
 //! repository so deleting a fork does not remove the commits being reviewed.
 
 use crate::backend::ci::CiRuns;
-use crate::backend::db;
-use crate::backend::repositories::store::{repo_store, RepoStore};
-use crate::backend::webhooks::{self, events, payloads::Scope};
+
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::RepoStore;
+
+use crate::backend::webhooks::payloads::Scope;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
 use codeyard_git::error::{ErrorKind, RepoError};
@@ -39,7 +41,7 @@ pub async fn head_repository(
     base: &Repository,
     head_id: i64,
 ) -> Result<Repository, HeadError> {
-    let head = db::repositories::records::get_repository_by_id(pool, head_id)
+    let head = crate::backend::db::repositories::records::get_repository_by_id(pool, head_id)
         .await
         .map_err(|_| HeadError::Unavailable)?
         .ok_or(HeadError::Missing)?;
@@ -56,15 +58,23 @@ pub async fn owner_head_repository(
     base: &Repository,
     owner: &str,
 ) -> anyhow::Result<Option<Repository>> {
-    if let Some(head) = db::repositories::records::get_repository(pool, owner, &base.name).await? {
+    if let Some(head) =
+        crate::backend::db::repositories::records::get_repository(pool, owner, &base.name).await?
+    {
         if head.id == base.id || head.forked_from_id == Some(base.id) {
             return Ok(Some(head));
         }
     }
-    use crate::backend::repositories::lifecycle;
-    match lifecycle::transfer_target(pool, owner).await {
-        Ok((owner, _)) => db::repositories::discovery::get_owner_fork(pool, owner, base.id).await,
-        Err(error) if error.kind == lifecycle::LifecycleFailure::Invalid => Ok(None),
+
+    match crate::backend::repositories::lifecycle::transfer_target(pool, owner).await {
+        Ok((owner, _)) => {
+            crate::backend::db::repositories::discovery::get_owner_fork(pool, owner, base.id).await
+        }
+        Err(error)
+            if error.kind == crate::backend::repositories::lifecycle::LifecycleFailure::Invalid =>
+        {
+            Ok(None)
+        }
         Err(error) => Err(error.into()),
     }
 }
@@ -103,20 +113,22 @@ async fn branch_commit(
 
 fn revisions(
     pull: codeyard_db_core::models::PullRequest,
-) -> Option<db::pull_requests::records::PullRequestRevisions> {
-    (pull.state == "open").then_some(db::pull_requests::records::PullRequestRevisions {
-        id: pull.id,
-        repo_id: pull.repo_id,
-        number: pull.number,
-        author_id: pull.author_id,
-        head_publisher_id: pull.head_publisher_id,
-        head_repo_id: pull.head_repo_id,
-        head_branch: pull.head_branch,
-        head_sha: pull.head_sha,
-        base_branch: pull.base_branch,
-        base_sha: pull.base_sha,
-        stack_id: pull.stack_id,
-    })
+) -> Option<crate::backend::db::pull_requests::records::PullRequestRevisions> {
+    (pull.state == "open").then_some(
+        crate::backend::db::pull_requests::records::PullRequestRevisions {
+            id: pull.id,
+            repo_id: pull.repo_id,
+            number: pull.number,
+            author_id: pull.author_id,
+            head_publisher_id: pull.head_publisher_id,
+            head_repo_id: pull.head_repo_id,
+            head_branch: pull.head_branch,
+            head_sha: pull.head_sha,
+            base_branch: pull.base_branch,
+            base_sha: pull.base_sha,
+            stack_id: pull.stack_id,
+        },
+    )
 }
 
 /// Moves the recorded head of an open pull request from `from` to `to`, unless another
@@ -139,7 +151,7 @@ async fn move_head(
 ) -> Result<bool, RefreshError> {
     // GitHub keeps auto-merge only when the recorded pusher of this head may write the base.
     let pusher = match head_repo {
-        Some(id) => match db::repositories::records::get_repository_by_id(pool, id)
+        Some(id) => match crate::backend::db::repositories::records::get_repository_by_id(pool, id)
             .await
             .map_err(|_| RefreshError::Database)?
         {
@@ -153,7 +165,7 @@ async fn move_head(
         },
         None => None,
     };
-    let moved = db::pull_requests::records::move_open_pull_request_head(
+    let moved = crate::backend::db::pull_requests::records::move_open_pull_request_head(
         pool,
         pull_id,
         from,
@@ -167,11 +179,14 @@ async fn move_head(
     if !moved {
         return Ok(false);
     }
-    let current = db::pull_requests::records::get_pull_request_by_id(pool, pull_id)
+    let current = crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull_id)
         .await
         .map_err(|_| RefreshError::Database)?;
     if let Some(current) = current {
-        super::code_owners::request_code_owner_reviews(pool, ci, base, &current, actor_id).await;
+        crate::backend::repositories::pull_requests::code_owners::request_code_owner_reviews(
+            pool, ci, base, &current, actor_id,
+        )
+        .await;
         // Describe this successful CAS even if another refresh already moved the row again.
         let mut current = current;
         current.head_sha = to.to_owned();
@@ -179,14 +194,14 @@ async fn move_head(
         let (author_id, repository) = (current.author_id, base.clone());
         let before = from.to_owned();
         let store = repo_store(base, ci.cluster.as_ref());
-        let payload = webhooks::emit(
+        let payload = crate::backend::webhooks::emit(
             pool,
             base,
-            events::PULL_REQUEST,
+            codeyard_model::webhook_events::PULL_REQUEST,
             vec![author_id, actor_id],
             move |owner, people| {
                 let (author, sender) = (people.get(author_id), people.get(actor_id));
-                let mut payload = super::webhook_payload(
+                let mut payload = crate::backend::repositories::pull_requests::webhook_payload(
                     "synchronize",
                     &current,
                     &author,
@@ -204,7 +219,7 @@ async fn move_head(
         )
         .await;
         if let Some(access) = ci_access {
-            super::workflows::queue_pull_request_event_ci(
+            crate::backend::repositories::pull_requests::workflows::queue_pull_request_event_ci(
                 pool,
                 ci,
                 base,
@@ -231,7 +246,7 @@ async fn refresh_one(
     ci: &CiRuns,
     actor_id: i64,
     listed: &mut ListedRefs,
-    mut pull: db::pull_requests::records::PullRequestRevisions,
+    mut pull: crate::backend::db::pull_requests::records::PullRequestRevisions,
     ci_access: Option<codeyard_db_core::models::AccessLevel>,
     head_writer: Option<i64>,
 ) -> Result<bool, RefreshError> {
@@ -239,10 +254,11 @@ async fn refresh_one(
     let mut changed = false;
     for attempt in 0..MAX_REFRESH_ATTEMPTS {
         if attempt > 0 {
-            let Some(current) = db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
-                .await
-                .map_err(|_| RefreshError::Database)?
-                .and_then(revisions)
+            let Some(current) =
+                crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
+                    .await
+                    .map_err(|_| RefreshError::Database)?
+                    .and_then(revisions)
             else {
                 return Ok(changed);
             };
@@ -252,7 +268,7 @@ async fn refresh_one(
         let base = if pull.repo_id == moved_repo.id {
             moved_repo.clone()
         } else {
-            db::repositories::records::get_repository_by_id(pool, pull.repo_id)
+            crate::backend::db::repositories::records::get_repository_by_id(pool, pull.repo_id)
                 .await
                 .map_err(|_| RefreshError::Database)?
                 .ok_or(RefreshError::MissingBase)?
@@ -276,7 +292,7 @@ async fn refresh_one(
                 _ => None,
             };
             // The refresh read `pull.base_branch`; a re-base since then must make it stale.
-            if db::pull_requests::records::move_open_pull_request_base(
+            if crate::backend::db::pull_requests::records::move_open_pull_request_base(
                 pool,
                 pull.id,
                 &pull.base_sha,
@@ -289,11 +305,13 @@ async fn refresh_one(
             {
                 changed = true;
                 // The base may have changed CODEOWNERS or the files the pull request differs in.
-                let current = db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
-                    .await
-                    .map_err(|_| RefreshError::Database)?;
+                let current = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+                    pool, pull.id,
+                )
+                .await
+                .map_err(|_| RefreshError::Database)?;
                 if let Some(current) = current {
-                    super::code_owners::request_code_owner_reviews(
+                    crate::backend::repositories::pull_requests::code_owners::request_code_owner_reviews(
                         pool, ci, &base, &current, actor_id,
                     )
                     .await;
@@ -306,7 +324,7 @@ async fn refresh_one(
         let head = match pull.head_repo_id {
             Some(id) if id == base.id => Some(base.clone()),
             Some(id) if id == moved_repo.id => Some(moved_repo.clone()),
-            Some(id) => db::repositories::records::get_repository_by_id(pool, id)
+            Some(id) => crate::backend::db::repositories::records::get_repository_by_id(pool, id)
                 .await
                 .map_err(|_| RefreshError::Database)?,
             None => None,
@@ -358,10 +376,11 @@ async fn refresh_one(
         if let Some(head) = &head {
             // The pull request may have been closed while the refs were read. A closed
             // one takes no new commits from its fork.
-            let open = db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
-                .await
-                .map_err(|_| RefreshError::Database)?
-                .is_some_and(|row| row.state == "open");
+            let open =
+                crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
+                    .await
+                    .map_err(|_| RefreshError::Database)?
+                    .is_some_and(|row| row.state == "open");
             if !open {
                 return Ok(changed);
             }
@@ -463,20 +482,23 @@ async fn refresh_one(
 /// rewritten layers below as this layer's own changes, so it is dropped. A failure only leaves the
 /// fork point for the next refresh.
 async fn drop_obsolete_fork(pool: &DbPool, store: &RepoStore, pull_id: i64) {
-    let pull = match db::pull_requests::records::get_pull_request_by_id(pool, pull_id).await {
-        Ok(Some(pull)) if pull.state == "open" => pull,
-        Ok(_) => return,
-        Err(error) => {
-            tracing::warn!(pull_request_id = pull_id, %error, "could not read the fork point");
-            return;
-        }
-    };
+    let pull =
+        match crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull_id)
+            .await
+        {
+            Ok(Some(pull)) if pull.state == "open" => pull,
+            Ok(_) => return,
+            Err(error) => {
+                tracing::warn!(pull_request_id = pull_id, %error, "could not read the fork point");
+                return;
+            }
+        };
     let Some(fork) = pull.fork_sha.as_deref() else {
         return;
     };
     match store.is_ancestor(&pull.base_sha, &pull.head_sha).await {
         Ok(true) => {
-            if let Err(error) = db::pull_requests::records::clear_fork_point(
+            if let Err(error) = crate::backend::db::pull_requests::records::clear_fork_point(
                 pool,
                 pull.id,
                 fork,
@@ -505,10 +527,11 @@ pub async fn refresh_open_pull_request(
     pull_request_id: i64,
     ci_access: Option<codeyard_db_core::models::AccessLevel>,
 ) -> Result<bool, RefreshError> {
-    let Some(pull) = db::pull_requests::records::get_pull_request_by_id(pool, pull_request_id)
-        .await
-        .map_err(|_| RefreshError::Database)?
-        .and_then(revisions)
+    let Some(pull) =
+        crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull_request_id)
+            .await
+            .map_err(|_| RefreshError::Database)?
+            .and_then(revisions)
     else {
         return Ok(false);
     };
@@ -540,17 +563,18 @@ pub async fn refresh_updated_head(
     actor_id: i64,
     pull_request_id: i64,
 ) -> Result<bool, RefreshError> {
-    let Some(pull) = db::pull_requests::records::get_pull_request_by_id(pool, pull_request_id)
-        .await
-        .map_err(|_| RefreshError::Database)?
-        .and_then(revisions)
+    let Some(pull) =
+        crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull_request_id)
+            .await
+            .map_err(|_| RefreshError::Database)?
+            .and_then(revisions)
     else {
         return Ok(false);
     };
     if pull.repo_id != repository.id || pull.head_repo_id != Some(head.id) {
         return Err(RefreshError::MissingBase);
     }
-    let actor = db::users::accounts::get_user_by_id(pool, actor_id)
+    let actor = crate::backend::db::users::accounts::get_user_by_id(pool, actor_id)
         .await
         .map_err(|_| RefreshError::Database)?;
     let writer = match actor {
@@ -587,17 +611,17 @@ pub async fn refresh_open_pull_requests(
     actor_id: i64,
     ci_access: codeyard_db_core::models::AccessLevel,
 ) -> Result<usize, RefreshError> {
-    if let Err(error) = db::vulnerabilities::enqueue(pool, repo.id).await {
+    if let Err(error) = crate::backend::db::vulnerabilities::enqueue(pool, repo.id).await {
         tracing::warn!(repo_id=repo.id,%error,"could not queue dependency vulnerability scan");
     }
     let open = match branches.filter(|names| names.len() <= MAX_FILTERED_BRANCHES) {
         Some(names) => {
-            db::pull_requests::records::list_open_pull_request_revisions_on_branches(
+            crate::backend::db::pull_requests::records::list_open_pull_request_revisions_on_branches(
                 pool, repo.id, names,
             )
             .await
         }
-        None => db::pull_requests::records::list_open_pull_request_revisions(pool, repo.id).await,
+        None => crate::backend::db::pull_requests::records::list_open_pull_request_revisions(pool, repo.id).await,
     }
     .map_err(|_| RefreshError::Database)?;
     let mut listed = ListedRefs::new();

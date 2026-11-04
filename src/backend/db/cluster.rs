@@ -23,7 +23,7 @@ impl ServingLock {
     /// connection.
     pub async fn release(self) {
         if let Some(connection) = self.postgres {
-            super::postgres::cluster::release_serving_lock(connection).await;
+            crate::backend::db::postgres::cluster::release_serving_lock(connection).await;
         }
     }
 }
@@ -31,7 +31,9 @@ impl ServingLock {
 pub async fn serving_lock(pool: &DbPool, identity: &str) -> Result<ServingLock> {
     match pool {
         DbPool::Postgres(pool) => Ok(ServingLock {
-            postgres: Some(super::postgres::cluster::serving_lock(pool, identity).await?),
+            postgres: Some(
+                crate::backend::db::postgres::cluster::serving_lock(pool, identity).await?,
+            ),
             _file: None,
         }),
         DbPool::Sqlite(pool) => {

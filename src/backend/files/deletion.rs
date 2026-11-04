@@ -1,4 +1,3 @@
-use crate::backend::db::files as files_db;
 use crate::backend::storage::ObjectStore;
 use codeyard_db_core::DbPool;
 use uuid::Uuid;
@@ -27,12 +26,12 @@ pub enum DeleteError {
 pub async fn delete_owned_file(
     pool: &DbPool,
     store: &ObjectStore,
-    actor: impl Into<files_db::FileAuthority>,
+    actor: impl Into<crate::backend::db::files::FileAuthority>,
     file_id: Uuid,
 ) -> Result<(), DeleteError> {
     let actor = actor.into();
     let actor_id = actor.user_id.ok_or(DeleteError::Denied)?;
-    let first = files_db::get_owned_file(pool, file_id, actor_id)
+    let first = crate::backend::db::files::get_owned_file(pool, file_id, actor_id)
         .await
         .map_err(|_| DeleteError::MetadataUnavailable)?
         .ok_or(DeleteError::NotFound)?;
@@ -40,17 +39,17 @@ pub async fn delete_owned_file(
         .lock_file(&first.object_key)
         .await
         .map_err(|_| DeleteError::StorageUnavailable)?;
-    match files_db::delete_file(pool, file_id, actor)
+    match crate::backend::db::files::delete_file(pool, file_id, actor)
         .await
         .map_err(|_| DeleteError::MetadataUnavailable)?
     {
-        files_db::DeleteFileOutcome::Deleted(_) => Ok(()),
-        files_db::DeleteFileOutcome::NotFound => Err(DeleteError::NotFound),
-        files_db::DeleteFileOutcome::Denied => Err(DeleteError::Denied),
-        files_db::DeleteFileOutcome::ReferencedOrganizationAvatar => {
+        crate::backend::db::files::DeleteFileOutcome::Deleted(_) => Ok(()),
+        crate::backend::db::files::DeleteFileOutcome::NotFound => Err(DeleteError::NotFound),
+        crate::backend::db::files::DeleteFileOutcome::Denied => Err(DeleteError::Denied),
+        crate::backend::db::files::DeleteFileOutcome::ReferencedOrganizationAvatar => {
             Err(DeleteError::ReferencedOrganizationAvatar)
         }
-        files_db::DeleteFileOutcome::ReferencedReleaseAsset => {
+        crate::backend::db::files::DeleteFileOutcome::ReferencedReleaseAsset => {
             Err(DeleteError::ReferencedReleaseAsset)
         }
     }
@@ -64,7 +63,7 @@ pub async fn delete_unreferenced_file(
     actor_id: i64,
     file_id: Uuid,
 ) -> Result<bool, DeleteError> {
-    let Some(first) = files_db::get_owned_file(pool, file_id, actor_id)
+    let Some(first) = crate::backend::db::files::get_owned_file(pool, file_id, actor_id)
         .await
         .map_err(|_| DeleteError::MetadataUnavailable)?
     else {
@@ -75,10 +74,10 @@ pub async fn delete_unreferenced_file(
         .await
         .map_err(|_| DeleteError::StorageUnavailable)?;
     Ok(matches!(
-        files_db::delete_unreferenced_file(pool, file_id, actor_id)
+        crate::backend::db::files::delete_unreferenced_file(pool, file_id, actor_id)
             .await
             .map_err(|_| DeleteError::MetadataUnavailable)?,
-        files_db::DeleteUnreferencedOutcome::Deleted(_)
+        crate::backend::db::files::DeleteUnreferencedOutcome::Deleted(_)
     ))
 }
 
@@ -93,11 +92,13 @@ pub async fn remove_expired_uploads(pool: &DbPool, store: &ObjectStore) -> anyho
     let mut removed = 0;
     let mut objects = HashMap::new();
     let metadata_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    let expired = files_db::expired_uploads(pool, EXPIRED_LIMIT).await?;
+    let expired = crate::backend::db::files::expired_uploads(pool, EXPIRED_LIMIT).await?;
     for candidate in expired {
         let expire = async {
             let _file_lock = store.lock_file(&candidate.object_key).await?;
-            Ok::<_, anyhow::Error>(files_db::delete_expired_upload(pool, candidate.id).await?)
+            Ok::<_, anyhow::Error>(
+                crate::backend::db::files::delete_expired_upload(pool, candidate.id).await?,
+            )
         };
         let file = match tokio::time::timeout_at(metadata_deadline, expire).await {
             Ok(result) => result?,
@@ -109,7 +110,7 @@ pub async fn remove_expired_uploads(pool: &DbPool, store: &ObjectStore) -> anyho
         }
     }
 
-    let due = files_db::due_object_deletions(pool, OBJECT_LIMIT).await?;
+    let due = crate::backend::db::files::due_object_deletions(pool, OBJECT_LIMIT).await?;
     for key in due {
         objects.insert(key, true);
     }
@@ -136,15 +137,16 @@ pub async fn remove_expired_uploads(pool: &DbPool, store: &ObjectStore) -> anyho
     {
         remaining.remove(&key);
         let recorded = if deleted && store.kind() == "local" {
-            files_db::finish_object_deletion(pool, &key)
+            crate::backend::db::files::finish_object_deletion(pool, &key)
                 .await
                 .map(|_| ())
         } else if deleted && due {
             // S3 expiry limits when a PUT starts, not when it finishes. Keep its tombstone
             // and reconcile late objects even after a successful DELETE.
-            files_db::postpone_object_deletion(pool, &key, 24 * 60 * 60).await
+            crate::backend::db::files::postpone_object_deletion(pool, &key, 24 * 60 * 60).await
         } else if due {
-            files_db::postpone_object_deletion(pool, &key, OBJECT_RETRY_SECONDS).await
+            crate::backend::db::files::postpone_object_deletion(pool, &key, OBJECT_RETRY_SECONDS)
+                .await
         } else {
             Ok(())
         };
@@ -152,7 +154,8 @@ pub async fn remove_expired_uploads(pool: &DbPool, store: &ObjectStore) -> anyho
     }
     // Work cancelled at the batch deadline must not occupy the next batch again.
     for key in remaining {
-        files_db::postpone_object_deletion(pool, &key, OBJECT_RETRY_SECONDS).await?;
+        crate::backend::db::files::postpone_object_deletion(pool, &key, OBJECT_RETRY_SECONDS)
+            .await?;
     }
     Ok(removed)
 }

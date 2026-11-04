@@ -1,10 +1,9 @@
 //! Gateway tests on throwaway databases and real Git repositories.
 //! GITSERV_TEST_OPENSSH_HELPER must point at the built codeyard binary.
 use super::*;
-use crate::backend::{
-    ci::{queue::RunQueue, CiWorkers},
-    notifications::NotificationBroadcaster,
-};
+use crate::backend::ci::queue::RunQueue;
+use crate::backend::ci::CiWorkers;
+use crate::backend::notifications::NotificationBroadcaster;
 use base64::Engine;
 use codeyard_db_core::models::AccessLevel;
 use std::os::unix::fs::PermissionsExt;
@@ -1358,7 +1357,7 @@ impl PushFixture {
             owner.id,
             &session,
             "push",
-            &crate::backend::identity::tokens::token_hash(&token),
+            &codeyard_support::token_hash::token_hash(&token),
             "write",
             None,
         )
@@ -1798,7 +1797,7 @@ async fn remote_repository_authorization(pool: &DbPool) {
     .unwrap();
     let node = db::cluster::register_own_node(
         pool,
-        &crate::backend::cluster::NodeKey::generate().public_hex(),
+        &codeyard_support::node_identity::NodeKey::generate().public_hex(),
         "remote-storage",
         &["storage".to_owned()],
         "test",

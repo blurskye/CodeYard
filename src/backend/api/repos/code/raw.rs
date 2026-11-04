@@ -1,9 +1,13 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::{check_repo_read_access, readable_repository};
-use crate::backend::api::repos::chrome::{load, resolve};
+use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::chrome::load;
+use crate::backend::api::repos::chrome::resolve;
 use crate::backend::app::AppState;
-use crate::backend::repositories::store::{repo_store, BlobBytes, BlobRange};
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::BlobBytes;
+use crate::backend::repositories::store::BlobRange;
 use axum::extract::{OriginalUri, Path, State};
 use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -189,7 +193,7 @@ pub async fn raw_page(
     headers: HeaderMap,
     method: Method,
     OriginalUri(uri): OriginalUri,
-    super::GitPathParams(params): super::GitPathParams,
+    crate::backend::api::repos::code::GitPathParams(params): crate::backend::api::repos::code::GitPathParams,
 ) -> Response {
     if headers.contains_key(header::AUTHORIZATION) {
         return token_raw_page(state, headers, method, &params).await;
@@ -365,7 +369,7 @@ async fn token_raw_page(
 
 #[cfg(test)]
 mod raw_content_type_tests {
-    use super::raw_content_type;
+    use crate::backend::api::repos::code::raw::raw_content_type;
 
     #[test]
     fn media_types_come_from_the_extension() {

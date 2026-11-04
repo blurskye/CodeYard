@@ -11,12 +11,11 @@ use axum::http::StatusCode;
 use codeyard::backend::api::create_router;
 use codeyard::backend::app::AppState;
 use codeyard::backend::ci::CiConfig;
-use codeyard::backend::db;
-use codeyard::backend::db::organizations;
+
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::OrganizationOutcome;
 use codeyard::backend::db::organizations::OrganizationProfile;
-use codeyard::backend::identity::avatars;
+
 use codeyard::backend::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use database::Database;
@@ -83,11 +82,11 @@ async fn set_avatar(
     pool: &codeyard_db_core::DbPool,
     user: &codeyard_db_core::models::User,
     file_id: &str,
-) -> Result<(), avatars::AvatarError> {
-    avatars::set_user_avatar(
+) -> Result<(), codeyard::backend::identity::avatars::AvatarError> {
+    codeyard::backend::identity::avatars::set_user_avatar(
         pool,
         user,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard::backend::db::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, user.id).await,
         ),
         file_id.parse().unwrap(),
@@ -138,7 +137,7 @@ fn take_io_slots(storage: &ObjectStore) -> Vec<tokio::sync::OwnedSemaphorePermit
 
 async fn organization(pool: &codeyard_db_core::DbPool, owner: i64, slug: &str) -> i64 {
     let profile = OrganizationProfile::new(None, None).unwrap();
-    match organizations::create_organization(
+    match codeyard::backend::db::organizations::create_organization(
         pool,
         owner,
         &NewOrganization::new(slug, profile).unwrap(),
@@ -181,7 +180,7 @@ async fn contract(pg: bool) {
     let nobody = Client::anonymous(&router);
 
     // The shared assignment checks ownership, reason and verification at the effect.
-    let alice_user = db::users::accounts::get_user_by_id(f.pool(), ids[0])
+    let alice_user = codeyard::backend::db::users::accounts::get_user_by_id(f.pool(), ids[0])
         .await
         .unwrap()
         .unwrap();
@@ -225,7 +224,7 @@ async fn contract(pg: bool) {
     ] {
         assert_eq!(
             set_avatar(f.pool(), &alice_user, file).await,
-            Err(avatars::AvatarError::NotUsable),
+            Err(codeyard::backend::identity::avatars::AvatarError::NotUsable),
             "{file}"
         );
     }
@@ -422,7 +421,7 @@ async fn contract(pg: bool) {
     let mut changed_png = PNG.to_vec();
     changed_png.push(0);
     let second = upload(&frank, "avatar", &changed_png, true).await;
-    let request_user = db::users::accounts::get_user_by_id(f.pool(), frank_id)
+    let request_user = codeyard::backend::db::users::accounts::get_user_by_id(f.pool(), frank_id)
         .await
         .unwrap()
         .unwrap();
@@ -442,7 +441,7 @@ async fn contract(pg: bool) {
     second_task.await.unwrap().unwrap();
     let selected = avatar_url(&frank).await.unwrap();
     assert!(selected.contains(&first) || selected.contains(&second));
-    let stats = db::files::get_user_file_stats(f.pool(), frank_id)
+    let stats = codeyard::backend::db::files::get_user_file_stats(f.pool(), frank_id)
         .await
         .unwrap()
         .unwrap();
@@ -452,7 +451,7 @@ async fn contract(pg: bool) {
     // Concurrent native uploads start with the same request-level user. The
     // transaction returns the actual predecessor, so the intermediate file is
     // removed and the final selected bytes survive.
-    let request_user = db::users::accounts::get_user_by_id(f.pool(), frank_id)
+    let request_user = codeyard::backend::db::users::accounts::get_user_by_id(f.pool(), frank_id)
         .await
         .unwrap()
         .unwrap();
@@ -461,11 +460,11 @@ async fn contract(pg: bool) {
         let storage = storage.clone();
         let user = request_user.clone();
         tokio::spawn(async move {
-            avatars::upload_user_avatar(
+            codeyard::backend::identity::avatars::upload_user_avatar(
                 &pool,
                 &storage,
                 &user,
-                &db::users::accounts::AccountCredential::Session(
+                &codeyard::backend::db::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(&pool, user.id).await,
                 ),
                 PNG.to_vec(),
@@ -479,11 +478,11 @@ async fn contract(pg: bool) {
         let user = request_user.clone();
         let bytes = changed_png.clone();
         tokio::spawn(async move {
-            avatars::upload_user_avatar(
+            codeyard::backend::identity::avatars::upload_user_avatar(
                 &pool,
                 &storage,
                 &user,
-                &db::users::accounts::AccountCredential::Session(
+                &codeyard::backend::db::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(&pool, user.id).await,
                 ),
                 bytes,
@@ -494,7 +493,7 @@ async fn contract(pg: bool) {
     upload_one.await.unwrap().unwrap();
     upload_two.await.unwrap().unwrap();
     let selected = avatar_url(&frank).await.unwrap();
-    let stats = db::files::get_user_file_stats(f.pool(), frank_id)
+    let stats = codeyard::backend::db::files::get_user_file_stats(f.pool(), frank_id)
         .await
         .unwrap()
         .unwrap();
@@ -549,9 +548,15 @@ async fn contract(pg: bool) {
     let org = organization(f.pool(), ids[2], "acme").await;
     for (user, role) in [(ids[1], OrgRole::Admin), (ids[3], OrgRole::Member)] {
         assert!(matches!(
-            organizations::add_organization_member(f.pool(), ids[2], org, user, role)
-                .await
-                .unwrap(),
+            codeyard::backend::db::organizations::add_organization_member(
+                f.pool(),
+                ids[2],
+                org,
+                user,
+                role
+            )
+            .await
+            .unwrap(),
             OrganizationOutcome::Applied(_)
         ));
     }
@@ -576,13 +581,14 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(sent.status, StatusCode::SEE_OTHER, "{}", sent.text());
     assert_eq!(sent.location.as_deref(), Some(base.as_str()));
-    let first_org = match organizations::get_organization_avatar(f.pool(), ids[2], org)
-        .await
-        .unwrap()
-    {
-        OrganizationOutcome::Applied(Some(file)) => file.to_string(),
-        other => panic!("the organization has no picture: {other:?}"),
-    };
+    let first_org =
+        match codeyard::backend::db::organizations::get_organization_avatar(f.pool(), ids[2], org)
+            .await
+            .unwrap()
+        {
+            OrganizationOutcome::Applied(Some(file)) => file.to_string(),
+            other => panic!("the organization has no picture: {other:?}"),
+        };
     let org_url = format!("/api/files/{first_org}/download");
     assert_eq!(download(&nobody, &first_org).await, StatusCode::OK);
     for client in [&carol, &bob, &dave] {
@@ -650,13 +656,14 @@ async fn contract(pg: bool) {
         .multipart(&upload_path, &[], Some(("image/png", PNG)))
         .await;
     assert_eq!(without_token.status, StatusCode::FORBIDDEN);
-    let second_org = match organizations::get_organization_avatar(f.pool(), ids[2], org)
-        .await
-        .unwrap()
-    {
-        OrganizationOutcome::Applied(Some(file)) => file.to_string(),
-        other => panic!("{other:?}"),
-    };
+    let second_org =
+        match codeyard::backend::db::organizations::get_organization_avatar(f.pool(), ids[2], org)
+            .await
+            .unwrap()
+        {
+            OrganizationOutcome::Applied(Some(file)) => file.to_string(),
+            other => panic!("{other:?}"),
+        };
     assert_ne!(second_org, first_org);
     assert_eq!(download(&nobody, &second_org).await, StatusCode::OK);
 
@@ -673,37 +680,56 @@ async fn contract(pg: bool) {
         (carols_user_picture.as_str(), "a user picture"),
         ("00000000-0000-4000-8000-000000000000", "no such file"),
     ] {
-        let outcome =
-            organizations::set_organization_avatar(f.pool(), ids[2], org, Some(uuid(file)))
-                .await
-                .unwrap();
+        let outcome = codeyard::backend::db::organizations::set_organization_avatar(
+            f.pool(),
+            ids[2],
+            org,
+            Some(uuid(file)),
+        )
+        .await
+        .unwrap();
         assert_eq!(outcome, OrganizationOutcome::Conflict, "{why}");
     }
     assert_eq!(
-        organizations::set_organization_avatar(f.pool(), ids[3], org, Some(uuid(&carols)))
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::set_organization_avatar(
+            f.pool(),
+            ids[3],
+            org,
+            Some(uuid(&carols))
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Denied,
         "a member cannot"
     );
     assert_eq!(
-        organizations::set_organization_avatar(f.pool(), ids[4], org, None)
+        codeyard::backend::db::organizations::set_organization_avatar(f.pool(), ids[4], org, None)
             .await
             .unwrap(),
         OrganizationOutcome::Denied,
         "an outsider cannot"
     );
     assert_eq!(
-        organizations::set_organization_avatar(f.pool(), ids[2], org + 99, None)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::set_organization_avatar(
+            f.pool(),
+            ids[2],
+            org + 99,
+            None
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Missing
     );
     // It names the picture it replaced.
     assert_eq!(
-        organizations::set_organization_avatar(f.pool(), ids[2], org, Some(uuid(&carols)))
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::set_organization_avatar(
+            f.pool(),
+            ids[2],
+            org,
+            Some(uuid(&carols))
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Applied(Some(uuid(&second_org)))
     );
     assert_eq!(
@@ -715,7 +741,7 @@ async fn contract(pg: bool) {
     // Replacing a picture removes the old one in the same transaction, so it cannot
     // be selected again; cleanup never removes the picture that is still selected.
     assert_eq!(
-        organizations::set_organization_avatar(
+        codeyard::backend::db::organizations::set_organization_avatar(
             f.pool(),
             ids[1],
             org,
@@ -726,9 +752,14 @@ async fn contract(pg: bool) {
         OrganizationOutcome::Applied(Some(uuid(&carols)))
     );
     assert_eq!(
-        organizations::set_organization_avatar(f.pool(), ids[2], org, Some(uuid(&carols)))
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::set_organization_avatar(
+            f.pool(),
+            ids[2],
+            org,
+            Some(uuid(&carols))
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Conflict
     );
     assert_eq!(download(&nobody, &carols).await, StatusCode::NOT_FOUND);
@@ -744,17 +775,27 @@ async fn contract(pg: bool) {
 
     // A former administrator who uploaded the selected organization picture
     // cannot bypass current organization authority through generic file DELETE.
-    let bob_user = db::users::accounts::get_user_by_id(f.pool(), ids[1])
+    let bob_user = codeyard::backend::db::users::accounts::get_user_by_id(f.pool(), ids[1])
         .await
         .unwrap()
         .unwrap();
-    avatars::set_org_avatar(f.pool(), &bob_user, org, Some(uuid(&bobs_org_picture)))
-        .await
-        .unwrap();
+    codeyard::backend::identity::avatars::set_org_avatar(
+        f.pool(),
+        &bob_user,
+        org,
+        Some(uuid(&bobs_org_picture)),
+    )
+    .await
+    .unwrap();
     assert!(matches!(
-        organizations::remove_organization_member(f.pool(), ids[2], org, ids[1])
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::remove_organization_member(
+            f.pool(),
+            ids[2],
+            org,
+            ids[1]
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Applied(())
     ));
     let (status, body) = bob
@@ -767,7 +808,7 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"], "file_in_use");
     assert_eq!(
-        organizations::get_organization_avatar(f.pool(), ids[2], org)
+        codeyard::backend::db::organizations::get_organization_avatar(f.pool(), ids[2], org)
             .await
             .unwrap(),
         OrganizationOutcome::Applied(Some(uuid(&bobs_org_picture)))
@@ -784,7 +825,7 @@ async fn contract(pg: bool) {
         StatusCode::NOT_FOUND
     );
     assert!(matches!(
-        organizations::get_organization_avatar(f.pool(), ids[2], org)
+        codeyard::backend::db::organizations::get_organization_avatar(f.pool(), ids[2], org)
             .await
             .unwrap(),
         OrganizationOutcome::Applied(None)
@@ -802,7 +843,7 @@ async fn contract(pg: bool) {
     assert_eq!(generated.status, StatusCode::OK);
     assert!(generated.text().starts_with("<svg"), "{}", generated.text());
 
-    let deletion_session = db::users::sessions::create_session(
+    let deletion_session = codeyard::backend::db::users::sessions::create_session(
         f.pool(),
         &uuid::Uuid::new_v4().simple().to_string().repeat(2),
         ids[2],
@@ -812,23 +853,33 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let deletion_credential = db::users::accounts::AccountCredential::Session(&deletion_session.id);
+    let deletion_credential =
+        codeyard::backend::db::users::accounts::AccountCredential::Session(&deletion_session.id);
     // Deleting an organization removes its selected picture and queues the bytes.
     let deleted_picture = upload(&carol, "org_avatar", PNG, true).await;
-    let file = db::files::get_file_by_id(f.pool(), uuid(&deleted_picture))
+    let file = codeyard::backend::db::files::get_file_by_id(f.pool(), uuid(&deleted_picture))
         .await
         .unwrap()
         .unwrap();
     assert!(matches!(
-        organizations::set_organization_avatar(f.pool(), ids[2], org, Some(uuid(&deleted_picture)))
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::set_organization_avatar(
+            f.pool(),
+            ids[2],
+            org,
+            Some(uuid(&deleted_picture))
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Applied(_)
     ));
     assert!(matches!(
-        organizations::delete_organization(f.pool(), (ids[2], &deletion_credential), org)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::delete_organization(
+            f.pool(),
+            (ids[2], &deletion_credential),
+            org
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Applied(())
     ));
     assert_eq!(
@@ -859,23 +910,36 @@ async fn contract(pg: bool) {
     let picture = upload(&carol, "org_avatar", PNG, true).await;
     for org_id in [deleted_org, other_org] {
         assert!(matches!(
-            organizations::set_organization_avatar(f.pool(), ids[2], org_id, Some(uuid(&picture)))
-                .await
-                .unwrap(),
+            codeyard::backend::db::organizations::set_organization_avatar(
+                f.pool(),
+                ids[2],
+                org_id,
+                Some(uuid(&picture))
+            )
+            .await
+            .unwrap(),
             OrganizationOutcome::Applied(_)
         ));
     }
     assert!(matches!(
-        organizations::delete_organization(f.pool(), (ids[2], &deletion_credential), deleted_org)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::delete_organization(
+            f.pool(),
+            (ids[2], &deletion_credential),
+            deleted_org
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Applied(())
     ));
     assert_eq!(download(&nobody, &picture).await, StatusCode::OK);
     assert!(matches!(
-        organizations::delete_organization(f.pool(), (ids[2], &deletion_credential), other_org)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::delete_organization(
+            f.pool(),
+            (ids[2], &deletion_credential),
+            other_org
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Applied(())
     ));
     assert_eq!(download(&nobody, &picture).await, StatusCode::NOT_FOUND);
@@ -911,18 +975,30 @@ async fn contract(pg: bool) {
         .contains("no-store"));
 
     // Picture types are recognized by their bytes.
-    assert_eq!(avatars::picture_type(PNG), Some("image/png"));
     assert_eq!(
-        avatars::picture_type(b"\xff\xd8\xff\xe0"),
+        codeyard::backend::identity::avatars::picture_type(PNG),
+        Some("image/png")
+    );
+    assert_eq!(
+        codeyard::backend::identity::avatars::picture_type(b"\xff\xd8\xff\xe0"),
         Some("image/jpeg")
     );
-    assert_eq!(avatars::picture_type(b"GIF89a.."), Some("image/gif"));
     assert_eq!(
-        avatars::picture_type(b"RIFF\0\0\0\0WEBPVP8 "),
+        codeyard::backend::identity::avatars::picture_type(b"GIF89a.."),
+        Some("image/gif")
+    );
+    assert_eq!(
+        codeyard::backend::identity::avatars::picture_type(b"RIFF\0\0\0\0WEBPVP8 "),
         Some("image/webp")
     );
-    assert_eq!(avatars::picture_type(b"<svg></svg>"), None);
-    assert_eq!(avatars::picture_type(b""), None);
+    assert_eq!(
+        codeyard::backend::identity::avatars::picture_type(b"<svg></svg>"),
+        None
+    );
+    assert_eq!(
+        codeyard::backend::identity::avatars::picture_type(b""),
+        None
+    );
 
     f.finish().await;
 }
@@ -962,24 +1038,26 @@ async fn pending_picture_contract(pg: bool) {
         let installed = store().await.unwrap();
         let interrupted = store().await.unwrap();
         for id in [installed, interrupted] {
-            let file = db::files::get_file_by_id(f.pool(), id)
+            let file = codeyard::backend::db::files::get_file_by_id(f.pool(), id)
                 .await
                 .unwrap()
                 .unwrap();
             assert!(!file.is_active);
             assert!(file.confirmed_at.is_some() && file.upload_expires_at.is_some());
-            assert!(db::files::get_downloadable_file(f.pool(), id, None)
-                .await
-                .unwrap()
-                .is_none());
+            assert!(
+                codeyard::backend::db::files::get_downloadable_file(f.pool(), id, None)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
         }
         let pool = f.pool();
         let assign = |id| async move {
             if reason == codeyard_db_core::models::FileReason::Avatar {
-                db::users::accounts::set_user_avatar(
+                codeyard::backend::db::users::accounts::set_user_avatar(
                     pool,
                     actor,
-                    &db::users::accounts::AccountCredential::Session(
+                    &codeyard::backend::db::users::accounts::AccountCredential::Session(
                         &crate::support::live_session(pool, actor).await,
                     ),
                     Some(id),
@@ -988,15 +1066,20 @@ async fn pending_picture_contract(pg: bool) {
                 .map(|outcome| {
                     assert_eq!(
                         outcome,
-                        db::users::accounts::UserAvatarOutcome::Applied(None)
+                        codeyard::backend::db::users::accounts::UserAvatarOutcome::Applied(None)
                     );
                 })
             } else {
-                organizations::set_organization_avatar(pool, actor, org, Some(id))
-                    .await
-                    .map(|outcome| {
-                        assert_eq!(outcome, OrganizationOutcome::Applied(None));
-                    })
+                codeyard::backend::db::organizations::set_organization_avatar(
+                    pool,
+                    actor,
+                    org,
+                    Some(id),
+                )
+                .await
+                .map(|outcome| {
+                    assert_eq!(outcome, OrganizationOutcome::Applied(None));
+                })
             }
         };
         if pg {
@@ -1006,7 +1089,7 @@ async fn pending_picture_contract(pg: bool) {
             f.execute(&format!("CREATE TRIGGER reject_picture BEFORE UPDATE OF avatar_file_id ON {table} BEGIN SELECT RAISE(ABORT, 'assignment unavailable'); END"), &[]).await;
         }
         assert!(assign(installed).await.is_err());
-        let file = db::files::get_file_by_id(f.pool(), installed)
+        let file = codeyard::backend::db::files::get_file_by_id(f.pool(), installed)
             .await
             .unwrap()
             .unwrap();
@@ -1023,15 +1106,17 @@ async fn pending_picture_contract(pg: bool) {
             f.execute("DROP TRIGGER reject_picture", &[]).await;
         }
         assign(installed).await.unwrap();
-        let file = db::files::get_file_by_id(f.pool(), installed)
+        let file = codeyard::backend::db::files::get_file_by_id(f.pool(), installed)
             .await
             .unwrap()
             .unwrap();
         assert!(file.is_active && file.upload_expires_at.is_none());
-        assert!(db::files::get_downloadable_file(f.pool(), installed, None)
-            .await
-            .unwrap()
-            .is_some());
+        assert!(
+            codeyard::backend::db::files::get_downloadable_file(f.pool(), installed, None)
+                .await
+                .unwrap()
+                .is_some()
+        );
         f.execute(
             "UPDATE files SET upload_expires_at='2000-01-01T00:00:00.000000Z' WHERE NOT is_active",
             &[],
@@ -1039,23 +1124,28 @@ async fn pending_picture_contract(pg: bool) {
         .await;
         if reason == codeyard_db_core::models::FileReason::Avatar {
             assert_eq!(
-                db::users::accounts::set_user_avatar(
+                codeyard::backend::db::users::accounts::set_user_avatar(
                     f.pool(),
                     actor,
-                    &db::users::accounts::AccountCredential::Session(
+                    &codeyard::backend::db::users::accounts::AccountCredential::Session(
                         &crate::support::live_session(f.pool(), actor).await
                     ),
                     Some(interrupted)
                 )
                 .await
                 .unwrap(),
-                db::users::accounts::UserAvatarOutcome::NotUsable
+                codeyard::backend::db::users::accounts::UserAvatarOutcome::NotUsable
             );
         } else {
             assert_eq!(
-                organizations::set_organization_avatar(f.pool(), actor, org, Some(interrupted))
-                    .await
-                    .unwrap(),
+                codeyard::backend::db::organizations::set_organization_avatar(
+                    f.pool(),
+                    actor,
+                    org,
+                    Some(interrupted)
+                )
+                .await
+                .unwrap(),
                 OrganizationOutcome::Conflict
             );
         }
@@ -1065,14 +1155,18 @@ async fn pending_picture_contract(pg: bool) {
                 .unwrap(),
             1
         );
-        assert!(db::files::get_file_by_id(f.pool(), interrupted)
-            .await
-            .unwrap()
-            .is_none());
-        assert!(db::files::get_file_by_id(f.pool(), installed)
-            .await
-            .unwrap()
-            .is_some());
+        assert!(
+            codeyard::backend::db::files::get_file_by_id(f.pool(), interrupted)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            codeyard::backend::db::files::get_file_by_id(f.pool(), installed)
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
     f.finish().await;
 }
@@ -1085,9 +1179,9 @@ async fn postgres_organization_picture_swaps_lock_files_in_uuid_order() {
     let second = organization(f.pool(), actor, "picture-swap-two").await;
     let mut pictures = Vec::new();
     for _ in 0..2 {
-        let file = db::files::reserve_upload(
+        let file = codeyard::backend::db::files::reserve_upload(
             f.pool(),
-            db::files::ReserveUpload {
+            codeyard::backend::db::files::ReserveUpload {
                 user_id: actor,
                 filename: "picture.png",
                 content_type: "image/png",
@@ -1099,16 +1193,21 @@ async fn postgres_organization_picture_swaps_lock_files_in_uuid_order() {
         )
         .await
         .unwrap();
-        db::files::verify_pending_upload(f.pool(), file.id, actor)
+        codeyard::backend::db::files::verify_pending_upload(f.pool(), file.id, actor)
             .await
             .unwrap();
         pictures.push(file.id);
     }
     for (org, file) in [(first, pictures[0]), (second, pictures[1])] {
         assert!(matches!(
-            organizations::set_organization_avatar(f.pool(), actor, org, Some(file))
-                .await
-                .unwrap(),
+            codeyard::backend::db::organizations::set_organization_avatar(
+                f.pool(),
+                actor,
+                org,
+                Some(file)
+            )
+            .await
+            .unwrap(),
             OrganizationOutcome::Applied(_)
         ));
     }
@@ -1123,7 +1222,13 @@ async fn postgres_organization_picture_swaps_lock_files_in_uuid_order() {
     for (org, file) in [(first, pictures[1]), (second, pictures[0])] {
         let pool = f.pool().clone();
         tasks.push(tokio::spawn(async move {
-            organizations::set_organization_avatar(&pool, actor, org, Some(file)).await
+            codeyard::backend::db::organizations::set_organization_avatar(
+                &pool,
+                actor,
+                org,
+                Some(file),
+            )
+            .await
         }));
     }
     tokio::time::timeout(Duration::from_secs(5),async {

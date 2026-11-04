@@ -1,7 +1,6 @@
 //! Failed-login limits per client address and per account, shared by every node. Storage that
 //! cannot answer denies the attempt.
 
-use crate::backend::db;
 use codeyard_db_core::DbPool;
 use sha2::{Digest, Sha256};
 use std::time::Duration;
@@ -15,7 +14,7 @@ pub enum AdmissionError {
 /// The budgets one admitted attempt was counted against, so a right password can give it back.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Attempt {
-    receipt: db::users::admission::Receipt,
+    receipt: crate::backend::db::users::admission::Receipt,
 }
 
 /// Counts an attempt before its credentials are checked, against `client` (the request's address,
@@ -95,7 +94,11 @@ async fn admit(
 ) -> Result<Attempt, AdmissionError> {
     let admitted = tokio::time::timeout(
         Duration::from_secs(5),
-        db::users::admission::admit_password_attempt(pool, client.as_deref(), &account),
+        crate::backend::db::users::admission::admit_password_attempt(
+            pool,
+            client.as_deref(),
+            &account,
+        ),
     )
     .await
     .map_err(|_| AdmissionError::Unavailable)?
@@ -112,7 +115,7 @@ async fn admit(
 pub async fn forgive_login(pool: &DbPool, attempt: &Attempt) {
     let forgiven = tokio::time::timeout(
         Duration::from_secs(5),
-        db::users::admission::forgive_password_attempt(pool, &attempt.receipt),
+        crate::backend::db::users::admission::forgive_password_attempt(pool, &attempt.receipt),
     )
     .await;
     if !matches!(forgiven, Ok(Ok(()))) {

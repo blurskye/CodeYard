@@ -1,4 +1,3 @@
-use crate::backend::db;
 use crate::backend::db::users::accounts::AccountCredential;
 use codeyard_support::credentials::AccountRestricted;
 
@@ -25,11 +24,11 @@ pub async fn change(
     username: &str,
     blocked: bool,
 ) -> Result<(), BlockError> {
-    let target = db::users::accounts::get_user_by_username(pool, username)
+    let target = crate::backend::db::users::accounts::get_user_by_username(pool, username)
         .await
         .map_err(|_| BlockError::Unavailable)?
         .ok_or(BlockError::Missing)?;
-    db::users::blocks::change_block(pool, actor, credential, target.id, blocked)
+    crate::backend::db::users::blocks::change_block(pool, actor, credential, target.id, blocked)
         .await
         .map_err(|error| {
             if error.is::<AccountRestricted>() {

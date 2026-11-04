@@ -1,8 +1,9 @@
 //! Watch notifications. A new issue, pull request or published release notifies the users watching
 //! the repository: everyone on "All activity", and "Custom" watchers who picked that kind of event.
-use super::create::{create_and_broadcast_notification, NotificationRequest};
-use super::NotificationBroadcaster;
-use crate::backend::db;
+use crate::backend::notifications::create::create_and_broadcast_notification;
+use crate::backend::notifications::create::NotificationRequest;
+use crate::backend::notifications::NotificationBroadcaster;
+
 use serde_json::json;
 
 /// Watchers read per query. A full page means more may follow, so the reads continue.
@@ -71,7 +72,7 @@ pub async fn notify_watchers(
     loop {
         // The query applies the event, ignore, account and read rules, so every user it returns
         // is notified.
-        let batch = match db::repositories::engagement::list_event_watchers(
+        let batch = match crate::backend::db::repositories::engagement::list_event_watchers(
             pool,
             item.repository.id,
             item.event.name(),
@@ -121,7 +122,7 @@ pub async fn notify_watchers(
     }
     let mut notified = item.notified.to_vec();
     notified.extend(&sent);
-    let subscribers = super::create::notify_subscribers(
+    let subscribers = crate::backend::notifications::create::notify_subscribers(
         pool,
         broadcaster,
         NotificationRequest {

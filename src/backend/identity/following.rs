@@ -1,7 +1,5 @@
 //! Follow edges and their best-effort notices, shared by JSON and native forms.
 
-use crate::backend::db::following;
-use crate::backend::db::users::accounts;
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
 use crate::backend::notifications::NotificationBroadcaster;
@@ -36,24 +34,24 @@ pub async fn status(
     viewer: Option<i64>,
 ) -> Result<FollowStatus, FollowError> {
     let following = match viewer.filter(|viewer| *viewer != target) {
-        Some(viewer) => following::is_user_following(pool, viewer, target)
+        Some(viewer) => crate::backend::db::following::is_user_following(pool, viewer, target)
             .await
             .map_err(|_| FollowError::Unavailable)?,
         None => false,
     };
     Ok(FollowStatus {
         following,
-        followers_count: following::count_user_followers(pool, target)
+        followers_count: crate::backend::db::following::count_user_followers(pool, target)
             .await
             .map_err(|_| FollowError::Unavailable)?,
-        following_count: following::count_user_following(pool, target)
+        following_count: crate::backend::db::following::count_user_following(pool, target)
             .await
             .map_err(|_| FollowError::Unavailable)?,
     })
 }
 
 fn mutation_error(error: anyhow::Error) -> FollowError {
-    if error.is::<following::FollowRestricted>()
+    if error.is::<crate::backend::db::following::FollowRestricted>()
         || error.is::<codeyard_support::credentials::AccountRestricted>()
     {
         FollowError::Restricted
@@ -66,15 +64,15 @@ pub async fn change(
     pool: &DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: i64,
-    credential: &accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     username: &str,
     follow: bool,
 ) -> Result<FollowStatus, FollowError> {
-    let current = accounts::get_user_by_id(pool, actor)
+    let current = crate::backend::db::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| FollowError::Unavailable)?
         .ok_or(FollowError::Missing)?;
-    let target = accounts::get_user_by_username(pool, username)
+    let target = crate::backend::db::users::accounts::get_user_by_username(pool, username)
         .await
         .map_err(|_| FollowError::Unavailable)?
         .ok_or(FollowError::Missing)?;
@@ -89,9 +87,10 @@ pub async fn change(
         });
     }
     if follow {
-        let created = following::follow_user(pool, actor, target.id, credential)
-            .await
-            .map_err(mutation_error)?;
+        let created =
+            crate::backend::db::following::follow_user(pool, actor, target.id, credential)
+                .await
+                .map_err(mutation_error)?;
         if created {
             let title = format!("{} started following you", current.username);
             let link = codeyard_webui::profile_path(&current.username);
@@ -127,7 +126,7 @@ pub async fn change(
             }
         }
     } else {
-        following::unfollow_user(pool, actor, target.id, credential)
+        crate::backend::db::following::unfollow_user(pool, actor, target.id, credential)
             .await
             .map_err(mutation_error)?;
     }

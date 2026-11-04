@@ -1,12 +1,11 @@
 //! Content-addressed objects are reserved before storage I/O so interrupted writes are collected.
-use crate::backend::{
-    db::{
-        self,
-        packages::{Blob, Refusal},
-    },
-    storage::{ObjectStore, Upload, MAX_OBJECT_BYTES},
-};
+
+use crate::backend::db::packages::Blob;
+use crate::backend::db::packages::Refusal;
+use crate::backend::storage::ObjectStore;
+use crate::backend::storage::Upload;
 use anyhow::{ensure, Result};
+use codeyard_support::object_limits::MAX_OBJECT_BYTES;
 use sha2::{Digest, Sha256};
 
 pub fn digest(bytes: &[u8]) -> String {
@@ -20,21 +19,6 @@ pub fn valid_digest(value: &str) -> bool {
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
     })
-}
-
-pub fn valid_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 255
-        && name.split('/').all(|part| {
-            !part.is_empty()
-                && part
-                    .bytes()
-                    .next()
-                    .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-                && part
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b))
-        })
 }
 
 pub fn valid_kind(kind: &str) -> bool {
@@ -79,7 +63,7 @@ pub async fn store(
     package: i64,
     token: i64,
     bytes: Vec<u8>,
-    charge: db::packages::Charge<'_>,
+    charge: crate::backend::db::packages::Charge<'_>,
 ) -> Result<Blob> {
     ensure!(bytes.len() <= MAX_OBJECT_BYTES as usize, Refusal::Blob);
     let io = std::sync::Arc::new(storage.try_acquire_io()?);
@@ -93,9 +77,9 @@ pub async fn store(
         digest: hash,
         size: bytes.len() as i64,
     };
-    let key = db::packages::object_key(&blob.digest);
+    let key = crate::backend::db::packages::object_key(&blob.digest);
     let _lock = storage.lock_file(&key).await?;
-    if !db::packages::reserve_blob(pool, package, token, &blob, charge).await? {
+    if !crate::backend::db::packages::reserve_blob(pool, package, token, &blob, charge).await? {
         let upload = Upload {
             key: &key,
             bytes: blob.size,
@@ -109,7 +93,7 @@ pub async fn store(
                 storage.verify(&upload).await.map_err(|_| error)?;
             }
         }
-        db::packages::ready_blob(pool, package, token, &blob).await?;
+        crate::backend::db::packages::ready_blob(pool, package, token, &blob).await?;
     }
     Ok(blob)
 }
@@ -117,7 +101,7 @@ pub async fn store(
 pub async fn read(storage: &ObjectStore, blob: &Blob) -> Result<Vec<u8>> {
     ensure!((0..=MAX_OBJECT_BYTES).contains(&blob.size), Refusal::Blob);
     let io = std::sync::Arc::new(storage.try_acquire_io()?);
-    let key = db::packages::object_key(&blob.digest);
+    let key = crate::backend::db::packages::object_key(&blob.digest);
     let bytes = storage.read_object(&key, blob.size as usize).await?;
     let (actual, bytes) = tokio::task::spawn_blocking(move || {
         let _io = io;
@@ -129,15 +113,15 @@ pub async fn read(storage: &ObjectStore, blob: &Blob) -> Result<Vec<u8>> {
 }
 
 pub async fn collect(pool: &codeyard_db_core::DbPool, storage: &ObjectStore) -> Result<()> {
-    let Some(_collecting) = db::packages::collector_lock(pool).await? else {
+    let Some(_collecting) = crate::backend::db::packages::collector_lock(pool).await? else {
         return Ok(());
     };
-    for digest in db::packages::garbage(pool).await? {
-        let key = db::packages::object_key(&digest);
+    for digest in crate::backend::db::packages::garbage(pool).await? {
+        let key = crate::backend::db::packages::object_key(&digest);
         let result = async {
             let _lock = storage.lock_file(&key).await?;
             storage.delete(&key).await?;
-            db::packages::removed_blob(pool, &digest).await?;
+            crate::backend::db::packages::removed_blob(pool, &digest).await?;
             anyhow::Ok(())
         }
         .await;
@@ -147,3 +131,5 @@ pub async fn collect(pool: &codeyard_db_core::DbPool, storage: &ObjectStore) -> 
     }
     Ok(())
 }
+
+use codeyard_model::package_input::valid_name;

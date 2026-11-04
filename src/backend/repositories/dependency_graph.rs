@@ -1,7 +1,8 @@
 //! Dependency inventories pin Git before reading either file and never execute package managers.
-use super::{dependencies::npm::Lockfile, store::repo_store};
 use crate::backend::app::AppState;
-use crate::backend::db;
+use crate::backend::repositories::dependencies::npm::Lockfile;
+use crate::backend::repositories::store::repo_store;
+
 use crate::backend::db::dependency_graph::Reader;
 use codeyard_db_core::models::Repository;
 use codeyard_git::error::{ErrorKind, RepoError};
@@ -15,26 +16,26 @@ fn unavailable(_: anyhow::Error) -> RepoError {
     )
 }
 
-fn graph_error(error: db::dependency_graph::GraphError) -> RepoError {
+fn graph_error(error: codeyard_model::dependency_graph::GraphError) -> RepoError {
     match error {
-        error @ (db::dependency_graph::GraphError::Denied
-        | db::dependency_graph::GraphError::Disabled
-        | db::dependency_graph::GraphError::Limit) => invalid(error.to_string()),
+        error @ (codeyard_model::dependency_graph::GraphError::Denied
+        | codeyard_model::dependency_graph::GraphError::Disabled
+        | codeyard_model::dependency_graph::GraphError::Limit) => invalid(error.to_string()),
         error => unavailable(error.into()),
     }
 }
 
 async fn file(
-    store: &super::store::RepoStore,
+    store: &crate::backend::repositories::store::RepoStore,
     sha: &str,
     name: &str,
 ) -> Result<Option<Vec<u8>>, RepoError> {
-    let limit = super::dependencies::npm::MAX_LOCK_BYTES as u64;
+    let limit = crate::backend::repositories::dependencies::npm::MAX_LOCK_BYTES as u64;
     match store
         .blob_range(
             sha,
             name,
-            super::store::BlobRange::Window {
+            crate::backend::repositories::store::BlobRange::Window {
                 offset: 0,
                 length: limit,
             },
@@ -62,7 +63,7 @@ fn is_manifest(path: &str) -> bool {
     (matches!(
         name,
         "package.json" | "package-lock.json" | "npm-shrinkwrap.json"
-    ) || super::dependencies::lockfiles::FILES.contains(&name))
+    ) || crate::backend::repositories::dependencies::lockfiles::FILES.contains(&name))
         && !directory
             .split('/')
             .any(|part| matches!(part, "node_modules" | "vendor" | ".git"))
@@ -73,7 +74,7 @@ fn invalid(message: impl Into<String>) -> RepoError {
 }
 
 async fn npm_packages(
-    store: &super::store::RepoStore,
+    store: &crate::backend::repositories::store::RepoStore,
     sha: &str,
     directory: &str,
     path: &str,
@@ -114,7 +115,7 @@ const NATIVE_DETECTOR: &str = "Codeyard";
 const NATIVE_CORRELATOR: &str = "lockfiles";
 
 /// Whether a snapshot carries the native scan's identity, which submissions may not use.
-pub(crate) fn is_native(snapshot: &crate::backend::dependency_graph::Snapshot) -> bool {
+pub(crate) fn is_native(snapshot: &codeyard_model::dependency_graph::Snapshot) -> bool {
     snapshot.detector.name == NATIVE_DETECTOR && snapshot.job.correlator == NATIVE_CORRELATOR
 }
 
@@ -127,7 +128,7 @@ async fn snapshot_values(
     sha: &str,
 ) -> Result<Vec<serde_json::Value>, RepoError> {
     let branch = reference.starts_with("refs/heads/").then_some(reference);
-    db::dependency_graph::snapshots(&state.pool, reader, repo.id, branch, Some(sha))
+    crate::backend::db::dependency_graph::snapshots(&state.pool, reader, repo.id, branch, Some(sha))
         .await
         .map_err(graph_error)?
         .iter()
@@ -143,7 +144,7 @@ pub(crate) async fn native_inventory(
     repo: &Repository,
     reference: &str,
 ) -> Result<(String, Vec<Package>), RepoError> {
-    db::dependency_graph::check_read(&state.pool, reader, repo.id)
+    crate::backend::db::dependency_graph::check_read(&state.pool, reader, repo.id)
         .await
         .map_err(graph_error)?;
     let store = repo_store(repo, state.cluster.as_ref());
@@ -177,21 +178,26 @@ pub(crate) async fn native_inventory_at(
     let branch = reference.starts_with("refs/heads/").then_some(reference);
     // Codeyard's own earlier scan of this commit is not a submission, so it covers nothing. A
     // manifest is named by its source location, as `dependency_graph::packages` reads it.
-    let covered: HashSet<String> =
-        db::dependency_graph::snapshots(&state.pool, reader, repo.id, branch, Some(&sha))
-            .await
-            .map_err(graph_error)?
-            .iter()
-            .filter(|snapshot| !is_native(snapshot))
-            .flat_map(|snapshot| snapshot.manifests.values())
-            .map(|manifest| {
-                manifest
-                    .file
-                    .as_ref()
-                    .and_then(|file| file.source_location.clone())
-                    .unwrap_or_else(|| manifest.name.clone())
-            })
-            .collect();
+    let covered: HashSet<String> = crate::backend::db::dependency_graph::snapshots(
+        &state.pool,
+        reader,
+        repo.id,
+        branch,
+        Some(&sha),
+    )
+    .await
+    .map_err(graph_error)?
+    .iter()
+    .filter(|snapshot| !is_native(snapshot))
+    .flat_map(|snapshot| snapshot.manifests.values())
+    .map(|manifest| {
+        manifest
+            .file
+            .as_ref()
+            .and_then(|file| file.source_location.clone())
+            .unwrap_or_else(|| manifest.name.clone())
+    })
+    .collect();
     let manifests: Vec<&str> = listing
         .paths
         .iter()
@@ -241,7 +247,7 @@ pub(crate) async fn native_inventory_at(
         let parsed = if matches!(name, "package-lock.json" | "npm-shrinkwrap.json") {
             npm_packages(&store, &sha, directory, path, &bytes).await?
         } else {
-            super::dependencies::lockfiles::parse(path, &bytes)
+            crate::backend::repositories::dependencies::lockfiles::parse(path, &bytes)
                 .map_err(|error| invalid(error.to_string()))?
         };
         for package in parsed {
@@ -255,7 +261,7 @@ pub(crate) async fn native_inventory_at(
             }
         }
     }
-    db::dependency_graph::check_read(&state.pool, reader, repo.id)
+    crate::backend::db::dependency_graph::check_read(&state.pool, reader, repo.id)
         .await
         .map_err(graph_error)?;
     Ok((sha, packages.into_values().collect()))
@@ -293,9 +299,9 @@ pub async fn inventory(
                             continue;
                         };
                         let (ecosystem, name, version) =
-                            db::dependency_inventory::package_parts(purl).ok_or_else(|| {
-                                unavailable(anyhow::anyhow!("Invalid stored package URL"))
-                            })?;
+                            codeyard_model::dependency_inventory::package_parts(purl).ok_or_else(
+                                || unavailable(anyhow::anyhow!("Invalid stored package URL")),
+                            )?;
                         let package = Package {
                             manifest: path.clone(),
                             ecosystem: ecosystem.into(),
@@ -323,7 +329,7 @@ pub async fn inventory(
             "Dependency inventory exceeds its limit",
         ));
     }
-    db::dependency_graph::check_read(&state.pool, reader, repo.id)
+    crate::backend::db::dependency_graph::check_read(&state.pool, reader, repo.id)
         .await
         .map_err(graph_error)?;
     Ok((sha, packages.into_values().collect()))
@@ -333,10 +339,13 @@ pub fn snapshot(
     sha: String,
     reference: String,
     packages: Vec<Package>,
-) -> crate::backend::dependency_graph::Snapshot {
-    use crate::backend::dependency_graph::{
-        Dependency, Detector, Job, Manifest, ManifestFile, Snapshot,
-    };
+) -> codeyard_model::dependency_graph::Snapshot {
+    use codeyard_model::dependency_graph::Dependency;
+    use codeyard_model::dependency_graph::Detector;
+    use codeyard_model::dependency_graph::Job;
+    use codeyard_model::dependency_graph::Manifest;
+    use codeyard_model::dependency_graph::ManifestFile;
+    use codeyard_model::dependency_graph::Snapshot;
     let mut manifests: BTreeMap<String, Manifest> = BTreeMap::new();
     for package in packages {
         let manifest = manifests
@@ -387,7 +396,7 @@ pub(crate) async fn pinned_snapshots(
     reader: &Reader,
     repo: &Repository,
     reference: &str,
-) -> Result<Vec<crate::backend::dependency_graph::Snapshot>, RepoError> {
+) -> Result<Vec<codeyard_model::dependency_graph::Snapshot>, RepoError> {
     let sha = match repo_store(repo, state.cluster.as_ref())
         .commit_from_primary(reference)
         .await
@@ -398,10 +407,15 @@ pub(crate) async fn pinned_snapshots(
         }
         Err(error) => return Err(error),
     };
-    let mut snapshots =
-        db::dependency_graph::snapshots(&state.pool, reader, repo.id, Some(reference), Some(&sha))
-            .await
-            .map_err(graph_error)?;
+    let mut snapshots = crate::backend::db::dependency_graph::snapshots(
+        &state.pool,
+        reader,
+        repo.id,
+        Some(reference),
+        Some(&sha),
+    )
+    .await
+    .map_err(graph_error)?;
     append_native_snapshot(state, reader, repo, reference, Some(&sha), &mut snapshots).await?;
     Ok(snapshots)
 }
@@ -414,7 +428,7 @@ pub(crate) async fn append_native_snapshot(
     repo: &Repository,
     reference: &str,
     pinned: Option<&str>,
-    snapshots: &mut Vec<crate::backend::dependency_graph::Snapshot>,
+    snapshots: &mut Vec<codeyard_model::dependency_graph::Snapshot>,
 ) -> Result<(), RepoError> {
     let scanned = match pinned {
         Some(sha) => native_inventory_at(state, reader, repo, reference, sha).await,

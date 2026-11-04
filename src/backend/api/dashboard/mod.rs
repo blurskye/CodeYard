@@ -1,8 +1,7 @@
 //! The signed-in user's own issues and pull requests: `/issues` and `/pulls`.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::app::AppState;
-use crate::backend::dashboard;
-use crate::backend::db;
+
 use crate::backend::db::issues::IssueRelation;
 use crate::backend::db::pull_requests::records::PullRequestRelation;
 use axum::{
@@ -60,44 +59,50 @@ async fn new_issue_page(
         );
     }
     let offset = i64::from(page - 1) * 30;
-    let (own, own_count) = match db::repositories::records::list_user_repository_page(
-        &ctx.state.pool,
-        user.id,
-        ctx.session_id.as_deref(),
-        query,
-        false,
-        30,
-        offset,
-    )
-    .await
-    {
-        Ok(repos) => repos,
-        Err(_) => return unavailable(),
-    };
-    let (shared, shared_count) = match db::repositories::records::list_shared_repository_page(
-        &ctx.state.pool,
-        user.id,
-        query,
-        false,
-        30,
-        offset,
-    )
-    .await
-    {
-        Ok(rows) => rows,
-        Err(_) => return unavailable(),
-    };
+    let (own, own_count) =
+        match crate::backend::db::repositories::records::list_user_repository_page(
+            &ctx.state.pool,
+            user.id,
+            ctx.session_id.as_deref(),
+            query,
+            false,
+            30,
+            offset,
+        )
+        .await
+        {
+            Ok(repos) => repos,
+            Err(_) => return unavailable(),
+        };
+    let (shared, shared_count) =
+        match crate::backend::db::repositories::records::list_shared_repository_page(
+            &ctx.state.pool,
+            user.id,
+            query,
+            false,
+            30,
+            offset,
+        )
+        .await
+        {
+            Ok(rows) => rows,
+            Err(_) => return unavailable(),
+        };
     // Archived repositories take no new issues, so the queries leave them out before paging.
     let repos: Vec<_> = own
         .into_iter()
         .chain(shared.into_iter().map(|row| row.repository))
         .collect();
     let ids: Vec<i64> = repos.iter().map(|repo| repo.id).collect();
-    let owners =
-        match db::repositories::records::repository_owner_names(&ctx.state.pool, &ids).await {
-            Ok(owners) => owners,
-            Err(_) => return unavailable(),
-        };
+    let owners = match crate::backend::db::repositories::records::repository_owner_names(
+        &ctx.state.pool,
+        &ids,
+    )
+    .await
+    {
+        Ok(owners) => owners,
+        Err(_) => return unavailable(),
+    };
     let mut choices: Vec<RepositoryChoice> = repos
         .into_iter()
         .filter_map(|repo| {
@@ -138,7 +143,14 @@ async fn issues_page(
         Some("created") => ("created", IssueRelation::Created),
         _ => ("assigned", IssueRelation::Assigned),
     };
-    let list = match dashboard::list_issues(&ctx.state.pool, user.id, relation, open).await {
+    let list = match crate::backend::dashboard::list_issues(
+        &ctx.state.pool,
+        user.id,
+        relation,
+        open,
+    )
+    .await
+    {
         Ok(list) => list,
         Err(_) => {
             return ctx.error(
@@ -181,7 +193,7 @@ async fn issues_page(
         open,
         open_count: counts.open,
         closed_count: counts.closed,
-        limited: items.len() as i64 >= dashboard::LIST_LIMIT,
+        limited: items.len() as i64 >= crate::backend::dashboard::LIST_LIMIT,
         items,
     };
     ctx.page_model("Issues", Page::Dashboard(model))
@@ -207,7 +219,14 @@ async fn pulls_page(
         Some("involved") => ("involved", PullRequestRelation::Involved),
         _ => ("created", PullRequestRelation::Created),
     };
-    let list = match dashboard::list_pull_requests(&ctx.state.pool, user.id, relation, open).await {
+    let list = match crate::backend::dashboard::list_pull_requests(
+        &ctx.state.pool,
+        user.id,
+        relation,
+        open,
+    )
+    .await
+    {
         Ok(list) => list,
         Err(_) => {
             return ctx.error(
@@ -241,7 +260,7 @@ async fn pulls_page(
         open,
         open_count: counts.open,
         closed_count: counts.closed,
-        limited: items.len() as i64 >= dashboard::LIST_LIMIT,
+        limited: items.len() as i64 >= crate::backend::dashboard::LIST_LIMIT,
         items,
     };
     ctx.page_model("Pull requests", Page::Dashboard(model))

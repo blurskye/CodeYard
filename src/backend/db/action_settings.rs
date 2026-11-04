@@ -173,8 +173,10 @@ pub fn organization_allows(org: &Value, setting: Setting, repo: i64) -> bool {
 
 /// Actions start only when the site, the repository and its organization all allow them.
 pub async fn actions_enabled(pool: &DbPool, repo: i64) -> Result<bool> {
-    if !super::actions::get_actions_settings(pool).await?.enabled
-        || !super::actions::get_repo_actions_settings(pool, repo)
+    if !crate::backend::db::actions::get_actions_settings(pool)
+        .await?
+        .enabled
+        || !crate::backend::db::actions::get_repo_actions_settings(pool, repo)
             .await?
             .enabled
     {
@@ -241,7 +243,7 @@ pub fn retention(repo: &Value, org: &Value, site: Option<i32>, private: bool) ->
 pub(crate) fn resolved(
     mut stored: Value,
     parent: &Value,
-    site: &super::actions::ActionsSettings,
+    site: &crate::backend::db::actions::ActionsSettings,
     private: bool,
     maximum: i64,
 ) -> Value {
@@ -272,16 +274,16 @@ pub(crate) fn resolved(
 
 native_operation!(crate::backend::db::postgres::action_settings::settings,
     crate::backend::db::sqlite::action_settings::settings,
-    fn settings(pool: &DbPool, actor: impl Into<super::credentials::Actor>, scope: &Scope, setting: Setting, update: Option<&Value>) -> Result<Value>);
+    fn settings(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, scope: &Scope, setting: Setting, update: Option<&Value>) -> Result<Value>);
 native_operation!(crate::backend::db::postgres::action_settings::effective,
     crate::backend::db::sqlite::action_settings::effective,
     fn effective(pool: &DbPool, repo: i64) -> Result<(Value, Value)>);
 native_operation!(crate::backend::db::postgres::action_settings::policies_page,
     crate::backend::db::sqlite::action_settings::policies_page,
-    fn policies_page(pool: &DbPool, actor: impl Into<super::credentials::Actor>, scope: &Scope, has_parents: bool, offset: i64, limit: i64) -> Result<(i64, Vec<ListedPolicy>)>);
+    fn policies_page(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, scope: &Scope, has_parents: bool, offset: i64, limit: i64) -> Result<(i64, Vec<ListedPolicy>)>);
 native_operation!(crate::backend::db::postgres::action_settings::policies,
     crate::backend::db::sqlite::action_settings::policies,
-    fn policies(pool: &DbPool, actor: impl Into<super::credentials::Actor>, scope: &Scope, id: Option<i64>, change: Option<Option<&Value>>) -> Result<Vec<Policy>>);
+    fn policies(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, scope: &Scope, id: Option<i64>, change: Option<Option<&Value>>) -> Result<Vec<Policy>>);
 
 pub enum SelectionChange {
     Set(Vec<i64>),
@@ -332,7 +334,7 @@ pub(crate) fn change_selection(
 
 native_operation!(crate::backend::db::postgres::action_settings::repositories,
     crate::backend::db::sqlite::action_settings::repositories,
-    fn repositories(pool: &DbPool, actor: impl Into<super::credentials::Actor>, scope: &Scope, setting: Setting, change: Option<&SelectionChange>, window: (i64, i64)) -> Result<(i64, Vec<codeyard_db_core::models::Repository>)>);
+    fn repositories(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, scope: &Scope, setting: Setting, change: Option<&SelectionChange>, window: (i64, i64)) -> Result<(i64, Vec<codeyard_db_core::models::Repository>)>);
 
 #[derive(sqlx::FromRow)]
 pub struct Policy {
@@ -358,8 +360,8 @@ pub(crate) struct PolicySelector {
 impl PolicySelector {
     pub(crate) fn applies(
         &self,
-        repository: &super::rulesets::RepositoryContext<'_>,
-        budget: &mut crate::backend::ci::workflows::WorkflowMatchBudget,
+        repository: &crate::backend::db::rulesets::RepositoryContext<'_>,
+        budget: &mut codeyard_model::workflow_glob::WorkflowMatchBudget,
     ) -> Result<bool> {
         if self.own {
             return Ok(true);
@@ -373,7 +375,7 @@ impl PolicySelector {
 
 pub(crate) fn policy_conditions(
     stored: Option<&str>,
-) -> Result<Option<super::rulesets::Conditions>> {
+) -> Result<Option<crate::backend::db::rulesets::Conditions>> {
     let Some(stored) = stored else {
         return Ok(None);
     };
@@ -386,7 +388,7 @@ pub(crate) fn policy_conditions(
     if fields.is_empty() {
         return Ok(None);
     }
-    let conditions: super::rulesets::Conditions =
+    let conditions: crate::backend::db::rulesets::Conditions =
         serde_json::from_value(value).map_err(|_| Refusal::Invalid)?;
     ensure!(
         conditions.ref_name.is_none()

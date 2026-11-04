@@ -1,7 +1,7 @@
 use super::action_secrets::{pat, request};
 use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
 use axum::http::StatusCode;
-use codeyard::backend::db;
+
 use serde_json::{json, Value};
 
 async fn contract(pg: bool) {
@@ -14,7 +14,7 @@ async fn contract(pg: bool) {
     let repo = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice),
         "project",
         None,
         true,
@@ -219,7 +219,7 @@ async fn contract(pg: bool) {
         )
         .await;
     }
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -261,7 +261,7 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
-    assert!(db::variables::for_run(f.pool(), repo.id)
+    assert!(codeyard::backend::db::variables::for_run(f.pool(), repo.id)
         .await
         .unwrap()
         .contains(&("FROM_FORM".into(), "native form variable".into())));

@@ -1,5 +1,6 @@
 //! Organization profile contacts and enforced member/repository policies.
-use super::{OrganizationOutcome, OrganizationProfile};
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::organizations::OrganizationProfile;
 use anyhow::Result;
 use codeyard_db_core::models::Organization;
 use codeyard_db_core::native_operation;
@@ -104,7 +105,10 @@ impl Changes {
         )
         .map_err(|error| {
             invalid(
-                if matches!(error, super::OrganizationInputError::Name) {
+                if matches!(
+                    error,
+                    crate::backend::db::organizations::OrganizationInputError::Name
+                ) {
                     "name"
                 } else {
                     "description"
@@ -118,9 +122,7 @@ impl Changes {
             if value
                 .as_ref()
                 .and_then(|value| value.as_ref())
-                .is_some_and(|value| {
-                    crate::backend::identity::credentials::validate_email(value).is_err()
-                })
+                .is_some_and(|value| codeyard_model::account_input::validate_email(value).is_err())
             {
                 return Err(invalid(field, "Enter a valid email address"));
             }

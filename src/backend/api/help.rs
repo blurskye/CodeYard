@@ -1,5 +1,6 @@
 //! The help page. It needs no account, and the header shows the viewer's account when there is one.
-use crate::backend::{api::http::context::PageContext, app::AppState};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::app::AppState;
 use axum::{
     extract::State,
     http::{HeaderMap, Uri},

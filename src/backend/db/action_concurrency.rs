@@ -5,20 +5,6 @@ use codeyard_db_core::models::CiRun;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
 
-#[derive(Clone, Debug)]
-pub struct Configuration {
-    pub group: String,
-    pub cancel_in_progress: bool,
-}
-impl Configuration {
-    pub(crate) fn validate(&self) -> Result<()> {
-        anyhow::ensure!(
-            codeyard_actions::workflow::valid_concurrency_group(&self.group),
-            super::ci::CiAdmissionRefusal::Invalid("Invalid concurrency group")
-        );
-        Ok(())
-    }
-}
 /// Workflow and job requests share one repository/group ordering and one holder set.
 pub(crate) fn blockers_sql(pg: bool) -> String {
     let sql = "SELECT EXISTS(SELECT 1 FROM actions_run_concurrency g JOIN ci_runs c ON c.id=g.run_id WHERE g.repo_id=$1 AND g.name_key=$2 AND (CAST($4 AS BIGINT) IS NULL OR c.id<>$4) AND c.status IN('queued','running') AND (g.holding OR (NOT c.cancel_requested AND g.request_order<$3))) OR EXISTS(SELECT 1 FROM actions_job_concurrency g JOIN actions_jobs j ON j.id=g.job_id JOIN ci_runs c ON c.id=j.run_id WHERE g.repo_id=$1 AND g.name_key=$2 AND (CAST($5 AS BIGINT) IS NULL OR j.id<>$5) AND j.status<>'completed' AND c.status IN('queued','running') AND (g.holding OR (NOT g.cancelled AND NOT c.cancel_requested AND g.request_order<$3)))";

@@ -1,11 +1,13 @@
 //! Release reads and writes retain draft visibility and tag publication in the repository domain.
-use super::{auth, pagination::Pagination, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db,
-    repositories::releases::{self, ReleaseError},
-    webhooks::payloads,
-};
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::releases::ReleaseError;
+
 use axum::{
     extract::{OriginalUri, Path, Query, Request, State},
     http::{HeaderMap, StatusCode},
@@ -30,8 +32,8 @@ pub(super) fn release_error(error: ReleaseError) -> Error {
         ReleaseError::AssetNameTaken => Error::invalid("An asset with this name already exists"),
         ReleaseError::Conflict => Error::new(StatusCode::CONFLICT, "Release changed"),
         ReleaseError::TargetRequired => Error::invalid("target_commitish is required"),
-        ReleaseError::Git(error) => super::contents::store_error(error),
-        ReleaseError::Ref(error) => super::refs::ref_error(error),
+        ReleaseError::Git(error) => crate::backend::api::github::contents::store_error(error),
+        ReleaseError::Ref(error) => crate::backend::api::github::refs::ref_error(error),
         ReleaseError::Upload(crate::backend::files::UploadError::Invalid) => {
             Error::invalid("Invalid asset upload")
         }
@@ -59,10 +61,10 @@ pub(super) async fn document(
     state: &AppState,
     owner: &str,
     name: &str,
-    detail: &releases::ReleaseDetail,
+    detail: &crate::backend::repositories::releases::ReleaseDetail,
 ) -> Result<Value> {
     let release = &detail.release.release;
-    let author = payloads::Person {
+    let author = crate::backend::webhooks::payloads::Person {
         id: release.author_id,
         login: detail.release.author.clone(),
         site_admin: false,
@@ -71,26 +73,33 @@ pub(super) async fn document(
     for asset in &detail.assets {
         assets.push(asset_document(state, owner, name, release, asset).await?);
     }
-    let mut value = payloads::release_json(release, &author, owner, name, Some(assets));
-    if let Some(number) = db::releases::release_discussion(&state.pool, release.id)
+    let mut value = crate::backend::webhooks::payloads::release_json(
+        release,
+        &author,
+        owner,
+        name,
+        Some(assets),
+    );
+    if let Some(number) = crate::backend::db::releases::release_discussion(&state.pool, release.id)
         .await
         .map_err(Error::unavailable)?
         .and_then(|discussion| discussion.number)
     {
         value["discussion_url"] = Value::String(format!(
             "{}/{}/{}/discussions/{number}",
-            crate::backend::api::http::config::link_origin(),
+            codeyard_model::http_config::link_origin(),
             codeyard_webui::encode_component(owner),
             codeyard_webui::encode_component(name)
         ));
     }
-    let counts = db::reactions::reaction_counts(&state.pool, "release", &[release.id], 0)
-        .await
-        .map_err(Error::unavailable)?;
-    value["reactions"] = payloads::reaction_rollup(
+    let counts =
+        crate::backend::db::reactions::reaction_counts(&state.pool, "release", &[release.id], 0)
+            .await
+            .map_err(Error::unavailable)?;
+    value["reactions"] = crate::backend::webhooks::payloads::reaction_rollup(
         &format!(
             "{}/releases/{}/reactions",
-            super::repo_url(owner, name),
+            crate::backend::api::github::repo_url(owner, name),
             release.id
         ),
         &counts,
@@ -108,7 +117,7 @@ async fn list(
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
     let (offset, limit) = page.window()?;
-    let listing = releases::list(
+    let listing = crate::backend::repositories::releases::list(
         &state.pool,
         viewer,
         repo.id,
@@ -124,7 +133,7 @@ async fn list(
     }
     for row in listing.releases {
         let assets = grouped.remove(&row.release.id).unwrap_or_default();
-        let detail = releases::ReleaseDetail {
+        let detail = crate::backend::repositories::releases::ReleaseDetail {
             repository: listing.repository.clone(),
             can_write: listing.can_write,
             release: row,
@@ -144,19 +153,20 @@ async fn get_one(
     let (repo, auth) = repository(&state, &headers, owner, name, false).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
     let detail = if let Some(tag) = params.get("tag") {
-        releases::detail_by_tag(&state.pool, viewer, repo.id, tag).await
+        crate::backend::repositories::releases::detail_by_tag(&state.pool, viewer, repo.id, tag)
+            .await
     } else {
         let id = match params.get("release_id") {
             Some(id) => id.parse().map_err(|_| Error::missing())?,
             None => {
-                db::releases::latest_release(&state.pool, repo.id)
+                crate::backend::db::releases::latest_release(&state.pool, repo.id)
                     .await
                     .map_err(Error::unavailable)?
                     .ok_or_else(Error::missing)?
                     .id
             }
         };
-        releases::detail_by_id(&state.pool, viewer, repo.id, id).await
+        crate::backend::repositories::releases::detail_by_id(&state.pool, viewer, repo.id, id).await
     }
     .map_err(release_error)?;
     Ok(Json(document(&state, owner, name, &detail).await?))
@@ -192,13 +202,15 @@ async fn generate_notes(
     Json(input): Json<GenerateNotes>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
-    let notes = releases::generate_notes(
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
+    let notes = crate::backend::repositories::releases::generate_notes(
         &state.pool,
         state.cluster.as_ref(),
         actor.id,
         repo.id,
-        &releases::NotesInput {
+        &crate::backend::repositories::releases::NotesInput {
             tag: &input.tag_name,
             target: input.target_commitish.as_deref(),
             previous_tag: input.previous_tag_name.as_deref(),
@@ -207,13 +219,18 @@ async fn generate_notes(
     )
     .await
     .map_err(release_error)?;
-    Ok(Json(payloads::release_notes(&notes)))
+    Ok(Json(crate::backend::webhooks::payloads::release_notes(
+        &notes,
+    )))
 }
 
 /// Whether a release may create its missing tag. A new tag queues push workflows, so a
 /// credential without the workflows permission may only release existing tags. A job's
 /// own events start no workflows, so a job token may create them.
-async fn may_create_tag(state: &AppState, auth: &auth::Authentication) -> Result<bool> {
+async fn may_create_tag(
+    state: &AppState,
+    auth: &crate::backend::api::github::auth::Authentication,
+) -> Result<bool> {
     Ok(auth.is_job()
         || crate::backend::identity::oauth_apps::allows_workflows(&state.pool, auth.token.id)
             .await
@@ -231,11 +248,11 @@ async fn discussion_category(
         return Ok(None);
     };
     let pool = &state.pool;
-    let category = if db::repository_discussions::enabled(pool, repo_id)
+    let category = if crate::backend::db::repository_discussions::enabled(pool, repo_id)
         .await
         .map_err(Error::unavailable)?
     {
-        db::repository_discussions::categories(pool, repo_id)
+        crate::backend::db::repository_discussions::categories(pool, repo_id)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
@@ -253,20 +270,20 @@ async fn discussion_category(
 /// Records the requested category and, once the release is published, starts its discussion.
 async fn start_discussion(
     state: &AppState,
-    auth: &auth::Authentication,
+    auth: &crate::backend::api::github::auth::Authentication,
     release: &codeyard_db_core::models::Release,
     category: Option<i64>,
 ) -> Result<()> {
     let pool = &state.pool;
     if let Some(category) = category {
-        db::releases::set_release_discussion_category(pool, release.id, category)
+        crate::backend::db::releases::set_release_discussion_category(pool, release.id, category)
             .await
             .map_err(Error::unavailable)?;
     }
     if release.is_draft {
         return Ok(());
     }
-    let Some(pending) = db::releases::release_discussion(pool, release.id)
+    let Some(pending) = crate::backend::db::releases::release_discussion(pool, release.id)
         .await
         .map_err(Error::unavailable)?
         .filter(|pending| pending.number.is_none())
@@ -278,13 +295,13 @@ async fn start_discussion(
         .as_deref()
         .filter(|name| !name.trim().is_empty())
         .unwrap_or(&release.tag_name);
-    let id = db::repository_discussions::write(
+    let id = crate::backend::db::repository_discussions::write(
         pool,
         auth.user.id,
         &auth.credential(),
         release.repo_id,
         None,
-        &db::repository_discussions::Write::Create {
+        &crate::backend::db::repository_discussions::Write::Create {
             category: pending.category_id,
             title,
             body: release.body.as_deref().unwrap_or_default(),
@@ -292,7 +309,7 @@ async fn start_discussion(
     )
     .await
     .map_err(|error| {
-        use db::repository_discussions::Refusal;
+        use crate::backend::db::repository_discussions::Refusal;
         match error.downcast_ref::<Refusal>() {
             Some(Refusal::Denied) => Error::new(StatusCode::FORBIDDEN, "Discussion write denied"),
             Some(Refusal::Invalid | Refusal::Missing) => {
@@ -301,7 +318,7 @@ async fn start_discussion(
             None => Error::unavailable(error),
         }
     })?;
-    db::releases::link_release_discussion(pool, release.id, id)
+    crate::backend::db::releases::link_release_discussion(pool, release.id, id)
         .await
         .map_err(Error::unavailable)?;
     Ok(())
@@ -314,25 +331,25 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     // The release code refuses a new tag where the tag is made.
     let new_tag_denied = !may_create_tag(&state, &auth).await?;
     let category =
         discussion_category(&state, repo.id, input.discussion_category_name.as_deref()).await?;
     let actor = &auth.user;
     let latest = match input.make_latest.as_deref() {
-        Some("false") => releases::LatestSelection::Keep,
-        Some("legacy") => releases::LatestSelection::Legacy,
-        Some("true") | None => releases::LatestSelection::Promote,
+        Some("false") => crate::backend::repositories::releases::LatestSelection::Keep,
+        Some("legacy") => crate::backend::repositories::releases::LatestSelection::Legacy,
+        Some("true") | None => crate::backend::repositories::releases::LatestSelection::Promote,
         _ => return Err(Error::invalid("Invalid make_latest")),
     };
     let (title, body, target) = if input.generate_release_notes {
-        let notes = releases::generate_notes(
+        let notes = crate::backend::repositories::releases::generate_notes(
             &state.pool,
             state.cluster.as_ref(),
             actor.id,
             repo.id,
-            &releases::NotesInput {
+            &crate::backend::repositories::releases::NotesInput {
                 tag: &input.tag_name,
                 target: input.target_commitish.as_deref(),
                 previous_tag: None,
@@ -352,7 +369,7 @@ async fn create(
             input.target_commitish.unwrap_or(repo.default_branch),
         )
     };
-    let release = releases::create(
+    let release = crate::backend::repositories::releases::create(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -360,11 +377,11 @@ async fn create(
         actor.id,
         &owner,
         &name,
-        &releases::ReleaseInput {
+        &crate::backend::repositories::releases::ReleaseInput {
             repository_id: repo.id,
             tag: input.tag_name,
             target,
-            fields: releases::ReleaseFields {
+            fields: crate::backend::repositories::releases::ReleaseFields {
                 name: title,
                 body,
                 is_draft: input.draft,
@@ -377,9 +394,14 @@ async fn create(
     .await
     .map_err(release_error)?;
     start_discussion(&state, &auth, &release, category).await?;
-    let detail = releases::detail_by_id(&state.pool, Some(actor.id), repo.id, release.id)
-        .await
-        .map_err(release_error)?;
+    let detail = crate::backend::repositories::releases::detail_by_id(
+        &state.pool,
+        Some(actor.id),
+        repo.id,
+        release.id,
+    )
+    .await
+    .map_err(release_error)?;
     Ok((
         StatusCode::CREATED,
         Json(document(&state, &owner, &name, &detail).await?),
@@ -406,7 +428,7 @@ async fn update(
     Json(value): Json<Value>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let input: Update = serde_json::from_value(value.clone())
         .map_err(|_| Error::invalid("Invalid release fields"))?;
     // Publishing a draft creates its tag when the tag is missing.
@@ -416,12 +438,12 @@ async fn update(
     let actor = &auth.user;
     let latest = match input.make_latest.as_deref() {
         None => None,
-        Some("true") => Some(releases::LatestSelection::Promote),
-        Some("legacy") => Some(releases::LatestSelection::Legacy),
-        Some("false") => Some(releases::LatestSelection::Keep),
+        Some("true") => Some(crate::backend::repositories::releases::LatestSelection::Promote),
+        Some("legacy") => Some(crate::backend::repositories::releases::LatestSelection::Legacy),
+        Some("false") => Some(crate::backend::repositories::releases::LatestSelection::Keep),
         _ => return Err(Error::invalid("Invalid make_latest")),
     };
-    releases::update(
+    crate::backend::repositories::releases::update(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -430,7 +452,7 @@ async fn update(
         &owner,
         &name,
         id,
-        &releases::ReleaseChanges {
+        &crate::backend::repositories::releases::ReleaseChanges {
             tag: input.tag_name,
             target: input.target_commitish,
             name: value.get("name").map(|_| input.name),
@@ -444,9 +466,14 @@ async fn update(
     )
     .await
     .map_err(release_error)?;
-    let detail = releases::detail_by_id(&state.pool, Some(actor.id), repo.id, id)
-        .await
-        .map_err(release_error)?;
+    let detail = crate::backend::repositories::releases::detail_by_id(
+        &state.pool,
+        Some(actor.id),
+        repo.id,
+        id,
+    )
+    .await
+    .map_err(release_error)?;
     start_discussion(&state, &auth, &detail.release.release, category).await?;
     Ok(Json(document(&state, &owner, &name, &detail).await?))
 }
@@ -463,7 +490,7 @@ async fn upload(
     request: Request,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, request.headers(), &owner, &name, true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     crate::backend::repositories::access::check_write(&state.pool, repo.id, auth.user.id)
         .await
         .map_err(|error| release_error(ReleaseError::Access(error)))?;
@@ -480,7 +507,10 @@ async fn upload(
         .map_err(Error::unavailable)?;
     let bytes = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        axum::body::to_bytes(request.into_body(), releases::MAX_ASSET_BYTES),
+        axum::body::to_bytes(
+            request.into_body(),
+            codeyard_model::release_integrity::MAX_ASSET_BYTES,
+        ),
     )
     .await
     .map_err(Error::unavailable)?
@@ -489,9 +519,9 @@ async fn upload(
     auth.require_live(&state.pool).await?;
     auth.repository_scope(&state.pool, repo.id, "contents", true)
         .await
-        .map_err(auth::scope_error)?;
+        .map_err(crate::backend::api::github::auth::scope_error)?;
     let actor = &auth.user;
-    let asset = releases::upload_asset(
+    let asset = crate::backend::repositories::releases::upload_asset(
         &state.pool,
         &state.storage,
         actor.id,
@@ -499,7 +529,7 @@ async fn upload(
         &owner,
         &name,
         id,
-        releases::AssetUpload {
+        crate::backend::repositories::releases::AssetUpload {
             token: Some(auth.token.id),
             name: &input.name,
             label: input.label.as_deref(),
@@ -509,9 +539,14 @@ async fn upload(
     )
     .await
     .map_err(release_error)?;
-    let detail = releases::detail_by_id(&state.pool, Some(actor.id), repo.id, id)
-        .await
-        .map_err(release_error)?;
+    let detail = crate::backend::repositories::releases::detail_by_id(
+        &state.pool,
+        Some(actor.id),
+        repo.id,
+        id,
+    )
+    .await
+    .map_err(release_error)?;
     Ok((
         StatusCode::CREATED,
         Json(asset_document(&state, &owner, &name, &detail.release.release, &asset).await?),
@@ -531,23 +566,25 @@ async fn update_asset(
     Json(value): Json<Value>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
     let input: AssetUpdate = serde_json::from_value(value.clone())
         .map_err(|_| Error::invalid("Invalid asset fields"))?;
-    let asset = releases::update_asset(
+    let asset = crate::backend::repositories::releases::update_asset(
         &state.pool,
         actor.id,
         &owner,
         &name,
         id,
-        &db::releases::AssetChanges {
+        &crate::backend::db::releases::AssetChanges {
             name: input.name,
             label: value.get("label").map(|_| input.label),
         },
     )
     .await
     .map_err(release_error)?;
-    let release = db::releases::get_release(&state.pool, repo.id, asset.release_id)
+    let release = crate::backend::db::releases::get_release(&state.pool, repo.id, asset.release_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -562,10 +599,12 @@ async fn remove(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (_, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    releases::delete(
+    crate::backend::repositories::releases::delete(
         &state.pool,
         &state.storage,
-        auth.ok_or_else(auth::required)?.user.id,
+        auth.ok_or_else(crate::backend::api::github::auth::required)?
+            .user
+            .id,
         &owner,
         &name,
         id,
@@ -583,7 +622,7 @@ async fn list_assets(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let detail = releases::detail_by_id(
+    let detail = crate::backend::repositories::releases::detail_by_id(
         &state.pool,
         auth.as_ref().map(|auth| auth.user.id),
         repo.id,
@@ -608,19 +647,25 @@ async fn asset(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
-    let asset = db::releases::get_repository_release_asset(&state.pool, repo.id, id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    let detail = releases::detail_by_id(&state.pool, viewer, repo.id, asset.release_id)
-        .await
-        .map_err(release_error)?;
+    let asset =
+        crate::backend::db::releases::get_repository_release_asset(&state.pool, repo.id, id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+    let detail = crate::backend::repositories::releases::detail_by_id(
+        &state.pool,
+        viewer,
+        repo.id,
+        asset.release_id,
+    )
+    .await
+    .map_err(release_error)?;
     if headers
         .get(axum::http::header::ACCEPT)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.contains("application/octet-stream"))
     {
-        let download = releases::download_by_id(
+        let download = crate::backend::repositories::releases::download_by_id(
             &state.pool,
             &state.storage,
             viewer,
@@ -650,12 +695,16 @@ async fn remove_asset(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user.id;
-    let asset = db::releases::get_repository_release_asset(&state.pool, repo.id, id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    releases::delete_asset(
+    let actor = auth
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user
+        .id;
+    let asset =
+        crate::backend::db::releases::get_repository_release_asset(&state.pool, repo.id, id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+    crate::backend::repositories::releases::delete_asset(
         &state.pool,
         &state.storage,
         actor,

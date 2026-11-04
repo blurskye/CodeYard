@@ -1,22 +1,21 @@
 //! Native registration and account-owner consent for GitHub Apps.
 mod manifests;
-use crate::backend::{
-    api::{
-        http::{context::PageContext, middleware, session},
-        user::responses::field,
-    },
-    app::AppState,
-    db::{self, github_apps::App},
-    identity::{github_apps as apps, tokens::token_hash},
-};
+use crate::backend::api::http::context::PageContext;
+
+use crate::backend::api::user::responses::field;
+use crate::backend::app::AppState;
+
+use crate::backend::db::github_apps::App;
+
 use axum::{
+    crate::backend::api::http::middleware::from_fn,
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
-    middleware::from_fn,
     response::{IntoResponse, Redirect, Response},
     routing::get,
     Form, Router,
 };
+use codeyard_support::token_hash::token_hash;
 use codeyard_webui::{
     app::Page,
     pages::{account, auth::apps::Model},
@@ -48,7 +47,9 @@ pub fn router() -> Router<Arc<AppState>> {
             get(install_get).post(install_post),
         )
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
-        .layer(from_fn(middleware::private_sensitive_response))
+        .layer(from_fn(
+            crate::backend::api::http::middleware::private_sensitive_response,
+        ))
 }
 fn model(mode: &str) -> Model {
     Model {
@@ -89,8 +90,15 @@ async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
         return r;
     }
     let mut model = model("list");
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match db::github_apps::apps(&ctx.state.pool, ctx.user.as_ref().unwrap().id, &session).await {
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    match crate::backend::db::github_apps::apps(
+        &ctx.state.pool,
+        ctx.user.as_ref().unwrap().id,
+        &session,
+    )
+    .await
+    {
         Ok(apps) => {
             model.registered = apps
                 .into_iter()
@@ -121,10 +129,10 @@ async fn delete_registration(
     if field(&form, "confirm") != "yes" {
         return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Confirm app deletion.");
     }
-    let Some(session) = session::extract_session_id(&ctx.headers) else {
+    let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    match db::github_apps::delete_registration(
+    match crate::backend::db::github_apps::delete_registration(
         &ctx.state.pool,
         ctx.user.as_ref().unwrap().id,
         &session,
@@ -154,8 +162,9 @@ async fn managed_installations(
         return response;
     }
     let mut model = model("installations");
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match db::github_apps::managed_installations(
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    match crate::backend::db::github_apps::managed_installations(
         &ctx.state.pool,
         ctx.user.as_ref().unwrap().id,
         &session,
@@ -203,11 +212,16 @@ async fn uninstall(
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
-    let Some(session) = session::extract_session_id(&ctx.headers) else {
+    let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    match db::github_apps::uninstall(&ctx.state.pool, ctx.user.as_ref().unwrap().id, &session, id)
-        .await
+    match crate::backend::db::github_apps::uninstall(
+        &ctx.state.pool,
+        ctx.user.as_ref().unwrap().id,
+        &session,
+        id,
+    )
+    .await
     {
         Ok(true) => Redirect::to("/settings/apps/installations").into_response(),
         Ok(false) => ctx.error(
@@ -220,10 +234,17 @@ async fn uninstall(
         ),
     }
 }
-fn key_failure(ctx: &PageContext, error: apps::RegistrationKeyError) -> Response {
+fn key_failure(
+    ctx: &PageContext,
+    error: crate::backend::identity::github_apps::RegistrationKeyError,
+) -> Response {
     let status = match error {
-        apps::RegistrationKeyError::Limited => StatusCode::TOO_MANY_REQUESTS,
-        apps::RegistrationKeyError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+        crate::backend::identity::github_apps::RegistrationKeyError::Limited => {
+            StatusCode::TOO_MANY_REQUESTS
+        }
+        crate::backend::identity::github_apps::RegistrationKeyError::Unavailable => {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
     };
     ctx.error(
         status,
@@ -250,20 +271,22 @@ async fn regenerate(
         return response;
     }
     let actor = ctx.user.as_ref().unwrap().id;
-    let Some(session) = session::extract_session_id(&ctx.headers) else {
+    let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    match db::github_apps::app(&ctx.state.pool, &slug).await {
+    match crate::backend::db::github_apps::app(&ctx.state.pool, &slug).await {
         Ok(Some(app)) if app.owner_id == actor && app.slug == slug => {}
         Ok(_) => return ctx.error(StatusCode::NOT_FOUND, "App not found"),
         Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Apps unavailable"),
     }
-    let (private, public) = match apps::registration_key(&ctx.state.pool, actor).await {
-        Ok(keys) => keys,
-        Err(error) => return key_failure(&ctx, error),
-    };
+    let (private, public) =
+        match crate::backend::identity::github_apps::registration_key(&ctx.state.pool, actor).await
+        {
+            Ok(keys) => keys,
+            Err(error) => return key_failure(&ctx, error),
+        };
     let secret = codeyard_support::crypto::random_hex();
-    match db::github_apps::rotate_credentials(
+    match crate::backend::db::github_apps::rotate_credentials(
         &ctx.state.pool,
         actor,
         &session,
@@ -325,12 +348,12 @@ async fn register(
         return manifest_approve(&ctx, &form).await;
     }
     let slug = field(&form, "slug");
-    let name = apps::valid_name(field(&form, "name"));
+    let name = crate::backend::identity::github_apps::valid_name(field(&form, "name"));
     let homepage = field(&form, "homepage");
     let url = url::Url::parse(homepage).ok();
     let permissions = serde_json::from_str::<Value>(field(&form, "permissions"))
         .ok()
-        .and_then(|value| apps::permissions(&value))
+        .and_then(|value| crate::backend::identity::github_apps::permissions(&value))
         .map(Value::Object);
     let chosen: Vec<String> = field(&form, "events")
         .split(',')
@@ -341,9 +364,9 @@ async fn register(
     let events = if chosen.is_empty() {
         Ok(String::new())
     } else {
-        crate::backend::webhooks::events::subscription(&chosen)
+        codeyard_model::webhook_events::subscription(&chosen)
     };
-    if !apps::valid_slug(slug)
+    if !crate::backend::identity::github_apps::valid_slug(slug)
         || name.is_none()
         || field(&form, "description").len() > 1000
         || homepage.len() > 2048
@@ -362,7 +385,10 @@ async fn register(
                     .split(',')
                     .filter(|event| !event.is_empty())
                     .any(|event| {
-                        !apps::event_permission(permissions.as_ref().unwrap_or(&Value::Null), event)
+                        !crate::backend::identity::github_apps::event_permission(
+                            permissions.as_ref().unwrap_or(&Value::Null),
+                            event,
+                        )
                     })
         })
     {
@@ -371,14 +397,18 @@ async fn register(
             "Invalid app fields or unsupported permissions/events",
         );
     }
-    let Some(session) = session::extract_session_id(&ctx.headers) else {
+    let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    let (private, public) =
-        match apps::registration_key(&ctx.state.pool, ctx.user.as_ref().unwrap().id).await {
-            Ok(keys) => keys,
-            Err(error) => return key_failure(&ctx, error),
-        };
+    let (private, public) = match crate::backend::identity::github_apps::registration_key(
+        &ctx.state.pool,
+        ctx.user.as_ref().unwrap().id,
+    )
+    .await
+    {
+        Ok(keys) => keys,
+        Err(error) => return key_failure(&ctx, error),
+    };
     let permissions = permissions.unwrap();
     let client = format!("Iv1.{}", &codeyard_support::crypto::random_hex()[..16]);
     let secret = codeyard_support::crypto::random_hex();
@@ -395,16 +425,16 @@ async fn register(
         public_key: public,
         permissions: permissions.to_string(),
         events: events.unwrap(),
-        access_level: if apps::allows(&permissions, "administration", true) {
+        access_level: if codeyard_model::github_apps::allows(&permissions, "administration", true) {
             5
-        } else if apps::write(&permissions) {
+        } else if crate::backend::identity::github_apps::write(&permissions) {
             3
         } else {
             1
         },
         created_at: chrono::Utc::now(),
     };
-    match db::github_apps::register(
+    match crate::backend::db::github_apps::register(
         &ctx.state.pool,
         app.owner_id,
         &session,
@@ -441,7 +471,7 @@ async fn install_get(
     if let Some(r) = login(&ctx) {
         return r;
     }
-    match db::github_apps::app(&ctx.state.pool, &slug).await {
+    match crate::backend::db::github_apps::app(&ctx.state.pool, &slug).await {
         Ok(Some(app))
             if app.is_public
                 || ctx
@@ -475,11 +505,11 @@ async fn install_post(
     if let Err(r) = ctx.check_csrf(&form) {
         return r;
     }
-    let app = match db::github_apps::app(&ctx.state.pool, &slug).await {
+    let app = match crate::backend::db::github_apps::app(&ctx.state.pool, &slug).await {
         Ok(Some(app)) => app,
         _ => return ctx.error(StatusCode::NOT_FOUND, "App not found"),
     };
-    let Some(session) = session::extract_session_id(&ctx.headers) else {
+    let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
     let org = if field(&form, "organization_id").is_empty() {
@@ -506,7 +536,7 @@ async fn install_post(
         let Some(org) = org else {
             return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Choose an organization");
         };
-        return match db::github_apps::request_installation(
+        return match crate::backend::db::github_apps::request_installation(
             &ctx.state.pool,
             actor,
             &session,
@@ -526,7 +556,7 @@ async fn install_post(
             ),
         };
     }
-    match db::github_apps::install(
+    match crate::backend::db::github_apps::install(
         &ctx.state.pool,
         actor,
         &session,

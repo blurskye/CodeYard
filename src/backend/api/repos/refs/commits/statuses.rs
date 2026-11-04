@@ -1,16 +1,17 @@
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
-use crate::backend::api::repos::access::{
-    check_repo_write_access, find_repository, readable_repository,
-};
+use crate::backend::api::repos::access::check_repo_write_access;
+use crate::backend::api::repos::access::find_repository;
+use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::chrome::ApiResult;
-use crate::backend::api::repos::paging::{json_page, PageQuery};
-use crate::backend::api::repos::responses::{
-    map_commit_status_response, repo_store_error, repository_unavailable,
-};
+use crate::backend::api::repos::paging::json_page;
+use crate::backend::api::repos::paging::PageQuery;
+use crate::backend::api::repos::responses::map_commit_status_response;
+use crate::backend::api::repos::responses::repo_store_error;
+use crate::backend::api::repos::responses::repository_unavailable;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
-use crate::backend::db;
+
 use crate::backend::repositories::store::repo_store;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -58,7 +59,7 @@ pub async fn list_commit_statuses(
     let sha = sha.to_ascii_lowercase();
 
     let (offset, limit) = json_page(query.page, query.per_page)?;
-    let statuses = db::repositories::protection::list_commit_statuses_page(
+    let statuses = crate::backend::db::repositories::protection::list_commit_statuses_page(
         &state.pool,
         repository.id,
         &sha,
@@ -82,7 +83,7 @@ pub(super) async fn status_responses(
         .collect();
     ids.sort_unstable();
     ids.dedup();
-    let users = db::users::accounts::get_users_by_ids(pool, &ids)
+    let users = crate::backend::db::users::accounts::get_users_by_ids(pool, &ids)
         .await
         .map_err(|_| {
             (
@@ -128,7 +129,7 @@ pub async fn create_commit_status(
     let sha = sha.to_ascii_lowercase();
 
     let state_value = req.state.trim().to_lowercase();
-    if !db::repositories::protection::valid_commit_status_state(&state_value) {
+    if !crate::backend::db::repositories::protection::valid_commit_status_state(&state_value) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -139,7 +140,7 @@ pub async fn create_commit_status(
     }
 
     let context = req.context.trim();
-    if db::repositories::protection::server_owned_status_context(context) {
+    if crate::backend::db::repositories::protection::server_owned_status_context(context) {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ApiError::new(
@@ -176,9 +177,9 @@ pub async fn create_commit_status(
         .await
         .map_err(|error| repo_store_error(error, StatusCode::SERVICE_UNAVAILABLE))?;
 
-    let status = db::repositories::protection::upsert_commit_status(
+    let status = crate::backend::db::repositories::protection::upsert_commit_status(
         &state.pool,
-        db::repositories::protection::CommitStatusUpsert {
+        crate::backend::db::repositories::protection::CommitStatusUpsert {
             repo_id: repository.id,
             sha: &sha,
             context,

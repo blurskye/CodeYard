@@ -1,14 +1,14 @@
 //! Publication-time immutable releases share the primary Git lock with every tag writer.
-use super::{
-    integrity::{Attestation, Statement},
-    ReleaseChanges, ReleaseError, ReleaseFields,
-};
-use crate::backend::api::http::config::link_origin;
 use crate::backend::cluster::NodeContext;
-use crate::backend::db;
-use crate::backend::db::repositories::immutable_releases as records;
+use crate::backend::repositories::releases::ReleaseChanges;
+use crate::backend::repositories::releases::ReleaseError;
+use crate::backend::repositories::releases::ReleaseFields;
+use codeyard_model::http_config::link_origin;
+use codeyard_model::release_integrity::Attestation;
+use codeyard_model::release_integrity::Statement;
+
 use crate::backend::db::repositories::immutable_releases::Refusal;
-use crate::backend::repositories::access;
+
 use crate::backend::repositories::git_sessions::validation::RefUpdate;
 use crate::backend::repositories::git_sessions::validation::ZERO_SHA;
 use crate::backend::repositories::store::repo_store;
@@ -38,13 +38,16 @@ impl Mutation {
     pub(crate) fn validate(&self) -> Result<(), RepoError> {
         let result = match self {
             Self::Create { tag, fields, .. } => {
-                super::validate_tag(tag).and_then(|()| super::validate_fields(fields))
+                crate::backend::repositories::releases::validate_tag(tag)
+                    .and_then(|()| crate::backend::repositories::releases::validate_fields(fields))
             }
-            Self::Update { changes, .. } => super::validate_fields(&ReleaseFields {
-                name: changes.name.clone().flatten(),
-                body: changes.body.clone().flatten(),
-                ..Default::default()
-            }),
+            Self::Update { changes, .. } => {
+                crate::backend::repositories::releases::validate_fields(&ReleaseFields {
+                    name: changes.name.clone().flatten(),
+                    body: changes.body.clone().flatten(),
+                    ..Default::default()
+                })
+            }
         };
         result.map_err(|error| match error {
             ReleaseError::Invalid(message) => RepoError::new(ErrorKind::Invalid, message),
@@ -58,25 +61,27 @@ pub async fn enabled(
     repository: &Repository,
 ) -> Result<bool> {
     let actor = viewer.ok_or(Refusal::Denied)?;
-    let actor = db::users::accounts::get_user_by_id(pool, actor.id)
+    let actor = crate::backend::db::users::accounts::get_user_by_id(pool, actor.id)
         .await?
         .ok_or(Refusal::Denied)?;
-    let repository = db::repositories::records::get_repository_by_id(pool, repository.id)
-        .await?
-        .ok_or(Refusal::Denied)?;
+    let repository =
+        crate::backend::db::repositories::records::get_repository_by_id(pool, repository.id)
+            .await?
+            .ok_or(Refusal::Denied)?;
     ensure!(
-        access::can_admin(pool, &actor, &repository).await?,
+        crate::backend::repositories::access::can_admin(pool, &actor, &repository).await?,
         Refusal::Denied
     );
-    records::enabled(pool, repository.id).await
+    crate::backend::db::repositories::immutable_releases::enabled(pool, repository.id).await
 }
 pub async fn set_enabled(
     pool: &codeyard_db_core::DbPool,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     enabled: bool,
 ) -> Result<()> {
-    records::set_enabled(pool, actor, repo, enabled).await
+    crate::backend::db::repositories::immutable_releases::set_enabled(pool, actor, repo, enabled)
+        .await
 }
 
 /// Also used with a proposed namespace before renaming/transferring/copy publication.
@@ -96,9 +101,11 @@ pub(crate) async fn check_tag_updates(
                 .map(str::to_owned)
         })
         .collect();
-    let reservations = records::reservations(pool, repo.id, owner, name, &tags)
-        .await
-        .map_err(|_| RepoError::new(ErrorKind::Unavailable, "Immutable tag policy unavailable"))?;
+    let reservations = crate::backend::db::repositories::immutable_releases::reservations(
+        pool, repo.id, owner, name, &tags,
+    )
+    .await
+    .map_err(|_| RepoError::new(ErrorKind::Unavailable, "Immutable tag policy unavailable"))?;
     for reserved in reservations {
         for update in updates.iter().filter(|update| {
             update.reference.strip_prefix("refs/tags/") == Some(reserved.tag_name.as_str())
@@ -126,7 +133,7 @@ pub(crate) async fn check_current_tag_updates(
     {
         return Ok(());
     }
-    let owner = db::repositories::records::repository_owner_names(pool, &[repo.id])
+    let owner = crate::backend::db::repositories::records::repository_owner_names(pool, &[repo.id])
         .await
         .map_err(|_| RepoError::new(ErrorKind::Unavailable, "Repository owner unavailable"))?
         .remove(&repo.id)
@@ -146,14 +153,16 @@ pub(crate) async fn check_namespace(
         .keys()
         .filter_map(|reference| reference.strip_prefix("refs/tags/").map(str::to_owned))
         .collect();
-    let reserved = records::reservations(pool, repo.id, owner, name, &tags)
-        .await
-        .map_err(|_| {
-            RepoError::new(
-                ErrorKind::Unavailable,
-                "Immutable namespace policy unavailable",
-            )
-        })?;
+    let reserved = crate::backend::db::repositories::immutable_releases::reservations(
+        pool, repo.id, owner, name, &tags,
+    )
+    .await
+    .map_err(|_| {
+        RepoError::new(
+            ErrorKind::Unavailable,
+            "Immutable namespace policy unavailable",
+        )
+    })?;
     if reserved
         .iter()
         .any(|reservation| reservation.repo_id != repo.id)
@@ -183,12 +192,14 @@ pub(crate) fn configure_local_identity(
     state_dir: &std::path::Path,
     repos: &std::path::Path,
 ) -> anyhow::Result<()> {
-    crate::backend::cluster::identity::release_key(state_dir, repos)?;
+    codeyard_support::node_identity::release_key(state_dir, repos)?;
     register_local_identity(state_dir, repos);
     Ok(())
 }
 
-async fn local_key(path: &std::path::Path) -> anyhow::Result<crate::backend::cluster::NodeKey> {
+async fn local_key(
+    path: &std::path::Path,
+) -> anyhow::Result<codeyard_support::node_identity::NodeKey> {
     let path = std::path::absolute(path)?;
     let (root, state) = LOCAL_IDENTITIES
         .read()
@@ -198,16 +209,14 @@ async fn local_key(path: &std::path::Path) -> anyhow::Result<crate::backend::clu
         .max_by_key(|(root, _)| root.components().count())
         .map(|(root, state)| (root.clone(), state.clone()))
         .ok_or_else(|| anyhow::anyhow!("Release identity not configured"))?;
-    tokio::task::spawn_blocking(move || {
-        crate::backend::cluster::identity::release_key(&state, &root)
-    })
-    .await?
+    tokio::task::spawn_blocking(move || codeyard_support::node_identity::release_key(&state, &root))
+        .await?
 }
 
 pub(crate) async fn verify_local(
     attestation: &Attestation,
     path: &std::path::Path,
-) -> Result<records::Publication, RepoError> {
+) -> Result<crate::backend::db::repositories::immutable_releases::Publication, RepoError> {
     let key = local_key(path)
         .await
         .map_err(|_| RepoError::new(ErrorKind::Unavailable, "Release identity unavailable"))?;
@@ -216,23 +225,18 @@ pub(crate) async fn verify_local(
 
 fn verify_with_key(
     attestation: &Attestation,
-    key: &crate::backend::cluster::NodeKey,
-) -> Result<records::Publication, RepoError> {
-    records::Publication::verify(attestation, &key.public_hex()).map_err(|_| {
+    key: &codeyard_support::node_identity::NodeKey,
+) -> Result<crate::backend::db::repositories::immutable_releases::Publication, RepoError> {
+    crate::backend::db::repositories::immutable_releases::Publication::verify(
+        attestation,
+        &key.public_hex(),
+    )
+    .map_err(|_| {
         RepoError::new(
             ErrorKind::Invalid,
             "Invalid or untrusted release attestation",
         )
     })
-}
-
-pub(crate) fn namespace_url(owner: &str, name: &str) -> String {
-    format!(
-        "{}/{}/{}",
-        link_origin(),
-        codeyard_webui::encode_component(owner),
-        codeyard_webui::encode_component(name)
-    )
 }
 
 pub(crate) async fn candidate(
@@ -244,9 +248,9 @@ pub(crate) async fn candidate(
     publishing: bool,
 ) -> Result<Option<Attestation>, ReleaseError> {
     if !publishing
-        || !records::enabled(pool, repository.id)
+        || !crate::backend::db::repositories::immutable_releases::enabled(pool, repository.id)
             .await
-            .map_err(super::unavailable)?
+            .map_err(crate::backend::repositories::releases::unavailable)?
     {
         return Ok(None);
     }
@@ -266,28 +270,29 @@ pub(crate) async fn candidate(
         .await
         .map_err(ReleaseError::Git)?;
     let assets = match release {
-        Some(id) => records::assets(pool, id)
+        Some(id) => crate::backend::db::repositories::immutable_releases::assets(pool, id)
             .await
-            .map_err(super::unavailable)?,
+            .map_err(crate::backend::repositories::releases::unavailable)?,
         None => vec![],
     };
-    let owner = db::repositories::records::repository_owner_names(pool, &[repository.id])
-        .await
-        .map_err(super::unavailable)?
-        .remove(&repository.id)
-        .ok_or(ReleaseError::Unavailable)?;
+    let owner =
+        crate::backend::db::repositories::records::repository_owner_names(pool, &[repository.id])
+            .await
+            .map_err(crate::backend::repositories::releases::unavailable)?
+            .remove(&repository.id)
+            .ok_or(ReleaseError::Unavailable)?;
     let url = namespace_url(&owner, &repository.name);
     let statement = Statement::new(repository.id, &url, tag, &tag_oid, &commit.sha, assets)
-        .map_err(super::unavailable)?;
+        .map_err(crate::backend::repositories::releases::unavailable)?;
     let key = match cluster {
         Some(context) => context.key.clone(),
         None => local_key(std::path::Path::new(&repository.disk_path))
             .await
-            .map_err(super::unavailable)?,
+            .map_err(crate::backend::repositories::releases::unavailable)?,
     };
     Attestation::sign(&statement, &key)
         .map(Some)
-        .map_err(super::unavailable)
+        .map_err(crate::backend::repositories::releases::unavailable)
 }
 
 #[cfg(test)]
@@ -298,8 +303,8 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let repos = root.path().join("repos");
         let state = root.path().join("state");
-        let legacy = crate::backend::cluster::load_or_create(&repos).unwrap();
-        let key = crate::backend::cluster::identity::release_key(&state, &repos).unwrap();
+        let legacy = codeyard_support::node_identity::load_or_create(&repos).unwrap();
+        let key = codeyard_support::node_identity::release_key(&state, &repos).unwrap();
         assert_eq!(legacy.public_hex(), key.public_hex());
         assert!(state.join("release.key").is_file());
         let statement = Statement::new(
@@ -313,11 +318,16 @@ mod tests {
         .unwrap();
         let valid = Attestation::sign(&statement, &key).unwrap();
         assert!(verify_with_key(&valid, &key).is_ok());
-        let forged =
-            Attestation::sign(&statement, &crate::backend::cluster::NodeKey::generate()).unwrap();
+        let forged = Attestation::sign(
+            &statement,
+            &codeyard_support::node_identity::NodeKey::generate(),
+        )
+        .unwrap();
         let error = verify_with_key(&forged, &key)
             .err()
             .expect("unknown signing identity must fail");
         assert_eq!(error.kind, ErrorKind::Invalid);
     }
 }
+
+use codeyard_model::urls::namespace_url;

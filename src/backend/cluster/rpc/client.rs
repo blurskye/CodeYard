@@ -1,9 +1,10 @@
-use super::wire::*;
-use super::RpcHandler;
-use crate::backend::{
-    cluster::{link::Link, transport, NodeAddress, NodeContext},
-    db,
-};
+use crate::backend::cluster::link::Link;
+use crate::backend::cluster::rpc::wire::*;
+use crate::backend::cluster::rpc::RpcHandler;
+
+use crate::backend::cluster::NodeAddress;
+use crate::backend::cluster::NodeContext;
+
 use anyhow::Result;
 use codeyard_git::error::{ErrorKind, RepoError};
 use tokio::io::AsyncWriteExt;
@@ -23,17 +24,18 @@ impl NodeContext {
     where
         F: std::future::Future<Output = anyhow::Result<()>>,
     {
-        use crate::backend::cluster::writes as coordinator;
-        use db::cluster::writes as journal;
+        use crate::backend::db::cluster::writes as journal;
         let pool = self.database()?;
-        let limits = super::git_session::WriteLimits::load(pool).await?;
+        let limits = crate::backend::cluster::rpc::git_session::WriteLimits::load(pool).await?;
         let id = Uuid::new_v4().to_string();
-        let write = coordinator::begin(pool, repo, self.node_id, term, &id, changes).await?;
+        let write =
+            crate::backend::cluster::writes::begin(pool, repo, self.node_id, term, &id, changes)
+                .await?;
         let prepared = self
             .prepare_push_write(repository, path, write.record())
             .await;
         let votes = prepared.is_ok()
-            && coordinator::collect_votes(pool, &write)
+            && crate::backend::cluster::writes::collect_votes(pool, &write)
                 .await
                 .unwrap_or(false);
         let authorized = if votes {
@@ -43,7 +45,8 @@ impl NodeContext {
         } else {
             false
         };
-        let decided = coordinator::decide(pool, &write, votes && authorized).await?;
+        let decided =
+            crate::backend::cluster::writes::decide(pool, &write, votes && authorized).await?;
         if decided.decision != "commit" {
             if self
                 .abort_push_write(repository, path, &decided)
@@ -55,7 +58,7 @@ impl NodeContext {
             anyhow::bail!("write quorum unavailable");
         }
         // After the SQL decision every failure is an unknown outcome, never a rollback.
-        if super::git_session::apply_refs(path, &decided, limits.timeout)
+        if crate::backend::cluster::rpc::git_session::apply_refs(path, &decided, limits.timeout)
             .await
             .is_err()
             || self
@@ -63,7 +66,7 @@ impl NodeContext {
                 .await
                 .is_err()
         {
-            return Err(coordinator::OutcomeUnknown.into());
+            return Err(crate::backend::cluster::writes::OutcomeUnknown.into());
         }
         Ok(())
     }
@@ -74,7 +77,8 @@ impl NodeContext {
         path: &std::path::Path,
         write: &codeyard_db_core::models::WriteRecord,
     ) -> anyhow::Result<()> {
-        let limits = super::git_session::WriteLimits::load(self.database()?).await?;
+        let limits =
+            crate::backend::cluster::rpc::git_session::WriteLimits::load(self.database()?).await?;
         tokio::time::timeout(limits.timeout, async {
             let follower = self.write_follower(write).await?;
             self.prepare_local_write(path, write, limits).await?;
@@ -104,7 +108,8 @@ impl NodeContext {
         path: &std::path::Path,
         write: &codeyard_db_core::models::WriteRecord,
     ) -> anyhow::Result<()> {
-        let limits = super::git_session::WriteLimits::load(self.database()?).await?;
+        let limits =
+            crate::backend::cluster::rpc::git_session::WriteLimits::load(self.database()?).await?;
         tokio::time::timeout(limits.timeout, async {
             let follower = self.write_follower(write).await?;
             self.publish_local_write(path, write).await?;
@@ -136,7 +141,8 @@ impl NodeContext {
         path: &std::path::Path,
         write: &codeyard_db_core::models::WriteRecord,
     ) -> anyhow::Result<()> {
-        let limits = super::git_session::WriteLimits::load(self.database()?).await?;
+        let limits =
+            crate::backend::cluster::rpc::git_session::WriteLimits::load(self.database()?).await?;
         tokio::time::timeout(
             limits.timeout.min(std::time::Duration::from_secs(1)),
             async {
@@ -168,8 +174,11 @@ impl NodeContext {
         &self,
         write: &codeyard_db_core::models::WriteRecord,
     ) -> anyhow::Result<i64> {
-        let view =
-            db::cluster::writes::recovery_view(self.database()?, write.repository_id).await?;
+        let view = crate::backend::db::cluster::writes::recovery_view(
+            self.database()?,
+            write.repository_id,
+        )
+        .await?;
         anyhow::ensure!(
             view.primary_id == self.node_id
                 && write.primary_id == self.node_id
@@ -271,9 +280,12 @@ impl NodeContext {
             .await
             .map_err(|_| unavailable())?;
         }
-        let mut link = tokio::time::timeout_at(deadline, self.dial(node_id, transport::ALPN_RPC))
-            .await
-            .map_err(|_| unavailable())??;
+        let mut link = tokio::time::timeout_at(
+            deadline,
+            self.dial(node_id, crate::backend::cluster::transport::ALPN_RPC),
+        )
+        .await
+        .map_err(|_| unavailable())??;
         let result = tokio::time::timeout_at(deadline, async {
             let sending = async {
                 write_frame(&mut link.writer, header, MAX_JSON).await?;
@@ -344,7 +356,7 @@ impl NodeContext {
                 return Err(unavailable());
             }
             let (node, address) = if let Some(pool) = &self.pool {
-                let node = db::cluster::get_node_by_id(pool, node_id)
+                let node = crate::backend::db::cluster::get_node_by_id(pool, node_id)
                     .await
                     .map_err(|_| unavailable())?
                     .filter(|node| {
@@ -354,7 +366,7 @@ impl NodeContext {
                 let address: NodeAddress =
                     serde_json::from_str(node.addr_hint.as_deref().ok_or_else(unavailable)?)
                         .map_err(|_| unavailable())?;
-                let peer = crate::backend::cluster::parse_public_key(&node.public_key)
+                let peer = codeyard_support::node_identity::parse_public_key(&node.public_key)
                     .map_err(|_| unavailable())?;
                 (peer, address)
             } else {
@@ -368,7 +380,9 @@ impl NodeContext {
                 let address = peer.resolved_address().await.map_err(|_| unavailable())?;
                 (peer.node().map_err(|_| unavailable())?, address)
             };
-            let linked = transport::dial_node(&self.iroh, node, &address, alpn).await;
+            let linked =
+                crate::backend::cluster::transport::dial_node(&self.iroh, node, &address, alpn)
+                    .await;
             self.note_dial(node_id, linked.is_ok());
             linked.map_err(|_| unavailable())
         })
@@ -393,7 +407,7 @@ impl NodeContext {
                 .map(|id| (id, false))
                 .collect();
         };
-        db::cluster::read_candidates(pool, &repository.to_string(), primary)
+        crate::backend::db::cluster::read_candidates(pool, &repository.to_string(), primary)
             .await
             .unwrap_or_default()
     }

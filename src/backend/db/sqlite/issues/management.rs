@@ -24,7 +24,7 @@ pub async fn closing_candidates(
         "SELECT p.* FROM pull_requests p JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$1
          WHERE (p.body LIKE $2 OR p.body LIKE $5) AND (p.repo_id=$3 OR p.body LIKE $4) AND p.base_branch=r.default_branch AND ($6<=0 OR p.id<$6) AND {}
          ORDER BY p.id DESC LIMIT 100",
-        super::super::repositories::access::readable_condition()
+        crate::backend::db::sqlite::repositories::access::readable_condition()
     ))
     .bind(viewer)
     .bind(format!("%#{number}%"))
@@ -45,7 +45,7 @@ pub async fn pinned(pool: &SqlitePool, repo: i64) -> Result<Vec<Issue>> {
 }
 
 async fn require_actor(tx: &mut Transaction<'_, Sqlite>, actor: &Actor) -> Result<()> {
-    super::super::credentials::require_account(tx, actor)
+    crate::backend::db::sqlite::credentials::require_account(tx, actor)
         .await
         .map_err(|error| {
             if error.is::<AccountRestricted>() {
@@ -76,7 +76,7 @@ pub async fn pin(
     let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
-        super::super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::sqlite::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
     require_actor(&mut tx, &authority).await?;
@@ -118,7 +118,7 @@ pub async fn delete(pool: &SqlitePool, actor: impl Into<Actor>, repo: i64, id: i
     let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
-        super::super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
     require_actor(&mut tx, &authority).await?;
@@ -155,7 +155,8 @@ pub async fn transfer(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     for repo in [repo.min(destination), repo.max(destination)] {
         ensure!(
-            super::super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+            crate::backend::db::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
+                .await?,
             Refusal::Denied
         );
     }
@@ -170,7 +171,8 @@ pub async fn transfer(
         .await?;
     ensure!(!publishes, Refusal::Destination);
     let old = issue(&mut tx, repo, id).await?;
-    let number = super::super::discussions::allocate_number(&mut tx, destination).await?;
+    let number =
+        crate::backend::db::sqlite::discussions::allocate_number(&mut tx, destination).await?;
     let labels: Vec<i64> = sqlx::query_scalar("SELECT DISTINCT b.id FROM issue_labels il JOIN labels a ON a.id=il.label_id JOIN labels b ON lower(b.name)=lower(a.name) WHERE il.issue_id=$1 AND b.repo_id=$2").bind(id).bind(destination).fetch_all(&mut *tx).await?;
     sqlx::query("DELETE FROM issue_labels WHERE issue_id=$1")
         .bind(id)
@@ -219,7 +221,7 @@ pub async fn transfer(
             .fetch_all(&mut *tx)
             .await?;
     for user in assignees {
-        match super::super::assignees::candidate(&mut tx, destination, user).await {
+        match crate::backend::db::sqlite::assignees::candidate(&mut tx, destination, user).await {
             Ok(()) => {}
             Err(error)
                 if matches!(
@@ -243,7 +245,7 @@ pub async fn transfer(
     .bind(number)
     .bind(milestone)
     .bind(id)
-    .bind(super::super::time::next_revision(old.updated_at)?)
+    .bind(crate::backend::db::sqlite::time::next_revision(old.updated_at)?)
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -266,7 +268,7 @@ pub async fn close_duplicate_with_previous(
     let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
-        super::super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::sqlite::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
     require_actor(&mut tx, &authority).await?;
@@ -276,10 +278,10 @@ pub async fn close_duplicate_with_previous(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(Refusal::Missing)?;
-    let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND {})",super::super::repositories::access::readable_condition())).bind(actor).bind(target_repo).fetch_one(&mut *tx).await?;
+    let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND {})",crate::backend::db::sqlite::repositories::access::readable_condition())).bind(actor).bind(target_repo).fetch_one(&mut *tx).await?;
     ensure!(visible, Refusal::Missing);
     issue(&mut tx, target_repo, duplicate).await?;
-    let next = super::super::time::next_revision(existing.updated_at)?;
+    let next = crate::backend::db::sqlite::time::next_revision(existing.updated_at)?;
     sqlx::query("INSERT INTO issue_duplicates(issue_id,duplicate_id) VALUES($1,$2) ON CONFLICT(issue_id) DO UPDATE SET duplicate_id=excluded.duplicate_id").bind(id).bind(duplicate).execute(&mut *tx).await?;
     let result: Issue = sqlx::query_as("UPDATE issues SET state='closed',state_reason='duplicate',closed_by_id=CASE WHEN state='open' THEN $1 ELSE closed_by_id END,closed_at=COALESCE(closed_at,strftime('%Y-%m-%dT%H:%M:%f000Z','now')),updated_at=$3 WHERE id=$2 RETURNING *").bind(actor).bind(id).bind(next).fetch_one(&mut *tx).await?;
     for (kind, detail, old) in crate::backend::db::timeline::edit_events(
@@ -288,8 +290,10 @@ pub async fn close_duplicate_with_previous(
         &result.title,
         &result.state,
     ) {
-        super::super::timeline::append(&mut tx, repo, "issue", id, actor, kind, detail, old)
-            .await?;
+        crate::backend::db::sqlite::timeline::append(
+            &mut tx, repo, "issue", id, actor, kind, detail, old,
+        )
+        .await?;
     }
     tx.commit().await?;
     Ok((existing, result))
@@ -317,7 +321,8 @@ pub async fn link_branch(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     for repo in [repo.min(branch_repo), repo.max(branch_repo)] {
         ensure!(
-            super::super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+            crate::backend::db::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
+                .await?,
             Refusal::Denied
         );
     }

@@ -1,9 +1,13 @@
 //! Statistics share one bounded, ref-cached history scan on local and remote storage.
-use super::{contents::store_error, pagination::Pagination, repository, Error, Result};
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::api::repos::code::contributors::contributor_accounts;
 use crate::backend::app::AppState;
 use crate::backend::repositories::store::repo_store;
-use crate::backend::webhooks::payloads;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -59,7 +63,7 @@ fn history_weeks(stats: &CommitStatistics) -> Result<Vec<i64>> {
 
 async fn live_read(
     state: &AppState,
-    auth: Option<&super::auth::Authentication>,
+    auth: Option<&crate::backend::api::github::auth::Authentication>,
     repo: i64,
 ) -> Result<()> {
     if let Some(auth) = auth {
@@ -68,11 +72,11 @@ async fn live_read(
             .map_err(Error::unavailable)?
             .is_none()
         {
-            return Err(super::auth::required());
+            return Err(crate::backend::api::github::auth::required());
         }
         auth.repository_scope(&state.pool, repo, "metadata", false)
             .await
-            .map_err(super::auth::scope_error)?;
+            .map_err(crate::backend::api::github::auth::scope_error)?;
     }
     if crate::backend::db::repositories::access::readable_repository_ids(
         &state.pool,
@@ -228,7 +232,7 @@ async fn statistics(
                     if stats.commits >= 10_000 { a = 0; d = 0; }
                     json!({"w":date, "a":a, "d":d, "c":c})
                 }).collect::<Vec<_>>();
-                json!({"author":user.map(|user| payloads::simple_person(&payloads::Person::of(user))), "total":total, "weeks":weeks})
+                json!({"author":user.map(|user| crate::backend::webhooks::payloads::simple_person(&crate::backend::webhooks::payloads::Person::of(user))), "total":total, "weeks":weeks})
             }).collect())
         }
         _ => return Err(Error::missing()),
@@ -272,7 +276,9 @@ async fn contributors(
                     value["contributions"].as_u64().unwrap_or_default() + u64::from(author.commits)
                 );
             } else {
-                let mut value = payloads::simple_person(&payloads::Person::of(user));
+                let mut value = crate::backend::webhooks::payloads::simple_person(
+                    &crate::backend::webhooks::payloads::Person::of(user),
+                );
                 value["contributions"] = json!(author.commits);
                 values.push(value);
             }

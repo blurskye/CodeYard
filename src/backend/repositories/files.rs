@@ -1,19 +1,24 @@
 //! Web editor and API file writes: check who may write where, then have the store
 //! commit the file and move the branch, failing if it changed since the editor loaded.
-use crate::backend::{
-    ci::{CiRuns, RefUpdate},
-    cluster::NodeContext,
-    db,
-    repositories::{
-        access,
-        protection::{check_branch_write, BranchWrite, History, Refusal, WriteVia, ANY_TIP},
-        pull_requests,
-        store::{
-            repo_store, CommitIdentities, CommitInfo, FileWrite, PreparedFile, RepoStore,
-            UploadWrite, MAX_EDITOR_BYTES,
-        },
-    },
-};
+use crate::backend::ci::CiRuns;
+use crate::backend::ci::RefUpdate;
+use crate::backend::cluster::NodeContext;
+
+use crate::backend::repositories::protection::check_branch_write;
+use crate::backend::repositories::protection::BranchWrite;
+use crate::backend::repositories::protection::History;
+use crate::backend::repositories::protection::Refusal;
+use crate::backend::repositories::protection::WriteVia;
+use crate::backend::repositories::protection::ANY_TIP;
+
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::CommitIdentities;
+use crate::backend::repositories::store::CommitInfo;
+use crate::backend::repositories::store::FileWrite;
+use crate::backend::repositories::store::PreparedFile;
+use crate::backend::repositories::store::RepoStore;
+use crate::backend::repositories::store::UploadWrite;
+use crate::backend::repositories::store::MAX_EDITOR_BYTES;
 use codeyard_git::error::{ErrorKind, RepoError};
 use std::collections::HashMap;
 
@@ -166,19 +171,30 @@ async fn check_web_signoff(
     user: &codeyard_db_core::models::User,
     message: &str,
 ) -> Result<(), WriteError> {
-    let required =
-        db::organizations::settings::repository_requires_web_signoff(pool, repository.id)
-            .await
-            .map_err(|_| unavailable())?
-            .ok_or(WriteError {
-                kind: WriteFailure::NotFound,
-                message: "Repository not found.".into(),
-            })?;
+    let required = crate::backend::db::organizations::settings::repository_requires_web_signoff(
+        pool,
+        repository.id,
+    )
+    .await
+    .map_err(|_| unavailable())?
+    .ok_or(WriteError {
+        kind: WriteFailure::NotFound,
+        message: "Repository not found.".into(),
+    })?;
     let email = user.commit_email();
-    if required && !db::organizations::settings::has_signoff(message, &user.username, &email) {
+    if required
+        && !crate::backend::db::organizations::settings::has_signoff(
+            message,
+            &user.username,
+            &email,
+        )
+    {
         return Err(WriteError {
             kind: WriteFailure::Invalid,
-            message: db::organizations::settings::required_signoff_message(&user.username, &email),
+            message: crate::backend::db::organizations::settings::required_signoff_message(
+                &user.username,
+                &email,
+            ),
         });
     }
     Ok(())
@@ -193,7 +209,7 @@ pub async fn write_file(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::credentials::Actor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -289,14 +305,14 @@ pub async fn ensure_readable(
     owner: &str,
     name: &str,
 ) -> Result<i64, WriteError> {
-    let repository = db::repositories::records::get_repository(pool, owner, name)
+    let repository = crate::backend::db::repositories::records::get_repository(pool, owner, name)
         .await
         .map_err(|_| unavailable())?
         .ok_or(WriteError {
             kind: WriteFailure::NotFound,
             message: "Repository not found.".into(),
         })?;
-    if !access::can_read(pool, Some(user), &repository)
+    if !crate::backend::repositories::access::can_read(pool, Some(user), &repository)
         .await
         .map_err(|_| unavailable())?
     {
@@ -315,7 +331,7 @@ pub async fn named_repository(
     owner: &str,
     name: &str,
 ) -> Result<codeyard_db_core::models::Repository, WriteError> {
-    db::repositories::records::get_repository(pool, owner, name)
+    crate::backend::db::repositories::records::get_repository(pool, owner, name)
         .await
         .map_err(|_| unavailable())?
         .ok_or(WriteError {
@@ -333,7 +349,7 @@ pub async fn write_file_bytes(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::credentials::Actor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -366,7 +382,7 @@ pub async fn delete_file(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::credentials::Actor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -397,7 +413,7 @@ pub async fn delete_file_web(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::credentials::Actor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -448,21 +464,22 @@ async fn authorize_write(
     ),
     WriteError,
 > {
-    let user = db::users::accounts::get_user_by_id(pool, actor_id)
+    let user = crate::backend::db::users::accounts::get_user_by_id(pool, actor_id)
         .await
         .map_err(|_| unavailable())?
         .ok_or(WriteError {
             kind: WriteFailure::Denied,
             message: "Sign in to edit this repository.".into(),
         })?;
-    let repository = db::repositories::records::get_repository_by_id(pool, repository_id)
-        .await
-        .map_err(|_| unavailable())?
-        .ok_or(WriteError {
-            kind: WriteFailure::NotFound,
-            message: "Repository not found.".into(),
-        })?;
-    if !access::can_read(pool, Some(&user), &repository)
+    let repository =
+        crate::backend::db::repositories::records::get_repository_by_id(pool, repository_id)
+            .await
+            .map_err(|_| unavailable())?
+            .ok_or(WriteError {
+                kind: WriteFailure::NotFound,
+                message: "Repository not found.".into(),
+            })?;
+    if !crate::backend::repositories::access::can_read(pool, Some(&user), &repository)
         .await
         .map_err(|_| unavailable())?
     {
@@ -472,7 +489,7 @@ async fn authorize_write(
         });
     }
     check()?;
-    if !access::can_write(pool, &user, &repository)
+    if !crate::backend::repositories::access::can_write(pool, &user, &repository)
         .await
         .map_err(|_| unavailable())?
     {
@@ -509,7 +526,7 @@ async fn save_file(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::credentials::Actor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     _owner: &str,
     repository_id: i64,
     mut input: FileWrite,
@@ -679,9 +696,9 @@ async fn publish_commit(
         }
     };
     // The branch moved: pull requests that use it follow, and push workflows run.
-    let current = access::current_repository_with_owner(pool, repository.id).await;
+    let current = crate::backend::repositories::access::current_repository_with_owner(pool, repository.id).await;
     let followup_repository = current.as_ref().map(|(repo, _)| repo).unwrap_or(repository);
-    let refreshed = pull_requests::refresh_open_pull_requests(
+    let refreshed = crate::backend::repositories::pull_requests::refresh_open_pull_requests(
         pool,
         followup_repository,
         Some(&[branch][..]),
@@ -732,7 +749,7 @@ pub async fn upload_files(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::credentials::Actor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     _owner: &str,
     repository_id: i64,
     write: UploadWrite,

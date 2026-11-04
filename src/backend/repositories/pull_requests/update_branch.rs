@@ -1,8 +1,9 @@
 //! Bring a pull head up to date without merging or closing the pull request.
-use super::{database_error, OperationError};
 use crate::backend::ci::CiRuns;
 use crate::backend::ci::RefUpdate;
-use crate::backend::db;
+use crate::backend::repositories::pull_requests::database_error;
+use crate::backend::repositories::pull_requests::OperationError;
+
 use crate::backend::repositories::store::repo_store;
 use codeyard_git::error::{ErrorKind, RepoError};
 
@@ -43,34 +44,36 @@ pub async fn update_branch(
     rebase: bool,
     token: Option<i64>,
 ) -> Result<String, OperationError> {
-    let actor = super::actor(pool, actor_id).await?;
-    let base = db::repositories::records::get_repository(pool, locator.0, locator.1)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Repository not found".into(),
-        })?;
-    super::require_read(pool, &actor, &base).await?;
+    let actor = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
+    let base =
+        crate::backend::db::repositories::records::get_repository(pool, locator.0, locator.1)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Repository not found".into(),
+            })?;
+    crate::backend::repositories::pull_requests::require_read(pool, &actor, &base).await?;
     if base.is_archived {
         return Err(OperationError::Denied {
             code: "write_denied",
             message: "Archived repositories cannot update pull requests".into(),
         });
     }
-    let pull = db::pull_requests::records::get_pull_request(pool, base.id, locator.2)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".into(),
-        })?;
+    let pull =
+        crate::backend::db::pull_requests::records::get_pull_request(pool, base.id, locator.2)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".into(),
+            })?;
     if pull.state != "open" {
         return Err(invalid(
             "Only open pull requests can update their head branch",
         ));
     }
-    let head = super::head_repository(
+    let head = crate::backend::repositories::pull_requests::head_repository(
         pool,
         &base,
         pull.head_repo_id
@@ -78,12 +81,16 @@ pub async fn update_branch(
     )
     .await
     .map_err(|error| match error {
-        super::branches::HeadError::Unavailable => database_error(()),
+        crate::backend::repositories::pull_requests::branches::HeadError::Unavailable => {
+            database_error(())
+        }
         _ => invalid("Head branch is unavailable"),
     })?;
-    if !super::maintainer_edit::can_update_head(pool, &actor, &base, &head, &pull)
-        .await
-        .map_err(database_error)?
+    if !crate::backend::repositories::pull_requests::maintainer_edit::can_update_head(
+        pool, &actor, &base, &head, &pull,
+    )
+    .await
+    .map_err(database_error)?
     {
         return Err(OperationError::Denied {
             code: "write_denied",
@@ -140,14 +147,17 @@ pub async fn update_branch(
         Err(error) => return Err(storage(error)),
     };
     // A head writer's own update is published with their authority; the wider refresh follows.
-    if let Err(error) =
-        super::branches::refresh_updated_head(pool, &base, &head, ci, actor.id, pull.id).await
+    if let Err(error) = crate::backend::repositories::pull_requests::branches::refresh_updated_head(
+        pool, &base, &head, ci, actor.id, pull.id,
+    )
+    .await
     {
         tracing::warn!(pull_request_id = pull.id, %error, "could not refresh the updated pull request");
     }
-    super::branches_moved(pool, &base, ci, actor.id).await;
+    crate::backend::repositories::pull_requests::branches_moved(pool, &base, ci, actor.id).await;
     if head.id != base.id {
-        super::branches_moved(pool, &head, ci, actor.id).await;
+        crate::backend::repositories::pull_requests::branches_moved(pool, &head, ci, actor.id)
+            .await;
     }
     let finish = |sha: String| {
         if followup_failed {
@@ -168,10 +178,11 @@ pub async fn update_branch(
         return finish(sha);
     }
     // The head moved, so its push workflows run as they do after any other push.
-    let head_owner = db::repositories::records::repository_owner_name(pool, head.id)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| database_error(()))?;
+    let head_owner =
+        crate::backend::db::repositories::records::repository_owner_name(pool, head.id)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| database_error(()))?;
     ci.queue_push_runs(
         &head,
         &head_owner,

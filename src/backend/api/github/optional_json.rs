@@ -1,5 +1,5 @@
 //! A JSON request body that may be left out, for endpoints whose fields are all optional.
-use super::json_parse_error;
+use crate::backend::api::github::json_parse_error;
 use axum::{
     async_trait,
     body::Bytes,
@@ -12,7 +12,9 @@ use serde::de::DeserializeOwned;
 /// type, as GitHub reads it: a malformed body is refused rather than read as no options.
 pub(super) struct OptionalJson<T>(pub Option<T>);
 
-pub(super) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> super::Result<Option<T>> {
+pub(super) fn decode<T: DeserializeOwned>(
+    bytes: &[u8],
+) -> crate::backend::api::github::Result<Option<T>> {
     if bytes.iter().all(u8::is_ascii_whitespace) {
         return Ok(None);
     }

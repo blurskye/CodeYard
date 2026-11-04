@@ -2,12 +2,14 @@
 //! request closed. The closed pull request takes nothing from the fork, and an open one in the
 //! same fork still follows it. A pull ref that got ahead of its row, because an earlier refresh
 //! lost the row update, is recorded before a newer head is published.
-use super::{refresh_one, revisions, ListedRefs};
-use crate::backend::ci::{CiConfig, CiRuns};
-use crate::backend::db;
+use crate::backend::ci::CiConfig;
+use crate::backend::ci::CiRuns;
+use crate::backend::repositories::pull_requests::branches::refresh_one;
+use crate::backend::repositories::pull_requests::branches::revisions;
+use crate::backend::repositories::pull_requests::branches::ListedRefs;
+
 use crate::backend::notifications::NotificationBroadcaster;
-use crate::backend::repositories::lifecycle;
-use crate::backend::repositories::pull_requests::mutations;
+
 use crate::backend::repositories::store::repo_store;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::Repository;
@@ -60,17 +62,17 @@ async fn forks() -> Forks {
         .await
         .unwrap();
     codeyard_db_core::run_migrations(&pool).await.unwrap();
-    let alice = db::users::accounts::create_user(&pool, "alice", None)
+    let alice = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
         .await
         .unwrap();
-    let bob = db::users::accounts::create_user(&pool, "bob", None)
+    let bob = crate::backend::db::users::accounts::create_user(&pool, "bob", None)
         .await
         .unwrap();
     let repos = root.path().join("repos");
-    let base = lifecycle::provision(
+    let base = crate::backend::repositories::lifecycle::provision(
         (&pool, None),
         &repos,
-        db::repositories::creation::RepositoryCreationOwner::personal(alice.id),
+        crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice.id),
         "proj",
         None,
         false,
@@ -81,9 +83,17 @@ async fn forks() -> Forks {
     let bare = git2::Repository::open_bare(&base.disk_path).unwrap();
     let main = commit(&bare, "main", None, "README.md", "# proj\n");
     let broadcaster = Arc::new(NotificationBroadcaster::new(&pool));
-    let fork = lifecycle::fork(&pool, None, &repos, &broadcaster, bob.id, base.id, "alice")
-        .await
-        .unwrap();
+    let fork = crate::backend::repositories::lifecycle::fork(
+        &pool,
+        None,
+        &repos,
+        &broadcaster,
+        bob.id,
+        base.id,
+        "alice",
+    )
+    .await
+    .unwrap();
     let ci = CiRuns::new(
         pool.clone(),
         Arc::new(CiConfig::default()),
@@ -114,7 +124,7 @@ fn pull_head(base: &Repository, number: i32) -> git2::Oid {
 }
 
 async fn row(forks: &Forks, id: i64) -> PullRequest {
-    db::pull_requests::records::get_pull_request_by_id(&forks.pool, id)
+    crate::backend::db::pull_requests::records::get_pull_request_by_id(&forks.pool, id)
         .await
         .unwrap()
         .unwrap()
@@ -122,19 +132,21 @@ async fn row(forks: &Forks, id: i64) -> PullRequest {
 
 /// Opens a pull request from `head_branch` on the fork into `main` of the base.
 async fn open(forks: &Forks, head_branch: &str) -> PullRequest {
-    let request = mutations::CreatePullRequestRequest {
-        suppress_ci: false,
-        head_repo_id: Some(forks.fork.id),
-        source: mutations::PullRequestSource::New {
-            title: format!("From {head_branch}"),
-            body: None,
-        },
-        head_branch: head_branch.to_owned(),
-        base_branch: "main".to_owned(),
-        is_draft: false,
-        maintainer_can_modify: None,
-    };
-    mutations::create_pull_request(
+    let request =
+        crate::backend::repositories::pull_requests::mutations::CreatePullRequestRequest {
+            suppress_ci: false,
+            head_repo_id: Some(forks.fork.id),
+            source:
+                crate::backend::repositories::pull_requests::mutations::PullRequestSource::New {
+                    title: format!("From {head_branch}"),
+                    body: None,
+                },
+            head_branch: head_branch.to_owned(),
+            base_branch: "main".to_owned(),
+            is_draft: false,
+            maintainer_can_modify: None,
+        };
+    crate::backend::repositories::pull_requests::mutations::create_pull_request(
         &forks.pool,
         &forks.ci,
         &forks.broadcaster,
@@ -149,7 +161,7 @@ async fn open(forks: &Forks, head_branch: &str) -> PullRequest {
 
 /// Closes the pull request through the same conditional update the API uses.
 async fn close(forks: &Forks, pull: &PullRequest) {
-    let edit = mutations::UpdatePullRequestRequest {
+    let edit = crate::backend::repositories::pull_requests::mutations::UpdatePullRequestRequest {
         expected_state: "open".to_owned(),
         expected_updated: pull.updated_at.to_rfc3339(),
         title: None,
@@ -158,7 +170,7 @@ async fn close(forks: &Forks, pull: &PullRequest) {
         base: None,
         maintainer_can_modify: None,
     };
-    mutations::update_pull_request(
+    crate::backend::repositories::pull_requests::mutations::update_pull_request(
         &forks.pool,
         &forks.ci,
         &forks.broadcaster,
@@ -283,10 +295,14 @@ async fn creation_catches_a_head_push_that_finished_after_the_initial_ref_read()
     let create = open(&forks, "feature");
     let push = async {
         loop {
-            if db::pull_requests::records::get_pull_request(&forks.pool, forks.base.id, 1)
-                .await
-                .unwrap()
-                .is_some()
+            if crate::backend::db::pull_requests::records::get_pull_request(
+                &forks.pool,
+                forks.base.id,
+                1,
+            )
+            .await
+            .unwrap()
+            .is_some()
             {
                 break;
             }
@@ -308,7 +324,7 @@ async fn creation_catches_a_head_push_that_finished_after_the_initial_ref_read()
 #[tokio::test]
 async fn existing_owner_requests_do_not_take_a_write_lock() {
     let forks = forks().await;
-    db::repositories::access::grant_repo_access(
+    crate::backend::db::repositories::access::grant_repo_access(
         &forks.pool,
         forks.bob,
         forks.base.id,
@@ -339,20 +355,21 @@ async fn existing_owner_requests_do_not_take_a_write_lock() {
         .unwrap()
     };
     commit(&base, "feature", Some(main), "a.txt", "change\n");
-    let pull = mutations::create_pull_request(
+    let pull = crate::backend::repositories::pull_requests::mutations::create_pull_request(
         &forks.pool,
         &forks.ci,
         &forks.broadcaster,
         forks.alice,
         "alice".into(),
         "proj".into(),
-        mutations::CreatePullRequestRequest {
+        crate::backend::repositories::pull_requests::mutations::CreatePullRequestRequest {
             suppress_ci: false,
             head_repo_id: Some(forks.base.id),
-            source: mutations::PullRequestSource::New {
-                title: "Owned".into(),
-                body: None,
-            },
+            source:
+                crate::backend::repositories::pull_requests::mutations::PullRequestSource::New {
+                    title: "Owned".into(),
+                    body: None,
+                },
             head_branch: "feature".into(),
             base_branch: "main".into(),
             is_draft: false,
@@ -362,10 +379,13 @@ async fn existing_owner_requests_do_not_take_a_write_lock() {
     .await
     .unwrap();
     assert_eq!(
-        db::pull_requests::reviews::list_pull_request_reviewers(&forks.pool, pull.id)
-            .await
-            .unwrap()
-            .len(),
+        crate::backend::db::pull_requests::reviews::list_pull_request_reviewers(
+            &forks.pool,
+            pull.id
+        )
+        .await
+        .unwrap()
+        .len(),
         1
     );
     let codeyard_db_core::DbPool::Sqlite(pool) = &forks.pool else {

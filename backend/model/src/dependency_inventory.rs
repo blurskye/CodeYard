@@ -157,7 +157,7 @@ pub enum Refusal {
 
 #[cfg(test)]
 mod tests {
-    use super::package_parts;
+    use crate::dependency_inventory::package_parts;
     #[test]
     fn package_urls_require_identity_and_preserve_encoded_components() {
         assert_eq!(

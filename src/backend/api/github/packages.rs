@@ -1,13 +1,15 @@
 //! Package metadata and recovery use the same records and authority as the registries.
-use super::{auth, pagination::Pagination, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        packages::{Owner, Package, Permission, Refusal},
-    },
-    webhooks::payloads,
-};
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::packages::Owner;
+use crate::backend::db::packages::Package;
+use crate::backend::db::packages::Permission;
+use crate::backend::db::packages::Refusal;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -22,7 +24,7 @@ use std::{collections::HashMap, sync::Arc};
 fn error(error: anyhow::Error) -> Error {
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Missing) => Error::missing(),
-        Some(Refusal::Unauthorized) => auth::required(),
+        Some(Refusal::Unauthorized) => crate::backend::api::github::auth::required(),
         Some(Refusal::Forbidden) => {
             Error::new(StatusCode::FORBIDDEN, "Resource not accessible by token")
         }
@@ -37,15 +39,20 @@ async fn namespace(
     headers: &HeaderMap,
     params: &HashMap<String, String>,
     write: bool,
-) -> Result<(Owner, Option<auth::Authentication>)> {
-    let auth = auth::authenticate(
+) -> Result<(
+    Owner,
+    Option<crate::backend::api::github::auth::Authentication>,
+)> {
+    let auth = crate::backend::api::github::auth::authenticate(
         state,
         headers,
         write || (!params.contains_key("org") && !params.contains_key("user_id")),
     )
     .await?;
     if write {
-        auth.as_ref().ok_or_else(auth::required)?.require_write()?;
+        auth.as_ref()
+            .ok_or_else(crate::backend::api::github::auth::required)?
+            .require_write()?;
     }
     let (name, kind) = if let Some(org) = params.get("org") {
         (org.as_str(), "org")
@@ -54,14 +61,14 @@ async fn namespace(
     } else {
         (
             auth.as_ref()
-                .ok_or_else(auth::required)?
+                .ok_or_else(crate::backend::api::github::auth::required)?
                 .user
                 .username
                 .as_str(),
             "user",
         )
     };
-    let owner = db::packages::owner(&state.pool, name, Some(kind))
+    let owner = crate::backend::db::packages::owner(&state.pool, name, Some(kind))
         .await
         .map_err(error)?
         .ok_or_else(Error::missing)?;
@@ -79,12 +86,12 @@ async fn package(
     state: &AppState,
     owner: &Owner,
     params: &HashMap<String, String>,
-    auth: Option<&auth::Authentication>,
+    auth: Option<&crate::backend::api::github::auth::Authentication>,
     deleted: bool,
 ) -> Result<Package> {
     let kind = kind(params.get("package_type").map(String::as_str))?;
     let name = params.get("package_name").ok_or_else(Error::missing)?;
-    db::packages::find(
+    crate::backend::db::packages::find(
         &state.pool,
         owner,
         kind,
@@ -101,10 +108,10 @@ async fn documents(
     state: &AppState,
     owner: &Owner,
     packages: &[Package],
-    auth: Option<&auth::Authentication>,
+    auth: Option<&crate::backend::api::github::auth::Authentication>,
 ) -> Result<Vec<Value>> {
     let ids: Vec<_> = packages.iter().map(|package| package.id).collect();
-    let counts: HashMap<_, _> = db::packages::version_counts(&state.pool, &ids)
+    let counts: HashMap<_, _> = crate::backend::db::packages::version_counts(&state.pool, &ids)
         .await
         .map_err(error)?
         .into_iter()
@@ -113,10 +120,13 @@ async fn documents(
         .iter()
         .filter_map(|package| package.repo_id)
         .collect();
-    let snapshots =
-        db::repository_stats::readable_snapshots(&state.pool, auth.map(|auth| auth.user.id), &ids)
-            .await
-            .map_err(error)?;
+    let snapshots = crate::backend::db::repository_stats::readable_snapshots(
+        &state.pool,
+        auth.map(|auth| auth.user.id),
+        &ids,
+    )
+    .await
+    .map_err(error)?;
     let mut repositories = HashMap::new();
     for snapshot in snapshots {
         if snapshot.repository.is_private {
@@ -126,20 +136,25 @@ async fn documents(
                     .await
                 {
                     Ok(()) => {}
-                    Err(auth::ScopeError::Missing | auth::ScopeError::Denied) => continue,
-                    Err(error) => return Err(auth::scope_error(error)),
+                    Err(
+                        crate::backend::api::github::auth::ScopeError::Missing
+                        | crate::backend::api::github::auth::ScopeError::Denied,
+                    ) => continue,
+                    Err(error) => {
+                        return Err(crate::backend::api::github::auth::scope_error(error))
+                    }
                 }
             }
         }
         repositories.insert(
             snapshot.repository.id,
-            payloads::repository_snapshot(&snapshot),
+            crate::backend::webhooks::payloads::repository_snapshot(&snapshot),
         );
     }
     Ok(packages
         .iter()
         .map(|package| {
-            payloads::package(
+            crate::backend::webhooks::payloads::package(
                 owner,
                 package,
                 counts.get(&package.id).copied().unwrap_or(0),
@@ -178,7 +193,7 @@ async fn list(
             Some("deleted") => true,
             _ => return Err(Error::validation("PackageVersion", "state", "invalid")),
         };
-        let mut versions = db::packages::versions(
+        let mut versions = crate::backend::db::packages::versions(
             &state.pool,
             package.id,
             token,
@@ -192,14 +207,14 @@ async fn list(
         versions.truncate(limit);
         let ids: Vec<_> = versions.iter().map(|version| version.id).collect();
         let mut tags: HashMap<i64, Vec<String>> = HashMap::new();
-        for (id, tag) in db::packages::version_tags(&state.pool, &ids)
+        for (id, tag) in crate::backend::db::packages::version_tags(&state.pool, &ids)
             .await
             .map_err(error)?
         {
             tags.entry(id).or_default().push(tag);
         }
         for version in versions {
-            items.push(payloads::package_version(
+            items.push(crate::backend::webhooks::payloads::package_version(
                 &owner,
                 &package,
                 &version,
@@ -215,10 +230,10 @@ async fn list(
         {
             return Err(Error::validation("Package", "visibility", "invalid"));
         }
-        let mut packages = db::packages::list(
+        let mut packages = crate::backend::db::packages::list(
             &state.pool,
             token,
-            db::packages::Listing {
+            crate::backend::db::packages::Listing {
                 owner: Some(&owner),
                 repo: None,
                 kind: Some(kind),
@@ -241,9 +256,9 @@ async fn docker_conflicts(
     headers: HeaderMap,
     Path(params): Path<HashMap<String, String>>,
 ) -> Result<Json<Vec<Value>>> {
-    auth::authenticate(&state, &headers, true)
+    crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     namespace(&state, &headers, &params, false).await?;
     // Codeyard publishes directly into the container registry. It has no legacy Docker
     // registry or migration queue, so no package can have a Docker migration conflict.
@@ -260,13 +275,14 @@ async fn get_one(
     let token = auth.as_ref().map(|auth| auth.token.id.into());
     let value = if let Some(id) = params.get("package_version_id") {
         let id = id.parse().map_err(|_| Error::missing())?;
-        let version = db::packages::version_by_id(&state.pool, package.id, token, id)
+        let version =
+            crate::backend::db::packages::version_by_id(&state.pool, package.id, token, id)
+                .await
+                .map_err(error)?;
+        let tags = crate::backend::db::packages::tags(&state.pool, package.id, token, version.id)
             .await
             .map_err(error)?;
-        let tags = db::packages::tags(&state.pool, package.id, token, version.id)
-            .await
-            .map_err(error)?;
-        payloads::package_version(&owner, &package, &version, &tags)
+        crate::backend::webhooks::payloads::package_version(&owner, &package, &version, &tags)
     } else {
         documents(
             &state,
@@ -289,13 +305,13 @@ async fn change(
 ) -> Result<Response> {
     let restore = uri.path().ends_with("/restore");
     let (owner, auth) = namespace(&state, &headers, &params, true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let package = package(&state, &owner, &params, Some(&auth), restore).await?;
     let version = params
         .get("package_version_id")
         .map(|id| id.parse::<i64>().map_err(|_| Error::missing()))
         .transpose()?;
-    db::packages::set_deleted(
+    crate::backend::db::packages::set_deleted(
         &state.pool,
         package.id,
         version,

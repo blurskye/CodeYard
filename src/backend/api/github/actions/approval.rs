@@ -1,11 +1,14 @@
 //! Fork approval uses the native pull request head check and execution authority.
-use super::run;
-use crate::backend::{
-    api::github::{auth, issues::pull_error, repository, Error, Result},
-    app::AppState,
-    db,
-    repositories::pull_requests::workflows::{run_pull_request_workflows, RunWorkflowsRequest},
-};
+use crate::backend::api::github::actions::run;
+
+use crate::backend::api::github::issues::pull_error;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::pull_requests::workflows::run_pull_request_workflows;
+use crate::backend::repositories::pull_requests::workflows::RunWorkflowsRequest;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -21,7 +24,10 @@ async fn approve(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, authentication) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = authentication.ok_or_else(auth::required)?.user.id;
+    let actor = authentication
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user
+        .id;
     let run = run(&state, repo.id, id).await?;
     if !run.approval_required || run.status != "queued" {
         return Err(Error::new(
@@ -29,7 +35,7 @@ async fn approve(
             "Workflow run is not awaiting approval",
         ));
     }
-    let pull = db::pull_requests::records::get_pull_request_by_id(
+    let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
         &state.pool,
         run.pull_request_id.ok_or_else(Error::missing)?,
     )

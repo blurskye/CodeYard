@@ -1,8 +1,7 @@
 use crate::backend::db::email::secondary_link_condition;
-use crate::backend::db::users::{
-    accounts::AccountCredential,
-    emails::{EmailAddress, EmailRefusal},
-};
+use crate::backend::db::users::accounts::AccountCredential;
+use crate::backend::db::users::emails::EmailAddress;
+use crate::backend::db::users::emails::EmailRefusal;
 use anyhow::Result;
 use sqlx::PgPool;
 
@@ -21,7 +20,8 @@ pub async fn list_account_emails(
     credential: &AccountCredential<'_>,
 ) -> Result<Vec<EmailAddress>> {
     let mut tx = pool.begin().await?;
-    super::transitions::require_account(&mut tx, user, credential).await?;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, user, credential)
+        .await?;
     let emails = sqlx::query_as(LIST_EMAILS)
         .bind(user)
         .fetch_all(&mut *tx)
@@ -38,7 +38,10 @@ pub async fn change_emails(
     add: bool,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
-    super::transitions::require_account_exclusive(&mut tx, user, credential).await?;
+    crate::backend::db::postgres::users::transitions::require_account_exclusive(
+        &mut tx, user, credential,
+    )
+    .await?;
     // Primary writes take this same lock in their trigger, after locking their account row.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtext(COALESCE(current_schema(),'')),37004)")
         .execute(&mut *tx)
@@ -95,7 +98,7 @@ pub async fn save_verification(
     body_text: &str,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    if !super::super::email::lock_link_recipient(&mut tx, user).await? {
+    if !crate::backend::db::postgres::email::lock_link_recipient(&mut tx, user).await? {
         return Ok(false);
     }
     let saved = sqlx::query("UPDATE user_emails SET verification_hash=$3,verification_expires_at=clock_timestamp()+INTERVAL '1 day',last_sent_at=clock_timestamp() WHERE user_id=$1 AND lower(email)=lower($2) AND NOT verified AND (last_sent_at IS NULL OR last_sent_at<clock_timestamp()-INTERVAL '60 seconds') AND EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)")

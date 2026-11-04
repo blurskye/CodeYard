@@ -1,6 +1,10 @@
 //! UTC schedules are discovered on the default branch; enqueue serializes each minute across nodes.
-use super::{admission::AdmissionError, CiRunRequest, CiRuns};
-use crate::backend::{db, repositories::store::repo_store, webhooks::payloads};
+use crate::backend::ci::CiRunRequest;
+use crate::backend::ci::CiRuns;
+use codeyard_db_core::ci_admission::AdmissionError;
+
+use crate::backend::repositories::store::repo_store;
+
 use anyhow::{ensure, Context, Result};
 use chrono::{DateTime, TimeZone, Timelike, Utc};
 use croner::Cron;
@@ -90,7 +94,7 @@ impl CiRuns {
             .context("invalid schedule time")?;
         let mut after = 0;
         loop {
-            let ids = db::ci::scheduled_repositories(&self.pool, after).await?;
+            let ids = crate::backend::db::ci::scheduled_repositories(&self.pool, after).await?;
             if ids.is_empty() {
                 break;
             }
@@ -120,12 +124,13 @@ impl CiRuns {
         id: i64,
         now: DateTime<Utc>,
     ) -> Result<(), AdmissionError> {
-        let Some(repo) = db::repositories::records::get_repository_by_id(&self.pool, id).await?
+        let Some(repo) =
+            crate::backend::db::repositories::records::get_repository_by_id(&self.pool, id).await?
         else {
             return Ok(());
         };
         // With Actions turned off, nothing would be queued, so Git is not read either.
-        if !db::action_settings::actions_enabled(&self.pool, repo.id).await? {
+        if !crate::backend::db::action_settings::actions_enabled(&self.pool, repo.id).await? {
             return Ok(());
         }
         let store = repo_store(&repo, self.cluster.as_ref());
@@ -158,11 +163,11 @@ impl CiRuns {
         if !self.actor_may_discover_workflows(repo.id, actor).await? {
             return Ok(());
         }
-        let definitions = super::list_workflows_for_ref(&store, &commit.sha).await?;
-        let owner = db::ci::ci_repository_owner(&self.pool, repo.id)
+        let definitions = crate::backend::ci::list_workflows_for_ref(&store, &commit.sha).await?;
+        let owner = crate::backend::db::ci::ci_repository_owner(&self.pool, repo.id)
             .await?
             .ok_or(AdmissionError::Unavailable)?;
-        let sender = db::users::accounts::get_user_by_id(&self.pool, actor)
+        let sender = crate::backend::db::users::accounts::get_user_by_id(&self.pool, actor)
             .await?
             .ok_or(AdmissionError::Unavailable)?;
         for definition in definitions {
@@ -173,7 +178,7 @@ impl CiRuns {
                 {
                     continue;
                 }
-                let payload = json!({"schedule": expression, "scheduled_minute": now.timestamp().div_euclid(60), "repository": payloads::repository(&repo, &owner), "sender":payloads::user(&sender)});
+                let payload = json!({"schedule": expression, "scheduled_minute": now.timestamp().div_euclid(60), "repository": crate::backend::webhooks::payloads::repository(&repo, &owner), "sender":payloads::user(&sender)});
                 match self
                     .trigger_event_run(
                         CiRunRequest {
@@ -184,7 +189,9 @@ impl CiRuns {
                             head_sha: Some(commit.sha.clone()),
                             event: "schedule".into(),
                             pull_request_id: None,
-                            pipeline: super::infer_pipeline_from_workflow_path(&definition.path),
+                            pipeline: crate::backend::ci::infer_pipeline_from_workflow_path(
+                                &definition.path,
+                            ),
                             workflow_paths: vec![definition.path.clone()],
                             environment: None,
                             inputs: None,

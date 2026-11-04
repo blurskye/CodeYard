@@ -1,6 +1,13 @@
-use super::{
-    arg, db, missing, node_id, unavailable, url, Arguments, RequestContext, Result, Value,
-};
+use crate::backend::api::graphql::arg;
+use crate::backend::api::graphql::db;
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::node_id;
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::url;
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
 use serde_json::json;
 
 pub(super) fn object(user: &codeyard_db_core::models::User, viewer: i64) -> Value {
@@ -77,7 +84,12 @@ pub(super) async fn resolve(
     let id = parent["databaseId"].as_i64().ok_or_else(missing)?;
     match field {
         "team" if ty == "Organization" => {
-            super::team::by_slug(id, &super::arg(ctx, "slug")?, request).await
+            crate::backend::api::graphql::team::by_slug(
+                id,
+                &crate::backend::api::graphql::arg(ctx, "slug")?,
+                request,
+            )
+            .await
         }
         "email" if ty == "User" => Ok(json!(db::users::profiles::public_email(
             &request.state.pool,
@@ -92,8 +104,12 @@ pub(super) async fn resolve(
                 .map_err(unavailable)?
                 .company
         )),
-        "repositories" => super::repository_list::list(ctx, request, parent).await,
-        "gists" if ty == "User" => super::gists::list(ctx, request, parent).await,
+        "repositories" => {
+            crate::backend::api::graphql::repository_list::list(ctx, request, parent).await
+        }
+        "gists" if ty == "User" => {
+            crate::backend::api::graphql::gists::list(ctx, request, parent).await
+        }
         "viewerCanFollow" => Ok(json!(
             id != request.auth.user.id
                 && !db::users::blocks::is_blocked(&request.state.pool, request.auth.user.id, id)
@@ -138,7 +154,7 @@ pub(super) async fn query(field: &str, ctx: &Arguments, request: &RequestContext
             .map_err(unavailable)?
             .filter(|user| !user.is_banned)
             .ok_or_else(|| {
-                super::error(
+                crate::backend::api::graphql::error(
                     format!("Could not resolve to a User with the login of '{login}'."),
                     "NOT_FOUND",
                 )
@@ -166,7 +182,7 @@ pub(super) async fn query(field: &str, ctx: &Arguments, request: &RequestContext
             .await
             .map_err(unavailable)?
             .ok_or_else(|| {
-                super::error(
+                crate::backend::api::graphql::error(
                     format!("Could not resolve to an Organization with the login of '{login}'."),
                     "NOT_FOUND",
                 )

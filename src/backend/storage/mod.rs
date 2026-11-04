@@ -12,7 +12,6 @@ use std::time::Duration;
 use tokio::io::AsyncRead;
 use tokio::sync::{OwnedMutexGuard, OwnedSemaphorePermit, Semaphore};
 
-pub const MAX_OBJECT_BYTES: i64 = 100 * 1024 * 1024;
 /// Concurrent uploads, confirmations and deletes this node performs. More are refused as
 /// busy, not queued.
 const IO_SLOTS: usize = 32;
@@ -440,3 +439,5 @@ mod tests {
         }
     }
 }
+
+use codeyard_support::object_limits::MAX_OBJECT_BYTES;

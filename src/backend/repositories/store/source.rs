@@ -1,8 +1,8 @@
 //! Fetch every advertised ref through Git's smart HTTP protocol, without following upstream URLs.
-use crate::backend::{
-    repositories::imports::{self, Credentials, MAX_IMPORT_PACK_BYTES},
-    webhooks::outbound,
-};
+
+use crate::backend::repositories::imports::Credentials;
+use crate::backend::repositories::imports::MAX_IMPORT_PACK_BYTES;
+
 use anyhow::{bail, ensure, Context, Result};
 use reqwest::{header, Client, Response};
 use std::{collections::HashMap, time::Duration};
@@ -183,14 +183,17 @@ pub(crate) async fn fetch(
     source: &str,
     credentials: Option<Credentials>,
 ) -> Result<(HashMap<String, String>, Option<String>, Vec<u8>)> {
-    let url = imports::source_url(source)?;
+    let url = crate::backend::repositories::imports::source_url(source)?;
     let addresses = tokio::time::timeout(
         Duration::from_secs(15),
-        outbound::resolve(&url, imports::allow_private()),
+        crate::backend::webhooks::outbound::resolve(
+            &url,
+            crate::backend::repositories::imports::allow_private(),
+        ),
     )
     .await?
     .map_err(|_| anyhow::anyhow!("Source address refused"))?;
-    let client = outbound::pinned_client(&url, &addresses)
+    let client = crate::backend::webhooks::outbound::pinned_client(&url, &addresses)
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(600))
         .user_agent("Codeyard repository importer")

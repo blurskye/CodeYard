@@ -1,5 +1,4 @@
 use crate::support::database::Database;
-use codeyard::backend::db;
 
 #[tokio::test]
 async fn metrics_refuse_to_truncate_storage_nodes() {
@@ -15,12 +14,16 @@ async fn metrics_refuse_to_truncate_storage_nodes() {
              SELECT printf('%064x',i), 'node-' || i, '[\"storage\"]' FROM ids"
         };
         database.execute(insert, &[]).await;
-        assert!(db::metrics::storage_nodes(database.pool()).await.is_err());
+        assert!(
+            codeyard::backend::db::metrics::storage_nodes(database.pool())
+                .await
+                .is_err()
+        );
         database
             .execute("DELETE FROM nodes WHERE name='node-1001'", &[])
             .await;
         assert_eq!(
-            db::metrics::storage_nodes(database.pool())
+            codeyard::backend::db::metrics::storage_nodes(database.pool())
                 .await
                 .unwrap()
                 .len(),

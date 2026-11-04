@@ -4,12 +4,14 @@
 
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::discussion::unavailable;
-use crate::backend::db;
+
 use crate::backend::repositories::access::can_read;
 use axum::response::Response;
 use codeyard_webui::components::references::{self, References};
 
-pub(crate) fn autolink(row: db::repositories::autolinks::Autolink) -> references::Autolink {
+pub(crate) fn autolink(
+    row: crate::backend::db::repositories::autolinks::Autolink,
+) -> references::Autolink {
     references::Autolink {
         id: row.id,
         key_prefix: row.key_prefix,
@@ -80,7 +82,8 @@ where
     let mut records = vec![repository.clone()];
     let mut names = Vec::new();
     for (owner, name) in found.repositories {
-        if let Some(record) = db::repositories::records::get_repository(pool, &owner, &name).await?
+        if let Some(record) =
+            crate::backend::db::repositories::records::get_repository(pool, &owner, &name).await?
         {
             names.push((record.id, owner, name));
             records.push(record);
@@ -99,8 +102,9 @@ where
             others.push((id, owner, name));
         }
     }
-    let lasts = db::discussions::last_discussion_numbers(pool, &counted).await?;
-    let autolinks = db::repositories::autolinks::for_rendering(pool, repository.id).await?;
+    let lasts = crate::backend::db::discussions::last_discussion_numbers(pool, &counted).await?;
+    let autolinks =
+        crate::backend::db::repositories::autolinks::for_rendering(pool, repository.id).await?;
     // Do not let reference metadata read after a revocation escape through earlier decisions.
     let readable = authorize(records.clone()).await?;
     if !readable.contains(&repository.id) {
@@ -146,7 +150,8 @@ where
         .repositories
         .sort_by(|a, b| (&a.owner, &a.name).cmp(&(&b.owner, &b.name)));
     if !found.users.is_empty() {
-        let users = db::users::accounts::get_users_by_usernames(pool, &found.users).await?;
+        let users =
+            crate::backend::db::users::accounts::get_users_by_usernames(pool, &found.users).await?;
         resolved.users = users.into_iter().map(|user| user.username).collect();
         resolved.users.sort();
     }
@@ -165,7 +170,7 @@ where
                     let Ok(number) = number.parse::<i32>() else {
                         continue;
                     };
-                    let issue = db::issues::get_issue(pool, record.id, number)
+                    let issue = crate::backend::db::issues::get_issue(pool, record.id, number)
                         .await
                         .ok()
                         .flatten()
@@ -173,7 +178,7 @@ where
                     let pull = if issue {
                         false
                     } else {
-                        db::pull_requests::records::get_pull_request(pool, record.id, number)
+                        crate::backend::db::pull_requests::records::get_pull_request(pool, record.id, number)
                             .await
                             .ok()
                             .flatten()
@@ -182,12 +187,12 @@ where
                     let moved = if issue || pull {
                         false
                     } else {
-                        match db::issues::management::redirect(pool, record.id, number)
+                        match crate::backend::db::issues::management::redirect(pool, record.id, number)
                             .await
                             .ok()
                             .flatten()
                         {
-                            Some(issue) => match db::repositories::records::get_repository_by_id(
+                            Some(issue) => match crate::backend::db::repositories::records::get_repository_by_id(
                                 pool,
                                 issue.repo_id,
                             )

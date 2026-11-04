@@ -1,8 +1,8 @@
-use crate::backend::{
-    api::http::session::{extract_session_id, get_current_user},
-    app::AppState,
-    files::{self, ConfirmationError},
-};
+use crate::backend::api::http::session::extract_session_id;
+use crate::backend::api::http::session::get_current_user;
+use crate::backend::app::AppState;
+
+use crate::backend::files::ConfirmationError;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::backend::api::http::error::{ApiError, ApiFailure};
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::ApiFailure;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,7 +31,7 @@ pub async fn confirm_upload(
     Json(req): Json<ConfirmUploadRequest>,
 ) -> Result<Json<ConfirmUploadResponse>, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
-    files::confirm_upload(
+    crate::backend::files::confirm_upload(
         &state.pool,
         &state.storage,
         (user.id, extract_session_id(&headers).unwrap_or_default()),

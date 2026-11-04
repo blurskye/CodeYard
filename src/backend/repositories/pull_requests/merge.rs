@@ -1,21 +1,24 @@
-use super::{database_error, OperationError};
 use crate::backend::ci::CiRuns;
 use crate::backend::ci::RefUpdate;
-use crate::backend::db;
+use crate::backend::repositories::pull_requests::database_error;
+use crate::backend::repositories::pull_requests::OperationError;
+
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
 use crate::backend::notifications::NotificationBroadcaster;
-use crate::backend::repositories::protection::{
-    check_branch_write, BranchWrite, History, Refusal, WriteVia,
-};
-use crate::backend::repositories::pull_requests;
-use crate::backend::repositories::pull_requests::code_owners;
+use crate::backend::repositories::protection::check_branch_write;
+use crate::backend::repositories::protection::BranchWrite;
+use crate::backend::repositories::protection::History;
+use crate::backend::repositories::protection::Refusal;
+use crate::backend::repositories::protection::WriteVia;
+
 use crate::backend::repositories::store::allowed_merge_methods;
 use crate::backend::repositories::store::repo_store;
 use crate::backend::repositories::store::validate_merge_revision;
 use crate::backend::repositories::store::MergeMethod;
 use crate::backend::repositories::store::MergeRequest as StoreMerge;
-use crate::backend::webhooks::{self, events, payloads::Scope};
+
+use crate::backend::webhooks::payloads::Scope;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_webui::pages::repos::issues::MERGE_COMMIT_REFUSED;
@@ -115,7 +118,7 @@ pub(super) fn prepare_error(error: RepoError) -> OperationError {
 /// `dismiss_stale_reviews` is set; otherwise it counts for any commit. A change request
 /// blocks whatever commit it was written on.
 fn count_effective_approvals(
-    decisions: &[db::pull_requests::reviews::PullRequestReviewDecision],
+    decisions: &[crate::backend::db::pull_requests::reviews::PullRequestReviewDecision],
     head_sha: &str,
     dismiss_stale_reviews: bool,
 ) -> (usize, bool) {
@@ -143,17 +146,20 @@ async fn eligible_reviews(
     pool: &codeyard_db_core::DbPool,
     pull_request: &codeyard_db_core::models::PullRequest,
     repository: &codeyard_db_core::models::Repository,
-) -> anyhow::Result<Vec<db::pull_requests::reviews::PullRequestReviewDecision>> {
-    let decisions =
-        db::pull_requests::reviews::list_pull_request_review_decisions(pool, pull_request.id)
-            .await?;
+) -> anyhow::Result<Vec<crate::backend::db::pull_requests::reviews::PullRequestReviewDecision>> {
+    let decisions = crate::backend::db::pull_requests::reviews::list_pull_request_review_decisions(
+        pool,
+        pull_request.id,
+    )
+    .await?;
     let ids: Vec<i64> = decisions
         .iter()
         .map(|decision| decision.author_id)
         .filter(|id| *id != pull_request.author_id)
         .collect();
     let writers =
-        db::repositories::access::write_access_user_ids(pool, repository.id, &ids).await?;
+        crate::backend::db::repositories::access::write_access_user_ids(pool, repository.id, &ids)
+            .await?;
     Ok(decisions
         .into_iter()
         .filter(|decision| writers.contains(&decision.author_id))
@@ -166,9 +172,9 @@ async fn last_push_approved(
     pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     pull: &codeyard_db_core::models::PullRequest,
-    decisions: &[db::pull_requests::reviews::PullRequestReviewDecision],
+    decisions: &[crate::backend::db::pull_requests::reviews::PullRequestReviewDecision],
 ) -> anyhow::Result<bool> {
-    let Some(repository) = db::repositories::records::get_repository_by_id(
+    let Some(repository) = crate::backend::db::repositories::records::get_repository_by_id(
         pool,
         pull.head_repo_id.unwrap_or(pull.repo_id),
     )
@@ -207,7 +213,8 @@ pub async fn review_decision(
     repository: &codeyard_db_core::models::Repository,
     pull: &codeyard_db_core::models::PullRequest,
 ) -> anyhow::Result<Option<ReviewDecision>> {
-    let target = super::stacks::merge_target(pool, pull).await?;
+    let target =
+        crate::backend::repositories::pull_requests::stacks::merge_target(pool, pull).await?;
     let rules =
         crate::backend::repositories::protection::matching_rules(pool, repository, &target.0)
             .await?;
@@ -237,7 +244,7 @@ pub async fn review_decision(
                 })
                 .map(|d| d.author_id)
                 .collect::<Vec<_>>();
-            if !code_owners::missing_owner_approvals(
+            if !crate::backend::repositories::pull_requests::code_owners::missing_owner_approvals(
                 pool, ci, repository, &target.1, pull, &approvers,
             )
             .await?
@@ -260,7 +267,7 @@ pub async fn review_decision(
 
 /// A check run passes when it completed with success, or as neutral or skipped, as on GitHub and
 /// on the Checks tab. Anything else is reported as a failure or as still pending.
-fn check_run_state(run: &db::checks::Run) -> &'static str {
+fn check_run_state(run: &crate::backend::db::checks::Run) -> &'static str {
     match (run.status.as_str(), run.conclusion.as_deref()) {
         ("completed", Some("success" | "neutral" | "skipped")) => "success",
         ("completed", _) => "failure",
@@ -274,7 +281,7 @@ fn required_status_check_failures(
     statuses: &[codeyard_db_core::models::CommitStatus],
     ci_runs: &[codeyard_db_core::models::CiRun],
     // The newest check run of each required name, from its bound app when the context has one.
-    check_runs: &[&db::checks::Run],
+    check_runs: &[&crate::backend::db::checks::Run],
     // None stands for a bound app that no longer exists, so nothing meets its context.
     bound_apps: &HashMap<&str, Option<i64>>,
 ) -> Vec<String> {
@@ -310,7 +317,7 @@ fn required_status_check_failures(
         // A stored success can hide another producer's failure, so a server-owned requirement
         // is checked against the actual runs, under their full names and their aliases.
         if !bound_apps.contains_key(required.as_str())
-            && db::repositories::protection::server_owned_status_context(required)
+            && crate::backend::db::repositories::protection::server_owned_status_context(required)
         {
             match ci_by_context.get(&required.to_ascii_lowercase()) {
                 Some(runs) => {
@@ -395,7 +402,8 @@ async fn merge_blockers(
     let mut statuses: Option<Vec<codeyard_db_core::models::CommitStatus>> = None;
     let mut ci_runs: Option<Vec<codeyard_db_core::models::CiRun>> = None;
     let mut app_clients: HashMap<i64, Option<i64>> = HashMap::new();
-    let mut latest_runs: HashMap<(String, Option<i64>), Option<db::checks::Run>> = HashMap::new();
+    let mut latest_runs: HashMap<(String, Option<i64>), Option<crate::backend::db::checks::Run>> =
+        HashMap::new();
     let mut changes_requested_reported = false;
     for rule in &rules {
         if reviews.is_none() {
@@ -411,7 +419,7 @@ async fn merge_blockers(
             &pull_request.head_sha,
             rule.dismiss_stale_reviews,
         );
-        if db::repositories::protection::has_review_requirements(rule)
+        if crate::backend::db::repositories::protection::has_review_requirements(rule)
             && has_changes_requested
             && !changes_requested_reported
         {
@@ -463,19 +471,20 @@ async fn merge_blockers(
                 })
                 .map(|decision| decision.author_id)
                 .collect();
-            let missing = code_owners::missing_owner_approvals(
-                pool,
-                ci,
-                repository,
-                target.1,
-                pull_request,
-                &approvers,
-            )
-            .await
-            .map_err(|_| OperationError::Unavailable {
-                code: "git_unavailable",
-                message: "Code owners are unavailable; merge denied.".to_owned(),
-            })?;
+            let missing =
+                crate::backend::repositories::pull_requests::code_owners::missing_owner_approvals(
+                    pool,
+                    ci,
+                    repository,
+                    target.1,
+                    pull_request,
+                    &approvers,
+                )
+                .await
+                .map_err(|_| OperationError::Unavailable {
+                    code: "git_unavailable",
+                    message: "Code owners are unavailable; merge denied.".to_owned(),
+                })?;
             if !missing.is_empty() {
                 blockers.push(OperationError::Conflict {
                     code: "branch_protection",
@@ -486,9 +495,12 @@ async fn merge_blockers(
 
         if rule.require_conversation_resolution {
             let unresolved =
-                db::pull_requests::reviews::count_unresolved_conversations(pool, pull_request.id)
-                    .await
-                    .map_err(database_error)?;
+                crate::backend::db::pull_requests::reviews::count_unresolved_conversations(
+                    pool,
+                    pull_request.id,
+                )
+                .await
+                .map_err(database_error)?;
             if unresolved > 0 {
                 blockers.push(OperationError::Conflict {
                     code: "unresolved_conversations",
@@ -510,7 +522,7 @@ async fn merge_blockers(
             if !required_status_checks.is_empty() {
                 if statuses.is_none() {
                     statuses = Some(
-                        db::repositories::protection::list_commit_statuses(
+                        crate::backend::db::repositories::protection::list_commit_statuses(
                             pool,
                             repository.id,
                             &pull_request.head_sha,
@@ -521,7 +533,7 @@ async fn merge_blockers(
                 }
                 if ci_runs.is_none() {
                     ci_runs = Some(
-                        db::ci::latest_ci_runs_for_commit(
+                        crate::backend::db::ci::latest_ci_runs_for_commit(
                             pool,
                             repository.id,
                             &pull_request.head_sha,
@@ -534,13 +546,14 @@ async fn merge_blockers(
                 }
                 // Old ambiguous bindings must fail closed as well as being refused by new writes.
                 let mut bindings = rule.github_settings.checks.clone();
-                db::repositories::protection::normalize_check_bindings(&mut bindings).map_err(
-                    |_| OperationError::Conflict {
-                        code: "branch_protection",
-                        message: "Required check producers conflict; update branch protection."
-                            .to_owned(),
-                    },
-                )?;
+                crate::backend::db::repositories::protection::normalize_check_bindings(
+                    &mut bindings,
+                )
+                .map_err(|_| OperationError::Conflict {
+                    code: "branch_protection",
+                    message: "Required check producers conflict; update branch protection."
+                        .to_owned(),
+                })?;
                 // Protection binds GitHub App ids, but a check suite records the app's OAuth
                 // client row, so each binding is translated to that row.
                 let mut bound_apps: HashMap<&str, Option<i64>> = HashMap::new();
@@ -553,15 +566,18 @@ async fn merge_blockers(
                     let client = match app_clients.get(&id) {
                         Some(client) => *client,
                         None => {
-                            let app = db::github_apps::app(pool, &id.to_string())
+                            let app = crate::backend::db::github_apps::app(pool, &id.to_string())
                                 .await
                                 .map_err(database_error)?
                                 .filter(|app| app.id == id);
                             let client = match app {
-                                Some(app) => db::oauth_apps::application(pool, &app.client_id)
-                                    .await
-                                    .map_err(database_error)?
-                                    .map(|client| client.id),
+                                Some(app) => crate::backend::db::oauth_apps::application(
+                                    pool,
+                                    &app.client_id,
+                                )
+                                .await
+                                .map_err(database_error)?
+                                .map(|client| client.id),
                                 None => None,
                             };
                             app_clients.insert(id, client);
@@ -580,16 +596,18 @@ async fn merge_blockers(
                         None => None,
                     };
                     if !bound_apps.contains_key(required.as_str())
-                        && db::repositories::protection::server_owned_status_context(required)
+                        && crate::backend::db::repositories::protection::server_owned_status_context(
+                            required,
+                        )
                     {
                         continue;
                     }
                     let key = (required.clone(), app_id);
                     if !latest_runs.contains_key(&key) {
-                        let run = db::checks::runs(
+                        let run = crate::backend::db::checks::runs(
                             pool,
                             repository.id,
-                            &db::checks::Filter {
+                            &crate::backend::db::checks::Filter {
                                 head_sha: Some(pull_request.head_sha.clone()),
                                 name: Some(required.clone()),
                                 app_id,
@@ -606,7 +624,7 @@ async fn merge_blockers(
                     }
                     wanted.push(key);
                 }
-                let check_runs: Vec<&db::checks::Run> = wanted
+                let check_runs: Vec<&crate::backend::db::checks::Run> = wanted
                     .iter()
                     .filter_map(|key| latest_runs.get(key).and_then(Option::as_ref))
                     .collect();
@@ -762,23 +780,28 @@ pub(super) async fn open_chain(
     pool: &codeyard_db_core::DbPool,
     pull_request: &codeyard_db_core::models::PullRequest,
 ) -> Result<Vec<codeyard_db_core::models::PullRequest>, OperationError> {
-    let chain = pull_requests::stacks::chain_below(pool, pull_request)
-        .await
-        .map_err(database_error)?;
+    let chain =
+        crate::backend::repositories::pull_requests::stacks::chain_below(pool, pull_request)
+            .await
+            .map_err(database_error)?;
     match chain {
-        pull_requests::stacks::Chain::Open(layers) => Ok(layers),
-        pull_requests::stacks::Chain::BelowClosed(number) => Err(OperationError::Conflict {
-            code: "stack_layer_closed",
-            message: format!(
+        crate::backend::repositories::pull_requests::stacks::Chain::Open(layers) => Ok(layers),
+        crate::backend::repositories::pull_requests::stacks::Chain::BelowClosed(number) => {
+            Err(OperationError::Conflict {
+                code: "stack_layer_closed",
+                message: format!(
                 "Pull request #{number} below it is closed. Reopen it or unstack this pull request."
             ),
-        }),
-        pull_requests::stacks::Chain::Broken => Err(OperationError::Conflict {
-            code: "stack_broken",
-            message:
-                "These pull requests depend on each other, so they cannot be merged as a stack."
-                    .to_owned(),
-        }),
+            })
+        }
+        crate::backend::repositories::pull_requests::stacks::Chain::Broken => {
+            Err(OperationError::Conflict {
+                code: "stack_broken",
+                message:
+                    "These pull requests depend on each other, so they cannot be merged as a stack."
+                        .to_owned(),
+            })
+        }
     }
 }
 
@@ -824,7 +847,7 @@ async fn refresh_chain(
             layers.push(layer);
             continue;
         }
-        pull_requests::refresh_open_pull_request(
+        crate::backend::repositories::pull_requests::refresh_open_pull_request(
             pool,
             repository,
             ci,
@@ -837,13 +860,14 @@ async fn refresh_chain(
             code: "git_unavailable",
             message: "Pull request revisions could not be refreshed; merge denied.".into(),
         })?;
-        let refreshed = db::pull_requests::records::get_pull_request_by_id(pool, layer.id)
-            .await
-            .map_err(database_error)?
-            .ok_or_else(|| OperationError::Missing {
-                code: "not_found",
-                message: "Pull request not found".to_owned(),
-            })?;
+        let refreshed =
+            crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, layer.id)
+                .await
+                .map_err(database_error)?
+                .ok_or_else(|| OperationError::Missing {
+                    code: "not_found",
+                    message: "Pull request not found".to_owned(),
+                })?;
         layers.push(refreshed);
     }
     Ok(layers)
@@ -877,7 +901,7 @@ async fn head_branch_exists(
     let Some(id) = pull_request.head_repo_id else {
         return Ok(true);
     };
-    match db::repositories::records::get_repository_by_id(pool, id).await {
+    match crate::backend::db::repositories::records::get_repository_by_id(pool, id).await {
         Ok(Some(head)) => Ok(repo_store(&head, ci.cluster.as_ref())
             .refs()
             .await
@@ -918,7 +942,11 @@ async fn check_restacked(
         }
     }
     if let Some(bottom) = layers.first() {
-        if pull_requests::restack::squashed_below(pool, &store, branches, bottom).await? {
+        if crate::backend::repositories::pull_requests::restack::squashed_below(
+            pool, &store, branches, bottom,
+        )
+        .await?
+        {
             return Err(needs_restack());
         }
     }
@@ -1017,7 +1045,7 @@ fn same_revision(
 
 pub struct PreparedMerge {
     actor_id: i64,
-    authority: db::credentials::Actor,
+    authority: crate::backend::db::credentials::Actor,
     owner: String,
     repo: String,
     repository: codeyard_db_core::models::Repository,
@@ -1028,7 +1056,7 @@ pub struct PreparedMerge {
     merge: StoreMerge,
     merge_sha: String,
     async_request: Option<(String, i64)>,
-    auto_merge: Option<db::pull_requests::merge_policy::AutoMergeIdentity>,
+    auto_merge: Option<crate::backend::db::pull_requests::merge_policy::AutoMergeIdentity>,
 }
 
 impl PreparedMerge {
@@ -1036,10 +1064,12 @@ impl PreparedMerge {
         self.async_request = Some((uuid.into(), token_id));
     }
     pub(super) fn bind_auto_merge(&mut self, pull_request_id: i64, generation: &str) {
-        self.auto_merge = Some(db::pull_requests::merge_policy::AutoMergeIdentity {
-            pull_request_id,
-            generation: generation.into(),
-        });
+        self.auto_merge = Some(
+            crate::backend::db::pull_requests::merge_policy::AutoMergeIdentity {
+                pull_request_id,
+                generation: generation.into(),
+            },
+        );
     }
     pub(super) fn matches_request(&self, repo_id: i64, pull_id: i64) -> bool {
         self.repository.id == repo_id && self.pull_request.id == pull_id
@@ -1049,7 +1079,7 @@ impl PreparedMerge {
 pub async fn prepare_pull_request_merge(
     pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repository: (String, String, i32),
     request: MergeRequest,
 ) -> Result<PreparedMerge, OperationError> {
@@ -1058,13 +1088,13 @@ pub async fn prepare_pull_request_merge(
 async fn prepare_pull_request_merge_checked(
     pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    authority: db::credentials::Actor,
+    authority: crate::backend::db::credentials::Actor,
     (owner, repo, number): (String, String, i32),
     request: MergeRequest,
     expected: Option<(i64, i64)>,
 ) -> Result<PreparedMerge, OperationError> {
     let actor_id = authority.user_id;
-    let repository = db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -1075,25 +1105,26 @@ async fn prepare_pull_request_merge_checked(
     if expected.is_some_and(|(id, _)| repository.id != id) {
         return Err(stale_revision());
     }
-    let user = super::actor(pool, actor_id).await?;
-    super::require_write(pool, &user, &repository).await?;
+    let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
+    crate::backend::repositories::pull_requests::require_write(pool, &user, &repository).await?;
     crate::backend::repositories::access::check_publication_actor(pool, &authority, &repository)
         .await
         .map_err(|error| publish_failure(error.into(), request.merge_method))?;
 
-    let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".to_owned(),
-        })?;
+    let pull_request =
+        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".to_owned(),
+            })?;
     if expected.is_some_and(|(_, id)| pull_request.id != id) {
         return Err(stale_revision());
     }
     // A merge uses this pull request's branches as they are now. An unrelated
     // broken fork must not deny a healthy pull request.
-    pull_requests::refresh_open_pull_request(
+    crate::backend::repositories::pull_requests::refresh_open_pull_request(
         pool,
         &repository,
         ci,
@@ -1106,13 +1137,14 @@ async fn prepare_pull_request_merge_checked(
         code: "git_unavailable",
         message: "Pull request revisions could not be refreshed; merge denied.".into(),
     })?;
-    let pull_request = db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Pull request not found".to_owned(),
-        })?;
+    let pull_request =
+        crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Pull request not found".to_owned(),
+            })?;
 
     if repository.is_archived {
         return Err(archived_refusal());
@@ -1184,7 +1216,7 @@ async fn prepare_pull_request_merge_checked(
     // A squash commit is authored by the pull request's author under the no-reply address, so the
     // account's own email is not published. When that account is gone, the merger is the author.
     let author = if request.merge_method == MergeMethod::Squash {
-        db::users::accounts::get_user_by_id(pool, pull_request.author_id)
+        crate::backend::db::users::accounts::get_user_by_id(pool, pull_request.author_id)
             .await
             .map_err(database_error)?
     } else {
@@ -1287,7 +1319,7 @@ fn validate_options(
     email: Option<&str>,
 ) -> Result<(), OperationError> {
     for text in [title, message].into_iter().flatten() {
-        if text.contains('\0') || crate::backend::issues::validate_body(text, false).is_err() {
+        if text.contains('\0') || codeyard_model::issue_input::validate_body(text, false).is_err() {
             return Err(OperationError::Invalid {
                 code: "validation_error",
                 message: "Invalid merge commit message".into(),
@@ -1379,32 +1411,34 @@ async fn publish_prepared_merge_owned(
         async_request,
         auto_merge,
     } = prepared;
-    let policy = db::pull_requests::merge_policy::Snapshot {
-        revision: db::pull_requests::merge_policy::revision(pool, repository.id)
+    let policy = crate::backend::db::pull_requests::merge_policy::Snapshot {
+        revision: crate::backend::db::pull_requests::merge_policy::revision(pool, repository.id)
             .await
             .map_err(database_error)?,
         auto_merge,
     };
-    let repository = db::repositories::records::get_repository_by_id(pool, repository.id)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Repository not found".to_owned(),
-        })?;
+    let repository =
+        crate::backend::db::repositories::records::get_repository_by_id(pool, repository.id)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Repository not found".to_owned(),
+            })?;
     // The settings may have changed since the merge was prepared, and the newer ones decide.
     if !allowed_merge_methods(&repository).contains(&merge.method) {
         return Err(method_not_allowed(merge.method));
     }
-    let user = super::actor(pool, actor_id).await?;
-    super::require_write(pool, &user, &repository).await?;
-    let current = db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Conflict {
-            code: "revision_conflict",
-            message: "The pull request changed while merging. Reload and try again.".to_owned(),
-        })?;
+    let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
+    crate::backend::repositories::pull_requests::require_write(pool, &user, &repository).await?;
+    let current =
+        crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| OperationError::Conflict {
+                code: "revision_conflict",
+                message: "The pull request changed while merging. Reload and try again.".to_owned(),
+            })?;
     // The stack is read again, so a layer that joined or left it since the merge was prepared
     // refuses the publish, as does any layer whose revision moved.
     let chain = stack_chain(pool, &current, merge.method).await?;
@@ -1485,9 +1519,10 @@ async fn publish_prepared_merge_owned(
             false
         }
     };
-    let marked =
-        db::pull_requests::records::mark_pull_requests_merged(pool, &chain, user.id, &merge_sha)
-            .await;
+    let marked = crate::backend::db::pull_requests::records::mark_pull_requests_merged(
+        pool, &chain, user.id, &merge_sha,
+    )
+    .await;
     let marked = matches!(marked, Ok(true));
     if !marked {
         tracing::error!(pr = current.id, %merge_sha, "branch merged but the pull requests were not marked");
@@ -1499,9 +1534,11 @@ async fn publish_prepared_merge_owned(
     // push workflows for the merge commit.
     let mut moved = Vec::new();
     for layer in chain.iter().filter(|_| marked) {
-        match db::pull_requests::records::get_pull_request_by_id(pool, layer.id).await {
+        match crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, layer.id)
+            .await
+        {
             Ok(Some(merged_row)) => moved.extend(
-                pull_requests::stacks::retarget_after_merge(
+                crate::backend::repositories::pull_requests::stacks::retarget_after_merge(
                     pool,
                     user.id,
                     &merged_row,
@@ -1518,9 +1555,15 @@ async fn publish_prepared_merge_owned(
     }
     // A moved layer may have workflows that run on its new base. They are queued after the
     // retarget's own transaction, as a head move is.
-    pull_requests::workflows::queue_moved_pull_requests_ci(pool, ci, &repository, &moved, user.id)
-        .await;
-    if let Err(error) = pull_requests::refresh_open_pull_requests(
+    crate::backend::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
+        pool,
+        ci,
+        &repository,
+        &moved,
+        user.id,
+    )
+    .await;
+    if let Err(error) = crate::backend::repositories::pull_requests::refresh_open_pull_requests(
         pool,
         &repository,
         Some(&[&merge.base_branch]),
@@ -1551,18 +1594,18 @@ async fn publish_prepared_merge_owned(
 
     for layer in &chain {
         if let Ok(Some(merged)) =
-            db::pull_requests::records::get_pull_request_by_id(pool, layer.id).await
+            crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, layer.id).await
         {
             let (merged_for_hook, repository_for_hook) = (merged.clone(), repository.clone());
             let (author_id, sender_id) = (merged.author_id, user.id);
             let hook_store = repo_store(&repository, ci.cluster.as_ref());
-            let payload = webhooks::emit(
+            let payload = crate::backend::webhooks::emit(
                 pool,
                 &repository,
-                events::PULL_REQUEST,
+                codeyard_model::webhook_events::PULL_REQUEST,
                 vec![author_id, sender_id],
                 move |owner, people| {
-                    super::webhook_payload(
+                    crate::backend::repositories::pull_requests::webhook_payload(
                         "closed",
                         &merged_for_hook,
                         &people.get(author_id),
@@ -1583,7 +1626,7 @@ async fn publish_prepared_merge_owned(
                 base_sha: merge.base.clone(),
                 ..merged
             };
-            pull_requests::workflows::queue_pull_request_event_ci(
+            crate::backend::repositories::pull_requests::workflows::queue_pull_request_event_ci(
                 pool,
                 ci,
                 &repository,
@@ -1657,7 +1700,7 @@ async fn close_linked_issues(
     owner: &str,
     layers: &[codeyard_db_core::models::PullRequest],
 ) {
-    let base = crate::backend::api::http::config::link_origin();
+    let base = codeyard_model::http_config::link_origin();
     let mut seen = HashSet::new();
     for layer in layers {
         let numbers = crate::backend::issues::closing::referenced_numbers(
@@ -1670,7 +1713,9 @@ async fn close_linked_issues(
             if !seen.insert(number) {
                 continue;
             }
-            let issue = match db::issues::get_issue(pool, repository.id, number).await {
+            let issue = match crate::backend::db::issues::get_issue(pool, repository.id, number)
+                .await
+            {
                 Ok(Some(issue)) if issue.state == "open" => issue,
                 Ok(_) => continue,
                 Err(error) => {
@@ -1707,7 +1752,7 @@ async fn close_linked_issues(
 /// request.
 pub async fn merge_pull_request(
     state: &crate::backend::app::AppState,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repository: (String, String, i32),
     request: MergeRequest,
 ) -> Result<MergeResponse, OperationError> {
@@ -1718,7 +1763,7 @@ pub async fn merge_pull_request(
 /// read, so a renamed or replaced one is refused.
 pub async fn merge_pull_request_checked(
     state: &crate::backend::app::AppState,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repository: (String, String, i32),
     request: MergeRequest,
     expected: Option<(i64, i64)>,
@@ -1753,7 +1798,7 @@ pub async fn merge_pull_request_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use db::pull_requests::reviews::PullRequestReviewDecision;
+    use crate::backend::db::pull_requests::reviews::PullRequestReviewDecision;
 
     #[test]
     fn publication_errors_keep_conflicts_denials_and_outages_distinct() {
@@ -1898,23 +1943,23 @@ mod tests {
 
     #[test]
     fn check_runs_and_statuses_both_decide_their_context() {
-        let run = |status: &str, conclusion: Option<&str>| db::checks::Run {
+        let run = |status: &str, conclusion: Option<&str>| crate::backend::db::checks::Run {
             id: 1,
             suite_id: 1,
             repo_id: 1,
             name: "lint".into(),
             status: status.into(),
             conclusion: conclusion.map(str::to_owned),
-            data: sqlx::types::Json(db::checks::RunData::default()),
+            data: sqlx::types::Json(crate::backend::db::checks::RunData::default()),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
         let required = vec!["lint".to_string()];
         let none = HashMap::new();
-        let failures = |runs: &[db::checks::Run],
+        let failures = |runs: &[crate::backend::db::checks::Run],
                         statuses: &[codeyard_db_core::models::CommitStatus],
                         bound: &HashMap<&str, Option<i64>>| {
-            let runs: Vec<&db::checks::Run> = runs.iter().collect();
+            let runs: Vec<&crate::backend::db::checks::Run> = runs.iter().collect();
             required_status_check_failures("H1", &required, statuses, &[], &runs, bound)
         };
         let passed = [run("completed", Some("success"))];

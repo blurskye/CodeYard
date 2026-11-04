@@ -263,8 +263,8 @@ pub(crate) fn private_reporting(configuration: &str, enforced_only: bool) -> Res
 /// `None` when the configuration is not enforced. A setting it leaves unset stays as `current`.
 pub(crate) fn enforced_scanning(
     configuration: &str,
-    current: super::secret_scanning::Settings,
-) -> Result<Option<super::secret_scanning::Settings>> {
+    current: crate::backend::db::secret_scanning::Settings,
+) -> Result<Option<crate::backend::db::secret_scanning::Settings>> {
     let value: Value = serde_json::from_str(configuration)?;
     if value["enforcement"] != "enforced" {
         return Ok(None);
@@ -274,8 +274,8 @@ pub(crate) fn enforced_scanning(
 
 pub(crate) fn scanning_settings(
     applied: &str,
-    previous: super::secret_scanning::Settings,
-) -> Result<super::secret_scanning::Settings> {
+    previous: crate::backend::db::secret_scanning::Settings,
+) -> Result<crate::backend::db::secret_scanning::Settings> {
     let value: Value = serde_json::from_str(applied)?;
     let enabled = value["secret_scanning"]["status"]
         .as_str()
@@ -284,31 +284,31 @@ pub(crate) fn scanning_settings(
         .as_str()
         .map_or(previous.push_protection, |s| s == "enabled");
     ensure!(enabled || !push_protection, Refusal::Invalid);
-    Ok(super::secret_scanning::Settings {
+    Ok(crate::backend::db::secret_scanning::Settings {
         enabled,
         push_protection,
     })
 }
 
-native_operation!(super::postgres::code_security::list,super::sqlite::code_security::list,
+native_operation!(crate::backend::db::postgres::code_security::list,crate::backend::db::sqlite::code_security::list,
     fn list(pool:&DbPool,actor:i64,org:i64) -> Result<Vec<Configuration>>);
-native_operation!(super::postgres::code_security::list_window,super::sqlite::code_security::list_window,
+native_operation!(crate::backend::db::postgres::code_security::list_window,crate::backend::db::sqlite::code_security::list_window,
     /// One keyset window of the organization's configurations by id: those after `after` and before `before`, oldest first, or newest first when `before` is bounded.
     fn list_window(pool:&DbPool,actor:i64,org:i64,after:i64,before:i64,limit:i64) -> Result<Vec<Configuration>>);
-native_operation!(super::postgres::code_security::settings_page,super::sqlite::code_security::settings_page,
+native_operation!(crate::backend::db::postgres::code_security::settings_page,crate::backend::db::sqlite::code_security::settings_page,
     fn settings_page(pool:&DbPool,actor:i64,session:&str,org:i64,before:Option<i64>) -> Result<SettingsPage>);
-native_operation!(super::postgres::code_security::save,super::sqlite::code_security::save,
-    fn save(pool:&DbPool,actor:impl Into<super::credentials::Actor>,org:i64,id:Option<i64>,patch:&Value) -> Result<Configuration>);
-native_operation!(super::postgres::code_security::delete,super::sqlite::code_security::delete,
-    fn delete(pool:&DbPool,actor:impl Into<super::credentials::Actor>,org:i64,id:i64) -> Result<()>);
-native_operation!(super::postgres::code_security::set_default,super::sqlite::code_security::set_default,
-    fn set_default(pool:&DbPool,actor:impl Into<super::credentials::Actor>,org:i64,id:i64,scope:&str) -> Result<Configuration>);
-native_operation!(super::postgres::code_security::attach,super::sqlite::code_security::attach,
-    fn attach(pool:&DbPool,actor:impl Into<super::credentials::Actor>,org:i64,id:Option<i64>,scope:&str,selected:&[i64]) -> Result<()>);
-native_operation!(super::postgres::code_security::repositories,super::sqlite::code_security::repositories,
+native_operation!(crate::backend::db::postgres::code_security::save,crate::backend::db::sqlite::code_security::save,
+    fn save(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,org:i64,id:Option<i64>,patch:&Value) -> Result<Configuration>);
+native_operation!(crate::backend::db::postgres::code_security::delete,crate::backend::db::sqlite::code_security::delete,
+    fn delete(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,org:i64,id:i64) -> Result<()>);
+native_operation!(crate::backend::db::postgres::code_security::set_default,crate::backend::db::sqlite::code_security::set_default,
+    fn set_default(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,org:i64,id:i64,scope:&str) -> Result<Configuration>);
+native_operation!(crate::backend::db::postgres::code_security::attach,crate::backend::db::sqlite::code_security::attach,
+    fn attach(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,org:i64,id:Option<i64>,scope:&str,selected:&[i64]) -> Result<()>);
+native_operation!(crate::backend::db::postgres::code_security::repositories,crate::backend::db::sqlite::code_security::repositories,
     /// One keyset window of the repositories attached to configuration `id`, ordered as `list_window`.
     fn repositories(pool:&DbPool,actor:i64,org:i64,id:i64,after:i64,before:i64,limit:i64) -> Result<Vec<Repository>>);
-native_operation!(super::postgres::code_security::repository_settings,super::sqlite::code_security::repository_settings,
+native_operation!(crate::backend::db::postgres::code_security::repository_settings,crate::backend::db::sqlite::code_security::repository_settings,
     fn repository_settings(pool:&DbPool,repo:i64) -> Result<Option<RepositorySettings>>);
-native_operation!(super::postgres::code_security::repository_configuration,super::sqlite::code_security::repository_configuration,
+native_operation!(crate::backend::db::postgres::code_security::repository_configuration,crate::backend::db::sqlite::code_security::repository_configuration,
     fn repository_configuration(pool:&DbPool,repo:i64) -> Result<Option<Configuration>>);

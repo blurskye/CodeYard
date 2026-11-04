@@ -1,6 +1,5 @@
 //! gh discussion's queries and writes through the real router on both engines.
 use super::*;
-use codeyard::backend::repositories::lifecycle;
 
 const META: &str = "query RepositoryMetaForDiscussions($name:String!$owner:String!){repository(owner: $owner, name: $name){id,databaseId,hasDiscussionsEnabled}}";
 const LABELS: &str = "query RepositoryLabelsForDiscussions($endCursor:String$name:String!$owner:String!){repository(owner: $owner, name: $name){labels(first: 100, after: $endCursor, orderBy: {field: NAME, direction: ASC}){nodes{id,name,color},pageInfo{hasNextPage,endCursor}}}}";
@@ -10,7 +9,7 @@ async fn contract(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("discussion-alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = lifecycle::provision(
+    let repo = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),

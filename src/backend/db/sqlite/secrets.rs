@@ -1,9 +1,10 @@
-use crate::backend::db::secrets::{SecretKind, SecretsError};
+use crate::backend::db::secrets::SecretKind;
+use crate::backend::db::secrets::SecretsError;
 use sqlx::SqlitePool;
 
-use crate::backend::crypto::SecretEncryptor;
 use codeyard_db_core::models::RepoSecret;
 use codeyard_db_core::models::RepoSecretMeta;
+use codeyard_support::secrets::SecretEncryptor;
 
 pub async fn encryption_samples(pool: &SqlitePool) -> anyhow::Result<Vec<(Vec<u8>, Vec<u8>)>> {
     Ok(
@@ -25,15 +26,17 @@ pub async fn create_or_update_secret(
     let actor_id = created_by_id.ok_or(SecretsError::Denied)?;
     let (encrypted_value, nonce) = encryptor.encrypt(value.as_bytes())?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
+    if !crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
         .await
         .map_err(SecretsError::authority)?
     {
         return Err(SecretsError::Denied);
     }
-    if !super::users::transitions::credential_live(&mut tx, actor_id, credential, true)
-        .await
-        .map_err(SecretsError::authority)?
+    if !crate::backend::db::sqlite::users::transitions::credential_live(
+        &mut tx, actor_id, credential, true,
+    )
+    .await
+    .map_err(SecretsError::authority)?
     {
         return Err(SecretsError::Denied);
     }
@@ -90,15 +93,17 @@ pub async fn repository_secret_key(
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<(String, crypto_box::SecretKey), SecretsError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
+    if !crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
         .await
         .map_err(SecretsError::authority)?
     {
         return Err(SecretsError::Denied);
     }
-    if !super::users::transitions::credential_live(&mut tx, actor_id, credential, false)
-        .await
-        .map_err(SecretsError::authority)?
+    if !crate::backend::db::sqlite::users::transitions::credential_live(
+        &mut tx, actor_id, credential, false,
+    )
+    .await
+    .map_err(SecretsError::authority)?
     {
         return Err(SecretsError::Denied);
     }
@@ -149,9 +154,11 @@ pub async fn list_secrets(
     repo_id: i64,
 ) -> Result<Vec<RepoSecretMeta>, SecretsError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::discussions::lock_settings_read_authority(&mut tx, actor_id, repo_id, true)
-        .await
-        .map_err(SecretsError::authority)?
+    if !crate::backend::db::sqlite::discussions::lock_settings_read_authority(
+        &mut tx, actor_id, repo_id, true,
+    )
+    .await
+    .map_err(SecretsError::authority)?
     {
         return Err(SecretsError::Denied);
     }
@@ -190,15 +197,17 @@ pub async fn delete_secret(
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
+    if !crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
         .await
         .map_err(SecretsError::authority)?
     {
         return Err(SecretsError::Denied);
     }
-    if !super::users::transitions::credential_live(&mut tx, actor_id, credential, true)
-        .await
-        .map_err(SecretsError::authority)?
+    if !crate::backend::db::sqlite::users::transitions::credential_live(
+        &mut tx, actor_id, credential, true,
+    )
+    .await
+    .map_err(SecretsError::authority)?
     {
         return Err(SecretsError::Denied);
     }

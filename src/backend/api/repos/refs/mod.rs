@@ -13,8 +13,12 @@ mod merge;
 pub mod references;
 pub mod tags;
 
-async fn repository_id(state: &AppState, owner: &str, name: &str) -> super::chrome::ApiResult<i64> {
-    super::access::find_repository(&state.pool, owner, name)
+async fn repository_id(
+    state: &AppState,
+    owner: &str,
+    name: &str,
+) -> crate::backend::api::repos::chrome::ApiResult<i64> {
+    crate::backend::api::repos::access::find_repository(&state.pool, owner, name)
         .await
         .map(|repo| repo.id)
 }

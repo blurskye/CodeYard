@@ -1,4 +1,6 @@
-use crate::backend::db::discussion_search::{Results, Search, Sort};
+use crate::backend::db::discussion_search::Results;
+use crate::backend::db::discussion_search::Search;
+use crate::backend::db::discussion_search::Sort;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -16,9 +18,13 @@ pub async fn search(
         "Invalid search window"
     );
     let statement = query
-        .statement(false, &super::repositories::access::readable_condition())
+        .statement(
+            false,
+            &crate::backend::db::sqlite::repositories::access::readable_condition(),
+        )
         .map_err(anyhow::Error::msg)?;
-    let mut connection = super::repositories::discovery::search_connection(pool).await?;
+    let mut connection =
+        crate::backend::db::sqlite::repositories::discovery::search_connection(pool).await?;
     sqlx::query("BEGIN").execute(&mut *connection).await?;
     let count_sql = format!("{} SELECT COUNT(*) FROM matched", statement.prefix);
     let mut count = sqlx::query_scalar::<_, i64>(&count_sql).bind(viewer);

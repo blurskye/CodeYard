@@ -18,7 +18,7 @@ pub async fn list_deploy_keys(
 ) -> Result<Vec<DeployKey>> {
     let credential = credential.into();
     let mut tx = pool.begin().await?;
-    let live = super::credentials::repository(
+    let live = crate::backend::db::postgres::credentials::repository(
         &mut tx,
         &(actor, &credential).into(),
         repo_id,
@@ -27,7 +27,7 @@ pub async fn list_deploy_keys(
     )
     .await?;
     anyhow::ensure!(live, codeyard_model::repositories::DeployKeyError::Denied);
-    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     let sql = format!("SELECT {COLUMNS} FROM deploy_keys WHERE repo_id=$1 AND id>$3 AND EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$2 WHERE r.id=deploy_keys.repo_id AND NOT r.is_gist AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>=5)) ORDER BY id LIMIT $4");
     let keys = sqlx::query_as(&sql)
         .bind(repo_id)
@@ -74,7 +74,8 @@ async fn require_admin(
     repo: i64,
     credential: crate::backend::db::deploy_keys::Credential,
 ) -> Result<()> {
-    use super::repositories::access::{lock_user_repo_access_in_transaction, RepositoryRowLock};
+    use crate::backend::db::postgres::repositories::access::lock_user_repo_access_in_transaction;
+    use crate::backend::db::postgres::repositories::access::RepositoryRowLock;
     let access =
         lock_user_repo_access_in_transaction(tx, actor, repo, RepositoryRowLock::Shared, true)
             .await?;
@@ -89,7 +90,7 @@ async fn require_admin(
             access.access.can_admin() || (!access.organization && access.is_admin)
         });
     // Fine-grained, app, CI and OAuth tokens each need repository administration.
-    let live = super::credentials::repository(
+    let live = crate::backend::db::postgres::credentials::repository(
         tx,
         &(actor, &credential).into(),
         repo,

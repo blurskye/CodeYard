@@ -1,6 +1,6 @@
 //! Bounded forge metadata reads. Upstream pagination links never choose a request destination.
-use super::Credentials;
-use crate::backend::webhooks::outbound;
+use crate::backend::repositories::imports::Credentials;
+
 use anyhow::{ensure, Context, Result};
 use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
@@ -24,7 +24,7 @@ pub struct Project {
 
 impl Project {
     pub fn parse(source: &str, forge: Forge) -> Result<Self> {
-        let source = super::source_url(source)?;
+        let source = crate::backend::repositories::imports::source_url(source)?;
         Self::from_url(&source, forge)
     }
 
@@ -244,11 +244,14 @@ pub async fn fetch(project: Project, credentials: Option<&Credentials>) -> Resul
 async fn fetch_inner(project: Project, credentials: Option<&Credentials>) -> Result<Metadata> {
     let addresses = tokio::time::timeout(
         Duration::from_secs(15),
-        outbound::resolve(&project.api, super::allow_private()),
+        crate::backend::webhooks::outbound::resolve(
+            &project.api,
+            crate::backend::repositories::imports::allow_private(),
+        ),
     )
     .await?
     .map_err(|_| anyhow::anyhow!("Source forge address refused"))?;
-    let client = outbound::pinned_client(&project.api, &addresses)
+    let client = crate::backend::webhooks::outbound::pinned_client(&project.api, &addresses)
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(60))
         .user_agent("Codeyard repository migration")

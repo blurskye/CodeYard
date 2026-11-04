@@ -1,11 +1,8 @@
 //! Shared post-commit effects for REST and native suggestion review.
-use crate::backend::db;
-use crate::backend::notifications::assignments;
+
 use crate::backend::notifications::assignments::Assignment;
 use crate::backend::notifications::NotificationBroadcaster;
-use crate::backend::webhooks;
-use crate::backend::webhooks::events;
-use crate::backend::webhooks::payloads;
+
 use crate::backend::webhooks::payloads::Scope;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
@@ -14,12 +11,12 @@ pub async fn resolve(
     pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: &User,
-    credential: &db::users::accounts::AccountCredential<'_>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     (repo, owner): (&Repository, &str),
     (issue_id, suggestion_id): (i64, i64),
     approve: bool,
-) -> Result<db::suggestions::Suggestion> {
-    let outcome = db::suggestions::resolve(
+) -> Result<crate::backend::db::suggestions::Suggestion> {
+    let outcome = crate::backend::db::suggestions::resolve(
         pool,
         repo.id,
         actor.id,
@@ -30,7 +27,7 @@ pub async fn resolve(
     )
     .await?;
     if outcome.invalidated {
-        return Err(db::suggestions::Refusal::Invalidated.into());
+        return Err(crate::backend::db::suggestions::Refusal::Invalidated.into());
     }
     if let Some(assignee) = outcome.assignment {
         let issue = &outcome.issue;
@@ -40,7 +37,7 @@ pub async fn resolve(
             codeyard_webui::encode_component(&repo.name),
             issue.number
         );
-        assignments::notify_assignees(
+        crate::backend::notifications::assignments::notify_assignees(
             pool,
             broadcaster,
             &Assignment {
@@ -58,17 +55,23 @@ pub async fn resolve(
         .await;
     }
     if let Some(issue) = outcome.closed_issue {
-        super::mutations::notify_state_change(pool, broadcaster, actor, (repo, owner), &issue)
-            .await;
+        crate::backend::issues::mutations::notify_state_change(
+            pool,
+            broadcaster,
+            actor,
+            (repo, owner),
+            &issue,
+        )
+        .await;
         let (author, sender) = (issue.author_id, actor.id);
         let repository = repo.clone();
-        webhooks::emit(
+        crate::backend::webhooks::emit(
             pool,
             repo,
-            events::ISSUES,
+            codeyard_model::webhook_events::ISSUES,
             vec![author, sender],
             move |owner, people| {
-                payloads::issues(
+                crate::backend::webhooks::payloads::issues(
                     "closed",
                     &issue,
                     &people.get(author),

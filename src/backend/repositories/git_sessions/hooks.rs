@@ -1,25 +1,26 @@
 //! Receive authorization and follow-up after Git accepts immutable updates.
-use super::broker::{Gateway, Operation};
-use super::validation::{self, RefUpdate, ZERO_SHA};
-use super::ReceiveCredential;
-use crate::backend::ci;
-use crate::backend::ci::workflows::WorkflowMatchBudget;
+use crate::backend::repositories::git_sessions::broker::Gateway;
+use crate::backend::repositories::git_sessions::broker::Operation;
+
+use crate::backend::repositories::git_sessions::validation::RefUpdate;
+use crate::backend::repositories::git_sessions::validation::ZERO_SHA;
+use crate::backend::repositories::git_sessions::ReceiveCredential;
+
 use crate::backend::ci::CiRunRequest;
-use crate::backend::db;
-use crate::backend::repositories::languages;
+use codeyard_model::workflow_glob::WorkflowMatchBudget;
+
 use crate::backend::repositories::protection::check_branch_write_with;
 use crate::backend::repositories::protection::load_rules;
 use crate::backend::repositories::protection::BranchWrite;
 use crate::backend::repositories::protection::History;
 use crate::backend::repositories::protection::Refusal;
 use crate::backend::repositories::protection::WriteVia;
-use crate::backend::repositories::pull_requests;
-use crate::backend::repositories::reads;
+
 use crate::backend::repositories::store::ensure_ref_room;
 use crate::backend::repositories::store::repo_store;
 use codeyard_git::error::{ErrorKind, RepoError};
 
-use crate::backend::webhooks::ref_changes::{self, RefMove};
+use crate::backend::webhooks::ref_changes::RefMove;
 use anyhow::{ensure, Context, Result};
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Repository;
@@ -151,13 +152,15 @@ impl Gateway {
     pub(super) async fn reference_transaction(
         self: &Arc<Self>,
         operation: &Arc<Operation>,
-        phase: super::protocol::TransactionPhase,
+        phase: crate::backend::repositories::git_sessions::protocol::TransactionPhase,
         updates: &[RefUpdate],
     ) -> Result<()> {
-        use super::protocol::TransactionPhase;
-        use crate::backend::cluster::writes as coordinator;
-        use db::cluster::writes as journal;
-        validation::validate_transaction_updates(updates)?;
+        use crate::backend::repositories::git_sessions::protocol::TransactionPhase;
+
+        use crate::backend::db::cluster::writes as journal;
+        crate::backend::repositories::git_sessions::validation::validate_transaction_updates(
+            updates,
+        )?;
         if !operation
             .state
             .lock()
@@ -205,7 +208,8 @@ impl Gateway {
                         "reference transaction differs from admission"
                     );
                     ensure!(
-                        state.writes.len() < validation::MAX_UPDATES,
+                        state.writes.len()
+                            < crate::backend::repositories::git_sessions::validation::MAX_UPDATES,
                         "too many reference transactions"
                     );
                     state.quorum_started = true;
@@ -221,14 +225,14 @@ impl Gateway {
                 let repository = crate::backend::cluster::rpc::repository_uuid(&repo.disk_path)?;
                 let view = journal::recovery_view(&self.pool, repo.id).await?;
                 let id = uuid::Uuid::new_v4().to_string();
-                let write = match coordinator::begin(
+                let write = match crate::backend::cluster::writes::begin(
                     &self.pool, repo.id, primary, view.term, &id, &changes,
                 )
                 .await
                 {
                     Ok(write) => write,
                     Err(error) => {
-                        if error.is::<coordinator::OutcomeUnknown>() {
+                        if error.is::<crate::backend::cluster::writes::OutcomeUnknown>() {
                             operation
                                 .state
                                 .lock()
@@ -256,7 +260,7 @@ impl Gateway {
                     .scope(cluster.prepare_push_write(repository, &operation.path, write.record()))
                     .await;
                 let votes = prepared.is_ok()
-                    && coordinator::collect_votes(&self.pool, &write)
+                    && crate::backend::cluster::writes::collect_votes(&self.pool, &write)
                         .await
                         .unwrap_or(false);
                 // Recheck after network and disk waits, immediately before the decision.
@@ -286,9 +290,12 @@ impl Gateway {
                     .await?;
                     Ok::<_, anyhow::Error>(())
                 };
-                let decided =
-                    coordinator::decide(&self.pool, &write, votes && authorized.await.is_ok())
-                        .await?;
+                let decided = crate::backend::cluster::writes::decide(
+                    &self.pool,
+                    &write,
+                    votes && authorized.await.is_ok(),
+                )
+                .await?;
                 operation
                     .state
                     .lock()
@@ -328,7 +335,7 @@ impl Gateway {
                 if write.decision == "commit" {
                     ensure!(
                         phase == TransactionPhase::Committed,
-                        coordinator::OutcomeUnknown
+                        crate::backend::cluster::writes::OutcomeUnknown
                     );
                     let (repo, _) = self.operation_repository(operation).await?;
                     let repository =
@@ -350,7 +357,10 @@ impl Gateway {
                         false,
                     )
                     .await?;
-                    ensure!(aborted.decision == "abort", coordinator::OutcomeUnknown);
+                    ensure!(
+                        aborted.decision == "abort",
+                        crate::backend::cluster::writes::OutcomeUnknown
+                    );
                     let (repo, _) = self.operation_repository(operation).await?;
                     let repository =
                         crate::backend::cluster::rpc::repository_uuid(&repo.disk_path)?;
@@ -386,7 +396,7 @@ impl Gateway {
         for write in writes {
             let current = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
-                db::cluster::writes::load_write(&self.pool, &write.id),
+                crate::backend::db::cluster::writes::load_write(&self.pool, &write.id),
             )
             .await??
             .context("write disappeared")?;
@@ -406,9 +416,12 @@ impl Gateway {
         updates: &[RefUpdate],
         quarantine: Option<&str>,
     ) -> Result<()> {
-        validation::validate_updates(updates)?;
+        crate::backend::repositories::git_sessions::validation::validate_updates(updates)?;
         #[cfg(test)]
-        super::broker::policy_tests::before_authorize(operation, post).await;
+        crate::backend::repositories::git_sessions::broker::policy_tests::before_authorize(
+            operation, post,
+        )
+        .await;
         if post {
             self.post_receive(operation, updates).await
         } else {
@@ -418,9 +431,12 @@ impl Gateway {
 
     /// The operation's repository, still at the location it was admitted at.
     async fn operation_repository(&self, operation: &Operation) -> Result<(Repository, PathBuf)> {
-        let repo = db::repositories::records::get_repository_by_id(&self.pool, operation.repo_id)
-            .await?
-            .context("repository unavailable")?;
+        let repo = crate::backend::db::repositories::records::get_repository_by_id(
+            &self.pool,
+            operation.repo_id,
+        )
+        .await?
+        .context("repository unavailable")?;
         let committed_term = operation
             .state
             .lock()
@@ -433,12 +449,13 @@ impl Gateway {
             // This admitted child must publish before its voter can be marked current.
             // It may finish only in its original serving term, never in a successor's path.
             let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
-            let view = db::cluster::writes::recovery_view(&self.pool, repo.id).await?;
+            let view =
+                crate::backend::db::cluster::writes::recovery_view(&self.pool, repo.id).await?;
             ensure!(
                 view.serving && view.term == term && view.primary_id == cluster.node_id,
                 "repository term changed"
             );
-            let node = db::cluster::get_node_by_id(&self.pool, cluster.node_id)
+            let node = crate::backend::db::cluster::get_node_by_id(&self.pool, cluster.node_id)
                 .await?
                 .context("storage node unavailable")?;
             ensure!(
@@ -693,7 +710,7 @@ impl Gateway {
         if !publications.is_empty() {
             let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
             let uuid = crate::backend::cluster::rpc::repository_uuid(&repo.disk_path)?;
-            let term = db::cluster::writes::recovery_view(&self.pool, repo.id)
+            let term = crate::backend::db::cluster::writes::recovery_view(&self.pool, repo.id)
                 .await?
                 .term;
             let changes = publications
@@ -742,7 +759,10 @@ impl Gateway {
             .await?;
         // A failed creation deletes its repository only while no write has reached it, so the
         // version moves before Git takes the push.
-        db::repositories::records::advance_contribution_version(&self.pool, current.id).await?;
+        crate::backend::db::repositories::records::advance_contribution_version(
+            &self.pool, current.id,
+        )
+        .await?;
         let mut state = operation
             .state
             .lock()
@@ -757,9 +777,13 @@ impl Gateway {
         let (repo, path) = self.operation_repository(operation).await?;
         // Proofs made while this push was in flight saw the old history under the new version.
         // This comes first, so no later bookkeeping failure can leave them current.
-        db::repositories::records::advance_contribution_version(&self.pool, repo.id).await?;
+        crate::backend::db::repositories::records::advance_contribution_version(
+            &self.pool, repo.id,
+        )
+        .await?;
         if let Some(actor) =
-            db::users::accounts::get_user_by_id(&self.pool, operation.actor_id).await?
+            crate::backend::db::users::accounts::get_user_by_id(&self.pool, operation.actor_id)
+                .await?
         {
             // Git has moved the pushed objects out of quarantine by now.
             let history = History::Stored { repository: &path };
@@ -799,7 +823,7 @@ impl Gateway {
             if !accepted || !consumed.insert(bypass.hash.clone()) {
                 continue;
             }
-            db::secret_scanning::use_bypass(
+            crate::backend::db::secret_scanning::use_bypass(
                 &self.pool,
                 repo.id,
                 operation.actor_id,
@@ -847,9 +871,14 @@ impl Gateway {
             if !scan_heads.insert(commit.sha.clone()) {
                 continue;
             }
-            if db::secret_scanning::enqueue(&self.pool, repo.id, &commit.sha, operation.actor_id)
-                .await
-                .is_err()
+            if crate::backend::db::secret_scanning::enqueue(
+                &self.pool,
+                repo.id,
+                &commit.sha,
+                operation.actor_id,
+            )
+            .await
+            .is_err()
             {
                 tracing::warn!(
                     repo_id = repo.id,
@@ -867,7 +896,7 @@ impl Gateway {
                 tracing::error!(repo_id = repo.id, "could not update gist after push");
             }
             return if failed {
-                Err(super::PostReceiveFailed.into())
+                Err(crate::backend::repositories::git_sessions::PostReceiveFailed.into())
             } else {
                 Ok(())
             };
@@ -883,9 +912,10 @@ impl Gateway {
             Ok((identity, access)) if identity.id == actor_id => access,
             _ => AccessLevel::None,
         };
-        let repo = db::repositories::records::get_repository_by_id(&self.pool, repo.id)
-            .await?
-            .context("repository unavailable")?;
+        let repo =
+            crate::backend::db::repositories::records::get_repository_by_id(&self.pool, repo.id)
+                .await?
+                .context("repository unavailable")?;
         // Webhooks follow the refs Git has just accepted. They never fail the push.
         let moves: Vec<RefMove> = updates
             .iter()
@@ -906,14 +936,17 @@ impl Gateway {
             failed = true;
         }
         crate::backend::repositories::dependencies::observe_refs(&self.pool, &repo, &moves).await;
-        ref_changes::emit_ref_moves(&self.pool, &repo, actor_id, &path, &moves).await;
+        crate::backend::webhooks::ref_changes::emit_ref_moves(
+            &self.pool, &repo, actor_id, &path, &moves,
+        )
+        .await;
         // Open pull requests follow the branches this push created, moved or deleted.
         let branches: Vec<&str> = updates
             .iter()
             .filter_map(|update| update.reference.strip_prefix("refs/heads/"))
             .collect();
         if !branches.is_empty()
-            && pull_requests::refresh_open_pull_requests(
+            && crate::backend::repositories::pull_requests::refresh_open_pull_requests(
                 &self.pool,
                 &repo,
                 Some(branches.as_slice()),
@@ -938,7 +971,7 @@ impl Gateway {
             .clone();
         for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
             if let Some(branch) = update.reference.strip_prefix("refs/heads/") {
-                languages::refresh_default_branch(
+                crate::backend::repositories::languages::refresh_default_branch(
                     self.pool.clone(),
                     repo.id,
                     path.clone(),
@@ -969,8 +1002,10 @@ impl Gateway {
                     counts.insert(range, count);
                     count
                 };
-                db::activity::record_repository_push(&self.pool, repo.id, actor_id, branch, count)
-                    .await?;
+                crate::backend::db::activity::record_repository_push(
+                    &self.pool, repo.id, actor_id, branch, count,
+                )
+                .await?;
             }
             Ok::<_, anyhow::Error>(())
         };
@@ -988,7 +1023,7 @@ impl Gateway {
         for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
             match store.commit(&update.new).await {
                 Ok(commit) => {
-                    db::ci::record_ci_accepted_push(
+                    crate::backend::db::ci::record_ci_accepted_push(
                         &self.pool,
                         repo.id,
                         actor_id,
@@ -1002,9 +1037,10 @@ impl Gateway {
             }
         }
         // Accepted-push facts above are independent of credential liveness.
-        let current_repo = db::repositories::records::get_repository_by_id(&self.pool, repo.id)
-            .await?
-            .context("repository unavailable")?;
+        let current_repo =
+            crate::backend::db::repositories::records::get_repository_by_id(&self.pool, repo.id)
+                .await?
+                .context("repository unavailable")?;
         let current_identity = match operation
             .credential
             .authorize(&self.pool, &current_repo, true)
@@ -1013,7 +1049,7 @@ impl Gateway {
             Ok((identity, _)) if identity.id == actor_id => identity,
             _ => {
                 return if failed {
-                    Err(super::PostReceiveFailed.into())
+                    Err(crate::backend::repositories::git_sessions::PostReceiveFailed.into())
                 } else {
                     Ok(())
                 }
@@ -1030,7 +1066,10 @@ impl Gateway {
                 .trusted_actor_ids
                 .contains(&current_identity.id)
         {
-            ensure!(!failed, super::PostReceiveFailed);
+            ensure!(
+                !failed,
+                crate::backend::repositories::git_sessions::PostReceiveFailed
+            );
             return Ok(());
         }
 
@@ -1057,14 +1096,15 @@ impl Gateway {
                     continue;
                 }
             };
-            let workflows = match ci::list_workflows_for_ref(&store, &commit_sha).await {
-                Ok(workflows) => workflows,
-                Err(_) => {
-                    failed = true;
-                    continue;
-                }
-            };
-            let message = match ci::commit_message_for_ref(
+            let workflows =
+                match crate::backend::ci::list_workflows_for_ref(&store, &commit_sha).await {
+                    Ok(workflows) => workflows,
+                    Err(_) => {
+                        failed = true;
+                        continue;
+                    }
+                };
+            let message = match crate::backend::ci::commit_message_for_ref(
                 &repo_store(&repo, self.ci.cluster.as_ref()),
                 &commit_sha,
             )
@@ -1076,13 +1116,13 @@ impl Gateway {
                     continue;
                 }
             };
-            let ref_update = ci::RefUpdate {
+            let ref_update = crate::backend::ci::RefUpdate {
                 reference: update.reference.clone(),
                 old: (update.old != ZERO_SHA).then(|| update.old.clone()),
                 new: update.new.clone(),
                 changed_paths: None,
             };
-            let matched = ci::push::matching_push_workflows(
+            let matched = crate::backend::ci::push::matching_push_workflows(
                 &repo_store(&repo, self.ci.cluster.as_ref()),
                 &ref_update,
                 workflows,
@@ -1102,7 +1142,7 @@ impl Gateway {
                 continue;
             }
             // A run's github.event is the push document the webhook sends.
-            let event = match ci::push::push_document(
+            let event = match crate::backend::ci::push::push_document(
                 &self.pool,
                 &repo_store(&repo, self.ci.cluster.as_ref()),
                 &repo,
@@ -1120,13 +1160,15 @@ impl Gateway {
                 }
             };
             for workflow in matched {
-                let pipeline = ci::infer_pipeline_from_workflow_path(&workflow.path);
+                let pipeline =
+                    crate::backend::ci::infer_pipeline_from_workflow_path(&workflow.path);
                 // Recheck live identity/access for each dispatch, in particular
                 // CD/full. Neither event=push nor the prior pre-hook is a bypass.
-                let fresh_repo =
-                    db::repositories::records::get_repository_by_id(&self.pool, repo.id)
-                        .await?
-                        .context("repository unavailable")?;
+                let fresh_repo = crate::backend::db::repositories::records::get_repository_by_id(
+                    &self.pool, repo.id,
+                )
+                .await?
+                .context("repository unavailable")?;
                 let (fresh_identity, access) = operation
                     .credential
                     .authorize(&self.pool, &fresh_repo, true)
@@ -1165,7 +1207,7 @@ impl Gateway {
                     .await;
                 if matches!(
                     result,
-                    Err(ci::admission::AdmissionError::WorkflowDisabled(_))
+                    Err(codeyard_db_core::ci_admission::AdmissionError::WorkflowDisabled(_))
                 ) {
                     continue;
                 }
@@ -1175,7 +1217,10 @@ impl Gateway {
                 }
             }
         }
-        ensure!(!failed, super::PostReceiveFailed);
+        ensure!(
+            !failed,
+            crate::backend::repositories::git_sessions::PostReceiveFailed
+        );
         Ok(())
     }
 
@@ -1227,8 +1272,9 @@ impl Gateway {
                 // A first push can create only a branch other than the initial HEAD. Git
                 // leaves HEAD unborn, so the first pushed branch becomes the default.
                 if repository.head().is_err() {
-                    if let Some(first) = reads::preferred_branch(created.iter().map(String::as_str))
-                    {
+                    if let Some(first) = crate::backend::repositories::reads::preferred_branch(
+                        created.iter().map(String::as_str),
+                    ) {
                         let target = format!("refs/heads/{first}");
                         if quorum {
                             head_change = Some(codeyard_db_core::models::RefChange {
@@ -1250,7 +1296,8 @@ impl Gateway {
                 head_change.filter(|change| change.old_target != change.new_target)
             {
                 let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
-                let view = db::cluster::writes::recovery_view(&self.pool, repo.id).await?;
+                let view =
+                    crate::backend::db::cluster::writes::recovery_view(&self.pool, repo.id).await?;
                 let uuid = crate::backend::cluster::rpc::repository_uuid(&repo.disk_path)?;
                 publication
                     .as_ref()
@@ -1268,8 +1315,10 @@ impl Gateway {
                     ))
                     .await?;
             }
-            db::repositories::records::update_repo_default_branch(&self.pool, repo.id, &branch)
-                .await?;
+            crate::backend::db::repositories::records::update_repo_default_branch(
+                &self.pool, repo.id, &branch,
+            )
+            .await?;
         }
         repo_store(repo, self.ci.cluster.as_ref()).refresh_storage_size(self.pool.clone(), repo.id);
         Ok(())
@@ -1278,8 +1327,8 @@ impl Gateway {
 
 #[cfg(test)]
 mod tests {
-    use super::super::broker::HookState;
     use super::*;
+    use crate::backend::repositories::git_sessions::broker::HookState;
 
     fn creates(prefix: &str, count: usize) -> Vec<RefUpdate> {
         (0..count)

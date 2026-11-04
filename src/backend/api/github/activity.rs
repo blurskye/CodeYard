@@ -3,16 +3,18 @@ mod events;
 pub(super) mod feeds;
 mod notifications;
 mod subscriptions;
-use super::{auth, pagination::Pagination, repository, Error, Result};
-use crate::backend::webhooks::payloads;
-use crate::backend::{
-    app::AppState,
-    db,
-    repositories::{
-        access::AccessError,
-        engagement::{self, Engagement, EngagementError},
-    },
-};
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::access::AccessError;
+
+use crate::backend::repositories::engagement::Engagement;
+use crate::backend::repositories::engagement::EngagementError;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode, Uri},
@@ -41,12 +43,12 @@ async fn starred(
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?
+        .ok_or_else(crate::backend::api::github::auth::required)?
         .user;
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    if db::repositories::engagement::is_repo_starred(&state.pool, actor.id, repo.id)
+    if crate::backend::db::repositories::engagement::is_repo_starred(&state.pool, actor.id, repo.id)
         .await
         .map_err(Error::unavailable)?
     {
@@ -64,8 +66,8 @@ async fn change_star(
     enabled: bool,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
-    engagement::change(
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
+    crate::backend::repositories::engagement::change(
         &state.pool,
         &state.notification_broadcaster,
         auth.database_actor(),
@@ -125,22 +127,29 @@ async fn list_stars(
     query: StarList,
     uri: &Uri,
 ) -> Result<Response> {
-    let auth = auth::authenticate(state, headers, username.is_none()).await?;
+    let auth =
+        crate::backend::api::github::auth::authenticate(state, headers, username.is_none()).await?;
     let user = match username {
-        Some(username) => db::users::accounts::get_user_by_username(&state.pool, username)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?,
-        None => auth.as_ref().ok_or_else(auth::required)?.user.clone(),
+        Some(username) => {
+            crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?
+        }
+        None => auth
+            .as_ref()
+            .ok_or_else(crate::backend::api::github::auth::required)?
+            .user
+            .clone(),
     };
     let sort = match (
         query.sort.as_deref().unwrap_or("created"),
         query.direction.as_deref().unwrap_or("desc"),
     ) {
-        ("created", "desc") => db::repositories::engagement::StarSort::Recent,
-        ("created", "asc") => db::repositories::engagement::StarSort::Oldest,
-        ("updated", "desc") => db::repositories::engagement::StarSort::Updated,
-        ("updated", "asc") => db::repositories::engagement::StarSort::UpdatedOldest,
+        ("created", "desc") => crate::backend::db::repositories::engagement::StarSort::Recent,
+        ("created", "asc") => crate::backend::db::repositories::engagement::StarSort::Oldest,
+        ("updated", "desc") => crate::backend::db::repositories::engagement::StarSort::Updated,
+        ("updated", "asc") => crate::backend::db::repositories::engagement::StarSort::UpdatedOldest,
         _ => return Err(Error::invalid("Invalid sort or direction")),
     };
     let page = Pagination {
@@ -148,7 +157,7 @@ async fn list_stars(
         per_page: query.per_page,
     };
     let (offset, limit) = page.window()?;
-    let rows = db::repositories::engagement::list_starred_repositories(
+    let rows = crate::backend::db::repositories::engagement::list_starred_repositories(
         &state.pool,
         user.id,
         auth.as_ref().map(|auth| auth.user.id),
@@ -160,7 +169,7 @@ async fn list_stars(
     .await
     .map_err(Error::unavailable)?;
     let has_next = rows.len() > limit;
-    let readable = auth::readable_repositories(
+    let readable = crate::backend::api::github::auth::readable_repositories(
         state,
         auth.as_ref(),
         &rows.iter().map(|repo| repo.id).collect::<Vec<_>>(),
@@ -173,11 +182,16 @@ async fn list_stars(
         .take(limit)
         .filter(|repo| readable.contains(&repo.id))
     {
-        let value = super::repos::document(state, repo, auth.as_ref()).await?;
+        let value =
+            crate::backend::api::github::repos::document(state, repo, auth.as_ref()).await?;
         items.push(if timestamps(headers) {
-            let Some(at) = db::repositories::engagement::starred_at(&state.pool, user.id, repo.id)
-                .await
-                .map_err(Error::unavailable)?
+            let Some(at) = crate::backend::db::repositories::engagement::starred_at(
+                &state.pool,
+                user.id,
+                repo.id,
+            )
+            .await
+            .map_err(Error::unavailable)?
             else {
                 continue;
             };
@@ -217,7 +231,7 @@ async fn stargazers(
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let (offset, limit) = page.window()?;
-    let rows = db::repositories::engagement::list_repo_stargazers(
+    let rows = crate::backend::db::repositories::engagement::list_repo_stargazers(
         &state.pool,
         repo.id,
         limit as i64,
@@ -226,7 +240,7 @@ async fn stargazers(
     .await
     .map_err(Error::unavailable)?;
     let has_next = rows.len() == limit
-        && !db::repositories::engagement::list_repo_stargazers(
+        && !crate::backend::db::repositories::engagement::list_repo_stargazers(
             &state.pool,
             repo.id,
             1,
@@ -237,11 +251,15 @@ async fn stargazers(
         .is_empty();
     let mut items = Vec::new();
     for user in rows {
-        let value = payloads::user(&user);
+        let value = crate::backend::webhooks::payloads::user(&user);
         items.push(if timestamps(&headers) {
-            let Some(at) = db::repositories::engagement::starred_at(&state.pool, user.id, repo.id)
-                .await
-                .map_err(Error::unavailable)?
+            let Some(at) = crate::backend::db::repositories::engagement::starred_at(
+                &state.pool,
+                user.id,
+                repo.id,
+            )
+            .await
+            .map_err(Error::unavailable)?
             else {
                 continue;
             };
@@ -268,10 +286,10 @@ async fn star_history(
     }
     let page = Pagination {
         page: query.page,
-        per_page: Some(super::pagination::page_size(query.per_page).min(30)),
+        per_page: Some(crate::backend::api::github::pagination::page_size(query.per_page).min(30)),
     };
     let (offset, limit) = page.window()?;
-    let rows = db::repositories::engagement::list_star_history(
+    let rows = crate::backend::db::repositories::engagement::list_star_history(
         &state.pool,
         repo.id,
         (limit + 1) as i64,

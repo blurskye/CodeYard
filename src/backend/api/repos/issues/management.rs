@@ -1,14 +1,12 @@
-use crate::backend::{
-    api::{
-        http::context::PageContext,
-        repos::{
-            discussion::{repository, unavailable, RepositoryData, ResultPage},
-            forms::{authorize_post, field},
-        },
-    },
-    app::AppState,
-    db::{self, issues::management as store},
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::repos::discussion::repository;
+use crate::backend::api::repos::discussion::unavailable;
+use crate::backend::api::repos::discussion::RepositoryData;
+use crate::backend::api::repos::discussion::ResultPage;
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::field;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -21,11 +19,13 @@ use std::{
 };
 
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
-    match error.downcast_ref::<store::Refusal>() {
-        Some(store::Refusal::Denied) => {
+    match error.downcast_ref::<crate::backend::db::issues::management::Refusal>() {
+        Some(crate::backend::db::issues::management::Refusal::Denied) => {
             ctx.error(StatusCode::FORBIDDEN, "Repository permission is required.")
         }
-        Some(store::Refusal::Missing) => ctx.error(StatusCode::NOT_FOUND, "Issue not found."),
+        Some(crate::backend::db::issues::management::Refusal::Missing) => {
+            ctx.error(StatusCode::NOT_FOUND, "Issue not found.")
+        }
         Some(refusal) => ctx.error(StatusCode::UNPROCESSABLE_ENTITY, &refusal.to_string()),
         None => unavailable(ctx),
     }
@@ -43,7 +43,7 @@ pub(crate) async fn native_change(
     let repo = repository(&ctx, &owner, &name).await?;
     let actor = ctx.require_user()?.id;
     let authority = || ctx.database_actor(actor);
-    let issue = db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
+    let issue = crate::backend::db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
         .await
         .map_err(|_| unavailable(&ctx))?
         .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
@@ -61,7 +61,7 @@ pub(crate) async fn native_change(
     let operation = field(&form, "operation");
     let result = match operation.as_str() {
         "pin" | "unpin" => {
-            store::pin(
+            crate::backend::db::issues::management::pin(
                 &ctx.state.pool,
                 authority(),
                 repo.record.id,
@@ -77,13 +77,18 @@ pub(crate) async fn native_change(
                     "Type the issue number to confirm deletion.",
                 ));
             }
-            store::delete(&ctx.state.pool, authority(), repo.record.id, issue.id)
-                .await
-                .map_err(|error| failure(&ctx, error))?;
+            crate::backend::db::issues::management::delete(
+                &ctx.state.pool,
+                authority(),
+                repo.record.id,
+                issue.id,
+            )
+            .await
+            .map_err(|error| failure(&ctx, error))?;
             return Ok(ctx.redirect(&base));
         }
         "transfer" => {
-            let target = db::repositories::records::get_repository(
+            let target = crate::backend::db::repositories::records::get_repository(
                 &ctx.state.pool,
                 &owner,
                 &field(&form, "destination"),
@@ -91,7 +96,7 @@ pub(crate) async fn native_change(
             .await
             .map_err(|_| unavailable(&ctx))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
-            let moved = store::transfer(
+            let moved = crate::backend::db::issues::management::transfer(
                 &ctx.state.pool,
                 authority(),
                 repo.record.id,
@@ -128,7 +133,7 @@ pub(crate) async fn native_change(
             .map_err(|error| {
                 crate::backend::api::repos::discussion::api_error(
                     &ctx,
-                    super::operation_error(error),
+                    crate::backend::api::repos::issues::operation_error(error),
                 )
             })?;
             Ok(())
@@ -176,22 +181,24 @@ pub(crate) async fn pinned(
     ctx: &PageContext,
     repo: &RepositoryData,
 ) -> ResultPage<Vec<RelatedIssue>> {
-    Ok(store::pinned(&ctx.state.pool, repo.record.id)
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .into_iter()
-        .map(|issue| RelatedIssue {
-            id: issue.id,
-            kind: "pinned".into(),
-            title: issue.title,
-            state: issue.state,
-            reference: format!("#{}", issue.number),
-            href: format!(
-                "/{}/{}/issues/{}",
-                repo.view.owner, repo.record.name, issue.number
-            ),
-        })
-        .collect())
+    Ok(
+        crate::backend::db::issues::management::pinned(&ctx.state.pool, repo.record.id)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .into_iter()
+            .map(|issue| RelatedIssue {
+                id: issue.id,
+                kind: "pinned".into(),
+                title: issue.title,
+                state: issue.state,
+                reference: format!("#{}", issue.number),
+                href: format!(
+                    "/{}/{}/issues/{}",
+                    repo.view.owner, repo.record.name, issue.number
+                ),
+            })
+            .collect(),
+    )
 }
 
 pub(crate) async fn load(
@@ -201,14 +208,14 @@ pub(crate) async fn load(
 ) -> ResultPage<Box<IssueManagement>> {
     let pool = &ctx.state.pool;
     let mut controls = IssueManagement {
-        pinned: store::pinned(pool, repo.record.id)
+        pinned: crate::backend::db::issues::management::pinned(pool, repo.record.id)
             .await
             .map_err(|_| unavailable(ctx))?
             .iter()
             .any(|p| p.id == issue.id),
         ..Default::default()
     };
-    let linked = store::linked_branches(pool, issue.id)
+    let linked = crate::backend::db::issues::management::linked_branches(pool, issue.id)
         .await
         .map_err(|_| unavailable(ctx))?;
     let mut wanted: HashMap<i64, HashSet<String>> = HashMap::new();
@@ -265,7 +272,7 @@ pub(crate) async fn load(
         issue,
         &repo.view.owner,
         &repo.record.name,
-        &crate::backend::api::http::config::link_origin(),
+        &codeyard_model::http_config::link_origin(),
     )
     .await
     .map_err(|_| unavailable(ctx))?
@@ -281,7 +288,7 @@ pub(crate) async fn load(
             ),
         ));
     }
-    if let Some(duplicate) = store::duplicate(pool, issue.id)
+    if let Some(duplicate) = crate::backend::db::issues::management::duplicate(pool, issue.id)
         .await
         .map_err(|_| unavailable(ctx))?
     {
@@ -337,10 +344,13 @@ async fn cached_target<'a>(
 ) -> ResultPage<Option<&'a (codeyard_db_core::models::Repository, String)>> {
     if let std::collections::hash_map::Entry::Vacant(slot) = targets.entry(id) {
         let target = if let Some(target) = readable_target(ctx, id).await? {
-            let owner = db::repositories::records::repository_owner_name(&ctx.state.pool, id)
-                .await
-                .map_err(|_| unavailable(ctx))?
-                .ok_or_else(|| unavailable(ctx))?;
+            let owner = crate::backend::db::repositories::records::repository_owner_name(
+                &ctx.state.pool,
+                id,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .ok_or_else(|| unavailable(ctx))?;
             Some((target, owner))
         } else {
             None
@@ -354,9 +364,10 @@ async fn readable_target(
     ctx: &PageContext,
     id: i64,
 ) -> ResultPage<Option<codeyard_db_core::models::Repository>> {
-    let target = db::repositories::records::get_repository_by_id(&ctx.state.pool, id)
-        .await
-        .map_err(|_| unavailable(ctx))?;
+    let target =
+        crate::backend::db::repositories::records::get_repository_by_id(&ctx.state.pool, id)
+            .await
+            .map_err(|_| unavailable(ctx))?;
     if let Some(target) = target {
         if crate::backend::repositories::access::can_read(
             &ctx.state.pool,

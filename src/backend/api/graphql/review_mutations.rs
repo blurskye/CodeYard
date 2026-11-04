@@ -1,10 +1,15 @@
 //! Review drafts, publication and reviewer requests retain the REST lane's native authority checks.
-use super::{
-    db, missing,
-    mutations::{pull_error, target, text},
-    node_objects, repository, unavailable, RequestContext, Result, Value,
-};
-use crate::backend::repositories::pull_requests::{self, reviews};
+use crate::backend::api::graphql::db;
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::mutations::pull_error;
+use crate::backend::api::graphql::mutations::target;
+use crate::backend::api::graphql::mutations::text;
+
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
+
 use serde_json::json;
 pub(super) const FIELDS: &[&str] = &[
     "addPullRequestReview",
@@ -77,12 +82,12 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;
-    let repo = repository::by_id(pull.repo_id, request).await?;
+    let repo = crate::backend::api::graphql::repository::by_id(pull.repo_id, request).await?;
     request.authorize(repo.id, "pull-requests", true).await?;
-    let owner = repository::owner(&repo, request).await?;
+    let owner = crate::backend::api::graphql::repository::owner(&repo, request).await?;
     let mut payload = json!({"clientMutationId":input["clientMutationId"]});
     if field == "requestReviews" {
-        let ids = super::metadata_mutations::ids(&input["userIds"], "U")?;
+        let ids = crate::backend::api::graphql::metadata_mutations::ids(&input["userIds"], "U")?;
         let mut names = vec![];
         for id in ids {
             names.push(
@@ -94,14 +99,14 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             );
         }
         for name in &names {
-            reviews::request_reviewer(
+            crate::backend::repositories::pull_requests::reviews::request_reviewer(
                 pool,
                 &request.state.notification_broadcaster,
                 actor,
                 owner.clone(),
                 repo.name.clone(),
                 pull.number,
-                reviews::RequestReviewerRequest {
+                crate::backend::repositories::pull_requests::reviews::RequestReviewerRequest {
                     username: name.clone(),
                 },
             )
@@ -114,7 +119,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 .map_err(unavailable)?
             {
                 if !names.iter().any(|n| n.eq_ignore_ascii_case(&row.username)) {
-                    reviews::remove_requested_reviewer(
+                    crate::backend::repositories::pull_requests::reviews::remove_requested_reviewer(
                         pool,
                         actor,
                         owner.clone(),
@@ -127,8 +132,9 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 }
             }
         }
-        payload["pullRequest"] = super::issue::pull_object(&pull);
-        payload["actor"] = super::user::actor_object(&request.auth.user, actor);
+        payload["pullRequest"] = crate::backend::api::graphql::issue::pull_object(&pull);
+        payload["actor"] =
+            crate::backend::api::graphql::user::actor_object(&request.auth.user, actor);
         payload["requestedReviewersEdge"] = Value::Null;
         return Ok(payload);
     }
@@ -148,7 +154,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     let review = match field {
         "addPullRequestReview" | "submitPullRequestReview" => {
             let body = input["body"].as_str().map(str::to_owned);
-            crate::backend::issues::validate_body(body.as_deref().unwrap_or(""), false)
+            codeyard_model::issue_input::validate_body(body.as_deref().unwrap_or(""), false)
                 .map_err(async_graphql::Error::new)?;
             let commit = input
                 .get("commitOID")
@@ -178,14 +184,14 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 return Err(missing());
             }
             if let Some(state) = event(input)? {
-                reviews::create_pull_request_review(
+                crate::backend::repositories::pull_requests::reviews::create_pull_request_review(
                     pool,
                     request.state.cluster.as_ref(),
                     &request.state.notification_broadcaster,
                     actor,
                     &request.auth.credential(),
                     (owner, repo.name.clone(), pull.number),
-                    reviews::CreatePullRequestReviewRequest {
+                    crate::backend::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
                         state: Some(state),
                         body,
                         commit_sha: Some(commit.to_owned()),
@@ -213,10 +219,10 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 )
                 .await
                 .map(|(review, _)| review)
-                .map_err(|e| pull_error(pull_requests::write_error(e)))?
+                .map_err(|e| pull_error(crate::backend::repositories::pull_requests::write_error(e)))?
             }
         }
-        "updatePullRequestReview" => reviews::edit_review(
+        "updatePullRequestReview" => crate::backend::repositories::pull_requests::reviews::edit_review(
             pool,
             &request.state.notification_broadcaster,
             actor,
@@ -227,14 +233,14 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         )
         .await
         .map_err(pull_error)?,
-        "dismissPullRequestReview" => reviews::dismiss_pull_request_review(
+        "dismissPullRequestReview" => crate::backend::repositories::pull_requests::reviews::dismiss_pull_request_review(
             pool,
             actor,
             owner,
             repo.name.clone(),
             pull.number,
             existing.as_ref().ok_or_else(missing)?.id,
-            reviews::DismissPullRequestReviewRequest {
+            crate::backend::repositories::pull_requests::reviews::DismissPullRequestReviewRequest {
                 reason: Some(text(input, "message")?.to_owned()),
             },
         )
@@ -247,11 +253,11 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             existing.as_ref().ok_or_else(missing)?.id,
         )
         .await
-        .map_err(|e| pull_error(pull_requests::write_error(e)))?
+        .map_err(|e| pull_error(crate::backend::repositories::pull_requests::write_error(e)))?
         .ok_or_else(missing)?,
         _ => return Err(missing()),
     };
-    let object = node_objects::review(&review, request).await?;
+    let object = crate::backend::api::graphql::node_objects::review(&review, request).await?;
     payload["pullRequestReview"] = object;
     Ok(payload)
 }

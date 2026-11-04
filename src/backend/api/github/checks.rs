@@ -1,8 +1,12 @@
 //! Check publishers share repository authority, but cannot overwrite another publisher's runs.
-use super::{contents::store_error, pagination::Pagination, repo_url, repository, Error, Result};
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::db::checks;
+use codeyard_model::urls::repo_url;
+
 use crate::backend::db::checks::Credential;
 use crate::backend::db::checks::Filter;
 use crate::backend::db::checks::Preference;
@@ -11,8 +15,7 @@ use crate::backend::db::checks::RunPatch;
 use crate::backend::db::checks::Suite;
 use crate::backend::db::checks::ACTIONS_APP_ID;
 use crate::backend::repositories::store::repo_store;
-use crate::backend::webhooks;
-use crate::backend::webhooks::payloads;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -27,12 +30,13 @@ use std::sync::Arc;
 mod documents;
 
 pub(in crate::backend::api) fn write_error(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<checks::Refusal>() {
-        Some(checks::Refusal::Missing) => Error::missing(),
-        Some(checks::Refusal::Denied | checks::Refusal::Publisher) => {
-            Error::new(StatusCode::FORBIDDEN, error.to_string())
-        }
-        Some(checks::Refusal::Invalid) => Error::invalid("Invalid check"),
+    match error.downcast_ref::<crate::backend::db::checks::Refusal>() {
+        Some(crate::backend::db::checks::Refusal::Missing) => Error::missing(),
+        Some(
+            crate::backend::db::checks::Refusal::Denied
+            | crate::backend::db::checks::Refusal::Publisher,
+        ) => Error::new(StatusCode::FORBIDDEN, error.to_string()),
+        Some(crate::backend::db::checks::Refusal::Invalid) => Error::invalid("Invalid check"),
         None => Error::unavailable(error),
     }
 }
@@ -41,7 +45,7 @@ async fn app(pool: &codeyard_db_core::DbPool, id: Option<i64>) -> Result<Value> 
     let Some(id) = id else {
         return Ok(Value::Null);
     };
-    Ok(checks::publishers(pool, &[id])
+    Ok(crate::backend::db::checks::publishers(pool, &[id])
         .await
         .map_err(Error::unavailable)?
         .first()
@@ -49,13 +53,13 @@ async fn app(pool: &codeyard_db_core::DbPool, id: Option<i64>) -> Result<Value> 
         .unwrap_or(Value::Null))
 }
 
-fn app_value(app: &checks::Publisher) -> Value {
-    let owner = payloads::Person {
+fn app_value(app: &crate::backend::db::checks::Publisher) -> Value {
+    let owner = crate::backend::webhooks::payloads::Person {
         id: app.owner_id,
         login: app.owner_login.clone(),
         site_admin: app.owner_is_admin,
     };
-    json!({"id":app.id,"node_id":super::node_id::encode("A", app.id),"client_id":app.client_id,"name":app.name,"description":null,"owner":payloads::person(&owner),"external_url":app.homepage,"html_url":app.homepage,"created_at":app.created_at,"updated_at":app.created_at,"permissions":{"checks":"write","metadata":"read"},"events":["check_run","check_suite"]})
+    json!({"id":app.id,"node_id":crate::backend::api::github::node_id::encode("A", app.id),"client_id":app.client_id,"name":app.name,"description":null,"owner":payloads::person(&owner),"external_url":app.homepage,"html_url":app.homepage,"created_at":app.created_at,"updated_at":app.created_at,"permissions":{"checks":"write","metadata":"read"},"events":["check_run","check_suite"]})
 }
 
 /// The app that publishes workflow run check suites, acting as the Actions bot account.
@@ -64,20 +68,23 @@ async fn actions_app(
     repo: &Repository,
     owner: &str,
 ) -> Result<Value> {
-    let Some(bot) = db::users::accounts::get_user_by_username(pool, db::ci_tokens::BOT)
-        .await
-        .map_err(Error::unavailable)?
+    let Some(bot) = crate::backend::db::users::accounts::get_user_by_username(
+        pool,
+        crate::backend::db::ci_tokens::BOT,
+    )
+    .await
+    .map_err(Error::unavailable)?
     else {
         return Ok(Value::Null);
     };
     let url = format!(
         "{}/{}/{}/actions",
-        crate::backend::api::http::config::link_origin(),
+        codeyard_model::http_config::link_origin(),
         codeyard_webui::encode_component(owner),
         codeyard_webui::encode_component(&repo.name)
     );
     Ok(
-        json!({"id":ACTIONS_APP_ID,"slug":"github-actions","node_id":super::node_id::encode("A",ACTIONS_APP_ID),"name":"GitHub Actions","description":"Workflow runs","owner":payloads::user(&bot),"external_url":url,"html_url":url,"created_at":bot.created_at,"updated_at":bot.created_at,"permissions":{"actions":"write","checks":"write","contents":"write","metadata":"read","statuses":"write"},"events":["check_run","check_suite","push","pull_request","workflow_dispatch"]}),
+        json!({"id":ACTIONS_APP_ID,"slug":"github-actions","node_id":crate::backend::api::github::node_id::encode("A",ACTIONS_APP_ID),"name":"GitHub Actions","description":"Workflow runs","owner":payloads::user(&bot),"external_url":url,"html_url":url,"created_at":bot.created_at,"updated_at":bot.created_at,"permissions":{"actions":"write","checks":"write","contents":"write","metadata":"read","statuses":"write"},"events":["check_run","check_suite","push","pull_request","workflow_dispatch"]}),
     )
 }
 
@@ -87,7 +94,7 @@ async fn pulls(
     owner: &str,
     sha: &str,
 ) -> Result<Value> {
-    let rows = checks::pulls(pool, repo.id, sha)
+    let rows = crate::backend::db::checks::pulls(pool, repo.id, sha)
         .await
         .map_err(Error::unavailable)?;
     Ok(json!(rows
@@ -96,7 +103,7 @@ async fn pulls(
         .collect::<Vec<_>>()))
 }
 
-fn pull_value(repo: &Repository, owner: &str, pull: &checks::Pull) -> Value {
+fn pull_value(repo: &Repository, owner: &str, pull: &crate::backend::db::checks::Pull) -> Value {
     let branch = |reference: &str, sha: &str| json!({"ref":reference,"sha":sha,"repo":{"id":repo.id,"name":repo.name,"url":repo_url(owner,&repo.name)}});
     json!({"id":pull.id,"number":pull.number,"url":format!("{}/pulls/{}",repo_url(owner,&repo.name),pull.number),"head":branch(&pull.head_branch,&pull.head_sha),"base":branch(&pull.base_branch,&pull.base_sha)})
 }
@@ -123,7 +130,7 @@ fn run_value(
     pull_requests: &Value,
 ) -> Value {
     let url = format!("{}/check-runs/{}", repo_url(owner, &repo.name), run.id);
-    json!({"id":run.id,"node_id":super::node_id::encode("CR",run.id),"head_sha":suite.head_sha,"name":run.name,"url":url,"html_url":format!("{}/{}/{}/runs/{}",crate::backend::api::http::config::link_origin(),codeyard_webui::encode_component(owner),codeyard_webui::encode_component(&repo.name),run.id),"details_url":run.data.details_url,"external_id":run.data.external_id,"status":run.status,"conclusion":run.conclusion,"started_at":run.data.started_at,"completed_at":run.data.completed_at,"check_suite":{"id":suite.id},"output":{"title":run.data.title,"summary":run.data.summary,"text":run.data.text,"annotations_count":count,"annotations_url":format!("{url}/annotations"),"images":run.data.images},"app":publisher,"pull_requests":pull_requests})
+    json!({"id":run.id,"node_id":crate::backend::api::github::node_id::encode("CR",run.id),"head_sha":suite.head_sha,"name":run.name,"url":url,"html_url":format!("{}/{}/{}/runs/{}",codeyard_model::http_config::link_origin(),codeyard_webui::encode_component(owner),codeyard_webui::encode_component(&repo.name),run.id),"details_url":run.data.details_url,"external_id":run.data.external_id,"status":run.status,"conclusion":run.conclusion,"started_at":run.data.started_at,"completed_at":run.data.completed_at,"check_suite":{"id":suite.id},"output":{"title":run.data.title,"summary":run.data.summary,"text":run.data.text,"annotations_count":count,"annotations_url":format!("{url}/annotations"),"images":run.data.images},"app":publisher,"pull_requests":pull_requests})
 }
 
 async fn suite_document(
@@ -141,7 +148,7 @@ async fn suite_document(
         repo,
         owner,
         suite,
-        &payloads::simple_commit(&commit),
+        &crate::backend::webhooks::payloads::simple_commit(&commit),
     )
     .await
 }
@@ -153,7 +160,7 @@ async fn suite_document_at(
     suite: &Suite,
     head_commit: &Value,
 ) -> Result<Value> {
-    let count = checks::run_count(
+    let count = crate::backend::db::checks::run_count(
         pool,
         repo.id,
         &Filter {
@@ -166,11 +173,11 @@ async fn suite_document_at(
     // A workflow run's suite has the run's state and is published by Actions.
     let (status, conclusion, publisher) = match suite.ci_run_id {
         Some(id) => {
-            let run = db::ci::get_ci_run(pool, id)
+            let run = crate::backend::db::ci::get_ci_run(pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-            let (status, conclusion) = db::action_runs::run_state(&run);
+            let (status, conclusion) = crate::backend::db::action_runs::run_state(&run);
             (
                 status.to_owned(),
                 conclusion.map(str::to_owned),
@@ -218,7 +225,7 @@ fn suite_value(
         pull_requests,
     } = documents;
     let url = format!("{}/check-suites/{}", repo_url(owner, &repo.name), suite.id);
-    json!({"id":suite.id,"node_id":super::node_id::encode("CSU",suite.id),"head_sha":suite.head_sha,"head_branch":suite.head_branch,"status":status,"conclusion":conclusion,"url":url,"before":null,"after":null,"created_at":suite.created_at,"updated_at":suite.updated_at,"repository":payloads::repository(repo,owner),"latest_check_runs_count":count,"check_runs_url":format!("{url}/check-runs"),"app":publisher,"head_commit":head_commit,"pull_requests":pull_requests,"rerequestable":true,"runs_rerequestable":true})
+    json!({"id":suite.id,"node_id":crate::backend::api::github::node_id::encode("CSU",suite.id),"head_sha":suite.head_sha,"head_branch":suite.head_branch,"status":status,"conclusion":conclusion,"url":url,"before":null,"after":null,"created_at":suite.created_at,"updated_at":suite.updated_at,"repository":payloads::repository(repo,owner),"latest_check_runs_count":count,"check_runs_url":format!("{url}/check-runs"),"app":publisher,"head_commit":head_commit,"pull_requests":pull_requests,"rerequestable":true,"runs_rerequestable":true})
 }
 
 /// Uses the bounded head snapshot captured on the store that accepted the publication. The
@@ -229,7 +236,7 @@ pub(crate) async fn requested_after_push(
     actor: i64,
     sha: &str,
     branch: &str,
-    head: &payloads::PushedCommit,
+    head: &crate::backend::webhooks::payloads::PushedCommit,
 ) {
     if let Err(error) = request_after_push(pool, repo, actor, sha, branch, head).await {
         tracing::warn!(
@@ -246,24 +253,24 @@ async fn request_after_push(
     actor: i64,
     sha: &str,
     branch: &str,
-    head: &payloads::PushedCommit,
+    head: &crate::backend::webhooks::payloads::PushedCommit,
 ) -> Result<()> {
     if !head.id.eq_ignore_ascii_case(sha) {
         return Err(Error::unavailable(
             "Accepted push did not retain the expected head",
         ));
     }
-    let head_commit = payloads::pushed_head(head);
+    let head_commit = crate::backend::webhooks::payloads::pushed_head(head);
     let mut after = 0;
     let mut owner = None;
     loop {
-        let page = checks::automatic_suites(pool, repo, sha, branch, after)
+        let page = crate::backend::db::checks::automatic_suites(pool, repo, sha, branch, after)
             .await
             .map_err(write_error)?;
         after = page.after;
         if !page.suites.is_empty() && owner.is_none() {
             owner = Some(
-                db::repositories::records::repository_owner_name(pool, repo.id)
+                crate::backend::db::repositories::records::repository_owner_name(pool, repo.id)
                     .await
                     .map_err(Error::unavailable)?
                     .ok_or_else(Error::missing)?,
@@ -320,9 +327,9 @@ async fn create_suite(
     Json(input): Json<CreateSuite>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let (sha, branch) = head(&state, &repo, &input.head_sha).await?;
-    let (suite, created) = checks::create_suite(
+    let (suite, created) = crate::backend::db::checks::create_suite(
         &state.pool,
         Credential::Token(auth.token.id),
         repo.id,
@@ -360,10 +367,10 @@ async fn create_run(
     Json(input): Json<CreateRun>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     input.patch.validate(true).map_err(write_error)?;
     let (sha, branch) = head(&state, &repo, &input.head_sha).await?;
-    let changed = checks::create_run(
+    let changed = crate::backend::db::checks::create_run(
         &state.pool,
         Credential::Token(auth.token.id),
         repo.id,
@@ -396,8 +403,8 @@ async fn update_run(
     Json(input): Json<RunPatch>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
-    let changed = checks::update_run(
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
+    let changed = crate::backend::db::checks::update_run(
         &state.pool,
         Credential::Token(auth.token.id),
         repo.id,
@@ -430,34 +437,36 @@ async fn get_run(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    if let Some(run) = checks::run(&state.pool, repo.id, id)
+    if let Some(run) = crate::backend::db::checks::run(&state.pool, repo.id, id)
         .await
         .map_err(Error::unavailable)?
     {
         return Ok(Json(run_document(&state, &repo, &owner, &run).await?));
     }
-    let job = db::action_jobs::by_check_run(&state.pool, repo.id, id)
+    let job = crate::backend::db::action_jobs::by_check_run(&state.pool, repo.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let run = db::ci::get_ci_run_by_id(&state.pool, repo.id, job.run_id)
+    let run = crate::backend::db::ci::get_ci_run_by_id(&state.pool, repo.id, job.run_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let suite = db::action_runs::metadata(&state.pool, repo.id, &[run.id])
+    let suite = crate::backend::db::action_runs::metadata(&state.pool, repo.id, &[run.id])
         .await
         .map_err(Error::unavailable)?
         .into_iter()
         .next()
         .and_then(|metadata| metadata.check_suite_id)
         .ok_or_else(Error::missing)?;
-    let (count, _) = db::action_jobs::annotations(&state.pool, repo.id, job.id, 0, 1)
-        .await
-        .map_err(Error::unavailable)?;
-    let job_document = payloads::action_job(&job, &[], &run, &owner, &repo.name);
+    let (count, _) =
+        crate::backend::db::action_jobs::annotations(&state.pool, repo.id, job.id, 0, 1)
+            .await
+            .map_err(Error::unavailable)?;
+    let job_document =
+        crate::backend::webhooks::payloads::action_job(&job, &[], &run, &owner, &repo.name);
     let url = format!("{}/check-runs/{id}", repo_url(&owner, &repo.name));
     Ok(Json(
-        json!({"id":id,"node_id":super::node_id::encode("CR",id),"head_sha":run.head_sha,"name":job.name,"url":url,
+        json!({"id":id,"node_id":crate::backend::api::github::node_id::encode("CR",id),"head_sha":run.head_sha,"name":job.name,"url":url,
         "html_url":job_document["html_url"],"details_url":job_document["html_url"],"external_id":null,
         "status":job.status,"conclusion":job.conclusion,"started_at":job.started_at,"completed_at":job.completed_at,
         "check_suite":{"id":suite},"output":{"title":job.name,"summary":null,"text":null,"annotations_count":count,"annotations_url":format!("{url}/annotations"),"images":[]},
@@ -470,7 +479,7 @@ async fn get_suite(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let suite = checks::suite(&state.pool, repo.id, id)
+    let suite = crate::backend::db::checks::suite(&state.pool, repo.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -550,7 +559,7 @@ async fn list_for_suite(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    checks::suite(&state.pool, repo.id, id)
+    crate::backend::db::checks::suite(&state.pool, repo.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -578,21 +587,33 @@ async fn list(
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
     let (count, key, docs) = if suites {
-        let count = checks::suite_count(&state.pool, repo.id, filter)
+        let count = crate::backend::db::checks::suite_count(&state.pool, repo.id, filter)
             .await
             .map_err(Error::unavailable)?;
-        let rows = checks::suites(&state.pool, repo.id, filter, offset as i64, limit as i64)
-            .await
-            .map_err(Error::unavailable)?;
+        let rows = crate::backend::db::checks::suites(
+            &state.pool,
+            repo.id,
+            filter,
+            offset as i64,
+            limit as i64,
+        )
+        .await
+        .map_err(Error::unavailable)?;
         let docs = documents::suites(state, repo, owner, &rows).await?;
         (count, "check_suites", docs)
     } else {
-        let count = checks::run_count(&state.pool, repo.id, filter)
+        let count = crate::backend::db::checks::run_count(&state.pool, repo.id, filter)
             .await
             .map_err(Error::unavailable)?;
-        let rows = checks::runs(&state.pool, repo.id, filter, offset as i64, limit as i64)
-            .await
-            .map_err(Error::unavailable)?;
+        let rows = crate::backend::db::checks::runs(
+            &state.pool,
+            repo.id,
+            filter,
+            offset as i64,
+            limit as i64,
+        )
+        .await
+        .map_err(Error::unavailable)?;
         let docs = documents::runs(state, repo, owner, &rows).await?;
         (count, "check_runs", docs)
     };
@@ -610,15 +631,15 @@ async fn annotations(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let Some(run) = checks::run(&state.pool, repo.id, id)
+    let Some(run) = crate::backend::db::checks::run(&state.pool, repo.id, id)
         .await
         .map_err(Error::unavailable)?
     else {
-        let job = db::action_jobs::by_check_run(&state.pool, repo.id, id)
+        let job = crate::backend::db::action_jobs::by_check_run(&state.pool, repo.id, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        return super::actions::job_annotations(
+        return crate::backend::api::github::actions::job_annotations(
             State(state),
             headers,
             Path((owner, name, job.id)),
@@ -627,35 +648,36 @@ async fn annotations(
         )
         .await;
     };
-    let suite = checks::suite(&state.pool, repo.id, run.suite_id)
+    let suite = crate::backend::db::checks::suite(&state.pool, repo.id, run.suite_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let (offset, limit) = page.window()?;
-    let count = checks::annotation_count(&state.pool, id)
+    let count = crate::backend::db::checks::annotation_count(&state.pool, id)
         .await
         .map_err(Error::unavailable)?;
-    let docs = checks::annotations(&state.pool, id, offset as i64, limit as i64)
-        .await
-        .map_err(Error::unavailable)?
-        .into_iter()
-        .map(|a| {
-            let mut doc = json!(a.0);
-            let base = format!(
-                "{}/{}/{}",
-                crate::backend::api::http::config::link_origin(),
-                codeyard_webui::encode_component(&owner),
-                codeyard_webui::encode_component(&name)
-            );
-            doc["blob_href"] = json!(codeyard_webui::pages::repos::ref_path::file_url(
-                &base,
-                "blob",
-                &suite.head_sha,
-                &a.path
-            ));
-            doc
-        })
-        .collect();
+    let docs =
+        crate::backend::db::checks::annotations(&state.pool, id, offset as i64, limit as i64)
+            .await
+            .map_err(Error::unavailable)?
+            .into_iter()
+            .map(|a| {
+                let mut doc = json!(a.0);
+                let base = format!(
+                    "{}/{}/{}",
+                    codeyard_model::http_config::link_origin(),
+                    codeyard_webui::encode_component(&owner),
+                    codeyard_webui::encode_component(&name)
+                );
+                doc["blob_href"] = json!(codeyard_webui::pages::repos::ref_path::file_url(
+                    &base,
+                    "blob",
+                    &suite.head_sha,
+                    &a.path
+                ));
+                doc
+            })
+            .collect();
     page.response(&uri, docs, count > (offset + limit) as i64)
 }
 async fn rerequest(
@@ -665,10 +687,10 @@ async fn rerequest(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let is_run = uri.path().contains("/check-runs/");
     let (suite, run) = if is_run {
-        let run = checks::run(&state.pool, repo.id, id)
+        let run = crate::backend::db::checks::run(&state.pool, repo.id, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -699,11 +721,11 @@ pub(in crate::backend::api) async fn request_again(
     owner: &str,
     actor: i64,
     credential: Credential<'_>,
-    ci_credential: db::ci::CiCredential,
+    ci_credential: crate::backend::db::ci::CiCredential,
     suite: i64,
     run: Option<&Run>,
 ) -> Result<()> {
-    let stored = checks::suite(&state.pool, repo.id, suite)
+    let stored = crate::backend::db::checks::suite(&state.pool, repo.id, suite)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -711,7 +733,7 @@ pub(in crate::backend::api) async fn request_again(
         // An Actions suite shows its workflow run, so rerequesting it queues another attempt of that run.
         let credential = Some(ci_credential);
         // Each attempt has its own suite and CI run; reruns go through the shared workflow run.
-        let workflow_run = db::ci::get_ci_run_by_id(&state.pool, repo.id, ci_run)
+        let workflow_run = crate::backend::db::ci::get_ci_run_by_id(&state.pool, repo.id, ci_run)
             .await
             .map_err(Error::unavailable)?
             .map(|run| run.workflow_run_id.unwrap_or(run.id))
@@ -720,10 +742,10 @@ pub(in crate::backend::api) async fn request_again(
             .ci_runs
             .rerun_workflow_run(repo.id, workflow_run, actor, false, credential)
             .await
-            .map_err(super::actions::admission_error)?;
+            .map_err(crate::backend::api::github::actions::admission_error)?;
         return Ok(());
     }
-    checks::rerequest(
+    crate::backend::db::checks::rerequest(
         &state.pool,
         credential,
         repo.id,
@@ -735,7 +757,7 @@ pub(in crate::backend::api) async fn request_again(
     let (event, doc) = if let Some(run) = run {
         ("check_run", run_document(state, repo, owner, run).await?)
     } else {
-        let suite = checks::suite(&state.pool, repo.id, suite)
+        let suite = crate::backend::db::checks::suite(&state.pool, repo.id, suite)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -757,14 +779,20 @@ pub(in crate::backend::api) async fn request_action(
     run: i64,
     identifier: String,
 ) -> Result<()> {
-    let run = checks::requested_action(&state.pool, credential, repo.id, run, &identifier)
-        .await
-        .map_err(write_error)?;
+    let run = crate::backend::db::checks::requested_action(
+        &state.pool,
+        credential,
+        repo.id,
+        run,
+        &identifier,
+    )
+    .await
+    .map_err(write_error)?;
     let (state, repo, owner) = (Arc::clone(state), repo.clone(), owner.to_owned());
     tokio::spawn(async move {
         let doc = run_document(&state, &repo, &owner, &run).await?;
         let repository = repo.clone();
-        webhooks::emit(&state.pool, &repo, "check_run", vec![actor], move |owner, people| json!({"action":"requested_action", "requested_action":{"identifier":identifier}, "check_run":doc, "repository":payloads::repository(&repository, owner), "sender":payloads::person(&people.get(actor))})).await;
+        crate::backend::webhooks::emit(&state.pool, &repo, "check_run", vec![actor], move |owner, people| json!({"action":"requested_action", "requested_action":{"identifier":identifier}, "check_run":doc, "repository":payloads::repository(&repository, owner), "sender":payloads::person(&people.get(actor))})).await;
         Ok(())
     }).await.map_err(Error::unavailable)?
 }
@@ -781,8 +809,8 @@ async fn preferences(
     Json(input): Json<Preferences>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
-    let saved = checks::preferences(
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
+    let saved = crate::backend::db::checks::preferences(
         &state.pool,
         Credential::Token(auth.token.id),
         repo.id,
@@ -814,7 +842,7 @@ async fn emit_for_pool(
     doc: Value,
 ) {
     let repository = repo.clone();
-    webhooks::emit(pool,repo,event,vec![actor],move |owner,people| json!({"action":action,event:doc,"repository":payloads::repository(&repository,owner),"sender":payloads::person(&people.get(actor))})).await;
+    crate::backend::webhooks::emit(pool,repo,event,vec![actor],move |owner,people| json!({"action":action,event:doc,"repository":payloads::repository(&repository,owner),"sender":payloads::person(&people.get(actor))})).await;
 }
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

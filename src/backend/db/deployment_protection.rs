@@ -1,5 +1,5 @@
 //! Custom deployment rules and per-attempt App decisions shared with Actions.
-use super::github_apps::App;
+use crate::backend::db::github_apps::App;
 use anyhow::Result;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
@@ -63,7 +63,7 @@ pub(crate) fn deployment_ref(branch: &str) -> (&'static str, &str) {
 
 pub(crate) fn provider(app: &App) -> bool {
     serde_json::from_str::<serde_json::Value>(&app.permissions).is_ok_and(|permissions| {
-        crate::backend::identity::github_apps::allows(&permissions, "deployments", true)
+        codeyard_model::github_apps::allows(&permissions, "deployments", true)
     })
 }
 
@@ -72,9 +72,9 @@ native_operation!(crate::backend::db::postgres::deployment_protection::rules, cr
 native_operation!(crate::backend::db::postgres::deployment_protection::integrations, crate::backend::db::sqlite::deployment_protection::integrations,
     fn integrations(pool: &DbPool, repo: i64) -> Result<Vec<App>>);
 native_operation!(crate::backend::db::postgres::deployment_protection::create, crate::backend::db::sqlite::deployment_protection::create,
-    fn create(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, environment: i64, app: i64) -> Result<Rule>);
+    fn create(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, environment: i64, app: i64) -> Result<Rule>);
 native_operation!(crate::backend::db::postgres::deployment_protection::disable, crate::backend::db::sqlite::deployment_protection::disable,
-    fn disable(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, environment: i64, rule: i64) -> Result<()>);
+    fn disable(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, environment: i64, rule: i64) -> Result<()>);
 native_operation!(crate::backend::db::postgres::deployment_protection::gates, crate::backend::db::sqlite::deployment_protection::gates,
     fn gates(pool: &DbPool, run: i64) -> Result<Vec<Gate>>);
 

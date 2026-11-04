@@ -1,13 +1,14 @@
-use super::{
-    admission::{self, AdmissionError},
-    passwords::{self, PasswordError},
-    sessions::{self, SessionContext, SessionIssueError},
-    setup,
-    two_factor::{self, TwoFactorError},
-    AuthenticatedAccount,
-};
-use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db;
+use crate::backend::identity::admission::AdmissionError;
+
+use crate::backend::identity::passwords::PasswordError;
+
+use crate::backend::identity::sessions::SessionContext;
+use crate::backend::identity::sessions::SessionIssueError;
+
+use crate::backend::identity::two_factor::TwoFactorError;
+use crate::backend::identity::AuthenticatedAccount;
+use codeyard_support::secrets::SecretEncryptor;
+
 use codeyard_db_core::DbPool;
 
 /// The result of the password step. An account with two-factor sign-in gets no session yet:
@@ -48,28 +49,29 @@ pub async fn password_login(
 ) -> Result<FirstFactor, LoginError> {
     if credentials.identity.len() > 1024
         || credentials.identity.chars().count() > 255
-        || credentials.password.len() > passwords::MAX_PASSWORD_BYTES
+        || credentials.password.len() > crate::backend::identity::passwords::MAX_PASSWORD_BYTES
     {
         return Err(LoginError::CredentialsBounds);
     }
-    if !setup::status(pool)
+    if !crate::backend::identity::setup::status(pool)
         .await
         .map_err(|_| LoginError::AccountUnavailable)?
         .setup_completed
     {
         return Err(LoginError::SetupRequired);
     }
-    let user = db::users::accounts::get_user_by_username(pool, credentials.identity)
-        .await
-        .map_err(|_| LoginError::AccountUnavailable)?;
+    let user =
+        crate::backend::db::users::accounts::get_user_by_username(pool, credentials.identity)
+            .await
+            .map_err(|_| LoginError::AccountUnavailable)?;
     let user = match user {
         Some(user) => Some(user),
-        None => db::users::accounts::get_user_by_email(pool, credentials.identity)
+        None => crate::backend::db::users::accounts::get_user_by_email(pool, credentials.identity)
             .await
             .map_err(|_| LoginError::AccountUnavailable)?,
     };
     // Shared admission precedes every KDF, including missing/OAuth-only accounts.
-    let attempt = admission::admit_login(
+    let attempt = crate::backend::identity::admission::admit_login(
         pool,
         session.client,
         user.as_ref().map(|user| user.id),
@@ -77,7 +79,7 @@ pub async fn password_login(
     )
     .await
     .map_err(LoginError::Admission)?;
-    let verification = passwords::verify_password(
+    let verification = crate::backend::identity::passwords::verify_password(
         credentials.password,
         user.as_ref().and_then(|user| user.password_hash.as_deref()),
     )
@@ -90,28 +92,28 @@ pub async fn password_login(
     if user.is_banned {
         return Err(LoginError::Banned);
     }
-    admission::forgive_login(pool, &attempt).await;
+    crate::backend::identity::admission::forgive_login(pool, &attempt).await;
     if verification.outdated {
         upgrade_hash(pool, &mut user, credentials.password).await;
     }
-    if two_factor::is_enabled(pool, user.id)
+    if crate::backend::identity::two_factor::is_enabled(pool, user.id)
         .await
         .map_err(|_| LoginError::AccountUnavailable)?
     {
         let encryptor = encryptor.ok_or(LoginError::TwoFactorUnavailable)?;
-        let pending = two_factor::seal_pending_login(
+        let pending = crate::backend::identity::two_factor::seal_pending_login(
             encryptor,
             user.id,
             session.user_agent,
             user.password_hash.as_deref(),
-            two_factor::now_unix(),
+            crate::backend::identity::two_factor::now_unix(),
         )
         .map_err(|_| LoginError::TwoFactorUnavailable)?;
         return Ok(FirstFactor::SecondFactor { pending });
     }
     // Password authentication deliberately permits the must-change account's
     // restricted session. Ordinary resource authority remains denied elsewhere.
-    let session_id = sessions::issue_authenticated_session(
+    let session_id = crate::backend::identity::sessions::issue_authenticated_session(
         pool,
         session,
         user.id,
@@ -132,14 +134,16 @@ async fn upgrade_hash(pool: &DbPool, user: &mut codeyard_db_core::models::User, 
     let Some(old) = user.password_hash.clone() else {
         return;
     };
-    let new = match passwords::hash_password(password).await {
+    let new = match crate::backend::identity::passwords::hash_password(password).await {
         Ok(new) => new,
         Err(error) => {
             tracing::warn!(?error, "could not rehash a password at the current cost");
             return;
         }
     };
-    match db::users::accounts::replace_password_hash(pool, user.id, &old, &new).await {
+    match crate::backend::db::users::accounts::replace_password_hash(pool, user.id, &old, &new)
+        .await
+    {
         Ok(true) => user.password_hash = Some(new),
         Ok(false) => adopt_current_hash(pool, user, password).await,
         Err(error) => tracing::warn!(?error, "could not store a rehashed password"),
@@ -153,10 +157,16 @@ async fn adopt_current_hash(
     user: &mut codeyard_db_core::models::User,
     password: &str,
 ) {
-    let Ok(Some(current)) = db::users::accounts::get_user_by_id(pool, user.id).await else {
+    let Ok(Some(current)) =
+        crate::backend::db::users::accounts::get_user_by_id(pool, user.id).await
+    else {
         return;
     };
-    if let Ok(check) = passwords::verify_password(password, current.password_hash.as_deref()).await
+    if let Ok(check) = crate::backend::identity::passwords::verify_password(
+        password,
+        current.password_hash.as_deref(),
+    )
+    .await
     {
         if check.valid {
             user.password_hash = current.password_hash;
@@ -174,42 +184,55 @@ pub async fn second_factor_login(
     session: SessionContext<'_>,
 ) -> Result<AuthenticatedAccount, LoginError> {
     let encryptor = encryptor.ok_or(LoginError::TwoFactorUnavailable)?;
-    let now = two_factor::now_unix();
-    let (user_id, sealed_password) =
-        two_factor::open_pending_login(encryptor, pending, session.user_agent, now)
-            .ok_or(LoginError::PendingLoginExpired)?;
-    let user = db::users::accounts::get_user_by_id(pool, user_id)
+    let now = crate::backend::identity::two_factor::now_unix();
+    let (user_id, sealed_password) = crate::backend::identity::two_factor::open_pending_login(
+        encryptor,
+        pending,
+        session.user_agent,
+        now,
+    )
+    .ok_or(LoginError::PendingLoginExpired)?;
+    let user = crate::backend::db::users::accounts::get_user_by_id(pool, user_id)
         .await
         .map_err(|_| LoginError::AccountUnavailable)?
         .ok_or(LoginError::PendingLoginExpired)?;
     // A password change ends the sign-in that started with the old password.
-    if two_factor::password_digest(user.password_hash.as_deref()) != sealed_password {
+    if crate::backend::identity::two_factor::password_digest(user.password_hash.as_deref())
+        != sealed_password
+    {
         return Err(LoginError::PendingLoginExpired);
     }
     if user.is_banned {
         return Err(LoginError::Banned);
     }
-    let attempt = admission::admit_login(pool, session.client, Some(user.id), &user.username)
-        .await
-        .map_err(LoginError::Admission)?;
-    let normalized = two_factor::normalize_code(code);
+    let attempt = crate::backend::identity::admission::admit_login(
+        pool,
+        session.client,
+        Some(user.id),
+        &user.username,
+    )
+    .await
+    .map_err(LoginError::Admission)?;
+    let normalized = crate::backend::identity::two_factor::normalize_code(code);
     let recovery = (!normalized.is_empty()
         && !(normalized.len() == 6 && normalized.bytes().all(|b| b.is_ascii_digit())))
-    .then(|| two_factor::recovery_code_hash(&normalized));
+    .then(|| crate::backend::identity::two_factor::recovery_code_hash(&normalized));
     let totp = if recovery.is_none() {
         Some(
-            two_factor::verify_totp_code(pool, encryptor, user.id, code, now)
-                .await
-                .map_err(|error| match error {
-                    TwoFactorError::KeyUnavailable => LoginError::TwoFactorUnavailable,
-                    _ => LoginError::AccountUnavailable,
-                })?
-                .ok_or(LoginError::InvalidTwoFactorCode)?,
+            crate::backend::identity::two_factor::verify_totp_code(
+                pool, encryptor, user.id, code, now,
+            )
+            .await
+            .map_err(|error| match error {
+                TwoFactorError::KeyUnavailable => LoginError::TwoFactorUnavailable,
+                _ => LoginError::AccountUnavailable,
+            })?
+            .ok_or(LoginError::InvalidTwoFactorCode)?,
         )
     } else {
         None
     };
-    let credential = db::users::sessions::SessionCredential::SecondFactor {
+    let credential = crate::backend::db::users::sessions::SessionCredential::SecondFactor {
         password: user
             .password_hash
             .as_deref()
@@ -217,15 +240,17 @@ pub async fn second_factor_login(
         recovery_hash: recovery.as_deref(),
         totp: totp.as_ref().map(|(nonce, step)| (nonce.as_slice(), *step)),
     };
-    let session_id = sessions::issue_authenticated_session(pool, session, user.id, credential)
-        .await
-        .map_err(|error| {
-            if error == SessionIssueError::Denied {
-                LoginError::InvalidTwoFactorCode
-            } else {
-                LoginError::Session(error)
-            }
-        })?;
-    admission::forgive_login(pool, &attempt).await;
+    let session_id = crate::backend::identity::sessions::issue_authenticated_session(
+        pool, session, user.id, credential,
+    )
+    .await
+    .map_err(|error| {
+        if error == SessionIssueError::Denied {
+            LoginError::InvalidTwoFactorCode
+        } else {
+            LoginError::Session(error)
+        }
+    })?;
+    crate::backend::identity::admission::forgive_login(pool, &attempt).await;
     Ok(AuthenticatedAccount { user, session_id })
 }

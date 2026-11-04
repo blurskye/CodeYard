@@ -5,7 +5,7 @@ use codeyard_db_core::models::OrgRole;
 use sqlx::SqlitePool;
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing};
 
-use super::authority::*;
+use crate::backend::db::sqlite::organizations::authority::*;
 
 pub async fn get_organization_role(
     pool: &SqlitePool,
@@ -64,7 +64,8 @@ pub async fn add_organization_member(
         return Ok(Denied);
     }
     if !active(&mut tx, target).await?
-        || super::blocks::target_blocked(&mut tx, org, target).await?
+        || crate::backend::db::sqlite::organizations::blocks::target_blocked(&mut tx, org, target)
+            .await?
     {
         return Ok(Denied);
     }
@@ -228,8 +229,10 @@ async fn remove_member(
             Removal::Remove => Missing,
             Removal::RemoveOrCancel => {
                 let outcome =
-                    super::invitations::cancel_offers(&mut tx, actor_role, org, target, false)
-                        .await?;
+                    crate::backend::db::sqlite::organizations::invitations::cancel_offers(
+                        &mut tx, actor_role, org, target, false,
+                    )
+                    .await?;
                 if matches!(outcome, Applied(())) {
                     tx.commit().await?;
                 }
@@ -263,7 +266,7 @@ async fn remove_member(
     }
     sqlx::query("UPDATE repository_invitations SET state='cancelled' WHERE invitee_id=?1 AND state='pending' AND repo_id IN (SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=?2)")
         .bind(target).bind(org).execute(&mut *tx).await?;
-    let recipient = super::invitations::RECIPIENT;
+    let recipient = crate::backend::db::sqlite::organizations::invitations::RECIPIENT;
     sqlx::query(&format!(
         "DELETE FROM organization_invitations AS i WHERE {recipient} AND i.org_id=?2"
     ))

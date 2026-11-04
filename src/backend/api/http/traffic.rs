@@ -1,9 +1,11 @@
 //! Observe only actual successful navigation responses, after SSR has completed.
-use super::{context::PageContext, render::accepts_page_model, session};
-use crate::backend::{
-    app::AppState,
-    repositories::traffic::{self, Identity, Metric},
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::render::accepts_page_model;
+
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::traffic::Identity;
+use crate::backend::repositories::traffic::Metric;
 use axum::{
     extract::Request,
     http::{header, Method},
@@ -50,7 +52,7 @@ pub(super) fn page(ctx: &PageContext, title: &str, page: &Page) -> Option<Observ
     let identity = match ctx.user.as_ref() {
         Some(actor) => Identity::account(actor.id),
         None => Identity::client(
-            session::client_address(&ctx.headers)?,
+            crate::backend::api::http::session::client_address(&ctx.headers)?,
             ctx.headers
                 .get(header::USER_AGENT)
                 .and_then(|header| header.to_str().ok())
@@ -63,7 +65,7 @@ pub(super) fn page(ctx: &PageContext, title: &str, page: &Page) -> Option<Observ
         ctx.headers
             .get(header::REFERER)
             .and_then(|header| header.to_str().ok()),
-        &super::config::link_origin(),
+        &codeyard_model::http_config::link_origin(),
     )
     .ok()?;
     Some(Observation {
@@ -82,7 +84,7 @@ pub(crate) async fn record_views(
     let observation = response.extensions_mut().remove::<Observation>();
     if navigation && response.status().is_success() {
         if let Some(observation) = observation {
-            traffic::observe(
+            crate::backend::repositories::traffic::observe(
                 &state.pool,
                 observation.repo,
                 &observation.identity,

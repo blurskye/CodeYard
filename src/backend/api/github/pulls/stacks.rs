@@ -1,12 +1,10 @@
-use super::super::{auth, node_id, pagination::Pagination, repo_url, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db,
-    repositories::{
-        access,
-        pull_requests::{mutations, stacks},
-    },
-};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use codeyard_model::urls::repo_url;
+
 use axum::{
     body::Bytes,
     extract::{OriginalUri, Path, Query, State},
@@ -23,8 +21,8 @@ async fn metadata(
     state: &AppState,
     repo: i64,
     number: i32,
-) -> Result<db::pull_requests::records::StackMetadata> {
-    db::pull_requests::records::get_pull_request_stack(&state.pool, repo, number)
+) -> Result<crate::backend::db::pull_requests::records::StackMetadata> {
+    crate::backend::db::pull_requests::records::get_pull_request_stack(&state.pool, repo, number)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)
@@ -34,17 +32,21 @@ async fn document(
     headers: &HeaderMap,
     repo: &codeyard_db_core::models::Repository,
     owner: &str,
-    meta: &db::pull_requests::records::StackMetadata,
+    meta: &crate::backend::db::pull_requests::records::StackMetadata,
     detail: bool,
 ) -> Result<Value> {
-    let members = stacks::order_layers(
-        db::pull_requests::records::list_stack_members(&state.pool, repo.id, meta.id)
-            .await
-            .map_err(Error::unavailable)?,
+    let members = crate::backend::repositories::pull_requests::stacks::order_layers(
+        crate::backend::db::pull_requests::records::list_stack_members(
+            &state.pool,
+            repo.id,
+            meta.id,
+        )
+        .await
+        .map_err(Error::unavailable)?,
     );
     let mut pulls = Vec::new();
     for pull in &members {
-        pulls.push(if detail{super::document(state,headers,repo,owner,pull,false).await?}else{json!({"number":pull.number,"state":if pull.state=="merged"{"closed"}else{&pull.state},"draft":pull.is_draft,"merged_at":pull.merged_at,"head":{"ref":pull.head_branch,"sha":pull.head_sha}})});
+        pulls.push(if detail{crate::backend::api::github::pulls::document(state,headers,repo,owner,pull,false).await?}else{json!({"number":pull.number,"state":if pull.state=="merged"{"closed"}else{&pull.state},"draft":pull.is_draft,"merged_at":pull.merged_at,"head":{"ref":pull.head_branch,"sha":pull.head_sha}})});
     }
     Ok(
         json!({"id":meta.id,"number":meta.number,"node_id":node_id::encode("S",meta.id),"url":format!("{}/stacks/{}",repo_url(owner,&repo.name),meta.number),"base":{"ref":meta.base_branch},"open":members.iter().any(|p|p.state=="open"),"created_at":meta.created_at,"pull_requests":pulls}),
@@ -72,7 +74,7 @@ async fn list(
         per_page: query.per_page,
     };
     let (offset, limit) = page.window()?;
-    let rows = db::pull_requests::records::list_pull_request_stacks(
+    let rows = crate::backend::db::pull_requests::records::list_pull_request_stacks(
         &state.pool,
         repo.id,
         query.pull_request,
@@ -112,14 +114,17 @@ async fn change(
 ) -> Result<Response> {
     let (owner, name) = namespace;
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(auth::required)?.user;
-    if !access::can_write(&state.pool, &actor, &repo)
+    let actor = viewer
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
+    if !crate::backend::repositories::access::can_write(&state.pool, &actor, &repo)
         .await
         .map_err(Error::unavailable)?
     {
         return Err(Error::new(StatusCode::FORBIDDEN, "Stack write denied"));
     }
-    let input: Members = serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
+    let input: Members =
+        serde_json::from_slice(&body).map_err(crate::backend::api::github::json_parse_error)?;
     if input.pull_requests.len() < if number.is_none() { 2 } else { 1 }
         || input.pull_requests.len() > 100
     {
@@ -128,7 +133,7 @@ async fn change(
     let mut pulls = Vec::new();
     for n in input.pull_requests {
         pulls.push(
-            db::pull_requests::records::get_pull_request(&state.pool, repo.id, n)
+            crate::backend::db::pull_requests::records::get_pull_request(&state.pool, repo.id, n)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(|| Error::invalid("Pull request not found in this repository"))?,
@@ -139,7 +144,7 @@ async fn change(
         None => pulls[0].id,
     };
     let ids: Vec<i64> = pulls.iter().map(|p| p.id).collect();
-    mutations::join_stack_batch(
+    crate::backend::repositories::pull_requests::mutations::join_stack_batch(
         &state.pool,
         &state.ci_runs,
         actor.id,
@@ -149,11 +154,12 @@ async fn change(
         number.is_none(),
     )
     .await
-    .map_err(super::mutations::operation_error)?;
-    let root = db::pull_requests::records::get_pull_request_by_id(&state.pool, root)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    .map_err(crate::backend::api::github::pulls::mutations::operation_error)?;
+    let root =
+        crate::backend::db::pull_requests::records::get_pull_request_by_id(&state.pool, root)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     let meta = metadata(&state, repo.id, root.number).await?;
     let value = document(&state, &headers, &repo, &owner, &meta, true).await?;
     let location = value["url"]
@@ -193,9 +199,11 @@ async fn unstack(
     Path((owner, name, number)): Path<(String, String, i32)>,
 ) -> Result<Response> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(auth::required)?.user;
+    let actor = viewer
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
     let meta = metadata(&state, repo.id, number).await?;
-    let count = mutations::unstack_named_stack(
+    let count = crate::backend::repositories::pull_requests::mutations::unstack_named_stack(
         &state.pool,
         &state.ci_runs,
         actor.id,
@@ -203,13 +211,17 @@ async fn unstack(
         meta.id,
     )
     .await
-    .map_err(super::mutations::operation_error)?;
+    .map_err(crate::backend::api::github::pulls::mutations::operation_error)?;
     if count == 0 {
         return Err(Error::invalid("Every pull request in this stack is locked"));
     }
-    match db::pull_requests::records::get_pull_request_stack(&state.pool, repo.id, number)
-        .await
-        .map_err(Error::unavailable)?
+    match crate::backend::db::pull_requests::records::get_pull_request_stack(
+        &state.pool,
+        repo.id,
+        number,
+    )
+    .await
+    .map_err(Error::unavailable)?
     {
         None => Ok(StatusCode::NO_CONTENT.into_response()),
         Some(meta) => {

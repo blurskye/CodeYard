@@ -1,7 +1,6 @@
-use crate::backend::db::users::{
-    signup_requests::{ReviewError, SignupSummary},
-    transitions::AdministratorActor,
-};
+use crate::backend::db::users::signup_requests::ReviewError;
+use crate::backend::db::users::signup_requests::SignupSummary;
+use crate::backend::db::users::transitions::AdministratorActor;
 use anyhow::Result;
 use codeyard_db_core::models::SignupRequest;
 use codeyard_db_core::models::User;
@@ -139,11 +138,22 @@ pub async fn approve_signup_request(
     }
 
     // Leave a conflicting request pending for an explicit rejection.
-    if super::transitions::organization_name_exists(&mut tx, &signup_request.username).await? {
+    if crate::backend::db::sqlite::users::transitions::organization_name_exists(
+        &mut tx,
+        &signup_request.username,
+    )
+    .await?
+    {
         return Err(ReviewError::Denied.into());
     }
 
-    if super::transitions::email_owned(&mut tx, signup_request.email.as_deref(), -1).await? {
+    if crate::backend::db::sqlite::users::transitions::email_owned(
+        &mut tx,
+        signup_request.email.as_deref(),
+        -1,
+    )
+    .await?
+    {
         return Err(ReviewError::Conflict.into());
     }
     let user = sqlx::query_as::<_, User>(
@@ -215,7 +225,7 @@ async fn queue_decision_email(
     let Some(to) = email.map(str::trim).filter(|email| !email.is_empty()) else {
         return Ok(());
     };
-    let mail = crate::backend::email::signup_decision(username, approved);
+    let mail = codeyard_model::mail::signup_decision(username, approved);
     crate::backend::db::sqlite::email::queue_email(tx, to, &mail.subject, &mail.body, None).await
 }
 
@@ -228,7 +238,9 @@ async fn require_reviewer(
             .fetch_optional(&mut **tx)
             .await?
             .unwrap_or(false);
-    if !configured || !super::transitions::active_admin_session(tx, actor).await? {
+    if !configured
+        || !crate::backend::db::sqlite::users::transitions::active_admin_session(tx, actor).await?
+    {
         return Err(ReviewError::Denied.into());
     }
     Ok(())

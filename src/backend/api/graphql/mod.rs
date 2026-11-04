@@ -32,8 +32,8 @@ mod schema;
 mod team;
 mod user;
 
-use super::github::{auth, node_id};
-use crate::backend::{app::AppState, db};
+use crate::backend::app::AppState;
+
 use arguments::Arguments;
 use async_graphql::{Error, ErrorExtensions};
 use axum::{
@@ -50,8 +50,8 @@ type Result<T> = async_graphql::Result<T>;
 
 struct RequestContext {
     state: Arc<AppState>,
-    auth: auth::Authentication,
-    actor: db::credentials::Actor,
+    auth: crate::backend::api::github::auth::Authentication,
+    actor: crate::backend::db::credentials::Actor,
     /// Scopes granted to an OAuth token; other credentials have none.
     oauth_scopes: Option<String>,
     /// Admission distinguishes personal tokens from integrations, which GraphQL does not accept.
@@ -63,7 +63,7 @@ struct RequestContext {
         std::collections::HashMap<(i64, String, String), Arc<codeyard_git::DiffInfo>>,
     >,
     mergeability: tokio::sync::Mutex<std::collections::HashMap<(i64, String, String), bool>>,
-    rate: db::graphql::RateLimit,
+    rate: crate::backend::db::graphql::RateLimit,
 }
 
 /// Field counts do not bound memory: one large text can be loaded under many aliases.
@@ -107,7 +107,7 @@ impl RequestContext {
 
     async fn authorize(&self, repo: i64, scope: &str, write: bool) -> Result<()> {
         let pool = &self.state.pool;
-        let live = db::users::tokens::token_user(pool, self.auth.token.id, write)
+        let live = crate::backend::db::users::tokens::token_user(pool, self.auth.token.id, write)
             .await
             .map_err(unavailable)?;
         if live.is_none_or(|user| user.id != self.auth.user.id) {
@@ -125,19 +125,15 @@ impl RequestContext {
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-            if !crate::backend::identity::github_apps::allows(
-                &permissions,
-                &scope.replace('-', "_"),
-                write,
-            ) {
+            if !codeyard_model::github_apps::allows(&permissions, &scope.replace('-', "_"), write) {
                 return Err(token_denied());
             }
         } else if self.auth.is_job() {
             self.auth
                 .repository_scope(pool, repo, scope, write)
                 .await
-                .map_err(|error| auth::scope_error(error).graphql())?;
-        } else if db::fine_grained_tokens::classic_refused_repository(
+                .map_err(|error| crate::backend::api::github::auth::scope_error(error).graphql())?;
+        } else if crate::backend::db::fine_grained_tokens::classic_refused_repository(
             pool,
             self.auth.token.id,
             repo,
@@ -148,22 +144,31 @@ impl RequestContext {
             return Err(token_denied());
         }
         // Check the live ACL even for cached scalars: ordinary PAT scope is not a read permit.
-        if db::repositories::access::readable_repository_ids(pool, Some(self.auth.user.id), &[repo])
-            .await
-            .map_err(unavailable)?
-            .is_empty()
+        if crate::backend::db::repositories::access::readable_repository_ids(
+            pool,
+            Some(self.auth.user.id),
+            &[repo],
+        )
+        .await
+        .map_err(unavailable)?
+        .is_empty()
         {
             return Err(missing());
         }
         if !write
-            && self.oauth_scopes.as_ref().is_some_and(|scopes| {
-                !crate::backend::identity::oauth_apps::has_scope(scopes, "repo")
-            })
+            && self
+                .oauth_scopes
+                .as_ref()
+                .is_some_and(|scopes| !codeyard_model::oauth_apps::has_scope(scopes, "repo"))
         {
-            if db::repositories::access::readable_repository_ids(pool, None, &[repo])
-                .await
-                .map_err(unavailable)?
-                .is_empty()
+            if crate::backend::db::repositories::access::readable_repository_ids(
+                pool,
+                None,
+                &[repo],
+            )
+            .await
+            .map_err(unavailable)?
+            .is_empty()
             {
                 return Err(token_denied());
             }
@@ -180,9 +185,9 @@ impl RequestContext {
             return match scope {
                 "repo" => Ok(()),
                 "workflow"
-                    if crate::backend::identity::github_apps::allows(
+                    if codeyard_model::github_apps::allows(
                         &Value::Object(
-                            grant.group(crate::backend::identity::fine_grained::Group::Repository),
+                            grant.group(codeyard_model::fine_grained::Group::Repository),
                         ),
                         "workflows",
                         true,
@@ -194,7 +199,7 @@ impl RequestContext {
             };
         }
         match &self.oauth_scopes {
-            Some(scopes) if !crate::backend::identity::oauth_apps::has_scope(scopes, scope) => {
+            Some(scopes) if !codeyard_model::oauth_apps::has_scope(scopes, scope) => {
                 Err(token_denied())
             }
             _ => Ok(()),
@@ -208,7 +213,7 @@ impl RequestContext {
         if self
             .oauth_scopes
             .as_ref()
-            .is_some_and(|scopes| !crate::backend::identity::oauth_apps::has_scope(scopes, "repo"))
+            .is_some_and(|scopes| !codeyard_model::oauth_apps::has_scope(scopes, "repo"))
         {
             return Ok(None);
         }
@@ -218,16 +223,19 @@ impl RequestContext {
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(token_denied)?;
-            let row = db::repositories::records::get_repository_by_id(&self.state.pool, repo)
-                .await
-                .map_err(unavailable)?
-                .ok_or_else(missing)?;
+            let row = crate::backend::db::repositories::records::get_repository_by_id(
+                &self.state.pool,
+                repo,
+            )
+            .await
+            .map_err(unavailable)?
+            .ok_or_else(missing)?;
             if !grant
                 .reaches(&self.state.pool, &row)
                 .await
                 .map_err(unavailable)?
-                || !crate::backend::identity::fine_grained::allows(
-                    &grant.group(crate::backend::identity::fine_grained::Group::Repository),
+                || !codeyard_model::fine_grained::allows(
+                    &grant.group(codeyard_model::fine_grained::Group::Repository),
                     &scope.replace('-', "_"),
                     false,
                 )
@@ -240,10 +248,14 @@ impl RequestContext {
 
     async fn account_permission(&self, key: &str, oauth_scope: &str) -> Result<bool> {
         if self.auth.is_job()
-            || db::users::tokens::token_user(&self.state.pool, self.auth.token.id, false)
-                .await
-                .map_err(unavailable)?
-                .is_none_or(|user| user.id != self.auth.user.id)
+            || crate::backend::db::users::tokens::token_user(
+                &self.state.pool,
+                self.auth.token.id,
+                false,
+            )
+            .await
+            .map_err(unavailable)?
+            .is_none_or(|user| user.id != self.auth.user.id)
         {
             return Ok(false);
         }
@@ -261,13 +273,21 @@ impl RequestContext {
 
     async fn authorize_organization(&self, org: i64) -> Result<()> {
         self.require_oauth_scope("read:org")?;
-        if db::users::tokens::token_user(&self.state.pool, self.auth.token.id, false)
+        if crate::backend::db::users::tokens::token_user(
+            &self.state.pool,
+            self.auth.token.id,
+            false,
+        )
+        .await
+        .map_err(unavailable)?
+        .is_none_or(|user| user.id != self.auth.user.id)
+            || crate::backend::db::fine_grained_tokens::classic_refused(
+                &self.state.pool,
+                self.auth.token.id,
+                org,
+            )
             .await
             .map_err(unavailable)?
-            .is_none_or(|user| user.id != self.auth.user.id)
-            || db::fine_grained_tokens::classic_refused(&self.state.pool, self.auth.token.id, org)
-                .await
-                .map_err(unavailable)?
         {
             return Err(token_denied());
         }
@@ -328,7 +348,7 @@ fn unavailable<E>(_: E) -> Error {
 }
 
 fn url(path: &str) -> String {
-    format!("{}{path}", super::http::config::link_origin())
+    format!("{}{path}", crate::backend::api::http::config::link_origin())
 }
 
 fn arg(ctx: &Arguments, name: &str) -> Result<String> {
@@ -346,7 +366,7 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
         return gists::node(key, request).await;
     }
     // Numeric team IDs and content-addressed tree IDs share T but have disjoint byte shapes.
-    if node_id::decode(id).is_none()
+    if crate::backend::api::github::node_id::decode(id).is_none()
         && id.split_once('_').is_some_and(|(kind, _)| {
             matches!(
                 kind,
@@ -356,7 +376,8 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
     {
         return git_objects::node(id, request).await;
     }
-    let (mut kind, mut id) = node_id::decode(id).ok_or_else(missing)?;
+    let (mut kind, mut id) =
+        crate::backend::api::github::node_id::decode(id).ok_or_else(missing)?;
     if kind == "IC" {
         kind = if id % 2 == 0 { "IC" } else { "PC" };
         id /= 2;
@@ -379,7 +400,7 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
             Ok(repository::object(&repo))
         }
         "I" => {
-            let issue = db::issues::get_issue_by_id(pool, id)
+            let issue = crate::backend::db::issues::get_issue_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -387,7 +408,7 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
             Ok(issue::object(&issue))
         }
         "PR" => {
-            let pull = db::pull_requests::records::get_pull_request_by_id(pool, id)
+            let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -399,7 +420,7 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
         "LB" => issue::linked_branch_node(id, request).await,
         "RRS" => rulesets::node(id, request).await,
         "L" => {
-            let label = db::labels::get_label_by_id(pool, id)
+            let label = crate::backend::db::labels::get_label_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -415,11 +436,11 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
             Ok(value)
         }
         "IC" => {
-            let comment = db::issues::get_issue_comment(pool, id)
+            let comment = crate::backend::db::issues::get_issue_comment(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-            let parent = db::issues::get_issue_by_id(pool, comment.issue_id)
+            let parent = crate::backend::db::issues::get_issue_by_id(pool, comment.issue_id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -429,28 +450,31 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
         "PC" => {
             // The body and its review's visibility are read together, so a draft edited and
             // submitted meanwhile cannot show its unpublished text.
-            let comment = db::pull_requests::reviews::get_visible_pull_request_comment(
+            let comment =
+                crate::backend::db::pull_requests::reviews::get_visible_pull_request_comment(
+                    pool,
+                    id,
+                    request
+                        .private_viewer(
+                            crate::backend::db::graphql::node_repository(pool, "PRRC", id)
+                                .await
+                                .map_err(unavailable)?
+                                .ok_or_else(missing)?,
+                            "pull-requests",
+                        )
+                        .await?
+                        .unwrap_or(-1),
+                )
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?;
+            let parent = crate::backend::db::pull_requests::records::get_pull_request_by_id(
                 pool,
-                id,
-                request
-                    .private_viewer(
-                        db::graphql::node_repository(pool, "PRRC", id)
-                            .await
-                            .map_err(unavailable)?
-                            .ok_or_else(missing)?,
-                        "pull-requests",
-                    )
-                    .await?
-                    .unwrap_or(-1),
+                comment.pull_request_id,
             )
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
-            let parent =
-                db::pull_requests::records::get_pull_request_by_id(pool, comment.pull_request_id)
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?;
             repository::by_id(parent.repo_id, request).await?;
             issue::pull_comment(&comment, request).await
         }
@@ -513,7 +537,11 @@ async fn execute(
     headers: HeaderMap,
     body: std::result::Result<Json<Value>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
-    let authentication = match auth::authenticate(&state, &headers, true).await {
+    let authentication = match crate::backend::api::github::auth::authenticate(
+        &state, &headers, true,
+    )
+    .await
+    {
         Ok(Some(auth)) => auth,
         Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
         Err(error) => {
@@ -529,10 +557,11 @@ async fn execute(
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
         Ok(None) => None,
     };
-    let oauth_scopes = match db::oauth_apps::token(&state.pool, authentication.token.id).await {
-        Ok(token) => token.map(|token| token.scopes),
-        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
-    };
+    let oauth_scopes =
+        match crate::backend::db::oauth_apps::token(&state.pool, authentication.token.id).await {
+            Ok(token) => token.map(|token| token.scopes),
+            Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        };
     let Json(body) = match body {
         Ok(body) => body,
         Err(error) => return error.into_response(),
@@ -547,7 +576,9 @@ async fn execute(
                 .into_response()
         }
     };
-    let rate = match db::graphql::admit_query(&state.pool, authentication.token.id).await {
+    let rate = match crate::backend::db::graphql::admit_query(&state.pool, authentication.token.id)
+        .await
+    {
         Ok(Some(rate)) => rate,
         Ok(None) => {
             return document(async_graphql::Response::from_errors(vec![
@@ -605,6 +636,6 @@ pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/graphql", post(execute))
         .layer(axum::middleware::from_fn(
-            super::http::middleware::bounded_form_body,
+            crate::backend::api::http::middleware::bounded_form_body,
         ))
 }

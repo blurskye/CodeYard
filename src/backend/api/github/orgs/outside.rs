@@ -1,13 +1,14 @@
 //! Outside collaborators retain explicit repository grants, never organization-wide authority.
-use super::{auth, outcome, target, AppState, Error, Result};
-use crate::backend::{
-    api::github::pagination::Pagination,
-    db::{
-        self,
-        organizations::{self, OrganizationOutcome},
-    },
-    webhooks::payloads,
-};
+use crate::backend::api::github::orgs::auth;
+use crate::backend::api::github::orgs::outcome;
+use crate::backend::api::github::orgs::target;
+use crate::backend::api::github::orgs::AppState;
+use crate::backend::api::github::orgs::Error;
+use crate::backend::api::github::orgs::Result;
+use crate::backend::api::github::pagination::Pagination;
+
+use crate::backend::db::organizations::OrganizationOutcome;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -46,7 +47,7 @@ async fn list(
         per_page: query.per_page,
     };
     let (offset, limit) = page.window()?;
-    let result = organizations::outside::list(
+    let result = crate::backend::db::organizations::outside::list(
         &state.pool,
         actor.user.id,
         org.id,
@@ -62,7 +63,13 @@ async fn list(
     let mut rows = outcome(result)?;
     let next = rows.len() > limit;
     rows.truncate(limit);
-    page.response(&uri, rows.iter().map(payloads::user).collect(), next)
+    page.response(
+        &uri,
+        rows.iter()
+            .map(crate::backend::webhooks::payloads::user)
+            .collect(),
+        next,
+    )
 }
 #[derive(Default, Deserialize)]
 struct Conversion {
@@ -82,10 +89,10 @@ async fn convert(
     let input: Conversion = if body.is_empty() {
         Default::default()
     } else {
-        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?
+        serde_json::from_slice(&body).map_err(crate::backend::api::github::json_parse_error)?
     };
     let org = target(&state, &name).await?;
-    let user = db::users::accounts::get_user_by_username(&state.pool, &username)
+    let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, &username)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -120,14 +127,18 @@ async fn remove(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    let user = db::users::accounts::get_user_by_username(&state.pool, &username)
+    let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, &username)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let result =
-        organizations::outside::remove(&state.pool, actor.database_actor(), org.id, user.id)
-            .await
-            .map_err(Error::unavailable)?;
+    let result = crate::backend::db::organizations::outside::remove(
+        &state.pool,
+        actor.database_actor(),
+        org.id,
+        user.id,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     if matches!(result, OrganizationOutcome::Conflict) {
         return Err(Error::new(
             StatusCode::UNPROCESSABLE_ENTITY,

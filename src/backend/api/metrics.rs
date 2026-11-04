@@ -1,6 +1,7 @@
 //! Private Prometheus gauges. Node ids and fixed states are the only labels.
-use super::{github::auth, http::credentials};
-use crate::backend::{app::AppState, db, identity};
+
+use crate::backend::app::AppState;
+
 use axum::{
     extract::State,
     http::{header, HeaderMap, StatusCode},
@@ -10,19 +11,21 @@ use std::{fmt::Write, sync::Arc, time::Duration};
 use subtle::ConstantTimeEq;
 
 async fn allowed(state: &AppState, headers: &HeaderMap) -> bool {
-    let Some(bearer) = credentials::bearer(headers) else {
+    let Some(bearer) = crate::backend::api::http::credentials::bearer(headers) else {
         return false;
     };
     if state.metrics_token_hash.as_ref().is_some_and(|expected| {
         bool::from(
             expected
                 .as_bytes()
-                .ct_eq(identity::tokens::token_hash(bearer).as_bytes()),
+                .ct_eq(codeyard_support::token_hash::token_hash(bearer).as_bytes()),
         )
     }) {
         return true;
     }
-    let Ok(Some(auth)) = auth::authenticate(state, headers, true).await else {
+    let Ok(Some(auth)) =
+        crate::backend::api::github::auth::authenticate(state, headers, true).await
+    else {
         return false;
     };
     if !auth.user.is_admin || auth.user.is_banned || auth.user.must_change_password {
@@ -30,10 +33,10 @@ async fn allowed(state: &AppState, headers: &HeaderMap) -> bool {
     }
     // Repository-scoped and OAuth credentials do not grant site-wide monitoring access.
     matches!(
-        identity::github_apps::authority(&state.pool, auth.token.id).await,
+        crate::backend::identity::github_apps::authority(&state.pool, auth.token.id).await,
         Ok(None)
     ) && matches!(
-        db::oauth_apps::token(&state.pool, auth.token.id).await,
+        crate::backend::db::oauth_apps::token(&state.pool, auth.token.id).await,
         Ok(None)
     )
 }
@@ -63,10 +66,10 @@ fn gauge(body: &mut String, name: &str) {
 }
 
 async fn collect(state: &AppState) -> anyhow::Result<String> {
-    let nodes = db::metrics::storage_nodes(&state.pool).await?;
-    let lag = db::metrics::replica_lag(&state.pool).await?;
-    let ci = db::metrics::ci_queue(&state.pool).await?;
-    let counts = db::metrics::node_counts(&state.pool).await?;
+    let nodes = crate::backend::db::metrics::storage_nodes(&state.pool).await?;
+    let lag = crate::backend::db::metrics::replica_lag(&state.pool).await?;
+    let ci = crate::backend::db::metrics::ci_queue(&state.pool).await?;
+    let counts = crate::backend::db::metrics::node_counts(&state.pool).await?;
     let mut body = String::new();
     gauge(&mut body, "repository_bytes");
     for node in &nodes {

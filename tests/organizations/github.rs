@@ -18,8 +18,8 @@ mod settings;
 mod teams;
 mod token_grants;
 use crate::support::{
-    database::Database, github_spec::assert_github_schema, http_client::Client,
-    organizations::applied,
+    codeyard::backend::db::organizations::applied, database::Database,
+    github_spec::assert_github_schema, http_client::Client,
 };
 use axum::{
     body::{to_bytes, Body},
@@ -29,10 +29,10 @@ use axum::{
 use codeyard::backend::api::create_router;
 use codeyard::backend::app::AppState;
 use codeyard::backend::ci::CiConfig;
-use codeyard::backend::db::organizations;
+
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::OrganizationProfile;
-use codeyard::backend::identity::tokens;
+
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard::backend::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
@@ -90,7 +90,7 @@ async fn contract(pg: bool) {
     let member = f.actor("member").await;
     let outsider = f.actor("outsider").await;
     let org = applied(
-        organizations::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new(
@@ -103,12 +103,18 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        organizations::add_organization_member(f.pool(), owner, org.id, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard::backend::db::organizations::add_organization_member(
+            f.pool(),
+            owner,
+            org.id,
+            member,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     applied(
-        organizations::invite_organization_member(
+        codeyard::backend::db::organizations::invite_organization_member(
             f.pool(),
             owner,
             org.id,
@@ -119,7 +125,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let second = applied(
-        organizations::create_organization(
+        codeyard::backend::db::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("second", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -144,7 +150,7 @@ async fn contract(pg: bool) {
         (member, "read"),
     ] {
         let session = Client::login(&router, f.pool(), actor).await;
-        let token = tokens::create(
+        let token = codeyard::backend::identity::tokens::create(
             f.pool(),
             actor,
             Some(&session.session),
@@ -557,7 +563,7 @@ async fn contract(pg: bool) {
     )
     .await;
     applied(
-        organizations::update_organization_member_role(
+        codeyard::backend::db::organizations::update_organization_member_role(
             f.pool(),
             owner,
             org.id,
@@ -588,7 +594,7 @@ async fn contract(pg: bool) {
     )
     .await;
     applied(
-        organizations::update_organization_member_role(
+        codeyard::backend::db::organizations::update_organization_member_role(
             f.pool(),
             owner,
             org.id,

@@ -1,13 +1,15 @@
 //! Docker exchanges login credentials for short-lived, repository-scoped bearer tokens.
-use super::{Error, Result};
-use crate::backend::{
-    api::github::auth::Authentication, app::AppState, db, identity::tokens::token_hash,
-};
+use crate::backend::api::github::auth::Authentication;
+use crate::backend::api::packages::Error;
+use crate::backend::api::packages::Result;
+use crate::backend::app::AppState;
+
 use axum::{
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
+use codeyard_support::token_hash::token_hash;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -26,7 +28,7 @@ pub(super) async fn authenticate(
         })
         .map(|(_, value)| value);
     let Some(value) = value else {
-        return super::authenticate(state, headers, write).await;
+        return crate::backend::api::packages::authenticate(state, headers, write).await;
     };
     if headers.get_all(header::AUTHORIZATION).iter().count() != 1 {
         return Err(Error(
@@ -38,9 +40,9 @@ pub(super) async fn authenticate(
     // This marker carries no authority: every operation still uses anonymous package policy.
     // It is deliberately public and requires no per-exchange durable state.
     if value == "cyp_registry_anonymous" {
-        return super::authenticate(state, &HeaderMap::new(), write).await;
+        return crate::backend::api::packages::authenticate(state, &HeaderMap::new(), write).await;
     }
-    let grant = db::packages::registry_token(&state.pool, &token_hash(value))
+    let grant = crate::backend::db::packages::registry_token(&state.pool, &token_hash(value))
         .await
         .map_err(Error::db)?
         .ok_or(Error(
@@ -70,16 +72,16 @@ pub(super) async fn authenticate(
         ));
     }
     let Some(id) = grant.token_id else {
-        return super::authenticate(state, &HeaderMap::new(), write).await;
+        return crate::backend::api::packages::authenticate(state, &HeaderMap::new(), write).await;
     };
-    let configured = db::node_config::get_node_configuration(&state.pool)
+    let configured = crate::backend::db::node_config::get_node_configuration(&state.pool)
         .await
         .map_err(Error::db)?
         .is_some_and(|config| config.setup_completed);
     if !configured {
         return Err(Error::missing());
     }
-    let user = db::users::tokens::token_user(&state.pool, id, write)
+    let user = crate::backend::db::users::tokens::token_user(&state.pool, id, write)
         .await
         .map_err(Error::db)?
         .ok_or(Error(
@@ -87,7 +89,7 @@ pub(super) async fn authenticate(
             "UNAUTHORIZED",
             "Registry credentials revoked",
         ))?;
-    let token = db::packages::registry_source(&state.pool, id)
+    let token = crate::backend::db::packages::registry_source(&state.pool, id)
         .await
         .map_err(Error::db)?
         .ok_or(Error(
@@ -103,7 +105,7 @@ pub(super) async fn exchange(
     headers: &HeaderMap,
     query: &str,
 ) -> Result<Response> {
-    let auth = super::authenticate(state, headers, false).await?;
+    let auth = crate::backend::api::packages::authenticate(state, headers, false).await?;
     let mut resources = BTreeMap::new();
     let mut count = 0;
     for (_, value) in
@@ -123,9 +125,9 @@ pub(super) async fn exchange(
                 .filter(|name| name.len() <= 512)
                 .ok_or_else(Error::invalid)?;
             let (owner, name) = resource.split_once('/').ok_or_else(Error::invalid)?;
-            if !crate::backend::packages::valid_name(owner)
+            if !codeyard_model::package_input::valid_name(owner)
                 || owner.contains('/')
-                || !crate::backend::packages::valid_name(name)
+                || !codeyard_model::package_input::valid_name(name)
             {
                 return Err(Error::invalid());
             }
@@ -143,8 +145,16 @@ pub(super) async fn exchange(
                 return Err(Error::invalid());
             }
             if auth.is_none() {
-                let owner = super::container_owner(state, owner).await?;
-                super::package(state, &owner, "container", name, None, false).await?;
+                let owner = crate::backend::api::packages::container_owner(state, owner).await?;
+                crate::backend::api::packages::package(
+                    state,
+                    &owner,
+                    "container",
+                    name,
+                    None,
+                    false,
+                )
+                .await?;
             }
             // Anonymous tokens can only pull.
             let granted: &mut BTreeSet<String> = resources.entry(resource.to_owned()).or_default();
@@ -164,7 +174,7 @@ pub(super) async fn exchange(
         "cyp_registry_{}",
         crate::backend::api::http::session::generate_session_id()
     );
-    db::packages::issue_registry_token(
+    crate::backend::db::packages::issue_registry_token(
         &state.pool,
         &token_hash(&value),
         auth.as_ref().map(|auth| auth.token.id),

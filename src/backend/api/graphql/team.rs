@@ -1,5 +1,11 @@
 //! Team identities use native active-membership and secret-team visibility, not repository grants.
-use super::{db, missing, token_denied, unavailable, RequestContext, Result, Value};
+use crate::backend::api::graphql::db;
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::token_denied;
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
 pub(super) async fn by_id(id: i64, request: &RequestContext) -> Result<Value> {
     if request.bounded() {
         return Err(token_denied());
@@ -15,7 +21,7 @@ pub(super) async fn by_id(id: i64, request: &RequestContext) -> Result<Value> {
     .map_err(unavailable)?
     .ok_or_else(missing)?;
     request.authorize_organization(team.org_id).await?;
-    super::review_requests::team_object(&team, request).await
+    crate::backend::api::graphql::review_requests::team_object(&team, request).await
 }
 pub(super) async fn by_slug(org: i64, slug: &str, request: &RequestContext) -> Result<Value> {
     if request.bounded() {
@@ -35,5 +41,5 @@ pub(super) async fn by_slug(org: i64, slug: &str, request: &RequestContext) -> R
         return Ok(Value::Null);
     };
     request.authorize_organization(org).await?;
-    super::review_requests::team_object(&team, request).await
+    crate::backend::api::graphql::review_requests::team_object(&team, request).await
 }

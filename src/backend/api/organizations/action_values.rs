@@ -1,12 +1,11 @@
-use super::organization::{self, field};
-use crate::backend::{
-    api::http::context::PageContext,
-    app::AppState,
-    db::{
-        self,
-        organization_values::{self as values, Kind, Save, ValueError},
-    },
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::organizations::organization::field;
+use crate::backend::app::AppState;
+
+use crate::backend::db::organization_values as values;
+use crate::backend::db::organization_values::Kind;
+use crate::backend::db::organization_values::Save;
+use crate::backend::db::organization_values::ValueError;
 use axum::{
     extract::{DefaultBodyLimit, Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -70,10 +69,14 @@ pub(super) async fn build(
             repositories: entry.repository_ids,
         });
     }
-    let oidc = db::oidc::settings(&ctx.state.pool, actor, db::oidc::Scope::Organization(org))
-        .await
-        .map_err(ValueError::Authority)?;
-    let inclusions = db::oidc::inclusions(&ctx.state.pool, actor, org)
+    let oidc = crate::backend::db::oidc::settings(
+        &ctx.state.pool,
+        actor,
+        crate::backend::db::oidc::Scope::Organization(org),
+    )
+    .await
+    .map_err(ValueError::Authority)?;
+    let inclusions = crate::backend::db::oidc::inclusions(&ctx.state.pool, actor, org)
         .await
         .map_err(ValueError::Authority)?;
     Ok(view::Panel {
@@ -148,26 +151,29 @@ async fn change(
             "Organization does not match this form.",
         );
     }
-    let credential =
-        db::users::accounts::AccountCredential::Session(ctx.session_id.as_deref().unwrap_or(""));
+    let credential = crate::backend::db::users::accounts::AccountCredential::Session(
+        ctx.session_id.as_deref().unwrap_or(""),
+    );
     if action.starts_with("oidc-") {
         let result = match action.as_str() {
             "oidc-save" => {
-                let mut settings =
-                    db::oidc::Settings::from_keys(false, field(&form, "include_claim_keys"));
+                let mut settings = crate::backend::db::oidc::Settings::from_keys(
+                    false,
+                    field(&form, "include_claim_keys"),
+                );
                 if settings.include_claim_keys.is_none() {
                     settings.include_claim_keys = Some(vec!["repo".into(), "context".into()]);
                 }
-                db::oidc::save_settings(
+                crate::backend::db::oidc::save_settings(
                     &ctx.state.pool,
                     (actor, &credential),
-                    db::oidc::Scope::Organization(org),
+                    crate::backend::db::oidc::Scope::Organization(org),
                     &settings,
                 )
                 .await
             }
             "oidc-property-add" | "oidc-property-delete" => {
-                db::oidc::change_inclusion(
+                crate::backend::db::oidc::change_inclusion(
                     &ctx.state.pool,
                     (actor, &credential),
                     org,
@@ -176,12 +182,12 @@ async fn change(
                 )
                 .await
             }
-            _ => return organization::not_found(&ctx),
+            _ => return crate::backend::api::organizations::organization::not_found(&ctx),
         };
         return match result {
             Ok(()) => ctx.redirect(&format!("/settings/organizations/{org}?tab=actions")),
             Err(error) => {
-                organization::respond(
+                crate::backend::api::organizations::organization::respond(
                     &ctx,
                     Some(org),
                     crate::backend::api::http::error::oidc_settings_status(&error),
@@ -195,12 +201,12 @@ async fn change(
     let kind = match action.as_str() {
         "secret-save" | "secret-access" | "secret-delete" => Kind::Secret,
         "variable-create" | "variable-save" | "variable-delete" => Kind::Variable,
-        _ => return organization::not_found(&ctx),
+        _ => return crate::backend::api::organizations::organization::not_found(&ctx),
     };
     let name = field(&form, "name").to_ascii_uppercase();
     let previous = field(&form, "previous").to_ascii_uppercase();
     if action.ends_with("-delete") && field(&form, "confirm") != "yes" {
-        return organization::respond(
+        return crate::backend::api::organizations::organization::respond(
             &ctx,
             Some(org),
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -216,9 +222,13 @@ async fn change(
             match values::list(&ctx.state.pool, actor, org, kind).await {
                 Ok(rows) => match rows.into_iter().find(|row| row.name == previous) {
                     Some(row) => row.value,
-                    None => return organization::not_found(&ctx),
+                    None => {
+                        return crate::backend::api::organizations::organization::not_found(&ctx)
+                    }
                 },
-                Err(_) => return organization::unavailable(&ctx),
+                Err(_) => {
+                    return crate::backend::api::organizations::organization::unavailable(&ctx)
+                }
             }
         } else {
             String::new()
@@ -254,7 +264,9 @@ async fn change(
     };
     match result {
         Ok(()) => ctx.redirect(&format!("/settings/organizations/{org}?tab=actions")),
-        Err(ValueError::Denied | ValueError::NotFound) => organization::not_found(&ctx),
+        Err(ValueError::Denied | ValueError::NotFound) => {
+            crate::backend::api::organizations::organization::not_found(&ctx)
+        }
         Err(error) => {
             let (status, message) = match error {
                 ValueError::Database(_) | ValueError::Authority(_) | ValueError::Encryption(_) => (
@@ -269,7 +281,14 @@ async fn change(
             } else {
                 HashMap::new()
             };
-            organization::respond(&ctx, Some(org), status, Some(message), draft).await
+            crate::backend::api::organizations::organization::respond(
+                &ctx,
+                Some(org),
+                status,
+                Some(message),
+                draft,
+            )
+            .await
         }
     }
 }

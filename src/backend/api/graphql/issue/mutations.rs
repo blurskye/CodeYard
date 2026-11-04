@@ -1,8 +1,9 @@
 use super::*;
-use crate::backend::db::relationships::{Kind, Mutation};
+use crate::backend::db::relationships::Kind;
+use crate::backend::db::relationships::Mutation;
 
 pub(super) fn id(input: &Value, name: &str, expected: &str) -> Result<i64> {
-    super::super::mutations::target(input, name, expected)
+    crate::backend::api::graphql::mutations::target(input, name, expected)
 }
 
 pub(super) async fn resolve(

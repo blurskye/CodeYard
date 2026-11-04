@@ -1,13 +1,15 @@
 //! Custom environment rules use installed GitHub Apps and the same gates as Actions.
-use super::{api_url, auth, node_id, pagination::Pagination, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        deployment_protection::{self as protection, Refusal, Rule},
-        environments,
-    },
-    repositories::access,
-};
+use codeyard_model::urls::api_url;
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use crate::backend::db::deployment_protection as protection;
+use crate::backend::db::deployment_protection::Refusal;
+use crate::backend::db::deployment_protection::Rule;
+
 use axum::{
     extract::{OriginalUri, Path, Query, Request, State},
     http::{HeaderMap, Method, StatusCode},
@@ -59,22 +61,26 @@ async fn rules(
     OriginalUri(uri): OriginalUri,
     request: Request,
 ) -> Result<Response> {
-    let read = auth::read_method(request.method());
+    let read = crate::backend::api::github::auth::read_method(request.method());
     let (repo, authentication) =
         repository(&state, &headers, &params["owner"], &params["repo"], !read).await?;
     if !read {
-        let actor = &authentication.as_ref().ok_or_else(auth::required)?.user;
-        if !access::can_admin(&state.pool, actor, &repo)
+        let actor = &authentication
+            .as_ref()
+            .ok_or_else(crate::backend::api::github::auth::required)?
+            .user;
+        if !crate::backend::repositories::access::can_admin(&state.pool, actor, &repo)
             .await
             .map_err(Error::unavailable)?
         {
             return Err(Error::missing());
         }
     }
-    let env = environments::get(&state.pool, repo.id, &params["environment_name"])
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let env =
+        crate::backend::db::environments::get(&state.pool, repo.id, &params["environment_name"])
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     let id = params
         .get("protection_rule_id")
         .map(|id| id.parse::<i64>().map_err(|_| Error::missing()))
@@ -93,7 +99,9 @@ async fn rules(
         let (offset, limit) = page.window()?;
         return Ok((page.headers(&uri, rules.len() > offset + limit)?, Json(json!({"total_count":rules.len(),"custom_deployment_protection_rules":rules.iter().skip(offset).take(limit).map(document).collect::<Vec<_>>()}))).into_response());
     }
-    let actor = authentication.ok_or_else(auth::required)?.database_actor();
+    let actor = authentication
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .database_actor();
     if request.method() == Method::DELETE {
         protection::disable(
             &state.pool,
@@ -126,14 +134,16 @@ async fn integrations(
 ) -> Result<Response> {
     let (repo, authentication) =
         repository(&state, &headers, &params["owner"], &params["repo"], false).await?;
-    let actor = authentication.ok_or_else(auth::required)?.user;
-    if !access::can_admin(&state.pool, &actor, &repo)
+    let actor = authentication
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .user;
+    if !crate::backend::repositories::access::can_admin(&state.pool, &actor, &repo)
         .await
         .map_err(Error::unavailable)?
     {
         return Err(Error::missing());
     }
-    environments::get(&state.pool, repo.id, &params["environment_name"])
+    crate::backend::db::environments::get(&state.pool, repo.id, &params["environment_name"])
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -161,7 +171,10 @@ async fn review_gate(
 ) -> Result<StatusCode> {
     let (repo, authentication) =
         repository(&state, &headers, &params["owner"], &params["repo"], false).await?;
-    let token = authentication.ok_or_else(auth::required)?.token.id;
+    let token = authentication
+        .ok_or_else(crate::backend::api::github::auth::required)?
+        .token
+        .id;
     let run = params["run_id"]
         .parse::<i64>()
         .map_err(|_| Error::missing())?;

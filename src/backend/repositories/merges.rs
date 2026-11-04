@@ -1,14 +1,16 @@
 //! Direct branch merges use normal ref-admission policy, not pull-request approval authority.
-use super::{
-    access, pull_requests,
-    refs::{publication_error, RefError},
-    store::{repo_store, BranchMergePublication, CommitInfo, MergeMethod, MergeRequest},
-};
-use crate::backend::{
-    ci::{CiRuns, RefUpdate},
-    cluster::NodeContext,
-    db,
-};
+
+use crate::backend::ci::CiRuns;
+use crate::backend::ci::RefUpdate;
+use crate::backend::cluster::NodeContext;
+use crate::backend::repositories::refs::publication_error;
+use crate::backend::repositories::refs::RefError;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::BranchMergePublication;
+use crate::backend::repositories::store::CommitInfo;
+use crate::backend::repositories::store::MergeMethod;
+use crate::backend::repositories::store::MergeRequest;
+
 use codeyard_git as git;
 use codeyard_git::error::{ErrorKind, RepoError};
 
@@ -34,16 +36,17 @@ pub async fn merge_branch(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     owner: &str,
     input: BranchMerge<'_>,
 ) -> Result<Option<CommitInfo>, RefError> {
     let authority = actor.into();
     let actor = authority.user_id;
-    let (repository, user) = access::check_write(pool, repo_id, actor)
-        .await
-        .map_err(RefError::Access)?;
+    let (repository, user) =
+        crate::backend::repositories::access::check_write(pool, repo_id, actor)
+            .await
+            .map_err(RefError::Access)?;
     let base_ref = git::branch_ref(input.base).ok_or(RefError::Invalid("Invalid base branch"))?;
     if input.head.is_empty() || input.head.len() > 4096 {
         return Err(RefError::Invalid("A branch name or commit SHA is required"));
@@ -153,7 +156,7 @@ pub async fn merge_branch(
             Err(RefError::AppliedFollowupFailed) => true,
             Err(error) => return Err(error),
         };
-        let refreshed = pull_requests::refresh_open_pull_requests(
+        let refreshed = crate::backend::repositories::pull_requests::refresh_open_pull_requests(
             &pool,
             &repository,
             Some(&[base_name.as_str()]),

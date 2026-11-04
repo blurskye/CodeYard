@@ -1,12 +1,13 @@
 //! Exceptional audited ingress: explicit IDs, current verified staff, no tenant reads.
 
-use super::organization::Fields;
-use super::{membership, organization, INDEX};
+use crate::backend::api::organizations::organization::Fields;
+
 use crate::backend::api::http::context::PageContext;
+use crate::backend::api::organizations::INDEX;
 use crate::backend::app::AppState;
-use crate::backend::db::organizations::{
-    list_ownerless_organizations, recover_suspended_organization_owner, OrganizationOutcome,
-};
+use crate::backend::db::organizations::list_ownerless_organizations;
+use crate::backend::db::organizations::recover_suspended_organization_owner;
+use crate::backend::db::organizations::OrganizationOutcome;
 use axum::extract::rejection::FormRejection;
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -48,22 +49,25 @@ pub(super) async fn recover(
     // Recovery neither follows caller redirects nor reads the supplied tenant.
     // On errors render the operator's own index with only bounded safe draft IDs.
     ctx.query.clear();
-    let draft = if organization::field(&form, "action") == "recover-owner" {
-        organization::draft(&form)
+    let draft = if crate::backend::api::organizations::organization::field(&form, "action")
+        == "recover-owner"
+    {
+        crate::backend::api::organizations::organization::draft(&form)
     } else {
         Fields::new()
     };
-    let ids = if organization::bounded(&form)
-        && organization::field(&form, "action") == "recover-owner"
+    let ids = if crate::backend::api::organizations::organization::bounded(&form)
+        && crate::backend::api::organizations::organization::field(&form, "action")
+            == "recover-owner"
     {
-        organization::id(&form, "org_id")
+        crate::backend::api::organizations::organization::id(&form, "org_id")
             .ok()
-            .zip(organization::username(&form).ok())
+            .zip(crate::backend::api::organizations::organization::username(&form).ok())
     } else {
         None
     };
     let Some((org, username)) = ids else {
-        return organization::respond(
+        return crate::backend::api::organizations::organization::respond(
             &ctx,
             None,
             StatusCode::BAD_REQUEST,
@@ -91,7 +95,7 @@ pub(super) async fn recover(
         }
     };
     let Some(recovered) = ownerless.iter().find(|candidate| candidate.id == org) else {
-        return organization::respond(
+        return crate::backend::api::organizations::organization::respond(
             &ctx,
             None,
             StatusCode::CONFLICT,
@@ -100,8 +104,8 @@ pub(super) async fn recover(
         )
         .await;
     };
-    if organization::field(&form, "confirm") != recovered.name {
-        return organization::respond(
+    if crate::backend::api::organizations::organization::field(&form, "confirm") != recovered.name {
+        return crate::backend::api::organizations::organization::respond(
             &ctx,
             None,
             StatusCode::BAD_REQUEST,
@@ -110,10 +114,11 @@ pub(super) async fn recover(
         )
         .await;
     }
-    let target = match membership::target(&ctx, &username).await {
+    let target = match crate::backend::api::organizations::membership::target(&ctx, &username).await
+    {
         Ok(Some(target)) => target,
         Ok(None) => {
-            return organization::respond(
+            return crate::backend::api::organizations::organization::respond(
                 &ctx,
                 None,
                 StatusCode::NOT_FOUND,
@@ -131,5 +136,12 @@ pub(super) async fn recover(
         Ok(_) => (StatusCode::CONFLICT, "Recovery was not applied. Confirm suspended governance and an eligible current member."),
         Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "Organization recovery is temporarily unavailable; no success was confirmed."),
     };
-    organization::respond(&ctx, None, status, Some(message.into()), draft).await
+    crate::backend::api::organizations::organization::respond(
+        &ctx,
+        None,
+        status,
+        Some(message.into()),
+        draft,
+    )
+    .await
 }

@@ -1,7 +1,9 @@
 //! Admin nodes page: the cluster's members, with approve and revoke.
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::user::responses::{mutation_guard, require_account};
-use crate::backend::{app::AppState, cluster, db};
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::require_account;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -38,7 +40,13 @@ async fn render(ctx: &PageContext, status: StatusCode, message: Option<String>) 
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let authority = (administrator.id, session).into();
     let after = ctx.query.get("after").map(String::as_str).unwrap_or("");
-    let mut nodes = match db::cluster::admin_node_page(&ctx.state.pool, &authority, after).await {
+    let mut nodes = match crate::backend::db::cluster::admin_node_page(
+        &ctx.state.pool,
+        &authority,
+        after,
+    )
+    .await
+    {
         Ok(nodes) => nodes,
         Err(error) if error.is::<codeyard_support::credentials::AccountRestricted>() => {
             return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
@@ -55,7 +63,8 @@ async fn render(ctx: &PageContext, status: StatusCode, message: Option<String>) 
     let next_after = more
         .then(|| nodes.last().map(|node| node.name.clone()))
         .flatten();
-    let Ok(cluster_enabled) = db::cluster::cluster_enabled(&ctx.state.pool).await else {
+    let Ok(cluster_enabled) = crate::backend::db::cluster::cluster_enabled(&ctx.state.pool).await
+    else {
         return ctx.error(
             StatusCode::SERVICE_UNAVAILABLE,
             "The node list is unavailable.",
@@ -134,14 +143,14 @@ async fn change(
         .id;
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let authority = db::cluster::Authority::Administrator {
+    let authority = crate::backend::db::cluster::Authority::Administrator {
         user_id: actor,
         session: &session,
     };
     let pool = &ctx.state.pool;
     let result = match change {
-        Change::Approve => cluster::approve(pool, authority, &name).await,
-        Change::Revoke => cluster::revoke(pool, authority, &name).await,
+        Change::Approve => crate::backend::cluster::approve(pool, authority, &name).await,
+        Change::Revoke => crate::backend::cluster::revoke(pool, authority, &name).await,
     };
     match result {
         Ok(codeyard_db_core::models::NodeStatusChange::Changed { .. }) => {

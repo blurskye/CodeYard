@@ -162,7 +162,7 @@ pub async fn verify_password(
 /// Why a settings change refused the account's current password.
 #[derive(Debug, PartialEq, Eq)]
 pub enum CurrentPasswordError {
-    Admission(super::admission::AdmissionError),
+    Admission(crate::backend::identity::admission::AdmissionError),
     Password(PasswordError),
     Invalid,
 }
@@ -174,9 +174,10 @@ pub async fn verify_current_password(
     user: &codeyard_db_core::models::User,
     password: &str,
 ) -> Result<(), CurrentPasswordError> {
-    let attempt = super::admission::admit_login(pool, None, Some(user.id), &user.username)
-        .await
-        .map_err(CurrentPasswordError::Admission)?;
+    let attempt =
+        crate::backend::identity::admission::admit_login(pool, None, Some(user.id), &user.username)
+            .await
+            .map_err(CurrentPasswordError::Admission)?;
     if !verify_password(password, user.password_hash.as_deref())
         .await
         .map_err(CurrentPasswordError::Password)?
@@ -184,7 +185,7 @@ pub async fn verify_current_password(
     {
         return Err(CurrentPasswordError::Invalid);
     }
-    super::admission::forgive_login(pool, &attempt).await;
+    crate::backend::identity::admission::forgive_login(pool, &attempt).await;
     Ok(())
 }
 

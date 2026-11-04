@@ -1,6 +1,6 @@
-use super::authority::*;
 use crate::backend::db::organizations::invitations::InvitationOffer;
 use crate::backend::db::organizations::*;
+use crate::backend::db::postgres::organizations::authority::*;
 use anyhow::Result;
 use codeyard_db_core::models::OrgInvitation;
 use codeyard_db_core::models::OrgMembership;
@@ -108,7 +108,10 @@ pub(super) async fn save_in_transaction(
         return Ok(Conflict);
     }
     if let Some(target) = target {
-        if !active(tx, target).await? || super::blocks::target_blocked(tx, org, target).await? {
+        if !active(tx, target).await?
+            || crate::backend::db::postgres::organizations::blocks::target_blocked(tx, org, target)
+                .await?
+        {
             return Ok(Denied);
         }
         if membership_role(tx, org, target).await?.is_some() {
@@ -263,7 +266,7 @@ async fn queue_invitation_email(
         .bind(org)
         .fetch_one(&mut *tx)
         .await?;
-    let mail = crate::backend::email::organization_invitation(&name);
+    let mail = codeyard_model::mail::organization_invitation(&name);
     crate::backend::db::postgres::email::queue_email(
         tx,
         &to,
@@ -494,7 +497,10 @@ pub async fn accept_organization_invitation(
     else {
         return Ok(Missing);
     };
-    if !actor_active || super::blocks::target_blocked(&mut tx, org, actor).await? {
+    if !actor_active
+        || crate::backend::db::postgres::organizations::blocks::target_blocked(&mut tx, org, actor)
+            .await?
+    {
         return Ok(Denied);
     }
     if !remaining_active_owner(&mut tx, org, -1).await? {
@@ -545,7 +551,7 @@ pub async fn decline_organization_invitation(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+    if !crate::backend::db::postgres::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
     crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])

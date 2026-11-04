@@ -1,6 +1,8 @@
-use crate::backend::db::email::{
-    delivery_allowed_sql, primary_link_condition, EmailLink, NewEmailSettings, RESEND_SECONDS,
-};
+use crate::backend::db::email::delivery_allowed_sql;
+use crate::backend::db::email::primary_link_condition;
+use crate::backend::db::email::EmailLink;
+use crate::backend::db::email::NewEmailSettings;
+use crate::backend::db::email::RESEND_SECONDS;
 use anyhow::Result;
 use codeyard_db_core::models::EmailSettings;
 use codeyard_db_core::models::OutboxMessage;
@@ -22,9 +24,11 @@ pub async fn save_email_settings(
     settings: &NewEmailSettings<'_>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
-    if !super::users::transitions::active_admin(&mut tx, actor).await?
-        || !super::users::transitions::live_session(&mut tx, actor, session).await?
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
+        .await?;
+    if !crate::backend::db::postgres::users::transitions::active_admin(&mut tx, actor).await?
+        || !crate::backend::db::postgres::users::transitions::live_session(&mut tx, actor, session)
+            .await?
     {
         return Ok(false);
     }
@@ -124,7 +128,7 @@ pub(in crate::backend::db) async fn queue_email(
     let saved: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM email_settings WHERE id=1)")
         .fetch_one(&mut *connection)
         .await?;
-    if !saved && !crate::backend::email::config::environment_configured() {
+    if !saved && !codeyard_model::mail_config::environment_configured() {
         return Ok(());
     }
     sqlx::query("INSERT INTO email_outbox(to_address,subject,body_text,organization_invitation_id) VALUES ($1,$2,$3,$4)")
@@ -234,7 +238,8 @@ pub async fn get_email_notifications(
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::require_account(&mut tx, user_id, credential).await?;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, user_id, credential)
+        .await?;
     let enabled: bool = sqlx::query_scalar("SELECT email_notifications FROM users WHERE id = $1")
         .bind(user_id)
         .fetch_one(&mut *tx)
@@ -250,7 +255,8 @@ pub async fn set_email_notifications(
     enabled: bool,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::require_account(&mut tx, user_id, credential).await?;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, user_id, credential)
+        .await?;
     sqlx::query("UPDATE users SET email_notifications = $2 WHERE id = $1")
         .bind(user_id)
         .bind(enabled)
@@ -297,7 +303,11 @@ pub(super) async fn lock_link_recipient(
 
 pub async fn save_email_token(pool: &PgPool, link: &EmailLink<'_>) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_accounts_shared(&mut tx, &[link.user_id]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(
+        &mut tx,
+        &[link.user_id],
+    )
+    .await?;
     if !lock_link_recipient(&mut tx, link.user_id).await? {
         return Ok(false);
     }
@@ -366,7 +376,7 @@ pub async fn verify_email_token(pool: &PgPool, token_hash: &str) -> Result<Optio
     .fetch_optional(&mut *tx)
     .await?;
     let Some(user) = user else { return Ok(None) };
-    super::users::transitions::lock_accounts(&mut tx, &[user]).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts(&mut tx, &[user]).await?;
     // Consumers retain the parent before taking the issuance, like issuers and account deletion.
     if sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE")
         .bind(user)

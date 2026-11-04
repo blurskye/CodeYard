@@ -1,14 +1,13 @@
 //! Revert through the normal branch publication and pull request creation paths.
-use super::{database_error, mutations, OperationError};
-use crate::backend::{
-    ci::CiRuns,
-    db,
-    notifications::NotificationBroadcaster,
-    repositories::{
-        refs,
-        store::{repo_store, RevertRequest as RevertCommit},
-    },
-};
+use crate::backend::repositories::pull_requests::database_error;
+
+use crate::backend::ci::CiRuns;
+use crate::backend::repositories::pull_requests::OperationError;
+
+use crate::backend::notifications::NotificationBroadcaster;
+
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::RevertRequest as RevertCommit;
 
 pub struct RevertRequest {
     pub title: Option<String>,
@@ -24,16 +23,16 @@ pub async fn revert_pull_request(
     (owner, name, number): (String, String, i32),
     request: RevertRequest,
 ) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
-    let user = super::actor(pool, actor).await?;
-    let repo = db::repositories::records::get_repository(pool, &owner, &name)
+    let user = crate::backend::repositories::pull_requests::actor(pool, actor).await?;
+    let repo = crate::backend::db::repositories::records::get_repository(pool, &owner, &name)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".into(),
         })?;
-    super::require_write(pool, &user, &repo).await?;
-    let pull = db::pull_requests::records::get_pull_request(pool, repo.id, number)
+    crate::backend::repositories::pull_requests::require_write(pool, &user, &repo).await?;
+    let pull = crate::backend::db::pull_requests::records::get_pull_request(pool, repo.id, number)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -50,9 +49,14 @@ pub async fn revert_pull_request(
         })?;
     // A stack merges in one commit. Its inverse for a lower layer would also remove the layers
     // above, so only the top layer can be reverted.
-    if db::pull_requests::records::merged_above(pool, repo.id, merged, &pull.head_branch)
-        .await
-        .map_err(database_error)?
+    if crate::backend::db::pull_requests::records::merged_above(
+        pool,
+        repo.id,
+        merged,
+        &pull.head_branch,
+    )
+    .await
+    .map_err(database_error)?
     {
         return Err(OperationError::Invalid {
             code: "invalid_state",
@@ -61,10 +65,11 @@ pub async fn revert_pull_request(
     }
     // The merge commit landed on the base of the bottom layer it merged, at the tip recorded for
     // that layer. A stacked layer's own base names the layer below it, which the merge left alone.
-    let (base_branch, before) = db::pull_requests::records::merged_trunk(pool, repo.id, merged)
-        .await
-        .map_err(database_error)?
-        .unwrap_or_else(|| (pull.base_branch.clone(), pull.base_sha.clone()));
+    let (base_branch, before) =
+        crate::backend::db::pull_requests::records::merged_trunk(pool, repo.id, merged)
+            .await
+            .map_err(database_error)?
+            .unwrap_or_else(|| (pull.base_branch.clone(), pull.base_sha.clone()));
     // The default title shortens a long original so it fits the 255-byte title limit.
     let title = request.title.unwrap_or_else(|| {
         let mut end = pull.title.len().min(255 - "Revert \"\"".len());
@@ -76,8 +81,8 @@ pub async fn revert_pull_request(
     let body = request
         .body
         .unwrap_or_else(|| format!("Reverts {owner}/{name}#{number}"));
-    crate::backend::issues::validate_title(&title)
-        .and_then(|_| crate::backend::issues::validate_body(&body, false))
+    codeyard_model::issue_input::validate_title(&title)
+        .and_then(|_| codeyard_model::issue_input::validate_body(&body, false))
         .map_err(|message| OperationError::Invalid {
             code: "validation_error",
             message: message.into(),
@@ -86,7 +91,7 @@ pub async fn revert_pull_request(
     let current = store
         .commit_from_primary(&format!("refs/heads/{base_branch}"))
         .await
-        .map_err(super::merge::prepare_error)?
+        .map_err(crate::backend::repositories::pull_requests::merge::prepare_error)?
         .sha;
     let sha = store
         .prepare_revert(&RevertCommit {
@@ -98,9 +103,9 @@ pub async fn revert_pull_request(
             email: user.commit_email(),
         })
         .await
-        .map_err(super::merge::prepare_error)?;
+        .map_err(crate::backend::repositories::pull_requests::merge::prepare_error)?;
     let branch = format!("revert-{number}-{}", uuid::Uuid::new_v4().simple());
-    refs::create_branch(
+    crate::backend::repositories::refs::create_branch(
         pool,
         ci.cluster.as_ref(),
         ci,
@@ -112,12 +117,15 @@ pub async fn revert_pull_request(
     )
     .await
     .map_err(|error| match error {
-        refs::RefError::Git(error) => super::merge::prepare_error(error),
-        refs::RefError::Access(_) | refs::RefError::Protected(_) => OperationError::Denied {
+        crate::backend::repositories::refs::RefError::Git(error) => {
+            crate::backend::repositories::pull_requests::merge::prepare_error(error)
+        }
+        crate::backend::repositories::refs::RefError::Access(_)
+        | crate::backend::repositories::refs::RefError::Protected(_) => OperationError::Denied {
             code: "write_denied",
             message: "Revert branch creation denied".into(),
         },
-        refs::RefError::Invalid(message) => OperationError::Invalid {
+        crate::backend::repositories::refs::RefError::Invalid(message) => OperationError::Invalid {
             code: "validation_error",
             message: message.into(),
         },
@@ -128,11 +136,11 @@ pub async fn revert_pull_request(
             ),
         },
     })?;
-    mutations::create_pull_request(pool, ci, broadcaster, actor, owner, name,
-        mutations::CreatePullRequestRequest {
+    crate::backend::repositories::pull_requests::mutations::create_pull_request(pool, ci, broadcaster, actor, owner, name,
+        crate::backend::repositories::pull_requests::mutations::CreatePullRequestRequest {
             suppress_ci: false,
             head_repo_id: None,
-            source: mutations::PullRequestSource::New { title, body: Some(body) },
+            source: crate::backend::repositories::pull_requests::mutations::PullRequestSource::New { title, body: Some(body) },
             head_branch: branch.clone(),
             base_branch,
             is_draft: request.is_draft,

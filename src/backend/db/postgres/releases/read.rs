@@ -1,6 +1,7 @@
 //! Release content and draft visibility share a repeatable read snapshot.
-use super::super::repositories::access::USER_REPO_ACCESS_SQL;
-use super::{ASSET_COLUMNS, ROW_SELECT};
+use crate::backend::db::postgres::releases::ASSET_COLUMNS;
+use crate::backend::db::postgres::releases::ROW_SELECT;
+use crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL;
 use crate::backend::db::releases::ReleaseRefusal;
 use crate::backend::db::releases::ReleaseSelection;
 use crate::backend::db::releases::ReleaseSnapshot;

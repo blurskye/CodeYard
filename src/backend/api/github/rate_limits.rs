@@ -1,10 +1,11 @@
 //! Primary REST limits use persistent counters, including anonymous requests.
-use super::{auth, Error, Result};
-use crate::backend::{
-    api::http::session,
-    app::AppState,
-    db::api_limits::{self, Budget},
-};
+
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+
+use crate::backend::app::AppState;
+
+use crate::backend::db::api_limits::Budget;
 use axum::{
     extract::Request,
     http::{HeaderMap, StatusCode},
@@ -40,9 +41,9 @@ async fn budget(
     consume: bool,
 ) -> Result<(Budget, bool)> {
     let (limit, seconds) = requester.limit(resource);
-    api_limits::budget(
+    crate::backend::db::api_limits::budget(
         &state.pool,
-        api_limits::Request {
+        crate::backend::db::api_limits::Request {
             key: &requester.key,
             resource,
             now: chrono::Utc::now().timestamp(),
@@ -84,7 +85,7 @@ pub(super) async fn enforce(
             .strip_prefix("/api/v3")
             .unwrap_or(request.uri().path());
         let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
-        let logs = auth::read_method(request.method())
+        let logs = crate::backend::api::github::auth::read_method(request.method())
             && matches!(
                 parts.as_slice(),
                 ["repos", _, _, "actions", "runs" | "jobs", _, "logs"]
@@ -95,11 +96,18 @@ pub(super) async fn enforce(
             .headers()
             .contains_key(axum::http::header::AUTHORIZATION);
         let mut key = None;
-        let authentication = if auth::application_credentials(path) {
-            if super::apps::client_credentials(path) {
-                let app = super::apps::application(&state, request.headers(), parts[1]).await?;
+        let authentication = if crate::backend::api::github::auth::application_credentials(path) {
+            if crate::backend::api::github::apps::client_credentials(path) {
+                let app = crate::backend::api::github::apps::application(
+                    &state,
+                    request.headers(),
+                    parts[1],
+                )
+                .await?;
                 key = Some(format!("oauth-app:{}", app.id));
-            } else if let Some(value) = auth::credential(request.headers()) {
+            } else if let Some(value) =
+                crate::backend::api::github::auth::credential(request.headers())
+            {
                 if let Some(app) =
                     crate::backend::identity::github_apps::authenticate(&state.pool, value)
                         .await
@@ -116,22 +124,28 @@ pub(super) async fn enforce(
                 url::form_urlencoded::parse(query.as_bytes())
                     .any(|(key, _)| key == "codeyard_download")
             });
-            if !capability && session::has_session_cookie(request.headers()) {
-                let user = session::get_current_user(&state.pool, request.headers())
-                    .await
-                    .map_err(|(status, axum::Json(error))| Error::new(status, error.message))?;
+            if !capability
+                && crate::backend::api::http::session::has_session_cookie(request.headers())
+            {
+                let user = crate::backend::api::http::session::get_current_user(
+                    &state.pool,
+                    request.headers(),
+                )
+                .await
+                .map_err(|(status, axum::Json(error))| Error::new(status, error.message))?;
                 key = Some(format!("user:{}", user.id));
             }
             None
         } else {
-            auth::authenticate(&state, request.headers(), false).await?
+            crate::backend::api::github::auth::authenticate(&state, request.headers(), false)
+                .await?
         };
         if let Some(auth) = authentication {
             key = Some(if auth.is_job() {
                 let job = crate::backend::db::ci_tokens::get(&state.pool, auth.token.id)
                     .await
                     .map_err(Error::unavailable)?
-                    .ok_or_else(auth::required)?;
+                    .ok_or_else(crate::backend::api::github::auth::required)?;
                 format!("job-repository:{}", job.repo_id)
             } else {
                 format!("user:{}", auth.user.id)
@@ -142,7 +156,8 @@ pub(super) async fn enforce(
             key: key.unwrap_or_else(|| {
                 format!(
                     "ip:{}",
-                    session::client_address(request.headers()).unwrap_or("unknown")
+                    crate::backend::api::http::session::client_address(request.headers())
+                        .unwrap_or("unknown")
                 )
             }),
         };
@@ -156,7 +171,8 @@ pub(super) async fn enforce(
         } else {
             "core"
         };
-        let consume = !(path == "/rate_limit" && auth::read_method(request.method()));
+        let consume = !(path == "/rate_limit"
+            && crate::backend::api::github::auth::read_method(request.method()));
         let (budget, allowed) = budget(&state, &requester, resource, consume).await?;
         let headers = headers(&budget, requester.limit(resource).0, resource);
         if !allowed {

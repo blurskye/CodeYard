@@ -4,23 +4,27 @@
 //! stay in one place. The review data the Conversation tab and the diff show is built here too.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::discussion::*;
-use crate::backend::api::repos::forms::{authorize_post, field};
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::field;
 use crate::backend::api::repos::pulls::diff::diff_url;
 use crate::backend::api::repos::pulls::diff::render_diff;
 use crate::backend::api::repos::pulls::operation_error;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::db::pull_requests::reviews::{PullRequestCommentEntry, PullRequestReviewEntry};
-use crate::backend::issues::{
-    discussion_link, discussion_link_at, discussion_page, MAX_REVIEW_COMMENT_OFFSET,
-};
-use crate::backend::repositories::code_owners::{load_rules, resolve_owners};
-use crate::backend::repositories::pull_requests::comments as comment_rules;
+
+use crate::backend::db::pull_requests::reviews::PullRequestCommentEntry;
+use crate::backend::db::pull_requests::reviews::PullRequestReviewEntry;
+use crate::backend::issues::discussion_link;
+use crate::backend::issues::discussion_link_at;
+use crate::backend::issues::discussion_page;
+use crate::backend::issues::MAX_REVIEW_COMMENT_OFFSET;
+use crate::backend::repositories::code_owners::load_rules;
+use crate::backend::repositories::code_owners::resolve_owners;
+
 use crate::backend::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
-use crate::backend::repositories::pull_requests::reviews as review_rules;
-use crate::backend::repositories::pull_requests::reviews::{
-    CreatePullRequestReviewRequest, DismissPullRequestReviewRequest, RequestReviewerRequest,
-};
+
+use crate::backend::repositories::pull_requests::reviews::CreatePullRequestReviewRequest;
+use crate::backend::repositories::pull_requests::reviews::DismissPullRequestReviewRequest;
+use crate::backend::repositories::pull_requests::reviews::RequestReviewerRequest;
 use crate::backend::repositories::store::repo_store;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -191,10 +195,13 @@ pub(crate) async fn page_reviews(
         0,
         0..=MAX_REVIEW_COMMENT_OFFSET,
     )?;
-    let comments =
-        db::pull_requests::reviews::list_review_comments_page(&ctx.state.pool, &ids, offset as i64)
-            .await
-            .map_err(|_| unavailable(ctx))?;
+    let comments = crate::backend::db::pull_requests::reviews::list_review_comments_page(
+        &ctx.state.pool,
+        &ids,
+        offset as i64,
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?;
     let next = offset + comments.comments.len();
     let has_more = comments.has_more;
     let mut reviews: Vec<pulls::Review> = entries
@@ -253,14 +260,18 @@ pub(crate) async fn reviewers(
     pull_id: i64,
     (base, head): (&str, &str),
 ) -> ResultPage<Vec<pulls::Reviewer>> {
-    let decisions =
-        db::pull_requests::reviews::list_pull_request_review_decisions(&ctx.state.pool, pull_id)
-            .await
-            .map_err(|_| unavailable(ctx))?;
-    let requested =
-        db::pull_requests::reviews::list_pull_request_reviewers(&ctx.state.pool, pull_id)
-            .await
-            .map_err(|_| unavailable(ctx))?;
+    let decisions = crate::backend::db::pull_requests::reviews::list_pull_request_review_decisions(
+        &ctx.state.pool,
+        pull_id,
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?;
+    let requested = crate::backend::db::pull_requests::reviews::list_pull_request_reviewers(
+        &ctx.state.pool,
+        pull_id,
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?;
     // The owners the changed files name. A reviewer named there gets the Code owner badge.
     let rules = load_rules(&repo.record, ctx.state.cluster.as_ref(), base)
         .await
@@ -330,7 +341,7 @@ pub(crate) async fn reviewers(
             });
         }
     }
-    let teams = db::pull_requests::team_reviewers::list(
+    let teams = crate::backend::db::pull_requests::team_reviewers::list(
         &ctx.state.pool,
         repo.record.id,
         Some(pull_id),
@@ -338,9 +349,10 @@ pub(crate) async fn reviewers(
     )
     .await
     .map_err(|_| unavailable(ctx))?;
-    if let Some(owner) = db::ci::ci_repository_owner(&ctx.state.pool, repo.record.id)
-        .await
-        .map_err(|_| unavailable(ctx))?
+    if let Some(owner) =
+        crate::backend::db::ci::ci_repository_owner(&ctx.state.pool, repo.record.id)
+            .await
+            .map_err(|_| unavailable(ctx))?
     {
         reviewers.extend(teams.into_iter().map(|team| {
             let username = format!("@{owner}/{}", team.team.slug);
@@ -364,10 +376,10 @@ async fn review_location(
     number: i32,
     review: &codeyard_db_core::models::PullRequestReview,
 ) -> String {
-    let position = db::pull_requests::reviews::count_discussion_items_through(
+    let position = crate::backend::db::pull_requests::reviews::count_discussion_items_through(
         &ctx.state.pool,
         review.pull_request_id,
-        db::pull_requests::reviews::DiscussionRef::Review(review.id),
+        crate::backend::db::pull_requests::reviews::DiscussionRef::Review(review.id),
     )
     .await;
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
@@ -475,16 +487,16 @@ pub(crate) async fn native_review(
         token: None,
     };
     let user = ctx.require_user()?.id;
-    match review_rules::create_pull_request_review(
+    match crate::backend::repositories::pull_requests::reviews::create_pull_request_review(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.notification_broadcaster,
         user,
-        &db::users::accounts::AccountCredential::Session(
+        &crate::backend::db::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),
-        review_rules::ReviewTarget {
+        crate::backend::repositories::pull_requests::reviews::ReviewTarget {
             owner: owner.clone(),
             name: name.clone(),
             number,
@@ -521,7 +533,7 @@ pub(crate) async fn native_dismiss_review(
     let request = DismissPullRequestReviewRequest {
         reason: (!reason.trim().is_empty()).then_some(reason),
     };
-    match review_rules::dismiss_pull_request_review(
+    match crate::backend::repositories::pull_requests::reviews::dismiss_pull_request_review(
         &ctx.state.pool,
         user,
         owner,
@@ -573,7 +585,7 @@ pub(crate) async fn native_request_reviewer(
     let request = RequestReviewerRequest {
         username: username.clone(),
     };
-    match review_rules::request_reviewer_bound(
+    match crate::backend::repositories::pull_requests::reviews::request_reviewer_bound(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         user,
@@ -620,7 +632,7 @@ pub(crate) async fn native_remove_requested_reviewer(
     let user = ctx.require_user()?.id;
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
     require_reviewer_repository(&ctx, &form, repo.record.id)?;
-    match review_rules::remove_requested_reviewer_bound(
+    match crate::backend::repositories::pull_requests::reviews::remove_requested_reviewer_bound(
         &ctx.state.pool,
         user,
         (owner, name, number),
@@ -722,7 +734,7 @@ pub(crate) async fn native_pull_comment(
         .ok_or_else(|| ctx.error(StatusCode::CONFLICT, "Comparison data is unavailable."))?;
     let head = compare.head_sha.as_str();
     let inline = !line.path.is_empty();
-    if let Err(message) = crate::backend::issues::validate_body(&line.body, true) {
+    if let Err(message) = codeyard_model::issue_input::validate_body(&line.body, true) {
         return refuse_comment(
             &ctx,
             &repo,
@@ -789,7 +801,7 @@ pub(crate) async fn native_pull_comment(
         review_id: None,
     };
     let user = ctx.require_user()?.id;
-    match comment_rules::create_pull_request_comment(
+    match crate::backend::repositories::pull_requests::comments::create_pull_request_comment(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.notification_broadcaster,
@@ -884,11 +896,14 @@ pub(crate) async fn native_set_viewed(
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
     let user = ctx.require_user()?.id;
-    let pull =
-        db::pull_requests::records::get_pull_request(&ctx.state.pool, repo.record.id, number)
-            .await
-            .map_err(|_| unavailable(&ctx))?
-            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found"))?;
+    let pull = crate::backend::db::pull_requests::records::get_pull_request(
+        &ctx.state.pool,
+        repo.record.id,
+        number,
+    )
+    .await
+    .map_err(|_| unavailable(&ctx))?
+    .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found"))?;
     if field(&form, "expected_head") != pull.head_sha
         || field(&form, "expected_base") != pull.base_sha
     {
@@ -899,7 +914,9 @@ pub(crate) async fn native_set_viewed(
     }
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
     let path = submitted_path(&ctx, &form)?;
-    if path.len() > db::pull_requests::reviews::MAX_COMMENT_PATH_BYTES || path.contains('\0') {
+    if path.len() > crate::backend::db::pull_requests::reviews::MAX_COMMENT_PATH_BYTES
+        || path.contains('\0')
+    {
         return Err(ctx.error(StatusCode::BAD_REQUEST, "Invalid diff path."));
     }
     // Clearing a mark needs no Git read. A new mark names the file's blob in the diff the page
@@ -919,7 +936,7 @@ pub(crate) async fn native_set_viewed(
         None
     };
     let blob = blob_sha.as_deref();
-    db::pull_requests::viewed::set_pull_request_file_viewed(
+    crate::backend::db::pull_requests::viewed::set_pull_request_file_viewed(
         &ctx.state.pool,
         pull.id,
         user,
@@ -963,9 +980,16 @@ pub(crate) async fn native_discard_review(
         ""
     };
     let pending = field(&form, "pending_review").parse().ok();
-    match review_rules::discard_pending_review(&ctx.state.pool, user, owner, name, number, pending)
-        .await
-        .map_err(operation_error)
+    match crate::backend::repositories::pull_requests::reviews::discard_pending_review(
+        &ctx.state.pool,
+        user,
+        owner,
+        name,
+        number,
+        pending,
+    )
+    .await
+    .map_err(operation_error)
     {
         Ok(()) => Ok(ctx.redirect(&format!("{base}/diff{view}"))),
         Err(failure) => {
@@ -991,7 +1015,7 @@ async fn set_resolution(
     let user = ctx.require_user()?.id;
     let from_diff = field(&form, "from") == "diff";
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
-    match comment_rules::set_comment_resolved(
+    match crate::backend::repositories::pull_requests::comments::set_comment_resolved(
         &ctx.state.pool,
         user,
         &owner,
@@ -1077,7 +1101,7 @@ pub(crate) async fn native_edit_conversation_comment(
         )
         .await;
     }
-    let result = comment_rules::edit_pull_request_comment(
+    let result = crate::backend::repositories::pull_requests::comments::edit_pull_request_comment(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         ctx.require_user()?.id,
@@ -1130,18 +1154,19 @@ pub(crate) async fn native_delete_conversation_comment(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let result = comment_rules::delete_pull_request_comment(
-        &ctx.state.pool,
-        ctx.require_user()?.id,
-        crate::backend::issues::comments::CommentTarget {
-            owner,
-            repo: name,
-            number,
-            comment_id,
-        },
-    )
-    .await
-    .map_err(operation_error);
+    let result =
+        crate::backend::repositories::pull_requests::comments::delete_pull_request_comment(
+            &ctx.state.pool,
+            ctx.require_user()?.id,
+            crate::backend::issues::comments::CommentTarget {
+                owner,
+                repo: name,
+                number,
+                comment_id,
+            },
+        )
+        .await
+        .map_err(operation_error);
     match result {
         Ok(()) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(Kind::Pull), number))),
         Err(failure) => {

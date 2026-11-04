@@ -1,9 +1,11 @@
 //! Deploy-key writes retain live credentials and cross-account fingerprint uniqueness.
-use super::{auth, pagination::Pagination, repository, Error, Result};
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::repositories::deploy_keys as keys;
-use crate::backend::webhooks::payloads;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -34,13 +36,18 @@ async fn document(
     key: &codeyard_db_core::models::DeployKey,
 ) -> Result<Value> {
     let added_by = match key.created_by_id {
-        Some(id) => db::users::accounts::get_user_by_id(&state.pool, id)
+        Some(id) => crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .map(|user| user.username),
         None => None,
     };
-    Ok(payloads::deploy_key(key, owner, name, added_by.as_deref()))
+    Ok(crate::backend::webhooks::payloads::deploy_key(
+        key,
+        owner,
+        name,
+        added_by.as_deref(),
+    ))
 }
 
 async fn list(
@@ -51,12 +58,15 @@ async fn list(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let auth = auth.ok_or_else(auth::required)?;
-    let keys = keys::list_keys(
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
+    let keys = crate::backend::repositories::deploy_keys::list_keys(
         &state.pool,
         &auth.user,
         &repo,
-        db::deploy_keys::Credential::Token(auth.token.id, auth.token.token_hash.clone()),
+        crate::backend::db::deploy_keys::Credential::Token(
+            auth.token.id,
+            auth.token.token_hash.clone(),
+        ),
     )
     .await
     .map_err(key_error)?;
@@ -75,12 +85,15 @@ async fn read(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let auth = auth.ok_or_else(auth::required)?;
-    let keys = keys::list_keys(
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
+    let keys = crate::backend::repositories::deploy_keys::list_keys(
         &state.pool,
         &auth.user,
         &repo,
-        db::deploy_keys::Credential::Token(auth.token.id, auth.token.token_hash.clone()),
+        crate::backend::db::deploy_keys::Credential::Token(
+            auth.token.id,
+            auth.token.token_hash.clone(),
+        ),
     )
     .await
     .map_err(key_error)?;
@@ -105,7 +118,7 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     // gh sends an empty title when none was given; GitHub treats that as no title.
     let title = input
         .title
@@ -123,10 +136,13 @@ async fn create(
                 comment
             }
         });
-    let key = keys::add_key(
+    let key = crate::backend::repositories::deploy_keys::add_key(
         &state.pool,
         &auth.user,
-        db::deploy_keys::Credential::Token(auth.token.id, auth.token.token_hash.clone()),
+        crate::backend::db::deploy_keys::Credential::Token(
+            auth.token.id,
+            auth.token.token_hash.clone(),
+        ),
         &repo,
         &title,
         &input.key,
@@ -147,11 +163,14 @@ async fn remove(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
-    keys::remove_key(
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
+    crate::backend::repositories::deploy_keys::remove_key(
         &state.pool,
         &auth.user,
-        db::deploy_keys::Credential::Token(auth.token.id, auth.token.token_hash.clone()),
+        crate::backend::db::deploy_keys::Credential::Token(
+            auth.token.id,
+            auth.token.token_hash.clone(),
+        ),
         &repo,
         id,
     )

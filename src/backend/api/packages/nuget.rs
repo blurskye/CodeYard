@@ -1,14 +1,13 @@
 //! NuGet v3 discovery, publication, flat-container, registration and search.
-use super::{authenticate, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        packages::{Package, Publish, Version},
-    },
-    packages,
-    storage::MAX_OBJECT_BYTES,
-};
+use crate::backend::api::packages::authenticate;
+use crate::backend::api::packages::Error;
+use crate::backend::api::packages::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::packages::Package;
+use crate::backend::db::packages::Publish;
+use crate::backend::db::packages::Version;
+
 use axum::{
     body::to_bytes,
     extract::{DefaultBodyLimit, FromRequest, Multipart, Path, Query, Request, State},
@@ -18,6 +17,7 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+use codeyard_support::object_limits::MAX_OBJECT_BYTES;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha512};
@@ -35,21 +35,21 @@ async fn handle(
 ) -> Response {
     let anonymous = !request.headers().contains_key(header::AUTHORIZATION)
         && !request.headers().contains_key("x-nuget-apikey");
-    super::finish(
+    crate::backend::api::packages::finish(
         tokio::time::timeout(
             Duration::from_secs(120),
             dispatch(&state, &owner, &path, request),
         )
         .await,
         anonymous,
-        super::RegistryFormat::Standard,
+        crate::backend::api::packages::RegistryFormat::Standard,
     )
 }
 
 fn root(owner: &str) -> String {
     format!(
         "{}/api/packages/{}/nuget",
-        crate::backend::api::http::config::link_origin(),
+        codeyard_model::http_config::link_origin(),
         codeyard_webui::encode_component(owner)
     )
 }
@@ -139,7 +139,7 @@ fn metadata(version: &Version) -> Result<Value> {
 }
 
 fn nuspec(bytes: &[u8]) -> Result<(String, String, Value)> {
-    let document = super::archives::xml(bytes)?;
+    let document = crate::backend::api::packages::archives::xml(bytes)?;
     if document.name != "package" {
         return Err(Error::invalid());
     }
@@ -154,13 +154,13 @@ fn nuspec(bytes: &[u8]) -> Result<(String, String, Value)> {
         return Err(Error::invalid());
     }
     let id = spec.value("id");
-    if !packages::valid_package_name("nuget", id) {
+    if !crate::backend::packages::valid_package_name("nuget", id) {
         return Err(Error::invalid());
     }
     let version = normalize(spec.value("version"))?;
-    let dependencies = |node: &super::archives::Xml| -> Result<Vec<Value>> {
+    let dependencies = |node: &crate::backend::api::packages::archives::Xml| -> Result<Vec<Value>> {
         node.children.iter().filter(|n| n.name=="dependency").map(|dep| {
-            let id = dep.attrs.get("id").filter(|id| packages::valid_package_name("nuget", id)).ok_or_else(Error::invalid)?;
+            let id = dep.attrs.get("id").filter(|id| crate::backend::packages::valid_package_name("nuget", id)).ok_or_else(Error::invalid)?;
             Ok(json!({"id":id,"range":dep.attrs.get("version").map(String::as_str).unwrap_or("(, )")}))
         }).collect()
     };
@@ -281,7 +281,7 @@ async fn dispatch(
     } else {
         None
     };
-    let owner = super::owner(state, namespace).await?;
+    let owner = crate::backend::api::packages::owner(state, namespace).await?;
     let base = root(namespace);
     if path == "index.json" && read {
         let resources = [
@@ -298,13 +298,13 @@ async fn dispatch(
         return Ok(Json(json!({"version":"3.0.0","resources":resources})).into_response());
     }
     if path == "publish" && request.method() == Method::PUT {
-        let auth = super::writer(auth.as_ref())?;
-        let slot = super::upload_slot(state)?;
+        let auth = crate::backend::api::packages::writer(auth.as_ref())?;
+        let slot = crate::backend::api::packages::upload_slot(state)?;
         let bytes = payload(request).await?;
         // ZIP indexing, XML projection and whole-archive hashing are CPU/blocking
         // work. Cancellation must retain upload admission until that work ends.
         let (bytes, name, version, catalog, _slot) = tokio::task::spawn_blocking(move || {
-            let spec = super::archives::nuspec(&bytes)?;
+            let spec = crate::backend::api::packages::archives::nuspec(&bytes)?;
             let (name, version, mut catalog) = nuspec(&spec)?;
             catalog["packageHash"] = json!(STANDARD.encode(Sha512::digest(&bytes)));
             catalog["packageHashAlgorithm"] = json!("SHA512");
@@ -316,18 +316,20 @@ async fn dispatch(
         })
         .await
         .map_err(|_| Error::unavailable())??;
-        let package = super::package(state, &owner, "nuget", &name, Some(auth), true).await?;
-        let blob = packages::store(
+        let package =
+            crate::backend::api::packages::package(state, &owner, "nuget", &name, Some(auth), true)
+                .await?;
+        let blob = crate::backend::packages::store(
             &state.pool,
             &state.storage,
             package.id,
             auth.token.id,
             bytes,
-            db::packages::Charge::Upload,
+            crate::backend::db::packages::Charge::Upload,
         )
         .await
         .map_err(Error::db)?;
-        db::packages::publish(
+        crate::backend::db::packages::publish(
             &state.pool,
             auth.token.id,
             Publish {
@@ -363,7 +365,9 @@ async fn dispatch(
         let needle = query.q.unwrap_or_default().to_lowercase();
         let skip = query.skip.unwrap_or(0).min(1_000_000);
         let take = query.take.unwrap_or(20).min(100);
-        let mut packages = super::owner_packages(state, &owner, "nuget", auth.as_ref()).await?;
+        let mut packages =
+            crate::backend::api::packages::owner_packages(state, &owner, "nuget", auth.as_ref())
+                .await?;
         packages.sort_by(|a, b| a.name.cmp(&b.name));
         let mut total = 0usize;
         let mut constructed = 128usize;
@@ -435,14 +439,14 @@ async fn dispatch(
             constructed = constructed
                 .checked_add(cost)
                 .ok_or_else(Error::unavailable)?;
-            if constructed > db::packages::MAX_METADATA_RESPONSE_BYTES {
+            if constructed > crate::backend::db::packages::MAX_METADATA_RESPONSE_BYTES {
                 return Err(Error::unavailable());
             }
             data.push(json!({"id":catalog["id"],"version":latest.name,"description":catalog["description"],"title":catalog["title"],"authors":catalog["authors"].as_str().unwrap_or("").split(',').map(str::trim).collect::<Vec<_>>(),"tags":catalog["tags"],"totalDownloads":downloads,"registration":format!("{base}/{registration_kind}/{}/index.json",package.name),"versions":versions.iter().map(|v| json!({"version":v.name,"downloads":v.downloads,"@id":format!("{base}/{registration_kind}/{}/{}.json",package.name,v.name)})).collect::<Vec<_>>()}));
         }
         let bytes = serde_json::to_vec(&json!({"totalHits":total,"data":data}))
             .map_err(|_| Error::unavailable())?;
-        if bytes.len() > db::packages::MAX_METADATA_RESPONSE_BYTES {
+        if bytes.len() > crate::backend::db::packages::MAX_METADATA_RESPONSE_BYTES {
             return Err(Error::unavailable());
         }
         return Ok(([(header::CONTENT_TYPE, "application/json")], bytes).into_response());
@@ -452,12 +456,19 @@ async fn dispatch(
         return Err(Error::missing());
     }
     let id = parts[1].to_ascii_lowercase();
-    let package = super::package(state, &owner, "nuget", &id, auth.as_ref(), false).await?;
+    let package =
+        crate::backend::api::packages::package(state, &owner, "nuget", &id, auth.as_ref(), false)
+            .await?;
     let token = auth.as_ref().map(|a| a.token.id.into());
     if parts[0] == "flatcontainer" {
         if parts.len() == 3 && parts[2] == "index.json" {
-            let mut versions =
-                super::all_version_fields(state, package.id, auth.as_ref(), true).await?;
+            let mut versions = crate::backend::api::packages::all_version_fields(
+                state,
+                package.id,
+                auth.as_ref(),
+                true,
+            )
+            .await?;
             versions.sort_by(|a, b| compare(&a.name, &b.name));
             return Ok(Json(
                 json!({"versions":versions.iter().map(|v| &v.name).collect::<Vec<_>>()}),
@@ -468,7 +479,7 @@ async fn dispatch(
             return Err(Error::missing());
         }
         let key = normalize(parts[2])?;
-        let version = db::packages::version(&state.pool, package.id, token, &key)
+        let version = crate::backend::db::packages::version(&state.pool, package.id, token, &key)
             .await
             .map_err(Error::db)?;
         let catalog = metadata(&version)?;
@@ -498,15 +509,26 @@ async fn dispatch(
         if parts[3] != format!("{id}.{key}.nupkg") {
             return Err(Error::missing());
         }
-        let blob = db::packages::blob(&state.pool, package.id, token, &version.digest)
-            .await
-            .map_err(Error::db)?;
-        let response =
-            super::oci::download(state, &blob, request.method(), request.headers()).await?;
-        if request.method() == Method::GET {
-            db::packages::nuget_downloaded(&state.pool, package.id, token, version.id)
+        let blob =
+            crate::backend::db::packages::blob(&state.pool, package.id, token, &version.digest)
                 .await
                 .map_err(Error::db)?;
+        let response = crate::backend::api::packages::oci::download(
+            state,
+            &blob,
+            request.method(),
+            request.headers(),
+        )
+        .await?;
+        if request.method() == Method::GET {
+            crate::backend::db::packages::nuget_downloaded(
+                &state.pool,
+                package.id,
+                token,
+                version.id,
+            )
+            .await
+            .map_err(Error::db)?;
         }
         return Ok(response);
     }
@@ -542,7 +564,7 @@ async fn dispatch(
     }
     if parts[0] == "catalog" && parts.len() == 3 {
         let key = parts[2].strip_suffix(".json").ok_or_else(Error::missing)?;
-        let version = db::packages::version(&state.pool, package.id, token, key)
+        let version = crate::backend::db::packages::version(&state.pool, package.id, token, key)
             .await
             .map_err(Error::db)?;
         return Ok(Json(
@@ -556,9 +578,9 @@ async fn dispatch(
 async fn versions(
     state: &AppState,
     package: &Package,
-    auth: Option<&super::Authentication>,
+    auth: Option<&crate::backend::api::packages::Authentication>,
 ) -> Result<Vec<Version>> {
-    let mut versions = super::all_versions(state, package.id, auth).await?;
+    let mut versions = crate::backend::api::packages::all_versions(state, package.id, auth).await?;
     versions.sort_by(|a, b| compare(&a.name, &b.name));
     Ok(versions)
 }
@@ -597,12 +619,12 @@ mod tests {
             assert!(!crate::backend::packages::valid_package_name("nuget", id));
         }
         assert_eq!(
-            super::normalize("01.2.0.0-RC.2+build").unwrap(),
+            crate::backend::api::packages::nuget::normalize("01.2.0.0-RC.2+build").unwrap(),
             "1.2.0-rc.2"
         );
-        assert!(super::normalize("1.0/evil").is_err());
-        assert!(super::compare("1.10.0", "1.2.0").is_gt());
-        assert!(super::compare("1.0.0", "1.0.0-rc.2").is_gt());
-        assert!(super::compare("1.0.0-rc.10", "1.0.0-rc.2").is_gt());
+        assert!(crate::backend::api::packages::nuget::normalize("1.0/evil").is_err());
+        assert!(crate::backend::api::packages::nuget::compare("1.10.0", "1.2.0").is_gt());
+        assert!(crate::backend::api::packages::nuget::compare("1.0.0", "1.0.0-rc.2").is_gt());
+        assert!(crate::backend::api::packages::nuget::compare("1.0.0-rc.10", "1.0.0-rc.2").is_gt());
     }
 }

@@ -1,4 +1,5 @@
-use crate::backend::db::{import_authors::Author, source_imports::ImportRefusal};
+use crate::backend::db::import_authors::Author;
+use crate::backend::db::source_imports::ImportRefusal;
 use anyhow::Result;
 use sqlx::PgPool;
 
@@ -10,7 +11,8 @@ pub async fn record(
 ) -> Result<Vec<Author>> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::postgres::discussions::lock_admin_authority(&mut tx, actor, repo)
+            .await?,
         ImportRefusal::Denied
     );
     for authors in crate::backend::db::import_authors::identities(authors).chunks(200) {
@@ -43,7 +45,8 @@ pub async fn map(
 ) -> Result<Option<Author>> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::postgres::discussions::lock_admin_authority(&mut tx, actor, repo)
+            .await?,
         ImportRefusal::Denied
     );
     let row = sqlx::query_as("UPDATE repository_import_authors SET mapped_name=COALESCE($3,mapped_name),mapped_email=COALESCE($4,mapped_email) WHERE repo_id=$1 AND id=$2 AND EXISTS(SELECT 1 FROM repository_imports WHERE repo_id=$1) RETURNING *").bind(repo).bind(author).bind(name).bind(email).fetch_optional(&mut *tx).await?;

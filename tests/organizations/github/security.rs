@@ -1,12 +1,12 @@
 use super::{
+    codeyard::backend::db::organizations::roles::{repo, run},
     request,
-    roles::{repo, run},
 };
-use crate::support::{database::Database, http_client::Client, organizations::applied};
+use crate::support::{
+    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+};
 use axum::http::StatusCode;
-use codeyard::backend::db;
-use codeyard::backend::db::organizations;
-use codeyard::backend::db::organizations::roles;
+
 use codeyard::backend::db::organizations::roles::SECURITY_MANAGER_ROLE_ID;
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::NewTeam;
@@ -14,7 +14,7 @@ use codeyard::backend::db::organizations::OrganizationProfile;
 use codeyard::backend::db::organizations::TeamPrivacy;
 use codeyard::backend::db::organizations::TeamProfile;
 use codeyard::backend::db::organizations::TeamRole;
-use codeyard::backend::identity::tokens;
+
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
@@ -33,7 +33,7 @@ async fn contract(pg: bool) {
     let mut orgs = vec![];
     for slug in ["acme", "foreign"] {
         orgs.push(applied(
-            organizations::create_organization(
+            codeyard::backend::db::organizations::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(slug, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -44,13 +44,19 @@ async fn contract(pg: bool) {
     }
     for (id, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
         applied(
-            organizations::add_organization_member(f.pool(), owner, orgs[0].id, id, role)
-                .await
-                .unwrap(),
+            codeyard::backend::db::organizations::add_organization_member(
+                f.pool(),
+                owner,
+                orgs[0].id,
+                id,
+                role,
+            )
+            .await
+            .unwrap(),
         );
     }
     applied(
-        organizations::add_organization_member(
+        codeyard::backend::db::organizations::add_organization_member(
             f.pool(),
             owner,
             orgs[1].id,
@@ -61,7 +67,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let parent = applied(
-        organizations::create_organization_team(
+        codeyard::backend::db::organizations::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -75,7 +81,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let child = applied(
-        organizations::create_organization_team(
+        codeyard::backend::db::organizations::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -92,7 +98,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let secret = applied(
-        organizations::create_organization_team(
+        codeyard::backend::db::organizations::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -106,7 +112,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        organizations::create_organization_team(
+        codeyard::backend::db::organizations::create_organization_team(
             f.pool(),
             owner,
             orgs[1].id,
@@ -120,7 +126,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        organizations::add_organization_team_member(
+        codeyard::backend::db::organizations::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -152,7 +158,7 @@ async fn contract(pg: bool) {
         (outsider, "write"),
     ] {
         let session = Client::login(&router, f.pool(), id).await;
-        let token = tokens::create(
+        let token = codeyard::backend::identity::tokens::create(
             f.pool(),
             id,
             Some(&session.session),
@@ -209,28 +215,60 @@ async fn contract(pg: bool) {
     let (_, teams) = request(&router, LIST, "GET", path, read, Value::Null, 200).await;
     assert_eq!(teams.as_array().unwrap().len(), 1);
     assert_eq!(teams[0]["id"], parent.id);
-    assert!(roles::can_manage_security(f.pool(), owner, orgs[0].id)
+    assert!(
+        codeyard::backend::db::organizations::roles::can_manage_security(
+            f.pool(),
+            owner,
+            orgs[0].id
+        )
         .await
-        .unwrap());
-    assert!(roles::can_manage_security(f.pool(), member, orgs[0].id)
+        .unwrap()
+    );
+    assert!(
+        codeyard::backend::db::organizations::roles::can_manage_security(
+            f.pool(),
+            member,
+            orgs[0].id
+        )
         .await
-        .unwrap());
-    assert!(!roles::can_manage_security(f.pool(), delegated, orgs[0].id)
+        .unwrap()
+    );
+    assert!(
+        !codeyard::backend::db::organizations::roles::can_manage_security(
+            f.pool(),
+            delegated,
+            orgs[0].id
+        )
         .await
-        .unwrap());
-    assert!(!roles::can_manage_security(f.pool(), member, orgs[1].id)
+        .unwrap()
+    );
+    assert!(
+        !codeyard::backend::db::organizations::roles::can_manage_security(
+            f.pool(),
+            member,
+            orgs[1].id
+        )
         .await
-        .unwrap());
+        .unwrap()
+    );
     assert_eq!(
-        db::repositories::access::get_user_repo_access(f.pool(), member, second.id)
-            .await
-            .unwrap(),
+        codeyard::backend::db::repositories::access::get_user_repo_access(
+            f.pool(),
+            member,
+            second.id
+        )
+        .await
+        .unwrap(),
         AccessLevel::Read
     );
     assert_eq!(
-        db::repositories::access::get_user_repo_access(f.pool(), member, foreign.id)
-            .await
-            .unwrap(),
+        codeyard::backend::db::repositories::access::get_user_repo_access(
+            f.pool(),
+            member,
+            foreign.id
+        )
+        .await
+        .unwrap(),
         AccessLevel::None
     );
     // The legacy and replacement APIs observe the exact same assignment rows.
@@ -285,13 +323,23 @@ async fn contract(pg: bool) {
         )
         .await;
     }
-    assert!(!roles::can_manage_security(f.pool(), member, orgs[0].id)
+    assert!(
+        !codeyard::backend::db::organizations::roles::can_manage_security(
+            f.pool(),
+            member,
+            orgs[0].id
+        )
         .await
-        .unwrap());
+        .unwrap()
+    );
     assert_eq!(
-        db::repositories::access::get_user_repo_access(f.pool(), member, second.id)
-            .await
-            .unwrap(),
+        codeyard::backend::db::repositories::access::get_user_repo_access(
+            f.pool(),
+            member,
+            second.id
+        )
+        .await
+        .unwrap(),
         AccessLevel::Read,
         "the independent read role survives"
     );
@@ -337,12 +385,18 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(response.status, StatusCode::SEE_OTHER);
-    assert!(!roles::can_manage_security(f.pool(), member, orgs[0].id)
+    assert!(
+        !codeyard::backend::db::organizations::roles::can_manage_security(
+            f.pool(),
+            member,
+            orgs[0].id
+        )
         .await
-        .unwrap());
+        .unwrap()
+    );
     // A security-only team grants reads and security management, not Git writes or CI authority.
     applied(
-        organizations::add_organization_team_member(
+        codeyard::backend::db::organizations::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -363,17 +417,27 @@ async fn contract(pg: bool) {
         204,
     )
     .await;
-    assert!(roles::can_manage_security(f.pool(), member, orgs[0].id)
+    assert!(
+        codeyard::backend::db::organizations::roles::can_manage_security(
+            f.pool(),
+            member,
+            orgs[0].id
+        )
         .await
-        .unwrap());
+        .unwrap()
+    );
     assert_eq!(
-        db::repositories::access::get_user_repo_access(f.pool(), member, second.id)
-            .await
-            .unwrap(),
+        codeyard::backend::db::repositories::access::get_user_repo_access(
+            f.pool(),
+            member,
+            second.id
+        )
+        .await
+        .unwrap(),
         AccessLevel::Read
     );
     applied(
-        organizations::remove_organization_team_member(
+        codeyard::backend::db::organizations::remove_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -383,9 +447,15 @@ async fn contract(pg: bool) {
         .await
         .unwrap(),
     );
-    assert!(!roles::can_manage_security(f.pool(), member, orgs[0].id)
+    assert!(
+        !codeyard::backend::db::organizations::roles::can_manage_security(
+            f.pool(),
+            member,
+            orgs[0].id
+        )
         .await
-        .unwrap());
+        .unwrap()
+    );
     assert_eq!(
         f.scalar(
             "SELECT COUNT(*) FROM ci_runs WHERE triggered_by_id=$1 AND status='queued'",
@@ -395,7 +465,7 @@ async fn contract(pg: bool) {
         1
     );
     applied(
-        organizations::add_organization_team_member(
+        codeyard::backend::db::organizations::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -407,13 +477,24 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        organizations::delete_organization_team(f.pool(), owner, orgs[0].id, secret.id)
-            .await
-            .unwrap(),
-    );
-    assert!(!roles::can_manage_security(f.pool(), member, orgs[0].id)
+        codeyard::backend::db::organizations::delete_organization_team(
+            f.pool(),
+            owner,
+            orgs[0].id,
+            secret.id,
+        )
         .await
-        .unwrap());
+        .unwrap(),
+    );
+    assert!(
+        !codeyard::backend::db::organizations::roles::can_manage_security(
+            f.pool(),
+            member,
+            orgs[0].id
+        )
+        .await
+        .unwrap()
+    );
     assert_eq!(
         f.scalar(
             "SELECT COUNT(*) FROM ci_runs WHERE triggered_by_id=$1 AND status='queued'",
@@ -432,9 +513,15 @@ async fn contract(pg: bool) {
         204,
     )
     .await;
-    assert!(roles::can_manage_security(f.pool(), member, orgs[0].id)
+    assert!(
+        codeyard::backend::db::organizations::roles::can_manage_security(
+            f.pool(),
+            member,
+            orgs[0].id
+        )
         .await
-        .unwrap());
+        .unwrap()
+    );
     let (_, teams) = request(&router, LIST, "GET", path, read, Value::Null, 200).await;
     assert_eq!(
         teams,
@@ -446,9 +533,15 @@ async fn contract(pg: bool) {
         &[member],
     )
     .await;
-    assert!(!roles::can_manage_security(f.pool(), member, orgs[0].id)
+    assert!(
+        !codeyard::backend::db::organizations::roles::can_manage_security(
+            f.pool(),
+            member,
+            orgs[0].id
+        )
         .await
-        .unwrap());
+        .unwrap()
+    );
     f.execute(
         "UPDATE users SET must_change_password=FALSE WHERE id=$1",
         &[member],
@@ -457,9 +550,13 @@ async fn contract(pg: bool) {
     f.execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[owner])
         .await;
     assert!(
-        !roles::can_manage_security(f.pool(), member, orgs[0].id)
-            .await
-            .unwrap(),
+        !codeyard::backend::db::organizations::roles::can_manage_security(
+            f.pool(),
+            member,
+            orgs[0].id
+        )
+        .await
+        .unwrap(),
         "suspended governance cannot authorize security changes"
     );
     f.finish().await;

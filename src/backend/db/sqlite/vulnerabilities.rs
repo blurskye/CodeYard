@@ -1,7 +1,7 @@
-use crate::backend::{
-    db::vulnerabilities::*, dependency_graph::Snapshot, vulnerabilities::PreparedAdvisory,
-};
+use crate::backend::db::vulnerabilities::*;
 use anyhow::{ensure, Result};
+use codeyard_model::dependency_graph::Snapshot;
+use codeyard_model::vulnerabilities::PreparedAdvisory;
 use sqlx::SqlitePool;
 
 pub async fn settings(pool: &SqlitePool) -> Result<Settings> {
@@ -20,8 +20,11 @@ pub async fn save_settings(
     let settings = settings.normalized()?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
-        super::users::transitions::active_admin(&mut tx, actor).await?
-            && super::users::transitions::live_session(&mut tx, actor, session).await?,
+        crate::backend::db::sqlite::users::transitions::active_admin(&mut tx, actor).await?
+            && crate::backend::db::sqlite::users::transitions::live_session(
+                &mut tx, actor, session
+            )
+            .await?,
         Refusal::Denied
     );
     sqlx::query(
@@ -58,7 +61,7 @@ pub async fn upsert(pool: &SqlitePool, prepared: &PreparedAdvisory) -> Result<bo
             .execute(&mut *tx)
             .await?;
         for affected in &advisory.affected {
-            let name = crate::backend::vulnerabilities::name(
+            let name = codeyard_model::vulnerabilities::name(
                 &affected.package.ecosystem,
                 &affected.package.name,
             );
@@ -136,7 +139,7 @@ pub async fn save_snapshot(
     .fetch_optional(&mut *tx)
     .await?;
     let Some(branch) = branch else { return Ok(()) };
-    if !super::dependency_graph::enabled_in(&mut tx, repo).await? {
+    if !crate::backend::db::sqlite::dependency_graph::enabled_in(&mut tx, repo).await? {
         return Ok(());
     }
     if snapshot.reference != format!("refs/heads/{branch}") {
@@ -145,15 +148,17 @@ pub async fn save_snapshot(
     sqlx::query("INSERT INTO dependency_snapshots(repo_id,sha,reference,correlator,detector,scanned,body) VALUES($1,$2,$3,$4,$5,$6,$7)")
         .bind(repo).bind(snapshot.sha.to_ascii_lowercase()).bind(&snapshot.reference).bind(&snapshot.job.correlator)
         .bind(&snapshot.detector.name).bind(snapshot.scanned).bind(serde_json::to_string(snapshot)?).execute(&mut *tx).await?;
-    super::dependency_graph::drop_replaced_snapshots(&mut tx, repo, snapshot).await?;
-    let _ = super::dependency_graph::bounded_snapshot_ids(
+    crate::backend::db::sqlite::dependency_graph::drop_replaced_snapshots(&mut tx, repo, snapshot)
+        .await?;
+    let _ = crate::backend::db::sqlite::dependency_graph::bounded_snapshot_ids(
         &mut tx,
         repo,
         Some(&snapshot.reference),
         Some(&snapshot.sha.to_ascii_lowercase()),
     )
     .await?;
-    super::dependabot_alerts::refresh(&mut tx, repo, Some(&snapshot.sha)).await?;
+    crate::backend::db::sqlite::dependabot_alerts::refresh(&mut tx, repo, Some(&snapshot.sha))
+        .await?;
     sqlx::query("UPDATE vulnerability_jobs SET lease_until=NULL,next_scan=$3 WHERE repo_id=$1 AND generation=$2")
         .bind(repo).bind(generation).bind(chrono::Utc::now()+chrono::Duration::minutes(5)).execute(&mut *tx).await?;
     tx.commit().await?;

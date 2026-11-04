@@ -1,12 +1,10 @@
 //! Durable scan work survives process restarts; Git reads go through the repository store.
-use crate::backend::{
-    app::AppState,
-    db::{self, secret_scanning as records},
-    repositories::store::repo_store,
-    webhooks::{self, payloads},
-};
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::store::repo_store;
+
 use anyhow::{ensure, Context, Result};
-use codeyard_git::secret_detection::{scan_with_patterns, MAX_BLOB_BYTES};
+use codeyard_support::secret_detection::{scan_with_patterns, MAX_BLOB_BYTES};
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
@@ -18,7 +16,7 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 
 pub async fn document(
     state: &AppState,
-    alert: &records::Alert,
+    alert: &crate::backend::db::secret_scanning::Alert,
     owner: &str,
     repo: &str,
     hide_secret: bool,
@@ -31,10 +29,13 @@ pub async fn document(
 /// Page enrichment has one bounded database read per related record kind.
 pub struct Documents {
     users: HashMap<i64, codeyard_db_core::models::User>,
-    bypasses: HashMap<(i64, String), records::Bypass>,
+    bypasses: HashMap<(i64, String), crate::backend::db::secret_scanning::Bypass>,
 }
 impl Documents {
-    pub async fn load(state: &AppState, alerts: &[records::Alert]) -> Result<Self> {
+    pub async fn load(
+        state: &AppState,
+        alerts: &[crate::backend::db::secret_scanning::Alert],
+    ) -> Result<Self> {
         ensure!(alerts.len() <= 100, "Too many alert enrichments");
         let keys = alerts
             .iter()
@@ -42,7 +43,8 @@ impl Documents {
             .collect::<HashSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        let bypasses = records::alert_bypasses(&state.pool, &keys).await?;
+        let bypasses =
+            crate::backend::db::secret_scanning::alert_bypasses(&state.pool, &keys).await?;
         let ids = alerts
             .iter()
             .flat_map(|alert| [alert.resolved_by, alert.assigned_to])
@@ -51,7 +53,7 @@ impl Documents {
             .collect::<HashSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        let users = db::users::accounts::get_users_by_ids(&state.pool, &ids)
+        let users = crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &ids)
             .await?
             .into_iter()
             .map(|user| (user.id, user))
@@ -68,7 +70,7 @@ impl Documents {
     pub fn document(
         &self,
         state: &AppState,
-        alert: &records::Alert,
+        alert: &crate::backend::db::secret_scanning::Alert,
         owner: &str,
         repo: &str,
         hide_secret: bool,
@@ -87,7 +89,7 @@ impl Documents {
             .bypasses
             .get(&(alert.repo_id, alert.secret_hash.clone()));
         let bypassed_by = bypass.and_then(|bypass| self.users.get(&bypass.actor_id));
-        let mut document = payloads::secret_scanning_alert(
+        let mut document = crate::backend::webhooks::payloads::secret_scanning_alert(
             alert,
             &secret,
             owner,
@@ -99,7 +101,7 @@ impl Documents {
         document["assigned_to"] = alert
             .assigned_to
             .and_then(|id| self.users.get(&id))
-            .map(payloads::user)
+            .map(crate::backend::webhooks::payloads::user)
             .unwrap_or(Value::Null);
         Ok(document)
     }
@@ -108,22 +110,23 @@ impl Documents {
 pub async fn emit_alert(
     state: &AppState,
     repo: &codeyard_db_core::models::Repository,
-    alert: &records::Alert,
+    alert: &crate::backend::db::secret_scanning::Alert,
     action: &'static str,
     actor: impl Into<Option<i64>>,
 ) -> Result<()> {
     let actor = actor.into();
-    let owner = db::repositories::records::repository_owner_name(&state.pool, repo.id)
-        .await?
-        .context("Repository owner unavailable")?;
+    let owner =
+        crate::backend::db::repositories::records::repository_owner_name(&state.pool, repo.id)
+            .await?
+            .context("Repository owner unavailable")?;
     let document = document(state, alert, &owner, &repo.name, true).await?;
-    let repository = payloads::repository(repo, &owner);
-    webhooks::emit(
+    let repository = crate::backend::webhooks::payloads::repository(repo, &owner);
+    crate::backend::webhooks::emit(
         &state.pool,
         repo,
         "secret_scanning_alert",
         actor.into_iter().collect(),
-        move |_, people| json!({"action": action,"alert": document,"repository": repository,"sender":actor.map(|actor| payloads::person(&people.get(actor))).unwrap_or(Value::Null)}),
+        move |_, people| json!({"action": action,"alert": document,"repository": repository,"sender":actor.map(|actor| crate::backend::webhooks::payloads::person(&people.get(actor))).unwrap_or(Value::Null)}),
     )
     .await;
     Ok(())
@@ -149,16 +152,21 @@ async fn commit_target(
     }
 }
 
-async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
-    let repo = db::repositories::records::get_repository_by_id(&state.pool, job.repo_id)
-        .await?
-        .context("Repository unavailable")?;
+async fn scan_job(
+    state: &AppState,
+    job: &crate::backend::db::secret_scanning::ScanJob,
+) -> Result<()> {
+    let repo =
+        crate::backend::db::repositories::records::get_repository_by_id(&state.pool, job.repo_id)
+            .await?
+            .context("Repository unavailable")?;
     let encryptor = state
         .secret_encryptor
         .as_ref()
         .context("Secret encryption unavailable")?;
     let store = repo_store(&repo, state.cluster.as_ref());
-    let (patterns, _) = records::effective_patterns(&state.pool, repo.id).await?;
+    let (patterns, _) =
+        crate::backend::db::secret_scanning::effective_patterns(&state.pool, repo.id).await?;
     let patterns = Arc::new(patterns);
     let heads: Vec<String> = match &job.head_sha {
         Some(head) => commit_target(&store, head).await?.into_iter().collect(),
@@ -177,10 +185,10 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
         .map(|sha| (sha, false))
         .collect::<Vec<_>>();
     let mut visited = HashSet::new();
-    let cacheable = codeyard_git::secret_detection::scanner::cache_across_commits()?;
+    let cacheable = codeyard_support::secret_detection::scanner::cache_across_commits()?;
     let mut cache = std::collections::HashMap::<
         (String, String),
-        Arc<Vec<codeyard_git::secret_detection::Detection>>,
+        Arc<Vec<codeyard_support::secret_detection::Detection>>,
     >::new();
     let mut cache_bytes = 0usize;
     // The claim lapses after five minutes without a heartbeat, so a long commit or a long run of
@@ -196,7 +204,14 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
     while let Some((sha, finishing)) = pending.pop() {
         if finishing {
             ensure!(
-                records::heartbeat(&state.pool, repo.id, job.id, job.attempt, Some(&sha)).await?,
+                crate::backend::db::secret_scanning::heartbeat(
+                    &state.pool,
+                    repo.id,
+                    job.id,
+                    job.attempt,
+                    Some(&sha)
+                )
+                .await?,
                 "Another worker took over this secret scan"
             );
             beat = std::time::Instant::now();
@@ -207,14 +222,26 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
         }
         if renew(&mut beat) {
             ensure!(
-                records::heartbeat(&state.pool, repo.id, job.id, job.attempt, None).await?,
+                crate::backend::db::secret_scanning::heartbeat(
+                    &state.pool,
+                    repo.id,
+                    job.id,
+                    job.attempt,
+                    None
+                )
+                .await?,
                 "Another worker took over this secret scan"
             );
         }
-        if !records::settings(&state.pool, repo.id).await?.enabled {
+        if !crate::backend::db::secret_scanning::settings(&state.pool, repo.id)
+            .await?
+            .enabled
+        {
             return Ok(());
         }
-        if job.scan_type == "incremental" && records::scanned(&state.pool, repo.id, &sha).await? {
+        if job.scan_type == "incremental"
+            && crate::backend::db::secret_scanning::scanned(&state.pool, repo.id, &sha).await?
+        {
             continue;
         }
         let commit = store.commit(&sha).await?;
@@ -226,7 +253,14 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
             }
             if renew(&mut beat) {
                 ensure!(
-                    records::heartbeat(&state.pool, repo.id, job.id, job.attempt, None).await?,
+                    crate::backend::db::secret_scanning::heartbeat(
+                        &state.pool,
+                        repo.id,
+                        job.id,
+                        job.attempt,
+                        None
+                    )
+                    .await?,
                     "Another worker took over this secret scan"
                 );
             }
@@ -271,12 +305,12 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
                     start_column: detection.start_column,
                     end_column: detection.end_column,
                 };
-                let hash = crate::backend::identity::tokens::token_hash(&detection.secret);
+                let hash = codeyard_support::token_hash::token_hash(&detection.secret);
                 let (ciphertext, nonce) = encryptor.encrypt(detection.secret.as_bytes())?;
-                let stored = records::record(
+                let stored = crate::backend::db::secret_scanning::record(
                     &state.pool,
                     repo.id,
-                    &records::Finding {
+                    &crate::backend::db::secret_scanning::Finding {
                         hash: &hash,
                         secret_type: &detection.secret_type,
                         display_name: &detection.secret_type_display_name,
@@ -293,14 +327,19 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
                     if added {
                         let actor = job.actor_id;
                         let owner =
-                            db::repositories::records::repository_owner_name(&state.pool, repo.id)
-                                .await?
-                                .context("Repository owner unavailable")?;
+                            crate::backend::db::repositories::records::repository_owner_name(
+                                &state.pool,
+                                repo.id,
+                            )
+                            .await?
+                            .context("Repository owner unavailable")?;
                         let document = document(state, &alert, &owner, &repo.name, true).await?;
-                        let repository = payloads::repository(&repo, &owner);
-                        let location =
-                            payloads::secret_scanning_location(&location, &owner, &repo.name);
-                        webhooks::emit(&state.pool, &repo, "secret_scanning_alert_location", actor.into_iter().collect(), move |_, people| json!({"action":"created","alert":document,"location":location,"repository":repository,"sender":actor.map(|actor| payloads::person(&people.get(actor))).unwrap_or(Value::Null)})).await;
+                        let repository =
+                            crate::backend::webhooks::payloads::repository(&repo, &owner);
+                        let location = crate::backend::webhooks::payloads::secret_scanning_location(
+                            &location, &owner, &repo.name,
+                        );
+                        crate::backend::webhooks::emit(&state.pool, &repo, "secret_scanning_alert_location", actor.into_iter().collect(), move |_, people| json!({"action":"created","alert":document,"location":location,"repository":repository,"sender":actor.map(|actor| crate::backend::webhooks::payloads::person(&people.get(actor))).unwrap_or(Value::Null)})).await;
                     }
                 }
             }
@@ -315,7 +354,7 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
 
 /// Runs one queued scan. Failed scans are recorded as failed, never reported as completed.
 pub async fn run_next(state: &AppState) -> Result<bool> {
-    let Some(job) = records::claim(&state.pool).await? else {
+    let Some(job) = crate::backend::db::secret_scanning::claim(&state.pool).await? else {
         return Ok(false);
     };
     // Renew while initial ref enumeration, tag peeling or any individual storage read waits,
@@ -329,7 +368,7 @@ pub async fn run_next(state: &AppState) -> Result<bool> {
             tokio::select! {
                 result = &mut scan => break result,
                 _ = beats.tick() => {
-                    let renewed = tokio::time::timeout(Duration::from_secs(5), records::heartbeat(&state.pool, job.repo_id, job.id, job.attempt, None)).await
+                    let renewed = tokio::time::timeout(Duration::from_secs(5), crate::backend::db::secret_scanning::heartbeat(&state.pool, job.repo_id, job.id, job.attempt, None)).await
                         .map_err(|_| codeyard_git::error::RepoError::new(codeyard_git::error::ErrorKind::Unavailable, "Secret scan lease renewal unavailable"))??;
                     ensure!(renewed, "Another worker took over this secret scan");
                 }
@@ -337,18 +376,19 @@ pub async fn run_next(state: &AppState) -> Result<bool> {
         }
     }.await;
     let completion = match &result {
-        Ok(()) => records::ScanCompletion::Completed,
+        Ok(()) => crate::backend::db::secret_scanning::ScanCompletion::Completed,
         Err(error)
             if error
                 .downcast_ref::<codeyard_git::error::RepoError>()
                 .is_some_and(|error| error.kind == codeyard_git::error::ErrorKind::Unavailable)
                 || error.is::<sqlx::Error>() =>
         {
-            records::ScanCompletion::Retry
+            crate::backend::db::secret_scanning::ScanCompletion::Retry
         }
-        Err(_) => records::ScanCompletion::Failed,
+        Err(_) => crate::backend::db::secret_scanning::ScanCompletion::Failed,
     };
-    records::finish(&state.pool, job.id, job.attempt, completion).await?;
+    crate::backend::db::secret_scanning::finish(&state.pool, job.id, job.attempt, completion)
+        .await?;
     result?;
     Ok(true)
 }

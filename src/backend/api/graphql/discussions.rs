@@ -1,16 +1,16 @@
-use super::arg;
-use super::connection;
-use super::db;
-use super::missing;
-use super::node_id;
-use super::repository;
-use super::unavailable;
-use super::url;
-use super::user;
-use super::Arguments;
-use super::RequestContext;
-use super::Result;
-use super::Value;
+use crate::backend::api::graphql::arg;
+
+use crate::backend::api::graphql::db;
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::node_id;
+
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::url;
+
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
 use async_graphql::{Error, ErrorExtensions};
 use db::repository_discussions::{self as store, Filter, Order, Write};
 use serde_json::json;
@@ -45,7 +45,7 @@ fn comment(c: &store::Comment, d: &store::Discussion) -> Value {
         "body":c.body,"isAnswer":c.is_answer,"createdAt":c.created_at,"updatedAt":c.updated_at,"reactionGroups":[],"upvoteCount":0})
 }
 async fn authorized(d: &store::Discussion, request: &RequestContext) -> Result<()> {
-    repository::by_id(d.repo_id, request).await?;
+    crate::backend::api::graphql::repository::by_id(d.repo_id, request).await?;
     request.authorize(d.repo_id, "discussions", false).await
 }
 async fn load(id: i64, request: &RequestContext) -> Result<store::Discussion> {
@@ -78,7 +78,7 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-            repository::by_id(c.repo_id, request).await?;
+            crate::backend::api::graphql::repository::by_id(c.repo_id, request).await?;
             request.authorize(c.repo_id, "discussions", false).await?;
             Ok(category(&c))
         }
@@ -98,7 +98,7 @@ pub(super) async fn repository_field(
             .await
             .map_err(unavailable)?)),
         "discussionCategories" => {
-            connection::validate(ctx)?;
+            crate::backend::api::graphql::connection::validate(ctx)?;
             if ctx
                 .args
                 .get("filterByAssignable")
@@ -111,7 +111,7 @@ pub(super) async fn repository_field(
                     "Codeyard does not support assignable category filtering yet",
                 ));
             }
-            connection::slice(
+            crate::backend::api::graphql::connection::slice(
                 ctx,
                 store::categories(pool, repo)
                     .await
@@ -127,7 +127,7 @@ pub(super) async fn repository_field(
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(|| {
-                    super::error(
+                    crate::backend::api::graphql::error(
                         format!("Could not resolve to a Discussion with the number of {number}."),
                         "NOT_FOUND",
                     )
@@ -170,7 +170,7 @@ async fn list(
     search: bool,
 ) -> Result<Value> {
     request.require_oauth_scope("repo")?;
-    connection::validate(ctx)?;
+    crate::backend::api::graphql::connection::validate(ctx)?;
     let pool = &request.state.pool;
     let (count, _) = store::list(
         pool,
@@ -182,7 +182,10 @@ async fn list(
     )
     .await
     .map_err(operation)?;
-    let page = connection::Page::new(ctx, if search { count.min(1000) } else { count })?;
+    let page = crate::backend::api::graphql::connection::Page::new(
+        ctx,
+        if search { count.min(1000) } else { count },
+    )?;
     let rows = if page.limit == 0 {
         Vec::new()
     } else {
@@ -221,19 +224,23 @@ pub(super) async fn resolve(
     parent: &Value,
 ) -> Result<Value> {
     let repo_id = parent["_repo"].as_i64().ok_or_else(missing)?;
-    let repo = repository::by_id(repo_id, request).await?;
+    let repo = crate::backend::api::graphql::repository::by_id(repo_id, request).await?;
     request.authorize(repo_id, "discussions", false).await?;
     if let Some(value) = parent.get(field) {
         return Ok(value.clone());
     }
     let pool = &request.state.pool;
     match field {
-        "repository" => Ok(repository::object(&repo)),
+        "repository" => Ok(crate::backend::api::graphql::repository::object(&repo)),
         "author" => {
-            user::retained_author(parent["_author"].as_i64().ok_or_else(missing)?, request).await
+            crate::backend::api::graphql::user::retained_author(
+                parent["_author"].as_i64().ok_or_else(missing)?,
+                request,
+            )
+            .await
         }
         "answerChosenBy" => match parent["_answerBy"].as_i64() {
-            Some(id) => user::retained_author(id, request).await,
+            Some(id) => crate::backend::api::graphql::user::retained_author(id, request).await,
             None => Ok(Value::Null),
         },
         "answer" => match parent["_answer"].as_i64() {
@@ -258,7 +265,7 @@ pub(super) async fn resolve(
         "discussion" => Ok(object(
             &load(parent["_discussion"].as_i64().ok_or_else(missing)?, request).await?,
         )),
-        "labels" => repository::label_connection(
+        "labels" => crate::backend::api::graphql::repository::label_connection(
             ctx,
             store::labels(pool, parent["databaseId"].as_i64().ok_or_else(missing)?)
                 .await
@@ -266,7 +273,7 @@ pub(super) async fn resolve(
             "discussions",
         ),
         "comments" | "replies" => {
-            connection::validate(ctx)?;
+            crate::backend::api::graphql::connection::validate(ctx)?;
             let (discussion, reply) = if ty == "Discussion" {
                 (parent["databaseId"].as_i64().ok_or_else(missing)?, None)
             } else {
@@ -279,7 +286,7 @@ pub(super) async fn resolve(
             let (count, _) = store::comments(pool, discussion, reply, 0, 0)
                 .await
                 .map_err(unavailable)?;
-            let page = connection::Page::new(ctx, count)?;
+            let page = crate::backend::api::graphql::connection::Page::new(ctx, count)?;
             let (_, rows) = store::comments(pool, discussion, reply, page.offset, page.limit)
                 .await
                 .map_err(unavailable)?;
@@ -293,7 +300,9 @@ pub(super) async fn resolve(
             };
             let mut path = format!(
                 "/{}/{}/discussions/{number}",
-                codeyard_webui::encode_component(&repository::owner(&repo, request).await?),
+                codeyard_webui::encode_component(
+                    &crate::backend::api::graphql::repository::owner(&repo, request).await?
+                ),
                 codeyard_webui::encode_component(&repo.name)
             );
             if ty == "DiscussionComment" {
@@ -366,7 +375,7 @@ pub(super) async fn mutation(
     let mut payload = json!({"clientMutationId":input["clientMutationId"]});
     if field == "createDiscussion" {
         let repo = id(string("repositoryId")?, "R")?;
-        repository::by_id(repo, request).await?;
+        crate::backend::api::graphql::repository::by_id(repo, request).await?;
         request.authorize(repo, "discussions", true).await?;
         let change = Write::Create {
             category: id(string("categoryId")?, "DIC")?,
@@ -411,7 +420,7 @@ pub(super) async fn mutation(
     let d = load(discussion, request).await?;
     request.authorize(d.repo_id, "discussions", true).await?;
     let comment_id = old["databaseId"].as_i64().ok_or_else(missing)?;
-    let labels = super::metadata_mutations::ids(&input["labelIds"], "L")?;
+    let labels = crate::backend::api::graphql::metadata_mutations::ids(&input["labelIds"], "L")?;
     let category = input["categoryId"]
         .as_str()
         .map(|v| id(v, "DIC"))

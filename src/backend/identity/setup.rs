@@ -1,15 +1,16 @@
-use super::{
-    admission::{self, AdmissionError},
-    credentials::{
-        validate_account, validate_email, validate_new_account_name, AccountInputError,
-        PasswordAccount,
-    },
-    passwords::{self, PasswordError},
-    sessions::{self, SessionContext, SessionIssueError},
-    AuthenticatedAccount,
-};
-use crate::backend::db;
-use crate::backend::db::users::transitions;
+use crate::backend::identity::admission::AdmissionError;
+use crate::backend::identity::credentials::validate_account;
+use crate::backend::identity::credentials::validate_new_account_name;
+use crate::backend::identity::credentials::PasswordAccount;
+use codeyard_model::account_input::validate_email;
+use codeyard_model::account_input::AccountInputError;
+
+use crate::backend::identity::passwords::PasswordError;
+
+use crate::backend::identity::sessions::SessionContext;
+use crate::backend::identity::sessions::SessionIssueError;
+use crate::backend::identity::AuthenticatedAccount;
+
 use crate::backend::db::users::transitions::SetupClaim;
 use codeyard_db_core::DbPool;
 use sha2::{Digest, Sha256};
@@ -35,7 +36,7 @@ pub struct SetupStatus {
 pub struct SetupStatusUnavailable;
 
 pub async fn status(pool: &DbPool) -> Result<SetupStatus, SetupStatusUnavailable> {
-    let config = db::node_config::get_node_configuration(pool)
+    let config = crate::backend::db::node_config::get_node_configuration(pool)
         .await
         .map_err(|_| SetupStatusUnavailable)?;
     Ok(match config {
@@ -104,12 +105,13 @@ pub async fn complete_setup(
         return Err(SetupError::InputBounds);
     }
     let mode = node_mode(input.node_mode).ok_or(SetupError::InvalidNodeMode)?;
-    let existing = db::users::accounts::get_user_by_username(pool, input.account.username)
-        .await
-        .map_err(|_| SetupError::AccountUnavailable)?;
+    let existing =
+        crate::backend::db::users::accounts::get_user_by_username(pool, input.account.username)
+            .await
+            .map_err(|_| SetupError::AccountUnavailable)?;
     // Every setup attempt shares one budget, whatever name it submits, and is charged before the
     // secret is compared, so guesses at the secret are bounded.
-    admission::admit_login(pool, session.client, None, "setup")
+    crate::backend::identity::admission::admit_login(pool, session.client, None, "setup")
         .await
         .map_err(SetupError::Admission)?;
     if let Some(expected) = expected_admin_secret {
@@ -125,10 +127,12 @@ pub async fn complete_setup(
         validate_new_account_name(input.account.username).map_err(SetupError::Input)?;
     }
     let recovery = if let Some(user) = &existing {
-        let verified =
-            passwords::verify_password(input.account.password, user.password_hash.as_deref())
-                .await
-                .map_err(SetupError::Password)?;
+        let verified = crate::backend::identity::passwords::verify_password(
+            input.account.password,
+            user.password_hash.as_deref(),
+        )
+        .await
+        .map_err(SetupError::Password)?;
         if verified.valid && user.is_admin && !user.is_banned {
             user.password_hash.as_deref().map(|hash| (user.id, hash))
         } else {
@@ -137,10 +141,10 @@ pub async fn complete_setup(
     } else {
         None
     };
-    let hash = passwords::hash_password(input.account.password)
+    let hash = crate::backend::identity::passwords::hash_password(input.account.password)
         .await
         .map_err(SetupError::Password)?;
-    let user = match transitions::complete_setup(
+    let user = match crate::backend::db::users::transitions::complete_setup(
         pool,
         input.account.username,
         input.account.email.filter(|email| !email.trim().is_empty()),
@@ -157,10 +161,14 @@ pub async fn complete_setup(
     };
     // Account/config commit precedes issuance. Failure cannot reopen setup; the
     // completed administrator retries ordinary sign-in, not bootstrap adoption.
-    let session_id =
-        sessions::issue_authenticated_session(pool, session, user.id, Some(hash.as_str()))
-            .await
-            .map_err(SetupError::Session)?;
+    let session_id = crate::backend::identity::sessions::issue_authenticated_session(
+        pool,
+        session,
+        user.id,
+        Some(hash.as_str()),
+    )
+    .await
+    .map_err(SetupError::Session)?;
     Ok(AuthenticatedAccount { user, session_id })
 }
 

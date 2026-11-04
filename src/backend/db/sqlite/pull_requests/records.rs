@@ -1,10 +1,19 @@
-use crate::backend::db::discussions::{ListFilter, StateCounts, SHOWN_PR_COMMENT};
+use crate::backend::db::discussions::ListFilter;
+use crate::backend::db::discussions::StateCounts;
+use crate::backend::db::discussions::SHOWN_PR_COMMENT;
+use crate::backend::db::pull_requests::records::can_grant_maintainer_edit;
+use crate::backend::db::pull_requests::records::decide_join;
+use crate::backend::db::pull_requests::records::DuplicateOpenPullRequest;
+use crate::backend::db::pull_requests::records::JoinCheck;
+use crate::backend::db::pull_requests::records::NewPullRequest;
 use crate::backend::db::pull_requests::records::PullRequestListEntry;
-use crate::backend::db::pull_requests::records::{
-    can_grant_maintainer_edit, decide_join, DuplicateOpenPullRequest, JoinCheck, NewPullRequest,
-    PullRequestRevisions, PullRequestUpdate, ReadyOutcome, StackJoin, StackRefusal,
-};
-use crate::backend::db::pull_requests::records::{PullRequestRelation, ViewerPullRequestEntry};
+use crate::backend::db::pull_requests::records::PullRequestRelation;
+use crate::backend::db::pull_requests::records::PullRequestRevisions;
+use crate::backend::db::pull_requests::records::PullRequestUpdate;
+use crate::backend::db::pull_requests::records::ReadyOutcome;
+use crate::backend::db::pull_requests::records::StackJoin;
+use crate::backend::db::pull_requests::records::StackRefusal;
+use crate::backend::db::pull_requests::records::ViewerPullRequestEntry;
 use anyhow::Result;
 use codeyard_db_core::models::PullRequest;
 use sqlx::SqlitePool;
@@ -148,7 +157,7 @@ pub async fn move_open_pull_request_head(
     .await?
     .rows_affected();
     if changed == 1 && old_head != new_head {
-        let access = super::super::repositories::access::USER_REPO_ACCESS_SQL;
+        let access = crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
         sqlx::query(&format!("DELETE FROM pull_request_auto_merges WHERE pull_request_id=?1 AND NOT EXISTS(SELECT 1 FROM pull_requests p JOIN repositories r ON r.id=p.repo_id JOIN users u ON u.id=?2 WHERE p.id=?1 AND ({access})>=3)"))
             .bind(pull_request_id).bind(pusher).execute(&mut *tx).await?;
     }
@@ -257,7 +266,9 @@ pub async fn approve_pull_request_workflows(
     .bind(pr_id)
     .fetch_one(&mut *tx)
     .await?;
-    if fork && !super::super::action_settings::fork_runs_allowed(&mut tx, repo).await? {
+    if fork
+        && !crate::backend::db::sqlite::action_settings::fork_runs_allowed(&mut tx, repo).await?
+    {
         return Ok(false);
     }
     let changed = sqlx::query("UPDATE pull_requests SET workflows_approved_sha = ?2 WHERE id = ?1 AND head_sha = ?2 AND state = 'open' AND NOT is_draft")
@@ -320,7 +331,15 @@ pub async fn set_pull_request_draft(
     }
     // Converting to a draft never adds to a cap, so only a return to ready is checked.
     if !is_draft {
-        super::super::pull_caps::check(&mut tx, author, repo, false, true, Some(pr_id)).await?;
+        crate::backend::db::sqlite::pull_caps::check(
+            &mut tx,
+            author,
+            repo,
+            false,
+            true,
+            Some(pr_id),
+        )
+        .await?;
     }
     let next = crate::backend::db::sqlite::time::next_revision(
         crate::backend::db::sqlite::time::decode(&updated)?,
@@ -350,7 +369,13 @@ pub async fn create_pull_request(
     .await?;
     let source = match input.issue {
         Some(number) => Some(
-            super::conversion::read_source(&mut tx, input.author_id, input.repo_id, number).await?,
+            crate::backend::db::sqlite::pull_requests::conversion::read_source(
+                &mut tx,
+                input.author_id,
+                input.repo_id,
+                number,
+            )
+            .await?,
         ),
         None => None,
     };
@@ -394,7 +419,7 @@ pub async fn create_pull_request(
     if let Some(number) = duplicate {
         return Err(DuplicateOpenPullRequest { number }.into());
     }
-    super::super::pull_caps::check(
+    crate::backend::db::sqlite::pull_caps::check(
         &mut tx,
         source
             .as_ref()
@@ -432,13 +457,19 @@ pub async fn create_pull_request(
     .bind(input.maintainer_can_modify)
     .bind(input.maintainer_can_modify.then_some(input.author_id))
     .bind(source.as_ref().map(|issue| issue.id))
-    .bind(source.as_ref().map(|issue| super::super::time::encode(issue.created_at)))
+    .bind(source.as_ref().map(|issue| crate::backend::db::sqlite::time::encode(issue.created_at)))
     .bind(source.as_ref().and_then(|issue| issue.milestone_id))
     .bind(input.author_id)
     .fetch_one(&mut *tx)
     .await?;
     if let Some(issue) = source.as_ref() {
-        super::conversion::move_source(&mut tx, issue, &pr, input.author_id).await?;
+        crate::backend::db::sqlite::pull_requests::conversion::move_source(
+            &mut tx,
+            issue,
+            &pr,
+            input.author_id,
+        )
+        .await?;
     }
     tx.commit().await?;
     Ok(pr)
@@ -508,7 +539,7 @@ pub async fn list_filtered_pull_requests(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<PullRequest>> {
-    let readable = super::super::repositories::access::readable_condition();
+    let readable = crate::backend::db::sqlite::repositories::access::readable_condition();
     let rows = sqlx::query_as::<_, PullRequest>(&format!(
         "SELECT p.* FROM pull_requests p LEFT JOIN repositories h ON h.id = p.head_repo_id
          LEFT JOIN users u ON u.id = h.owner_user_id LEFT JOIN organizations o ON o.id = h.owner_org_id
@@ -534,7 +565,7 @@ pub async fn list_repo_pull_requests(
     let columns = crate::backend::db::sqlite::users::accounts::AUTHOR_DISPLAY_COLUMNS;
     let (assignee_mode, assignee_id) = filter.assignee.binding();
     let (milestone_mode, milestone_id) = filter.milestone.binding();
-    let labels = super::super::discussions::label_names_json(filter.labels)?;
+    let labels = crate::backend::db::sqlite::discussions::label_names_json(filter.labels)?;
     let order = filter
         .sort
         .order_by("pr_comments", "pull_request_id", SHOWN_PR_COMMENT);
@@ -554,7 +585,7 @@ pub async fn list_repo_pull_requests(
     ))
     .bind(repo_id)
     .bind(filter.state)
-    .bind(filter.search.map(super::super::search::contains))
+    .bind(filter.search.map(crate::backend::db::sqlite::search::contains))
     .bind(limit)
     .bind(filter.author_id)
     .bind(assignee_mode)
@@ -670,7 +701,7 @@ pub async fn count_repo_pull_requests_by_state(
 ) -> Result<Vec<(String, i64)>> {
     let (assignee_mode, assignee_id) = filter.assignee.binding();
     let (milestone_mode, milestone_id) = filter.milestone.binding();
-    let labels = super::super::discussions::label_names_json(filter.labels)?;
+    let labels = crate::backend::db::sqlite::discussions::label_names_json(filter.labels)?;
     let rows = sqlx::query_as::<_, (String, i64)>(
         r"SELECT i.state AS bucket, COUNT(*) FROM pull_requests i WHERE i.repo_id = ?1
             AND (?2 IS NULL OR i.title REGEXP ?2 OR i.body REGEXP ?2)
@@ -685,7 +716,7 @@ pub async fn count_repo_pull_requests_by_state(
         GROUP BY bucket",
     )
     .bind(repo_id)
-    .bind(filter.search.map(super::super::search::contains))
+    .bind(filter.search.map(crate::backend::db::sqlite::search::contains))
     .bind(filter.author_id)
     .bind(assignee_mode)
     .bind(assignee_id)
@@ -804,7 +835,15 @@ pub async fn update_pull_request(
     // Reopening, or moving the base, must not leave two open pull requests for one head and base.
     let final_open = edit.state.unwrap_or(edit.expected_state) == "open";
     if state == "closed" && final_open {
-        super::super::pull_caps::check(&mut tx, author, repo, draft, false, Some(pr_id)).await?;
+        crate::backend::db::sqlite::pull_caps::check(
+            &mut tx,
+            author,
+            repo,
+            draft,
+            false,
+            Some(pr_id),
+        )
+        .await?;
     }
     if final_open && (state == "closed" || base.is_some()) {
         let duplicate: Option<i32> = sqlx::query_scalar(
@@ -847,7 +886,7 @@ pub async fn update_pull_request(
         for (kind, detail, previous) in
             crate::backend::db::timeline::edit_events(&old_title, &state, &pr.title, &pr.state)
         {
-            super::super::timeline::append(
+            crate::backend::db::sqlite::timeline::append(
                 &mut tx,
                 repo,
                 "pull_request",
@@ -902,7 +941,7 @@ pub async fn mark_pull_requests_merged(
         if changed != 1 {
             return Ok(false);
         }
-        super::super::timeline::append(
+        crate::backend::db::sqlite::timeline::append(
             &mut tx,
             pull.repo_id,
             "pull_request",

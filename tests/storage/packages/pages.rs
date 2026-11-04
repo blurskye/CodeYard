@@ -1,5 +1,4 @@
 use super::*;
-use codeyard::backend::db;
 
 async fn pages(pg: bool) {
     crate::support::fake_webui_bundle::install();
@@ -175,16 +174,22 @@ async fn pages(pg: bool) {
     f.execute("UPDATE package_blob_grants SET expires_at=0", &[])
         .await;
     let auth = tokens::token_hash(writer.trim_start_matches("Bearer "));
-    let token = db::users::tokens::find_token(f.pool(), &auth)
+    let token = codeyard::backend::db::users::tokens::find_token(f.pool(), &auth)
         .await
         .unwrap()
         .unwrap();
-    let error = db::packages::set_deleted(f.pool(), package, None, token.id.into(), true)
-        .await
-        .unwrap_err();
+    let error = codeyard::backend::db::packages::set_deleted(
+        f.pool(),
+        package,
+        None,
+        token.id.into(),
+        true,
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(
-        error.downcast_ref::<db::packages::Refusal>(),
-        Some(db::packages::Refusal::Missing)
+        error.downcast_ref::<codeyard::backend::db::packages::Refusal>(),
+        Some(codeyard::backend::db::packages::Refusal::Missing)
     ));
     let storage = codeyard::backend::storage::ObjectStore::open(root.path(), None)
         .await

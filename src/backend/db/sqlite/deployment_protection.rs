@@ -1,4 +1,3 @@
-use crate::backend::ci::workflows::github_glob_matches;
 use crate::backend::db::deployment_protection::deployment_ref;
 use crate::backend::db::deployment_protection::provider;
 use crate::backend::db::deployment_protection::Gate;
@@ -8,6 +7,7 @@ use crate::backend::db::deployment_protection::Rule;
 use crate::backend::db::github_apps::App;
 use anyhow::Result;
 use codeyard_db_core::models::CiRun;
+use codeyard_model::workflow_glob::github_glob_matches;
 use sqlx::{SqliteConnection, SqlitePool};
 
 pub async fn rules(pool: &SqlitePool, environment: i64) -> Result<Vec<Rule>> {
@@ -40,9 +40,16 @@ pub async fn create(
     let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor.user_id, repo).await?
-            && super::credentials::repository(&mut tx, &actor, repo, "administration", true)
-                .await?,
+        crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor.user_id, repo)
+            .await?
+            && crate::backend::db::sqlite::credentials::repository(
+                &mut tx,
+                &actor,
+                repo,
+                "administration",
+                true
+            )
+            .await?,
         Refusal::Denied
     );
     let exists: bool = sqlx::query_scalar(
@@ -86,9 +93,16 @@ pub async fn disable(
     let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor.user_id, repo).await?
-            && super::credentials::repository(&mut tx, &actor, repo, "administration", true)
-                .await?,
+        crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor.user_id, repo)
+            .await?
+            && crate::backend::db::sqlite::credentials::repository(
+                &mut tx,
+                &actor,
+                repo,
+                "administration",
+                true
+            )
+            .await?,
         Refusal::Denied
     );
     let changed = sqlx::query("UPDATE deployment_protection_rules SET enabled=FALSE WHERE id=?1 AND environment_id=?2 AND EXISTS(SELECT 1 FROM deployment_environments WHERE id=?2 AND repo_id=?3)")
@@ -235,8 +249,8 @@ pub async fn review(
     let granted = serde_json::from_str(&granted)?;
     let repositories: Vec<i64> = serde_json::from_str(&repositories)?;
     anyhow::ensure!(
-        crate::backend::identity::github_apps::allows(&permissions, "deployments", true)
-            && crate::backend::identity::github_apps::allows(&granted, "deployments", true)
+        codeyard_model::github_apps::allows(&permissions, "deployments", true)
+            && codeyard_model::github_apps::allows(&granted, "deployments", true)
             && (repositories.is_empty() || repositories.contains(&repo)),
         Refusal::Denied
     );

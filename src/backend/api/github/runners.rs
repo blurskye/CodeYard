@@ -1,16 +1,20 @@
 //! GitHub runner administration projects Codeyard's scoped cluster workers.
-use super::{auth, pagination::Pagination, Error, Result};
-use crate::backend::{
-    app::AppState,
-    cluster::JoinTicket,
-    db::{
-        self,
-        runners::{
-            self as native, Group, GroupInput, Labels, Refusal, Registration, Runner, Scope,
-            Selection,
-        },
-    },
-};
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use crate::backend::cluster::JoinTicket;
+
+use crate::backend::db::runners as native;
+use crate::backend::db::runners::Group;
+use crate::backend::db::runners::GroupInput;
+use crate::backend::db::runners::Labels;
+use crate::backend::db::runners::Refusal;
+use crate::backend::db::runners::Registration;
+use crate::backend::db::runners::Runner;
+use crate::backend::db::runners::Scope;
+use crate::backend::db::runners::Selection;
 use axum::{
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -190,14 +194,14 @@ async fn scope(
     p: &Params,
     write: bool,
 ) -> Result<(i64, Scope)> {
-    let auth = auth::authenticate(state, headers, true)
+    let auth = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     if write {
         auth.require_write()?;
     }
     let scope = if let Some(org) = p.get("org") {
-        let org = db::organizations::get_public_organization(&state.pool, org)
+        let org = crate::backend::db::organizations::get_public_organization(&state.pool, org)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -206,7 +210,7 @@ async fn scope(
         let owner = p.get("owner").ok_or_else(Error::missing)?;
         let repo = p.get("repo").ok_or_else(Error::missing)?;
         Scope::Repository(
-            super::repository(state, headers, owner, repo, write)
+            crate::backend::api::github::repository(state, headers, owner, repo, write)
                 .await?
                 .0
                 .id,
@@ -242,9 +246,11 @@ fn group_document(name: &str, g: &Group) -> Result<Value> {
     );
     let workflows: Value =
         serde_json::from_str(&g.selected_workflows).map_err(Error::unavailable)?;
-    let mut value = json!({"id":g.id,"name":g.name,"visibility":g.visibility,"default":g.is_default,"runners_url":super::api_url(&format!("{base}/runners")),"hosted_runners_url":super::api_url(&format!("{base}/hosted-runners")),"inherited":false,"allows_public_repositories":g.allows_public_repositories,"workflow_restrictions_read_only":false,"restricted_to_workflows":g.restricted_to_workflows,"selected_workflows":workflows});
+    let mut value = json!({"id":g.id,"name":g.name,"visibility":g.visibility,"default":g.is_default,"runners_url":crate::backend::api::github::api_url(&format!("{base}/runners")),"hosted_runners_url":crate::backend::api::github::api_url(&format!("{base}/hosted-runners")),"inherited":false,"allows_public_repositories":g.allows_public_repositories,"workflow_restrictions_read_only":false,"restricted_to_workflows":g.restricted_to_workflows,"selected_workflows":workflows});
     if g.visibility == "selected" {
-        value["selected_repositories_url"] = json!(super::api_url(&format!("{base}/repositories")));
+        value["selected_repositories_url"] = json!(crate::backend::api::github::api_url(&format!(
+            "{base}/repositories"
+        )));
     }
     Ok(value)
 }
@@ -330,13 +336,16 @@ async fn groups(
         let name = name
             .strip_prefix(&format!("{}/", p["org"]))
             .unwrap_or(&name);
-        let repo = db::repositories::records::get_repository(&s.pool, &p["org"], name)
-            .await
-            .map_err(Error::unavailable)?
-            .filter(|r| {
-                r.owner_kind == "org" && r.owner_org_id == Some(org_id) && r.owner_user_id.is_none()
-            })
-            .ok_or_else(Error::missing)?;
+        let repo =
+            crate::backend::db::repositories::records::get_repository(&s.pool, &p["org"], name)
+                .await
+                .map_err(Error::unavailable)?
+                .filter(|r| {
+                    r.owner_kind == "org"
+                        && r.owner_org_id == Some(org_id)
+                        && r.owner_user_id.is_none()
+                })
+                .ok_or_else(Error::missing)?;
         Some(repo.id)
     } else {
         None
@@ -387,7 +396,7 @@ async fn create_group(
     input: std::result::Result<Json<GroupInput>, JsonRejection>,
 ) -> Result<Response> {
     let (actor, scope) = administered(&s, &headers, &p, true).await?;
-    let Json(input) = input.map_err(super::json_error)?;
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     let row = native::save_group(&s.pool, actor, org(scope)?, None, &input)
         .await
         .map_err(error)?;
@@ -400,7 +409,7 @@ async fn update_group(
     input: std::result::Result<Json<GroupInput>, JsonRejection>,
 ) -> Result<Json<Value>> {
     let (actor, scope) = administered(&s, &headers, &p, true).await?;
-    let Json(input) = input.map_err(super::json_error)?;
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     let row = native::save_group(
         &s.pool,
         actor,
@@ -458,7 +467,7 @@ async fn repositories(
         .skip(offset)
         .take(limit)
         .collect();
-    let rows = db::repositories::records::get_repositories_by_ids(&s.pool, &ids)
+    let rows = crate::backend::db::repositories::records::get_repositories_by_ids(&s.pool, &ids)
         .await
         .map_err(Error::unavailable)?;
     let organization = org(scope)?;
@@ -468,10 +477,10 @@ async fn repositories(
     {
         return Err(Error::missing());
     }
-    let credential = auth::authenticate(&s, &headers, true)
+    let credential = crate::backend::api::github::auth::authenticate(&s, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
-    let repos = super::repos::documents(&s, &rows, Some(&credential)).await?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
+    let repos = crate::backend::api::github::repos::documents(&s, &rows, Some(&credential)).await?;
     // No document loaded after the first group snapshot escapes a later loss of group authority.
     let current = selected_group(&s, actor, scope, &p).await?;
     if current.visibility != "selected" || ids.iter().any(|id| !current.repositories.contains(id)) {
@@ -522,7 +531,10 @@ async fn set_repositories(
         &p,
         || {
             Ok(Selection::Replace(
-                input.map_err(super::json_error)?.0.selected_repository_ids,
+                input
+                    .map_err(crate::backend::api::github::json_error)?
+                    .0
+                    .selected_repository_ids,
             ))
         },
         true,
@@ -569,7 +581,10 @@ async fn set_runners(
         &p,
         || {
             Ok(Selection::Replace(
-                input.map_err(super::json_error)?.0.runners,
+                input
+                    .map_err(crate::backend::api::github::json_error)?
+                    .0
+                    .runners,
             ))
         },
         false,
@@ -688,7 +703,7 @@ struct LabelInput {
 /// GitHub documents these label operations with string-array validation errors.
 fn label_input(input: std::result::Result<Json<LabelInput>, JsonRejection>) -> Result<Vec<String>> {
     Ok(input
-        .map_err(|error| super::json_error(error).simple())?
+        .map_err(|error| crate::backend::api::github::json_error(error).simple())?
         .0
         .labels)
 }
@@ -765,7 +780,7 @@ async fn downloads(
 ) -> Result<Json<Value>> {
     administered(&s, &headers, &p, false).await?;
     Ok(Json(
-        json!([{"os":std::env::consts::OS,"architecture":match std::env::consts::ARCH {"x86_64"=>"x64","aarch64"=>"arm64",arch=>arch},"download_url":format!("{}/api/actions/runners/download",crate::backend::api::http::config::link_origin()),"filename":format!("codeyard-runner-{}-{}",std::env::consts::OS,std::env::consts::ARCH)}]),
+        json!([{"os":std::env::consts::OS,"architecture":match std::env::consts::ARCH {"x86_64"=>"x64","aarch64"=>"arm64",arch=>arch},"download_url":format!("{}/api/actions/runners/download",codeyard_model::http_config::link_origin()),"filename":format!("codeyard-runner-{}-{}",std::env::consts::OS,std::env::consts::ARCH)}]),
     ))
 }
 async fn ticket(state: &AppState) -> Result<JoinTicket> {
@@ -846,7 +861,8 @@ async fn jit(
     input: std::result::Result<Json<Jit>, JsonRejection>,
 ) -> Result<Response> {
     let (actor, scope) = administered(&s, &headers, &p, true).await?;
-    let Json(input) = input.map_err(|error| super::json_error(error).simple())?;
+    let Json(input) =
+        input.map_err(|error| crate::backend::api::github::json_error(error).simple())?;
     if input.labels.is_empty() {
         return Err(Error::invalid_simple("Invalid runner labels"));
     }

@@ -8,7 +8,7 @@ use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
 use base64::Engine;
-use codeyard::backend::db;
+
 use database::Database;
 use pulls::{text, Client};
 use serde_json::{json, Value};
@@ -40,7 +40,9 @@ impl World {
         let repository = codeyard::backend::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+            codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+                alice_id,
+            ),
             "proj",
             None,
             true,
@@ -53,7 +55,7 @@ impl World {
             (carol_id, codeyard_db_core::models::AccessLevel::Write),
             (dave_id, codeyard_db_core::models::AccessLevel::Read),
         ] {
-            db::repositories::access::grant_repo_access(
+            codeyard::backend::db::repositories::access::grant_repo_access(
                 database.pool(),
                 user,
                 repository.id,
@@ -322,11 +324,11 @@ async fn owner_regressions_contract(pg: bool) {
     merge_refused(&world.alice, own, "Waiting on review from @alice").await;
 
     let pool = world._database.pool();
-    let repo = db::repositories::records::get_repository(pool, "alice", "proj")
+    let repo = codeyard::backend::db::repositories::records::get_repository(pool, "alice", "proj")
         .await
         .unwrap()
         .unwrap();
-    let users = db::users::accounts::get_users_by_usernames(
+    let users = codeyard::backend::db::users::accounts::get_users_by_usernames(
         pool,
         &["alice".into(), "bob".into(), "carol".into(), "dave".into()],
     )
@@ -343,10 +345,11 @@ async fn owner_regressions_contract(pg: bool) {
                 )
                 .await;
         }
-        let writers = db::repositories::access::write_access_user_ids(pool, repo.id, &ids)
-            .await
-            .unwrap();
-        let current = db::users::accounts::get_users_by_ids(pool, &ids)
+        let writers =
+            codeyard::backend::db::repositories::access::write_access_user_ids(pool, repo.id, &ids)
+                .await
+                .unwrap();
+        let current = codeyard::backend::db::users::accounts::get_users_by_ids(pool, &ids)
             .await
             .unwrap();
         for user in current {
@@ -365,12 +368,12 @@ async fn private_teams_and_unverified_email_do_not_resolve(pg: bool) {
     use codeyard::backend::repositories::code_owners::resolve_owners;
     let mut world = World::new(pg).await;
     let pool = world._database.pool();
-    let repo = db::repositories::records::get_repository(pool, "alice", "proj")
+    let repo = codeyard::backend::db::repositories::records::get_repository(pool, "alice", "proj")
         .await
         .unwrap()
         .unwrap();
     let alice = repo.owner_user_id.unwrap();
-    let carol = db::users::accounts::get_user_by_username(pool, "carol")
+    let carol = codeyard::backend::db::users::accounts::get_user_by_username(pool, "carol")
         .await
         .unwrap()
         .unwrap();
@@ -413,9 +416,11 @@ async fn private_teams_and_unverified_email_do_not_resolve(pg: bool) {
     let org_repo = codeyard::backend::repositories::lifecycle::provision(
         (pool, None),
         world._root.path(),
-        db::repositories::creation::RepositoryCreationOwner {
+        codeyard::backend::db::repositories::creation::RepositoryCreationOwner {
             actor_id: alice,
-            target: db::repositories::creation::RepositoryTarget::Organization(909090),
+            target: codeyard::backend::db::repositories::creation::RepositoryTarget::Organization(
+                909090,
+            ),
         },
         "owned",
         None,
@@ -424,7 +429,7 @@ async fn private_teams_and_unverified_email_do_not_resolve(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard::backend::db::repositories::access::grant_repo_access(
         pool,
         carol.id,
         org_repo.id,

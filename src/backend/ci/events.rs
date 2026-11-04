@@ -1,8 +1,11 @@
 //! Repository events use the default branch's workflow and the webhook's unchanged document.
-use super::{admission::AdmissionError, workflows::WorkflowMatchBudget, CiRunRequest, CiRuns};
-use crate::backend::db;
+use crate::backend::ci::CiRunRequest;
+use crate::backend::ci::CiRuns;
+use codeyard_db_core::ci_admission::AdmissionError;
+use codeyard_model::workflow_glob::WorkflowMatchBudget;
+
 use crate::backend::repositories::store::repo_store;
-use crate::backend::webhooks::payloads;
+
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Repository;
 use serde_json::Value;
@@ -32,7 +35,7 @@ impl CiRuns {
         sender: i64,
         event_type: String,
         client_payload: Value,
-        credential: db::ci::CiCredential,
+        credential: crate::backend::db::ci::CiCredential,
     ) -> Result<(), AdmissionError> {
         if repo.is_archived {
             return Err(AdmissionError::Denied(
@@ -85,8 +88,11 @@ impl CiRuns {
         let Some(actor) = run.triggered_by_id else {
             return Ok(());
         };
-        let Some(repo) =
-            db::repositories::records::get_repository_by_id(&self.pool, run.repo_id).await?
+        let Some(repo) = crate::backend::db::repositories::records::get_repository_by_id(
+            &self.pool,
+            run.repo_id,
+        )
+        .await?
         else {
             return Ok(());
         };
@@ -107,43 +113,50 @@ impl CiRuns {
                 may_chain = false;
                 break;
             };
-            let Some(previous) = db::ci::get_ci_run_by_id(&self.pool, repo.id, id).await? else {
+            let Some(previous) =
+                crate::backend::db::ci::get_ci_run_by_id(&self.pool, repo.id, id).await?
+            else {
                 may_chain = false;
                 break;
             };
             source = previous;
         }
         let store = repo_store(&repo, self.cluster.as_ref());
-        let owner = db::ci::ci_repository_owner(&self.pool, repo.id)
+        let owner = crate::backend::db::ci::ci_repository_owner(&self.pool, repo.id)
             .await?
             .ok_or(AdmissionError::Unavailable)?;
-        let sender = db::users::accounts::get_user_by_id(&self.pool, actor)
+        let sender = crate::backend::db::users::accounts::get_user_by_id(&self.pool, actor)
             .await?
             .ok_or(AdmissionError::Unavailable)?;
-        let metadata = db::action_runs::metadata(&self.pool, repo.id, &[run.id])
+        let metadata = crate::backend::db::action_runs::metadata(&self.pool, repo.id, &[run.id])
             .await?
             .into_iter()
             .next()
             .ok_or(AdmissionError::Unavailable)?;
-        let repository = payloads::repository(&repo, &owner);
+        let repository = crate::backend::webhooks::payloads::repository(&repo, &owner);
         let head_repository = if !run.is_fork {
             repository.clone()
         } else {
             match metadata.head_repository.as_ref() {
                 Some(snapshot) => {
-                    match db::repositories::records::get_repository_by_id(&self.pool, snapshot.0.id)
-                        .await
-                        .ok()
-                        .flatten()
+                    match crate::backend::db::repositories::records::get_repository_by_id(
+                        &self.pool,
+                        snapshot.0.id,
+                    )
+                    .await
+                    .ok()
+                    .flatten()
                     {
                         Some(head) if head.id == repo.id => repository.clone(),
                         Some(head) if !head.is_private => {
-                            match db::ci::ci_repository_owner(&self.pool, head.id)
+                            match crate::backend::db::ci::ci_repository_owner(&self.pool, head.id)
                                 .await
                                 .ok()
                                 .flatten()
                             {
-                                Some(owner) => payloads::repository(&head, &owner),
+                                Some(owner) => {
+                                    crate::backend::webhooks::payloads::repository(&head, &owner)
+                                }
                                 None => Value::Null,
                             }
                         }
@@ -155,31 +168,37 @@ impl CiRuns {
         };
         let head_commit = match run.head_sha.as_deref() {
             Some(sha) => store.commit(sha).await.map_or(Value::Null, |mut commit| {
-                commit.message = payloads::bounded_text(&commit.message, 4096);
-                payloads::simple_commit(&commit)
+                commit.message =
+                    crate::backend::webhooks::payloads::bounded_text(&commit.message, 4096);
+                crate::backend::webhooks::payloads::simple_commit(&commit)
             }),
             None => Value::Null,
         };
-        let workflow_document =
-            db::action_workflows::workflow_by_id(&self.pool, repo.id, metadata.workflow_id)
-                .await?
-                .map_or(Value::Null, |workflow| {
-                    payloads::action_workflow(&workflow, &owner, &repo.name)
-                });
+        let workflow_document = crate::backend::db::action_workflows::workflow_by_id(
+            &self.pool,
+            repo.id,
+            metadata.workflow_id,
+        )
+        .await?
+        .map_or(Value::Null, |workflow| {
+            crate::backend::webhooks::payloads::action_workflow(&workflow, &owner, &repo.name)
+        });
         let pull = match run.pull_request_id {
-            Some(id) => db::pull_requests::records::get_pull_request_by_id(&self.pool, id)
-                .await?
-                .filter(|pull| pull.repo_id == repo.id),
+            Some(id) => {
+                crate::backend::db::pull_requests::records::get_pull_request_by_id(&self.pool, id)
+                    .await?
+                    .filter(|pull| pull.repo_id == repo.id)
+            }
             None => None,
         };
-        let pull_requests = payloads::action_run_pull_requests(
+        let pull_requests = crate::backend::webhooks::payloads::action_run_pull_requests(
             run,
             pull.as_ref(),
             &repository,
             &head_repository,
             false,
         );
-        let mut document = payloads::action_run(
+        let mut document = crate::backend::webhooks::payloads::action_run(
             run,
             &owner,
             repository,
@@ -200,18 +219,19 @@ impl CiRuns {
         // A rerun keeps the first attempt's actor; whoever reran it is the triggering actor, as
         // in the REST document.
         let first = match run.workflow_run_id.filter(|id| *id != run.id) {
-            Some(root) => db::ci::get_ci_run_by_id(&self.pool, repo.id, root)
+            Some(root) => crate::backend::db::ci::get_ci_run_by_id(&self.pool, repo.id, root)
                 .await?
                 .and_then(|first| first.triggered_by_id)
                 .filter(|id| *id != actor),
             None => None,
         };
         let first = match first {
-            Some(id) => db::users::accounts::get_user_by_id(&self.pool, id).await?,
+            Some(id) => crate::backend::db::users::accounts::get_user_by_id(&self.pool, id).await?,
             None => None,
         };
-        document["actor"] = payloads::user(first.as_ref().unwrap_or(&sender));
-        document["triggering_actor"] = payloads::user(&sender);
+        document["actor"] =
+            crate::backend::webhooks::payloads::user(first.as_ref().unwrap_or(&sender));
+        document["triggering_actor"] = crate::backend::webhooks::payloads::user(&sender);
         let snapshot = repo.clone();
         let action = action.to_owned();
         let payload = crate::backend::webhooks::emit(
@@ -220,11 +240,11 @@ impl CiRuns {
             "workflow_run",
             vec![actor],
             move |owner, people| {
-                payloads::workflow_run(
+                crate::backend::webhooks::payloads::workflow_run(
                     &action,
                     document,
                     workflow_document,
-                    payloads::Scope {
+                    crate::backend::webhooks::payloads::Scope {
                         repo: &snapshot,
                         owner,
                         sender: &people.get(actor),
@@ -257,22 +277,27 @@ impl CiRuns {
         job_id: i64,
         action: &'static str,
     ) -> anyhow::Result<()> {
-        let Some(run) = db::ci::get_ci_run(&self.pool, run_id).await? else {
+        let Some(run) = crate::backend::db::ci::get_ci_run(&self.pool, run_id).await? else {
             return Ok(());
         };
         let Some(actor) = run.triggered_by_id else {
             return Ok(());
         };
-        let Some(repo) =
-            db::repositories::records::get_repository_by_id(&self.pool, run.repo_id).await?
+        let Some(repo) = crate::backend::db::repositories::records::get_repository_by_id(
+            &self.pool,
+            run.repo_id,
+        )
+        .await?
         else {
             return Ok(());
         };
         // The queued event names a job that has not started yet.
-        let Some(job) = db::action_jobs::get(&self.pool, repo.id, job_id, true).await? else {
+        let Some(job) =
+            crate::backend::db::action_jobs::get(&self.pool, repo.id, job_id, true).await?
+        else {
             return Ok(());
         };
-        let steps = db::action_jobs::steps(&self.pool, repo.id, job_id).await?;
+        let steps = crate::backend::db::action_jobs::steps(&self.pool, repo.id, job_id).await?;
         let snapshot = repo.clone();
         crate::backend::webhooks::emit(
             &self.pool,
@@ -280,10 +305,16 @@ impl CiRuns {
             "workflow_job",
             vec![actor],
             move |owner, people| {
-                payloads::workflow_job(
+                crate::backend::webhooks::payloads::workflow_job(
                     action,
-                    payloads::action_job(&job, &steps, &run, owner, &snapshot.name),
-                    payloads::Scope {
+                    crate::backend::webhooks::payloads::action_job(
+                        &job,
+                        &steps,
+                        &run,
+                        owner,
+                        &snapshot.name,
+                    ),
+                    crate::backend::webhooks::payloads::Scope {
                         repo: &snapshot,
                         owner,
                         sender: &people.get(actor),
@@ -301,14 +332,14 @@ impl CiRuns {
         actor: i64,
         event: &str,
         payload: &Value,
-        credential: Option<db::ci::CiCredential>,
+        credential: Option<crate::backend::db::ci::CiCredential>,
     ) -> Result<(), AdmissionError> {
         if !is_repository_event(event) || !self.actor_may_discover_workflows(repo.id, actor).await?
         {
             return Ok(());
         }
         // With Actions turned off the event is still accepted; it just starts nothing.
-        if !db::action_settings::actions_enabled(&self.pool, repo.id).await? {
+        if !crate::backend::db::action_settings::actions_enabled(&self.pool, repo.id).await? {
             return Ok(());
         }
         let store = repo_store(repo, self.cluster.as_ref());
@@ -319,7 +350,7 @@ impl CiRuns {
             Err(error) if error.kind == codeyard_git::error::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error.into()),
         };
-        let definitions = super::list_workflows_for_ref(&store, &commit.sha).await?;
+        let definitions = crate::backend::ci::list_workflows_for_ref(&store, &commit.sha).await?;
         let mut budget = WorkflowMatchBudget::new();
         let mut matched = Vec::new();
         let branch = if event == "workflow_run" {
@@ -352,7 +383,9 @@ impl CiRuns {
                         head_sha: Some(commit.sha.clone()),
                         event: event.to_owned(),
                         pull_request_id: None,
-                        pipeline: super::infer_pipeline_from_workflow_path(&definition.path),
+                        pipeline: crate::backend::ci::infer_pipeline_from_workflow_path(
+                            &definition.path,
+                        ),
                         workflow_paths: vec![definition.path],
                         environment: None,
                         inputs: None,

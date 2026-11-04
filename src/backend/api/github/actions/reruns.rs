@@ -1,9 +1,10 @@
 //! New attempts use native immutable admission and observed dependency state.
-use super::workflows::admission_error;
-use crate::backend::{
-    api::github::{auth, repository, Error, Result},
-    app::AppState,
-};
+use crate::backend::api::github::actions::workflows::admission_error;
+
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
 use axum::{
     body::Bytes,
     extract::{Path, State},
@@ -36,7 +37,7 @@ async fn perform(
     selection: Selection,
 ) -> Result<Response> {
     let (repo, authentication) = repository(&state, &headers, &owner, &name, true).await?;
-    let authentication = authentication.ok_or_else(auth::required)?;
+    let authentication = authentication.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = authentication.workflow_actor(&state, repo.id).await?;
     let credential = Some(authentication.ci_credential(&headers, "actions")?);
     let args: Parameters = if body.is_empty() {

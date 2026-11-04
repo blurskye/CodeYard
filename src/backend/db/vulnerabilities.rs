@@ -1,8 +1,9 @@
 //! Durable OSV data and leases for lockfile snapshot scans.
-use crate::backend::{dependency_graph::Snapshot, vulnerabilities::PreparedAdvisory};
 use anyhow::Result;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
+use codeyard_model::dependency_graph::Snapshot;
+use codeyard_model::vulnerabilities::PreparedAdvisory;
 use serde::{Deserialize, Serialize};
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
@@ -48,23 +49,23 @@ impl Settings {
         })
     }
 }
-native_operation!(super::postgres::vulnerabilities::settings,super::sqlite::vulnerabilities::settings,
+native_operation!(crate::backend::db::postgres::vulnerabilities::settings,crate::backend::db::sqlite::vulnerabilities::settings,
     fn settings(pool:&DbPool)->Result<Settings>);
-native_operation!(super::postgres::vulnerabilities::save_settings,super::sqlite::vulnerabilities::save_settings,
+native_operation!(crate::backend::db::postgres::vulnerabilities::save_settings,crate::backend::db::sqlite::vulnerabilities::save_settings,
     fn save_settings(pool:&DbPool,actor:i64,session:&str,settings:&Settings)->Result<()>);
-native_operation!(super::postgres::vulnerabilities::upsert,super::sqlite::vulnerabilities::upsert,
+native_operation!(crate::backend::db::postgres::vulnerabilities::upsert,crate::backend::db::sqlite::vulnerabilities::upsert,
     fn upsert(pool:&DbPool,advisory:&PreparedAdvisory)->Result<bool>);
-native_operation!(super::postgres::vulnerabilities::rescan_all,super::sqlite::vulnerabilities::rescan_all,
+native_operation!(crate::backend::db::postgres::vulnerabilities::rescan_all,crate::backend::db::sqlite::vulnerabilities::rescan_all,
     fn rescan_all(pool:&DbPool)->Result<()>);
-native_operation!(super::postgres::vulnerabilities::advisories,super::sqlite::vulnerabilities::advisories,
+native_operation!(crate::backend::db::postgres::vulnerabilities::advisories,crate::backend::db::sqlite::vulnerabilities::advisories,
     fn advisories(pool:&DbPool,ecosystem:&str,name:&str)->Result<Vec<String>>);
-native_operation!(super::postgres::vulnerabilities::enqueue,super::sqlite::vulnerabilities::enqueue,
+native_operation!(crate::backend::db::postgres::vulnerabilities::enqueue,crate::backend::db::sqlite::vulnerabilities::enqueue,
     fn enqueue(pool:&DbPool,repo:i64)->Result<()>);
-native_operation!(super::postgres::vulnerabilities::queue_changed,super::sqlite::vulnerabilities::queue_changed,
+native_operation!(crate::backend::db::postgres::vulnerabilities::queue_changed,crate::backend::db::sqlite::vulnerabilities::queue_changed,
     fn queue_changed(pool:&DbPool)->Result<()>);
-native_operation!(super::postgres::vulnerabilities::claim,super::sqlite::vulnerabilities::claim,
+native_operation!(crate::backend::db::postgres::vulnerabilities::claim,crate::backend::db::sqlite::vulnerabilities::claim,
     fn claim(pool:&DbPool)->Result<Option<(i64,i64)>>);
-native_operation!(super::postgres::vulnerabilities::claim_sync,super::sqlite::vulnerabilities::claim_sync,
+native_operation!(crate::backend::db::postgres::vulnerabilities::claim_sync,crate::backend::db::sqlite::vulnerabilities::claim_sync,
     fn claim_sync(pool:&DbPool)->Result<bool>);
-native_operation!(super::postgres::vulnerabilities::save_snapshot,super::sqlite::vulnerabilities::save_snapshot,
+native_operation!(crate::backend::db::postgres::vulnerabilities::save_snapshot,crate::backend::db::sqlite::vulnerabilities::save_snapshot,
     fn save_snapshot(pool:&DbPool,repo:i64,generation:i64,snapshot:&Snapshot)->Result<()>);

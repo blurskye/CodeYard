@@ -1,6 +1,6 @@
 //! Bind environment values to admitted job IDs before either engine receives them.
-use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db::environment_values as values;
+use codeyard_support::secrets::SecretEncryptor;
+
 use crate::backend::db::environment_values::WorkflowValues;
 use anyhow::{ensure, Context, Result};
 use codeyard_db_core::models::CiRun;
@@ -20,7 +20,7 @@ pub(super) async fn load(
     run: &CiRun,
     definitions: &BTreeMap<String, Vec<u8>>,
 ) -> Result<EnvironmentValues> {
-    let definitions = super::workflows::parse_definitions(definitions).await?;
+    let definitions = codeyard_model::workflow_yaml::parse_definitions(definitions).await?;
     let mut result = EnvironmentValues::default();
     // Each definition's bindings use its own job IDs. The run's roots qualify them through their calls.
     let mut local = BTreeMap::new();
@@ -42,12 +42,18 @@ pub(super) async fn load(
                 !environment.contains("${{"),
                 "CI requires literal job environment names"
             );
-            let key = values::environment_key(environment)?;
+            let key = crate::backend::db::environment_values::environment_key(environment)?;
             if let std::collections::btree_map::Entry::Vacant(entry) =
                 result.environments.entry(key.clone())
             {
-                let scoped =
-                    values::for_run(pool, encryptor, run.repo_id, environment, run.is_fork).await?;
+                let scoped = crate::backend::db::environment_values::for_run(
+                    pool,
+                    encryptor,
+                    run.repo_id,
+                    environment,
+                    run.is_fork,
+                )
+                .await?;
                 entry.insert(scoped);
             }
             let job = job.as_str().context("Invalid admitted job ID")?;
@@ -125,7 +131,7 @@ mod tests {
         ]);
         let definitions = definitions
             .into_iter()
-            .map(|(path, bytes)| (path, super::super::workflows::parse_yaml(&bytes).unwrap()))
+            .map(|(path, bytes)| (path, crate::backend::ci::environment_values::codeyard_model::workflow_yaml::parse_yaml(&bytes).unwrap()))
             .collect();
         let local = BTreeMap::from([(
             "ci.yml".to_owned(),

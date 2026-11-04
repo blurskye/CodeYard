@@ -344,8 +344,6 @@ async fn keys_api_and_forms(pg: bool) {
 }
 
 async fn live_authority(pg: bool) {
-    use codeyard::backend::repositories::deploy_keys as keys;
-
     let (mut database, _root, alice, bob) = setup(pg).await;
     let pool = database.pool();
     let repository = db::repositories::records::get_repository(pool, "alice", "proj")
@@ -375,7 +373,7 @@ async fn live_authority(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    let key = keys::add_key(
+    let key = codeyard::backend::repositories::deploy_keys::add_key(
         pool,
         &administrator,
         &bob.session,
@@ -387,16 +385,21 @@ async fn live_authority(pg: bool) {
     .await
     .unwrap();
     for write in [false, true] {
-        let (_, access) = keys::authorize(pool, key.id, &repository, write)
-            .await
-            .unwrap();
+        let (_, access) = codeyard::backend::repositories::deploy_keys::authorize(
+            pool,
+            key.id,
+            &repository,
+            write,
+        )
+        .await
+        .unwrap();
         assert_eq!(access, codeyard_db_core::models::AccessLevel::Write);
     }
     db::users::sessions::delete_session(pool, &alice.session)
         .await
         .unwrap();
     assert!(matches!(
-        keys::add_key(
+        codeyard::backend::repositories::deploy_keys::add_key(
             pool,
             &owner,
             &alice.session,
@@ -420,11 +423,15 @@ async fn live_authority(pg: bool) {
     database
         .execute("UPDATE users SET is_admin=FALSE WHERE id=$1", &[bob_id])
         .await;
-    assert!(
-        keys::remove_key(pool, &administrator, &bob.session, &repository, key.id)
-            .await
-            .is_err()
-    );
+    assert!(codeyard::backend::repositories::deploy_keys::remove_key(
+        pool,
+        &administrator,
+        &bob.session,
+        &repository,
+        key.id
+    )
+    .await
+    .is_err());
     assert!(db::deploy_keys::get_deploy_key(pool, key.id)
         .await
         .unwrap()
@@ -456,9 +463,14 @@ async fn live_authority(pg: bool) {
         .await;
     let organization_repository = database.repository(repository.id).await;
     assert!(
-        keys::authorize(pool, key.id, &organization_repository, false)
-            .await
-            .is_err(),
+        codeyard::backend::repositories::deploy_keys::authorize(
+            pool,
+            key.id,
+            &organization_repository,
+            false
+        )
+        .await
+        .is_err(),
         "personal site-admin authority does not extend to organizations"
     );
     let late = db::deploy_keys::NewDeployKey {

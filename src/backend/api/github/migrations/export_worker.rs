@@ -1,18 +1,17 @@
 mod projects;
-use super::super::{auth, comments, issues, milestones, pulls, releases, repos, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        assignees::AssignedItem,
-        repository_exports::{self as exports, RepositoryExport},
-    },
-    repositories::{
-        migration_archive::MigrationArchive, releases::ReleaseDetail, store::repo_store,
-    },
-    storage::Upload,
-    webhooks::payloads,
-};
+
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::assignees::AssignedItem;
+use crate::backend::db::repository_exports as exports;
+use crate::backend::db::repository_exports::RepositoryExport;
+use crate::backend::repositories::migration_archive::MigrationArchive;
+use crate::backend::repositories::releases::ReleaseDetail;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::storage::Upload;
+
 use axum::http::HeaderMap;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -26,7 +25,7 @@ pub(super) fn spawn(state: Arc<AppState>, headers: HeaderMap, row: RepositoryExp
             exports::finish(&state.pool, row.id, "exporting").await.map_err(Error::unavailable)?;
             let bytes = build(&state, &headers, &row).await?;
             // Tokens, scope and selected repository ownership are rechecked before publication.
-            let actor = auth::authenticate(&state, &headers, true).await?.ok_or_else(auth::required)?;
+            let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true).await?.ok_or_else(crate::backend::api::github::auth::required)?;
             actor.require_write()?;
             if Some(actor.user.id) != row.actor_id || exports::by_guid(&state.pool, actor.user.id, &row.guid).await.map_err(Error::unavailable)?.is_none() { return Err(Error::missing()); }
             let key = row.object_key();
@@ -43,17 +42,17 @@ pub(super) fn spawn(state: Arc<AppState>, headers: HeaderMap, row: RepositoryExp
 }
 
 async fn person(state: &AppState, id: i64) -> Result<Value> {
-    let user = db::users::accounts::get_user_by_id(&state.pool, id)
+    let user = crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    Ok(payloads::user(&user))
+    Ok(crate::backend::webhooks::payloads::user(&user))
 }
 
 async fn build(state: &AppState, headers: &HeaderMap, row: &RepositoryExport) -> Result<Vec<u8>> {
-    let actor = auth::authenticate(state, headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
     if exports::by_guid(&state.pool, actor.user.id, &row.guid)
         .await
@@ -78,14 +77,15 @@ async fn build(state: &AppState, headers: &HeaderMap, row: &RepositoryExport) ->
         projects::append(state, actor.user.id, row, &mut archive).await?;
     }
     for id in ids {
-        let repo = db::repositories::records::get_repository_by_id(&state.pool, id)
+        let repo = crate::backend::db::repositories::records::get_repository_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        let owner = db::repositories::records::repository_owner_name(&state.pool, id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let owner =
+            crate::backend::db::repositories::records::repository_owner_name(&state.pool, id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
         let store = repo_store(&repo, state.cluster.as_ref());
         if options.lock_repositories {
             store
@@ -93,7 +93,8 @@ async fn build(state: &AppState, headers: &HeaderMap, row: &RepositoryExport) ->
                 .await
                 .map_err(Error::unavailable)?;
         }
-        let value = repos::document(state, &repo, Some(&actor)).await?;
+        let value =
+            crate::backend::api::github::repos::document(state, &repo, Some(&actor)).await?;
         archive
             .records("repository", vec![value])
             .map_err(Error::unavailable)?;
@@ -139,11 +140,13 @@ async fn metadata(
     owner: &str,
     archive: &mut MigrationArchive,
 ) -> Result<()> {
-    let repository = payloads::repository(repo, owner)["html_url"].clone();
+    let repository =
+        crate::backend::webhooks::payloads::repository(repo, owner)["html_url"].clone();
     for (kind, record) in [("type", "issue_type"), ("field", "issue_field")] {
-        let definitions = db::issue_attributes::catalog(&state.pool, repo.id, Some(actor), kind)
-            .await
-            .map_err(Error::unavailable)?;
+        let definitions =
+            crate::backend::db::issue_attributes::catalog(&state.pool, repo.id, Some(actor), kind)
+                .await
+                .map_err(Error::unavailable)?;
         let mut values = Vec::new();
         for definition in definitions {
             let mut value = serde_json::to_value(definition).map_err(Error::unavailable)?;
@@ -156,15 +159,21 @@ async fn metadata(
     }
     let mut offset = 0;
     loop {
-        let labels =
-            db::labels::list_repo_labels_page(&state.pool, repo.id, "", "oldest", 100, offset)
-                .await
-                .map_err(Error::unavailable)?;
+        let labels = crate::backend::db::labels::list_repo_labels_page(
+            &state.pool,
+            repo.id,
+            "",
+            "oldest",
+            100,
+            offset,
+        )
+        .await
+        .map_err(Error::unavailable)?;
         let count = labels.len();
         let values = labels
             .iter()
             .map(|label| {
-                let mut value = payloads::label(label, owner, &repo.name);
+                let mut value = crate::backend::webhooks::payloads::label(label, owner, &repo.name);
                 value["repository"] = repository.clone();
                 value
             })
@@ -179,14 +188,26 @@ async fn metadata(
     }
     let mut offset = 0;
     loop {
-        let rows =
-            db::milestones::list_milestones_page(&state.pool, repo.id, None, "due_on", 100, offset)
-                .await
-                .map_err(Error::unavailable)?;
+        let rows = crate::backend::db::milestones::list_milestones_page(
+            &state.pool,
+            repo.id,
+            None,
+            "due_on",
+            100,
+            offset,
+        )
+        .await
+        .map_err(Error::unavailable)?;
         let count = rows.len();
         let mut values = Vec::new();
         for row in rows {
-            let mut value = milestones::document(&state.pool, &row, owner, &repo.name).await?;
+            let mut value = crate::backend::api::github::milestones::document(
+                &state.pool,
+                &row,
+                owner,
+                &repo.name,
+            )
+            .await?;
             value["repository"] = repository.clone();
             values.push(value);
         }
@@ -207,9 +228,9 @@ async fn metadata(
         let next = rows.last().copied();
         let mut values = Vec::new();
         for id in rows {
-            let mut value = issues::document(
+            let mut value = crate::backend::api::github::issues::document(
                 &state.pool,
-                issues::Reader::Repository,
+                crate::backend::api::github::issues::Reader::Repository,
                 repo,
                 owner,
                 AssignedItem::Issue(id),
@@ -217,7 +238,7 @@ async fn metadata(
             .await?;
             value["issue_type"] = value["type"].take();
             value["issue_field_values"] = serde_json::to_value(
-                db::issue_attributes::values(&state.pool, repo.id, id, Some(actor))
+                crate::backend::db::issue_attributes::values(&state.pool, repo.id, id, Some(actor))
                     .await
                     .map_err(Error::unavailable)?,
             )
@@ -243,17 +264,21 @@ async fn metadata(
         let next = rows.last().copied();
         let mut values = Vec::new();
         for id in rows {
-            let pull = db::pull_requests::records::get_pull_request_by_id(&state.pool, id)
-                .await
-                .map_err(Error::unavailable)?
-                .ok_or_else(Error::missing)?;
-            let mut value = pulls::document(state, headers, repo, owner, &pull, false).await?;
+            let pull =
+                crate::backend::db::pull_requests::records::get_pull_request_by_id(&state.pool, id)
+                    .await
+                    .map_err(Error::unavailable)?
+                    .ok_or_else(Error::missing)?;
+            let mut value = crate::backend::api::github::pulls::document(
+                state, headers, repo, owner, &pull, false,
+            )
+            .await?;
             value["repository"] = repository.clone();
             values.push(value);
             pull_comments(state, repo, owner, &pull, archive).await?;
             let mut offset = 0;
             loop {
-                let rows = db::pull_requests::reviews::list_pull_request_reviews(
+                let rows = crate::backend::db::pull_requests::reviews::list_pull_request_reviews(
                     &state.pool,
                     pull.id,
                     100,
@@ -267,22 +292,24 @@ async fn metadata(
                     if row.review.state == "pending" {
                         continue;
                     }
-                    let author =
-                        db::users::accounts::get_user_by_id(&state.pool, row.review.author_id)
-                            .await
-                            .map_err(Error::unavailable)?
-                            .ok_or_else(Error::missing)?;
-                    let mut value = payloads::pull_request_review_json(
+                    let author = crate::backend::db::users::accounts::get_user_by_id(
+                        &state.pool,
+                        row.review.author_id,
+                    )
+                    .await
+                    .map_err(Error::unavailable)?
+                    .ok_or_else(Error::missing)?;
+                    let mut value = crate::backend::webhooks::payloads::pull_request_review_json(
                         &row.review,
-                        &payloads::Person::of(&author),
+                        &crate::backend::webhooks::payloads::Person::of(&author),
                         &pull,
                         repo,
                         owner,
                     );
-                    value["user"] = payloads::user(&author);
+                    value["user"] = crate::backend::webhooks::payloads::user(&author);
                     value["pull_request"] = json!(format!(
                         "{}/pull/{}",
-                        payloads::repository(repo, owner)["html_url"]
+                        crate::backend::webhooks::payloads::repository(repo, owner)["html_url"]
                             .as_str()
                             .unwrap_or_default(),
                         pull.number
@@ -318,19 +345,22 @@ async fn issue_comments(
 ) -> Result<()> {
     let mut offset = 0;
     loop {
-        let rows = db::issues::list_issue_comments(&state.pool, id, 100, offset)
+        let rows = crate::backend::db::issues::list_issue_comments(&state.pool, id, 100, offset)
             .await
             .map_err(Error::unavailable)?;
         let count = rows.len();
         let mut values = Vec::new();
         for row in rows {
-            let comment = comments::find(
+            let comment = crate::backend::api::github::comments::find(
                 &state.pool,
                 repo.id,
-                payloads::conversation_comment_id(row.comment.id, false),
+                codeyard_model::webhook_ids::conversation_comment_id(row.comment.id, false),
             )
             .await?;
-            values.push(comments::document(&state.pool, repo, owner, &comment).await?);
+            values.push(
+                crate::backend::api::github::comments::document(&state.pool, repo, owner, &comment)
+                    .await?,
+            );
         }
         archive
             .records("issue_comment", values)
@@ -352,7 +382,7 @@ async fn pull_comments(
 ) -> Result<()> {
     let mut offset = 0;
     loop {
-        let rows = db::pull_requests::reviews::list_pull_request_comments(
+        let rows = crate::backend::db::pull_requests::reviews::list_pull_request_comments(
             &state.pool,
             pull.id,
             100,
@@ -365,28 +395,39 @@ async fn pull_comments(
         let mut inline = Vec::new();
         for row in rows {
             if row.comment.path.is_some() || row.comment.review_id.is_some() {
-                let author =
-                    db::users::accounts::get_user_by_id(&state.pool, row.comment.author_id)
-                        .await
-                        .map_err(Error::unavailable)?
-                        .ok_or_else(Error::missing)?;
-                let mut value = payloads::pull_request_review_comment_json(
-                    &row.comment,
-                    pull,
-                    &payloads::Person::of(&author),
-                    repo,
-                    owner,
-                );
-                value["user"] = payloads::user(&author);
+                let author = crate::backend::db::users::accounts::get_user_by_id(
+                    &state.pool,
+                    row.comment.author_id,
+                )
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
+                let mut value =
+                    crate::backend::webhooks::payloads::pull_request_review_comment_json(
+                        &row.comment,
+                        pull,
+                        &crate::backend::webhooks::payloads::Person::of(&author),
+                        repo,
+                        owner,
+                    );
+                value["user"] = crate::backend::webhooks::payloads::user(&author);
                 inline.push(value);
             } else {
-                let comment = comments::find(
+                let comment = crate::backend::api::github::comments::find(
                     &state.pool,
                     repo.id,
-                    payloads::conversation_comment_id(row.comment.id, true),
+                    codeyard_model::webhook_ids::conversation_comment_id(row.comment.id, true),
                 )
                 .await?;
-                conversation.push(comments::document(&state.pool, repo, owner, &comment).await?);
+                conversation.push(
+                    crate::backend::api::github::comments::document(
+                        &state.pool,
+                        repo,
+                        owner,
+                        &comment,
+                    )
+                    .await?,
+                );
             }
         }
         archive
@@ -412,35 +453,41 @@ async fn release_records(
 ) -> Result<()> {
     let mut offset = 0;
     loop {
-        let rows = db::releases::list_releases(&state.pool, repo.id, true, 100, offset)
-            .await
-            .map_err(Error::unavailable)?;
+        let rows =
+            crate::backend::db::releases::list_releases(&state.pool, repo.id, true, 100, offset)
+                .await
+                .map_err(Error::unavailable)?;
         let count = rows.len();
         let mut values = Vec::new();
         for row in rows {
-            let assets = db::releases::list_release_assets(&state.pool, row.release.id)
-                .await
-                .map_err(Error::unavailable)?;
+            let assets =
+                crate::backend::db::releases::list_release_assets(&state.pool, row.release.id)
+                    .await
+                    .map_err(Error::unavailable)?;
             let detail = ReleaseDetail {
                 repository: repo.clone(),
                 can_write: true,
                 release: row,
                 assets,
             };
-            let mut value = releases::document(state, owner, &repo.name, &detail).await?;
-            value["repository"] = payloads::repository(repo, owner)["html_url"].clone();
+            let mut value =
+                crate::backend::api::github::releases::document(state, owner, &repo.name, &detail)
+                    .await?;
+            value["repository"] =
+                crate::backend::webhooks::payloads::repository(repo, owner)["html_url"].clone();
             let mut asset_values = Vec::new();
             if attachments {
                 for asset in &detail.assets {
-                    let file = db::files::get_file_by_id(&state.pool, asset.file_id)
-                        .await
-                        .map_err(Error::unavailable)?
-                        .filter(|file| file.is_active)
-                        .ok_or_else(Error::missing)?;
+                    let file =
+                        crate::backend::db::files::get_file_by_id(&state.pool, asset.file_id)
+                            .await
+                            .map_err(Error::unavailable)?
+                            .filter(|file| file.is_active)
+                            .ok_or_else(Error::missing)?;
                     let path = format!("attachments/release-assets/{}", asset.id);
                     let mut bytes = Vec::new();
                     let size = usize::try_from(file.file_size).map_err(Error::unavailable)?;
-                    if size > crate::backend::storage::MAX_OBJECT_BYTES as usize {
+                    if size > codeyard_support::object_limits::MAX_OBJECT_BYTES as usize {
                         return Err(Error::unavailable(()));
                     }
                     while bytes.len() < size {
@@ -464,7 +511,7 @@ async fn release_records(
                     .await
                     .map_err(Error::unavailable)?
                     .map_err(Error::unavailable)?;
-                    let mut asset_value = releases::asset_document(
+                    let mut asset_value = crate::backend::api::github::releases::asset_document(
                         state,
                         owner,
                         &repo.name,
@@ -499,21 +546,26 @@ async fn organization(
     org: i64,
     archive: &mut MigrationArchive,
 ) -> Result<()> {
-    use db::organizations::{OrganizationOutcome, OrganizationPage};
-    let record = db::organizations::get_public_organization_by_id(&state.pool, org)
+    use crate::backend::db::organizations::{OrganizationOutcome, OrganizationPage};
+    let record = crate::backend::db::organizations::get_public_organization_by_id(&state.pool, org)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let origin = crate::backend::api::http::config::link_origin();
+    let origin = codeyard_model::http_config::link_origin();
     let url = format!("{origin}{}", codeyard_webui::profile_path(&record.name));
     archive.person(json!({"id":record.id,"login":record.name,"html_url":url,"url":url,"type":"Organization","name":record.display_name,"description":record.description,"created_at":record.created_at,"updated_at":record.updated_at}));
     let mut after = 0;
     loop {
         let page = OrganizationPage::new(after, 100).map_err(Error::unavailable)?;
         let OrganizationOutcome::Applied(rows) =
-            db::organizations::list_organization_members(&state.pool, actor, org, page)
-                .await
-                .map_err(Error::unavailable)?
+            crate::backend::db::organizations::list_organization_members(
+                &state.pool,
+                actor,
+                org,
+                page,
+            )
+            .await
+            .map_err(Error::unavailable)?
         else {
             return Err(Error::missing());
         };
@@ -541,14 +593,19 @@ async fn teams(
     slug: &str,
     archive: &mut MigrationArchive,
 ) -> Result<()> {
-    use db::organizations::{OrganizationOutcome, OrganizationPage};
+    use crate::backend::db::organizations::{OrganizationOutcome, OrganizationPage};
     let mut after = 0;
     loop {
         let page = OrganizationPage::new(after, 100).map_err(Error::unavailable)?;
         let OrganizationOutcome::Applied(rows) =
-            db::organizations::list_organization_teams(&state.pool, actor, org, page)
-                .await
-                .map_err(Error::unavailable)?
+            crate::backend::db::organizations::list_organization_teams(
+                &state.pool,
+                actor,
+                org,
+                page,
+            )
+            .await
+            .map_err(Error::unavailable)?
         else {
             return Err(Error::missing());
         };
@@ -556,14 +613,16 @@ async fn teams(
         let mut values = Vec::new();
         for row in rows {
             after = row.team.id;
-            let mut value = payloads::team(&db::repositories::push_teams::TeamAccess {
-                team: row.team.clone(),
-                permission: 0,
-                org_slug: slug.to_owned(),
-            });
+            let mut value = crate::backend::webhooks::payloads::team(
+                &crate::backend::db::repositories::push_teams::TeamAccess {
+                    team: row.team.clone(),
+                    permission: 0,
+                    org_slug: slug.to_owned(),
+                },
+            );
             value["organization"] = json!(format!(
                 "{}{}",
-                crate::backend::api::http::config::link_origin(),
+                codeyard_model::http_config::link_origin(),
                 codeyard_webui::profile_path(slug)
             ));
             value["parent_team_id"] = json!(row.team.parent_team_id);
@@ -577,7 +636,7 @@ async fn teams(
             loop {
                 let page = OrganizationPage::new(member_after, 100).map_err(Error::unavailable)?;
                 let OrganizationOutcome::Applied(members) =
-                    db::organizations::list_direct_organization_team_members(
+                    crate::backend::db::organizations::list_direct_organization_team_members(
                         &state.pool,
                         actor,
                         org,
@@ -607,7 +666,7 @@ async fn teams(
                 let page =
                     OrganizationPage::new(repository_after, 100).map_err(Error::unavailable)?;
                 let OrganizationOutcome::Applied(repositories) =
-                    db::organizations::list_direct_organization_team_repositories(
+                    crate::backend::db::organizations::list_direct_organization_team_repositories(
                         &state.pool,
                         actor,
                         org,
@@ -623,7 +682,7 @@ async fn teams(
                 let mut grants = Vec::new();
                 for repository in repositories {
                     repository_after = repository.id;
-                    grants.push(json!({"id":repository.id,"team":team_url,"repository":format!("{}/{}/{}",crate::backend::api::http::config::link_origin(),codeyard_webui::encode_component(&repository.owner),codeyard_webui::encode_component(&repository.name)),"permission":repository.permission}));
+                    grants.push(json!({"id":repository.id,"team":team_url,"repository":format!("{}/{}/{}",codeyard_model::http_config::link_origin(),codeyard_webui::encode_component(&repository.owner),codeyard_webui::encode_component(&repository.name)),"permission":repository.permission}));
                 }
                 archive
                     .records("team_repository", grants)

@@ -1,16 +1,16 @@
-use super::{auth, pagination::Pagination, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        gists::{GistList, GistRefusal, ListScope},
-    },
-    gists as domain,
-    repositories::{
-        lifecycle::{LifecycleFailure, StorageError},
-        store::{repo_store, GistCredential},
-    },
-};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::gists::GistList;
+use crate::backend::db::gists::GistRefusal;
+use crate::backend::db::gists::ListScope;
+
+use crate::backend::repositories::lifecycle::LifecycleFailure;
+use crate::backend::repositories::lifecycle::StorageError;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::GistCredential;
 use axum::{
     extract::{rejection::JsonRejection, DefaultBodyLimit, OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -105,7 +105,9 @@ pub(crate) fn failure(error: anyhow::Error) -> Error {
             _ => Error::unavailable(()),
         };
     }
-    if error.is::<domain::GistSaved>() || error.is::<domain::GistDeleted>() {
+    if error.is::<crate::backend::gists::GistSaved>()
+        || error.is::<crate::backend::gists::GistDeleted>()
+    {
         return Error::new(StatusCode::SERVICE_UNAVAILABLE, error.to_string());
     }
     match error.downcast::<RepoError>() {
@@ -159,10 +161,13 @@ fn hidden_failure(error: anyhow::Error) -> Error {
         failure(error)
     }
 }
-async fn writer(state: &AppState, headers: &HeaderMap) -> Result<auth::Authentication> {
-    let actor = auth::authenticate(state, headers, true)
+async fn writer(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<crate::backend::api::github::auth::Authentication> {
+    let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
     Ok(actor)
 }
@@ -203,20 +208,31 @@ async fn collection(
     uri: axum::http::Uri,
     scope: ListingScope,
 ) -> Result<Response> {
-    let actor =
-        auth::authenticate(&state, &headers, matches!(scope, ListingScope::Starred)).await?;
+    let actor = crate::backend::api::github::auth::authenticate(
+        &state,
+        &headers,
+        matches!(scope, ListingScope::Starred),
+    )
+    .await?;
     let cap = matches!(scope, ListingScope::Public);
     let scope = match scope {
         ListingScope::Default => actor.as_ref().map_or(ListScope::Public, |actor| {
             ListScope::Owner(actor.user.id, true)
         }),
         ListingScope::Public => ListScope::Public,
-        ListingScope::Starred => {
-            ListScope::Starred(actor.as_ref().ok_or_else(auth::required)?.user.id)
-        }
-        ListingScope::User(name) => {
-            ListScope::Owner(super::users::target(&state, &name).await?.id, false)
-        }
+        ListingScope::Starred => ListScope::Starred(
+            actor
+                .as_ref()
+                .ok_or_else(crate::backend::api::github::auth::required)?
+                .user
+                .id,
+        ),
+        ListingScope::User(name) => ListScope::Owner(
+            crate::backend::api::github::users::target(&state, &name)
+                .await?
+                .id,
+            false,
+        ),
     };
     let page = query.page();
     let (offset, limit) = page.window()?;
@@ -227,11 +243,11 @@ async fn collection(
     };
     let limit = limit.min(available);
     if let ListScope::Owner(owner, true) = scope {
-        domain::recover_owned(&state, owner)
+        crate::backend::gists::recover_owned(&state, owner)
             .await
             .map_err(failure)?;
     }
-    let mut entries = db::gists::list(
+    let mut entries = crate::backend::db::gists::list(
         &state.pool,
         &GistList {
             scope,
@@ -246,7 +262,7 @@ async fn collection(
     entries.truncate(limit);
     let mut values = Vec::new();
     for entry in entries {
-        let loaded = domain::load(&state, &entry.id, None)
+        let loaded = crate::backend::gists::load(&state, &entry.id, None)
             .await
             .map_err(failure)?;
         values.push(documents::base(&state, &loaded, false).await?);
@@ -312,17 +328,17 @@ fn public_flag<'de, D: serde::Deserializer<'de>>(
 fn saved_error(id: &str) -> Error {
     Error::new(
         StatusCode::SERVICE_UNAVAILABLE,
-        domain::GistSaved { id: id.into() }.to_string(),
+        crate::backend::gists::GistSaved { id: id.into() }.to_string(),
     )
 }
-async fn created(state: &AppState, loaded: &domain::LoadedGist) -> Result<Response> {
+async fn created(state: &AppState, loaded: &crate::backend::gists::LoadedGist) -> Result<Response> {
     let value = documents::detail(state, loaded)
         .await
         .map_err(|_| saved_error(&loaded.gist.id))?;
     let mut response = (StatusCode::CREATED, Json(value)).into_response();
     response.headers_mut().insert(
         header::LOCATION,
-        super::api_url(&format!("/gists/{}", loaded.gist.id))
+        codeyard_model::urls::api_url(&format!("/gists/{}", loaded.gist.id))
             .parse()
             .map_err(|_| saved_error(&loaded.gist.id))?,
     );
@@ -335,11 +351,11 @@ async fn create(
 ) -> Result<Response> {
     let actor = writer(&state, &headers).await?;
     let Json(input) = input.map_err(|_| Error::validation("Gist", "files", "invalid"))?;
-    let loaded = domain::create(
+    let loaded = crate::backend::gists::create(
         state.clone(),
         actor.user.id,
         GistCredential::Token(actor.token.id, actor.token.token_hash.clone()),
-        domain::CreateGist {
+        crate::backend::gists::CreateGist {
             description: input.description,
             is_public: input.public,
             files: input
@@ -358,8 +374,10 @@ async fn read(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response> {
-    auth::authenticate(&state, &headers, false).await?;
-    let loaded = domain::load(&state, &id, None).await.map_err(failure)?;
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
+    let loaded = crate::backend::gists::load(&state, &id, None)
+        .await
+        .map_err(failure)?;
     documents::response(&headers, documents::detail(&state, &loaded).await?)
 }
 async fn revision(
@@ -367,8 +385,8 @@ async fn revision(
     headers: HeaderMap,
     Path((id, sha)): Path<(String, String)>,
 ) -> Result<Response> {
-    auth::authenticate(&state, &headers, false).await?;
-    let loaded = domain::load(&state, &id, Some(&sha))
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
+    let loaded = crate::backend::gists::load(&state, &id, Some(&sha))
         .await
         .map_err(failure)?;
     documents::response(&headers, documents::detail(&state, &loaded).await?)
@@ -413,7 +431,9 @@ async fn update(
     if method == axum::http::Method::POST
         && input.updated_at.as_deref() == Some("0001-01-01T00:00:00Z")
     {
-        let original = domain::load(&state, &id, None).await.map_err(failure)?;
+        let original = crate::backend::gists::load(&state, &id, None)
+            .await
+            .map_err(failure)?;
         let existing: std::collections::HashSet<_> = original
             .snapshot
             .files
@@ -475,7 +495,7 @@ async fn update(
             )
         })
         .collect();
-    let loaded = domain::update(
+    let loaded = crate::backend::gists::update(
         state.clone(),
         actor.user.id,
         GistCredential::Token(actor.token.id, actor.token.token_hash.clone()),
@@ -500,7 +520,7 @@ async fn remove(
     Path(id): Path<String>,
 ) -> Result<StatusCode> {
     let actor = writer(&state, &headers).await?;
-    domain::delete(
+    crate::backend::gists::delete(
         state,
         actor.user.id,
         GistCredential::Token(actor.token.id, actor.token.token_hash.clone()),
@@ -516,7 +536,7 @@ async fn fork(
     Path(id): Path<String>,
 ) -> Result<Response> {
     let actor = writer(&state, &headers).await?;
-    let loaded = domain::fork(
+    let loaded = crate::backend::gists::fork(
         state.clone(),
         actor.user.id,
         GistCredential::Token(actor.token.id, actor.token.token_hash.clone()),
@@ -533,8 +553,10 @@ async fn commits(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    auth::authenticate(&state, &headers, false).await?;
-    let loaded = domain::load(&state, &id, None).await.map_err(failure)?;
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
+    let loaded = crate::backend::gists::load(&state, &id, None)
+        .await
+        .map_err(failure)?;
     let (offset, limit) = page.window()?;
     let mut values = documents::history(&state, &loaded, offset, limit + 1).await?;
     let more = values.len() > limit;
@@ -549,10 +571,12 @@ async fn forks(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    auth::authenticate(&state, &headers, false).await?;
-    let loaded = domain::load(&state, &id, None).await.map_err(failure)?;
+    crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
+    let loaded = crate::backend::gists::load(&state, &id, None)
+        .await
+        .map_err(failure)?;
     let (offset, limit) = page.window()?;
-    let mut forks = db::gists::list(
+    let mut forks = crate::backend::db::gists::list(
         &state.pool,
         &GistList {
             scope: ListScope::Forks(loaded.repository.id),
@@ -567,7 +591,7 @@ async fn forks(
     forks.truncate(limit);
     let mut values = Vec::new();
     for fork in forks {
-        let loaded = domain::load(&state, &fork.id, None)
+        let loaded = crate::backend::gists::load(&state, &fork.id, None)
             .await
             .map_err(failure)?;
         values.push(documents::base(&state, &loaded, false).await?);
@@ -580,12 +604,14 @@ async fn check(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
-    let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
+    let gist = crate::backend::gists::metadata(&state.pool, &id)
+        .await
+        .map_err(failure)?;
     Ok(
-        if db::gists::starred(&state.pool, actor.user.id, gist.repo_id)
+        if crate::backend::db::gists::starred(&state.pool, actor.user.id, gist.repo_id)
             .await
             .map_err(Error::unavailable)?
         {
@@ -603,8 +629,10 @@ async fn change_star(
     adding: bool,
 ) -> Result<StatusCode> {
     let actor = writer(&state, &headers).await?;
-    let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
-    db::gists::star(
+    let gist = crate::backend::gists::metadata(&state.pool, &id)
+        .await
+        .map_err(failure)?;
+    crate::backend::db::gists::star(
         &state.pool,
         actor.user.id,
         &actor.credential(),

@@ -1,6 +1,5 @@
 //! Personal-fork consent is scoped to one open pull request, never general Git write access.
-use crate::backend::db;
-use crate::backend::repositories::access;
+
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
@@ -15,13 +14,13 @@ pub(crate) async fn publication_authorized(
     let Some(id) = publisher else {
         return Ok(false);
     };
-    let Some(user) = db::users::accounts::get_user_by_id(pool, id).await? else {
+    let Some(user) = crate::backend::db::users::accounts::get_user_by_id(pool, id).await? else {
         return Ok(false);
     };
     if user.is_banned || user.must_change_password {
         return Ok(false);
     }
-    access::can_read(pool, Some(&user), head).await
+    crate::backend::repositories::access::can_read(pool, Some(&user), head).await
 }
 
 pub(crate) async fn can_update_head(
@@ -35,16 +34,16 @@ pub(crate) async fn can_update_head(
         || actor.must_change_password
         || base.is_archived
         || head.is_archived
-        || db::repository_exports::locked(pool, head.id).await?
+        || crate::backend::db::repository_exports::locked(pool, head.id).await?
         || pull.state != "open"
         || pull.repo_id != base.id
         || pull.head_repo_id != Some(head.id)
-        || !access::can_read(pool, Some(actor), base).await?
+        || !crate::backend::repositories::access::can_read(pool, Some(actor), base).await?
     {
         return Ok(false);
     }
     // A writer of the head acts on their own authority, and publishes the updated head with it.
-    if access::can_write(pool, actor, head).await? {
+    if crate::backend::repositories::access::can_write(pool, actor, head).await? {
         return Ok(true);
     }
     if head.id != base.id && !publication_authorized(pool, pull.head_publisher_id, head).await? {
@@ -63,8 +62,8 @@ pub(crate) async fn can_update_head(
     let Some(grantor) = pull.maintainer_edit_granted_by_id else {
         return Ok(false);
     };
-    let active = db::users::accounts::get_user_by_id(pool, grantor)
+    let active = crate::backend::db::users::accounts::get_user_by_id(pool, grantor)
         .await?
         .is_some_and(|owner| !owner.is_banned && !owner.must_change_password);
-    Ok(active && access::can_write(pool, actor, base).await?)
+    Ok(active && crate::backend::repositories::access::can_write(pool, actor, base).await?)
 }

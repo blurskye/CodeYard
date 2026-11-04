@@ -1,8 +1,9 @@
-use super::{auth, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::attestation_validation::{self as store, AttestationError, PreparedBundle},
-};
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use crate::backend::db::attestation_validation as store;
+use crate::backend::db::attestation_validation::AttestationError;
+use crate::backend::db::attestation_validation::PreparedBundle;
 use axum::{
     extract::{
         rejection::{JsonRejection, QueryRejection},
@@ -56,10 +57,11 @@ async fn create(
     Path((owner, name)): Path<(String, String)>,
     body: std::result::Result<Json<Create>, JsonRejection>,
 ) -> Result<Response> {
-    let (repo, auth) = super::repository(&state, &headers, &owner, &name, false).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let (repo, auth) =
+        crate::backend::api::github::repository(&state, &headers, &owner, &name, false).await?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     auth.require_write()?;
-    let Json(body) = body.map_err(super::json_error)?;
+    let Json(body) = body.map_err(crate::backend::api::github::json_error)?;
     let bundle = PreparedBundle::new(&body.bundle).map_err(error)?;
     let id = store::create(&state.pool, auth.database_actor(), repo.id, &bundle)
         .await
@@ -106,7 +108,7 @@ fn link(uri: &Uri, relation: &str, id: i64) -> String {
     );
     format!(
         "<{}{}?{}>; rel=\"{relation}\"",
-        crate::backend::api::http::config::link_origin(),
+        codeyard_model::http_config::link_origin(),
         uri.path(),
         query.finish()
     )
@@ -118,15 +120,16 @@ async fn list(
     OriginalUri(uri): OriginalUri,
     query: std::result::Result<Query<CursorQuery>, QueryRejection>,
 ) -> Result<Response> {
-    let (repo, auth) = super::repository(&state, &headers, &owner, &name, false).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let (repo, auth) =
+        crate::backend::api::github::repository(&state, &headers, &owner, &name, false).await?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let Query(query) = query.map_err(|_| Error::invalid("Invalid attestation pagination"))?;
     let after = decode_cursor(query.after.as_deref(), "after")?;
     let before = decode_cursor(query.before.as_deref(), "before")?;
     let page = store::Page {
         after,
         before,
-        limit: super::pagination::page_size(query.per_page) as i64,
+        limit: crate::backend::api::github::pagination::page_size(query.per_page) as i64,
         predicate_type: query.predicate_type.as_deref(),
     };
     let (rows, more) = store::list(&state.pool, Some(auth.user.id), repo.id, &digest, &page)
@@ -158,7 +161,7 @@ async fn list(
                 .map_err(Error::unavailable)?,
         );
     }
-    let base = super::repo_url(&owner, &name);
+    let base = codeyard_model::urls::repo_url(&owner, &name);
     let mut attestations = Vec::new();
     for row in rows {
         let bundle: Value = serde_json::from_str(&row.bundle).map_err(Error::unavailable)?;
@@ -171,7 +174,8 @@ async fn bundle(
     headers: HeaderMap,
     Path((owner, name, id)): Path<(String, String, String)>,
 ) -> Result<Json<Value>> {
-    let (repo, auth) = super::repository(&state, &headers, &owner, &name, false).await?;
+    let (repo, auth) =
+        crate::backend::api::github::repository(&state, &headers, &owner, &name, false).await?;
     let id = id
         .parse::<i64>()
         .ok()

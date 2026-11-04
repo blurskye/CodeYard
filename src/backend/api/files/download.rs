@@ -1,11 +1,13 @@
-use crate::backend::{
-    api::http::session::{extract_session_id, get_current_user},
-    app::AppState,
-    files::{
-        self, AssetDownload, DownloadCapability, DownloadError, DownloadTransport, SignedDownload,
-    },
-    storage::attachment_disposition,
-};
+use crate::backend::api::http::session::extract_session_id;
+use crate::backend::api::http::session::get_current_user;
+use crate::backend::app::AppState;
+
+use crate::backend::files::AssetDownload;
+use crate::backend::files::DownloadCapability;
+use crate::backend::files::DownloadError;
+use crate::backend::files::DownloadTransport;
+use crate::backend::files::SignedDownload;
+use crate::backend::storage::attachment_disposition;
 use axum::{
     extract::{Path, State},
     http::{header, HeaderMap, Method, StatusCode},
@@ -16,7 +18,8 @@ use serde::Serialize;
 use std::{io::Read, sync::Arc, time::Duration};
 use uuid::Uuid;
 
-use crate::backend::api::http::error::{ApiError, ApiFailure};
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::ApiFailure;
 
 #[derive(Serialize)]
 pub struct DownloadUrlResponse {
@@ -70,7 +73,7 @@ pub async fn get_download_url(
 ) -> Result<Response, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
     let file_id = parse_file_id(&file_id)?;
-    let download = files::download_for_user(
+    let download = crate::backend::files::download_for_user(
         &state.pool,
         &state.storage,
         (user.id, extract_session_id(&headers).unwrap_or_default()),

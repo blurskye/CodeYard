@@ -1,8 +1,7 @@
-use crate::backend::{
-    api::{http::error::ApiError, http::session::get_current_user},
-    app::AppState,
-    ci::runs::DispatchRequest,
-};
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
+use crate::backend::app::AppState;
+use crate::backend::ci::runs::DispatchRequest;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -36,7 +35,7 @@ pub async fn trigger_ci(
                 .map(crate::backend::db::ci::CiCredential::Session),
         )
         .await
-        .map_err(super::admission_error)?;
+        .map_err(crate::backend::api::ci::admission_error)?;
     Ok(Json(TriggerCiResponse {
         job_id: run.run_id.to_string(),
         mode: run.mode,
@@ -161,12 +160,12 @@ async fn refusal_workflows(
         .user
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Sign in required"))?;
-    super::jobs::ensure_repo_read_access(&ctx.state, user, repository)
+    crate::backend::api::ci::jobs::ensure_repo_read_access(&ctx.state, user, repository)
         .await
         .map_err(|_| anyhow::anyhow!("Repository read access required"))?;
     Ok(definitions
         .into_iter()
-        .map(super::responses::workflow_view)
+        .map(crate::backend::api::ci::responses::workflow_view)
         .collect())
 }
 
@@ -244,7 +243,9 @@ async fn dispatch(
         .unwrap_or_else(|| "/ci".into());
     ctx.return_to = Some(base_path.clone());
     // Allow every individually valid input, including name=value and CRLF overhead.
-    use crate::backend::ci::dispatch_inputs::{MAX_INPUTS, MAX_NAME_BYTES, MAX_VALUE_BYTES};
+    use crate::backend::ci::dispatch_inputs::MAX_INPUTS;
+    use crate::backend::ci::dispatch_inputs::MAX_NAME_BYTES;
+    use crate::backend::ci::dispatch_inputs::MAX_VALUE_BYTES;
     const MAX_INPUT_LINES_BYTES: usize = MAX_INPUTS * (MAX_NAME_BYTES + 1 + MAX_VALUE_BYTES + 2);
     if form.iter().any(|(key, value)| {
         value.len()
@@ -342,7 +343,7 @@ async fn dispatch(
                 .map(crate::backend::db::ci::CiCredential::Session),
         )
         .await
-        .map_err(super::admission_error)
+        .map_err(crate::backend::api::ci::admission_error)
     {
         Ok(result) => {
             let mut query = BTreeMap::new();
@@ -404,7 +405,7 @@ mod tests {
     }
     #[tokio::test]
     async fn refusal_discovery_keeps_the_authorized_repository_after_alias_reuse() {
-        use crate::backend::{db, repositories::lifecycle, storage::ObjectStore};
+        use crate::backend::storage::ObjectStore;
         let native = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(
@@ -417,17 +418,17 @@ mod tests {
             .unwrap();
         let pool = codeyard_db_core::DbPool::from(native.clone());
         codeyard_db_core::run_migrations(&pool).await.unwrap();
-        db::node_config::upsert_node_configuration(&pool, "public", true)
+        crate::backend::db::node_config::upsert_node_configuration(&pool, "public", true)
             .await
             .unwrap();
-        let owner = db::users::accounts::create_user(&pool, "alice", None)
+        let owner = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
-        let original = lifecycle::provision(
+        let original = crate::backend::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+            crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
             "project",
             None,
             false,
@@ -435,10 +436,10 @@ mod tests {
         )
         .await
         .unwrap();
-        let private = lifecycle::provision(
+        let private = crate::backend::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+            crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
             "private",
             None,
             true,
@@ -473,11 +474,11 @@ mod tests {
         );
         // Only a signed-in reader is shown a refused run's workflows; bob may read the public one.
         // The page reads him from a live session, as metadata is checked against the cookie.
-        let bob = db::users::accounts::create_user(&pool, "bob", None)
+        let bob = crate::backend::db::users::accounts::create_user(&pool, "bob", None)
             .await
             .unwrap();
         let session = uuid::Uuid::new_v4().simple().to_string().repeat(2);
-        db::users::sessions::create_session(
+        crate::backend::db::users::sessions::create_session(
             &pool,
             &session,
             bob.id,

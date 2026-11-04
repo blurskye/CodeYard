@@ -1,11 +1,14 @@
 //! External status reporters share the status rows used by branch protection.
-use super::{contents::store_error, pagination::Pagination, repo_url, repository, Error, Result};
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::db::repositories::protection;
+use codeyard_model::urls::repo_url;
+
 use crate::backend::repositories::store::repo_store;
-use crate::backend::webhooks;
-use crate::backend::webhooks::payloads;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -27,12 +30,19 @@ async fn documents(
     let mut ids: Vec<_> = rows.iter().filter_map(|row| row.creator_id).collect();
     ids.sort_unstable();
     ids.dedup();
-    let users = db::users::accounts::get_users_by_ids(&state.pool, &ids)
+    let users = crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &ids)
         .await
         .map_err(Error::unavailable)?;
     let users: std::collections::HashMap<_, _> = users
         .into_iter()
-        .map(|user| (user.id, payloads::person(&payloads::Person::of(&user))))
+        .map(|user| {
+            (
+                user.id,
+                crate::backend::webhooks::payloads::person(
+                    &crate::backend::webhooks::payloads::Person::of(&user),
+                ),
+            )
+        })
         .collect();
     Ok(rows
         .into_iter()
@@ -40,7 +50,7 @@ async fn documents(
             let creator = status.creator_id.and_then(|id| users.get(&id));
             json!({
             "id": status.id,
-            "node_id": super::node_id::encode("CS", status.id),
+            "node_id": crate::backend::api::github::node_id::encode("CS", status.id),
             "avatar_url": creator.as_ref().map(|value| &value["avatar_url"]),
             "url": format!("{}/statuses/{}", repo_url(owner, name), status.sha),
             "state": status.state, "context": status.context, "description": status.description,
@@ -66,13 +76,13 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = auth.user.id;
     if !codeyard_git::is_full_commit_id(&sha) {
         return Err(Error::invalid("sha must be a full commit ID"));
     }
     let context = input.context.as_deref().unwrap_or("default");
-    if protection::server_owned_status_context(context) {
+    if crate::backend::db::repositories::protection::server_owned_status_context(context) {
         return Err(Error::new(
             StatusCode::FORBIDDEN,
             "This status context is managed by Actions",
@@ -84,9 +94,9 @@ async fn create(
     if commit.sha != sha {
         return Err(Error::invalid("sha must name an existing commit object"));
     }
-    let saved = protection::upsert_commit_status_with_token(
+    let saved = crate::backend::db::repositories::protection::upsert_commit_status_with_token(
         &state.pool,
-        protection::CommitStatusUpsert {
+        crate::backend::db::repositories::protection::CommitStatusUpsert {
             repo_id: repo.id,
             sha: &sha,
             context,
@@ -98,16 +108,26 @@ async fn create(
         Some(auth.token.id),
     )
     .await
-    .map_err(
-        |error| match error.downcast_ref::<protection::ProtectionWriteRefusal>() {
-            Some(protection::ProtectionWriteRefusal::Denied) => {
+    .map_err(|error| {
+        match error
+            .downcast_ref::<crate::backend::db::repositories::protection::ProtectionWriteRefusal>()
+        {
+            Some(crate::backend::db::repositories::protection::ProtectionWriteRefusal::Denied) => {
                 Error::new(StatusCode::FORBIDDEN, "Status write denied")
             }
             Some(_) => Error::invalid("Invalid commit status"),
             None => Error::unavailable(()),
-        },
-    )?;
-    webhooks::statuses::emit_status(&state.pool, &store, &repo, &saved, &commit, actor).await;
+        }
+    })?;
+    crate::backend::webhooks::statuses::emit_status(
+        &state.pool,
+        &store,
+        &repo,
+        &saved,
+        &commit,
+        actor,
+    )
+    .await;
     Ok((
         StatusCode::CREATED,
         Json(
@@ -134,7 +154,7 @@ async fn read(
         .sha;
     let (offset, limit) = page.window()?;
     let history = uri.path().ends_with("/statuses");
-    let page_rows = protection::commit_status_page(
+    let page_rows = crate::backend::db::repositories::protection::commit_status_page(
         &state.pool,
         auth.as_ref().map(|auth| auth.user.id),
         repo.id,
@@ -147,18 +167,18 @@ async fn read(
     .map_err(Error::unavailable)?
     .ok_or_else(Error::missing)?;
     if let Some(auth) = auth.as_ref() {
-        if db::users::tokens::token_user(&state.pool, auth.token.id, false)
+        if crate::backend::db::users::tokens::token_user(&state.pool, auth.token.id, false)
             .await
             .map_err(Error::unavailable)?
             .is_none_or(|user| user.id != auth.user.id)
         {
-            return Err(super::auth::required());
+            return Err(crate::backend::api::github::auth::required());
         }
         auth.repository_scope(&state.pool, repo.id, "statuses", false)
             .await
-            .map_err(super::auth::scope_error)?;
+            .map_err(crate::backend::api::github::auth::scope_error)?;
     }
-    let protection::CommitStatusPage {
+    let crate::backend::db::repositories::protection::CommitStatusPage {
         total,
         counts,
         statuses,
@@ -186,7 +206,7 @@ async fn read(
         page.headers(&uri, has_next)?,
         Json(json!({
             "state": combined, "sha": sha, "total_count": total, "statuses": items,
-            "repository": payloads::repository(&repo, &owner),
+            "repository": crate::backend::webhooks::payloads::repository(&repo, &owner),
             "commit_url": format!("{}/commits/{sha}", repo_url(&owner, &name)),
             "url": format!("{}/commits/{reference}/status", repo_url(&owner, &name)),
         })),

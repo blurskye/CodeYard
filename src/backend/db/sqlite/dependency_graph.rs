@@ -1,10 +1,9 @@
-use crate::backend::{
-    db::dependency_graph::{
-        self, GraphError, Reader, Submission, SBOM_REPORTS_PER_REPOSITORY,
-        SBOM_REPORT_LIFETIME_SECONDS,
-    },
-    dependency_graph::Snapshot,
-};
+use crate::backend::db::dependency_graph::Reader;
+use crate::backend::db::dependency_graph::Submission;
+use crate::backend::db::dependency_graph::SBOM_REPORTS_PER_REPOSITORY;
+use crate::backend::db::dependency_graph::SBOM_REPORT_LIFETIME_SECONDS;
+use codeyard_model::dependency_graph::GraphError;
+use codeyard_model::dependency_graph::Snapshot;
 use sqlx::SqlitePool;
 
 pub(super) async fn enabled_in(
@@ -13,7 +12,7 @@ pub(super) async fn enabled_in(
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(&format!(
         "SELECT {}",
-        dependency_graph::enabled_sql(false, "$1")
+        crate::backend::db::dependency_graph::enabled_sql(false, "$1")
     ))
     .bind(repo)
     .fetch_one(connection)
@@ -27,14 +26,14 @@ async fn authorize_in(
 ) -> Result<(), GraphError> {
     match reader {
         Reader::Viewer(Some(actor)) => {
-            if !super::repositories::access::lock_readable_repository_in_transaction(
+            if !crate::backend::db::sqlite::repositories::access::lock_readable_repository_in_transaction(
                 tx,
                 actor.user_id,
                 repo,
             )
             .await
             .map_err(GraphError::Authority)?
-                || !super::credentials::repository(tx, actor, repo, "contents", false)
+                || !crate::backend::db::sqlite::credentials::repository(tx, actor, repo, "contents", false)
                     .await
                     .map_err(GraphError::Authority)?
             {
@@ -42,7 +41,7 @@ async fn authorize_in(
             }
         }
         Reader::Viewer(None) | Reader::Scan(_) => {
-            let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived))", super::repositories::access::readable_condition()))
+            let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived))", crate::backend::db::sqlite::repositories::access::readable_condition()))
                 .bind(repo).bind(matches!(reader, Reader::Scan(_))).fetch_one(&mut **tx).await?;
             if !visible {
                 return Err(GraphError::Denied);
@@ -102,15 +101,21 @@ pub async fn submit(
     let credential = actor.into();
     let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::discussions::lock_write_authority(&mut tx, actor, repo)
+    if !crate::backend::db::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
         .await
         .map_err(GraphError::Authority)?
     {
         return Err(GraphError::Denied);
     }
-    if !super::credentials::repository(&mut tx, &credential, repo, "contents", true)
-        .await
-        .map_err(GraphError::Authority)?
+    if !crate::backend::db::sqlite::credentials::repository(
+        &mut tx,
+        &credential,
+        repo,
+        "contents",
+        true,
+    )
+    .await
+    .map_err(GraphError::Authority)?
     {
         return Err(GraphError::Denied);
     }
@@ -142,17 +147,19 @@ pub(super) async fn bounded_snapshot_ids(
     reference: Option<&str>,
     sha: Option<&str>,
 ) -> Result<Vec<i64>, GraphError> {
-    let rows: Vec<(i64, i64)> = sqlx::query_as(&dependency_graph::snapshot_candidates_sql(
-        false,
-        reference.is_some(),
-        sha.is_some(),
-    ))
+    let rows: Vec<(i64, i64)> = sqlx::query_as(
+        &crate::backend::db::dependency_graph::snapshot_candidates_sql(
+            false,
+            reference.is_some(),
+            sha.is_some(),
+        ),
+    )
     .bind(repo)
     .bind(reference)
     .bind(sha)
     .fetch_all(connection)
     .await?;
-    dependency_graph::snapshot_ids(rows)
+    crate::backend::db::dependency_graph::snapshot_ids(rows)
 }
 
 pub(super) async fn snapshots_in(

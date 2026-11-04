@@ -1,13 +1,18 @@
 //! Mutation adaptation only: permissions and side effects stay in the REST domain operations.
-use super::{
-    bindings::boxed, db, issue, missing, node_id, repository, unavailable, user, Arguments,
-    RequestContext, Result, Value,
-};
-use crate::backend::{
-    identity::following,
-    issues,
-    repositories::{engagement, pull_requests, store::MergeMethod},
-};
+use crate::backend::api::graphql::bindings::boxed;
+use crate::backend::api::graphql::db;
+
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::node_id;
+
+use crate::backend::api::graphql::unavailable;
+
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
+
+use crate::backend::repositories::store::MergeMethod;
 use async_graphql::{Error, ErrorExtensions};
 use serde_json::json;
 
@@ -44,23 +49,28 @@ fn merge_method(
         .to_ascii_lowercase();
     MergeMethod::parse(&method).ok_or_else(|| Error::new("Invalid merge method"))
 }
-pub(super) fn pull_error(error: pull_requests::OperationError) -> Error {
+pub(super) fn pull_error(
+    error: crate::backend::repositories::pull_requests::OperationError,
+) -> Error {
     let kind = match &error {
-        pull_requests::OperationError::Missing { .. } => "NOT_FOUND",
-        pull_requests::OperationError::Denied { .. }
-        | pull_requests::OperationError::Unauthenticated { .. } => "FORBIDDEN",
-        pull_requests::OperationError::Unavailable { .. } => "INTERNAL",
+        crate::backend::repositories::pull_requests::OperationError::Missing { .. } => "NOT_FOUND",
+        crate::backend::repositories::pull_requests::OperationError::Denied { .. }
+        | crate::backend::repositories::pull_requests::OperationError::Unauthenticated { .. } => {
+            "FORBIDDEN"
+        }
+        crate::backend::repositories::pull_requests::OperationError::Unavailable { .. } => {
+            "INTERNAL"
+        }
         _ => "UNPROCESSABLE",
     };
     Error::new(error.to_string()).extend_with(|_, e| e.set("type", kind))
 }
-pub(super) fn issue_error(error: issues::OperationError) -> Error {
+pub(super) fn issue_error(error: crate::backend::issues::OperationError) -> Error {
     let kind = match &error {
-        issues::OperationError::Missing { .. } => "NOT_FOUND",
-        issues::OperationError::Denied { .. } | issues::OperationError::Unauthenticated { .. } => {
-            "FORBIDDEN"
-        }
-        issues::OperationError::Unavailable { .. } => "INTERNAL",
+        crate::backend::issues::OperationError::Missing { .. } => "NOT_FOUND",
+        crate::backend::issues::OperationError::Denied { .. }
+        | crate::backend::issues::OperationError::Unauthenticated { .. } => "FORBIDDEN",
+        crate::backend::issues::OperationError::Unavailable { .. } => "INTERNAL",
         _ => "UNPROCESSABLE",
     };
     Error::new(error.to_string()).extend_with(|_, e| e.set("type", kind))
@@ -68,14 +78,16 @@ pub(super) fn issue_error(error: issues::OperationError) -> Error {
 /// The viewer can read the repository, so a refused change to someone else's issue is
 /// GitHub's FORBIDDEN, not a missing repository.
 pub(super) fn issue_change_error(
-    error: issues::OperationError,
+    error: crate::backend::issues::OperationError,
     author_id: i64,
     field: &str,
     request: &RequestContext,
 ) -> Error {
     match error {
-        issues::OperationError::Missing { .. } if author_id != request.auth.user.id => {
-            super::forbidden(field, request)
+        crate::backend::issues::OperationError::Missing { .. }
+            if author_id != request.auth.user.id =>
+        {
+            crate::backend::api::graphql::forbidden(field, request)
         }
         error => issue_error(error),
     }
@@ -87,7 +99,8 @@ pub(super) async fn resolve(
     request: &RequestContext,
 ) -> Result<Value> {
     if field.contains("Discussion") {
-        return boxed(|| super::discussions::mutation(field, args, request)).await;
+        return boxed(|| crate::backend::api::graphql::discussions::mutation(field, args, request))
+            .await;
     }
     if matches!(field, "addLabelsToLabelable" | "removeLabelsFromLabelable") {
         let input = args.args.try_get("input")?.object()?;
@@ -95,7 +108,10 @@ pub(super) async fn resolve(
             node_id::decode(input.try_get("labelableId")?.string()?),
             Some(("D", _))
         ) {
-            return boxed(|| super::discussions::mutation(field, args, request)).await;
+            return boxed(|| {
+                crate::backend::api::graphql::discussions::mutation(field, args, request)
+            })
+            .await;
         }
     }
     if matches!(
@@ -115,27 +131,42 @@ pub(super) async fn resolve(
             | "addBlockedBy"
             | "removeBlockedBy"
     ) {
-        return boxed(|| issue::mutation(field, args, request)).await;
+        return boxed(|| crate::backend::api::graphql::issue::mutation(field, args, request)).await;
     }
     request
         .auth
         .require_write()
         .map_err(|_| Error::new("Resource not accessible by token"))?;
     let input: Value = args.args.try_get("input")?.deserialize()?;
-    if super::repository_mutations::FIELDS.contains(&field) {
-        return boxed(|| super::repository_mutations::resolve(field, &input, request)).await;
+    if crate::backend::api::graphql::repository_mutations::FIELDS.contains(&field) {
+        return boxed(|| {
+            crate::backend::api::graphql::repository_mutations::resolve(field, &input, request)
+        })
+        .await;
     }
     if matches!(field, "addReaction" | "removeReaction") {
-        return boxed(|| super::reaction_mutations::resolve(field, &input, request)).await;
+        return boxed(|| {
+            crate::backend::api::graphql::reaction_mutations::resolve(field, &input, request)
+        })
+        .await;
     }
     if matches!(field, "updateIssueComment" | "deleteIssueComment") {
-        return boxed(|| super::comment_mutations::resolve(field, &input, request)).await;
+        return boxed(|| {
+            crate::backend::api::graphql::comment_mutations::resolve(field, &input, request)
+        })
+        .await;
     }
-    if super::review_mutations::FIELDS.contains(&field) {
-        return boxed(|| super::review_mutations::resolve(field, &input, request)).await;
+    if crate::backend::api::graphql::review_mutations::FIELDS.contains(&field) {
+        return boxed(|| {
+            crate::backend::api::graphql::review_mutations::resolve(field, &input, request)
+        })
+        .await;
     }
-    if super::collaboration_mutations::FIELDS.contains(&field) {
-        return boxed(|| super::collaboration_mutations::resolve(field, &input, request)).await;
+    if crate::backend::api::graphql::collaboration_mutations::FIELDS.contains(&field) {
+        return boxed(|| {
+            crate::backend::api::graphql::collaboration_mutations::resolve(field, &input, request)
+        })
+        .await;
     }
     let allowed: &[&str] = match field {
         "updateIssue" => &[
@@ -242,7 +273,7 @@ pub(super) async fn resolve(
             "addStar" | "removeStar" | "updateSubscription" | "followUser" | "unfollowUser"
         )
     {
-        return Err(super::token_denied());
+        return Err(crate::backend::api::graphql::token_denied());
     }
     let actor = request.auth.user.id;
     let pool = &request.state.pool;
@@ -251,7 +282,11 @@ pub(super) async fn resolve(
     match field {
         "archiveRepository" | "unarchiveRepository" => {
             boxed(|| async move {
-                let repo = repository::by_id(target(&input, "repositoryId", "R")?, request).await?;
+                let repo = crate::backend::api::graphql::repository::by_id(
+                    target(&input, "repositoryId", "R")?,
+                    request,
+                )
+                .await?;
                 request.authorize(repo.id, "administration", true).await?;
                 db::repositories::records::set_repository_archived(
                     pool,
@@ -260,9 +295,12 @@ pub(super) async fn resolve(
                     field == "archiveRepository",
                 )
                 .await
-                .map_err(|error| super::super::github::repos::settings_error(error).graphql())?;
-                payload["repository"] =
-                    repository::object(&repository::by_id(repo.id, request).await?);
+                .map_err(|error| {
+                    crate::backend::api::github::repos::settings_error(error).graphql()
+                })?;
+                payload["repository"] = crate::backend::api::graphql::repository::object(
+                    &crate::backend::api::graphql::repository::by_id(repo.id, request).await?,
+                );
                 Ok(payload)
             })
             .await
@@ -274,9 +312,14 @@ pub(super) async fn resolve(
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?;
-                let repo = repository::by_id(current.repo_id, request).await?;
+                let repo =
+                    crate::backend::api::graphql::repository::by_id(current.repo_id, request)
+                        .await?;
                 request.authorize(repo.id, "issues", true).await?;
-                let metadata = super::metadata_mutations::prepare(&input, &repo, request).await?;
+                let metadata = crate::backend::api::graphql::metadata_mutations::prepare(
+                    &input, &repo, request,
+                )
+                .await?;
                 // A metadata-only edit needs triage, not the write access a content edit needs.
                 let metadata_only = ["title", "body", "state", "stateReason"]
                     .iter()
@@ -284,13 +327,13 @@ pub(super) async fn resolve(
                 let saved = if metadata_only {
                     current
                 } else {
-                    issues::mutations::update_issue_latest(
+                    crate::backend::issues::mutations::update_issue_latest(
                         pool,
                         broadcaster,
                         actor,
                         repo.id,
                         current.number,
-                        issues::mutations::UpdateIssueRequest {
+                        crate::backend::issues::mutations::UpdateIssueRequest {
                             expected_state: current.state,
                             expected_updated: current.updated_at.to_rfc3339(),
                             title: optional_text(&input, "title"),
@@ -303,7 +346,7 @@ pub(super) async fn resolve(
                     .await
                     .map_err(|error| issue_change_error(error, current.author_id, field, request))?
                 };
-                super::metadata_mutations::apply(
+                crate::backend::api::graphql::metadata_mutations::apply(
                     &repo,
                     db::assignees::AssignedItem::Issue(saved.id),
                     saved.number,
@@ -316,14 +359,14 @@ pub(super) async fn resolve(
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?;
-                payload["issue"] = issue::object(&saved);
+                payload["issue"] = crate::backend::api::graphql::issue::object(&saved);
                 Ok(payload)
             })
             .await
         }
         "createPullRequest" => {
             boxed(|| async move {
-                let repo = repository::by_id(target(&input, "repositoryId", "R")?, request).await?;
+                let repo = crate::backend::api::graphql::repository::by_id(target(&input, "repositoryId", "R")?, request).await?;
                 request.authorize(repo.id, "pull-requests", true).await?;
                 crate::backend::identity::interactions::prepare(
                     &request.state,
@@ -343,7 +386,7 @@ pub(super) async fn resolve(
                     request.authorize(id, "metadata", false).await?;
                     Some(id)
                 } else if let Some(owner) = head_owner {
-                    let head = pull_requests::branches::owner_head_repository(pool, &repo, owner)
+                    let head = crate::backend::repositories::pull_requests::branches::owner_head_repository(pool, &repo, owner)
                         .await
                         .map_err(unavailable)?
                         .ok_or_else(missing)?;
@@ -361,9 +404,9 @@ pub(super) async fn resolve(
                 } else {
                     None
                 };
-                let head = repository::by_id(head_repo_id.unwrap_or(repo.id), request).await?;
+                let head = crate::backend::api::graphql::repository::by_id(head_repo_id.unwrap_or(repo.id), request).await?;
                 request.authorize(head.id, "contents", false).await?;
-                let saved = pull_requests::mutations::create_pull_request(
+                let saved = crate::backend::repositories::pull_requests::mutations::create_pull_request(
                     pool,
                     &request.state.ci_runs,
                     broadcaster,
@@ -371,12 +414,12 @@ pub(super) async fn resolve(
                         user: actor,
                         token: Some(request.auth.token.id),
                     },
-                    repository::owner(&repo, request).await?,
+                    crate::backend::api::graphql::repository::owner(&repo, request).await?,
                     repo.name,
-                    pull_requests::mutations::CreatePullRequestRequest {
+                    crate::backend::repositories::pull_requests::mutations::CreatePullRequestRequest {
                         suppress_ci: false,
                         head_repo_id,
-                        source: pull_requests::mutations::PullRequestSource::New {
+                        source: crate::backend::repositories::pull_requests::mutations::PullRequestSource::New {
                             title: text(&input, "title")?.into(),
                             body: optional_text(&input, "body"),
                         },
@@ -394,7 +437,7 @@ pub(super) async fn resolve(
                 )
                 .await
                 .map_err(pull_error)?;
-                payload["pullRequest"] = issue::pull_object(&saved);
+                payload["pullRequest"] = crate::backend::api::graphql::issue::pull_object(&saved);
                 Ok(payload)
             })
             .await
@@ -408,30 +451,34 @@ pub(super) async fn resolve(
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-                let repo = repository::by_id(current.repo_id, request).await?;
+                let repo =
+                    crate::backend::api::graphql::repository::by_id(current.repo_id, request)
+                        .await?;
                 request.authorize(repo.id, "pull-requests", true).await?;
                 request.authorize(repo.id, "contents", true).await?;
                 request.require_oauth_scope("workflow")?;
-                let saved = pull_requests::revert::revert_pull_request(
-                    pool,
-                    &request.state.ci_runs,
-                    broadcaster,
-                    actor,
-                    (
-                        repository::owner(&repo, request).await?,
-                        repo.name,
-                        current.number,
-                    ),
-                    pull_requests::revert::RevertRequest {
-                        title: optional_text(&input, "title"),
-                        body: optional_text(&input, "body"),
-                        is_draft: input["draft"].as_bool().unwrap_or(false),
-                    },
-                )
-                .await
-                .map_err(pull_error)?;
-                payload["pullRequest"] = issue::pull_object(&current);
-                payload["revertPullRequest"] = issue::pull_object(&saved);
+                let saved =
+                    crate::backend::repositories::pull_requests::revert::revert_pull_request(
+                        pool,
+                        &request.state.ci_runs,
+                        broadcaster,
+                        actor,
+                        (
+                            crate::backend::api::graphql::repository::owner(&repo, request).await?,
+                            repo.name,
+                            current.number,
+                        ),
+                        crate::backend::repositories::pull_requests::revert::RevertRequest {
+                            title: optional_text(&input, "title"),
+                            body: optional_text(&input, "body"),
+                            is_draft: input["draft"].as_bool().unwrap_or(false),
+                        },
+                    )
+                    .await
+                    .map_err(pull_error)?;
+                payload["pullRequest"] = crate::backend::api::graphql::issue::pull_object(&current);
+                payload["revertPullRequest"] =
+                    crate::backend::api::graphql::issue::pull_object(&saved);
                 Ok(payload)
             })
             .await
@@ -451,10 +498,10 @@ pub(super) async fn resolve(
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-                let repo = repository::by_id(current.repo_id, request).await?;
+                let repo = crate::backend::api::graphql::repository::by_id(current.repo_id, request).await?;
                 request.authorize(repo.id, "pull-requests", true).await?;
-                let owner = repository::owner(&repo, request).await?;
-                let metadata = super::metadata_mutations::prepare(&input, &repo, request).await?;
+                let owner = crate::backend::api::graphql::repository::owner(&repo, request).await?;
+                let metadata = crate::backend::api::graphql::metadata_mutations::prepare(&input, &repo, request).await?;
                 // Metadata has its own live native authority; do not run a structural PR edit
                 // for an empty edit (notably a fork author's grant revocation).
                 let metadata_only = field == "updatePullRequest"
@@ -487,7 +534,7 @@ pub(super) async fn resolve(
                             true,
                         )
                         .await
-                        .map_err(|error| super::auth::scope_error(error).graphql())?;
+                        .map_err(|error| crate::backend::api::graphql::auth::scope_error(error).graphql())?;
                     let expected = input
                         .get("expectedHeadOid")
                         .filter(|v| !v.is_null())
@@ -497,7 +544,7 @@ pub(super) async fn resolve(
                             })
                         })
                         .transpose()?;
-                    pull_requests::update_branch::update_branch(
+                    crate::backend::repositories::pull_requests::update_branch::update_branch(
                         pool,
                         &request.state.ci_runs,
                         actor,
@@ -516,7 +563,7 @@ pub(super) async fn resolve(
                     field,
                     "markPullRequestReadyForReview" | "convertPullRequestToDraft"
                 ) {
-                    pull_requests::mutations::set_pull_request_draft(
+                    crate::backend::repositories::pull_requests::mutations::set_pull_request_draft(
                         pool,
                         &request.state.ci_runs,
                         actor,
@@ -526,19 +573,19 @@ pub(super) async fn resolve(
                     )
                     .await
                     .map_err(|error| match error {
-                        pull_requests::OperationError::Denied { .. } => {
-                            super::forbidden(field, request)
+                        crate::backend::repositories::pull_requests::OperationError::Denied { .. } => {
+                            crate::backend::api::graphql::forbidden(field, request)
                         }
                         error => pull_error(error),
                     })?
                 } else if field == "mergePullRequest" {
                     request.authorize(repo.id, "contents", true).await?;
                     let method = merge_method(&input, &current)?;
-                    pull_requests::merge::merge_pull_request(
+                    crate::backend::repositories::pull_requests::merge::merge_pull_request(
                         &request.state,
                         request.auth.database_actor(),
                         (owner, repo.name, current.number),
-                        pull_requests::merge::MergeRequest {
+                        crate::backend::repositories::pull_requests::merge::MergeRequest {
                             expected_head: current.head_sha,
                             expected_base: current.base_sha,
                             expected_base_branch: Some(current.base_branch),
@@ -561,13 +608,13 @@ pub(super) async fn resolve(
                         "reopenPullRequest" => Some("open".into()),
                         _ => optional_text(&input, "state").map(|s| s.to_ascii_lowercase()),
                     };
-                    pull_requests::mutations::update_pull_request_latest(
+                    crate::backend::repositories::pull_requests::mutations::update_pull_request_latest(
                         pool,
                         &request.state.ci_runs,
                         broadcaster,
                         actor,
                         (repo.id, current.number),
-                        pull_requests::mutations::UpdatePullRequestRequest {
+                        crate::backend::repositories::pull_requests::mutations::UpdatePullRequestRequest {
                             expected_state: current.state,
                             expected_updated: current.updated_at.to_rfc3339(),
                             title: optional_text(&input, "title"),
@@ -580,8 +627,8 @@ pub(super) async fn resolve(
                     .await
                     .map_err(pull_error)?
                 };
-                let repo = repository::by_id(saved.repo_id, request).await?;
-                super::metadata_mutations::apply(
+                let repo = crate::backend::api::graphql::repository::by_id(saved.repo_id, request).await?;
+                crate::backend::api::graphql::metadata_mutations::apply(
                     &repo,
                     db::assignees::AssignedItem::PullRequest(saved.id),
                     saved.number,
@@ -594,7 +641,7 @@ pub(super) async fn resolve(
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?;
-                payload["pullRequest"] = issue::pull_object(&saved);
+                payload["pullRequest"] = crate::backend::api::graphql::issue::pull_object(&saved);
                 Ok(payload)
             })
             .await
@@ -608,27 +655,34 @@ pub(super) async fn resolve(
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-                let repo = repository::by_id(current.repo_id, request).await?;
+                let repo =
+                    crate::backend::api::graphql::repository::by_id(current.repo_id, request)
+                        .await?;
                 request.authorize(repo.id, "pull-requests", true).await?;
                 if field == "enablePullRequestAutoMerge" {
                     request.authorize(repo.id, "contents", true).await?;
-                    let options = pull_requests::auto_merge::EnableRequest {
-                        expected_head: optional_text(&input, "expectedHeadOid"),
-                        token: Some(request.auth.token.id),
-                        merge_method: merge_method(&input, &current)?,
-                        commit_title: optional_text(&input, "commitHeadline"),
-                        commit_message: optional_text(&input, "commitBody"),
-                        author_email: optional_text(&input, "authorEmail"),
-                    };
-                    pull_requests::auto_merge::enable(pool, actor, &current, options)
-                        .await
-                        .map_err(pull_error)?;
+                    let options =
+                        crate::backend::repositories::pull_requests::auto_merge::EnableRequest {
+                            expected_head: optional_text(&input, "expectedHeadOid"),
+                            token: Some(request.auth.token.id),
+                            merge_method: merge_method(&input, &current)?,
+                            commit_title: optional_text(&input, "commitHeadline"),
+                            commit_message: optional_text(&input, "commitBody"),
+                            author_email: optional_text(&input, "authorEmail"),
+                        };
+                    crate::backend::repositories::pull_requests::auto_merge::enable(
+                        pool, actor, &current, options,
+                    )
+                    .await
+                    .map_err(pull_error)?;
                 } else {
-                    pull_requests::auto_merge::disable(pool, actor, &current)
-                        .await
-                        .map_err(pull_error)?;
+                    crate::backend::repositories::pull_requests::auto_merge::disable(
+                        pool, actor, &current,
+                    )
+                    .await
+                    .map_err(pull_error)?;
                 }
-                payload["pullRequest"] = issue::pull_object(&current);
+                payload["pullRequest"] = crate::backend::api::graphql::issue::pull_object(&current);
                 Ok(payload)
             })
             .await
@@ -641,7 +695,7 @@ pub(super) async fn resolve(
                     "starrableId"
                 };
                 let id = target(&input, key, "R")?;
-                repository::by_id(id, request).await?;
+                crate::backend::api::graphql::repository::by_id(id, request).await?;
                 if field == "updateSubscription" {
                     let level = match text(&input, "state")? {
                         "SUBSCRIBED" => "watching",
@@ -649,24 +703,34 @@ pub(super) async fn resolve(
                         "UNSUBSCRIBED" => "participating",
                         _ => return Err(Error::new("Invalid subscription state")),
                     };
-                    engagement::set_level(pool, actor, id, level, &[])
-                        .await
-                        .map_err(|error| match error {
-                            engagement::EngagementError::Access(_) => missing(),
-                            _ => unavailable(()),
-                        })?;
+                    crate::backend::repositories::engagement::set_level(
+                        pool,
+                        actor,
+                        id,
+                        level,
+                        &[],
+                    )
+                    .await
+                    .map_err(|error| match error {
+                        crate::backend::repositories::engagement::EngagementError::Access(_) => {
+                            missing()
+                        }
+                        _ => unavailable(()),
+                    })?;
                 } else {
-                    engagement::change(
+                    crate::backend::repositories::engagement::change(
                         pool,
                         broadcaster,
                         actor,
                         id,
-                        engagement::Engagement::Star,
+                        crate::backend::repositories::engagement::Engagement::Star,
                         field == "addStar",
                     )
                     .await
                     .map_err(|error| match error {
-                        engagement::EngagementError::Access(_) => missing(),
+                        crate::backend::repositories::engagement::EngagementError::Access(_) => {
+                            missing()
+                        }
                         _ => unavailable(()),
                     })?;
                 }
@@ -674,7 +738,9 @@ pub(super) async fn resolve(
                     "subscribable"
                 } else {
                     "starrable"
-                }] = repository::object(&repository::by_id(id, request).await?);
+                }] = crate::backend::api::graphql::repository::object(
+                    &crate::backend::api::graphql::repository::by_id(id, request).await?,
+                );
                 Ok(payload)
             })
             .await
@@ -683,14 +749,14 @@ pub(super) async fn resolve(
             boxed(|| async move {
                 // REST has no OAuth route for account follow writes, so OAuth tokens may not make them.
                 if request.is_oauth() {
-                    return Err(super::token_denied());
+                    return Err(crate::backend::api::graphql::token_denied());
                 }
                 let id = target(&input, "userId", "U")?;
                 let current = db::users::accounts::get_user_by_id(pool, id)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?;
-                following::change(
+                crate::backend::identity::following::change(
                     pool,
                     broadcaster,
                     actor,
@@ -700,12 +766,12 @@ pub(super) async fn resolve(
                 )
                 .await
                 .map_err(|error| match error {
-                    following::FollowError::Missing => missing(),
-                    following::FollowError::Unavailable
-                    | following::FollowError::CountsUnavailableAfterSave => unavailable(()),
+                    crate::backend::identity::following::FollowError::Missing => missing(),
+                    crate::backend::identity::following::FollowError::Unavailable
+                    | crate::backend::identity::following::FollowError::CountsUnavailableAfterSave => unavailable(()),
                     error => Error::new(error.to_string()),
                 })?;
-                payload["user"] = user::object(&current, actor);
+                payload["user"] = crate::backend::api::graphql::user::object(&current, actor);
                 Ok(payload)
             })
             .await

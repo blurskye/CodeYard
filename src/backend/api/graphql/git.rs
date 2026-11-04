@@ -1,10 +1,19 @@
 //! Git data uses the same repository store and status rows as the REST adapters.
-use super::{
-    connection::{self, Page},
-    db, missing, node_id, repository, unavailable, url, user, Arguments, RequestContext, Result,
-    Value,
-};
-use crate::backend::repositories::store::{repo_store, CommitInfo};
+
+use crate::backend::api::graphql::connection::Page;
+use crate::backend::api::graphql::db;
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::node_id;
+
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::url;
+
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::CommitInfo;
 use serde_json::json;
 
 pub(super) fn charge_commit(row: &CommitInfo, request: &RequestContext) -> Result<()> {
@@ -96,16 +105,20 @@ pub(super) async fn resolve(
     if let Some(value) = parent.get(field) {
         return Ok(value.clone());
     }
-    let repo = repository::by_id(parent["_repo"].as_i64().ok_or_else(missing)?, request).await?;
+    let repo = crate::backend::api::graphql::repository::by_id(
+        parent["_repo"].as_i64().ok_or_else(missing)?,
+        request,
+    )
+    .await?;
     let oid = parent["oid"]
         .as_str()
         .or_else(|| parent["_oid"].as_str())
         .ok_or_else(missing)?;
     match (ty, field) {
-        ("Commit", "repository") => Ok(repository::object(&repo)),
+        ("Commit", "repository") => Ok(crate::backend::api::graphql::repository::object(&repo)),
         ("Commit", "url") => Ok(json!(url(&format!(
             "/{}/{}/commit/{oid}",
-            repository::owner(&repo, request).await?,
+            crate::backend::api::graphql::repository::owner(&repo, request).await?,
             repo.name
         )))),
         ("Commit", "authors") => {
@@ -120,7 +133,7 @@ pub(super) async fn resolve(
                 )
                 .await?
             };
-            connection::slice(
+            crate::backend::api::graphql::connection::slice(
                 args,
                 value["_authors"]
                     .as_array()
@@ -160,8 +173,12 @@ pub(super) async fn resolve(
             }
             Ok(page.finish(nodes))
         }
-        ("Commit", "comments") => super::commit_comment::list(repo.id, oid, args, request).await,
-        ("Commit", "statusCheckRollup") => super::checks::rollup(repo.id, oid, request).await,
+        ("Commit", "comments") => {
+            crate::backend::api::graphql::commit_comment::list(repo.id, oid, args, request).await
+        }
+        ("Commit", "statusCheckRollup") => {
+            crate::backend::api::graphql::checks::rollup(repo.id, oid, request).await
+        }
         ("Commit", "status") => {
             request.authorize(repo.id, "statuses", false).await?;
             let rows = db::repositories::protection::list_commit_statuses(
@@ -188,7 +205,9 @@ pub(super) async fn resolve(
                 json!({"__typename":"Status","_repo":repo.id,"_scope":"statuses","_oid":oid,"id":node_id::git("STAT",&format!("{}/{oid}",repo.id)),"state":state}),
             )
         }
-        ("StatusCheckRollup", "contexts") => super::checks::contexts(args, request, parent).await,
+        ("StatusCheckRollup", "contexts") => {
+            crate::backend::api::graphql::checks::contexts(args, request, parent).await
+        }
         ("Status", "contexts") => {
             request.authorize(repo.id, "statuses", false).await?;
             let rows = db::repositories::protection::list_commit_statuses(
@@ -227,7 +246,7 @@ pub(super) async fn resolve(
             } else {
                 return Ok(json!(false));
             };
-            repository::by_id(pull.repo_id, request).await?;
+            crate::backend::api::graphql::repository::by_id(pull.repo_id, request).await?;
             request
                 .authorize(pull.repo_id, "pull-requests", false)
                 .await?;
@@ -253,7 +272,7 @@ pub(super) async fn resolve(
                     .as_str()))))
         }
         ("StatusContext", "creator") => match parent["_creator"].as_i64() {
-            Some(id) => user::actor_by_id(id, request).await,
+            Some(id) => crate::backend::api::graphql::user::actor_by_id(id, request).await,
             None => Ok(Value::Null),
         },
         _ if ty == "Commit" => {

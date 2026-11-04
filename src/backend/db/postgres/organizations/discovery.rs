@@ -1,6 +1,6 @@
-use super::authority::*;
 use crate::backend::db::organizations::discovery::MembershipState;
 use crate::backend::db::organizations::*;
+use crate::backend::db::postgres::organizations::authority::*;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Organization;

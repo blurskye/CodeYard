@@ -1,5 +1,5 @@
 //! Public profile links, changed together so the four-account limit is atomic.
-use super::accounts::AccountCredential;
+use crate::backend::db::users::accounts::AccountCredential;
 use anyhow::Result;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;

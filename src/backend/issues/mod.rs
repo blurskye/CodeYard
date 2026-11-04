@@ -1,5 +1,3 @@
-use crate::backend::db;
-use crate::backend::repositories::access;
 pub mod assignments;
 pub mod branches;
 pub mod closing;
@@ -22,76 +20,6 @@ pub enum OperationError {
     Conflict { code: &'static str, message: String },
     #[error("{message}")]
     Unavailable { code: &'static str, message: String },
-}
-
-/// Text limits for issues, pull requests, comments, reviews and labels. The JSON API and
-/// the native forms both call these, so they refuse the same text. NUL is refused because
-/// PostgreSQL text cannot store it, and a SQLite database holding it could not be copied.
-pub fn validate_title(title: &str) -> Result<(), &'static str> {
-    if title.trim().is_empty() || title.len() > 255 {
-        Err("Title must contain 1–255 bytes of text.")
-    } else if title.contains('\0') {
-        Err(NUL_REFUSAL)
-    } else {
-        Ok(())
-    }
-}
-
-pub fn validate_body(body: &str, required: bool) -> Result<(), &'static str> {
-    if required && body.trim().is_empty() {
-        return Err("Comment cannot be empty.");
-    }
-    if body.len() > 65_536 {
-        return Err("Text cannot exceed 65,536 bytes.");
-    }
-    if body.contains('\0') {
-        return Err(NUL_REFUSAL);
-    }
-    Ok(())
-}
-
-/// Label names are 1–50 bytes and descriptions at most 1,024 bytes. Both refuse NUL.
-pub fn validate_label(name: &str, description: Option<&str>) -> Result<(), &'static str> {
-    if name.is_empty() || name.len() > 50 {
-        Err("Label name must be 1-50 characters")
-    } else if description.is_some_and(|text| text.len() > 1_024) {
-        Err("Label description must be at most 1024 bytes")
-    } else if name.contains('\0') || description.is_some_and(|text| text.contains('\0')) {
-        Err(NUL_REFUSAL)
-    } else {
-        Ok(())
-    }
-}
-
-const NUL_REFUSAL: &str = "Text cannot contain NUL characters.";
-
-/// Milestone titles are 1–255 bytes. The description has the body limits.
-pub fn validate_milestone(title: &str, description: &str) -> Result<(), &'static str> {
-    if title.trim().is_empty() || title.len() > 255 {
-        Err("Milestone title must contain 1–255 bytes of text.")
-    } else if title.contains('\0') {
-        Err(NUL_REFUSAL)
-    } else {
-        validate_body(description, false)
-    }
-}
-
-/// A calendar day written exactly YYYY-MM-DD; other spellings of the day, such as 2026-1-2,
-/// are refused.
-pub fn calendar_day(value: &str) -> Option<chrono::NaiveDate> {
-    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
-        .ok()
-        .filter(|day| day.format("%Y-%m-%d").to_string() == value)
-}
-
-/// A due date is a calendar day written YYYY-MM-DD. An empty value means no due date.
-pub fn parse_due_date(value: &str) -> Result<Option<String>, &'static str> {
-    if value.is_empty() {
-        return Ok(None);
-    }
-    calendar_day(value)
-        .map(|_| Some(value.to_owned()))
-        .ok_or("Due date must be a day written YYYY-MM-DD.")
 }
 
 /// Comments on one discussion page. Notification and redirect links name the page that
@@ -166,7 +94,8 @@ pub(super) async fn repository(
     pool: &codeyard_db_core::DbPool,
     id: i64,
 ) -> Result<(codeyard_db_core::models::Repository, String), OperationError> {
-    use crate::backend::repositories::access::{current_repository_with_owner, AccessError};
+    use crate::backend::repositories::access::current_repository_with_owner;
+    use crate::backend::repositories::access::AccessError;
     current_repository_with_owner(pool, id)
         .await
         .map_err(|error| match error {
@@ -182,7 +111,7 @@ pub(super) async fn actor(
     pool: &codeyard_db_core::DbPool,
     id: i64,
 ) -> Result<codeyard_db_core::models::User, OperationError> {
-    db::users::accounts::get_user_by_id(pool, id)
+    crate::backend::db::users::accounts::get_user_by_id(pool, id)
         .await
         .map_err(write_error)?
         .filter(|user| !user.is_banned)
@@ -195,20 +124,24 @@ pub(super) async fn actor(
 /// Repository access decisions belong to `repositories::access`; this only says them in the
 /// terms of these operations. Only someone who can read the repository learns why a write is
 /// refused.
-fn access_error(error: access::AccessError) -> OperationError {
+fn access_error(error: crate::backend::repositories::access::AccessError) -> OperationError {
     match error {
-        access::AccessError::Unavailable => OperationError::Unavailable {
-            code: "database_error",
-            message: "Repository authority is unavailable".into(),
-        },
-        access::AccessError::WriteDenied | access::AccessError::PasswordChangeRequired => {
+        crate::backend::repositories::access::AccessError::Unavailable => {
+            OperationError::Unavailable {
+                code: "database_error",
+                message: "Repository authority is unavailable".into(),
+            }
+        }
+        crate::backend::repositories::access::AccessError::WriteDenied
+        | crate::backend::repositories::access::AccessError::PasswordChangeRequired => {
             OperationError::Denied {
                 code: "write_denied",
                 message: "Archived repositories and password-change-required accounts cannot write"
                     .into(),
             }
         }
-        access::AccessError::NotFound | access::AccessError::InvalidCollaboratorOwner => {
+        crate::backend::repositories::access::AccessError::NotFound
+        | crate::backend::repositories::access::AccessError::InvalidCollaboratorOwner => {
             OperationError::Missing {
                 code: "not_found",
                 message: "Repository not found".into(),
@@ -222,7 +155,7 @@ pub(super) async fn require_read(
     user: &codeyard_db_core::models::User,
     repo: &codeyard_db_core::models::Repository,
 ) -> Result<(), OperationError> {
-    access::check_read(pool, repo.id, Some(user.id))
+    crate::backend::repositories::access::check_read(pool, repo.id, Some(user.id))
         .await
         .map(|_| ())
         .map_err(access_error)
@@ -233,14 +166,14 @@ pub(super) async fn require_write(
     user: &codeyard_db_core::models::User,
     repo: &codeyard_db_core::models::Repository,
 ) -> Result<(), OperationError> {
-    access::check_write(pool, repo.id, user.id)
+    crate::backend::repositories::access::check_write(pool, repo.id, user.id)
         .await
         .map(|_| ())
         .map_err(access_error)
 }
 
 pub(super) fn write_error(error: anyhow::Error) -> OperationError {
-    use db::discussions::DiscussionWriteRefusal;
+    use crate::backend::db::discussions::DiscussionWriteRefusal;
     if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return OperationError::Denied {
             code: "forbidden",
@@ -249,20 +182,23 @@ pub(super) fn write_error(error: anyhow::Error) -> OperationError {
     }
     // Initial metadata now shares the create transaction, so preserve its typed refusals.
     let metadata = error
-        .downcast_ref::<db::assignees::AssignmentRefusal>()
+        .downcast_ref::<crate::backend::db::assignees::AssignmentRefusal>()
         .map(|r| {
             (
-                matches!(r, db::assignees::AssignmentRefusal::Denied),
-                matches!(r, db::assignees::AssignmentRefusal::NotFound),
+                matches!(r, crate::backend::db::assignees::AssignmentRefusal::Denied),
+                matches!(
+                    r,
+                    crate::backend::db::assignees::AssignmentRefusal::NotFound
+                ),
                 r.to_string(),
             )
         })
         .or_else(|| {
             error
-                .downcast_ref::<db::labels::LabelWriteRefusal>()
+                .downcast_ref::<crate::backend::db::labels::LabelWriteRefusal>()
                 .map(|r| {
                     (
-                        matches!(r, db::labels::LabelWriteRefusal::Denied),
+                        matches!(r, crate::backend::db::labels::LabelWriteRefusal::Denied),
                         false,
                         r.to_string(),
                     )
@@ -270,22 +206,28 @@ pub(super) fn write_error(error: anyhow::Error) -> OperationError {
         })
         .or_else(|| {
             error
-                .downcast_ref::<db::milestones::MilestoneWriteRefusal>()
+                .downcast_ref::<crate::backend::db::milestones::MilestoneWriteRefusal>()
                 .map(|r| {
                     (
-                        matches!(r, db::milestones::MilestoneWriteRefusal::Denied),
-                        matches!(r, db::milestones::MilestoneWriteRefusal::NotFound),
+                        matches!(
+                            r,
+                            crate::backend::db::milestones::MilestoneWriteRefusal::Denied
+                        ),
+                        matches!(
+                            r,
+                            crate::backend::db::milestones::MilestoneWriteRefusal::NotFound
+                        ),
                         r.to_string(),
                     )
                 })
         })
         .or_else(|| {
             error
-                .downcast_ref::<db::issue_attributes::Refusal>()
+                .downcast_ref::<crate::backend::db::issue_attributes::Refusal>()
                 .map(|r| {
                     (
-                        matches!(r, db::issue_attributes::Refusal::Denied),
-                        matches!(r, db::issue_attributes::Refusal::Missing),
+                        matches!(r, crate::backend::db::issue_attributes::Refusal::Denied),
+                        matches!(r, crate::backend::db::issue_attributes::Refusal::Missing),
                         r.to_string(),
                     )
                 })
@@ -308,13 +250,13 @@ pub(super) fn write_error(error: anyhow::Error) -> OperationError {
             }
         };
     }
-    if let Some(refusal) = error.downcast_ref::<db::relationships::Refusal>() {
+    if let Some(refusal) = error.downcast_ref::<crate::backend::db::relationships::Refusal>() {
         return match refusal {
-            db::relationships::Refusal::Denied => OperationError::Denied {
+            crate::backend::db::relationships::Refusal::Denied => OperationError::Denied {
                 code: "forbidden",
                 message: refusal.to_string(),
             },
-            db::relationships::Refusal::Missing => OperationError::Missing {
+            crate::backend::db::relationships::Refusal::Missing => OperationError::Missing {
                 code: "not_found",
                 message: refusal.to_string(),
             },
@@ -358,7 +300,8 @@ pub(super) fn write_error(error: anyhow::Error) -> OperationError {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_body, validate_title};
+    use codeyard_model::issue_input::validate_body;
+    use codeyard_model::issue_input::validate_title;
 
     #[test]
     fn blank_and_oversized_text_is_refused_in_bytes() {
@@ -374,15 +317,15 @@ mod tests {
 
     #[test]
     fn label_descriptions_are_bounded_in_bytes() {
-        assert!(super::validate_label("label", Some(&"x".repeat(1024))).is_ok());
-        assert!(super::validate_label("label", Some(&"x".repeat(1025))).is_err());
+        assert!(crate::backend::issues::validate_label("label", Some(&"x".repeat(1024))).is_ok());
+        assert!(crate::backend::issues::validate_label("label", Some(&"x".repeat(1025))).is_err());
     }
 
     #[test]
     fn comment_links_reach_pages_beyond_one_thousand() {
-        assert_eq!(super::discussion_page(Ok(30_001)), 1001);
+        assert_eq!(crate::backend::issues::discussion_page(Ok(30_001)), 1001);
         assert_eq!(
-            super::comment_link("/a/r/issues/1", 9, Ok(30_001)),
+            crate::backend::issues::comment_link("/a/r/issues/1", 9, Ok(30_001)),
             "/a/r/issues/1?page=1001#comment-9"
         );
     }
@@ -395,3 +338,9 @@ mod tests {
         assert!(validate_body("a\u{e9}b", false).is_ok());
     }
 }
+
+use codeyard_model::issue_input::validate_body;
+
+use codeyard_model::issue_input::validate_label;
+
+use codeyard_model::issue_input::validate_title;

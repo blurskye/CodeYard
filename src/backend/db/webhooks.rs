@@ -39,7 +39,7 @@ pub(crate) fn ensure_distinct(
             && hook.payload_url == payload_url
             && hook.content_type == content_type
             && hook.ssl_verify == ssl_verify
-            && crate::backend::webhooks::events::overlap(&hook.events, events)
+            && codeyard_model::webhook_events::overlap(&hook.events, events)
     });
     anyhow::ensure!(!duplicate, HookExists);
     Ok(())
@@ -133,13 +133,12 @@ pub struct InvalidEvents(pub &'static str);
 impl WebhookPatch {
     /// Resolve event deltas against the row locked by the webhook's write transaction.
     pub(crate) fn changed_events(&self, current: &str) -> Result<Option<String>, InvalidEvents> {
-        use crate::backend::webhooks::events;
         if self.events.is_none() && self.add_events.is_empty() && self.remove_events.is_empty() {
             return Ok(None);
         }
         for delta in [&self.add_events, &self.remove_events] {
             if !delta.is_empty() {
-                events::subscription(delta).map_err(InvalidEvents)?;
+                codeyard_model::webhook_events::subscription(delta).map_err(InvalidEvents)?;
             }
         }
         let mut selected: Vec<_> = self
@@ -156,7 +155,7 @@ impl WebhookPatch {
             }
         }
         selected.retain(|event| !self.remove_events.contains(event));
-        events::subscription(&selected)
+        codeyard_model::webhook_events::subscription(&selected)
             .map(Some)
             .map_err(InvalidEvents)
     }

@@ -1,6 +1,11 @@
 //! SQLite side of a database copy.
 
-use super::{literal, quote, Catalog, Column, Sequence, Table};
+use crate::backend::db::copy::literal;
+use crate::backend::db::copy::quote;
+use crate::backend::db::copy::Catalog;
+use crate::backend::db::copy::Column;
+use crate::backend::db::copy::Sequence;
+use crate::backend::db::copy::Table;
 use anyhow::{bail, Result};
 use codeyard_db_core::sqlite::migrations::validate_history;
 use sqlx::{Sqlite, Transaction};

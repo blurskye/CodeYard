@@ -1,6 +1,7 @@
 //! robots.txt and ai.txt follow the site's AI crawler setting (`node_configuration.ai_crawlers`).
 //! Block is the default. Both files then disallow the AI crawlers; allow lets every agent in.
-use crate::backend::{app::AppState, db};
+use crate::backend::app::AppState;
+
 use axum::{
     extract::State,
     http::{header, StatusCode},
@@ -60,9 +61,11 @@ pub(crate) fn setting_value(raw: &str) -> Option<&'static str> {
 /// Whether AI training crawlers are blocked. No setting row means block; an unreadable
 /// setting is an error, not allow.
 pub(crate) async fn ai_crawlers_blocked(pool: &codeyard_db_core::DbPool) -> anyhow::Result<bool> {
-    Ok(db::node_config::get_node_configuration(pool)
-        .await?
-        .is_none_or(|config| config.ai_crawlers != ALLOW))
+    Ok(
+        crate::backend::db::node_config::get_node_configuration(pool)
+            .await?
+            .is_none_or(|config| config.ai_crawlers != ALLOW),
+    )
 }
 
 async fn robots_txt(State(state): State<Arc<AppState>>) -> Response {

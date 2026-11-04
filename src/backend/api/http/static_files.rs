@@ -213,7 +213,9 @@ async fn serve_runtime(root: &Path, uri: &Uri, headers: &HeaderMap) -> Response 
     if not_modified(headers, &etag) {
         return asset_response(Body::empty(), mime, &etag, headers);
     }
-    let Some(permit) = super::middleware::wait_for_static_slot(&DOWNLOADS).await else {
+    let Some(permit) =
+        crate::backend::api::http::middleware::wait_for_static_slot(&DOWNLOADS).await
+    else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     let file = match tokio::fs::File::open(&file).await {
@@ -231,7 +233,7 @@ async fn serve_runtime(root: &Path, uri: &Uri, headers: &HeaderMap) -> Response 
                 .map(|chunk| chunk.map(|chunk| (chunk, (stream, permit))))
         });
     asset_response(
-        super::middleware::download_body(stream),
+        crate::backend::api::http::middleware::download_body(stream),
         mime,
         &etag,
         headers,

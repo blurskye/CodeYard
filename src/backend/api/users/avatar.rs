@@ -2,7 +2,8 @@
 //! is sent to that file, whose own visibility rules apply. Any other name, including a deleted
 //! account's, gets a generated square with the first letter, so a timeline never has a gap.
 
-use crate::backend::{app::AppState, db};
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{Path, State},
     http::{header, HeaderValue, StatusCode},
@@ -45,9 +46,10 @@ pub(crate) async fn avatar_get(
 ) -> Response {
     let pool = &state.pool;
     // Users and organizations share one name space; a name that is no user may be an organization.
-    let file_id = match db::users::accounts::get_user_by_username(pool, &name).await {
+    let file_id = match crate::backend::db::users::accounts::get_user_by_username(pool, &name).await
+    {
         Ok(Some(user)) => user.avatar_file_id,
-        Ok(None) => db::organizations::get_public_organization(pool, &name)
+        Ok(None) => crate::backend::db::organizations::get_public_organization(pool, &name)
             .await
             .ok()
             .flatten()
@@ -83,7 +85,7 @@ pub(crate) async fn avatar_get(
 
 #[cfg(test)]
 mod tests {
-    use super::default_picture;
+    use crate::backend::api::users::avatar::default_picture;
 
     #[test]
     fn a_name_always_gets_the_same_colour_and_its_first_letter() {

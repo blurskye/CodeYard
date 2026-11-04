@@ -1,14 +1,18 @@
 //! Upload files: a browser form that adds several files to one branch in one commit. The page
 //! and its form share the address `/OWNER/REPO/upload/REF` or `/OWNER/REPO/upload/REF/DIR`.
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::repos::chrome::{self, resolve};
+
+use crate::backend::api::repos::chrome::resolve;
 use crate::backend::api::repos::code::contents::write_status;
-use crate::backend::api::repos::forms::{field, with_status};
+use crate::backend::api::repos::forms::field;
+use crate::backend::api::repos::forms::with_status;
 use crate::backend::app::AppState;
-use crate::backend::repositories::files;
-use crate::backend::repositories::store::{
-    UploadFile, UploadWrite, MAX_UPLOAD_FILES, MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
-};
+
+use crate::backend::repositories::store::UploadFile;
+use crate::backend::repositories::store::UploadWrite;
+use crate::backend::repositories::store::MAX_UPLOAD_FILES;
+use crate::backend::repositories::store::MAX_UPLOAD_FILE_BYTES;
+use crate::backend::repositories::store::MAX_UPLOAD_TOTAL_BYTES;
 use axum::{
     extract::{
         multipart::{Multipart, MultipartError, MultipartRejection},
@@ -137,13 +141,15 @@ async fn read_parts(mut multipart: Multipart) -> Result<UploadParts, UploadFormE
 /// and the revision is the branch's tip as the page is opened.
 async fn target(
     ctx: &PageContext,
-    loaded: &chrome::Loaded,
+    loaded: &crate::backend::api::repos::chrome::Loaded,
     tail: &str,
 ) -> Result<view::editor::UploadForm, Response> {
     let resolved = resolve(ctx, loaded, tail, false)?;
-    let branch = chrome::branch_name(&resolved.reference).to_owned();
+    let branch = crate::backend::api::repos::chrome::branch_name(&resolved.reference).to_owned();
     let reference = format!("refs/heads/{branch}");
-    if !loaded.refs.is_empty() && !chrome::is_branch(loaded, &resolved.reference) {
+    if !loaded.refs.is_empty()
+        && !crate::backend::api::repos::chrome::is_branch(loaded, &resolved.reference)
+    {
         return Err(ctx.error(
             StatusCode::BAD_REQUEST,
             "Choose a branch, not a tag or detached commit, to upload files.",
@@ -161,7 +167,7 @@ async fn target(
         ..Default::default()
     };
     if let Some(user) = ctx.user.as_ref() {
-        form.protected = files::direct_commit_refused(
+        form.protected = crate::backend::repositories::files::direct_commit_refused(
             &ctx.state.pool,
             &loaded.repository,
             user,
@@ -169,7 +175,8 @@ async fn target(
             &form.expected_revision,
         )
         .await;
-        form.new_branch = files::free_branch_name(&user.username, &loaded.refs);
+        form.new_branch =
+            crate::backend::repositories::files::free_branch_name(&user.username, &loaded.refs);
     }
     Ok(form)
 }
@@ -177,7 +184,7 @@ async fn target(
 /// The upload page again, with what went wrong and the text the user typed.
 fn refusal(
     ctx: &PageContext,
-    loaded: &chrome::Loaded,
+    loaded: &crate::backend::api::repos::chrome::Loaded,
     mut form: view::editor::UploadForm,
     status: StatusCode,
     message: &str,
@@ -188,7 +195,7 @@ fn refusal(
 
 fn upload_page(
     ctx: &PageContext,
-    loaded: &chrome::Loaded,
+    loaded: &crate::backend::api::repos::chrome::Loaded,
     form: view::editor::UploadForm,
 ) -> Response {
     ctx.page_model(
@@ -212,16 +219,19 @@ pub(in crate::backend::api::repos) async fn page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
-    super::GitPathParams(params): super::GitPathParams,
+    crate::backend::api::repos::code::GitPathParams(params): crate::backend::api::repos::code::GitPathParams,
 ) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let loaded = match chrome::load(&ctx, &params["owner"], &params["repo"]).await {
-        Ok(loaded) => loaded,
-        Err(response) => return response,
-    };
+    let loaded =
+        match crate::backend::api::repos::chrome::load(&ctx, &params["owner"], &params["repo"])
+            .await
+        {
+            Ok(loaded) => loaded,
+            Err(response) => return response,
+        };
     if let Err(response) = ctx.require_user() {
         return response;
     }
@@ -239,17 +249,20 @@ pub(in crate::backend::api::repos) async fn post(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
-    super::GitPathParams(params): super::GitPathParams,
+    crate::backend::api::repos::code::GitPathParams(params): crate::backend::api::repos::code::GitPathParams,
     multipart: Result<Multipart, MultipartRejection>,
 ) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let loaded = match chrome::load(&ctx, &params["owner"], &params["repo"]).await {
-        Ok(loaded) => loaded,
-        Err(response) => return response,
-    };
+    let loaded =
+        match crate::backend::api::repos::chrome::load(&ctx, &params["owner"], &params["repo"])
+            .await
+        {
+            Ok(loaded) => loaded,
+            Err(response) => return response,
+        };
     if let Err(response) = ctx.require_user() {
         return response;
     }
@@ -366,7 +379,7 @@ pub(in crate::backend::api::repos) async fn post(
         files,
     };
     let actor = ctx.database_actor(ctx.user.as_ref().expect("authenticated upload").id);
-    let saved = files::upload_files(
+    let saved = crate::backend::repositories::files::upload_files(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.ci_runs,
@@ -387,7 +400,8 @@ pub(in crate::backend::api::repos) async fn post(
             None => branch_url(&loaded.chrome.base(), "tree", &form.branch, &form.directory),
         }),
         Err(error) => {
-            form.saved = error.kind == files::WriteFailure::SavedFollowupFailed;
+            form.saved = error.kind
+                == crate::backend::repositories::files::WriteFailure::SavedFollowupFailed;
             refusal(&ctx, &loaded, form, write_status(&error), &error.message)
         }
     }

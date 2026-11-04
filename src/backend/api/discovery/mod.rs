@@ -5,7 +5,9 @@ mod home;
 pub(crate) mod search;
 pub(crate) mod stars;
 
-use crate::backend::{api::http::context::PageContext, app::AppState, db};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::app::AppState;
+
 use axum::{extract::DefaultBodyLimit, http::StatusCode, response::Response, routing::get, Router};
 use codeyard_webui::{components::languages::LanguageShare, pages::discovery::RepositoryCard};
 use std::{
@@ -106,35 +108,41 @@ pub(crate) async fn repository_cards(
     repos: Vec<codeyard_db_core::models::Repository>,
 ) -> Result<Vec<RepositoryCard>, DiscoveryReadError> {
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
-    let owners = db::repositories::records::repository_owner_names(&state.pool, &ids)
+    let owners =
+        crate::backend::db::repositories::records::repository_owner_names(&state.pool, &ids)
+            .await
+            .map_err(|_| DiscoveryReadError::Unavailable)?;
+    let forks = crate::backend::db::repositories::discovery::public_fork_counts(&state.pool, &ids)
         .await
         .map_err(|_| DiscoveryReadError::Unavailable)?;
-    let forks = db::repositories::discovery::public_fork_counts(&state.pool, &ids)
+    let topics = crate::backend::db::repositories::topics::repository_topics(&state.pool, &ids)
         .await
         .map_err(|_| DiscoveryReadError::Unavailable)?;
-    let topics = db::repositories::topics::repository_topics(&state.pool, &ids)
-        .await
-        .map_err(|_| DiscoveryReadError::Unavailable)?;
-    let languages = db::repository_stats::get_primary_repo_languages(&state.pool, &ids)
-        .await
-        .map_err(|_| DiscoveryReadError::Unavailable)?
-        .into_iter()
-        .map(|row| {
-            (
-                row.repo_id,
-                LanguageShare {
-                    name: row.language,
-                    percentage: row.percentage,
-                    color: row.color.unwrap_or_default(),
-                },
-            )
-        })
-        .collect::<HashMap<_, _>>();
-    let readable = db::repositories::access::readable_repository_ids(&state.pool, viewer, &ids)
-        .await
-        .map_err(|_| DiscoveryReadError::Unavailable)?
-        .into_iter()
-        .collect::<std::collections::HashSet<_>>();
+    let languages =
+        crate::backend::db::repository_stats::get_primary_repo_languages(&state.pool, &ids)
+            .await
+            .map_err(|_| DiscoveryReadError::Unavailable)?
+            .into_iter()
+            .map(|row| {
+                (
+                    row.repo_id,
+                    LanguageShare {
+                        name: row.language,
+                        percentage: row.percentage,
+                        color: row.color.unwrap_or_default(),
+                    },
+                )
+            })
+            .collect::<HashMap<_, _>>();
+    let readable = crate::backend::db::repositories::access::readable_repository_ids(
+        &state.pool,
+        viewer,
+        &ids,
+    )
+    .await
+    .map_err(|_| DiscoveryReadError::Unavailable)?
+    .into_iter()
+    .collect::<std::collections::HashSet<_>>();
     let repos = repos
         .into_iter()
         .filter(|repo| readable.contains(&repo.id))
@@ -149,10 +157,11 @@ pub(crate) async fn dashboard_cards(
     repos: Vec<codeyard_db_core::models::Repository>,
 ) -> Result<Vec<RepositoryCard>, DiscoveryReadError> {
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
-    let owners = db::repositories::records::repository_owner_names(&state.pool, &ids)
-        .await
-        .map_err(|_| DiscoveryReadError::Unavailable)?;
-    let forks = db::repositories::discovery::public_fork_counts(&state.pool, &ids)
+    let owners =
+        crate::backend::db::repositories::records::repository_owner_names(&state.pool, &ids)
+            .await
+            .map_err(|_| DiscoveryReadError::Unavailable)?;
+    let forks = crate::backend::db::repositories::discovery::public_fork_counts(&state.pool, &ids)
         .await
         .map_err(|_| DiscoveryReadError::Unavailable)?;
     card_list(repos, &owners, BTreeMap::new(), HashMap::new(), forks)

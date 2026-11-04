@@ -1,10 +1,10 @@
 //! Associations are derived from published Git ancestry, not commit-message references.
-use super::{
-    access,
-    store::{repo_store, CommitInfo, RepoStore},
-};
+
 use crate::backend::cluster::NodeContext;
-use crate::backend::db;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::CommitInfo;
+use crate::backend::repositories::store::RepoStore;
+
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::Repository;
 use codeyard_git as git;
@@ -13,7 +13,7 @@ use std::{collections::HashMap, time::Duration};
 
 #[derive(Debug)]
 pub enum AssociationError {
-    Access(access::AccessError),
+    Access(crate::backend::repositories::access::AccessError),
     Git(RepoError),
     Limit,
     Unavailable,
@@ -105,9 +105,13 @@ pub async fn associated_pulls(
         return Err(AssociationError::Limit);
     }
     tokio::time::timeout(Duration::from_secs(30), async {
-        let repository = access::check_read(pool, query.repository_id, query.actor)
-            .await
-            .map_err(AssociationError::Access)?;
+        let repository = crate::backend::repositories::access::check_read(
+            pool,
+            query.repository_id,
+            query.actor,
+        )
+        .await
+        .map_err(AssociationError::Access)?;
         let store = repo_store(&repository, cluster);
         let refs = store
             .refs_from_primary()
@@ -146,15 +150,16 @@ pub async fn associated_pulls(
         let mut skipped = 0;
         let mut pulls = Vec::new();
         loop {
-            let candidates = db::pull_requests::records::commit_association_candidates(
-                pool,
-                repository.id,
-                before,
-                256,
-                on_default,
-            )
-            .await
-            .map_err(|_| AssociationError::Unavailable)?;
+            let candidates =
+                crate::backend::db::pull_requests::records::commit_association_candidates(
+                    pool,
+                    repository.id,
+                    before,
+                    256,
+                    on_default,
+                )
+                .await
+                .map_err(|_| AssociationError::Unavailable)?;
             if candidates.is_empty() {
                 break;
             }
@@ -175,9 +180,13 @@ pub async fn associated_pulls(
                     continue;
                 }
                 if pulls.len() == query.limit {
-                    let repository = access::check_read(pool, repository.id, query.actor)
-                        .await
-                        .map_err(AssociationError::Access)?;
+                    let repository = crate::backend::repositories::access::check_read(
+                        pool,
+                        repository.id,
+                        query.actor,
+                    )
+                    .await
+                    .map_err(AssociationError::Access)?;
                     return Ok(CommitPullPage {
                         repository,
                         commit,
@@ -188,9 +197,10 @@ pub async fn associated_pulls(
                 pulls.push(pull);
             }
         }
-        let repository = access::check_read(pool, repository.id, query.actor)
-            .await
-            .map_err(AssociationError::Access)?;
+        let repository =
+            crate::backend::repositories::access::check_read(pool, repository.id, query.actor)
+                .await
+                .map_err(AssociationError::Access)?;
         Ok(CommitPullPage {
             repository,
             commit,

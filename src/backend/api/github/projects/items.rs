@@ -1,5 +1,9 @@
 use super::*;
-use crate::backend::db::projects::{Content, Field, FieldUpdate, Item, NewView};
+use crate::backend::db::projects::Content;
+use crate::backend::db::projects::Field;
+use crate::backend::db::projects::FieldUpdate;
+use crate::backend::db::projects::Item;
+use crate::backend::db::projects::NewView;
 use axum::routing::{delete, patch};
 use serde_json::json;
 
@@ -66,9 +70,9 @@ async fn item_document(
                 .ok_or_else(Error::missing)?;
             if let Some(id) = item.issue_id {
                 let auth = auth::authenticate(state, headers, false).await?;
-                super::super::issues::document(
+                crate::backend::api::github::issues::document(
                     &state.pool,
-                    super::super::issues::Reader::Request(state, auth.as_ref()),
+                    crate::backend::api::github::issues::Reader::Request(state, auth.as_ref()),
                     &repo,
                     &owner,
                     db::assignees::AssignedItem::Issue(id),
@@ -82,7 +86,10 @@ async fn item_document(
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-                super::super::pulls::document(state, headers, &repo, &owner, &pull, false).await?
+                crate::backend::api::github::pulls::document(
+                    state, headers, &repo, &owner, &pull, false,
+                )
+                .await?
             }
         }
         None => payloads::project_draft(item, payloads::user(&creator)),
@@ -129,7 +136,7 @@ async fn add_item(
     input: std::result::Result<Json<AddItem>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Response> {
     let (project, name, auth) = context(&state, &headers, &params, true, false).await?;
-    let Json(input) = input.map_err(super::super::json_error)?;
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     if !matches!(input.kind.as_str(), "Issue" | "PullRequest") {
         return Err(Error::validation("ProjectV2Item", "type", "invalid"));
     }
@@ -217,7 +224,7 @@ async fn draft(
 ) -> Result<Response> {
     let (project, name, auth) =
         context(&state, &headers, &params, true, !params.contains_key("org")).await?;
-    let Json(input) = input.map_err(super::super::json_error)?;
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     let auth = auth.ok_or_else(auth::required)?;
     let actor = auth.user.id;
     let item = projects::add_item(
@@ -441,7 +448,7 @@ async fn update_item(
     input: std::result::Result<Json<Update>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>> {
     let (project, name, auth) = context(&state, &headers, &params, true, false).await?;
-    let Json(input) = input.map_err(super::super::json_error)?;
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     let actor = auth.as_ref().ok_or_else(auth::required)?.user.id;
     let id: i64 = params["item_id"].parse().map_err(|_| Error::missing())?;
     let item = projects::update_item(
@@ -489,7 +496,7 @@ async fn create_view(
 ) -> Result<Response> {
     let (project, name, auth) =
         context(&state, &headers, &params, true, !params.contains_key("org")).await?;
-    let Json(input) = input.map_err(super::super::json_error)?;
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     let auth = auth.ok_or_else(auth::required)?;
     let actor = &auth.user;
     let view = projects::create_view(
@@ -503,7 +510,7 @@ async fn create_view(
     .map_err(project_error)?;
     let html = format!(
         "{}/{}/{}/projects/{}/views/{}",
-        crate::backend::api::http::config::link_origin(),
+        codeyard_model::http_config::link_origin(),
         if project.owner_kind == "org" {
             "orgs"
         } else {

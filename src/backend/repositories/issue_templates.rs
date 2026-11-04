@@ -6,7 +6,7 @@
 //! instead of a Markdown body. `config.yml` in the directory can switch blank issues off. The
 //! pull request template is the first of a few fixed paths that exists.
 
-use super::store::RepoStore;
+use crate::backend::repositories::store::RepoStore;
 use codeyard_git::error::{ErrorKind, RepoError};
 use codeyard_support::git_limits::{MAX_TEMPLATES, MAX_TEMPLATE_BYTES};
 
@@ -170,7 +170,9 @@ fn is_template_name(name: &str) -> bool {
         || ((name.ends_with(".yml") || name.ends_with(".yaml")) && !name.starts_with("config."))
 }
 
-pub(super) fn template_paths(entries: Vec<super::store::TreeEntry>) -> Vec<String> {
+pub(super) fn template_paths(
+    entries: Vec<crate::backend::repositories::store::TreeEntry>,
+) -> Vec<String> {
     let mut paths: Vec<String> = entries
         .into_iter()
         .filter(|entry| entry.entry_type == "file" && is_template_name(&entry.name))
@@ -485,7 +487,7 @@ mod tests {
     #[test]
     fn template_reads_are_bounded_even_when_candidates_are_rejected() {
         let entries = (0..1000)
-            .map(|i| super::super::store::TreeEntry {
+            .map(|i| crate::backend::repositories::store::TreeEntry {
                 sha: "a".repeat(40),
                 name: format!("{i:04}.md"),
                 path: format!("{i:04}.md"),

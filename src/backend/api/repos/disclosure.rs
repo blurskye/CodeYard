@@ -1,14 +1,13 @@
 //! Native private vulnerability reporting. Every confidential read and write goes through the DAL.
-use super::{
-    chrome::{self, Loaded},
-    forms::{authorize_post, field, with_status},
-    refs::references::resolve_references,
-};
-use crate::backend::{
-    api::http::context::PageContext,
-    app::AppState,
-    db::{advisories, repositories::security as records},
-};
+
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::repos::chrome::Loaded;
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::forms::field;
+use crate::backend::api::repos::forms::with_status;
+use crate::backend::api::repos::refs::references::resolve_references;
+use crate::backend::app::AppState;
+
 use axum::{
     extract::{DefaultBodyLimit, Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -66,7 +65,7 @@ async fn toggle(
             )
         }
     };
-    match records::set_enabled(
+    match crate::backend::db::repositories::security::set_enabled(
         &ctx.state.pool,
         ctx.database_actor(ctx.user.as_ref().unwrap().id),
         loaded.repository.id,
@@ -87,22 +86,30 @@ fn failure(error: &anyhow::Error) -> (StatusCode, &str) {
             "A live unrestricted credential is required.",
         );
     }
-    if let Some(refusal) = error.downcast_ref::<advisories::Refusal>() {
+    if let Some(refusal) = error.downcast_ref::<codeyard_model::advisories::Refusal>() {
         let status = match refusal {
-            advisories::Refusal::Missing | advisories::Refusal::Denied => StatusCode::NOT_FOUND,
-            advisories::Refusal::Invalid | advisories::Refusal::Conflict => {
-                StatusCode::UNPROCESSABLE_ENTITY
-            }
+            codeyard_model::advisories::Refusal::Missing
+            | codeyard_model::advisories::Refusal::Denied => StatusCode::NOT_FOUND,
+            codeyard_model::advisories::Refusal::Invalid
+            | codeyard_model::advisories::Refusal::Conflict => StatusCode::UNPROCESSABLE_ENTITY,
         };
-        return (status, chrome::safe_error(status));
+        return (
+            status,
+            crate::backend::api::repos::chrome::safe_error(status),
+        );
     }
-    match error.downcast_ref::<records::Refusal>() {
-        Some(records::Refusal::Missing | records::Refusal::Denied) => (
+    match error.downcast_ref::<codeyard_model::security_reports::Refusal>() {
+        Some(
+            codeyard_model::security_reports::Refusal::Missing
+            | codeyard_model::security_reports::Refusal::Denied,
+        ) => (
             StatusCode::NOT_FOUND,
             "Security report not found or not available to this account.",
         ),
-        Some(records::Refusal::Invalid(message)) => (StatusCode::UNPROCESSABLE_ENTITY, message),
-        Some(records::Refusal::Limit) => (
+        Some(codeyard_model::security_reports::Refusal::Invalid(message)) => {
+            (StatusCode::UNPROCESSABLE_ENTITY, message)
+        }
+        Some(codeyard_model::security_reports::Refusal::Limit) => (
             StatusCode::TOO_MANY_REQUESTS,
             "Security reporting limit reached. Try again later.",
         ),
@@ -135,7 +142,7 @@ async fn open(
     name: &str,
 ) -> Result<(PageContext, Loaded), Response> {
     let ctx = PageContext::load(state, headers, uri).await?;
-    let loaded = chrome::load_database(&ctx, owner, name).await?;
+    let loaded = crate::backend::api::repos::chrome::load_database(&ctx, owner, name).await?;
     Ok((ctx, loaded))
 }
 fn show(ctx: &PageContext, loaded: Loaded, page: SecurityPage) -> Response {
@@ -155,12 +162,17 @@ async fn index_model(
     title: String,
     body: String,
 ) -> Response {
-    let enabled = match records::enabled(&ctx.state.pool, loaded.repository.id).await {
+    let enabled = match crate::backend::db::repositories::security::enabled(
+        &ctx.state.pool,
+        loaded.repository.id,
+    )
+    .await
+    {
         Ok(enabled) => enabled,
         Err(error) => return refused(ctx, error),
     };
     let mut rows = if let Some(user) = &ctx.user {
-        match records::list_reports(
+        match crate::backend::db::repositories::security::list_reports(
             &ctx.state.pool,
             ctx.database_actor(user.id),
             loaded.repository.id,
@@ -215,7 +227,7 @@ async fn thread_model(
             "Sign in to read private security reports.",
         );
     };
-    let mut thread = match records::report_thread(
+    let mut thread = match crate::backend::db::repositories::security::report_thread(
         &ctx.state.pool,
         ctx.database_actor(actor),
         loaded.repository.id,
@@ -338,8 +350,8 @@ async fn create(
     }
     let title = field(&form, "title");
     let body = field(&form, "body");
-    let result = match records::NewReport::new(&title, &body) {
-        Ok(_) => advisories::create(
+    let result = match codeyard_model::security_reports::NewReport::new(&title, &body) {
+        Ok(_) => crate::backend::db::advisories::create(
             &ctx.state.pool,
             ctx.database_actor(actor),
             loaded.repository.id,
@@ -397,7 +409,7 @@ async fn change(
     let intent = field(&form, "intent");
     let result = match intent.as_str() {
         // A reply returns how many replies came before it, which names the page that shows it.
-        "reply" => records::reply(
+        "reply" => crate::backend::db::repositories::security::reply(
             &ctx.state.pool,
             ctx.database_actor(actor),
             loaded.repository.id,
@@ -406,7 +418,7 @@ async fn change(
         )
         .await
         .map(Some),
-        "close" => records::set_state(
+        "close" => crate::backend::db::repositories::security::set_state(
             &ctx.state.pool,
             ctx.database_actor(actor),
             loaded.repository.id,
@@ -415,7 +427,7 @@ async fn change(
         )
         .await
         .map(|()| None),
-        "reopen" => records::set_state(
+        "reopen" => crate::backend::db::repositories::security::set_state(
             &ctx.state.pool,
             ctx.database_actor(actor),
             loaded.repository.id,

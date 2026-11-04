@@ -1,5 +1,5 @@
 //! Stored default-branch languages, including successfully computed empty results.
-use crate::backend::db;
+
 use crate::backend::db::repository_stats::LanguageSource;
 use codeyard_git::error::{ErrorKind, RepoError};
 
@@ -23,16 +23,18 @@ static COMPUTATIONS: LazyLock<Mutex<HashMap<i64, Weak<tokio::sync::Mutex<()>>>>>
     LazyLock::new(Default::default);
 
 pub async fn stored(pool: &DbPool, repo_id: i64) -> Result<Vec<LanguageStat>> {
-    Ok(db::repository_stats::get_repo_languages(pool, repo_id)
-        .await?
-        .into_iter()
-        .map(|row| LanguageStat {
-            language: row.language,
-            bytes: row.bytes as u64,
-            percentage: row.percentage as f32,
-            color: row.color.unwrap_or_default(),
-        })
-        .collect())
+    Ok(
+        crate::backend::db::repository_stats::get_repo_languages(pool, repo_id)
+            .await?
+            .into_iter()
+            .map(|row| LanguageStat {
+                language: row.language,
+                bytes: row.bytes as u64,
+                percentage: row.percentage as f32,
+                color: row.color.unwrap_or_default(),
+            })
+            .collect(),
+    )
 }
 
 fn computation(repo_id: i64) -> Arc<tokio::sync::Mutex<()>> {
@@ -68,7 +70,9 @@ pub async fn compute_and_store(
     let computation = computation(repository.id);
     tokio::time::timeout(REFRESH_TIMEOUT, async {
         let _computation = computation.lock().await;
-        let Some(source) = db::repository_stats::language_source(pool, repository.id).await? else {
+        let Some(source) =
+            crate::backend::db::repository_stats::language_source(pool, repository.id).await?
+        else {
             return Ok(Vec::new());
         };
         if source.default_branch != repository.default_branch
@@ -86,7 +90,7 @@ pub async fn compute_and_store(
                 .unwrap_or_else(|| "main".into());
             if current == branch
                 && git::branch_tip(path, &branch)? == tip
-                && db::repository_stats::languages_computed(
+                && crate::backend::db::repository_stats::languages_computed(
                     pool,
                     &source,
                     &tip.clone().unwrap_or_default(),
@@ -96,7 +100,7 @@ pub async fn compute_and_store(
                 return Ok::<_, anyhow::Error>(languages);
             }
             let Some(current_source) =
-                db::repository_stats::language_source(pool, repository.id).await?
+                crate::backend::db::repository_stats::language_source(pool, repository.id).await?
             else {
                 return Ok(Vec::new());
             };
@@ -146,7 +150,8 @@ pub(crate) fn refresh_default_branch(
             let work = async {
                 let computation = computation(repo_id);
                 let _computation = computation.lock().await;
-                let Some(source) = db::repository_stats::language_source(&pool, repo_id).await?
+                let Some(source) =
+                    crate::backend::db::repository_stats::language_source(&pool, repo_id).await?
                 else {
                     return Ok(());
                 };
@@ -175,7 +180,7 @@ async fn compute_local(
     source: &LanguageSource,
 ) -> Result<Vec<LanguageStat>> {
     let tip = git::branch_tip(path, branch)?.unwrap_or_default();
-    if db::repository_stats::languages_computed(pool, source, &tip).await? {
+    if crate::backend::db::repository_stats::languages_computed(pool, source, &tip).await? {
         return stored(pool, source.repo_id).await;
     }
     let languages = if tip.is_empty() {
@@ -187,7 +192,9 @@ async fn compute_local(
     // Only publication is serialized: refresh the source/version under the same lease
     // as ref publishers, then retain the database placement CAS through commit.
     let _publication = git::locks::publication(path).await?;
-    let Some(current) = db::repository_stats::language_source(pool, source.repo_id).await? else {
+    let Some(current) =
+        crate::backend::db::repository_stats::language_source(pool, source.repo_id).await?
+    else {
         return Ok(languages);
     };
     // Languages follow Git's default branch, which an adopted repository may name
@@ -233,7 +240,7 @@ async fn store_rows(
         })
         .collect();
     // False when the version check lost to a newer write, and nothing was stored.
-    db::repository_stats::upsert_repo_languages(pool, source, revision, &rows).await
+    crate::backend::db::repository_stats::upsert_repo_languages(pool, source, revision, &rows).await
 }
 
 #[cfg(test)]

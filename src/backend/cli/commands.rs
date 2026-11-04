@@ -1,4 +1,3 @@
-use crate::backend::db;
 use crate::backend::repositories::store::repo_store;
 use anyhow::Result;
 use codeyard_db_core::models::AccessLevel;
@@ -33,7 +32,7 @@ fn storage_location(
 
 /// Copy every table between SQLite and PostgreSQL and print the row counts
 pub async fn copy_database_cmd(from: &str, to: &str) -> Result<()> {
-    let counts = db::copy::copy_database(from, to).await?;
+    let counts = crate::backend::db::copy::copy_database(from, to).await?;
     println!("{:<40} {:>12}", "Table", "Rows");
     for count in &counts {
         println!("{:<40} {:>12}", count.table, count.rows);
@@ -50,12 +49,12 @@ pub async fn create_user_cmd(pool: &DbPool, username: &str, email: Option<&str>)
     validate_cli_username(username)?;
     let email = email.map(str::trim).filter(|value| !value.is_empty());
     if let Some(email) = email {
-        crate::backend::identity::credentials::validate_email(email)
+        codeyard_model::account_input::validate_email(email)
             .map_err(|_| anyhow::anyhow!("Invalid email address"))?;
     }
-    let user = match db::users::transitions::create_cli_user(pool, username, email).await? {
-        db::users::transitions::AccountAdmission::User(user) => user,
-        db::users::transitions::AccountAdmission::SetupRequired => anyhow::bail!(
+    let user = match crate::backend::db::users::transitions::create_cli_user(pool, username, email).await? {
+        crate::backend::db::users::transitions::AccountAdmission::User(user) => user,
+        crate::backend::db::users::transitions::AccountAdmission::SetupRequired => anyhow::bail!(
             "Complete /setup first, or run codeyard user bootstrap <new-admin> --password-stdin locally"
         ),
         _ => anyhow::bail!("Account creation refused"),
@@ -65,42 +64,42 @@ pub async fn create_user_cmd(pool: &DbPool, username: &str, email: Option<&str>)
 }
 
 fn validate_cli_username(username: &str) -> Result<()> {
-    use crate::backend::identity::credentials;
-    credentials::validate_namespace(username, 3).map_err(|_| anyhow::anyhow!(
+    codeyard_model::account_input::validate_namespace(username, 3).map_err(|_| anyhow::anyhow!(
         "Username must be 3-1024 bytes, at most 255 characters, and contain only letters, numbers, hyphens and underscores"
     ))?;
-    credentials::validate_new_account_name(username)
+    crate::backend::identity::credentials::validate_new_account_name(username)
         .map_err(|_| anyhow::anyhow!("That username is reserved"))
 }
 
 pub async fn bootstrap_user_cmd(pool: &DbPool, username: &str, mode: &str) -> Result<()> {
-    use crate::backend::identity::{credentials, passwords};
     use std::io::Read;
 
     validate_cli_username(username)?;
     let mut password = String::new();
     std::io::stdin()
-        .take(passwords::MAX_PASSWORD_BYTES as u64 + 3)
+        .take(crate::backend::identity::passwords::MAX_PASSWORD_BYTES as u64 + 3)
         .read_to_string(&mut password)?;
     let password = password.strip_suffix('\n').unwrap_or(&password);
     let password = password.strip_suffix('\r').unwrap_or(password);
-    credentials::validate_new_password(password)
+    crate::backend::identity::credentials::validate_new_password(password)
         .map_err(|_| anyhow::anyhow!("Password must be 8-1024 bytes"))?;
-    let hash = passwords::hash_password(password)
+    let hash = crate::backend::identity::passwords::hash_password(password)
         .await
         .map_err(|_| anyhow::anyhow!("Could not hash administrator password"))?;
-    match db::users::transitions::bootstrap_admin(pool, username, &hash, mode).await? {
-        db::users::transitions::SetupClaim::Completed(user) => {
+    match crate::backend::db::users::transitions::bootstrap_admin(pool, username, &hash, mode)
+        .await?
+    {
+        crate::backend::db::users::transitions::SetupClaim::Completed(user) => {
             println!(
                 "Setup completed. Sign in as {} (id={}).",
                 user.username, user.id
             );
             Ok(())
         }
-        db::users::transitions::SetupClaim::AlreadyCompleted => {
+        crate::backend::db::users::transitions::SetupClaim::AlreadyCompleted => {
             anyhow::bail!("Setup is already complete; sign in with an existing administrator")
         }
-        db::users::transitions::SetupClaim::ExistingAccounts => {
+        crate::backend::db::users::transitions::SetupClaim::ExistingAccounts => {
             anyhow::bail!("That namespace already exists; choose a new administrator username")
         }
     }
@@ -108,7 +107,7 @@ pub async fn bootstrap_user_cmd(pool: &DbPool, username: &str, mode: &str) -> Re
 
 /// List all users
 pub async fn list_users_cmd(pool: &DbPool) -> Result<()> {
-    let users = db::users::accounts::list_users(pool).await?;
+    let users = crate::backend::db::users::accounts::list_users(pool).await?;
     if users.is_empty() {
         println!("No users found.");
         return Ok(());
@@ -136,11 +135,12 @@ pub async fn add_key_cmd(
     public_key: &str,
 ) -> Result<()> {
     crate::backend::identity::keys::validate_name(key_name)?;
-    let user = db::users::accounts::get_user_by_username(pool, username)
+    let user = crate::backend::db::users::accounts::get_user_by_username(pool, username)
         .await?
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", username))?;
 
-    let key = db::users::ssh_keys::add_ssh_key(pool, user.id, key_name, public_key).await?;
+    let key = crate::backend::db::users::ssh_keys::add_ssh_key(pool, user.id, key_name, public_key)
+        .await?;
     println!(
         "Added SSH key '{}' for user '{}'",
         terminal_text(&key.name),
@@ -158,7 +158,7 @@ pub async fn add_key_from_file_cmd(
     key_path: &std::path::Path,
 ) -> Result<()> {
     use tokio::io::AsyncReadExt;
-    let limit = db::users::ssh_keys::MAX_PUBLIC_KEY_BYTES + 1;
+    let limit = crate::backend::db::users::ssh_keys::MAX_PUBLIC_KEY_BYTES + 1;
     let mut public_key = String::new();
     tokio::fs::File::open(key_path)
         .await?
@@ -174,11 +174,11 @@ pub async fn add_key_from_file_cmd(
 
 /// List SSH keys for a user
 pub async fn list_keys_cmd(pool: &DbPool, username: &str) -> Result<()> {
-    let user = db::users::accounts::get_user_by_username(pool, username)
+    let user = crate::backend::db::users::accounts::get_user_by_username(pool, username)
         .await?
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", username))?;
 
-    let keys = db::users::ssh_keys::list_user_keys(pool, user.id).await?;
+    let keys = crate::backend::db::users::ssh_keys::list_user_keys(pool, user.id).await?;
     if keys.is_empty() {
         println!("No SSH keys found for user '{}'.", username);
         return Ok(());
@@ -209,7 +209,7 @@ pub async fn create_repo_cmd(
     description: Option<&str>,
     is_private: bool,
 ) -> Result<()> {
-    let user = db::users::accounts::get_user_by_username(pool, owner)
+    let user = crate::backend::db::users::accounts::get_user_by_username(pool, owner)
         .await?
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", owner))?;
 
@@ -218,7 +218,7 @@ pub async fn create_repo_cmd(
     let created = crate::backend::repositories::lifecycle::provision(
         (pool, context.as_ref()),
         repos_path,
-        db::repositories::creation::RepositoryCreationOwner::personal(user.id),
+        crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(user.id),
         name,
         description,
         is_private,
@@ -242,11 +242,12 @@ pub async fn create_repo_cmd(
 
 /// List repositories for a user
 pub async fn list_repos_cmd(pool: &DbPool, username: &str) -> Result<()> {
-    let user = db::users::accounts::get_user_by_username(pool, username)
+    let user = crate::backend::db::users::accounts::get_user_by_username(pool, username)
         .await?
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", username))?;
 
-    let repos = db::repositories::records::list_user_repositories(pool, user.id).await?;
+    let repos =
+        crate::backend::db::repositories::records::list_user_repositories(pool, user.id).await?;
     if repos.is_empty() {
         println!("No repositories found for user '{}'.", username);
         return Ok(());
@@ -275,11 +276,11 @@ pub async fn grant_access_cmd(
     username: &str,
     level: &str,
 ) -> Result<()> {
-    let repo = db::repositories::records::get_repository(pool, owner, repo_name)
+    let repo = crate::backend::db::repositories::records::get_repository(pool, owner, repo_name)
         .await?
         .ok_or_else(|| anyhow::anyhow!("Repository not found: {}/{}", owner, repo_name))?;
 
-    let user = db::users::accounts::get_user_by_username(pool, username)
+    let user = crate::backend::db::users::accounts::get_user_by_username(pool, username)
         .await?
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", username))?;
 
@@ -295,7 +296,13 @@ pub async fn grant_access_cmd(
         }
     };
 
-    db::repositories::access::grant_repo_access(pool, user.id, repo.id, access_level).await?;
+    crate::backend::db::repositories::access::grant_repo_access(
+        pool,
+        user.id,
+        repo.id,
+        access_level,
+    )
+    .await?;
     println!(
         "Granted {} access to user '{}' for repository '{}/{}'",
         level, username, owner, repo_name
@@ -311,7 +318,7 @@ pub async fn repo_info_cmd(
     owner: &str,
     repo_name: &str,
 ) -> Result<()> {
-    let repo = db::repositories::records::get_repository(pool, owner, repo_name)
+    let repo = crate::backend::db::repositories::records::get_repository(pool, owner, repo_name)
         .await?
         .ok_or_else(|| anyhow::anyhow!("Repository not found: {}/{}", owner, repo_name))?;
 

@@ -1,8 +1,8 @@
-use super::authority::*;
 use crate::backend::db::organizations::roles::OrganizationRole;
 use crate::backend::db::organizations::roles::RoleTarget;
 use crate::backend::db::organizations::roles::UserAssignment;
 use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::sqlite::organizations::authority::*;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Team;

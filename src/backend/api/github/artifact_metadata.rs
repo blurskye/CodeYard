@@ -1,14 +1,15 @@
 //! Artifact inventory writes resolve the same repository-scoped provenance as attestation reads.
-use super::{auth, orgs, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        artifact_metadata::{
-            self, Actor, ClusterInput, DeploymentInput, Mutation, Refusal, StorageInput,
-        },
-    },
-};
+
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::artifact_metadata::Actor;
+use crate::backend::db::artifact_metadata::ClusterInput;
+use crate::backend::db::artifact_metadata::DeploymentInput;
+use crate::backend::db::artifact_metadata::Mutation;
+use crate::backend::db::artifact_metadata::Refusal;
+use crate::backend::db::artifact_metadata::StorageInput;
 use axum::{
     extract::{OriginalUri, Path, Request, State},
     http::{HeaderMap, StatusCode},
@@ -47,19 +48,19 @@ async fn actor(
     params: &Params,
     write: bool,
 ) -> Result<(Actor, i64)> {
-    let auth = auth::authenticate(state, headers, true)
+    let auth = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     if write {
         auth.require_write()?;
     }
-    let org = orgs::target(state, &params["org"]).await?;
-    let repo = if auth.user.username == db::ci_tokens::BOT {
-        let job = db::ci_tokens::get(&state.pool, auth.token.id)
+    let org = crate::backend::api::github::orgs::target(state, &params["org"]).await?;
+    let repo = if auth.user.username == crate::backend::db::ci_tokens::BOT {
+        let job = crate::backend::db::ci_tokens::get(&state.pool, auth.token.id)
             .await
             .map_err(Error::unavailable)?
-            .ok_or_else(auth::required)?;
-        let permissions: crate::backend::ci::tokens::Permissions =
+            .ok_or_else(crate::backend::api::github::auth::required)?;
+        let permissions: codeyard_model::permissions::Permissions =
             serde_json::from_str(&job.permissions).map_err(Error::unavailable)?;
         if !permissions.allows("artifact-metadata", write) {
             return Err(Error::new(
@@ -67,10 +68,13 @@ async fn actor(
                 "Resource not accessible by token",
             ));
         }
-        let repo = db::repositories::records::get_repository_by_id(&state.pool, job.repo_id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let repo = crate::backend::db::repositories::records::get_repository_by_id(
+            &state.pool,
+            job.repo_id,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
         if repo.owner_org_id != Some(org.id) {
             return Err(Error::missing());
         }
@@ -140,7 +144,7 @@ async fn deployment(
     }
     let input: DeploymentInput = serde_json::from_value(input)
         .map_err(|_| Error::validation("ArtifactMetadata", "record", "invalid"))?;
-    let rows = artifact_metadata::deployment(&state.pool, actor, org, &input)
+    let rows = crate::backend::db::artifact_metadata::deployment(&state.pool, actor, org, &input)
         .await
         .map_err(failure)?;
     mutation(rows, "deployment", input.return_records, false)
@@ -154,7 +158,7 @@ async fn storage(
 ) -> Result<Response> {
     let (actor, org) = actor(&state, &headers, &params, true).await?;
     let input: StorageInput = body(request).await?;
-    let rows = artifact_metadata::storage(&state.pool, actor, org, &input)
+    let rows = crate::backend::db::artifact_metadata::storage(&state.pool, actor, org, &input)
         .await
         .map_err(failure)?;
     mutation(rows, "storage", input.return_records, false)
@@ -168,9 +172,15 @@ async fn cluster(
 ) -> Result<Response> {
     let (actor, org) = actor(&state, &headers, &params, true).await?;
     let input: ClusterInput = body(request).await?;
-    let rows = artifact_metadata::cluster(&state.pool, actor, org, &params["cluster"], &input)
-        .await
-        .map_err(failure)?;
+    let rows = crate::backend::db::artifact_metadata::cluster(
+        &state.pool,
+        actor,
+        org,
+        &params["cluster"],
+        &input,
+    )
+    .await
+    .map_err(failure)?;
     mutation(
         rows,
         "deployment",
@@ -187,10 +197,15 @@ async fn enqueue(
 ) -> Result<Response> {
     let (actor, org) = actor(&state, &headers, &params, true).await?;
     let input: ClusterInput = body(request).await?;
-    let (id, errors) =
-        artifact_metadata::enqueue(&state.pool, actor, org, &params["cluster"], &input)
-            .await
-            .map_err(failure)?;
+    let (id, errors) = crate::backend::db::artifact_metadata::enqueue(
+        &state.pool,
+        actor,
+        org,
+        &params["cluster"],
+        &input,
+    )
+    .await
+    .map_err(failure)?;
     let mut value = json!({"job_id":id});
     if !errors.is_empty() {
         value["errors"] = json!(errors);
@@ -209,10 +224,11 @@ async fn job(
         .ok()
         .filter(|id| *id > 0)
         .ok_or_else(Error::missing)?;
-    let job = artifact_metadata::job(&state.pool, actor, org, &params["cluster"], id)
-        .await
-        .map_err(failure)?
-        .ok_or_else(Error::missing)?;
+    let job =
+        crate::backend::db::artifact_metadata::job(&state.pool, actor, org, &params["cluster"], id)
+            .await
+            .map_err(failure)?
+            .ok_or_else(Error::missing)?;
     let mut value = json!({"job_id":job.id,"status":job.status});
     if let Some(started) = job.started_at {
         value["started_at"] = json!(started);
@@ -234,7 +250,7 @@ async fn list(
 ) -> Result<Response> {
     let (actor, org) = actor(&state, &headers, &params, false).await?;
     let digest = &params["subject_digest"];
-    if !digest.starts_with("sha256:") || !db::attestations::valid_digest(digest) {
+    if !digest.starts_with("sha256:") || !crate::backend::db::attestations::valid_digest(digest) {
         return Err(Error::validation(
             "ArtifactMetadata",
             "subject_digest",
@@ -246,7 +262,7 @@ async fn list(
     } else {
         "deployment"
     };
-    let rows = artifact_metadata::list(&state.pool, actor, org, digest, kind)
+    let rows = crate::backend::db::artifact_metadata::list(&state.pool, actor, org, digest, kind)
         .await
         .map_err(failure)?;
     mutation(

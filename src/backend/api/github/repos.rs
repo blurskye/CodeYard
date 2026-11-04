@@ -1,16 +1,15 @@
 //! Repository lifecycle and metadata use the same authority checks as the settings forms.
-use super::{
-    auth, contents::store_error, pagination::Pagination, repo_url, repository, Error, Result,
-};
+
+use crate::backend::api::github::contents::store_error;
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::db::repositories::creation;
-use crate::backend::db::repositories::records;
-use crate::backend::db::repositories::topics;
-use crate::backend::repositories::lifecycle;
+use codeyard_model::urls::repo_url;
+
 use crate::backend::repositories::store::repo_store;
-use crate::backend::repositories::templates;
-use crate::backend::webhooks::payloads;
+
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -23,8 +22,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 
-pub(in crate::backend::api) fn lifecycle_error(error: lifecycle::StorageError) -> Error {
-    use lifecycle::LifecycleFailure::*;
+pub(in crate::backend::api) fn lifecycle_error(
+    error: crate::backend::repositories::lifecycle::StorageError,
+) -> Error {
+    use crate::backend::repositories::lifecycle::LifecycleFailure::*;
     let status = match error.kind {
         Invalid | OwnRepositoryFork | Conflict => StatusCode::UNPROCESSABLE_ENTITY,
         Denied => StatusCode::FORBIDDEN,
@@ -36,14 +37,16 @@ pub(in crate::backend::api) fn lifecycle_error(error: lifecycle::StorageError) -
 }
 
 pub(in crate::backend::api) fn settings_error(error: anyhow::Error) -> Error {
-    use records::RepositorySettingsRefusal::*;
+    use crate::backend::db::repositories::records::RepositorySettingsRefusal::*;
     if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return Error::new(
             StatusCode::FORBIDDEN,
             "A live unrestricted credential is required",
         );
     }
-    match error.downcast_ref::<records::RepositorySettingsRefusal>() {
+    match error
+        .downcast_ref::<crate::backend::db::repositories::records::RepositorySettingsRefusal>()
+    {
         Some(Denied | VisibilityLocked) => {
             Error::new(StatusCode::FORBIDDEN, "Repository mutation denied")
         }
@@ -56,13 +59,13 @@ pub(in crate::backend::api) fn settings_error(error: anyhow::Error) -> Error {
 pub(super) async fn search_document(
     state: &AppState,
     repo: &Repository,
-    viewer: Option<&auth::Authentication>,
+    viewer: Option<&crate::backend::api::github::auth::Authentication>,
     deadline: tokio::time::Instant,
     cached_license: Option<Option<&str>>,
 ) -> Result<Value> {
     let mut value = document(state, repo, viewer).await?;
     let license = match cached_license {
-        Some(license) => license.and_then(templates::license),
+        Some(license) => license.and_then(crate::backend::repositories::templates::license),
         None => tokio::time::timeout_at(
             deadline,
             crate::backend::repositories::catalog_search::git_facts(
@@ -75,10 +78,10 @@ pub(super) async fn search_document(
         .ok()
         .and_then(|result| result.ok())
         .and_then(|git| git.license)
-        .and_then(templates::license),
+        .and_then(crate::backend::repositories::templates::license),
     };
     value["license"] = license
-        .map(|template| super::meta::license_document(template, false))
+        .map(|template| crate::backend::api::github::meta::license_document(template, false))
         .unwrap_or(Value::Null);
     Ok(value)
 }
@@ -86,7 +89,7 @@ pub(super) async fn search_document(
 pub(super) async fn public_fork_count(state: &AppState, repo: i64) -> Result<i32> {
     // The source token does not necessarily select any of its private forks.
     Ok(
-        db::repositories::discovery::public_fork_counts(&state.pool, &[repo])
+        crate::backend::db::repositories::discovery::public_fork_counts(&state.pool, &[repo])
             .await
             .map_err(Error::unavailable)?
             .remove(&repo)
@@ -99,7 +102,7 @@ pub(super) async fn public_fork_count(state: &AppState, repo: i64) -> Result<i32
 pub(super) async fn document(
     state: &AppState,
     repo: &Repository,
-    viewer: Option<&auth::Authentication>,
+    viewer: Option<&crate::backend::api::github::auth::Authentication>,
 ) -> Result<Value> {
     documents(state, std::slice::from_ref(repo), viewer)
         .await?
@@ -110,23 +113,24 @@ pub(super) async fn document(
 pub(super) async fn documents(
     state: &AppState,
     repos: &[Repository],
-    viewer: Option<&auth::Authentication>,
+    viewer: Option<&crate::backend::api::github::auth::Authentication>,
 ) -> Result<Vec<Value>> {
     let ids: Vec<_> = repos.iter().map(|repo| repo.id).collect();
-    let owners = records::repository_owner_names(&state.pool, &ids)
-        .await
-        .map_err(Error::unavailable)?;
-    let topics = topics::repository_topics(&state.pool, &ids)
+    let owners =
+        crate::backend::db::repositories::records::repository_owner_names(&state.pool, &ids)
+            .await
+            .map_err(Error::unavailable)?;
+    let topics = crate::backend::db::repositories::topics::repository_topics(&state.pool, &ids)
         .await
         .map_err(Error::unavailable)?;
     // Counts only public forks: the viewer's credential does not necessarily select its private ones.
-    let forks = db::repositories::discovery::public_fork_counts(&state.pool, &ids)
+    let forks = crate::backend::db::repositories::discovery::public_fork_counts(&state.pool, &ids)
         .await
         .map_err(Error::unavailable)?;
     let mut metadata = std::collections::HashMap::new();
     for ids in ids.chunks(100) {
         metadata.extend(
-            db::repository_stats::repository_document_metadata(&state.pool, ids)
+            crate::backend::db::repository_stats::repository_document_metadata(&state.pool, ids)
                 .await
                 .map_err(Error::unavailable)?
                 .into_iter()
@@ -152,7 +156,13 @@ pub(super) async fn documents(
         );
     }
     if let Some(viewer) = viewer {
-        let readable = auth::readable_repositories(state, Some(viewer), &ids, "metadata").await?;
+        let readable = crate::backend::api::github::auth::readable_repositories(
+            state,
+            Some(viewer),
+            &ids,
+            "metadata",
+        )
+        .await?;
         values.retain(|value| {
             value["id"]
                 .as_i64()
@@ -165,21 +175,21 @@ pub(super) async fn documents(
 async fn document_with(
     state: &AppState,
     repo: &Repository,
-    viewer: Option<&auth::Authentication>,
+    viewer: Option<&crate::backend::api::github::auth::Authentication>,
     owner: &str,
-    facts: &db::repository_stats::RepositoryDocumentMetadata,
+    facts: &crate::backend::db::repository_stats::RepositoryDocumentMetadata,
     topics: &[String],
     forks: i32,
 ) -> Result<Value> {
-    let mut value = payloads::repository(repo, owner);
-    payloads::set_fork_counts(&mut value, forks);
+    let mut value = crate::backend::webhooks::payloads::repository(repo, owner);
+    crate::backend::webhooks::payloads::set_fork_counts(&mut value, forks);
     value["language"] = json!(facts.facts.language);
     value["open_issues_count"] = json!(facts.facts.open_items);
     value["open_issues"] = json!(facts.facts.open_items);
     value["pushed_at"] = json!(facts.last_pushed_at);
     value["topics"] = json!(topics);
     if let Some(document) = value.as_object_mut() {
-        payloads::set_features(document, &facts.features);
+        crate::backend::webhooks::payloads::set_features(document, &facts.features);
     }
     value["has_discussions"] = json!(facts.discussions);
     if repo.is_fork {
@@ -189,22 +199,32 @@ async fn document_with(
             if seen.len() > 64 || !seen.insert(id) {
                 return Err(Error::unavailable(anyhow::anyhow!("Invalid fork ancestry")));
             }
-            let ancestor = records::get_repository_by_id(&state.pool, id)
-                .await
-                .map_err(Error::unavailable)?
-                .ok_or_else(Error::missing)?;
-            if !auth::readable_repositories(state, viewer, &[id], "metadata")
-                .await?
-                .contains(&id)
+            let ancestor =
+                crate::backend::db::repositories::records::get_repository_by_id(&state.pool, id)
+                    .await
+                    .map_err(Error::unavailable)?
+                    .ok_or_else(Error::missing)?;
+            if !crate::backend::api::github::auth::readable_repositories(
+                state,
+                viewer,
+                &[id],
+                "metadata",
+            )
+            .await?
+            .contains(&id)
             {
                 break;
             }
-            let owner = records::repository_owner_name(&state.pool, id)
-                .await
-                .map_err(Error::unavailable)?
-                .ok_or_else(Error::missing)?;
-            let mut document = payloads::repository(&ancestor, &owner);
-            payloads::set_fork_counts(&mut document, public_fork_count(state, id).await?);
+            let owner =
+                crate::backend::db::repositories::records::repository_owner_name(&state.pool, id)
+                    .await
+                    .map_err(Error::unavailable)?
+                    .ok_or_else(Error::missing)?;
+            let mut document = crate::backend::webhooks::payloads::repository(&ancestor, &owner);
+            crate::backend::webhooks::payloads::set_fork_counts(
+                &mut document,
+                public_fork_count(state, id).await?,
+            );
             if repo.forked_from_id == Some(id) {
                 value["parent"] = document.clone();
             }
@@ -219,15 +239,16 @@ async fn document_with(
             .await
             .map_err(Error::unavailable)?;
         if level.can_admin() {
-            if let Some(settings) = db::code_security::repository_settings(&state.pool, repo.id)
-                .await
-                .map_err(Error::unavailable)?
+            if let Some(settings) =
+                crate::backend::db::code_security::repository_settings(&state.pool, repo.id)
+                    .await
+                    .map_err(Error::unavailable)?
             {
                 value["security_and_analysis"] =
                     serde_json::from_str(&settings.security_and_analysis)
                         .map_err(Error::unavailable)?;
             }
-            let security = db::secret_scanning::settings(&state.pool, repo.id)
+            let security = crate::backend::db::secret_scanning::settings(&state.pool, repo.id)
                 .await
                 .map_err(Error::unavailable)?;
             let status = |enabled| if enabled { "enabled" } else { "disabled" };
@@ -267,9 +288,10 @@ struct Create {
     allow_squash_merge: Option<bool>,
     allow_rebase_merge: Option<bool>,
     #[serde(flatten)]
-    features: records::FeatureUpdate,
-    custom_properties:
-        Option<HashMap<String, Option<db::organizations::properties::PropertyValue>>>,
+    features: crate::backend::db::repositories::records::FeatureUpdate,
+    custom_properties: Option<
+        HashMap<String, Option<crate::backend::db::organizations::properties::PropertyValue>>,
+    >,
 }
 
 async fn create(
@@ -278,11 +300,11 @@ async fn create(
     params: Option<Path<HashMap<String, String>>>,
     Json(input): Json<Create>,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
-    let merge_methods = records::MergeMethodUpdate {
+    let merge_methods = crate::backend::db::repositories::records::MergeMethodUpdate {
         merge: input.allow_merge_commit,
         squash: input.allow_squash_merge,
         rebase: input.allow_rebase_merge,
@@ -290,30 +312,38 @@ async fn create(
     merge_methods
         .resolve((true, true, true))
         .map_err(settings_error)?;
-    lifecycle::validate_description(input.description.as_deref().unwrap_or(""))
-        .map_err(lifecycle_error)?;
+    crate::backend::repositories::lifecycle::validate_description(
+        input.description.as_deref().unwrap_or(""),
+    )
+    .map_err(lifecycle_error)?;
     let website = input
         .homepage
         .as_deref()
-        .map(db::repositories::topics::parse_website)
+        .map(crate::backend::db::repositories::topics::parse_website)
         .transpose()
         .map_err(|error| Error::invalid(error.to_string()))?;
     let target = if let Some(org) = params.and_then(|Path(params)| params.get("org").cloned()) {
-        let org = db::organizations::profiles::get_public_organization(&state.pool, &org)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        creation::RepositoryTarget::Organization(org.id)
+        let org =
+            crate::backend::db::organizations::profiles::get_public_organization(&state.pool, &org)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
+        crate::backend::db::repositories::creation::RepositoryTarget::Organization(org.id)
     } else {
-        creation::RepositoryTarget::Personal(actor.user.id)
+        crate::backend::db::repositories::creation::RepositoryTarget::Personal(actor.user.id)
     };
     let (private, internal) = match input.visibility.as_deref() {
         Some(name) => visibility(name)?,
         None => (input.private, false),
     };
-    if internal && matches!(target, creation::RepositoryTarget::Personal(_)) {
+    if internal
+        && matches!(
+            target,
+            crate::backend::db::repositories::creation::RepositoryTarget::Personal(_)
+        )
+    {
         return Err(settings_error(
-            records::RepositorySettingsRefusal::InternalNeedsOrganization.into(),
+            crate::backend::db::repositories::records::RepositorySettingsRefusal::InternalNeedsOrganization.into(),
         ));
     }
     input.features.validate().map_err(settings_error)?;
@@ -321,14 +351,16 @@ async fn create(
         .gitignore_template
         .as_deref()
         .map(|name| {
-            templates::gitignore(name).ok_or_else(|| Error::invalid("Unknown gitignore template"))
+            crate::backend::repositories::templates::gitignore(name)
+                .ok_or_else(|| Error::invalid("Unknown gitignore template"))
         })
         .transpose()?;
     let license = input
         .license_template
         .as_deref()
         .map(|name| {
-            templates::license(name).ok_or_else(|| Error::invalid("Unknown license template"))
+            crate::backend::repositories::templates::license(name)
+                .ok_or_else(|| Error::invalid("Unknown license template"))
         })
         .transpose()?;
     let properties = input
@@ -336,22 +368,22 @@ async fn create(
         .unwrap_or_default()
         .into_iter()
         .map(
-            |(property_name, value)| db::organizations::properties::ValueInput {
+            |(property_name, value)| crate::backend::db::organizations::properties::ValueInput {
                 property_name,
                 value,
             },
         )
         .collect::<Vec<_>>();
-    let repo = lifecycle::provision_with_initial_properties(
+    let repo = crate::backend::repositories::lifecycle::provision_with_initial_properties(
         (&state.pool, state.cluster.as_ref()),
         &state.repos_path,
-        lifecycle::CreationInput {
-            owner: creation::RepositoryCreationOwner {
+        crate::backend::repositories::lifecycle::CreationInput {
+            owner: crate::backend::db::repositories::creation::RepositoryCreationOwner {
                 actor_id: actor.user.id,
                 target,
             },
             properties: &properties,
-            admission: creation::CreationAdmission {
+            admission: crate::backend::db::repositories::creation::CreationAdmission {
                 authority: Some(&actor.database_actor()),
                 advisory: None,
             },
@@ -359,7 +391,7 @@ async fn create(
         &input.name,
         input.description.as_deref(),
         private,
-        lifecycle::InitialFiles {
+        crate::backend::repositories::lifecycle::InitialFiles {
             readme: input.auto_init,
             gitignore,
             license,
@@ -367,11 +399,11 @@ async fn create(
     )
     .await
     .map_err(lifecycle_error)?;
-    let repo = records::patch_repository(
+    let repo = crate::backend::db::repositories::records::patch_repository(
         &state.pool,
         actor.user.id,
         repo.id,
-        &records::RepositoryChanges {
+        &crate::backend::db::repositories::records::RepositoryChanges {
             token: Some(actor.token.id),
             is_template: input.is_template,
             website: website.as_ref().map(|website| website.as_deref()),
@@ -413,7 +445,7 @@ struct Update {
     has_wiki: Option<bool>,
     has_discussions: Option<bool>,
     #[serde(flatten)]
-    features: records::FeatureUpdate,
+    features: crate::backend::db::repositories::records::FeatureUpdate,
 }
 
 /// GitHub's visibility names as (private, internal).
@@ -433,7 +465,7 @@ async fn update(
     Json(value): Json<Value>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let input: Update = serde_json::from_value(value.clone())
         .map_err(|_| Error::invalid("Invalid repository fields"))?;
     for (field, enabled) in [
@@ -457,11 +489,13 @@ async fn update(
         ));
     }
     if let Some(name) = input.name.as_deref() {
-        lifecycle::validate_name(name).map_err(lifecycle_error)?;
+        crate::backend::repositories::lifecycle::validate_name(name).map_err(lifecycle_error)?;
     }
     if value.get("description").is_some() {
-        lifecycle::validate_description(input.description.as_deref().unwrap_or(""))
-            .map_err(lifecycle_error)?;
+        crate::backend::repositories::lifecycle::validate_description(
+            input.description.as_deref().unwrap_or(""),
+        )
+        .map_err(lifecycle_error)?;
     }
     let (private, internal) = match input.visibility.as_deref().map(visibility).transpose()? {
         Some((private, internal)) => (Some(private), Some(internal)),
@@ -483,7 +517,7 @@ async fn update(
             return Err(Error::invalid("The default branch must already exist"));
         }
     }
-    let changes = records::RepositoryChanges {
+    let changes = crate::backend::db::repositories::records::RepositoryChanges {
         token: Some(auth.token.id),
         name: input.name.as_deref(),
         description: value
@@ -495,7 +529,7 @@ async fn update(
         wiki: input.has_wiki,
         discussions: input.has_discussions,
         is_template: input.is_template,
-        merge_methods: records::MergeMethodUpdate {
+        merge_methods: crate::backend::db::repositories::records::MergeMethodUpdate {
             merge: input.allow_merge_commit,
             squash: input.allow_squash_merge,
             rebase: input.allow_rebase_merge,
@@ -516,9 +550,14 @@ async fn update(
             .await
             .map_err(store_error)?
     } else {
-        records::patch_repository(&state.pool, auth.database_actor(), repo.id, &changes)
-            .await
-            .map_err(settings_error)?
+        crate::backend::db::repositories::records::patch_repository(
+            &state.pool,
+            auth.database_actor(),
+            repo.id,
+            &changes,
+        )
+        .await
+        .map_err(settings_error)?
     };
     Ok(Json(document(&state, &repo, Some(&auth)).await?))
 }
@@ -529,8 +568,8 @@ async fn remove(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(auth::required)?;
-    lifecycle::delete(
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
+    crate::backend::repositories::lifecycle::delete(
         &state.pool,
         state.cluster.as_ref(),
         actor.database_actor(),
@@ -554,8 +593,8 @@ async fn transfer(
     Json(input): Json<Transfer>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
-    let repo = lifecycle::transfer(
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
+    let repo = crate::backend::repositories::lifecycle::transfer(
         &state.pool,
         state.cluster.as_ref(),
         auth.database_actor(),
@@ -564,7 +603,8 @@ async fn transfer(
     )
     .await
     .map_err(|error| match error.kind {
-        lifecycle::LifecycleFailure::Invalid | lifecycle::LifecycleFailure::Conflict => {
+        crate::backend::repositories::lifecycle::LifecycleFailure::Invalid
+        | crate::backend::repositories::lifecycle::LifecycleFailure::Conflict => {
             Error::invalid(error.message)
         }
         _ => lifecycle_error(error),
@@ -582,11 +622,12 @@ async fn get_topics(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let names = topics::repository_topics(&state.pool, &[repo.id])
-        .await
-        .map_err(Error::unavailable)?
-        .remove(&repo.id)
-        .unwrap_or_default();
+    let names =
+        crate::backend::db::repositories::topics::repository_topics(&state.pool, &[repo.id])
+            .await
+            .map_err(Error::unavailable)?
+            .remove(&repo.id)
+            .unwrap_or_default();
     Ok(Json(json!({"names": names})))
 }
 
@@ -602,11 +643,16 @@ async fn set_topics(
     Json(input): Json<Topics>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let names =
-        topics::parse_topics(input.names.iter().map(String::as_str)).map_err(settings_error)?;
-    topics::replace_topics(
+    let names = crate::backend::db::repositories::topics::parse_topics(
+        input.names.iter().map(String::as_str),
+    )
+    .map_err(settings_error)?;
+    crate::backend::db::repositories::topics::replace_topics(
         &state.pool,
-        actor.ok_or_else(auth::required)?.user.id,
+        actor
+            .ok_or_else(crate::backend::api::github::auth::required)?
+            .user
+            .id,
         repo.id,
         &names,
     )
@@ -655,9 +701,9 @@ async fn tags(
     let next = tags.len() > offset + limit;
     let base = repo_url(&owner, &name);
     let values = tags.into_iter().skip(offset).take(limit).map(|tag| {
-        let reference = super::contents::path_url(&format!("refs/tags/{}", tag.name));
+        let reference = crate::backend::api::github::contents::path_url(&format!("refs/tags/{}", tag.name));
         json!({"name": tag.name,
-            "node_id": super::node_id::reference(repo.id, &format!("refs/tags/{}", tag.name)),
+            "node_id": crate::backend::api::github::node_id::reference(repo.id, &format!("refs/tags/{}", tag.name)),
             "commit": {"sha": tag.commit, "url": format!("{base}/commits/{}", tag.commit)},
             "zipball_url": format!("{base}/zipball/{reference}"), "tarball_url": format!("{base}/tarball/{reference}"),
         })
@@ -695,23 +741,25 @@ async fn list(
     Query(query): Query<ListQuery>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    use db::repositories::github::{self, RepositoryList, RepositoryListQuery};
+    use crate::backend::db::repositories::github::{self, RepositoryList, RepositoryListQuery};
     let authenticated = uri.path() == "/api/v3/user/repos";
-    let auth = auth::authenticate(&state, &headers, authenticated).await?;
+    let auth =
+        crate::backend::api::github::auth::authenticate(&state, &headers, authenticated).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
     let params = params.map(|Path(params)| params).unwrap_or_default();
     let public = uri.path() == "/api/v3/repositories";
     let list = if let Some(username) = params.get("user_id") {
-        let user = db::users::accounts::get_user_by_username(&state.pool, username)
+        let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
         RepositoryList::User(user.id)
     } else if let Some(org) = params.get("org") {
-        let org = db::organizations::profiles::get_public_organization(&state.pool, org)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let org =
+            crate::backend::db::organizations::profiles::get_public_organization(&state.pool, org)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
         RepositoryList::Organization(org.id)
     } else if let (Some(owner), Some(name)) = (params.get("owner"), params.get("repo")) {
         let (repo, _) = repository(&state, &headers, owner, name, false).await?;
@@ -824,7 +872,13 @@ async fn list(
         scanned += rows.len() as i64;
         let done = rows.len() < 100;
         let ids: Vec<_> = rows.iter().map(|repo| repo.id).collect();
-        let readable = auth::readable_repositories(&state, auth.as_ref(), &ids, "metadata").await?;
+        let readable = crate::backend::api::github::auth::readable_repositories(
+            &state,
+            auth.as_ref(),
+            &ids,
+            "metadata",
+        )
+        .await?;
         for repo in rows {
             if !readable.contains(&repo.id) {
                 continue;
@@ -849,7 +903,10 @@ async fn list(
             .iter()
             .filter_map(|value| value["id"].as_i64())
             .collect();
-        let readable = auth::readable_repositories(&state, None, &ids, "metadata").await?;
+        let readable = crate::backend::api::github::auth::readable_repositories(
+            &state, None, &ids, "metadata",
+        )
+        .await?;
         values.retain(|value| {
             value["id"]
                 .as_i64()
@@ -864,7 +921,7 @@ async fn list(
                     axum::http::header::LINK,
                     format!(
                         "<{}?since={}>; rel=\"next\"",
-                        super::api_url("/repositories"),
+                        crate::backend::api::github::api_url("/repositories"),
                         last.id
                     )
                     .parse()
@@ -895,15 +952,16 @@ async fn dispatch(
     input: std::result::Result<Json<Dispatch>, axum::extract::rejection::JsonRejection>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = auth.workflow_actor(&state, repo.id).await?;
-    let Json(input) = input.map_err(super::json_error)?;
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     if !crate::backend::ci::events::valid_dispatch(&input.event_type, &input.client_payload) {
         return Err(Error::invalid("Invalid repository dispatch"));
     }
-    let access = db::repositories::access::get_user_repo_access(&state.pool, actor, repo.id)
-        .await
-        .map_err(Error::unavailable)?;
+    let access =
+        crate::backend::db::repositories::access::get_user_repo_access(&state.pool, actor, repo.id)
+            .await
+            .map_err(Error::unavailable)?;
     if !access.can_write() {
         return Err(Error::new(
             StatusCode::FORBIDDEN,
@@ -921,7 +979,7 @@ async fn dispatch(
             auth.ci_credential(&headers, "contents")?,
         )
         .await
-        .map_err(super::actions::admission_error)?;
+        .map_err(crate::backend::api::github::actions::admission_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -961,13 +1019,13 @@ async fn property_values(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let metadata = db::organizations::properties::repository(
+    let metadata = crate::backend::db::organizations::properties::repository(
         &state.pool,
         auth.as_ref().map(|auth| auth.user.id),
         repo.id,
     )
     .await
-    .map_err(super::orgs::properties::error)?;
+    .map_err(crate::backend::api::github::orgs::properties::error)?;
     Ok(Json(json!(metadata
         .map(|metadata| metadata.values.properties)
         .unwrap_or_default())))
@@ -975,7 +1033,7 @@ async fn property_values(
 
 #[derive(Deserialize)]
 struct PropertyValues {
-    properties: Vec<db::organizations::properties::ValueInput>,
+    properties: Vec<crate::backend::db::organizations::properties::ValueInput>,
 }
 
 async fn set_property_values(
@@ -985,15 +1043,15 @@ async fn set_property_values(
     input: std::result::Result<Json<PropertyValues>, axum::extract::rejection::JsonRejection>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let Json(input) = input.map_err(super::json_error)?;
-    let auth = auth.ok_or_else(auth::required)?;
-    db::organizations::properties::set_repository_values(
+    let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
+    let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
+    crate::backend::db::organizations::properties::set_repository_values(
         &state.pool,
         auth.database_actor(),
         repo.id,
         &input.properties,
     )
     .await
-    .map_err(super::orgs::properties::error)?;
+    .map_err(crate::backend::api::github::orgs::properties::error)?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -11,26 +11,49 @@ async fn write<'a>(
     org: i64,
 ) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    match super::organizations::authority::authority(&mut tx, actor.user_id, org).await? {
+    match crate::backend::db::sqlite::organizations::authority::authority(
+        &mut tx,
+        actor.user_id,
+        org,
+    )
+    .await?
+    {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {}
         OrganizationOutcome::Applied(OrgRole::Member)
-            if super::organizations::roles::manages_security(&mut tx, actor.user_id, org)
-                .await? => {}
+            if crate::backend::db::sqlite::organizations::roles::manages_security(
+                &mut tx,
+                actor.user_id,
+                org,
+            )
+            .await? => {}
         OrganizationOutcome::Missing => return Err(Refusal::Missing.into()),
         _ => return Err(Refusal::Denied.into()),
     }
     ensure!(
-        super::credentials::organization(&mut tx, actor, org, "organization_administration", true)
-            .await?,
+        crate::backend::db::sqlite::credentials::organization(
+            &mut tx,
+            actor,
+            org,
+            "organization_administration",
+            true
+        )
+        .await?,
         Refusal::Denied
     );
     Ok(tx)
 }
 async fn readable(connection: &mut SqliteConnection, actor: i64, org: i64) -> Result<()> {
-    match super::organizations::authority::read_authority(connection, actor, org).await? {
+    match crate::backend::db::sqlite::organizations::authority::read_authority(
+        connection, actor, org,
+    )
+    .await?
+    {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => Ok(()),
         OrganizationOutcome::Applied(OrgRole::Member)
-            if super::organizations::roles::holds_security_role(connection, actor, org).await? =>
+            if crate::backend::db::sqlite::organizations::roles::holds_security_role(
+                connection, actor, org,
+            )
+            .await? =>
         {
             Ok(())
         }
@@ -79,7 +102,7 @@ async fn apply_repository(
         .bind(repo)
         .fetch_optional(&mut *connection)
         .await?;
-        super::secret_scanning::save_settings_on_connection(
+        crate::backend::db::sqlite::secret_scanning::save_settings_on_connection(
             connection,
             actor,
             repo,

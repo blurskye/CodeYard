@@ -1,4 +1,5 @@
-use crate::backend::db::pull_requests::auto_merge::{AutoMerge, AutoMergeRequest};
+use crate::backend::db::pull_requests::auto_merge::AutoMerge;
+use crate::backend::db::pull_requests::auto_merge::AutoMergeRequest;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -15,13 +16,18 @@ pub async fn enable(
         .await?
         .ok_or(Refusal::Denied)?;
     anyhow::ensure!(
-        super::super::discussions::lock_write_authority(&mut tx, request.enabled_by, repo).await?,
+        crate::backend::db::sqlite::discussions::lock_write_authority(
+            &mut tx,
+            request.enabled_by,
+            repo
+        )
+        .await?,
         Refusal::Denied
     );
     if let Some(token) = request.token_id {
         for scope in ["contents", "pull-requests"] {
             anyhow::ensure!(
-                super::super::users::tokens::repository_write_on(
+                crate::backend::db::sqlite::users::tokens::repository_write_on(
                     &mut tx,
                     token,
                     request.enabled_by,

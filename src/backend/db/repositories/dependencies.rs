@@ -410,7 +410,7 @@ pub(crate) fn receipts(snapshot: &Snapshot) -> Result<String> {
 
 pub(crate) fn project(
     rows: Vec<crate::backend::db::dependabot_alerts::Alert>,
-    inventory: Vec<crate::backend::dependency_graph::Snapshot>,
+    inventory: Vec<codeyard_model::dependency_graph::Snapshot>,
     raw: &str,
 ) -> Result<Snapshot> {
     use serde_json::Value;
@@ -424,7 +424,7 @@ pub(crate) fn project(
         .or_else(|| inventory.first())
         .map(|snapshot| snapshot.sha.clone())
         .unwrap_or_else(|| "0".repeat(40));
-    snapshot.packages = crate::backend::dependency_graph::packages(&inventory)
+    snapshot.packages = codeyard_model::dependency_graph::packages(&inventory)
         .into_iter()
         .map(|package| InstalledPackage {
             path: package.manifest,
@@ -492,9 +492,9 @@ pub(crate) fn project(
     }
     Ok(snapshot)
 }
-native_operation!(crate::backend::db::postgres::repositories::dependencies::page_snapshot,crate::backend::db::sqlite::repositories::dependencies::page_snapshot,fn page_snapshot(pool:&DbPool,actor:impl Into<super::super::credentials::Actor>,repo:i64)->Result<PageSnapshot>);
+native_operation!(crate::backend::db::postgres::repositories::dependencies::page_snapshot,crate::backend::db::sqlite::repositories::dependencies::page_snapshot,fn page_snapshot(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,repo:i64)->Result<PageSnapshot>);
 native_operation!(crate::backend::db::postgres::repositories::dependencies::state,crate::backend::db::sqlite::repositories::dependencies::state,fn state(pool:&DbPool,repo:i64)->Result<Option<State>>);
-native_operation!(crate::backend::db::postgres::repositories::dependencies::configure,crate::backend::db::sqlite::repositories::dependencies::configure,fn configure(pool:&DbPool,actor:impl Into<super::super::credentials::Actor>,repo:i64,feature:Feature,enabled:bool,private_consent:bool)->Result<()>);
+native_operation!(crate::backend::db::postgres::repositories::dependencies::configure,crate::backend::db::sqlite::repositories::dependencies::configure,fn configure(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,repo:i64,feature:Feature,enabled:bool,private_consent:bool)->Result<()>);
 native_operation!(crate::backend::db::postgres::repositories::dependencies::enqueue,crate::backend::db::sqlite::repositories::dependencies::enqueue,fn enqueue(pool:&DbPool,repo:i64)->Result<()>);
 native_operation!(crate::backend::db::postgres::repositories::dependencies::claim,crate::backend::db::sqlite::repositories::dependencies::claim,fn claim(pool:&DbPool,nonce:&str)->Result<Option<Job>>);
 native_operation!(crate::backend::db::postgres::repositories::dependencies::check_job,crate::backend::db::sqlite::repositories::dependencies::check_job,fn check_job(pool:&DbPool,job:&Job,feature:Feature)->Result<()>);

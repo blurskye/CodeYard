@@ -1,18 +1,19 @@
-use super::{outcome, target};
-use crate::backend::{
-    api::github::{
-        auth,
-        pagination::Pagination,
-        repository,
-        rulesets::{error, page},
-        Error, Result,
-    },
-    app::AppState,
-    db::{
-        organizations::OrganizationOutcome,
-        rulesets::{self, Suite, SuiteEnforcement, SuiteFilter, SuiteResult},
-    },
-};
+use crate::backend::api::github::orgs::outcome;
+use crate::backend::api::github::orgs::target;
+
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::repository;
+use crate::backend::api::github::rulesets::error;
+use crate::backend::api::github::rulesets::page;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+use crate::backend::db::organizations::OrganizationOutcome;
+
+use crate::backend::db::rulesets::Suite;
+use crate::backend::db::rulesets::SuiteEnforcement;
+use crate::backend::db::rulesets::SuiteFilter;
+use crate::backend::db::rulesets::SuiteResult;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -135,13 +136,13 @@ pub(super) async fn list(
     Query(query): Query<List>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     let org = target(&state, &name).await?;
     let (pagination, filter) = query.filter()?;
     let rows = outcome(
-        rulesets::organization_rule_suites(
+        crate::backend::db::rulesets::organization_rule_suites(
             &state.pool,
             actor.user.id,
             org.id,
@@ -172,14 +173,19 @@ pub(super) async fn get_one(
     Path((name, id)): Path<(String, i64)>,
     Query(query): Query<Detail>,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(crate::backend::api::github::auth::required)?;
     let org = target(&state, &name).await?;
     let row = outcome(
-        rulesets::organization_rule_suite(&state.pool, actor.user.id, org.id, id)
-            .await
-            .map_err(error)?,
+        crate::backend::db::rulesets::organization_rule_suite(
+            &state.pool,
+            actor.user.id,
+            org.id,
+            id,
+        )
+        .await
+        .map_err(error)?,
     )?;
     Ok(Json(document(&row, true, query.include_metadata)?))
 }
@@ -201,10 +207,10 @@ pub(super) async fn list_repository(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = actor.ok_or_else(auth::required)?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     let (pagination, filter) = query.filter()?;
     let rows = repository_outcome(
-        rulesets::repository_rule_suites(
+        crate::backend::db::rulesets::repository_rule_suites(
             &state.pool,
             actor.user.id,
             repo.id,
@@ -231,11 +237,16 @@ pub(super) async fn get_repository(
     Query(query): Query<Detail>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = actor.ok_or_else(auth::required)?;
+    let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     let row = repository_outcome(
-        rulesets::repository_rule_suite(&state.pool, actor.user.id, repo.id, id)
-            .await
-            .map_err(error)?,
+        crate::backend::db::rulesets::repository_rule_suite(
+            &state.pool,
+            actor.user.id,
+            repo.id,
+            id,
+        )
+        .await
+        .map_err(error)?,
     )?;
     Ok(Json(document(&row, true, query.include_metadata)?))
 }

@@ -1,11 +1,14 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::extract_session_id;
-use crate::backend::api::user::profile::{settings_response, settings_result};
-use crate::backend::api::user::responses::{field, mutation_guard, within_bounds, Fields};
+use crate::backend::api::user::profile::settings_response;
+use crate::backend::api::user::profile::settings_result;
+use crate::backend::api::user::responses::field;
+use crate::backend::api::user::responses::mutation_guard;
+use crate::backend::api::user::responses::within_bounds;
+use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::identity::keys;
+
 use crate::backend::identity::keys::KeyError;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -102,10 +105,10 @@ async fn save_key_form(
     }
     let session_id = extract_session_id(&ctx.headers);
     let result = if signing {
-        keys::enroll_signing(
+        crate::backend::identity::keys::enroll_signing(
             &ctx.state.pool,
             actor,
-            &db::users::accounts::AccountCredential::Session(
+            &crate::backend::db::users::accounts::AccountCredential::Session(
                 session_id.as_deref().unwrap_or_default(),
             ),
             field(&form, "name").trim(),
@@ -114,7 +117,7 @@ async fn save_key_form(
         .await
         .map(|_| ())
     } else {
-        keys::enroll(
+        crate::backend::identity::keys::enroll(
             &ctx.state.pool,
             actor,
             session_id.as_deref(),
@@ -151,10 +154,10 @@ pub(crate) async fn signing_key_delete_post(
         Err(response) => return response,
     };
     let session = extract_session_id(&ctx.headers).unwrap_or_default();
-    let result = keys::delete_signing(
+    let result = crate::backend::identity::keys::delete_signing(
         &ctx.state.pool,
         actor,
-        &db::users::accounts::AccountCredential::Session(&session),
+        &crate::backend::db::users::accounts::AccountCredential::Session(&session),
         id,
     )
     .await
@@ -178,10 +181,10 @@ pub(crate) async fn key_delete_post(
         Err(response) => return response,
     };
     let session = extract_session_id(&ctx.headers).unwrap_or_default();
-    let result = keys::delete(
+    let result = crate::backend::identity::keys::delete(
         &ctx.state.pool,
         actor,
-        &db::users::accounts::AccountCredential::Session(&session),
+        &crate::backend::db::users::accounts::AccountCredential::Session(&session),
         id,
     )
     .await

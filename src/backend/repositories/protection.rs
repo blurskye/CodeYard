@@ -5,9 +5,8 @@
 //! A rule with `enforce_admins` off does not apply to repository administrators, except that
 //! blocked force pushes stay blocked for them too, unless the rule lists them: they are easy
 //! mistakes.
-use crate::backend::ci::workflows::WorkflowMatchBudget;
-use crate::backend::db;
-use crate::backend::repositories::access;
+use codeyard_model::workflow_glob::WorkflowMatchBudget;
+
 use anyhow::Result;
 use codeyard_db_core::models::BranchProtectionRule;
 use codeyard_db_core::models::Repository;
@@ -159,7 +158,8 @@ pub async fn load_rules(
     pool: &codeyard_db_core::DbPool,
     repository: &Repository,
 ) -> Result<Vec<BranchProtectionRule>> {
-    db::repositories::protection::list_branch_protection_rules(pool, repository.id).await
+    crate::backend::db::repositories::protection::list_branch_protection_rules(pool, repository.id)
+        .await
 }
 
 /// The rules of `repository` that match `branch`.
@@ -183,9 +183,12 @@ fn rules_for_branch<'a>(
 ) -> Result<Vec<&'a BranchProtectionRule>, Refusal> {
     let mut matching = Vec::new();
     for rule in rules {
-        let matches =
-            db::repositories::protection::branch_pattern_matches(&rule.pattern, branch, budget)
-                .map_err(|_| Refusal::Unavailable)?;
+        let matches = crate::backend::db::repositories::protection::branch_pattern_matches(
+            &rule.pattern,
+            branch,
+            budget,
+        )
+        .map_err(|_| Refusal::Unavailable)?;
         if matches {
             matching.push(rule);
         }
@@ -236,7 +239,7 @@ pub async fn check_branch_write_with(
     let force_push_blocked = blocks_force_push(&matching, actor.id);
     let is_admin = write.via != WriteVia::DeployKey
         && matching.iter().any(|rule| !rule.enforce_admins)
-        && access::can_admin(pool, actor, repository)
+        && crate::backend::repositories::access::can_admin(pool, actor, repository)
             .await
             .map_err(|_| Refusal::Unavailable)?;
 
@@ -253,7 +256,7 @@ pub async fn check_branch_write_with(
             && !rule.push_allowances.contains(&actor.id)
             && !rule.push_team_allowances.is_empty()
         {
-            db::repositories::push_teams::contains_actor(
+            crate::backend::db::repositories::push_teams::contains_actor(
                 pool,
                 repository.id,
                 actor.id,
@@ -345,13 +348,13 @@ async fn app_allows_actor(
     ids: &[i64],
 ) -> Result<bool> {
     for id in ids {
-        let Some(app) = db::github_apps::app(pool, &id.to_string()).await? else {
+        let Some(app) = crate::backend::db::github_apps::app(pool, &id.to_string()).await? else {
             continue;
         };
         if app.bot_id != actor {
             continue;
         }
-        if db::github_apps::repository_installation(pool, app.id, repo, true, None)
+        if crate::backend::db::github_apps::repository_installation(pool, app.id, repo, true, None)
             .await?
             .is_some()
         {
@@ -405,7 +408,8 @@ async fn bypass_allows(
     }
     let teams = ids("teams");
     if !teams.is_empty()
-        && db::repositories::push_teams::contains_actor(pool, repo, actor, &teams).await?
+        && crate::backend::db::repositories::push_teams::contains_actor(pool, repo, actor, &teams)
+            .await?
     {
         return Ok(true);
     }
@@ -621,7 +625,7 @@ mod tests {
 
     #[test]
     fn users_and_teams_share_the_push_allowance_bound() {
-        use db::repositories::protection::{
+        use crate::backend::db::repositories::protection::{
             apply_protection_update, ActorListUpdate, ProtectionUpdate, ProtectionWriteRefusal,
         };
         let mut rule = rule();

@@ -5,14 +5,22 @@ pub(super) async fn review_request(
     request: &RequestContext,
 ) -> Result<Value> {
     Ok(
-        json!({"__typename":"ReviewRequest","_repo":pull.repo_id,"_scope":"pull-requests","id":super::node_id::git("RR",&format!("{}/{}",pull.id,reviewer.id)),"databaseId":null,"pullRequest":super::issue::pull_object(pull),"requestedReviewer":user::actor_by_id(reviewer.id,request).await?}),
+        json!({"__typename":"ReviewRequest","_repo":pull.repo_id,"_scope":"pull-requests","id":crate::backend::api::graphql::node_id::git("RR",&format!("{}/{}",pull.id,reviewer.id)),"databaseId":null,"pullRequest":crate::backend::api::graphql::issue::pull_object(pull),"requestedReviewer":user::actor_by_id(reviewer.id,request).await?}),
     )
 }
-use super::{
-    connection, db, git, missing, repository, unavailable, user, Arguments, RequestContext, Result,
-    Value,
-};
-use crate::backend::repositories::{access, pull_requests::merge, store::repo_store};
+
+use crate::backend::api::graphql::db;
+
+use crate::backend::api::graphql::missing;
+
+use crate::backend::api::graphql::unavailable;
+
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
+
+use crate::backend::repositories::store::repo_store;
 use serde_json::json;
 
 async fn mergeable(
@@ -20,7 +28,8 @@ async fn mergeable(
     pull: &codeyard_db_core::models::PullRequest,
     request: &RequestContext,
 ) -> Result<Option<(bool, String)>> {
-    use crate::backend::repositories::store::{MergeMethod, MergeRequest};
+    use crate::backend::repositories::store::MergeMethod;
+    use crate::backend::repositories::store::MergeRequest;
     use codeyard_git::error::ErrorKind;
     let store = repo_store(repo, request.state.cluster.as_ref());
     let base = match store
@@ -31,7 +40,7 @@ async fn mergeable(
         Err(error) if error.kind == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(unavailable(error)),
     };
-    git::charge_commit(&base, request)?;
+    crate::backend::api::graphql::git::charge_commit(&base, request)?;
     let key = (repo.id, base.sha.clone(), pull.head_sha.clone());
     let mut cache = request.mergeability.lock().await;
     if let Some(value) = cache.get(&key) {
@@ -100,7 +109,7 @@ pub(super) async fn resolve(
                 &method.to_ascii_lowercase(),
             )
             .ok_or_else(|| async_graphql::Error::new("Invalid merge method"))?;
-            let (headline, body) = merge::default_merge_text(&pull, method);
+            let (headline, body) = crate::backend::repositories::pull_requests::merge::default_merge_text(&pull, method);
             Ok(json!(if field == "viewerMergeHeadlineText" {
                 headline
             } else {
@@ -127,7 +136,7 @@ pub(super) async fn resolve(
             drop(diffs);
             Ok(match field {
                 "additions"=>json!(diff.additions),"deletions"=>json!(diff.deletions),"changedFiles"=>json!(diff.changed_files),
-                _=>connection::slice(args,diff.files.iter().map(|f|json!({"path":f.filename,"additions":f.additions,"deletions":f.deletions,"changeType":match f.status.as_str() {"added"=>"ADDED","removed"|"deleted"=>"DELETED","renamed"=>"RENAMED","copied"=>"COPIED","type_changed"=>"CHANGED",_=>"MODIFIED"}})).collect())?,
+                _=>crate::backend::api::graphql::connection::slice(args,diff.files.iter().map(|f|json!({"path":f.filename,"additions":f.additions,"deletions":f.deletions,"changeType":match f.status.as_str() {"added"=>"ADDED","removed"|"deleted"=>"DELETED","renamed"=>"RENAMED","copied"=>"COPIED","type_changed"=>"CHANGED",_=>"MODIFIED"}})).collect())?,
             })
         }
         "commits" => {
@@ -135,7 +144,7 @@ pub(super) async fn resolve(
                 .pull_request_commits(pull.diff_base(), &pull.head_sha, 0, 0)
                 .await
                 .map_err(unavailable)?;
-            let page = connection::Page::new(args, count as i64)?;
+            let page = crate::backend::api::graphql::connection::Page::new(args, count as i64)?;
             let (offset, limit) = (page.offset as usize, page.limit as usize);
             // The store pages within the oldest 250 commits. A page past them, such as
             // `last: 1` for the head commit, reads from the newest end instead.
@@ -146,7 +155,7 @@ pub(super) async fn resolve(
                     .map_err(unavailable)?
                     .1;
                 for row in &rows {
-                    git::charge_commit(row, request)?;
+                    crate::backend::api::graphql::git::charge_commit(row, request)?;
                 }
                 rows
             } else {
@@ -156,7 +165,7 @@ pub(super) async fn resolve(
                     .await
                     .map_err(unavailable)?;
                 for row in &rows {
-                    git::charge_commit(row, request)?;
+                    crate::backend::api::graphql::git::charge_commit(row, request)?;
                 }
                 rows.reverse();
                 rows
@@ -164,14 +173,14 @@ pub(super) async fn resolve(
             let nodes = window
                 .iter()
                 .map(|c| {
-                    git::commit(repo.id, c, "pull-requests", request)
+                    crate::backend::api::graphql::git::commit(repo.id, c, "pull-requests", request)
                         .map(|commit| json!({"commit":commit}))
                 })
                 .collect::<Result<Vec<_>>>()?;
             Ok(page.finish(nodes))
         }
         "reviews" | "latestReviews" => {
-            connection::validate(args)?;
+            crate::backend::api::graphql::connection::validate(args)?;
             let states = args
                 .args
                 .get("states")
@@ -198,7 +207,7 @@ pub(super) async fn resolve(
                 db::pull_requests::reviews::count_filtered_reviews(&request.state.pool, &query)
                     .await
                     .map_err(unavailable)?;
-            let page = connection::Page::new(args, total)?;
+            let page = crate::backend::api::graphql::connection::Page::new(args, total)?;
             let rows = db::pull_requests::reviews::filter_reviews(
                 &request.state.pool,
                 &query,
@@ -209,7 +218,7 @@ pub(super) async fn resolve(
             .map_err(unavailable)?;
             let mut nodes = vec![];
             for row in rows {
-                nodes.push(super::node_objects::review(&row, request).await?);
+                nodes.push(crate::backend::api::graphql::node_objects::review(&row, request).await?);
             }
             Ok(page.finish(nodes))
         }
@@ -220,7 +229,7 @@ pub(super) async fn resolve(
             )
             .await
             .map_err(unavailable)?;
-            let page = connection::Page::new(args, reviewers.len() as i64)?;
+            let page = crate::backend::api::graphql::connection::Page::new(args, reviewers.len() as i64)?;
             let mut nodes = vec![];
             for row in reviewers
                 .into_iter()
@@ -253,7 +262,7 @@ pub(super) async fn resolve(
                         } else {
                             crate::backend::repositories::store::MergeMethod::Rebase
                         };
-                        if merge::page_blocker_messages(
+                        if crate::backend::repositories::pull_requests::merge::page_blocker_messages(
                             &request.state.pool,
                             &request.state.ci_runs,
                             repo,
@@ -274,7 +283,7 @@ pub(super) async fn resolve(
             };
             Ok(json!(state))
         }
-        "reviewDecision" => Ok(json!(merge::review_decision(
+        "reviewDecision" => Ok(json!(crate::backend::repositories::pull_requests::merge::review_decision(
             &request.state.pool,
             &request.state.ci_runs,
             repo,
@@ -283,12 +292,12 @@ pub(super) async fn resolve(
         .await
         .map_err(unavailable)?
         .map(|s| match s {
-            merge::ReviewDecision::Approved => "APPROVED",
-            merge::ReviewDecision::ChangesRequested => "CHANGES_REQUESTED",
-            merge::ReviewDecision::Required => "REVIEW_REQUIRED",
+            crate::backend::repositories::pull_requests::merge::ReviewDecision::Approved => "APPROVED",
+            crate::backend::repositories::pull_requests::merge::ReviewDecision::ChangesRequested => "CHANGES_REQUESTED",
+            crate::backend::repositories::pull_requests::merge::ReviewDecision::Required => "REVIEW_REQUIRED",
         }))),
         "baseRef" => {
-            super::git_objects::reference(
+            crate::backend::api::graphql::git_objects::reference(
                 repo,
                 &format!("refs/heads/{}", pull.base_branch),
                 request,
@@ -305,7 +314,7 @@ pub(super) async fn resolve(
             let Some(head_id) = pull.head_repo_id else {
                 return Ok(Value::Null);
             };
-            if !super::repository::optional_authority(head_id, "metadata", request).await? {
+            if !crate::backend::api::graphql::repository::optional_authority(head_id, "metadata", request).await? {
                 return Ok(Value::Null);
             }
             let Some(head) =
@@ -315,26 +324,26 @@ pub(super) async fn resolve(
             else {
                 return Ok(Value::Null);
             };
-            if !access::can_read(&request.state.pool, Some(&request.auth.user), &head)
+            if !crate::backend::repositories::access::can_read(&request.state.pool, Some(&request.auth.user), &head)
                 .await
                 .map_err(unavailable)?
             {
                 return Ok(Value::Null);
             }
             if field == "headRepository" {
-                Ok(repository::object(&head))
+                Ok(crate::backend::api::graphql::repository::object(&head))
             } else if head.owner_kind == "org" {
-                user::organization_by_id(head.owner_id(), request).await
+                crate::backend::api::graphql::user::organization_by_id(head.owner_id(), request).await
             } else {
-                user::by_id(head.owner_id(), request).await
+                crate::backend::api::graphql::user::by_id(head.owner_id(), request).await
             }
         }
         "mergedBy" => match pull.merged_by_id {
-            Some(id) => user::actor_by_id(id, request).await,
+            Some(id) => crate::backend::api::graphql::user::actor_by_id(id, request).await,
             None => Ok(Value::Null),
         },
         "mergeCommit" => match pull.merge_commit_sha {
-            Some(oid) => git::load(repo, &oid, "pull-requests", request).await,
+            Some(oid) => crate::backend::api::graphql::git::load(repo, &oid, "pull-requests", request).await,
             None => Ok(Value::Null),
         },
         // No speculative merge commit is stored by Codeyard.
@@ -354,9 +363,9 @@ pub(super) async fn resolve(
                 "commitHeadline":entry.commit_title,"enabledAt":entry.enabled_at,
                 "enabledBy":user::actor_by_id(entry.enabled_by, request).await?,
                 "mergeMethod":entry.merge_method.to_ascii_uppercase(),
-                "pullRequest":super::issue::pull_object(&pull)}),
+                "pullRequest":crate::backend::api::graphql::issue::pull_object(&pull)}),
             )
         }
-        _ => super::collaboration::resolve("PullRequest", field, args, request, parent, repo).await,
+        _ => crate::backend::api::graphql::collaboration::resolve("PullRequest", field, args, request, parent, repo).await,
     }
 }

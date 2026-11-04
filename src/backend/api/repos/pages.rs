@@ -1,7 +1,7 @@
-use super::{chrome, forms};
-use crate::backend::{
-    api::http::context::PageContext, app::AppState, db::pages, repositories::store::repo_store,
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::app::AppState;
+
+use crate::backend::repositories::store::repo_store;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -10,11 +10,11 @@ use axum::{
     Form, Router,
 };
 use codeyard_webui::{
-    app::Page,
-    pages::repos::{
+    crate::backend::db::pages::repos::{
+        crate::backend::db::pages::{Build, Page as PagesPage, Settings},
         page::Page as RepoPage,
-        pages::{Build, Page as PagesPage, Settings},
     },
+    app::Page,
 };
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
@@ -25,7 +25,7 @@ pub fn page_router() -> Router<Arc<AppState>> {
 }
 async fn render(
     ctx: &PageContext,
-    loaded: chrome::Loaded,
+    loaded: crate::backend::api::repos::chrome::Loaded,
     submitted: Option<Settings>,
     error: Option<String>,
     status: StatusCode,
@@ -37,9 +37,11 @@ async fn render(
             .as_deref()
             .map(crate::backend::db::users::accounts::AccountCredential::Session),
     };
-    let site = match pages::site(&ctx.state.pool, &reader, loaded.repository.id).await {
+    let site = match crate::backend::db::pages::site(&ctx.state.pool, &reader, loaded.repository.id)
+        .await
+    {
         Ok(site) => site,
-        Err(_) => return chrome::unavailable(ctx),
+        Err(_) => return crate::backend::api::repos::chrome::unavailable(ctx),
     };
     let exists = site.is_some();
     let settings = submitted.unwrap_or_else(|| match site {
@@ -58,7 +60,15 @@ async fn render(
             ..Default::default()
         },
     });
-    let builds = match pages::builds(&ctx.state.pool, &reader, loaded.repository.id, 0, 30).await {
+    let builds = match crate::backend::db::pages::builds(
+        &ctx.state.pool,
+        &reader,
+        loaded.repository.id,
+        0,
+        30,
+    )
+    .await
+    {
         Ok(rows) => rows
             .into_iter()
             .map(|row| Build {
@@ -67,9 +77,9 @@ async fn render(
                 error: row.error.unwrap_or_default(),
             })
             .collect(),
-        Err(_) => return chrome::unavailable(ctx),
+        Err(_) => return crate::backend::api::repos::chrome::unavailable(ctx),
     };
-    forms::with_status(
+    crate::backend::api::repos::forms::with_status(
         ctx.page_model(
             "Pages",
             Page::Repositories(RepoPage::Pages {
@@ -95,7 +105,8 @@ async fn page(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let loaded = match chrome::load_database(&ctx, &owner, &name).await {
+    let loaded = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await
+    {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
@@ -115,10 +126,11 @@ async fn submit(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    if let Err(response) = forms::authorize_post(&ctx, &form) {
+    if let Err(response) = crate::backend::api::repos::forms::authorize_post(&ctx, &form) {
         return response;
     }
-    let loaded = match chrome::load_database(&ctx, &owner, &name).await {
+    let loaded = match crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await
+    {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
@@ -139,31 +151,31 @@ async fn submit(
         credential: Some(crate::backend::db::users::accounts::AccountCredential::Session(&session)),
     };
     let settings = Settings {
-        build_type: forms::field(&form, "build_type"),
-        branch: forms::field(&form, "branch"),
-        path: forms::field(&form, "path"),
-        cname: forms::field(&form, "cname"),
-        https_enforced: forms::checkbox(&form, "https_enforced"),
-        public: forms::checkbox(&form, "public"),
+        build_type: crate::backend::api::repos::forms::field(&form, "build_type"),
+        branch: crate::backend::api::repos::forms::field(&form, "branch"),
+        path: crate::backend::api::repos::forms::field(&form, "path"),
+        cname: crate::backend::api::repos::forms::field(&form, "cname"),
+        https_enforced: crate::backend::api::repos::forms::checkbox(&form, "https_enforced"),
+        public: crate::backend::api::repos::forms::checkbox(&form, "public"),
     };
     let operation=async {
-        match forms::field(&form,"op").as_str() {
-            "delete"=>pages::delete(&ctx.state.pool,actor,&credential,loaded.repository.id).await?,
+        match crate::backend::api::repos::forms::field(&form,"op").as_str() {
+            "delete"=>crate::backend::db::pages::delete(&ctx.state.pool,actor,&credential,loaded.repository.id).await?,
             "build"=>{
-                let site=pages::site(&ctx.state.pool,&reader,loaded.repository.id).await?.ok_or(pages::Refusal::Missing)?;
-                let branch=site.branch.ok_or(pages::Refusal::Invalid)?;
+                let site=crate::backend::db::pages::site(&ctx.state.pool,&reader,loaded.repository.id).await?.ok_or(crate::backend::db::pages::Refusal::Missing)?;
+                let branch=site.branch.ok_or(crate::backend::db::pages::Refusal::Invalid)?;
                 let commit=repo_store(&loaded.repository,ctx.state.cluster.as_ref()).commit(&format!("refs/heads/{branch}")).await?;
-                pages::request_build(&ctx.state.pool,actor,&credential,loaded.repository.id,&commit.sha).await?;
+                crate::backend::db::pages::request_build(&ctx.state.pool,actor,&credential,loaded.repository.id,&commit.sha).await?;
             }
             "save"=>{
-                let create=pages::site(&ctx.state.pool,&reader,loaded.repository.id).await?.is_none();
+                let create=crate::backend::db::pages::site(&ctx.state.pool,&reader,loaded.repository.id).await?.is_none();
                 let mut value=json!({"build_type":settings.build_type,"cname":if settings.cname.is_empty(){None}else{Some(&settings.cname)},"https_enforced":settings.https_enforced,"public":settings.public});
                 if settings.build_type == "legacy" && !settings.branch.is_empty() {value["source"]=json!({"branch":settings.branch,"path":settings.path});}
-                let update=pages::Update::parse(&value,create)?;
+                let update=crate::backend::db::pages::Update::parse(&value,create)?;
                 if let Some(source)=&update.source {repo_store(&loaded.repository,ctx.state.cluster.as_ref()).commit(&format!("refs/heads/{}",source.branch)).await?;}
-                pages::save(&ctx.state.pool,actor,&credential,loaded.repository.id,&update,create).await?;
+                crate::backend::db::pages::save(&ctx.state.pool,actor,&credential,loaded.repository.id,&update,create).await?;
             }
-            _=>anyhow::bail!(pages::Refusal::Invalid),
+            _=>anyhow::bail!(crate::backend::db::pages::Refusal::Invalid),
         }
         Ok::<_,anyhow::Error>(())
     }.await;
@@ -173,9 +185,9 @@ async fn submit(
             loaded.chrome.base()
         ))),
         Err(error) => {
-            let status = match error.downcast_ref::<pages::Refusal>() {
-                Some(pages::Refusal::Denied) => StatusCode::FORBIDDEN,
-                Some(pages::Refusal::Missing) => StatusCode::NOT_FOUND,
+            let status = match error.downcast_ref::<crate::backend::db::pages::Refusal>() {
+                Some(crate::backend::db::pages::Refusal::Denied) => StatusCode::FORBIDDEN,
+                Some(crate::backend::db::pages::Refusal::Missing) => StatusCode::NOT_FOUND,
                 Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
                 None if error.is::<codeyard_support::credentials::AccountRestricted>() => {
                     StatusCode::FORBIDDEN
@@ -196,8 +208,9 @@ async fn submit(
             render(
                 &ctx,
                 loaded,
-                (forms::field(&form, "op") == "save").then_some(settings),
-                Some(chrome::safe_error(status).into()),
+                (crate::backend::api::repos::forms::field(&form, "op") == "save")
+                    .then_some(settings),
+                Some(crate::backend::api::repos::chrome::safe_error(status).into()),
                 status,
             )
             .await

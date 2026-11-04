@@ -77,11 +77,19 @@ pub async fn set_workflow_enabled(
     let actor = credential.user_id;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        crate::backend::db::postgres::discussions::lock_write_authority(&mut tx, actor, repo)
+            .await?,
         RepositorySettingsRefusal::Denied
     );
     anyhow::ensure!(
-        super::credentials::writes(&mut tx, &credential, Some(repo), None, "actions").await?,
+        crate::backend::db::postgres::credentials::writes(
+            &mut tx,
+            &credential,
+            Some(repo),
+            None,
+            "actions"
+        )
+        .await?,
         RepositorySettingsRefusal::Denied
     );
     let workflow=sqlx::query_as("UPDATE actions_workflows SET state=$3,updated_at=NOW() WHERE repo_id=$1 AND id=$2 RETURNING *").bind(repo).bind(id).bind(if enabled {"active"} else {"disabled_manually"}).fetch_optional(&mut *tx).await?;

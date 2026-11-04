@@ -1,5 +1,7 @@
 //! Offset cursors keep forward and backward pages in the same ordering.
-use super::{Arguments, Result, Value};
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
 use async_graphql::Error;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::json;

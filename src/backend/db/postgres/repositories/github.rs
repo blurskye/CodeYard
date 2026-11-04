@@ -22,9 +22,11 @@ pub async fn repository_teams(
     // Repository access, organization role and team rows come from one snapshot.
     let mut tx = crate::backend::db::postgres::organizations::authority::begin_read(pool).await?;
     // Anyone who can read the repository may list the teams of its organization they can see.
-    if !super::access::user_repo_access_in_transaction(&mut tx, actor, repo_id)
-        .await?
-        .can_read()
+    if !crate::backend::db::postgres::repositories::access::user_repo_access_in_transaction(
+        &mut tx, actor, repo_id,
+    )
+    .await?
+    .can_read()
     {
         return Ok(None);
     }
@@ -96,8 +98,8 @@ pub async fn list_repositories(
 ) -> Result<Vec<Repository>> {
     let sql = list_sql(
         &query,
-        super::access::USER_REPO_ACCESS_SQL,
-        &super::access::readable_condition(),
+        crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL,
+        &crate::backend::db::postgres::repositories::access::readable_condition(),
     );
     Ok(sqlx::query_as(&sql)
         .bind(query.viewer)
@@ -114,8 +116,8 @@ pub async fn list_repositories(
 pub async fn count_repositories(pool: &PgPool, query: RepositoryListQuery<'_>) -> Result<i64> {
     let sql = count_sql(
         &query,
-        super::access::USER_REPO_ACCESS_SQL,
-        &super::access::readable_condition(),
+        crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL,
+        &crate::backend::db::postgres::repositories::access::readable_condition(),
     );
     Ok(sqlx::query_scalar(&sql)
         .bind(query.viewer)

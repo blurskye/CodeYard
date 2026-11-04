@@ -61,9 +61,9 @@ impl NewInvitation {
             Some(InvitationTeams::Slugs(names)) => {
                 // Team handles follow the rules team creation uses.
                 names.len() <= 1000
-                    && names
-                        .iter()
-                        .all(|name| super::profiles::validate_slug(name).is_ok())
+                    && names.iter().all(|name| {
+                        crate::backend::db::organizations::profiles::validate_slug(name).is_ok()
+                    })
             }
         }
     }

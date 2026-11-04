@@ -1,12 +1,11 @@
-use super::{auth, issues, pagination::Pagination, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        assignees::AssignedItem,
-        discussion_search::{Search, Sort},
-    },
-};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::api::github::Error;
+use crate::backend::api::github::Result;
+use crate::backend::app::AppState;
+
+use crate::backend::db::assignees::AssignedItem;
+use crate::backend::db::discussion_search::Search;
+use crate::backend::db::discussion_search::Sort;
 use axum::{
     extract::{OriginalUri, Query, State},
     http::{HeaderMap, StatusCode},
@@ -27,13 +26,13 @@ async fn search_issues(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let auth = auth::authenticate(&state, &headers, false).await?;
+    let auth = crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
     let query = Search::parse(q.get("q").map_or("", String::as_str))
         .map_err(Error::invalid)?
         .with_classic_policy(auth.as_ref().map(|auth| auth.token.id));
     if query.needs_viewer() && viewer.is_none() {
-        return Err(auth::required());
+        return Err(crate::backend::api::github::auth::required());
     }
     let sort = Sort::parse(q.get("sort").map(String::as_str)).map_err(Error::invalid)?;
     let ascending = match q.get("order").map_or("desc", String::as_str) {
@@ -49,7 +48,7 @@ async fn search_issues(
     }
     let search_type = q.get("search_type").map_or("lexical", String::as_str);
     if search_type != "lexical" && viewer.is_none() {
-        return Err(auth::required());
+        return Err(crate::backend::api::github::auth::required());
     }
     if !matches!(search_type, "lexical" | "semantic" | "hybrid") {
         return Err(Error::validation("Search", "search_type", "invalid"));
@@ -62,7 +61,7 @@ async fn search_issues(
                 "Search is busy. Try again shortly.",
             )
         })?;
-    let results = db::discussion_search::search(
+    let results = crate::backend::db::discussion_search::search(
         &state.pool,
         viewer,
         &query,
@@ -81,16 +80,24 @@ async fn search_issues(
     repo_ids.sort_unstable();
     repo_ids.dedup();
     // Reauthorize the page after the search snapshot, before assembling any private documents.
-    let readable = auth::readable_repositories(&state, auth.as_ref(), &repo_ids, "issues").await?;
-    let repos = db::repositories::records::get_repositories_by_ids(&state.pool, &repo_ids)
-        .await
-        .map_err(Error::unavailable)?
-        .into_iter()
-        .map(|repo| (repo.id, repo))
-        .collect::<HashMap<_, _>>();
-    let owners = db::repositories::records::repository_owner_names(&state.pool, &repo_ids)
-        .await
-        .map_err(Error::unavailable)?;
+    let readable = crate::backend::api::github::auth::readable_repositories(
+        &state,
+        auth.as_ref(),
+        &repo_ids,
+        "issues",
+    )
+    .await?;
+    let repos =
+        crate::backend::db::repositories::records::get_repositories_by_ids(&state.pool, &repo_ids)
+            .await
+            .map_err(Error::unavailable)?
+            .into_iter()
+            .map(|repo| (repo.id, repo))
+            .collect::<HashMap<_, _>>();
+    let owners =
+        crate::backend::db::repositories::records::repository_owner_names(&state.pool, &repo_ids)
+            .await
+            .map_err(Error::unavailable)?;
     let mut selected = Vec::new();
     let mut scores = Vec::new();
     let mut incomplete = false;
@@ -113,9 +120,9 @@ async fn search_issues(
         scores.push(score);
     }
     let mut items = Vec::<Value>::new();
-    for (mut value, score) in issues::documents_across(
+    for (mut value, score) in crate::backend::api::github::issues::documents_across(
         &state.pool,
-        issues::Reader::Request(&state, auth.as_ref()),
+        crate::backend::api::github::issues::Reader::Request(&state, auth.as_ref()),
         &selected,
     )
     .await?

@@ -7,14 +7,12 @@
 //! quotas as one uploaded through the files API, then activated when set. The picture
 //! an account stops using is removed in the same database transaction as the change.
 
-use crate::backend::db;
-use crate::backend::db::organizations;
 use crate::backend::db::organizations::OrganizationOutcome;
 use crate::backend::db::users::accounts::AccountCredential;
 use codeyard_support::credentials::AccountRestricted;
 
 use crate::backend::db::users::accounts::UserAvatarOutcome;
-use crate::backend::files;
+
 use crate::backend::files::UploadDeclaration;
 use crate::backend::files::UploadError;
 use crate::backend::storage::media_signature_matches;
@@ -80,7 +78,7 @@ async fn store_picture(
     }
     let content_type = picture_type(&bytes).ok_or(AvatarError::BadPicture)?;
     let checksum = hex::encode(Sha256::digest(&bytes));
-    files::store_upload(
+    crate::backend::files::store_upload(
         pool,
         store,
         actor,
@@ -100,7 +98,7 @@ async fn store_picture(
 
 /// Attempts early cleanup after assignment fails. Pending expiry covers failures.
 async fn discard(pool: &DbPool, store: &ObjectStore, owner: i64, file: Uuid) {
-    if files::delete_unreferenced_file(pool, store, owner, file)
+    if crate::backend::files::delete_unreferenced_file(pool, store, owner, file)
         .await
         .is_err()
     {
@@ -152,7 +150,9 @@ async fn change_user_avatar(
     credential: &AccountCredential<'_>,
     file: Option<Uuid>,
 ) -> Result<(), AvatarError> {
-    match db::users::accounts::set_user_avatar(pool, user.id, credential, file).await {
+    match crate::backend::db::users::accounts::set_user_avatar(pool, user.id, credential, file)
+        .await
+    {
         Ok(UserAvatarOutcome::Applied(_)) => Ok(()),
         Ok(UserAvatarOutcome::NotUsable) => Err(AvatarError::NotUsable),
         Err(error) if error.is::<AccountRestricted>() => Err(AvatarError::Denied),
@@ -170,7 +170,7 @@ pub async fn set_org_avatar(
     org: i64,
     file: Option<Uuid>,
 ) -> Result<(), AvatarError> {
-    match organizations::set_organization_avatar(pool, actor.id, org, file)
+    match crate::backend::db::organizations::set_organization_avatar(pool, actor.id, org, file)
         .await
         .map_err(unavailable)?
     {

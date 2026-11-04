@@ -1,4 +1,10 @@
-use super::{connection, db, missing, unavailable, Arguments, RequestContext, Result, Value};
+use crate::backend::api::graphql::db;
+use crate::backend::api::graphql::missing;
+use crate::backend::api::graphql::unavailable;
+use crate::backend::api::graphql::Arguments;
+use crate::backend::api::graphql::RequestContext;
+use crate::backend::api::graphql::Result;
+use crate::backend::api::graphql::Value;
 pub(super) async fn resolve(
     field: &str,
     args: &Arguments,
@@ -16,11 +22,11 @@ pub(super) async fn resolve(
         .await
         .map_err(unavailable)?
         {
-            Some(row) => super::collaboration::milestone(row, request).await,
+            Some(row) => crate::backend::api::graphql::collaboration::milestone(row, request).await,
             None => Ok(Value::Null),
         };
     }
-    connection::validate(args)?;
+    crate::backend::api::graphql::connection::validate(args)?;
     let mut states = args
         .args
         .get("states")
@@ -68,7 +74,7 @@ pub(super) async fn resolve(
         ("NUMBER", "DESC") => "number-desc",
         _ => return Err(missing()),
     };
-    let page = connection::Page::new(
+    let page = crate::backend::api::graphql::connection::Page::new(
         args,
         db::milestones::count_matching_milestones(pool, repo.id, state.as_deref(), query)
             .await
@@ -87,7 +93,7 @@ pub(super) async fn resolve(
     .map_err(unavailable)?;
     let mut nodes = vec![];
     for row in rows {
-        nodes.push(super::collaboration::milestone(row, request).await?);
+        nodes.push(crate::backend::api::graphql::collaboration::milestone(row, request).await?);
     }
     Ok(page.finish(nodes))
 }

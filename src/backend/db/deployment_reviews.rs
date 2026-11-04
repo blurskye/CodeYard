@@ -1,6 +1,6 @@
 //! Reviews reference the run's pending deployment and its configured environment protections.
-use super::deployments::Deployment;
-use super::environments::Environment;
+use crate::backend::db::deployments::Deployment;
+use crate::backend::db::environments::Environment;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::native_operation;
@@ -44,7 +44,7 @@ impl Input {
                     .all(|(i, id)| *id > 0 && !self.environment_ids[..i].contains(id))
                 && matches!(self.state.as_str(), "approved" | "rejected")
                 && self.comment.len() <= 65536,
-            super::action_settings::Refusal::Invalid
+            crate::backend::db::action_settings::Refusal::Invalid
         );
         Ok(())
     }
@@ -56,7 +56,7 @@ pub(crate) fn execution_state(status: &str) -> Result<&'static str> {
         "success" => "success",
         "failed" => "failure",
         "cancelled" => "error",
-        _ => anyhow::bail!(super::action_settings::Refusal::Invalid),
+        _ => anyhow::bail!(crate::backend::db::action_settings::Refusal::Invalid),
     })
 }
 
@@ -65,7 +65,7 @@ native_operation!(crate::backend::db::postgres::deployment_reviews::pending,
     fn pending(pool: &DbPool, repo: i64, run: i64, actor: Option<i64>) -> Result<Vec<Pending>>);
 native_operation!(crate::backend::db::postgres::deployment_reviews::review,
     crate::backend::db::sqlite::deployment_reviews::review,
-    fn review(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, run: i64, input: &Input) -> Result<Vec<Deployment>>);
+    fn review(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, run: i64, input: &Input) -> Result<Vec<Deployment>>);
 native_operation!(crate::backend::db::postgres::deployment_reviews::history,
     crate::backend::db::sqlite::deployment_reviews::history,
     fn history(pool: &DbPool, repo: i64, run: i64) -> Result<Vec<Review>>);

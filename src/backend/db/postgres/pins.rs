@@ -1,7 +1,8 @@
-use crate::backend::db::{
-    assignees::AssignedItem,
-    pins::{scope, ItemPin, Pin, PinRefusal},
-};
+use crate::backend::db::assignees::AssignedItem;
+use crate::backend::db::pins::scope;
+use crate::backend::db::pins::ItemPin;
+use crate::backend::db::pins::Pin;
+use crate::backend::db::pins::PinRefusal;
 use anyhow::Result;
 use sqlx::PgPool;
 pub async fn get_pin(pool: &PgPool, item: AssignedItem) -> Result<Option<Pin>> {
@@ -44,8 +45,9 @@ pub async fn set_pin(
     let mut tx = pool.begin().await?;
     let permission = if s.pull { "pull_requests" } else { "issues" };
     anyhow::ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?
-            && super::credentials::repository(
+        crate::backend::db::postgres::discussions::lock_write_authority(&mut tx, actor, repo)
+            .await?
+            && crate::backend::db::postgres::credentials::repository(
                 &mut tx,
                 &crate::backend::db::credentials::Actor::from((actor, credential)),
                 repo,
