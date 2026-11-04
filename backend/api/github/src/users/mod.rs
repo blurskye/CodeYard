@@ -128,7 +128,7 @@ async fn update(
     headers: HeaderMap,
     input: std::result::Result<Json<Value>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>> {
-    use codeyard_db_identity::users::codeyard_db_core::queries::users::accounts::AccountCredential;
+    use codeyard_db_core::queries::users::accounts::AccountCredential;
     use codeyard_db_identity::users::profiles::ProfilePatch;
     let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?

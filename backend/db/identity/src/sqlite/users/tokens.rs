@@ -3,6 +3,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use codeyard_db_core::models::PersonalAccessToken;
 use codeyard_db_core::models::User;
+use codeyard_db_core::queries::sqlite::users::tokens::permits_write;
 use sqlx::SqlitePool;
 
 /// The initiating credential is checked inside the same transaction as its repository write.

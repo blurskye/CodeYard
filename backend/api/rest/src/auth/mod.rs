@@ -12,8 +12,8 @@ pub mod session;
 pub(crate) mod two_factor;
 
 pub fn router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>> {
-    use axum::codeyard_api_http::middleware::from_fn;
     use axum::extract::DefaultBodyLimit;
+    use axum::middleware::from_fn;
     use axum::routing::get;
     use axum::Router;
     Router::new()

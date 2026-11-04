@@ -4,6 +4,7 @@ use codeyard_db_core::models::AdminActivityPoint;
 use codeyard_db_core::models::AdminUser;
 use codeyard_db_core::models::User;
 use codeyard_db_core::native_operation;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_db_core::DbPool;
 
 pub struct AdminUserPage {

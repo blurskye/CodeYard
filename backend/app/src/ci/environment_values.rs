@@ -136,10 +136,7 @@ mod tests {
             .map(|(path, bytes)| {
                 (
                     path,
-                    crate::ci::environment_values::codeyard_model::workflow_yaml::parse_yaml(
-                        &bytes,
-                    )
-                    .unwrap(),
+                    codeyard_model::workflow_yaml::parse_yaml(&bytes).unwrap(),
                 )
             })
             .collect();

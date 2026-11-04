@@ -1,9 +1,9 @@
 //! The fine-grained token pages render on the server with plain forms, so they work without
 //! JavaScript, and they are only for the signed-in account and the organization's owners.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
-use crate::support::codeyard_db_orgs::organizations::applied;
 use crate::support::database::Database;
 use crate::support::http_client::Client;
+use crate::support::organizations::applied;
 use chrono::{Duration, Utc};
 
 use super::NewOrganization;

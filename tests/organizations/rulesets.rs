@@ -1,5 +1,5 @@
-use crate::support::codeyard_db_orgs::organizations::applied;
 use crate::support::database::Database;
+use crate::support::organizations::applied;
 
 use super::NewOrganization;
 use super::OrganizationProfile;

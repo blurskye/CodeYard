@@ -4,6 +4,7 @@ use chrono::Utc;
 use codeyard_db_core::models::PersonalAccessToken;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::native_operation;
+use codeyard_db_core::queries::github_apps::Token;
 use codeyard_db_core::DbPool;
 
 #[derive(Clone, Debug, sqlx::FromRow)]

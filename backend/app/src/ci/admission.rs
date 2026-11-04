@@ -769,7 +769,7 @@ mod tests {
 
     #[tokio::test]
     async fn admission_waits_for_shared_parsing_capacity() {
-        let permits = crate::ci::admission::codeyard_model::workflow_yaml::PARSING_SLOTS
+        let permits = codeyard_model::workflow_yaml::PARSING_SLOTS
             .acquire_many(2)
             .await
             .unwrap();

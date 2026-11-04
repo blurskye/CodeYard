@@ -1,9 +1,9 @@
 //! Organization-owned fine-grained tokens: the owners' policy, approval, revocation and
 //! membership, through the REST grant endpoints and the settings page on both engines.
 use super::request;
-use crate::support::codeyard_db_orgs::organizations::applied;
 use crate::support::database::Database;
 use crate::support::http_client::Client;
+use crate::support::organizations::applied;
 use chrono::{Duration, Utc};
 
 use super::NewOrganization;

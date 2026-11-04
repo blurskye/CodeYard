@@ -1,9 +1,9 @@
 use super::request;
-use crate::support::codeyard_db_orgs::organizations::applied;
 use crate::support::database::Database;
 use crate::support::http_client::field_value;
 use crate::support::http_client::hidden_value;
 use crate::support::http_client::Client;
+use crate::support::organizations::applied;
 use axum::http::StatusCode;
 
 use super::NewOrganization;

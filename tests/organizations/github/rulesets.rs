@@ -1,7 +1,7 @@
 use super::request;
-use crate::support::codeyard_db_orgs::organizations::applied;
 use crate::support::database::Database;
 use crate::support::http_client::Client;
+use crate::support::organizations::applied;
 use axum::{
     body::Body,
     http::{Request, StatusCode},

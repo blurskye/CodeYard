@@ -1,6 +1,6 @@
 //! JSON and browser CI resources retain their distinct authentication and response layers.
-use axum::codeyard_api_http::middleware::from_fn;
 use axum::http::StatusCode;
+use axum::middleware::from_fn;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Json;

@@ -968,10 +968,10 @@ async fn test_token_creation_refuses_session_revoked_by_password_change_on_sqlit
 /// no token. The session check and the insert are one transaction or statement, so the
 /// change either precedes the insert or the insert is refused.
 async fn token_session_revocation_contract(pool: &DbPool) {
-    use codeyard::backend::codeyard_db_identity::users::accounts;
-    use codeyard::backend::codeyard_db_identity::users::sessions;
-    use codeyard::backend::codeyard_db_identity::users::transitions;
     use codeyard::backend::identity::tokens;
+    use codeyard_db_identity::users::accounts;
+    use codeyard_db_identity::users::sessions;
+    use codeyard_db_identity::users::transitions;
     use codeyard_identity::tokens::TokenError;
     use codeyard_identity::tokens::TokenInput;
     let user = accounts::create_user_with_password_and_flags(

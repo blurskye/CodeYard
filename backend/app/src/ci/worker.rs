@@ -2323,10 +2323,8 @@ mod tests {
         let run_id = uuid::Uuid::new_v4();
         let labels = prepare_workflow(&path, &config, run_id).unwrap();
         assert!(labels.contains("ubuntu-latest"));
-        let value = crate::ci::worker::codeyard_model::workflow_yaml::parse_yaml(
-            &std::fs::read(&path).unwrap(),
-        )
-        .unwrap();
+        let value =
+            codeyard_model::workflow_yaml::parse_yaml(&std::fs::read(&path).unwrap()).unwrap();
         // The workflow keeps its public name; act's resource names carry the run instead.
         assert_eq!(value["name"].as_str(), Some("Test"));
         assert!(value["jobs"]["build"]["container"]["options"]
@@ -2335,10 +2333,8 @@ mod tests {
             .contains(&run_container_label(run_id)));
         std::fs::write(&path, source).unwrap();
         prepare_workflow_for_engine(&path, &config, run_id, true, "").unwrap();
-        let native = crate::ci::worker::codeyard_model::workflow_yaml::parse_yaml(
-            &std::fs::read(&path).unwrap(),
-        )
-        .unwrap();
+        let native =
+            codeyard_model::workflow_yaml::parse_yaml(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(native["name"].as_str(), Some("Test"));
         assert!(native["jobs"]["build"]["container"]["options"]
             .as_str()
@@ -3134,10 +3130,8 @@ jobs:
 "#,
         )
         .unwrap();
-        let mut yaml = crate::ci::worker::codeyard_model::workflow_yaml::parse_yaml(
-            &std::fs::read(path).unwrap(),
-        )
-        .unwrap();
+        let mut yaml =
+            codeyard_model::workflow_yaml::parse_yaml(&std::fs::read(path).unwrap()).unwrap();
         add_container_options(&mut yaml, &run_container_options(&label)).unwrap();
         let jobs = yaml.get("jobs").unwrap();
         assert_eq!(

@@ -3,6 +3,7 @@ use crate::users::blocks::InteractionBlocked;
 use crate::users::blocks::InvalidBlock;
 use anyhow::Result;
 use codeyard_db_core::models::User;
+use codeyard_db_core::queries::sqlite::users::blocks::repository_interaction_blocked;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use sqlx::SqliteConnection;
 use sqlx::SqlitePool;

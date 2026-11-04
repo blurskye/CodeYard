@@ -1,9 +1,9 @@
-use super::codeyard_db_orgs::organizations::roles::repo;
-use super::codeyard_db_orgs::organizations::roles::run;
 use super::request;
-use crate::support::codeyard_db_orgs::organizations::applied;
+use super::roles::repo;
+use super::roles::run;
 use crate::support::database::Database;
 use crate::support::http_client::Client;
+use crate::support::organizations::applied;
 use axum::http::StatusCode;
 
 use super::NewOrganization;

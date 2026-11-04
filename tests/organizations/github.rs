@@ -17,10 +17,10 @@ mod security;
 mod settings;
 mod teams;
 mod token_grants;
-use crate::support::codeyard_db_orgs::organizations::applied;
 use crate::support::database::Database;
 use crate::support::github_spec::assert_github_schema;
 use crate::support::http_client::Client;
+use crate::support::organizations::applied;
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, Request},
