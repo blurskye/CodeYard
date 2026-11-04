@@ -614,12 +614,12 @@ impl russh::server::Handler for GitSshHandler {
         options.git_protocol = io.git_protocol.take();
         options.credential = Some(credential);
         options.owner = git_cmd.owner;
-        let receive: Option<(
-            codeyard_db_core::DbPool,
-            Arc<dyn codeyard_repos_core::receive_ci::ReceiveCi>,
-        )> = git_cmd
-            .write
-            .then(|| (self.pool.clone(), self.ci_service.clone()));
+        let receive = git_cmd.write.then(|| {
+            (
+                self.pool.clone(),
+                self.ci_service.clone() as Arc<dyn codeyard_repos_core::receive_ci::ReceiveCi>,
+            )
+        });
         if !self.git_tasks.spawn(async move {
             let _task_slot = task_slot;
             // Waiting in russh's serial callback would stop the active channel from
