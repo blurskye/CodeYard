@@ -5,6 +5,7 @@ use super::Database;
 use super::StatusCode;
 use super::TokenInput;
 use super::Value;
+use codeyard_identity::tokens;
 use serde_json::json;
 
 async fn contract(pg: bool) {

@@ -3214,7 +3214,6 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
     use codeyard_db_repos::labels;
     use codeyard_db_repos::pull_requests::records;
     use codeyard_db_repos::pull_requests::reviews;
-    use codeyard_db_repos::repositories;
 
     let owner = setup(pool, "public").await;
     let writer = accounts::create_user_with_password(

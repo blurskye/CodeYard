@@ -258,10 +258,13 @@ async fn contract(pg: bool) {
         .await
             >= 89 * 86400
     );
-    let credentials = objects::authenticate(f.pool(), &ci::runtime::token_hash(&runtime.token))
-        .await
-        .unwrap()
-        .unwrap();
+    let credentials = objects::authenticate(
+        f.pool(),
+        &codeyard_support::token_hash::token_hash(&runtime.token),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let now = chrono::Utc::now().timestamp();
     let stale = objects::create_object(
         f.pool(),

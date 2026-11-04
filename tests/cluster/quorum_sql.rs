@@ -1406,7 +1406,6 @@ pub(super) async fn replace_node_key(pool: &DbPool, node: i64) -> NodeKey {
 }
 
 async fn term_directory_admission(pool: &DbPool) {
-    use codeyard_app::cluster;
     use codeyard_app::cluster::context::term_path;
     let f = setup(pool, 2, "2").await;
     let root = tempfile::tempdir().unwrap();
@@ -1575,9 +1574,7 @@ async fn quorum_promotion_fences(pool: &DbPool) {
 }
 
 async fn quorum_directory_recovery(pool: &DbPool) {
-    use codeyard_app::cluster;
     use codeyard_app::cluster::context::term_path;
-    use codeyard_app::cluster::replicas;
     let seed = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init_bare(seed.path()).unwrap();
     let signature = git2::Signature::now("owner", "owner@example.test").unwrap();

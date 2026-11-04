@@ -17,7 +17,6 @@ async fn remote_git_streams_large_packs_and_ends_on_storage_disconnect() {
 use chrono::{Duration as ChronoDuration, Utc};
 
 use codeyard_app::cluster;
-use codeyard_app::cluster::rpc;
 use codeyard_app::cluster::rpc::wire::Operation;
 use codeyard_app::cluster::rpc::wire::Request;
 use codeyard_app::repositories::git_sessions::ReceiveCredential;

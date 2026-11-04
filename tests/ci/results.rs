@@ -811,10 +811,13 @@ async fn pending_uploads_share_the_cache_quota(pg: bool) {
     .await
     .unwrap();
     let (_run, token) = run(&f, repo.id, alice, "main").await;
-    let auth = objects::authenticate(f.pool(), &runtime::token_hash(&token.token))
-        .await
-        .unwrap()
-        .unwrap();
+    let auth = objects::authenticate(
+        f.pool(),
+        &codeyard_support::token_hash::token_hash(&token.token),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let expires_at = chrono::Utc::now().timestamp() + 86400;
     let a = objects::create_object(
         f.pool(),

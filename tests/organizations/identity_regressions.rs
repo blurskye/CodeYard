@@ -23,7 +23,6 @@ use codeyard_db_orgs::organizations::membership::add_organization_member;
 use codeyard_db_orgs::organizations::profiles::create_organization;
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
-use codeyard_db_orgs::organizations::properties::repository;
 use codeyard_db_orgs::organizations::teams::add_organization_team_member;
 use codeyard_db_orgs::organizations::teams::create_organization_team;
 use codeyard_db_orgs::organizations::teams::grant_organization_team_repository;

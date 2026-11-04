@@ -148,7 +148,7 @@ async fn contract(pg: bool) {
     let jobs = &credentials.workflows[".github/workflows/ci.yml"];
     assert!(codeyard_db_identity::users::tokens::find_token(
         f.pool(),
-        &ci::runtime::token_hash(&act.act)
+        &codeyard_support::token_hash::token_hash(&act.act)
     )
     .await
     .unwrap()
@@ -173,7 +173,7 @@ async fn contract(pg: bool) {
     assert_eq!(merge.status(), StatusCode::FORBIDDEN);
     let stored = codeyard_db_identity::users::tokens::find_token(
         f.pool(),
-        &ci::runtime::token_hash(&jobs["writer"]),
+        &codeyard_support::token_hash::token_hash(&jobs["writer"]),
     )
     .await
     .unwrap()
@@ -386,7 +386,7 @@ async fn contract(pg: bool) {
     .await;
     let reader = codeyard_db_identity::users::tokens::find_token(
         f.pool(),
-        &ci::runtime::token_hash(&jobs["reader"]),
+        &codeyard_support::token_hash::token_hash(&jobs["reader"]),
     )
     .await
     .unwrap()
@@ -401,7 +401,7 @@ async fn contract(pg: bool) {
         .await;
     assert!(codeyard_db_identity::users::tokens::find_token(
         f.pool(),
-        &ci::runtime::token_hash(&jobs["reader"])
+        &codeyard_support::token_hash::token_hash(&jobs["reader"])
     )
     .await
     .unwrap()

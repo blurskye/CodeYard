@@ -122,7 +122,6 @@ pub(super) async fn run(
     .await;
 
     use crate::support::organizations::applied;
-    use codeyard_db_orgs::organizations as orgs;
     let org = applied(
         codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),

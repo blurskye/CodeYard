@@ -370,7 +370,6 @@ async fn repository_secrets(pg: bool) {
 
 async fn organization_secrets(pg: bool) {
     use codeyard_db_core::queries::organizations::OrganizationOutcome;
-    use codeyard_db_orgs::organizations;
     use codeyard_db_orgs::organizations::profiles::NewOrganization;
     use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
     use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;

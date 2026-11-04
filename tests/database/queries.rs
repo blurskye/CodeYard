@@ -2,6 +2,7 @@
 
 use crate::support::native_database as native;
 use codeyard_db_core::DbPool;
+use codeyard_identity::tokens;
 use uuid::Uuid;
 
 async fn setup_test_db() -> native::PostgresDatabase {

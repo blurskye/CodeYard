@@ -5,6 +5,7 @@ use super::Database;
 use super::StatusCode;
 use super::TokenInput;
 use super::Value;
+use codeyard_identity::tokens;
 
 use codeyard_db_core::DbPool;
 use serde_json::json;
@@ -334,7 +335,6 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::OK, "{second}");
     assert_ne!(page[0]["number"], second[0]["number"]);
-    use codeyard_db_orgs::organizations;
     use codeyard_db_orgs::organizations::profiles::NewOrganization;
     use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
     let created = codeyard_db_orgs::organizations::profiles::create_organization(

@@ -3023,7 +3023,7 @@ mod interleaved {
         let runner = db.actor("concurrent_runner").await;
         let organization = organization_repository(&db, first_owner, "concurrent_governance").await;
         applied(
-            super::add_organization_member(
+            codeyard_db_orgs::organizations::membership::add_organization_member(
                 db.pool(),
                 first_owner,
                 organization.id,
@@ -3206,7 +3206,7 @@ mod interleaved {
         let actor = db.actor("enqueue_org_revoke_actor").await;
         let organization = organization_repository(&db, owner, "enqueue_org_revoke").await;
         applied(
-            super::add_organization_member(
+            codeyard_db_orgs::organizations::membership::add_organization_member(
                 db.pool(),
                 owner,
                 organization.id,

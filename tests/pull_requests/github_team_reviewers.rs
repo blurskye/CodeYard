@@ -6,7 +6,6 @@ use crate::support::organizations::applied;
 use axum::http::StatusCode;
 use base64::Engine;
 
-use codeyard_db_orgs::organizations as orgs;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};

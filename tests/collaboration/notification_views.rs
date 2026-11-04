@@ -138,7 +138,6 @@ async fn bounded_previews_and_current_targets(pg: bool) {
         assert_eq!(item["link"], "/alice/renamed/issues/7?page=3#comment-9");
     }
     use codeyard_db_core::queries::organizations::OrganizationOutcome;
-    use codeyard_db_orgs::organizations;
     use codeyard_db_orgs::organizations::profiles::NewOrganization;
     use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
     assert!(matches!(

@@ -1,6 +1,5 @@
 use super::*;
 use codeyard_app::ci::runs::CiRuns;
-use codeyard_app::repositories::pull_requests as pulls;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 

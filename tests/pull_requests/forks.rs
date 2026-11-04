@@ -14,7 +14,6 @@ use codeyard_app::ci::queue::RunQueue;
 use codeyard_app::ci::runs::CiRuns;
 use codeyard_app::ci::workers::CiWorkers;
 use codeyard_app::repositories::lifecycle::provision;
-use codeyard_app::repositories::pull_requests;
 use codeyard_app::repositories::store::editor::FileWrite;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_app::storage::ObjectStore;

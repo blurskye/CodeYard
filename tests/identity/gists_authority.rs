@@ -8,7 +8,6 @@ use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;
 use codeyard_app::gists;
 use codeyard_app::gists::CreateGist;
-use codeyard_app::repositories::access;
 use codeyard_app::repositories::lifecycle;
 use codeyard_app::repositories::store::gists::GistCredential;
 use codeyard_app::repositories::store::repo_store;

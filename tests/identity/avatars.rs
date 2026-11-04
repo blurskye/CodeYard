@@ -1014,7 +1014,6 @@ async fn contract(pg: bool) {
 }
 
 async fn pending_picture_contract(pg: bool) {
-    use codeyard_app::files;
     use codeyard_app::files::uploads::UploadDeclaration;
 
     let mut f = Database::new(pg).await;

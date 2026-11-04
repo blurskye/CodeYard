@@ -6,6 +6,7 @@ use super::AccessLevel;
 use super::SecretsError;
 use super::NAME;
 use crate::support::database::wait_until_blocked;
+use codeyard_db_actions::secrets;
 use std::{str::FromStr, time::Duration};
 
 async fn attempt(

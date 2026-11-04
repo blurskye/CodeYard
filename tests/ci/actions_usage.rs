@@ -74,7 +74,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-        let generation = runtime::token_hash(&format!("usage-{attempt}"));
+        let generation = codeyard_support::token_hash::token_hash(&format!("usage-{attempt}"));
         codeyard_db_actions::action_objects::issue_token(
             f.pool(),
             run.id,

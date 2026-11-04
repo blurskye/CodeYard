@@ -10,7 +10,6 @@ use codeyard_app::cluster;
 use codeyard_app::cluster::link::Link;
 use codeyard_app::cluster::pairing::InviteOptions;
 use codeyard_app::cluster::pairing::JoinTicket;
-use codeyard_app::cluster::rpc;
 use codeyard_app::cluster::tcp;
 use codeyard_app::cluster::transport::IrohDialer;
 use codeyard_app::cluster::transport::NodeAddress;

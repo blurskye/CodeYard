@@ -13,7 +13,6 @@ use codeyard_app::ci::config::CiConfig;
 use codeyard_app::ci::workflows::list_workflows_for_ref;
 use codeyard_app::cluster;
 use codeyard_app::cluster::context::NodeContext;
-use codeyard_app::cluster::rpc;
 use codeyard_app::cluster::rpc::wire::Failure;
 use codeyard_app::cluster::rpc::wire::Operation;
 use codeyard_app::cluster::rpc::wire::Reply;

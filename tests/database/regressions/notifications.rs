@@ -11,7 +11,7 @@ async fn refollows_keep_a_durable_per_actor_notification_cooldown() {
         let credential =
             codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
         for _ in 0..5 {
-            codeyard_db_identity::relationships::change(
+            codeyard_notifications::following::change(
                 f.pool(),
                 &broadcaster,
                 actor,
@@ -21,7 +21,7 @@ async fn refollows_keep_a_durable_per_actor_notification_cooldown() {
             )
             .await
             .unwrap();
-            codeyard_db_identity::relationships::change(
+            codeyard_notifications::following::change(
                 f.pool(),
                 &broadcaster,
                 actor,
@@ -46,7 +46,7 @@ async fn refollows_keep_a_durable_per_actor_notification_cooldown() {
             &[target],
         )
         .await;
-        codeyard_db_identity::relationships::change(
+        codeyard_notifications::following::change(
             f.pool(),
             &broadcaster,
             actor,
