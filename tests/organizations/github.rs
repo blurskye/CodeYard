@@ -28,7 +28,7 @@ use axum::{
 };
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;

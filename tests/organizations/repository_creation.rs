@@ -808,7 +808,7 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
     use axum::http::StatusCode;
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
-    use codeyard_app::ci::config::CiConfig;
+    use codeyard_ci::config::CiConfig;
     use codeyard_app::cluster;
     use codeyard_repos::editor::FileWrite;
     use codeyard_app::repositories::store::repo_store;

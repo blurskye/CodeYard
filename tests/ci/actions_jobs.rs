@@ -77,7 +77,7 @@ async fn contract(pg: bool) {
         "jobs",
         "local",
         &[alice],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()

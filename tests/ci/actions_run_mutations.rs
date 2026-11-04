@@ -42,7 +42,7 @@ async fn contract(pg: bool) {
     let reader = pat(&f, &router, alice, "read").await;
     let (source, _) = results::run(&f, repo.id, alice, "main").await;
     let definitions=BTreeMap::from([(".github/workflows/ci.yml".to_owned(),b"on: push\njobs:\n  reader:\n    permissions: {actions: read}\n    runs-on: ubuntu-latest\n    steps: [{run: 'echo ok'}]\n  writer:\n    permissions: {actions: write}\n    runs-on: ubuntu-latest\n    steps: [{run: 'echo ok'}]\n".to_vec())]);
-    let credentials = codeyard_app::ci::tokens::issue(f.pool(), &source, &definitions, false)
+    let credentials = codeyard_ci::tokens::issue(f.pool(), &source, &definitions, false)
         .await
         .unwrap();
     let read_token = &credentials.workflows[".github/workflows/ci.yml"]["reader"];
@@ -167,7 +167,7 @@ async fn contract(pg: bool) {
     );
     let (target, runtime) = results::run(&f, repo.id, alice, "main").await;
     let target_credentials =
-        codeyard_app::ci::tokens::issue(f.pool(), &target, &definitions, false)
+        codeyard_ci::tokens::issue(f.pool(), &target, &definitions, false)
             .await
             .unwrap();
     let target_hash = codeyard_support::token_hash::token_hash(

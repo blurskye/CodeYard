@@ -1,5 +1,5 @@
 use super::*;
-use crate::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 use crate::cluster::context::NodeContext;
 use crate::cluster::link::Link;
 use crate::cluster::rpc::repository::repository_uuid;

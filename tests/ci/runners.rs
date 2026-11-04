@@ -11,8 +11,8 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD, Engine};
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::config::CiConfig;
-use codeyard_app::ci::config::CiExecutionMode;
+use codeyard_ci::config::CiConfig;
+use codeyard_ci::config::CiExecutionMode;
 use codeyard_app::ci::runner_credentials::JitConfig;
 
 use codeyard_app::cluster::context::NodeContext;
@@ -795,7 +795,7 @@ async fn contract(pg: bool) {
         &format!("{}/slot", repo_runner_key.public_hex()),
         "local",
         &[alice],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -807,7 +807,7 @@ async fn contract(pg: bool) {
         &worker,
         "local",
         &[alice],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -816,7 +816,7 @@ async fn contract(pg: bool) {
     assert_eq!(claim.runner_group.as_deref(), Some("Restricted"));
     // actions:write is not runner-administration authority. In particular, an
     // active workflow token cannot mint a longer-lived registration credential.
-    let credentials = codeyard_app::ci::tokens::issue(
+    let credentials = codeyard_ci::tokens::issue(
         f.pool(),
         &claim,
         &std::collections::BTreeMap::from([(
@@ -924,7 +924,7 @@ async fn contract(pg: bool) {
         &worker,
         "local",
         &[alice],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -1036,7 +1036,7 @@ async fn contract(pg: bool) {
                 &jit_worker,
                 "local",
                 &[alice],
-                &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+                &codeyard_ci::config::CiConfig::default().platform_labels(),
             )
             .await
             .unwrap()
@@ -1051,7 +1051,7 @@ async fn contract(pg: bool) {
                 &format!("{}/second-slot", jit_key.public_hex()),
                 "local",
                 &[alice],
-                &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+                &codeyard_ci::config::CiConfig::default().platform_labels(),
             )
             .await
             .unwrap()

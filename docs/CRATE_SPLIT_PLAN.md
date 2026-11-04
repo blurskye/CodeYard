@@ -106,7 +106,8 @@ and results stay the same. A stage can be the last one.
    engines. Shared transaction helpers and their records live under `db/core/src/queries`.
    All workspace targets check.
 6. **Services (partial).** Repository policy, imports, lockfile parsing, traffic,
-   templates and Git editor preparation live in `backend/repos/`. `identity`, `notifications` and `ssh` are extracted. Repository
+   templates and Git editor preparation live in `backend/repos/`. CI configuration,
+   credentials, logs and environment values live in `backend/ci/`. `identity`, `notifications` and `ssh` are extracted. Repository
    authority, identity mail links and delivery helpers have one lower owner.
    `RepoStore` is a concrete enum-backed type, not the trait assumed above; its local
    and remote implementations call cluster RPC and CI, which call the concrete store

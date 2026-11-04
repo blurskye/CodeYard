@@ -73,7 +73,7 @@ async fn contract(pg: bool) {
         "blocked",
         "local",
         &[alice, bob],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels()
+        &codeyard_ci::config::CiConfig::default().platform_labels()
     )
     .await
     .unwrap()
@@ -127,7 +127,7 @@ async fn contract(pg: bool) {
         "approved",
         "local",
         &[alice],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()

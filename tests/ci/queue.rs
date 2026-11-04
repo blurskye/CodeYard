@@ -34,7 +34,7 @@ use uuid::Uuid;
 mod filtered_history;
 
 fn platforms() -> Vec<String> {
-    codeyard_app::ci::config::CiConfig::default().platform_labels()
+    codeyard_ci::config::CiConfig::default().platform_labels()
 }
 
 const WORKER: &str = "worker-1";
@@ -1226,7 +1226,7 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
 }
 
 async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &Database) {
-    use codeyard_app::ci::config::CiConfig;
+    use codeyard_ci::config::CiConfig;
     use codeyard_app::ci::queue::RunQueue;
     use codeyard_app::ci::runs::CiRuns;
     use codeyard_notifications::broadcast::NotificationBroadcaster;
@@ -1632,7 +1632,7 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
     };
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
-    use codeyard_app::ci::config::CiConfig;
+    use codeyard_ci::config::CiConfig;
     use codeyard_storage::ObjectStore;
     use codeyard_model::ci::LogLine;
     use codeyard_webui::app::PageEnvelope;
@@ -2514,7 +2514,7 @@ macro_rules! on_both_engines {
 }
 
 async fn stale_failures_are_broadcast_after_commit(db: &Database) {
-    use codeyard_app::ci::config::CiConfig;
+    use codeyard_ci::config::CiConfig;
     use codeyard_app::ci::queue::RunQueue;
     use codeyard_app::ci::workers::CiWorkers;
     use codeyard_notifications::broadcast::NotificationBroadcaster;

@@ -269,7 +269,7 @@ async fn download_artifact(
     if object.expires_at <= chrono::Utc::now().timestamp() {
         return Err(Error::new(StatusCode::GONE, "Artifact has expired"));
     }
-    let token = codeyard_app::ci::runtime::secret();
+    let token = codeyard_ci::runtime::secret();
     if !objects::grant_artifact_download(
         &state.pool,
         actor,

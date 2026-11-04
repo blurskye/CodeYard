@@ -92,7 +92,7 @@ async fn signed_url(
     run: i64,
     write: bool,
 ) -> Result<String, Error> {
-    let token = codeyard_app::ci::runtime::secret();
+    let token = codeyard_ci::runtime::secret();
     if !objects::grant_blob(
         &state.pool,
         object.id,
@@ -107,7 +107,7 @@ async fn signed_url(
     let site = codeyard_db_actions::actions::get_actions_settings(&state.pool).await?;
     Ok(format!(
         "{}/twirp/blobs/{}?sig={token}",
-        codeyard_app::ci::runtime::results_url(&site),
+        codeyard_ci::runtime::results_url(&site),
         object.id
     ))
 }

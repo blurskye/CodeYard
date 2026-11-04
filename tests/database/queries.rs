@@ -647,7 +647,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         "node-a/1",
         "podman",
         &[],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -661,7 +661,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
             "node-b/1",
             "local",
             &[],
-            &codeyard_app::ci::config::CiConfig::default().platform_labels()
+            &codeyard_ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()
@@ -779,7 +779,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         "node-a/1",
         "podman",
         &[],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()

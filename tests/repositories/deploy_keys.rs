@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 use codeyard_storage::ObjectStore;
 use codeyard_db_identity::users::ssh_keys;
 use codeyard_support::secrets::SecretEncryptor;

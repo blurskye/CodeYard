@@ -2,7 +2,7 @@
 //! request closed. The closed pull request takes nothing from the fork, and an open one in the
 //! same fork still follows it. A pull ref that got ahead of its row, because an earlier refresh
 //! lost the row update, is recorded before a newer head is published.
-use crate::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 use crate::ci::runs::CiRuns;
 use crate::repositories::pull_requests::branches::refresh_one;
 use crate::repositories::pull_requests::branches::revisions;

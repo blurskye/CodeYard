@@ -926,7 +926,7 @@ mod tests {
             .clone();
         let ci = Arc::new(CiRuns::new(
             pool.clone(),
-            Arc::new(codeyard_app::ci::config::CiConfig::default()),
+            Arc::new(codeyard_ci::config::CiConfig::default()),
             Arc::new(tokio::sync::Notify::new()),
             None,
             Arc::new(codeyard_notifications::broadcast::NotificationBroadcaster::new(&pool)),
@@ -984,7 +984,7 @@ mod tests {
         let pool = DbPool::from(pool);
         let ci_service = Arc::new(CiRuns::new(
             pool.clone(),
-            Arc::new(codeyard_app::ci::config::CiConfig::default()),
+            Arc::new(codeyard_ci::config::CiConfig::default()),
             Arc::new(tokio::sync::Notify::new()),
             None,
             Arc::new(codeyard_notifications::broadcast::NotificationBroadcaster::new(&pool)),

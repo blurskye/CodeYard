@@ -16,7 +16,7 @@ pub struct EnvironmentValues {
     pub workflows: BTreeMap<String, BTreeMap<String, String>>,
 }
 
-pub(super) async fn load(
+pub async fn load(
     pool: &DbPool,
     encryptor: Option<&SecretEncryptor>,
     run: &CiRun,

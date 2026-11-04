@@ -10,7 +10,7 @@ use axum::{
 use base64::Engine as _;
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 use codeyard_support::secrets::SecretEncryptor;
 
 use codeyard_db_orgs::organizations::profiles::NewOrganization;

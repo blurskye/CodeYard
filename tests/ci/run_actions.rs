@@ -9,7 +9,7 @@ use crate::support::http_client::Client;
 use axum::http::StatusCode;
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 
 use codeyard_storage::ObjectStore;
 use codeyard_db_core::models::AccessLevel;
@@ -103,7 +103,7 @@ async fn contract(pg: bool) {
         "log-worker",
         "local",
         &[alice_id, bob_id],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -737,7 +737,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
         worker,
         "local",
         &[alice_id, bob_id],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()

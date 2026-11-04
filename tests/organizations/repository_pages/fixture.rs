@@ -142,7 +142,7 @@ impl Fixture {
             repos_path.clone(),
             Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
             None,
-            codeyard_app::ci::config::CiConfig::default(),
+            codeyard_ci::config::CiConfig::default(),
             None,
         );
         Self {

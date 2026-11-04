@@ -2,9 +2,9 @@
 use crate::support::database::Database;
 
 use codeyard_app::app::AppState;
-use codeyard_app::ci::config::CiConfig;
-use codeyard_app::ci::config::CiExecutionMode;
-use codeyard_app::ci::config::CiPipelineKind;
+use codeyard_ci::config::CiConfig;
+use codeyard_ci::config::CiExecutionMode;
+use codeyard_ci::config::CiPipelineKind;
 use codeyard_app::ci::queue::RunQueue;
 use codeyard_app::ci::runs::CiRunRequest;
 use codeyard_app::ci::workers::CiWorkers;

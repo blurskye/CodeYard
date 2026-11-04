@@ -1,4 +1,4 @@
-use crate::ci::config::CiPipelineKind;
+use codeyard_ci::config::CiPipelineKind;
 use crate::repositories::store::RepoStore;
 use anyhow::ensure;
 use anyhow::Context;

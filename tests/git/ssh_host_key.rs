@@ -2,7 +2,7 @@
 
 use crate::support::native_database as support;
 
-use codeyard_app::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 use codeyard_app::ci::runs::CiRuns;
 use codeyard_ssh::server::SshServer;
 use codeyard_notifications::broadcast::NotificationBroadcaster;

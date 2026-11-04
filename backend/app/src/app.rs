@@ -1,5 +1,5 @@
 //! Shared application state: database, storage, CI and notification services.
-use crate::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 use crate::ci::runs::CiRuns;
 use codeyard_storage::ObjectStore;
 use codeyard_db_core::DbPool;
@@ -23,7 +23,7 @@ pub struct AppState {
     pub storage: Arc<ObjectStore>,
     pub notification_broadcaster: Arc<NotificationBroadcaster>,
     pub ci_runs: Arc<CiRuns>,
-    pub oidc_keys: Arc<crate::ci::oidc::SigningKeys>,
+    pub oidc_keys: Arc<codeyard_ci::oidc::SigningKeys>,
     pub git_tasks: Arc<crate::repositories::git_sessions::GitTasks>,
     pub form_reads: Arc<tokio::sync::Semaphore>,
     pub anonymous_form_reads: Arc<tokio::sync::Semaphore>,
@@ -64,7 +64,7 @@ impl AppState {
             cluster.clone(),
             notification_broadcaster.clone(),
         ));
-        let oidc_keys = Arc::new(crate::ci::oidc::SigningKeys::new(pool.clone()));
+        let oidc_keys = Arc::new(codeyard_ci::oidc::SigningKeys::new(pool.clone()));
         Self {
             metrics_token_hash: std::env::var("METRICS_TOKEN")
                 .ok()

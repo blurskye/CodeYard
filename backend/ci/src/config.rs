@@ -170,7 +170,7 @@ impl CiConfig {
     }
 }
 
-pub(super) fn podman_socket_path(socket: &str) -> Result<&str> {
+pub fn podman_socket_path(socket: &str) -> Result<&str> {
     let path = socket.strip_prefix("unix://").unwrap_or(socket);
     ensure!(
         path.starts_with('/') && path.len() > 1,
@@ -193,7 +193,7 @@ fn default_podman_socket() -> String {
 }
 
 /// The `runs-on` labels the runner image serves.
-pub(super) const UBUNTU_LABELS: [&str; 4] = [
+pub const UBUNTU_LABELS: [&str; 4] = [
     "ubuntu-latest",
     "ubuntu-24.04",
     "ubuntu-22.04",
@@ -240,7 +240,7 @@ impl RunLimits {
     }
 
     /// The Podman options that cap a job container, empty when nothing is capped.
-    pub(super) fn container_options(&self) -> String {
+    pub fn container_options(&self) -> String {
         let mut options = Vec::new();
         if let Some(cpus) = self.cpus {
             options.push(format!("--cpus={cpus}"));

@@ -4,7 +4,7 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::native_database as native;
 
-use codeyard_app::ci::config::CiExecutionMode;
+use codeyard_ci::config::CiExecutionMode;
 use codeyard_app::ci::queue::RunQueue;
 use codeyard_app::cluster;
 use codeyard_app::cluster::link::Link;
@@ -995,7 +995,7 @@ async fn a_ci_claim_moves_on_from_a_tcp_address_that_never_answers() {
         .claim(
             "slot-1",
             CiExecutionMode::Local,
-            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+            &codeyard_ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .expect("the second TCP address answers");
@@ -1037,7 +1037,7 @@ async fn a_ci_claim_reaches_the_core_over_iroh_after_a_tcp_address_never_answers
         .claim(
             "slot-1",
             CiExecutionMode::Local,
-            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+            &codeyard_ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .expect("iroh answers once TCP gives up");

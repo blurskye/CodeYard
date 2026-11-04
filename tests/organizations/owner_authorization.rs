@@ -162,7 +162,7 @@ impl Fixture {
             root.path().join("repos"),
             Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
             None,
-            codeyard_app::ci::config::CiConfig::default(),
+            codeyard_ci::config::CiConfig::default(),
             None,
         );
         let router = create_router(state);

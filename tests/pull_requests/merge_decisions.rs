@@ -8,8 +8,8 @@ use axum::http::StatusCode;
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::config::CiConfig;
-use codeyard_app::ci::config::CiPipelineKind;
+use codeyard_ci::config::CiConfig;
+use codeyard_ci::config::CiPipelineKind;
 use codeyard_storage::ObjectStore;
 use database::Database;
 use pulls::{text, Client};
@@ -433,7 +433,7 @@ async fn contract(pg: bool) {
                     &format!("worker-{}", expected.id),
                     "local",
                     &[owner],
-                    &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+                    &codeyard_ci::config::CiConfig::default().platform_labels(),
                 )
                 .await
                 .unwrap()
@@ -501,7 +501,7 @@ async fn contract(pg: bool) {
                     "worker",
                     "local",
                     &[owner],
-                    &codeyard_app::ci::config::CiConfig::default().platform_labels()
+                    &codeyard_ci::config::CiConfig::default().platform_labels()
                 )
                 .await
                 .unwrap()
@@ -518,7 +518,7 @@ async fn contract(pg: bool) {
                     "worker-2",
                     "local",
                     &[owner],
-                    &codeyard_app::ci::config::CiConfig::default().platform_labels()
+                    &codeyard_ci::config::CiConfig::default().platform_labels()
                 )
                 .await
                 .unwrap()
@@ -1261,7 +1261,7 @@ async fn runs_of_another_pull_request_do_not_satisfy_a_check(pg: bool) {
         "worker",
         "local",
         &[owner],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -1288,7 +1288,7 @@ async fn runs_of_another_pull_request_do_not_satisfy_a_check(pg: bool) {
         "worker",
         "local",
         &[owner],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -1364,7 +1364,7 @@ async fn pull_request_checks_show_failures_and_the_head_branch(pg: bool) {
         "worker",
         "local",
         &[owner],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()

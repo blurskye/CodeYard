@@ -241,7 +241,7 @@ async fn web_publication_updates_storage_and_keeps_deleted_branch_runs_admissibl
     .unwrap());
     let ci = crate::ci::runs::CiRuns::new(
         a.pool.clone(),
-        std::sync::Arc::new(crate::ci::config::CiConfig {
+        std::sync::Arc::new(codeyard_ci::config::CiConfig {
             trusted_actor_ids: [a.actor].into(),
             ..Default::default()
         }),
@@ -260,7 +260,7 @@ async fn web_publication_updates_storage_and_keeps_deleted_branch_runs_admissibl
             head_sha: Some(saved.sha.clone()),
             event: "push".into(),
             pull_request_id: None,
-            pipeline: crate::ci::config::CiPipelineKind::Ci,
+            pipeline: codeyard_ci::config::CiPipelineKind::Ci,
             workflow_paths: vec![".github/workflows/ci.yml".into()],
             environment: None,
             inputs: None,

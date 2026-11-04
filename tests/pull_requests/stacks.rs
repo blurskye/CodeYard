@@ -53,7 +53,7 @@ async fn application_with_runs(f: &mut Database, root: &Path) -> Runs {
         root.to_owned(),
         Arc::new(ObjectStore::open(root, None).await.unwrap()),
         None,
-        codeyard_app::ci::config::CiConfig::default(),
+        codeyard_ci::config::CiConfig::default(),
         None,
     );
     let ci = state.ci_runs.clone();

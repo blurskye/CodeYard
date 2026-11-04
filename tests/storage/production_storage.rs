@@ -659,7 +659,7 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
         root.path().to_owned(),
         store,
         None,
-        codeyard_app::ci::config::CiConfig::default(),
+        codeyard_ci::config::CiConfig::default(),
         None,
     ));
     let response = router

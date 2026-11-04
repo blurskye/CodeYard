@@ -257,7 +257,7 @@ mod fixture {
             }
             let ci = Arc::new(CiRuns::new(
                 pool.clone(),
-                Arc::new(crate::ci::config::CiConfig::default()),
+                Arc::new(codeyard_ci::config::CiConfig::default()),
                 Arc::new(tokio::sync::Notify::new()),
                 None,
                 Arc::new(codeyard_notifications::broadcast::NotificationBroadcaster::new(&pool)),
@@ -1446,7 +1446,7 @@ mod fixture {
         let mut fixture = Fixture::new().await;
         fixture.ci = Arc::new(CiRuns::new(
             fixture.pool.clone(),
-            Arc::new(crate::ci::config::CiConfig {
+            Arc::new(codeyard_ci::config::CiConfig {
                 trusted_actor_ids: [fixture.actor_id].into(),
                 ..Default::default()
             }),
@@ -1546,7 +1546,7 @@ mod fixture {
         .unwrap());
         fixture.ci = Arc::new(CiRuns::new(
             fixture.pool.clone(),
-            Arc::new(crate::ci::config::CiConfig::default()),
+            Arc::new(codeyard_ci::config::CiConfig::default()),
             Arc::new(tokio::sync::Notify::new()),
             Some(crate::cluster::context::NodeContext {
                 pool: Some(fixture.pool.clone()),
@@ -1646,7 +1646,7 @@ mod fixture {
         let mut fixture = Fixture::new().await;
         fixture.ci = Arc::new(CiRuns::new(
             fixture.pool.clone(),
-            Arc::new(crate::ci::config::CiConfig {
+            Arc::new(codeyard_ci::config::CiConfig {
                 trusted_actor_ids: [fixture.actor_id].into(),
                 ..Default::default()
             }),
@@ -1711,7 +1711,7 @@ mod fixture {
         let mut fixture = Fixture::new().await;
         fixture.ci = Arc::new(CiRuns::new(
             fixture.pool.clone(),
-            Arc::new(crate::ci::config::CiConfig {
+            Arc::new(codeyard_ci::config::CiConfig {
                 trusted_actor_ids: [fixture.actor_id].into(),
                 ..Default::default()
             }),
@@ -1843,7 +1843,7 @@ mod fixture {
             .unwrap();
             fixture.ci = Arc::new(CiRuns::new(
                 fixture.pool.clone(),
-                Arc::new(crate::ci::config::CiConfig {
+                Arc::new(codeyard_ci::config::CiConfig {
                     trusted_actor_ids: [fixture.actor_id].into(),
                     ..Default::default()
                 }),
@@ -1995,7 +1995,7 @@ mod fixture {
                     "worker",
                     "local",
                     &[fixture.actor_id],
-                    &crate::ci::config::CiConfig::default().platform_labels(),
+                    &codeyard_ci::config::CiConfig::default().platform_labels(),
                 )
                 .await
                 .unwrap()

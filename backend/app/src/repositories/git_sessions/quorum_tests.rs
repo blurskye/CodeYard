@@ -170,7 +170,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
     };
     let ci = Arc::new(CiRuns::new(
         pool.clone(),
-        Arc::new(crate::ci::config::CiConfig::default()),
+        Arc::new(codeyard_ci::config::CiConfig::default()),
         Arc::new(tokio::sync::Notify::new()),
         Some(context),
         Arc::new(NotificationBroadcaster::new(&pool)),

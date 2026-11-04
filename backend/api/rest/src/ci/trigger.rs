@@ -143,7 +143,7 @@ mod tests {
             root.path().to_owned(),
             Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
             None,
-            codeyard_app::ci::config::CiConfig::default(),
+            codeyard_ci::config::CiConfig::default(),
             None,
         );
         // Only a signed-in reader is shown a refused run's workflows; bob may read the public one.

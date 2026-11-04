@@ -691,7 +691,7 @@ mod tests {
         codeyard_db_core::run_migrations(&pool).await.unwrap();
         let ci = Arc::new(CiRuns::new(
             pool.clone(),
-            Arc::new(codeyard_app::ci::config::CiConfig::default()),
+            Arc::new(codeyard_ci::config::CiConfig::default()),
             Arc::new(tokio::sync::Notify::new()),
             None,
             Arc::new(codeyard_notifications::broadcast::NotificationBroadcaster::new(&pool)),

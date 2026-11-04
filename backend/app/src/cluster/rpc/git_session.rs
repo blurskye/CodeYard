@@ -1,4 +1,4 @@
-use crate::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 use crate::ci::runs::CiRuns;
 use crate::cluster::context::NodeContext;
 use crate::cluster::link::Link;

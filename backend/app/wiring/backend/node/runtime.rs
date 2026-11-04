@@ -4,7 +4,7 @@ use crate::backend::node::config::ServeConfig;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 use codeyard_storage::s3::S3Config;
 use codeyard_storage::ObjectStore;
 use codeyard_db_core::DbPool;
@@ -288,7 +288,7 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
         result = &mut signal => return result,
         result = codeyard_app::cluster::worker::worker_context(state_dir, settings) => result?,
     };
-    let config = std::sync::Arc::new(codeyard_app::ci::config::CiConfig::from_env()?);
+    let config = std::sync::Arc::new(codeyard_ci::config::CiConfig::from_env()?);
     let workers = codeyard_app::ci::workers::CiWorkers::new(
         codeyard_app::ci::queue::RunQueue::Remote {
             preferred: Default::default(),

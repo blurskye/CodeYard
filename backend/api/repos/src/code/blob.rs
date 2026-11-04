@@ -578,7 +578,7 @@ mod tests {
                     .unwrap(),
             ),
             None,
-            codeyard_app::ci::config::CiConfig::default(),
+            codeyard_ci::config::CiConfig::default(),
             None,
         ));
         let path = || {

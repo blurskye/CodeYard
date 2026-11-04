@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 /// Literal `runs-on` labels used by the workflow's jobs. In local mode jobs run
 /// directly on the worker host, so container jobs and Docker actions are refused.
 /// Workers call this on the admitted snapshot, where every called workflow is local.
-pub(super) fn labels_from_value(workflow: &Value, local: bool) -> Result<BTreeSet<String>> {
+pub fn labels_from_value(workflow: &Value, local: bool) -> Result<BTreeSet<String>> {
     let jobs = workflow.get("jobs").and_then(Value::as_mapping);
     for reference in jobs
         .into_iter()
@@ -29,7 +29,7 @@ pub(super) fn labels_from_value(workflow: &Value, local: bool) -> Result<BTreeSe
         .collect())
 }
 
-pub(super) fn scheduling_from_value(
+pub fn scheduling_from_value(
     workflow: &Value,
     local: bool,
 ) -> Result<codeyard_db_actions::runners::Scheduling> {

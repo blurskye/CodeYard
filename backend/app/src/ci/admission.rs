@@ -1,5 +1,5 @@
-use crate::ci::config::CiConfig;
-use crate::ci::config::CiPipelineKind;
+use codeyard_ci::config::CiConfig;
+use codeyard_ci::config::CiPipelineKind;
 use crate::ci::runs::CiRunRequest;
 use crate::ci::workflows::infer_pipeline_from_workflow_path;
 use crate::ci::workflows::workflow_definition_from_yaml;
@@ -633,7 +633,7 @@ pub(super) async fn parse_admission_workflow(
         }
         let definition = workflow_definition_from_yaml(&path, &yaml)
             .map_err(|_| AdmissionError::Invalid("CI workflow YAML is invalid"))?;
-        let scheduling = crate::ci::runner_labels::scheduling_from_value(&yaml, false)
+        let scheduling = codeyard_ci::runner_labels::scheduling_from_value(&yaml, false)
             .map_err(|_| AdmissionError::Invalid("CI runner selection is invalid"))?;
         Ok(ParsedWorkflow {
             definition,

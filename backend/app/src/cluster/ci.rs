@@ -48,8 +48,8 @@ fn transient_database_error(error: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ci::config::CiConfig;
-    use crate::ci::config::CiExecutionMode;
+    use codeyard_ci::config::CiConfig;
+    use codeyard_ci::config::CiExecutionMode;
     use crate::cluster::transport::IrohDialer;
     use crate::cluster::transport::Relay;
     use codeyard_support::node_identity::NodeKey;

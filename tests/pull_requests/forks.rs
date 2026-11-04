@@ -8,8 +8,8 @@ use base64::Engine;
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::config::CiConfig;
-use codeyard_app::ci::config::CiExecutionMode;
+use codeyard_ci::config::CiConfig;
+use codeyard_ci::config::CiExecutionMode;
 use codeyard_app::ci::queue::RunQueue;
 use codeyard_app::ci::runs::CiRuns;
 use codeyard_app::ci::workers::CiWorkers;
@@ -241,7 +241,7 @@ async fn contract(pg: bool) {
         "not-approved",
         "local",
         &[alice_id, bob_id],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels()
+        &codeyard_ci::config::CiConfig::default().platform_labels()
     )
     .await
     .unwrap()

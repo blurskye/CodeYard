@@ -12,7 +12,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 use codeyard_storage::ObjectStore;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;

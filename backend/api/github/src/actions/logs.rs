@@ -80,7 +80,7 @@ async fn live_logs(
             .into_iter()
             .map(|row| LogLine {
                 id: row.id,
-                stage: codeyard_app::ci::logs::normalize_stage_name(&row.stage),
+                stage: codeyard_ci::logs::normalize_stage_name(&row.stage),
                 line: row.line,
                 level: row.level,
                 timestamp: row.created_at.timestamp(),
@@ -124,7 +124,7 @@ async fn download(
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
         let (bytes, kind, filename) =
-            tokio::task::spawn_blocking(move || codeyard_app::ci::logs::archive::encode(snapshot))
+            tokio::task::spawn_blocking(move || codeyard_ci::logs::archive::encode(snapshot))
                 .await
                 .map_err(Error::unavailable)?
                 .map_err(Error::unavailable)?;
@@ -231,7 +231,7 @@ async fn download(
             step: None,
         }
     };
-    let token = codeyard_app::ci::runtime::secret();
+    let token = codeyard_ci::runtime::secret();
     if !codeyard_db_actions::action_logs::issue(
         &state.pool,
         actor,

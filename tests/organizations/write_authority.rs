@@ -687,7 +687,7 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
         "team-worker",
         "local",
         &[member],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()

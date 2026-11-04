@@ -10,9 +10,9 @@ use axum::http::StatusCode;
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::config::CiConfig;
-use codeyard_app::ci::config::CiExecutionMode;
-use codeyard_app::ci::config::RunLimits;
+use codeyard_ci::config::CiConfig;
+use codeyard_ci::config::CiExecutionMode;
+use codeyard_ci::config::RunLimits;
 use codeyard_app::ci::queue::RunQueue;
 use codeyard_storage::ObjectStore;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
@@ -207,7 +207,7 @@ async fn contract(pg: bool) {
         .claim(
             "slot-1",
             CiExecutionMode::Local,
-            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+            &codeyard_ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .unwrap()
@@ -740,7 +740,7 @@ async fn rest_settings(pg: bool) {
             .claim(
                 "settings",
                 CiExecutionMode::Local,
-                &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+                &codeyard_ci::config::CiConfig::default().platform_labels(),
             )
             .await
             .unwrap()
@@ -882,7 +882,7 @@ async fn rest_settings(pg: bool) {
         .claim(
             "settings",
             CiExecutionMode::Local,
-            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+            &codeyard_ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .unwrap()

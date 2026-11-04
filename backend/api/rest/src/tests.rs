@@ -280,7 +280,7 @@ async fn anonymous_slow_posts_cannot_block_authenticated_mutations() {
                 .unwrap(),
         ),
         None,
-        codeyard_app::ci::config::CiConfig::default(),
+        codeyard_ci::config::CiConfig::default(),
         None,
     );
     let capacity = state.form_reads.clone();

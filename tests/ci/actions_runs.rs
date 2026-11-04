@@ -61,7 +61,7 @@ async fn contract(pg: bool) {
         "documents",
         "local",
         &[alice],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -82,7 +82,7 @@ async fn contract(pg: bool) {
         "documents",
         "local",
         &[alice],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -320,7 +320,7 @@ async fn contract(pg: bool) {
                 .unwrap(),
         ),
         None,
-        codeyard_app::ci::config::CiConfig {
+        codeyard_ci::config::CiConfig {
             trusted_actor_ids: std::collections::BTreeSet::from([alice]),
             ..Default::default()
         },
@@ -336,7 +336,7 @@ async fn contract(pg: bool) {
             head_sha: Some(head.sha.clone()),
             event: "workflow_dispatch".into(),
             pull_request_id: None,
-            pipeline: codeyard_app::ci::config::CiPipelineKind::Ci,
+            pipeline: codeyard_ci::config::CiPipelineKind::Ci,
             workflow_paths: vec![
                 ".github/workflows/ci.yml".into(),
                 ".github/workflows/other.yml".into(),

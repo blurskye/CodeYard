@@ -502,7 +502,7 @@ pub async fn start(
         .is_some()
         .then(|| crate::cluster::rpc::RpcHandler::new(context.clone()));
     let sessions = rpc.as_ref().map(crate::cluster::rpc::RpcHandler::sessions);
-    let ci_config = std::sync::Arc::new(crate::ci::config::CiConfig::from_env()?);
+    let ci_config = std::sync::Arc::new(codeyard_ci::config::CiConfig::from_env()?);
     let queue = crate::ci::queue::RunQueue::Database {
         pool: pool.clone(),
         config: ci_config,

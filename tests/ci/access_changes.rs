@@ -102,7 +102,7 @@ async fn grant_changes(pool: &codeyard_db_core::DbPool) {
                 &slot,
                 "podman",
                 &trusted,
-                &codeyard_app::ci::config::CiConfig::default().platform_labels()
+                &codeyard_ci::config::CiConfig::default().platform_labels()
             )
             .await
             .unwrap()
@@ -141,7 +141,7 @@ async fn grant_changes(pool: &codeyard_db_core::DbPool) {
             &other,
             "podman",
             &trusted,
-            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+            &codeyard_ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .unwrap();
@@ -203,7 +203,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
             WORKER,
             "podman",
             &trusted,
-            &codeyard_app::ci::config::CiConfig::default().platform_labels()
+            &codeyard_ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()
@@ -218,7 +218,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
             SECOND_WORKER,
             "podman",
             &trusted,
-            &codeyard_app::ci::config::CiConfig::default().platform_labels()
+            &codeyard_ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()
@@ -313,7 +313,7 @@ async fn claimed_run_behind_repository_lock(
             WORKER,
             "podman",
             &trusted,
-            &codeyard_app::ci::config::CiConfig::default().platform_labels()
+            &codeyard_ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()
@@ -584,7 +584,7 @@ async fn cancellation_after_access_loss(pool: &codeyard_db_core::DbPool) {
             WORKER,
             "local",
             &[writer],
-            &codeyard_app::ci::config::CiConfig::default().platform_labels()
+            &codeyard_ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()
@@ -809,7 +809,7 @@ async fn postgres_team_grant_revocation_and_claim_do_not_deadlock() {
             WORKER,
             "local",
             &trusted,
-            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+            &codeyard_ci::config::CiConfig::default().platform_labels(),
         )
         .await
     });

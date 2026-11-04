@@ -525,7 +525,7 @@ mod tests {
                     .unwrap(),
             ),
             None,
-            codeyard_app::ci::config::CiConfig::default(),
+            codeyard_ci::config::CiConfig::default(),
             None,
         );
         let ids = std::collections::HashSet::from([candidate.id]);

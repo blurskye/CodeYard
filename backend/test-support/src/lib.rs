@@ -17,7 +17,7 @@ pub async fn closed_state() -> AppState {
         PathBuf::from("/unused-ssr-fixture"),
         storage,
         None,
-        codeyard_app::ci::config::CiConfig::default(),
+        codeyard_ci::config::CiConfig::default(),
         None,
     )
 }

@@ -15,7 +15,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 use codeyard_app::repositories::lifecycle;
 use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
@@ -821,7 +821,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    let token = codeyard_app::ci::runtime::issue(
+    let token = codeyard_ci::runtime::issue(
         f.pool(),
         &runtime,
         &codeyard_db_actions::actions::ActionsSettings::default(),

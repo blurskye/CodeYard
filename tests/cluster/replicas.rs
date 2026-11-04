@@ -8,7 +8,7 @@ use codeyard::backend::cli::cluster as cluster_cli;
 use codeyard::backend::cli::cluster::Command;
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 
 use codeyard_app::cluster::replicas::promote::Promotion;
 use codeyard_app::cluster::replicas::promote::Silent;
@@ -1876,8 +1876,8 @@ async fn delete_names_the_promoted_primary_on_postgres() {
 
 #[tokio::test]
 async fn database_free_ci_checkout_uses_claimed_replica_targets() {
-    use codeyard_app::ci::config::CiConfig;
-    use codeyard_app::ci::config::CiExecutionMode;
+    use codeyard_ci::config::CiConfig;
+    use codeyard_ci::config::CiExecutionMode;
     use codeyard_app::ci::queue::ClaimedRun;
     use codeyard_app::ci::queue::RunQueue;
     use codeyard_notifications::broadcast::NotificationBroadcaster;
@@ -1944,7 +1944,7 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
         .claim(
             &worker,
             CiExecutionMode::Local,
-            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+            &codeyard_ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .unwrap()

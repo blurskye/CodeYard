@@ -149,7 +149,7 @@ impl Broker {
     async fn new_with_ci(
         pool: DbPool,
         git_user: String,
-        config: Option<codeyard_app::ci::config::CiConfig>,
+        config: Option<codeyard_ci::config::CiConfig>,
     ) -> Self {
         let uid = private_files::effective_uid();
         let helper = PathBuf::from(
@@ -603,7 +603,7 @@ async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
     let broker = Broker::new_with_ci(
         database.pool.clone(),
         "git".to_owned(),
-        Some(codeyard_app::ci::config::CiConfig {
+        Some(codeyard_ci::config::CiConfig {
             trusted_actor_ids: [reader.id].into(),
             ..Default::default()
         }),
@@ -1437,7 +1437,7 @@ impl PushFixture {
             directory.path().to_owned(),
             storage,
             None,
-            codeyard_app::ci::config::CiConfig::default(),
+            codeyard_ci::config::CiConfig::default(),
             None,
         );
         Self {

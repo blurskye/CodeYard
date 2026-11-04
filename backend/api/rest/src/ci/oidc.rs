@@ -21,7 +21,7 @@ pub fn router() -> Router<Arc<AppState>> {
 }
 
 async fn discovery() -> Json<Value> {
-    let issuer = codeyard_app::ci::oidc::issuer();
+    let issuer = codeyard_ci::oidc::issuer();
     Json(
         json!({"issuer":issuer,"jwks_uri":format!("{issuer}/.well-known/jwks"),
         "subject_types_supported":["public"],"response_types_supported":["id_token"],
@@ -30,7 +30,7 @@ async fn discovery() -> Json<Value> {
 }
 
 async fn jwks(State(state): State<Arc<AppState>>) -> Result<Json<Value>, StatusCode> {
-    codeyard_app::ci::oidc::jwks(&state.oidc_keys)
+    codeyard_ci::oidc::jwks(&state.oidc_keys)
         .await
         .map(Json)
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)
@@ -56,7 +56,7 @@ async fn token(
         return Err(StatusCode::UNPROCESSABLE_ENTITY);
     }
     let value =
-        codeyard_app::ci::oidc::issue(&state.oidc_keys, credential, input.audience.as_deref())
+        codeyard_ci::oidc::issue(&state.oidc_keys, credential, input.audience.as_deref())
             .await
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
             .ok_or(StatusCode::FORBIDDEN)?;

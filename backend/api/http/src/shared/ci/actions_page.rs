@@ -446,7 +446,7 @@ pub async fn actions(
             .into_iter()
             .map(|line| LogLine {
                 id: line.id,
-                stage: codeyard_app::ci::logs::normalize_stage_name(&line.stage),
+                stage: codeyard_ci::logs::normalize_stage_name(&line.stage),
                 line: line.line,
                 level: line.level,
                 timestamp: line.created_at.timestamp(),

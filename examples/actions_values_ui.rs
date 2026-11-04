@@ -2,7 +2,7 @@
 //! This is not an automatic test target: ordinary native tests need no browser bundle.
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 use codeyard_app::repositories::lifecycle;
 use codeyard_storage::ObjectStore;
 use codeyard_db_actions::environment_values as environments;

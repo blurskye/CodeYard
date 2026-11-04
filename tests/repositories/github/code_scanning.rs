@@ -722,7 +722,7 @@ async fn workflow_tokens(
         "scanner-worker",
         "local",
         &[actor],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -734,7 +734,7 @@ async fn workflow_tokens(
             ".github/workflows/security.yml".into(),
             b"permissions: {contents: read, actions: read, security-events: write}\njobs: {scanner: {}}".to_vec(),
         )]);
-        let tokens = codeyard_app::ci::tokens::issue(pool, &run, &definitions, false)
+        let tokens = codeyard_ci::tokens::issue(pool, &run, &definitions, false)
             .await
             .unwrap();
         let token = if engine == "act" {
@@ -821,7 +821,7 @@ async fn workflow_tokens(
             ".github/workflows/security.yml".into(),
             b"permissions: {contents: write}\njobs: {scanner: {}}".to_vec(),
         )]);
-        let tokens = codeyard_app::ci::tokens::issue(pool, &run, &definitions, false)
+        let tokens = codeyard_ci::tokens::issue(pool, &run, &definitions, false)
             .await
             .unwrap();
         let token = if engine == "act" {

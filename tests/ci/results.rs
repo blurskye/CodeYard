@@ -8,7 +8,7 @@ use axum::{
     Router,
 };
 
-use codeyard_app::ci::runtime;
+use codeyard_ci::runtime;
 use codeyard_db_actions::action_objects as objects;
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -897,7 +897,7 @@ async fn postgres_results_pending_uploads_share_quota() {
 async fn shared_s3_across_routers(pg: bool) {
     use axum::{extract::State, http::Method, response::IntoResponse};
     use codeyard_app::app::AppState;
-    use codeyard_app::ci::config::CiConfig;
+    use codeyard_ci::config::CiConfig;
     use codeyard_storage::s3::S3Config;
     use codeyard_storage::ObjectStore;
     use std::{

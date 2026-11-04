@@ -12,7 +12,7 @@ use axum::http::StatusCode;
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 use codeyard_app::repositories::pull_requests::merge::prepare_pull_request_merge;
 use codeyard_app::repositories::pull_requests::merge::publish_prepared_merge;
 use codeyard_app::repositories::pull_requests::merge::MergeRequest;

@@ -1,11 +1,11 @@
 //! A CI worker: claims queued runs and executes their workflows with `act`.
-use crate::ci::config::podman_socket_path;
-use crate::ci::config::CiExecutionMode;
+use codeyard_ci::config::podman_socket_path;
+use codeyard_ci::config::CiExecutionMode;
 use crate::ci::process::Stopped;
 use crate::ci::queue::ClaimedRun;
 use crate::ci::queue::CoreRefusal;
 use crate::ci::queue::RunQueue;
-use crate::ci::runner_labels::labels_from_value;
+use codeyard_ci::runner_labels::labels_from_value;
 use crate::ci::workers::CiWorkers;
 use anyhow::bail;
 use anyhow::ensure;
@@ -1138,7 +1138,7 @@ fn act_command(
             for (label, image) in &config.act_platform_map {
                 // The site's runner image replaces the node's for the Ubuntu labels.
                 let image = match &claim.limits.image {
-                    Some(site) if crate::ci::config::UBUNTU_LABELS.contains(&label.as_str()) => {
+                    Some(site) if codeyard_ci::config::UBUNTU_LABELS.contains(&label.as_str()) => {
                         site
                     }
                     _ => image,
@@ -1193,7 +1193,7 @@ fn container_filters(label: &str) -> String {
 #[cfg(test)]
 fn prepare_workflow(
     path: &Path,
-    config: &crate::ci::config::CiConfig,
+    config: &codeyard_ci::config::CiConfig,
     run_id: uuid::Uuid,
 ) -> Result<BTreeSet<String>> {
     prepare_workflow_for_engine(path, config, run_id, false, "")
@@ -1201,7 +1201,7 @@ fn prepare_workflow(
 
 fn prepare_workflow_for_engine(
     path: &Path,
-    config: &crate::ci::config::CiConfig,
+    config: &codeyard_ci::config::CiConfig,
     run_id: uuid::Uuid,
     native: bool,
     limits: &str,
@@ -2105,7 +2105,7 @@ impl Workspace {
     fn write_environment_values(
         &self,
         workflow: &str,
-        values: &crate::ci::environment_values::EnvironmentValues,
+        values: &codeyard_ci::environment_values::EnvironmentValues,
         fork: bool,
     ) -> Result<Option<PathBuf>> {
         use std::{io::Write, os::unix::fs::OpenOptionsExt};
@@ -2184,7 +2184,7 @@ impl Workspace {
         &self,
         workflow: &str,
         tokens: &BTreeMap<String, String>,
-        credentials: &crate::ci::tokens::GithubTokens,
+        credentials: &codeyard_ci::tokens::GithubTokens,
     ) -> Result<PathBuf> {
         use std::os::unix::fs::OpenOptionsExt;
         let path = self
@@ -2305,7 +2305,7 @@ fn file_name(workflow: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ci::config::CiConfig;
+    use codeyard_ci::config::CiConfig;
     use crate::repositories::store::RepoStore;
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -2316,7 +2316,7 @@ mod tests {
         let path = root.path().join("ci.yml");
         let source = b"name: Test\njobs: {build: {runs-on: ubuntu-latest, container: alpine}}\n";
         std::fs::write(&path, source).unwrap();
-        let config = crate::ci::config::CiConfig {
+        let config = codeyard_ci::config::CiConfig {
             mode: CiExecutionMode::Podman,
             ..Default::default()
         };
@@ -2341,7 +2341,7 @@ mod tests {
             .unwrap()
             .contains(&run_container_label(run_id)));
         std::fs::write(&path, source).unwrap();
-        let config = crate::ci::config::CiConfig {
+        let config = codeyard_ci::config::CiConfig {
             mode: CiExecutionMode::Local,
             ..Default::default()
         };
@@ -2398,12 +2398,12 @@ mod tests {
             "worker",
             "local",
             &[owner.id],
-            &crate::ci::config::CiConfig::default().platform_labels(),
+            &codeyard_ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .unwrap()
         .unwrap();
-        let config = Arc::new(crate::ci::config::CiConfig::default());
+        let config = Arc::new(codeyard_ci::config::CiConfig::default());
         let service = CiWorkers::new(
             RunQueue::Database {
                 pool: pool.clone(),
@@ -2653,7 +2653,7 @@ mod tests {
     #[tokio::test]
     async fn environment_values_files_are_private_and_bound_to_one_workflow() {
         let workspace = secret_workspace();
-        let mut values = crate::ci::environment_values::EnvironmentValues::default();
+        let mut values = codeyard_ci::environment_values::EnvironmentValues::default();
         for (key, secret) in [("prod", "production-secret"), ("other", "other-secret")] {
             values.environments.insert(
                 key.into(),
@@ -2704,7 +2704,7 @@ mod tests {
     async fn environment_values_masking_retains_shadowed_secrets_but_not_variables() {
         let root = tempfile::tempdir().unwrap();
         let (_, run) = queued_fixture(root.path()).await;
-        let mut environment_values = crate::ci::environment_values::EnvironmentValues::default();
+        let mut environment_values = codeyard_ci::environment_values::EnvironmentValues::default();
         environment_values.environments.insert(
             "prod".into(),
             codeyard_db_actions::environment_values::WorkflowValues {
@@ -3022,7 +3022,7 @@ mod tests {
             storage_replicas: Vec::new(),
             limits: Default::default(),
             github_tokens: Default::default(),
-            runtime: crate::ci::runtime::RuntimeCredentials {
+            runtime: codeyard_ci::runtime::RuntimeCredentials {
                 token: "runtime-test-token".into(),
                 results_url: "https://results.example".into(),
             },
@@ -3707,7 +3707,7 @@ jobs:
         .unwrap();
         let queue = RunQueue::Database {
             pool: pool.clone(),
-            config: Arc::new(crate::ci::config::CiConfig::default()),
+            config: Arc::new(codeyard_ci::config::CiConfig::default()),
             secrets: None,
             context: None,
             notifications: Arc::new(

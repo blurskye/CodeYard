@@ -35,7 +35,7 @@ pub async fn issue(
     issue_selected(pool, run, definitions, permissive, None).await
 }
 
-pub(crate) async fn issue_selected(
+pub async fn issue_selected(
     pool: &DbPool,
     run: &CiRun,
     definitions: &BTreeMap<String, Vec<u8>>,
@@ -172,7 +172,7 @@ pub(crate) async fn issue_selected(
                 format!(
                     "{}{}",
                     codeyard_support::tokens::ACTIONS_PREFIX,
-                    crate::ci::runtime::secret()
+                    codeyard_ci::runtime::secret()
                 ),
             )
         })
@@ -291,9 +291,9 @@ pub(crate) async fn issue_selected(
     Ok(GithubTokens {
         workflows,
         oidc_jobs,
-        oidc_url: crate::ci::runtime::oidc_url(),
+        oidc_url: codeyard_ci::runtime::oidc_url(),
         act: values.get("act").cloned().unwrap_or_default(),
         act_limited,
-        completion_secret: crate::ci::runtime::secret(),
+        completion_secret: codeyard_ci::runtime::secret(),
     })
 }

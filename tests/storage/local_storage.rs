@@ -501,7 +501,7 @@ impl Fixture {
             self.temporary.path().join("repos"),
             self.storage.clone(),
             None,
-            codeyard_app::ci::config::CiConfig::default(),
+            codeyard_ci::config::CiConfig::default(),
             None,
         ))
     }

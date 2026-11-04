@@ -5,8 +5,8 @@ use crate::support::http_client as pulls;
 use crate::support::native_database as native;
 use crate::support::rpc_operations;
 
-use codeyard_app::ci::config::CiConfig;
-use codeyard_app::ci::config::CiExecutionMode;
+use codeyard_ci::config::CiConfig;
+use codeyard_ci::config::CiExecutionMode;
 use codeyard_app::ci::queue::RunQueue;
 use codeyard_app::ci::workers::CiWorkers;
 
@@ -2021,7 +2021,7 @@ async fn full_pipeline_tests_gate_deployment_and_report_the_workers_mode() {
                 event: "workflow_dispatch".into(),
                 pull_request_id: None,
                 inputs: None,
-                pipeline: codeyard_app::ci::config::CiPipelineKind::Full,
+                pipeline: codeyard_ci::config::CiPipelineKind::Full,
                 workflow_paths: vec![
                     ".github/workflows/tests.yml".into(),
                     ".github/workflows/deploy.yml".into(),

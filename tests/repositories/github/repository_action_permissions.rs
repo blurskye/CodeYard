@@ -1,5 +1,5 @@
 use super::*;
-use codeyard_app::ci::config::CiExecutionMode;
+use codeyard_ci::config::CiExecutionMode;
 use codeyard_app::ci::queue::RunQueue;
 use codeyard_app::repositories::lifecycle;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
@@ -170,7 +170,7 @@ async fn contract(pg: bool) {
         .claim(
             "slot-1",
             CiExecutionMode::Local,
-            &codeyard_app::ci::config::CiConfig::default().platform_labels()
+            &codeyard_ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()
@@ -207,7 +207,7 @@ async fn contract(pg: bool) {
         .claim(
             "slot-1",
             CiExecutionMode::Local,
-            &codeyard_app::ci::config::CiConfig::default().platform_labels()
+            &codeyard_ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()

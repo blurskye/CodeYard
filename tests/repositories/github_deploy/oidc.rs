@@ -110,7 +110,7 @@ async fn contract(pg: bool) {
         "worker",
         "local",
         &[actor],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -564,7 +564,7 @@ async fn organization_contract(pg: bool) {
         "worker",
         "local",
         &[alice],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()

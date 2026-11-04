@@ -1,7 +1,7 @@
 //! Incremental log durability, cursors and retention on both native engines.
 use crate::support::database::Database;
 
-use codeyard_app::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 
 use codeyard_actions::progress::Event;
 use codeyard_actions::progress::Update;
@@ -296,7 +296,7 @@ async fn ordered_read_across_500_chunks(pg: bool) {
         .unwrap()
         .unwrap();
     assert_eq!(snapshot.lines.len(), 1000);
-    let (bytes, kind, _) = codeyard_app::ci::logs::archive::encode(snapshot).unwrap();
+    let (bytes, kind, _) = codeyard_ci::logs::archive::encode(snapshot).unwrap();
     assert_eq!(kind, "application/zip");
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
     let mut text = String::new();

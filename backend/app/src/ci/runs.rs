@@ -1,6 +1,6 @@
 //! Admission, enqueue and cancellation of durable CI runs.
-use crate::ci::config::CiConfig;
-use crate::ci::config::CiPipelineKind;
+use codeyard_ci::config::CiConfig;
+use codeyard_ci::config::CiPipelineKind;
 use anyhow::Result;
 use codeyard_db_core::ci_admission::AdmissionError;
 use codeyard_db_core::ci_messages::branch_name;

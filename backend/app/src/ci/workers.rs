@@ -1,5 +1,5 @@
 //! Worker execution and shutdown for this node.
-use crate::ci::config::CiConfig;
+use codeyard_ci::config::CiConfig;
 use crate::ci::queue::RunQueue;
 use anyhow::ensure;
 use anyhow::Result;

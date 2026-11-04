@@ -94,7 +94,7 @@ async fn contract(pg: bool) {
         "first",
         "local",
         &[alice],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
+        &codeyard_ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -105,7 +105,7 @@ async fn contract(pg: bool) {
         "blocked",
         "local",
         &[alice],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels()
+        &codeyard_ci::config::CiConfig::default().platform_labels()
     )
     .await
     .unwrap()
@@ -117,7 +117,7 @@ async fn contract(pg: bool) {
             "other",
             "local",
             &[alice],
-            &codeyard_app::ci::config::CiConfig::default().platform_labels()
+            &codeyard_ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()
@@ -209,7 +209,7 @@ async fn contract(pg: bool) {
         "blocked",
         "local",
         &[alice],
-        &codeyard_app::ci::config::CiConfig::default().platform_labels()
+        &codeyard_ci::config::CiConfig::default().platform_labels()
     )
     .await
     .unwrap()
@@ -224,7 +224,7 @@ async fn contract(pg: bool) {
             "replacement",
             "local",
             &[alice],
-            &codeyard_app::ci::config::CiConfig::default().platform_labels()
+            &codeyard_ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()

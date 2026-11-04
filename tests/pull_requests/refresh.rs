@@ -563,7 +563,7 @@ async fn concurrent_refresh_converges(pg: bool) {
         root.path().to_owned(),
         Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
         None,
-        codeyard_app::ci::config::CiConfig::default(),
+        codeyard_ci::config::CiConfig::default(),
         None,
     );
     let ci = state.ci_runs.clone();
