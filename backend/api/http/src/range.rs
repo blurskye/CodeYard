@@ -1,7 +1,7 @@
 //! One single-range header contract for immutable HTTP downloads.
 use axum::http::header;
 use axum::http::HeaderMap;
-use codeyard_app::storage::range::ByteRange;
+use codeyard_storage::range::ByteRange;
 
 /// The requested `Range`, or `Full`. An `If-Range` that does not equal the response's strong
 /// validator asks for the complete representation (RFC 9110 section 13.1.5). Without a

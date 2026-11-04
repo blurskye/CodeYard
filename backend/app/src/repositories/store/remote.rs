@@ -10,7 +10,7 @@ use crate::repositories::store::types::WorkflowPayloadEntry;
 use crate::repositories::store::types::MAX_BLOB_RESPONSE_BYTES;
 use crate::repositories::store::types::MAX_WORKFLOW_PAYLOAD_BYTES;
 use crate::repositories::store::RepoStore;
-use crate::storage::range::ByteRange as BlobRange;
+use codeyard_storage::range::ByteRange as BlobRange;
 use codeyard_git::error::RepoError;
 use codeyard_git::BlobContent;
 use codeyard_git::CiWorkflowSource;

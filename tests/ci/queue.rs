@@ -1633,7 +1633,7 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
     use codeyard_app::ci::config::CiConfig;
-    use codeyard_app::storage::ObjectStore;
+    use codeyard_storage::ObjectStore;
     use codeyard_model::ci::LogLine;
     use codeyard_webui::app::PageEnvelope;
     use codeyard_webui::bootstrap::MAX_PAGE_MODEL_BYTES;

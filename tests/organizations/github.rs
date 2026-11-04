@@ -33,7 +33,7 @@ use codeyard_app::ci::config::CiConfig;
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};

@@ -3,7 +3,7 @@
 use crate::cluster::context::NodeContext;
 use crate::repositories::store::repo_store;
 use crate::repositories::store::RepoStore;
-use crate::storage::range::ByteRange as BlobRange;
+use codeyard_storage::range::ByteRange as BlobRange;
 use chrono::DateTime;
 use chrono::Utc;
 use codeyard_db_core::models::Repository;

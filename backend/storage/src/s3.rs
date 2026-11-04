@@ -1,9 +1,9 @@
 //! Uploaded files in an S3-compatible bucket. Clients upload and download
 //! directly with presigned URLs; the server only signs, checks and deletes.
-use crate::storage::media_signature_matches;
-use crate::storage::valid_key;
-use crate::storage::StorageError;
-use crate::storage::Upload;
+use crate::media_signature_matches;
+use crate::valid_key;
+use crate::StorageError;
+use crate::Upload;
 use anyhow::anyhow;
 use anyhow::ensure;
 use anyhow::Context;
@@ -552,7 +552,7 @@ impl S3Store {
             .response_content_disposition(if inline_image.is_some() {
                 "inline".to_owned()
             } else {
-                crate::storage::attachment_disposition(filename)
+                crate::attachment_disposition(filename)
             })
             .presigned(PresigningConfig::expires_in(Duration::from_secs(seconds))?)
             .await?;

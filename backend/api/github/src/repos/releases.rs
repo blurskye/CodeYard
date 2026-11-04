@@ -41,10 +41,10 @@ pub(crate) fn release_error(error: ReleaseError) -> Error {
         ReleaseError::TargetRequired => Error::invalid("target_commitish is required"),
         ReleaseError::Git(error) => codeyard_app::api_shared::github::contents::store_error(error),
         ReleaseError::Ref(error) => crate::git::refs::ref_error(error),
-        ReleaseError::Upload(codeyard_app::files::uploads::UploadError::Invalid) => {
+        ReleaseError::Upload(codeyard_storage::files::uploads::UploadError::Invalid) => {
             Error::invalid("Invalid asset upload")
         }
-        ReleaseError::Upload(codeyard_app::files::uploads::UploadError::Quota) => {
+        ReleaseError::Upload(codeyard_storage::files::uploads::UploadError::Quota) => {
             Error::new(StatusCode::FORBIDDEN, "Upload quota exhausted")
         }
         ReleaseError::Upload(_) | ReleaseError::Download(_) => Error::unavailable(()),

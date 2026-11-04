@@ -481,7 +481,7 @@ async fn vulnerability_contract(pg: bool) {
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
     use codeyard_app::ci::config::CiConfig;
-    use codeyard_app::storage::ObjectStore;
+    use codeyard_storage::ObjectStore;
     use codeyard_app::vulnerabilities;
     use codeyard_db_core::queries::organizations::OrganizationOutcome;
     use codeyard_db_orgs::organizations::profiles::NewOrganization;

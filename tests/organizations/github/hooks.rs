@@ -18,7 +18,7 @@ use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
 use codeyard_db_repos::webhooks::HookOwner;
 
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
 use codeyard_support::crypto::hmac_sha256;

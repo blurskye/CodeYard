@@ -4,12 +4,12 @@
 //! publishes its tag.
 use crate::ci::runs::CiRuns;
 use crate::cluster::context::NodeContext;
-use crate::files::downloads::DownloadError;
-use crate::files::uploads::UploadDeclaration;
-use crate::files::uploads::UploadError;
+use codeyard_storage::files::downloads::DownloadError;
+use codeyard_storage::files::uploads::UploadDeclaration;
+use codeyard_storage::files::uploads::UploadError;
 use crate::repositories::refs::RefError;
 use crate::repositories::store::repo_store;
-use crate::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use crate::webhooks::payloads::Scope;
 use anyhow::Error;
 use codeyard_db_core::models::Release;
@@ -841,7 +841,7 @@ pub async fn upload_asset(
     }
     let size = bytes.len() as i64;
     let checksum = hex::encode(Sha256::digest(&bytes));
-    let file_id = crate::files::uploads::store_upload(
+    let file_id = codeyard_storage::files::uploads::store_upload(
         pool,
         store,
         actor,
@@ -951,7 +951,7 @@ pub async fn download(
     tag: &str,
     asset_name: &str,
     count: bool,
-) -> Result<crate::files::downloads::AssetDownload, ReleaseError> {
+) -> Result<codeyard_storage::files::downloads::AssetDownload, ReleaseError> {
     let asset = codeyard_db_repos::releases::download_asset(
         pool,
         viewer,
@@ -974,7 +974,7 @@ pub async fn download_by_id(
     repo_id: i64,
     asset_id: i64,
     count: bool,
-) -> Result<crate::files::downloads::AssetDownload, ReleaseError> {
+) -> Result<codeyard_storage::files::downloads::AssetDownload, ReleaseError> {
     let asset = codeyard_db_repos::releases::download_asset(
         pool,
         viewer,
@@ -994,14 +994,14 @@ async fn open_asset(
     store: &ObjectStore,
     asset: ReleaseAsset,
     count: bool,
-) -> Result<crate::files::downloads::AssetDownload, ReleaseError> {
+) -> Result<codeyard_storage::files::downloads::AssetDownload, ReleaseError> {
     let mut file = codeyard_db_repos::files::get_file_by_id(pool, asset.file_id)
         .await
         .map_err(unavailable)?
         .filter(|file| file.is_active)
         .ok_or(ReleaseError::NotFound)?;
     file.original_name = asset.name;
-    let opened = crate::files::downloads::open_file(store, file)
+    let opened = codeyard_storage::files::downloads::open_file(store, file)
         .await
         .map_err(ReleaseError::Download)?;
     if count {
@@ -1023,7 +1023,7 @@ async fn discard_file(pool: &codeyard_db_core::DbPool, store: &ObjectStore, file
         tracing::warn!(%file, "could not find the uploader of a release file");
         return;
     };
-    if crate::files::deletion::delete_unreferenced_file(pool, store, uploader, file)
+    if codeyard_storage::files::deletion::delete_unreferenced_file(pool, store, uploader, file)
         .await
         .is_err()
     {

@@ -22,7 +22,7 @@ pub async fn get_public_download_url(
         .await?
         .map(|user| user.id);
     let file_id = parse_file_id(&file_id)?;
-    let download = codeyard_app::files::downloads::download_asset(
+    let download = codeyard_storage::files::downloads::download_asset(
         &state.pool,
         &state.storage,
         (actor, extract_session_id(&headers)),
@@ -43,7 +43,7 @@ pub async fn public_file_redirect(
         .await?
         .map(|user| user.id);
     let file_id = parse_file_id(&file_id)?;
-    let download = codeyard_app::files::downloads::open_asset_download(
+    let download = codeyard_storage::files::downloads::open_asset_download(
         &state.pool,
         &state.storage,
         (actor, extract_session_id(&headers)),

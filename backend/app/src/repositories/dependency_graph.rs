@@ -36,7 +36,7 @@ async fn file(
         .blob_range(
             sha,
             name,
-            crate::storage::range::ByteRange::Window {
+            codeyard_storage::range::ByteRange::Window {
                 offset: 0,
                 length: limit,
             },

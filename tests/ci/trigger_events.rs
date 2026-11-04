@@ -11,7 +11,7 @@ use codeyard_app::ci::config::CiConfig;
 use codeyard_app::ci::config::CiExecutionMode;
 use codeyard_app::ci::queue::RunQueue;
 use codeyard_app::repositories::lifecycle::provision;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, sync::Arc};

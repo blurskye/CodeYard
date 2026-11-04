@@ -7,7 +7,7 @@ use codeyard_api_http::error::ApiFailure;
 use codeyard_api_http::session::extract_session_id;
 use codeyard_api_http::session::get_current_user;
 use codeyard_app::app::AppState;
-use codeyard_app::files::uploads::ConfirmationError;
+use codeyard_storage::files::uploads::ConfirmationError;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
@@ -29,7 +29,7 @@ pub async fn confirm_upload(
     Json(req): Json<ConfirmUploadRequest>,
 ) -> Result<Json<ConfirmUploadResponse>, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
-    codeyard_app::files::uploads::confirm_upload(
+    codeyard_storage::files::uploads::confirm_upload(
         &state.pool,
         &state.storage,
         (user.id, extract_session_id(&headers).unwrap_or_default()),

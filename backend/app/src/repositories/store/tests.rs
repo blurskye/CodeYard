@@ -14,7 +14,7 @@ use crate::repositories::store::types::MAX_BLOB_RESPONSE_BYTES;
 use crate::repositories::store::types::MAX_COMMIT_OFFSET;
 use crate::repositories::store::types::MAX_COMMIT_PAGE_SIZE;
 use crate::repositories::store::RepoStore;
-use crate::storage::range::ByteRange as BlobRange;
+use codeyard_storage::range::ByteRange as BlobRange;
 use codeyard_git::error::RepoErrorReason;
 use codeyard_git::repository::MAX_DIFF_FILE_PATCH_BYTES;
 use codeyard_git::repository::MAX_REPOSITORY_REFS;

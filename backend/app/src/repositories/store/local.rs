@@ -19,7 +19,7 @@ use crate::repositories::store::types::MergeRequest;
 use crate::repositories::store::types::RestackMove;
 use crate::repositories::store::types::MAX_ARCHIVE_RESPONSE_BYTES;
 use crate::repositories::store::types::MAX_BLOB_RESPONSE_BYTES;
-use crate::storage::range::ByteRange as BlobRange;
+use codeyard_storage::range::ByteRange as BlobRange;
 use codeyard_git as git;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;

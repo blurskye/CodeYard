@@ -16,7 +16,7 @@ use axum::routing::any;
 use axum::Json;
 use axum::Router;
 use codeyard_app::app::AppState;
-use codeyard_app::storage::Download;
+use codeyard_storage::Download;
 use codeyard_db_repos::packages::Blob;
 use codeyard_db_repos::packages::Publish;
 use codeyard_db_repos::packages::Upload;

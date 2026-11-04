@@ -15,7 +15,7 @@ use codeyard_app::ci::workers::CiWorkers;
 use codeyard_app::repositories;
 use codeyard_app::repositories::store::editor::FileWrite;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, sync::Arc, time::Duration};

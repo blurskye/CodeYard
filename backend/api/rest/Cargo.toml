@@ -5,6 +5,7 @@ edition.workspace = true
 license = "LGPL-3.0-or-later"
 
 [dependencies]
+codeyard-storage.workspace = true
 subtle.workspace = true
 anyhow.workspace = true
 axum.workspace = true

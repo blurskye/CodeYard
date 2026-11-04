@@ -1152,7 +1152,7 @@ async fn ecosystems(pg: bool) {
         .await;
     f.execute("UPDATE package_blobs SET expires_at=0", &[])
         .await;
-    let store = codeyard_app::storage::ObjectStore::open(root.path(), None)
+    let store = codeyard_storage::ObjectStore::open(root.path(), None)
         .await
         .unwrap();
     packages::collect(f.pool(), &store).await.unwrap();

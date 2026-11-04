@@ -14,7 +14,7 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_app::storage::Download;
+use codeyard_storage::Download;
 use codeyard_db_repos::repository_exports as exports;
 use codeyard_db_repos::repository_exports::ExportOptions;
 use codeyard_db_repos::repository_exports::ExportRefusal;
@@ -428,7 +428,7 @@ pub(crate) async fn archive(
                 (header::CONTENT_TYPE, "application/gzip".to_owned()),
                 (
                     header::CONTENT_DISPOSITION,
-                    codeyard_app::storage::attachment_disposition(&filename),
+                    codeyard_storage::attachment_disposition(&filename),
                 ),
                 (header::CACHE_CONTROL, "private, no-store".to_owned()),
             ],

@@ -1,4 +1,4 @@
-use crate::storage::ObjectStore;
+use crate::ObjectStore;
 use codeyard_db_core::DbPool;
 use uuid::Uuid;
 

@@ -5,8 +5,8 @@ use anyhow::Context;
 use anyhow::Result;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;
-use codeyard_app::storage::s3::S3Config;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::s3::S3Config;
+use codeyard_storage::ObjectStore;
 use codeyard_db_core::DbPool;
 use codeyard_model::node_roles::NodeRole;
 use codeyard_support::fs::lock_state_dir;
@@ -141,7 +141,7 @@ const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
 /// restore window. Safe to run on several nodes at once: each row is removed by only one.
 async fn remove_expired_rows(
     pool: DbPool,
-    storage: std::sync::Arc<codeyard_app::storage::ObjectStore>,
+    storage: std::sync::Arc<codeyard_storage::ObjectStore>,
     web: bool,
     repos_path: Option<PathBuf>,
     mut stop: tokio::sync::watch::Receiver<bool>,
@@ -184,10 +184,10 @@ async fn remove_expired_rows(
     }
 }
 
-async fn remove_expired_web_rows(pool: &DbPool, storage: &codeyard_app::storage::ObjectStore) {
+async fn remove_expired_web_rows(pool: &DbPool, storage: &codeyard_storage::ObjectStore) {
     match tokio::time::timeout(
         std::time::Duration::from_secs(12),
-        codeyard_app::files::deletion::remove_expired_uploads(pool, storage),
+        codeyard_storage::files::deletion::remove_expired_uploads(pool, storage),
     )
     .await
     {

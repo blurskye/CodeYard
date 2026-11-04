@@ -62,8 +62,8 @@ pub enum Download {
 }
 
 enum Backend {
-    Local(crate::storage::local::LocalStore),
-    S3(crate::storage::s3::S3Store),
+    Local(crate::local::LocalStore),
+    S3(crate::s3::S3Store),
 }
 
 pub struct ObjectStore {
@@ -75,11 +75,11 @@ pub struct ObjectStore {
 }
 
 impl ObjectStore {
-    pub async fn open(state_dir: &Path, s3: Option<crate::storage::s3::S3Config>) -> Result<Self> {
+    pub async fn open(state_dir: &Path, s3: Option<crate::s3::S3Config>) -> Result<Self> {
         let backend = match s3 {
-            Some(config) => Backend::S3(crate::storage::s3::S3Store::open(config).await?),
+            Some(config) => Backend::S3(crate::s3::S3Store::open(config).await?),
             None => Backend::Local(
-                crate::storage::local::LocalStore::open(&state_dir.join("objects")).await?,
+                crate::local::LocalStore::open(&state_dir.join("objects")).await?,
             ),
         };
         Ok(Self {
@@ -91,7 +91,7 @@ impl ObjectStore {
         })
     }
 
-    pub(crate) fn state_directory(&self) -> &Path {
+    pub fn state_directory(&self) -> &Path {
         &self.state_dir
     }
 
@@ -189,12 +189,12 @@ impl ObjectStore {
     /// Stores bytes sent to this server (local storage only), checking size,
     /// checksum and file signature on the way in. `io` is the slot the caller was
     /// admitted with; the blocking work keeps it until that work ends.
-    pub(crate) async fn stage_local(
+    pub async fn stage_local(
         &self,
         upload: &Upload<'_>,
         reader: impl AsyncRead + Unpin,
         io: Arc<OwnedSemaphorePermit>,
-    ) -> Result<crate::storage::local::StagedUpload, StorageError> {
+    ) -> Result<crate::local::StagedUpload, StorageError> {
         match &self.backend {
             Backend::Local(store) => store.stage(upload, reader, io).await,
             Backend::S3(_) => Err(StorageError::Rejected),
@@ -443,3 +443,5 @@ mod tests {
         }
     }
 }
+
+pub mod files;

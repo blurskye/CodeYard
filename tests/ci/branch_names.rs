@@ -20,7 +20,7 @@ async fn long_account_names_can_list_and_dispatch_workflows_on_both_engines() {
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
     use codeyard_app::repositories::lifecycle;
-    use codeyard_app::storage::ObjectStore;
+    use codeyard_storage::ObjectStore;
     use serde_json::{json, Value};
     use std::sync::Arc;
 
@@ -152,7 +152,7 @@ async fn manual_runs_take_the_inputs_their_workflow_declares_on_both_engines() {
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
     use codeyard_app::repositories::lifecycle;
-    use codeyard_app::storage::ObjectStore;
+    use codeyard_storage::ObjectStore;
     use serde_json::{json, Value};
     use std::sync::Arc;
 
@@ -383,7 +383,7 @@ async fn pull_request_base_names_that_look_like_refs_keep_their_branch_kind() {
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
     use codeyard_app::repositories::lifecycle;
-    use codeyard_app::storage::ObjectStore;
+    use codeyard_storage::ObjectStore;
     use serde_json::json;
     use std::sync::Arc;
     bundle::install();

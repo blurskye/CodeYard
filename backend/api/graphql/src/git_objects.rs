@@ -58,7 +58,7 @@ pub(super) async fn load(
             let blob = store
                 .blob_by_id_range(
                     oid,
-                    codeyard_app::storage::range::ByteRange::Window {
+                    codeyard_storage::range::ByteRange::Window {
                         offset: 0,
                         length: 0,
                     },

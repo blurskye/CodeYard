@@ -1,5 +1,5 @@
-use crate::storage::Download;
-use crate::storage::ObjectStore;
+use crate::Download;
+use crate::ObjectStore;
 use codeyard_db_core::models::File;
 use codeyard_db_core::DbPool;
 use serde::Serialize;

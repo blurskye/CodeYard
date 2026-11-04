@@ -194,7 +194,7 @@ pub(super) async fn detail_model(ctx: &PageContext, id: &str) -> Result<view::De
                 .blob_range(
                     &loaded.snapshot.sha,
                     &entry.path,
-                    codeyard_app::storage::range::ByteRange::Window {
+                    codeyard_storage::range::ByteRange::Window {
                         offset: 0,
                         length: length as u64,
                     },

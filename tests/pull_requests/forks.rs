@@ -16,7 +16,7 @@ use codeyard_app::ci::workers::CiWorkers;
 use codeyard_app::repositories::lifecycle::provision;
 use codeyard_app::repositories::store::editor::FileWrite;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
 use database::Database;
 use pulls::{text, Client};

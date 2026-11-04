@@ -427,7 +427,7 @@ async fn oci(pg: bool) {
         .await;
     f.execute("UPDATE package_blob_grants SET expires_at=0", &[])
         .await;
-    let storage = codeyard_app::storage::ObjectStore::open(root.path(), None)
+    let storage = codeyard_storage::ObjectStore::open(root.path(), None)
         .await
         .unwrap();
     packages::collect(f.pool(), &storage).await.unwrap();
@@ -691,7 +691,7 @@ async fn packages_oci_postgres() {
 #[tokio::test]
 async fn packages_reject_truncated_or_corrupt_chunks() {
     let root = tempfile::tempdir().unwrap();
-    let storage = codeyard_app::storage::ObjectStore::open(root.path(), None)
+    let storage = codeyard_storage::ObjectStore::open(root.path(), None)
         .await
         .unwrap();
     let bytes = b"original";
@@ -702,7 +702,7 @@ async fn packages_reject_truncated_or_corrupt_chunks() {
     let key = codeyard_db_repos::packages::object_key(&blob.digest);
     storage
         .put_bytes(
-            &codeyard_app::storage::Upload {
+            &codeyard_storage::Upload {
                 key: &key,
                 bytes: blob.size,
                 content_type: "application/octet-stream",

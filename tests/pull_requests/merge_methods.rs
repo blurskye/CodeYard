@@ -18,7 +18,7 @@ use codeyard_app::repositories::pull_requests::merge::publish_prepared_merge;
 use codeyard_app::repositories::pull_requests::merge::MergeRequest;
 use codeyard_app::repositories::pull_requests::OperationError;
 use codeyard_app::repositories::store::types::MergeMethod;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use database::Database;
 use pulls::{text, Client, Reply};
 use serde_json::{json, Value};

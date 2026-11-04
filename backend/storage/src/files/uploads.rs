@@ -1,6 +1,6 @@
-use crate::storage::ObjectStore;
-use crate::storage::StorageError;
-use crate::storage::Upload;
+use crate::ObjectStore;
+use crate::StorageError;
+use crate::Upload;
 use codeyard_db_core::models::File;
 use codeyard_db_core::models::FileReason;
 use codeyard_db_core::models::FileVisibility;

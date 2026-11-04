@@ -24,7 +24,7 @@ use codeyard_identity::login::PasswordCredentials;
 use codeyard_identity::sessions::InitiatingSession;
 use codeyard_identity::sessions::SessionContext;
 
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_db_core::models::User;
 use codeyard_identity::two_factor::TwoFactorError;
 use std::sync::Arc;

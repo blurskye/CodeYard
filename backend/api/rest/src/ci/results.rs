@@ -13,7 +13,7 @@ use axum::routing::post;
 use axum::Json;
 use axum::Router;
 use codeyard_app::app::AppState;
-use codeyard_app::storage::Upload;
+use codeyard_storage::Upload;
 use codeyard_db_actions::action_objects as objects;
 use codeyard_db_actions::action_objects::ActionObject;
 use codeyard_db_actions::action_objects::BlobPart;

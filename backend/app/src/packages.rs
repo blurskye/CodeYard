@@ -1,8 +1,8 @@
 //! Content-addressed objects are reserved before storage I/O so interrupted writes are collected.
 use sha2::Digest;
 
-use crate::storage::ObjectStore;
-use crate::storage::Upload;
+use codeyard_storage::ObjectStore;
+use codeyard_storage::Upload;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_repos::packages::Blob;

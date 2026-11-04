@@ -9,7 +9,7 @@ use codeyard_app::ci::queue::RunQueue;
 use codeyard_app::ci::runs::CiRunRequest;
 use codeyard_app::ci::workers::CiWorkers;
 use codeyard_app::repositories;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_support::secrets::SecretEncryptor;
 use std::{collections::BTreeSet, sync::Arc, time::Duration};

@@ -8,7 +8,7 @@ pub async fn closed_state() -> AppState {
     pool.close().await;
     let object_root = tempfile::tempdir().unwrap();
     let storage = Arc::new(
-        codeyard_app::storage::ObjectStore::open(object_root.path(), None)
+        codeyard_storage::ObjectStore::open(object_root.path(), None)
             .await
             .unwrap(),
     );

@@ -9,7 +9,7 @@ use crate::repositories::code_owners::LOCATIONS;
 use crate::repositories::code_owners::MAX_BYTES;
 use crate::repositories::code_owners::MAX_LINES;
 use crate::repositories::store::repo_store;
-use crate::storage::range::ByteRange as BlobRange;
+use codeyard_storage::range::ByteRange as BlobRange;
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Diagnostic {

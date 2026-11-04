@@ -79,7 +79,7 @@ mod tests {
     }
     #[tokio::test]
     async fn refusal_discovery_keeps_the_authorized_repository_after_alias_reuse() {
-        use codeyard_app::storage::ObjectStore;
+        use codeyard_storage::ObjectStore;
         let native = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(

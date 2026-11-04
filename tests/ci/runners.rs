@@ -21,7 +21,7 @@ use codeyard_app::cluster::transport::NodeAddress;
 use codeyard_app::cluster::transport::Relay;
 use codeyard_support::node_identity::NodeKey;
 
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};

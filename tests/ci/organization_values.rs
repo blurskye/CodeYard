@@ -14,7 +14,7 @@ use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
 use std::sync::Arc;

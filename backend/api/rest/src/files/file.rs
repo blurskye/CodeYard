@@ -7,7 +7,7 @@ use codeyard_api_http::error::ApiFailure;
 use codeyard_api_http::session::extract_session_id;
 use codeyard_api_http::session::get_current_user;
 use codeyard_app::app::AppState;
-use codeyard_app::files::deletion::DeleteError;
+use codeyard_storage::files::deletion::DeleteError;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -24,7 +24,7 @@ pub async fn delete_file(
             "Invalid file ID format",
         )
     })?;
-    codeyard_app::files::deletion::delete_owned_file(
+    codeyard_storage::files::deletion::delete_owned_file(
         &state.pool,
         &state.storage,
         (user.id, extract_session_id(&headers).unwrap_or_default()),

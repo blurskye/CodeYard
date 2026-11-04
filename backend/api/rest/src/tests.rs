@@ -275,7 +275,7 @@ async fn anonymous_slow_posts_cannot_block_authenticated_mutations() {
         pool,
         root.path().to_owned(),
         Arc::new(
-            codeyard_app::storage::ObjectStore::open(root.path(), None)
+            codeyard_storage::ObjectStore::open(root.path(), None)
                 .await
                 .unwrap(),
         ),

@@ -5,7 +5,7 @@ use crate::ci::runs::CiRuns;
 use crate::repositories::dependencies::registry::Client;
 use crate::repositories::store::repo_store;
 use crate::repositories::store::RepoStore;
-use crate::storage::range::ByteRange as BlobRange;
+use codeyard_storage::range::ByteRange as BlobRange;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;

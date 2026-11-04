@@ -7,7 +7,7 @@ use axum::{
     Router,
 };
 
-use codeyard_app::storage::s3::S3Config;
+use codeyard_storage::s3::S3Config;
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]

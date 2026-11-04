@@ -1895,7 +1895,7 @@ async fn http_ci(
         pool.clone(),
         root.path().to_owned(),
         Arc::new(
-            codeyard_app::storage::ObjectStore::open(root.path(), None)
+            codeyard_storage::ObjectStore::open(root.path(), None)
                 .await
                 .unwrap(),
         ),
@@ -2508,7 +2508,7 @@ async fn actions_history_survives_a_stalled_git_preflight() {
         fixture.pool().clone(),
         fixture.root.path().to_owned(),
         Arc::new(
-            codeyard_app::storage::ObjectStore::open(fixture.root.path(), None)
+            codeyard_storage::ObjectStore::open(fixture.root.path(), None)
                 .await
                 .unwrap(),
         ),

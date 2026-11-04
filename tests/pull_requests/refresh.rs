@@ -9,7 +9,7 @@ use crate::support::http_client as pulls;
 use axum::http::StatusCode;
 
 use codeyard_app::app::AppState;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use database::Database;
 use pulls::{moved_forward, text, Client};
 use serde_json::{json, Value};

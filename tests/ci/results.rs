@@ -724,10 +724,10 @@ async fn contract(pg: bool) {
         &[],
     )
     .await;
-    let storage = codeyard_app::storage::ObjectStore::open(root.path(), None)
+    let storage = codeyard_storage::ObjectStore::open(root.path(), None)
         .await
         .unwrap();
-    codeyard_app::files::deletion::remove_expired_uploads(f.pool(), &storage)
+    codeyard_storage::files::deletion::remove_expired_uploads(f.pool(), &storage)
         .await
         .unwrap();
     assert_eq!(
@@ -898,8 +898,8 @@ async fn shared_s3_across_routers(pg: bool) {
     use axum::{extract::State, http::Method, response::IntoResponse};
     use codeyard_app::app::AppState;
     use codeyard_app::ci::config::CiConfig;
-    use codeyard_app::storage::s3::S3Config;
-    use codeyard_app::storage::ObjectStore;
+    use codeyard_storage::s3::S3Config;
+    use codeyard_storage::ObjectStore;
     use std::{
         collections::HashMap,
         sync::{Arc, Mutex},

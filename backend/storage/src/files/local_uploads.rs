@@ -1,6 +1,6 @@
 use crate::files::uploads::upload;
-use crate::storage::ObjectStore;
-use crate::storage::StorageError;
+use crate::ObjectStore;
+use crate::StorageError;
 use codeyard_db_core::DbPool;
 use tokio::io::AsyncRead;
 use uuid::Uuid;

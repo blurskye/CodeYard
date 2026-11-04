@@ -315,7 +315,7 @@ async fn contract(pg: bool) {
         f.pool().clone(),
         repos.clone(),
         std::sync::Arc::new(
-            codeyard_app::storage::ObjectStore::open(&repos, None)
+            codeyard_storage::ObjectStore::open(&repos, None)
                 .await
                 .unwrap(),
         ),

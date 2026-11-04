@@ -8,10 +8,10 @@
 //! an account stops using is removed in the same database transaction as the change.
 use sha2::Digest;
 
-use codeyard_app::files::uploads::UploadDeclaration;
-use codeyard_app::files::uploads::UploadError;
-use codeyard_app::storage::media_signature_matches;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::files::uploads::UploadDeclaration;
+use codeyard_storage::files::uploads::UploadError;
+use codeyard_storage::media_signature_matches;
+use codeyard_storage::ObjectStore;
 use codeyard_db_core::models::FileReason;
 use codeyard_db_core::models::FileVisibility;
 use codeyard_db_core::models::User;
@@ -77,7 +77,7 @@ async fn store_picture(
     }
     let content_type = picture_type(&bytes).ok_or(AvatarError::BadPicture)?;
     let checksum = hex::encode(Sha256::digest(&bytes));
-    codeyard_app::files::uploads::store_upload(
+    codeyard_storage::files::uploads::store_upload(
         pool,
         store,
         actor,
@@ -97,7 +97,7 @@ async fn store_picture(
 
 /// Attempts early cleanup after assignment fails. Pending expiry covers failures.
 async fn discard(pool: &DbPool, store: &ObjectStore, owner: i64, file: Uuid) {
-    if codeyard_app::files::deletion::delete_unreferenced_file(pool, store, owner, file)
+    if codeyard_storage::files::deletion::delete_unreferenced_file(pool, store, owner, file)
         .await
         .is_err()
     {

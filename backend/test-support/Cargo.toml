@@ -5,6 +5,7 @@ edition.workspace = true
 license = "LGPL-3.0-or-later"
 
 [dependencies]
+codeyard-storage.workspace = true
 codeyard-app.workspace = true
 codeyard-db-core.workspace = true
 sqlx.workspace = true

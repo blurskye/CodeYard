@@ -7,7 +7,7 @@ use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::Json;
 use codeyard_app::app::AppState;
-use codeyard_app::storage::StorageError;
+use codeyard_storage::StorageError;
 use codeyard_db_actions::action_objects::ActionObject;
 use codeyard_db_actions::action_objects::BlobPart;
 use serde_json::json;
@@ -190,7 +190,7 @@ pub async fn download(
         .header(header::CACHE_CONTROL, "private, no-store, no-transform")
         .header(
             header::CONTENT_DISPOSITION,
-            codeyard_app::storage::attachment_disposition(&format!("{}.zip", object.name)),
+            codeyard_storage::attachment_disposition(&format!("{}.zip", object.name)),
         );
     if partial {
         response = response.header(

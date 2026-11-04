@@ -27,7 +27,7 @@ use codeyard_app::repositories::store::types::GitService;
 use codeyard_app::repositories::store::types::GitSession;
 use codeyard_app::repositories::store::types::GitStreams;
 use codeyard_app::repositories::store::RepoStore;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_db_cluster::cluster::FamilyOutcome;
 use codeyard_db_cluster::cluster::PromoteOutcome;
 use codeyard_db_core::models::NodeReplicaCounts;

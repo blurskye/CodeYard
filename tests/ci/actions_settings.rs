@@ -14,7 +14,7 @@ use codeyard_app::ci::config::CiConfig;
 use codeyard_app::ci::config::CiExecutionMode;
 use codeyard_app::ci::config::RunLimits;
 use codeyard_app::ci::queue::RunQueue;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use serde_json::json;
 use std::collections::BTreeSet;

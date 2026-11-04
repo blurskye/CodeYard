@@ -2,7 +2,7 @@
 //! Parsing and matching are pure. Resolving owners reads users and teams.
 use crate::cluster::context::NodeContext;
 use crate::repositories::store::repo_store;
-use crate::storage::range::ByteRange as BlobRange;
+use codeyard_storage::range::ByteRange as BlobRange;
 use codeyard_db_core::models::Repository;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;

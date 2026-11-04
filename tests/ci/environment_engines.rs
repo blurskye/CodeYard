@@ -9,7 +9,7 @@ use codeyard_app::ci::queue::RunQueue;
 use codeyard_app::ci::runs::CiRunRequest;
 use codeyard_app::ci::workers::CiWorkers;
 use codeyard_app::repositories::lifecycle;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_db_actions::environment_values as values;
 use codeyard_db_actions::environment_values::Save;
 use codeyard_db_orgs::organization_values::Kind;

@@ -10,7 +10,7 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;
 use codeyard_app::ci::config::CiPipelineKind;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use database::Database;
 use pulls::{text, Client};
 use serde_json::json;

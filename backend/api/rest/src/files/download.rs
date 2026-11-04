@@ -9,9 +9,9 @@ use codeyard_api_http::error::ApiFailure;
 use codeyard_api_http::session::extract_session_id;
 use codeyard_api_http::session::get_current_user;
 use codeyard_app::app::AppState;
-use codeyard_app::files::downloads::DownloadCapability;
-use codeyard_app::files::downloads::DownloadError;
-use codeyard_app::files::downloads::SignedDownload;
+use codeyard_storage::files::downloads::DownloadCapability;
+use codeyard_storage::files::downloads::DownloadError;
+use codeyard_storage::files::downloads::SignedDownload;
 use serde::Serialize;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -54,7 +54,7 @@ pub async fn get_download_url(
 ) -> Result<Response, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
     let file_id = parse_file_id(&file_id)?;
-    let download = codeyard_app::files::downloads::download_for_user(
+    let download = codeyard_storage::files::downloads::download_for_user(
         &state.pool,
         &state.storage,
         (user.id, extract_session_id(&headers).unwrap_or_default()),
@@ -106,9 +106,9 @@ mod tests {
     use axum::response::Redirect;
     use codeyard_api_http::shared::files::download::asset_response;
     use codeyard_api_http::shared::files::download::download_read;
-    use codeyard_app::files::downloads::AssetDownload;
-    use codeyard_app::files::downloads::DownloadTransport;
-    use codeyard_app::storage::attachment_disposition;
+    use codeyard_storage::files::downloads::AssetDownload;
+    use codeyard_storage::files::downloads::DownloadTransport;
+    use codeyard_storage::attachment_disposition;
     use std::time::Duration;
 
     #[cfg(target_os = "linux")]

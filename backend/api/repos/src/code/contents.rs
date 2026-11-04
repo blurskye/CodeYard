@@ -19,7 +19,7 @@ use codeyard_app::app::AppState;
 use codeyard_app::repositories::store::editor::FileWrite;
 use codeyard_app::repositories::store::editor::MAX_EDITOR_BYTES;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_app::storage::range::ByteRange as BlobRange;
+use codeyard_storage::range::ByteRange as BlobRange;
 use codeyard_webui::components::references::References;
 use codeyard_webui::pages::repos as view;
 use codeyard_webui::pages::repos::ref_path::branch_url;

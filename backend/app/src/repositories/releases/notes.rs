@@ -6,7 +6,7 @@ use crate::repositories::releases::validate_fields;
 use crate::repositories::releases::validate_tag;
 use crate::repositories::releases::ReleaseError;
 use crate::repositories::store::repo_store;
-use crate::storage::range::ByteRange as BlobRange;
+use codeyard_storage::range::ByteRange as BlobRange;
 use codeyard_git::error::ErrorKind;
 use codeyard_model::http_config::link_origin;
 use serde::Deserialize;

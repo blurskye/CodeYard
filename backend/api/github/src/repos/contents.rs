@@ -384,7 +384,7 @@ async fn save(
             .blob_range(
                 revision,
                 path,
-                codeyard_app::storage::range::ByteRange::Window {
+                codeyard_storage::range::ByteRange::Window {
                     offset: 0,
                     length: 0,
                 },

@@ -1,8 +1,8 @@
 //! Uploaded files stored as plain files under `<state_dir>/objects`.
-use crate::storage::media_signature_matches;
-use crate::storage::valid_key;
-use crate::storage::StorageError;
-use crate::storage::Upload;
+use crate::media_signature_matches;
+use crate::valid_key;
+use crate::StorageError;
+use crate::Upload;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_support::object_limits::MAX_OBJECT_BYTES;
@@ -45,12 +45,12 @@ impl Drop for TemporaryUpload {
 
 /// Checked bytes waiting in the staging directory. `publish` renames them into place;
 /// dropping the upload removes them.
-pub(crate) struct StagedUpload {
+pub struct StagedUpload {
     temporary: TemporaryUpload,
     target: PathBuf,
 }
 impl StagedUpload {
-    pub(crate) async fn publish(mut self) -> Result<(), StorageError> {
+    pub async fn publish(mut self) -> Result<(), StorageError> {
         let target = self.target.clone();
         let guard = self.temporary.1.clone();
         let temporary = self.temporary.0.take().ok_or(StorageError::Unavailable)?;

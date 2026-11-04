@@ -10,7 +10,7 @@ use codeyard_api_http::error::ApiFailure;
 use codeyard_api_http::session::extract_session_id;
 use codeyard_api_http::session::get_current_user;
 use codeyard_app::app::AppState;
-use codeyard_app::files::local_uploads::LocalUploadError;
+use codeyard_storage::files::local_uploads::LocalUploadError;
 use futures_util::Stream;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -55,7 +55,7 @@ pub async fn put_upload_content(
         stream: Box::pin(body.into_data_stream()),
         chunk: Bytes::new(),
     };
-    codeyard_app::files::local_uploads::put_local_upload(
+    codeyard_storage::files::local_uploads::put_local_upload(
         &state.pool,
         &state.storage,
         (user.id, extract_session_id(&headers).unwrap_or_default()),

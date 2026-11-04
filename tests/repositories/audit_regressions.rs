@@ -9,7 +9,7 @@ use codeyard_app::ci::config::CiConfig;
 use codeyard_app::repositories::languages;
 use codeyard_app::repositories::lifecycle;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use serde_json::{json, Value};
 use std::sync::Arc;
 

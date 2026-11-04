@@ -3,7 +3,7 @@ use codeyard_app::app::AppState;
 use codeyard_app::repositories::migration_archive::MigrationArchive;
 use codeyard_app::repositories::releases::ReleaseDetail;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_app::storage::Upload;
+use codeyard_storage::Upload;
 use codeyard_db_repos::assignees::AssignedItem;
 use codeyard_db_repos::repository_exports as exports;
 use codeyard_db_repos::repository_exports::RepositoryExport;

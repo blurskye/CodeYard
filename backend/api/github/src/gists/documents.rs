@@ -26,7 +26,7 @@ pub(super) async fn base(state: &AppState, loaded: &LoadedGist, contents: bool) 
                 .blob_range(
                     &loaded.snapshot.sha,
                     &entry.path,
-                    codeyard_app::storage::range::ByteRange::Window {
+                    codeyard_storage::range::ByteRange::Window {
                         offset: 0,
                         length: (remaining + 3) as u64,
                     },

@@ -15,7 +15,7 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::pull_requests::merge;
 use codeyard_app::repositories::pull_requests::OperationError;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_db_repos::pull_requests::records::StackJoin;
 use codeyard_db_repos::pull_requests::records::StackRefusal;
 use database::{wait_until_blocked, Database};

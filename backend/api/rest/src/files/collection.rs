@@ -6,9 +6,9 @@ use codeyard_api_http::error::ApiError;
 use codeyard_api_http::error::ApiFailure;
 use codeyard_api_http::session::get_current_user;
 use codeyard_app::app::AppState;
-use codeyard_app::files::uploads::UploadCapability;
-use codeyard_app::files::uploads::UploadDeclaration;
-use codeyard_app::files::uploads::UploadError;
+use codeyard_storage::files::uploads::UploadCapability;
+use codeyard_storage::files::uploads::UploadDeclaration;
+use codeyard_storage::files::uploads::UploadError;
 use codeyard_db_core::models::FileReason;
 use codeyard_db_core::models::FileVisibility;
 use serde::Deserialize;
@@ -58,7 +58,7 @@ pub async fn create_upload_url(
     Json(req): Json<CreateUploadUrlRequest>,
 ) -> Result<Json<CreateUploadUrlResponse>, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
-    let reservation = codeyard_app::files::uploads::reserve_and_sign_upload(
+    let reservation = codeyard_storage::files::uploads::reserve_and_sign_upload(
         &state.pool,
         &state.storage,
         user.id,

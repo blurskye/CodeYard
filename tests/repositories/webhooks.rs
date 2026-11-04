@@ -12,7 +12,7 @@ use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::users::accounts::AccountCredential;

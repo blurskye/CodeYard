@@ -118,7 +118,7 @@ and results stay the same. A stage can be the last one.
    binary wiring. All workspace targets check.
 8. **`app`.** Source layout complete. `backend/app/src` is the app library;
    `backend/app/wiring` contains the existing binary package's entry points, CLI
-   and node startup. Backups and storage live in the app library. SSH lives in `backend/ssh/`. The source
+   and node startup. Backups live in the app library. Storage and file operations live in `backend/storage/`. SSH lives in `backend/ssh/`. The source
    stages are committed before workspace, Clippy and WASM checks begin. Broker
    tests now live in `backend/app/tests/git_broker.rs` and link the app library
    with REST through one `AppState`. Hook barriers have one shared owner.

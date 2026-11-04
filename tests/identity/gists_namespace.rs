@@ -9,7 +9,7 @@ use codeyard_app::gists;
 use codeyard_app::gists::CreateGist;
 use codeyard_app::repositories::lifecycle;
 use codeyard_app::repositories::store::gists::GistCredential;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;

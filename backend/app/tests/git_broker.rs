@@ -1428,7 +1428,7 @@ impl PushFixture {
         let mut pack = git2::Buf::new();
         builder.write_buf(&mut pack).unwrap();
         let storage = Arc::new(
-            codeyard_app::storage::ObjectStore::open(directory.path(), None)
+            codeyard_storage::ObjectStore::open(directory.path(), None)
                 .await
                 .unwrap(),
         );

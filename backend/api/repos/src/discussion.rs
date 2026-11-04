@@ -1590,7 +1590,7 @@ mod tests {
             pool.clone(),
             root.path().into(),
             Arc::new(
-                codeyard_app::storage::ObjectStore::open(root.path(), None)
+                codeyard_storage::ObjectStore::open(root.path(), None)
                     .await
                     .unwrap(),
             ),

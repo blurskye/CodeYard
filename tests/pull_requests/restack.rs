@@ -17,7 +17,7 @@ use codeyard_app::repositories::pull_requests::restack;
 use codeyard_app::repositories::pull_requests::OperationError;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_app::repositories::store::types::RestackMove;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};

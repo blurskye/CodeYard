@@ -417,7 +417,7 @@ pub async fn backup(
         !codeyard_db_cluster::cluster::cluster_enabled(pool).await?,
         "codeyard backup covers a single-node installation; this one is in cluster mode"
     );
-    let s3 = crate::storage::s3::S3Config::optional_from_env()?.is_some();
+    let s3 = codeyard_storage::s3::S3Config::optional_from_env()?.is_some();
     let started = std::time::Instant::now();
     let before = codeyard_db_cluster::backups::list_repositories(pool).await?;
     ensure!(
@@ -602,7 +602,7 @@ pub async fn backup(
 /// state directory, then repairs and rebuilds what the database and Git disagree on.
 /// Returns the open database, migrated to this version.
 pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core::DbPool> {
-    let s3 = crate::storage::s3::S3Config::optional_from_env()?.is_some();
+    let s3 = codeyard_storage::s3::S3Config::optional_from_env()?.is_some();
     let _lock = lock_destination(dir)?;
     let key = std::env::var_os("NODE_KEY_FILE")
         .map(PathBuf::from)

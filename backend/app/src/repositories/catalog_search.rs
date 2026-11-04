@@ -1,7 +1,7 @@
 //! README and license predicates use pinned Git snapshots, bounded like live code search.
 use crate::cluster::context::NodeContext;
 use crate::repositories::store::repo_store;
-use crate::storage::range::ByteRange as BlobRange;
+use codeyard_storage::range::ByteRange as BlobRange;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
 use codeyard_db_repos::catalog_search::Options;

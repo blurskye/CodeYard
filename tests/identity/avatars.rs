@@ -16,7 +16,7 @@ use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use database::Database;
 use pulls::Client;
@@ -774,7 +774,7 @@ async fn contract(pg: bool) {
         OrganizationOutcome::Conflict
     );
     assert_eq!(download(&nobody, &carols).await, StatusCode::NOT_FOUND);
-    assert!(!codeyard_app::files::deletion::delete_unreferenced_file(
+    assert!(!codeyard_storage::files::deletion::delete_unreferenced_file(
         f.pool(),
         &storage,
         ids[1],
@@ -1014,7 +1014,7 @@ async fn contract(pg: bool) {
 }
 
 async fn pending_picture_contract(pg: bool) {
-    use codeyard_app::files::uploads::UploadDeclaration;
+    use codeyard_storage::files::uploads::UploadDeclaration;
 
     let mut f = Database::new(pg).await;
     let actor = f.actor("pending_picture").await;
@@ -1030,7 +1030,7 @@ async fn pending_picture_contract(pg: bool) {
         ),
     ] {
         let store = || {
-            codeyard_app::files::uploads::store_upload(
+            codeyard_storage::files::uploads::store_upload(
                 f.pool(),
                 &storage,
                 actor,
@@ -1160,7 +1160,7 @@ async fn pending_picture_contract(pg: bool) {
             );
         }
         assert_eq!(
-            codeyard_app::files::deletion::remove_expired_uploads(f.pool(), &storage)
+            codeyard_storage::files::deletion::remove_expired_uploads(f.pool(), &storage)
                 .await
                 .unwrap(),
             1

@@ -11,7 +11,7 @@ use codeyard_app::gists::CreateGist;
 use codeyard_app::repositories::lifecycle;
 use codeyard_app::repositories::store::gists::GistCredential;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_app::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_git::gist_types::GistEdit;
 use codeyard_git::gist_types::GistFileChange;

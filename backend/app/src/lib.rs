@@ -20,7 +20,6 @@ pub mod code_scanning;
 
 pub mod dashboard;
 
-pub mod files;
 
 pub mod gists;
 
@@ -38,7 +37,6 @@ pub mod projects;
 
 pub mod repositories;
 
-pub mod storage;
 
 pub mod vulnerabilities;
 

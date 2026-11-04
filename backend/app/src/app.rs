@@ -1,7 +1,7 @@
 //! Shared application state: database, storage, CI and notification services.
 use crate::ci::config::CiConfig;
 use crate::ci::runs::CiRuns;
-use crate::storage::ObjectStore;
+use codeyard_storage::ObjectStore;
 use codeyard_db_core::DbPool;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_support::secrets::SecretEncryptor;
