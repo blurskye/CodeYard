@@ -122,7 +122,7 @@ async fn contract(pg: bool) {
         .await;
     let mut fork_run = run.clone();
     fork_run.is_fork = true;
-    let fork = ci::tokens::issue(f.pool(), &fork_run, &definitions, true)
+    let fork = codeyard_ci::tokens::issue(f.pool(), &fork_run, &definitions, true)
         .await
         .unwrap();
     blob(
@@ -136,12 +136,12 @@ async fn contract(pg: bool) {
         .await;
     let mut act_run = run.clone();
     act_run.engine = Some("act".into());
-    let act = ci::tokens::issue(f.pool(), &act_run, &definitions, false)
+    let act = codeyard_ci::tokens::issue(f.pool(), &act_run, &definitions, false)
         .await
         .unwrap();
     assert!(act.act_limited);
     blob(&router, "project", &act.act, StatusCode::FORBIDDEN).await;
-    let credentials = ci::tokens::issue(f.pool(), &run, &definitions, false)
+    let credentials = codeyard_ci::tokens::issue(f.pool(), &run, &definitions, false)
         .await
         .unwrap();
     assert!(credentials.act_limited);

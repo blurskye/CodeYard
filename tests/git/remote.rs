@@ -524,7 +524,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
         &caller_disk.join("state"),
         &caller_disk,
         &"web".parse().unwrap(),
-        cluster::Settings::from_lookup(&|name| match name {
+        codeyard_cluster::settings::Settings::from_lookup(&|name| match name {
             "IROH_BIND" => Some("127.0.0.1:0".into()),
             "NODE_NAME" => Some("git-caller".into()),
             _ => None,

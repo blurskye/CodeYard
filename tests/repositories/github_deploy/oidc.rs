@@ -117,7 +117,7 @@ async fn contract(pg: bool) {
     .filter(|r| r.id == run.id)
     .unwrap();
     let definitions = BTreeMap::from([(path.into(), b"name: Identity\npermissions: {id-token: write}\njobs:\n  writer: {}\n  production: {environment: 'Production:EU'}\n  reader: {permissions: {contents: read}}".to_vec())]);
-    let credentials = ci::tokens::issue(f.pool(), &run, &definitions, false)
+    let credentials = codeyard_ci::tokens::issue(f.pool(), &run, &definitions, false)
         .await
         .unwrap();
     assert!(credentials.oidc_jobs.contains(&format!("{path}:writer")));
@@ -125,11 +125,11 @@ async fn contract(pg: bool) {
     let jobs = &credentials.workflows[path];
     let router = f.router(root.path()).await;
     let discovery = get(&router, "/.well-known/openid-configuration", None, 200).await;
-    assert_eq!(discovery["issuer"], ci::oidc::issuer());
+    assert_eq!(discovery["issuer"], codeyard_ci::oidc::issuer());
     let jwks_uri = discovery["jwks_uri"]
         .as_str()
         .unwrap()
-        .strip_prefix(&ci::oidc::issuer())
+        .strip_prefix(&codeyard_ci::oidc::issuer())
         .unwrap();
     let jwks = get(&router, jwks_uri, None, 200).await;
     let endpoint = "/api/ci/oidc/token?&audience=cloud%3Adeploy";
@@ -192,7 +192,10 @@ async fn contract(pg: bool) {
         "repo:alice/project:environment:Production%3AEU"
     );
     assert_eq!(default["environment"], "Production:EU");
-    assert_eq!(default["aud"], format!("{}/alice", ci::oidc::issuer()));
+    assert_eq!(
+        default["aud"],
+        format!("{}/alice", codeyard_ci::oidc::issuer())
+    );
     assert_ne!(default["jti"], claims["jti"]);
     assert_eq!(get(&router, jwks_uri, None, 200).await, jwks);
     let session = Client::login(&router, f.pool(), actor).await;
@@ -305,7 +308,7 @@ async fn contract(pg: bool) {
     let jwks_path = discovery["jwks_uri"]
         .as_str()
         .unwrap()
-        .strip_prefix(&ci::oidc::issuer())
+        .strip_prefix(&codeyard_ci::oidc::issuer())
         .unwrap();
     let public_keys: Value = http
         .get(format!("{base}{jwks_path}"))
@@ -574,7 +577,7 @@ async fn organization_contract(pg: bool) {
         path.into(),
         b"permissions: {id-token: write}\njobs: {deploy: {}}".to_vec(),
     )]);
-    let credentials = ci::tokens::issue(f.pool(), &run, &definitions, false)
+    let credentials = codeyard_ci::tokens::issue(f.pool(), &run, &definitions, false)
         .await
         .unwrap();
     let job = &credentials.workflows[path]["deploy"];

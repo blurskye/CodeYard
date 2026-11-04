@@ -10,7 +10,6 @@ use axum::{
     Router,
 };
 
-use codeyard_app::ci;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
@@ -153,7 +152,7 @@ pub(super) async fn job_credentials(
         ".github/workflows/ci.yml".to_owned(),
         format!("on: workflow_dispatch\njobs:\n{jobs}").into_bytes(),
     )]);
-    ci::tokens::issue(f.pool(), run, &definitions, false)
+    codeyard_ci::tokens::issue(f.pool(), run, &definitions, false)
         .await
         .unwrap();
 }
@@ -436,7 +435,7 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(body["total_count"], 1);
     assert_eq!(body["actions_caches"][0]["id"], cache1);
-    let job_tokens=ci::tokens::issue(f.pool(),&main,&BTreeMap::from([(".github/workflows/ci.yml".to_owned(),b"jobs:\n  reader:\n    permissions:\n      actions: read\n  writer:\n    permissions:\n      actions: write\n".to_vec())]),false).await.unwrap();
+    let job_tokens=codeyard_ci::tokens::issue(f.pool(),&main,&BTreeMap::from([(".github/workflows/ci.yml".to_owned(),b"jobs:\n  reader:\n    permissions:\n      actions: read\n  writer:\n    permissions:\n      actions: write\n".to_vec())]),false).await.unwrap();
     let jobs = &job_tokens.workflows[".github/workflows/ci.yml"];
     checked(
         &router,

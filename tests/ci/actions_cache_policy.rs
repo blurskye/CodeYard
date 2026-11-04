@@ -10,7 +10,6 @@ use axum::{
     Router,
 };
 
-use codeyard_app::ci;
 use codeyard_db_actions::action_objects as objects;
 use codeyard_db_actions::action_objects::NewObject;
 use serde_json::{json, Value};
@@ -283,7 +282,7 @@ async fn contract(pg: bool) {
         .await,
         2 * 86400
     );
-    let jobs = ci::tokens::issue(
+    let jobs = codeyard_ci::tokens::issue(
         f.pool(),
         &run,
         &BTreeMap::from([(

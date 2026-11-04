@@ -651,14 +651,14 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
     )
     .await;
     assert_eq!(receiver.received().len(), 2, "deleted hook retried or sent");
-    assert!(!webhooks::enqueue(
+    assert!(!codeyard_webhooks::enqueue(
         pool,
         current.clone(),
         codeyard_webhooks::outgoing(
             "push",
             None,
             &current,
-            &"x".repeat(webhooks::MAX_PAYLOAD_BYTES + 1)
+            &"x".repeat(codeyard_webhooks::MAX_PAYLOAD_BYTES + 1)
         )
     ));
     database.finish().await;

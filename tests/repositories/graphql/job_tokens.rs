@@ -59,7 +59,7 @@ async fn contract(pg: bool) {
     .filter(|claim| claim.id == run.id)
     .unwrap();
     let definitions = BTreeMap::from([(".github/workflows/ci.yml".into(),b"jobs:\n  contents:\n    permissions: {contents: read}\n  reader:\n    permissions: {issues: read}\n  writer:\n    permissions: {issues: write}\n".to_vec())]);
-    let issued = ci::tokens::issue(f.pool(), &run, &definitions, false)
+    let issued = codeyard_ci::tokens::issue(f.pool(), &run, &definitions, false)
         .await
         .unwrap();
     let tokens = &issued.workflows[".github/workflows/ci.yml"];

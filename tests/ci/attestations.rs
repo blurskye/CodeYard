@@ -387,7 +387,7 @@ async fn contract(pg: bool) {
     .unwrap();
     let definitions = std::collections::BTreeMap::from([(".github/workflows/ci.yml".into(),
         b"permissions: {}\njobs:\n  writer: {permissions: {attestations: write}}\n  reader: {permissions: {attestations: read}}\n  denied: {permissions: {contents: write}}".to_vec())]);
-    let credentials = ci::tokens::issue(f.pool(), &claim, &definitions, false)
+    let credentials = codeyard_ci::tokens::issue(f.pool(), &claim, &definitions, false)
         .await
         .unwrap();
     let jobs = &credentials.workflows[".github/workflows/ci.yml"];

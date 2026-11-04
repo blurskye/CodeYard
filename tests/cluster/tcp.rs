@@ -357,9 +357,10 @@ async fn unknown_keys_are_closed_on_rpc_and_events_before_any_answer() {
     let stranger = NodeKey::generate();
     for alpn in [ALPN_RPC, ALPN_EVENTS] {
         // The handshake succeeds for any well-formed key; membership is checked after it.
-        let mut link = tcp::dial(&stranger, address_of(&core), core.public_key(), alpn)
-            .await
-            .expect("the handshake completes for any well-formed key");
+        let mut link =
+            codeyard_cluster::tcp::dial(&stranger, address_of(&core), core.public_key(), alpn)
+                .await
+                .expect("the handshake completes for any well-formed key");
         let answer = tokio::time::timeout(Duration::from_secs(5), async {
             let _ = codeyard_app::cluster::rpc::wire::write_frame(
                 &mut link.writer,
@@ -401,9 +402,10 @@ async fn revoked_member_is_refused_on_its_next_connection() {
         .await
         .unwrap();
 
-    let mut link = tcp::dial(&member, address_of(&core), core.public_key(), ALPN_RPC)
-        .await
-        .unwrap();
+    let mut link =
+        codeyard_cluster::tcp::dial(&member, address_of(&core), core.public_key(), ALPN_RPC)
+            .await
+            .unwrap();
     exists(&mut link)
         .await
         .expect("an active member gets an answer");
@@ -415,9 +417,10 @@ async fn revoked_member_is_refused_on_its_next_connection() {
     )
     .await
     .unwrap();
-    let mut link = tcp::dial(&member, address_of(&core), core.public_key(), ALPN_RPC)
-        .await
-        .unwrap();
+    let mut link =
+        codeyard_cluster::tcp::dial(&member, address_of(&core), core.public_key(), ALPN_RPC)
+            .await
+            .unwrap();
     assert!(
         exists(&mut link).await.is_err(),
         "a revoked member got an answer"
@@ -433,9 +436,10 @@ async fn dialer_refuses_a_node_that_presents_another_key() {
     let root = tempfile::tempdir().unwrap();
     let node = start_tcp(&database, root.path(), "core-1", "storage").await;
     let impostor = NodeKey::generate().public_key();
-    let error = tcp::dial(&NodeKey::generate(), address_of(&node), impostor, ALPN_RPC)
-        .await
-        .unwrap_err();
+    let error =
+        codeyard_cluster::tcp::dial(&NodeKey::generate(), address_of(&node), impostor, ALPN_RPC)
+            .await
+            .unwrap_err();
     assert!(format!("{error:#}").contains("pinned"), "{error:#}");
 }
 
@@ -504,7 +508,7 @@ async fn hold_every_pairing_slot(address: SocketAddr, node: iroh::PublicKey) -> 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     let mut held = Vec::new();
     loop {
-        let mut peer = tcp::dial(&NodeKey::generate(), address, node, ALPN_PAIR)
+        let mut peer = codeyard_cluster::tcp::dial(&NodeKey::generate(), address, node, ALPN_PAIR)
             .await
             .expect("the handshake completes");
         if closed_by_node(&mut peer).await {
@@ -535,9 +539,10 @@ async fn pairing_over_tcp_refuses_a_seventeenth_idle_peer_and_frees_slots_on_dro
     // Silent peers that finish the handshake hold the pairing slots, all sixteen of them.
     let idle = hold_every_pairing_slot(address, core.public_key()).await;
     // The seventeenth completes its handshake, and the node closes it without an answer.
-    let mut refused = tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
-        .await
-        .expect("the handshake completes");
+    let mut refused =
+        codeyard_cluster::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
+            .await
+            .expect("the handshake completes");
     let answer = tokio::time::timeout(
         Duration::from_secs(5),
         pairing_answer(&mut refused, b"this is not json"),
@@ -552,9 +557,14 @@ async fn pairing_over_tcp_refuses_a_seventeenth_idle_peer_and_frees_slots_on_dro
     drop(idle);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        let mut peer = tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
-            .await
-            .expect("the handshake completes");
+        let mut peer = codeyard_cluster::tcp::dial(
+            &NodeKey::generate(),
+            address,
+            core.public_key(),
+            ALPN_PAIR,
+        )
+        .await
+        .expect("the handshake completes");
         let answer = pairing_answer(&mut peer, b"this is not json").await;
         if answer
             .as_ref()
@@ -632,7 +642,7 @@ async fn garbage_and_stalled_clients_do_not_stop_the_listener() {
     .await;
 
     // A valid peer still gets through.
-    tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
+    codeyard_cluster::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
         .await
         .expect("the listener still accepts");
 
@@ -643,7 +653,7 @@ async fn garbage_and_stalled_clients_do_not_stop_the_listener() {
         stalled.push(TcpStream::connect(address).await.unwrap());
     }
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-    while tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
+    while codeyard_cluster::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
         .await
         .is_ok()
     {
@@ -654,7 +664,7 @@ async fn garbage_and_stalled_clients_do_not_stop_the_listener() {
     }
 
     // The stalled handshakes end after five seconds and free their slots.
-    while tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
+    while codeyard_cluster::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
         .await
         .is_err()
     {
@@ -861,7 +871,7 @@ async fn shutdown_closes_the_connections_the_listener_holds() {
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     // A pairing peer that connects and says nothing. Pairing would wait fifteen seconds.
-    let mut idle = tcp::dial(
+    let mut idle = codeyard_cluster::tcp::dial(
         &NodeKey::generate(),
         address_of(&core),
         core.public_key(),
@@ -906,7 +916,7 @@ async fn a_membership_check_that_stalls_keeps_its_handshake_slot() {
     loop {
         let attempt = tokio::time::timeout(
             Duration::from_secs(2),
-            tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_RPC),
+            codeyard_cluster::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_RPC),
         )
         .await
         .expect("the node answers each handshake attempt");
@@ -928,7 +938,7 @@ async fn a_membership_check_that_stalls_keeps_its_handshake_slot() {
     lock.rollback().await.unwrap();
     drop(waiting);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_RPC)
+    while codeyard_cluster::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_RPC)
         .await
         .is_err()
     {

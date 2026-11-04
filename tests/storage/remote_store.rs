@@ -80,8 +80,8 @@ fn merge_request(head: &str, base: &str, message: &str, name: &str, email: &str)
     }
 }
 
-fn settings(name: &str) -> cluster::Settings {
-    cluster::Settings::from_lookup(&|key| match key {
+fn settings(name: &str) -> codeyard_cluster::settings::Settings {
+    codeyard_cluster::settings::Settings::from_lookup(&|key| match key {
         "IROH_BIND" => Some("127.0.0.1:0".into()),
         "NODE_NAME" => Some(name.into()),
         _ => None,

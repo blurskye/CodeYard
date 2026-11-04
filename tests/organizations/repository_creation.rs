@@ -831,7 +831,7 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
             ("fork-web", "web", root.path()),
             ("fork-storage", "storage", storage_root.path()),
         ] {
-            let settings = cluster::Settings::from_lookup(&|key| match key {
+            let settings = codeyard_cluster::settings::Settings::from_lookup(&|key| match key {
                 "IROH_BIND" => Some("127.0.0.1:0".into()),
                 "NODE_NAME" => Some(name.into()),
                 _ => None,

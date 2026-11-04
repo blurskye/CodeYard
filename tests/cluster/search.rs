@@ -18,7 +18,7 @@ async fn start_node(
     name: &str,
     roles: &str,
 ) -> cluster::Cluster {
-    let settings = cluster::Settings::from_lookup(&|key| match key {
+    let settings = codeyard_cluster::settings::Settings::from_lookup(&|key| match key {
         "IROH_BIND" => Some("127.0.0.1:0".into()),
         "NODE_NAME" => Some(name.into()),
         _ => None,
