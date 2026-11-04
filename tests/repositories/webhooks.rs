@@ -582,7 +582,7 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    let outgoing = webhooks::outgoing("push", None, &hook, "{}");
+    let outgoing = codeyard_webhooks::outgoing("push", None, &hook, "{}");
     delivery::send(pool, &hook, &outgoing).await;
     let rows = deliveries(&database, id, 1).await;
     assert_eq!(rows[0].status_code, Some(200));
@@ -620,7 +620,7 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    let outgoing = webhooks::outgoing("push", None, &current, "{}");
+    let outgoing = codeyard_webhooks::outgoing("push", None, &current, "{}");
     receiver.replies.lock().unwrap().push_back(500);
     let pool_for_send = pool.clone();
     let hook_for_send = current.clone();
@@ -647,14 +647,14 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
     delivery::send(
         pool,
         &current,
-        &webhooks::outgoing("push", None, &current, "{}"),
+        &codeyard_webhooks::outgoing("push", None, &current, "{}"),
     )
     .await;
     assert_eq!(receiver.received().len(), 2, "deleted hook retried or sent");
     assert!(!webhooks::enqueue(
         pool,
         current.clone(),
-        webhooks::outgoing(
+        codeyard_webhooks::outgoing(
             "push",
             None,
             &current,

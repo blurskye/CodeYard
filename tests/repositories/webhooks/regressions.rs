@@ -1,5 +1,4 @@
 use super::*;
-use codeyard_app::webhooks;
 use codeyard_webhooks::delivery;
 
 async fn insert_hook(database: &Database, url: &str) -> codeyard_db_core::models::Webhook {
@@ -106,14 +105,14 @@ async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
     let session = crate::support::live_session(database.pool(), actor.id).await;
     let credential =
         codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
-    let place = webhooks::panel::Place {
+    let place = codeyard_webhooks::panel::Place {
         owner: HookOwner::Repository(hooks[0].repo_id.unwrap()),
         base: "/alice/proj/settings?tab=webhooks",
         action_base: "/alice/proj/_forms",
         csrf_token: "token",
         repository_id: hooks[0].repo_id,
     };
-    let first = webhooks::panel::build(
+    let first = codeyard_webhooks::panel::build(
         database.pool(),
         &actor,
         &credential,
@@ -128,9 +127,10 @@ async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
     assert_eq!(first.hooks[2].last, "Last delivery 201");
     assert!(first.next_href.is_some() && first.first_href.is_none());
     let query = [("hook_after".into(), hooks[29].id.to_string())].into();
-    let next = webhooks::panel::build(database.pool(), &actor, &credential, &place, &query)
-        .await
-        .unwrap();
+    let next =
+        codeyard_webhooks::panel::build(database.pool(), &actor, &credential, &place, &query)
+            .await
+            .unwrap();
     assert_eq!(next.hooks.len(), 2);
     assert!(next.next_href.is_none() && next.first_href.is_some());
     let query = [
@@ -138,9 +138,10 @@ async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
         ("edit".into(), "1".into()),
     ]
     .into();
-    let editor = webhooks::panel::build(database.pool(), &actor, &credential, &place, &query)
-        .await
-        .unwrap();
+    let editor =
+        codeyard_webhooks::panel::build(database.pool(), &actor, &credential, &place, &query)
+            .await
+            .unwrap();
     assert!(editor.hooks.is_empty());
     assert_eq!(editor.editing.unwrap().id, Some(hooks[31].id));
     let (status, html) = alice.page(place.base).await;
@@ -180,7 +181,12 @@ pub(super) async fn retry_backoff_frees_send_slots(pg: bool) {
         let pool = database.pool().clone();
         let hook = hook.clone();
         sends.push(tokio::spawn(async move {
-            delivery::send(&pool, &hook, &webhooks::outgoing("push", None, &hook, "{}")).await;
+            delivery::send(
+                &pool,
+                &hook,
+                &codeyard_webhooks::outgoing("push", None, &hook, "{}"),
+            )
+            .await;
         }));
     }
     // Room for a slow CI runner to make the four first attempts.
@@ -197,7 +203,12 @@ pub(super) async fn retry_backoff_frees_send_slots(pg: bool) {
         let hook = hook.clone();
         tokio::spawn(async move {
             let body = "{\"healthy\":true}";
-            delivery::send(&pool, &hook, &webhooks::outgoing("push", None, &hook, body)).await;
+            delivery::send(
+                &pool,
+                &hook,
+                &codeyard_webhooks::outgoing("push", None, &hook, body),
+            )
+            .await;
         })
     };
     tokio::time::timeout(Duration::from_secs(30), async {
@@ -243,7 +254,12 @@ pub(super) async fn queued_delivery_recovers_from_database_failure(pg: bool) {
     let id = hook.id;
     let send = tokio::spawn(
         async move {
-            delivery::send(&pool, &hook, &webhooks::outgoing("push", None, &hook, "{}")).await;
+            delivery::send(
+                &pool,
+                &hook,
+                &codeyard_webhooks::outgoing("push", None, &hook, "{}"),
+            )
+            .await;
         }
         .with_subscriber(log.dispatch.clone()),
     );

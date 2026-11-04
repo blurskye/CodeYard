@@ -12,7 +12,6 @@ use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use codeyard_app::app::AppState;
-use codeyard_app::webhooks;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::queries::webhooks::WebhookPatch;
 use codeyard_db_identity::github_app_hooks::Delivery;
@@ -154,7 +153,7 @@ fn document(delivery: &Delivery, detail: bool) -> Value {
     if detail {
         let outgoing = codeyard_webhooks::delivery::redelivery(record);
         value["url"] = json!(delivery.url);
-        value["request"] = json!({"headers":headers(&record.request_headers),"payload":webhooks::delivery::json_payload(&outgoing).filter(Value::is_object)});
+        value["request"] = json!({"headers":headers(&record.request_headers),"payload":codeyard_webhooks::delivery::json_payload(&outgoing).filter(Value::is_object)});
         value["response"] = json!({"headers":record.response_headers.as_deref().map(headers),"payload":record.response_body});
     }
     value

@@ -71,10 +71,10 @@ pub fn contributor_covenant(text: &str) -> bool {
     let text = conduct_text(text);
     [
         include_str!("templates/conduct/contributor-covenant-14.txt"),
-        include_str!("templates/conduct/contributor-covenant-20.txt"),
+        crate::templates::CONTRIBUTOR_COVENANT_20,
         include_str!("templates/conduct/contributor-covenant-21.txt"),
         // The text /codes_of_conduct offers.
-        include_str!("templates/conduct/contributor_covenant.txt"),
+        crate::templates::CONTRIBUTOR_COVENANT,
     ]
     .into_iter()
     .any(|template| text == conduct_text(template))

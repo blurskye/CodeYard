@@ -279,9 +279,7 @@ async fn repository_license(
 fn conduct(full: bool) -> Value {
     let mut value = json!({"key":"contributor_covenant","name":"Contributor Covenant","url":api_url("/codes_of_conduct/contributor_covenant"),"html_url":api_url("/codes_of_conduct/contributor_covenant")});
     if full {
-        value["body"] = json!(include_str!(
-            "../../../../app/src/repositories/templates/conduct/contributor_covenant.txt"
-        ));
+        value["body"] = json!(codeyard_repos::templates::CONTRIBUTOR_COVENANT);
     }
     value
 }

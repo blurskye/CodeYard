@@ -71,7 +71,21 @@ async fn community_contract(pg: bool) {
         let git = git2::Repository::open_bare(&defaults.disk_path).unwrap();
         let signature = git2::Signature::now("Fixture", "fixture@example.test").unwrap();
         let mut builder = git.treebuilder(None).unwrap();
-        for (path,content) in [("CONTRIBUTING.md","Contributing guide"),("CODE_OF_CONDUCT.md",include_str!("../../../backend/app/src/repositories/templates/conduct/contributor-covenant-20.txt")),("ISSUE_TEMPLATE.md","Describe the issue"),("PULL_REQUEST_TEMPLATE.md","Describe the change")] {builder.insert(path,git.blob(content.as_bytes()).unwrap(),0o100644).unwrap();}
+        for (path, content) in [
+            ("CONTRIBUTING.md", "Contributing guide"),
+            (
+                "CODE_OF_CONDUCT.md",
+                include_str!(
+                    "../../../backend/repos/src/templates/conduct/contributor-covenant-20.txt"
+                ),
+            ),
+            ("ISSUE_TEMPLATE.md", "Describe the issue"),
+            ("PULL_REQUEST_TEMPLATE.md", "Describe the change"),
+        ] {
+            builder
+                .insert(path, git.blob(content.as_bytes()).unwrap(), 0o100644)
+                .unwrap();
+        }
         let tree = git.find_tree(builder.write().unwrap()).unwrap();
         git.commit(
             Some("HEAD"),

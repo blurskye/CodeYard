@@ -192,6 +192,10 @@ const BSD_3_CLAUSE_LICENSE: &str = include_str!("templates/license/bsd-3-clause.
 const MPL_2_0_LICENSE: &str = include_str!("templates/license/mpl-2-0.txt");
 const UNLICENSE_LICENSE: &str = include_str!("templates/license/unlicense.txt");
 
+pub const CONTRIBUTOR_COVENANT_20: &str =
+    include_str!("templates/conduct/contributor-covenant-20.txt");
+pub const CONTRIBUTOR_COVENANT: &str = include_str!("templates/conduct/contributor_covenant.txt");
+
 #[cfg(test)]
 mod tests {
     use super::*;

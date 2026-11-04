@@ -13,7 +13,6 @@ use axum::{
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::webhooks;
 use codeyard_ci::config::CiConfig;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
@@ -455,8 +454,9 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    let outgoing = webhooks::outgoing("issues", Some("opened"), &current, &payload.to_string());
-    webhooks::delivery::send(f.pool(), &current, &outgoing).await;
+    let outgoing =
+        codeyard_webhooks::outgoing("issues", Some("opened"), &current, &payload.to_string());
+    codeyard_webhooks::delivery::send(f.pool(), &current, &outgoing).await;
     // The three sent deliveries and the two inserted failures; the removed repository adds none.
     assert_eq!(
         codeyard_db_identity::github_app_hooks::deliveries(f.pool(), id)

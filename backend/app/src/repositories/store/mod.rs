@@ -2622,7 +2622,7 @@ impl RepoStore {
 
     /// Whether this store runs Git on this node. Its sessions take a local slot, and a remote
     /// store's take a forwarding slot.
-    pub(crate) fn is_local(&self) -> bool {
+    pub fn is_local(&self) -> bool {
         matches!(self.0, Backend::Local(_))
     }
 
