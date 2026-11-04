@@ -20,10 +20,10 @@ backend/
   db/
     core/                      DbPool, connection, migrations, models, native_operation!
     identity/ orgs/ repos/ actions/ security/ cluster/     queries by domain
-  repositories/                repository store, pull requests, Git sessions
-  ci/                          queue, workers, tokens
+  repos/                       repository policy, imports, traffic, templates, Git editor
+  ci/                          configuration, credentials, logs, environment values
     runner/                    the Actions runner
-  cluster/                     cluster and node
+  cluster/                     membership, settings, transport, quorum writes
   identity/                    login, tokens, keys
   notifications/               notifications, email, webhooks
   api/
@@ -34,7 +34,11 @@ backend/
     graphql/                   our GraphQL resolvers
     repos/                     web and Git HTTP for repositories
     (rest)                     the remaining routes
-  app/                         the `codeyard` binary: wiring, ssh, cli, backups, storage
+  webhooks/                    payloads, subscriptions, delivery
+  storage/                     object storage and file operations
+  ssh/                         SSH serving and the OpenSSH gateway
+  app/                         app state, store, CI engine, inbound cluster handlers
+    wiring/                    the `codeyard` binary, cli and node startup
 backend/test-support/          dev-only shared fixtures
 tests/                         same tests; imports use the crates' public items
 ```

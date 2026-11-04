@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 use crate::delivery::Outgoing;
 use codeyard_db_core::{models::Webhook, DbPool};
 use codeyard_db_repos::webhooks::HookOwner;
