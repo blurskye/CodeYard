@@ -24,7 +24,7 @@ impl LocalStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo: i64,
-    ) -> Result<Option<(&crate::cluster::context::NodeContext, i64)>, RepoError> {
+    ) -> Result<Option<(&codeyard_repos_core::context::NodeContext, i64)>, RepoError> {
         let repository = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo)
             .await
             .map_err(|_| RepoError::authority_unavailable())?

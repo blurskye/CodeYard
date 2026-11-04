@@ -3,7 +3,7 @@ use crate::ci::runs::CiRuns;
 use crate::repositories::pull_requests::database_error;
 use crate::repositories::pull_requests::OperationError;
 use crate::repositories::store::repo_store;
-use crate::repositories::store::types::RevertRequest as RevertCommit;
+use codeyard_repos_core::store_types::RevertRequest as RevertCommit;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 
 pub struct RevertRequest {

@@ -32,7 +32,7 @@ static DISCOVERY_SLOTS: Semaphore = Semaphore::const_new(2);
 static DISCOVERY_PAYLOADS: Semaphore = Semaphore::const_new(4);
 // Let the store finish its address and replica fallback before discovery gives up.
 const DISCOVERY_READ_TIMEOUT: Duration =
-    crate::cluster::rpc::wire::TIMEOUT.saturating_add(Duration::from_secs(5));
+    codeyard_repos_core::wire::TIMEOUT.saturating_add(Duration::from_secs(5));
 const WORKFLOW_CACHE_BYTES: usize = 8 * 1024 * 1024;
 const WORKFLOW_CACHE_ENTRIES: usize = 32;
 

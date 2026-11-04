@@ -1,6 +1,6 @@
 //! In cluster mode new repositories use the online storage node with the most free space.
 //! A single-node installation, with or without runners on other machines, records no node.
-use crate::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use codeyard_db_core::models::ClusterNode;
 use codeyard_db_core::models::Repository;
 use codeyard_git::error::RepoError;
@@ -19,20 +19,20 @@ pub async fn storage_node(
     // its node connection is there only for runners.
     if !codeyard_db_cluster::cluster::cluster_enabled(context.database()?)
         .await
-        .map_err(|_| crate::cluster::rpc::wire::unavailable())?
+        .map_err(|_| codeyard_repos_core::wire::unavailable())?
     {
         return Ok(None);
     }
     let nodes = codeyard_db_cluster::cluster::list_nodes(context.database()?)
         .await
-        .map_err(|_| crate::cluster::rpc::wire::unavailable())?;
+        .map_err(|_| codeyard_repos_core::wire::unavailable())?;
     // In a cluster the owner is always recorded, even when it is this node: other nodes
     // route by it. A node with no storage node to use refuses instead of keeping a
     // repository that no other node could reach.
     ranked(&nodes)
         .first()
         .map(|node| Some(node.id))
-        .ok_or_else(crate::cluster::rpc::wire::unavailable)
+        .ok_or_else(codeyard_repos_core::wire::unavailable)
 }
 
 /// Online storage nodes that report their free space, most free space first. Ties go

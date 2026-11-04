@@ -1,8 +1,8 @@
 use super::*;
-use crate::cluster::rpc::wire::operation_body_limit;
+use codeyard_repos_core::wire::operation_body_limit;
 
-use crate::cluster::rpc::wire::Operation;
-use crate::cluster::rpc::wire::MAX_BYTES;
+use codeyard_repos_core::wire::Operation;
+use codeyard_repos_core::wire::MAX_BYTES;
 use codeyard_db_core::models::RefChange;
 use tokio::io::AsyncWriteExt;
 

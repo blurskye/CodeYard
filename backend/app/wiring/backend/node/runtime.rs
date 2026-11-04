@@ -57,7 +57,7 @@ async fn prepare_application(
     repos_path: PathBuf,
     state_dir: &Path,
     roles: &codeyard_model::node_roles::NodeRoles,
-    cluster: Option<codeyard_app::cluster::context::NodeContext>,
+    cluster: Option<codeyard_repos_core::context::NodeContext>,
     s3: Option<S3Config>,
 ) -> Result<AppState> {
     let serves_web = roles.contains(NodeRole::Web);

@@ -1,6 +1,6 @@
 //! Community standards are derived from real files at a pinned default-branch commit.
 
-use crate::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use crate::repositories::store::repo_store;
 use crate::repositories::store::RepoStore;
 use chrono::DateTime;

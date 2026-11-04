@@ -13,7 +13,7 @@ use crate::repositories::pull_requests::merge::prepare_error;
 use crate::repositories::pull_requests::require_write;
 use crate::repositories::pull_requests::OperationError;
 use crate::repositories::store::repo_store;
-use crate::repositories::store::types::RestackMove;
+use codeyard_repos_core::store_types::RestackMove;
 use crate::repositories::store::RepoStore;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_repos::pull_requests::records::MAX_STACK_LAYERS;

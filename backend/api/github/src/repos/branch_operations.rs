@@ -144,7 +144,7 @@ async fn complete_upstream(
         )
         .await
         .map_err(store_error)?;
-    if merged.merge_type != codeyard_app::repositories::store::types::UpstreamMergeType::None {
+    if merged.merge_type != codeyard_repos_core::store_types::UpstreamMergeType::None {
         // The branch moved, so its push workflows run as they do after any other push.
         state
             .ci_runs
@@ -176,7 +176,7 @@ async fn complete_upstream(
             "Branch synchronized but pull request refresh failed",
         )
     })?;
-    use codeyard_app::repositories::store::types::UpstreamMergeType;
+    use codeyard_repos_core::store_types::UpstreamMergeType;
     let message = match merged.merge_type {
         UpstreamMergeType::None => format!("Already up to date with upstream {base_branch}"),
         UpstreamMergeType::FastForward => {

@@ -19,7 +19,7 @@ fn terminal_text(value: &str) -> String {
 /// Where a repository lives. One stored on another node has no path on this machine.
 fn storage_location(
     repo: &codeyard_db_core::models::Repository,
-    context: Option<&codeyard_app::cluster::context::NodeContext>,
+    context: Option<&codeyard_repos_core::context::NodeContext>,
     location: &str,
 ) -> String {
     match repo.storage_node_id {

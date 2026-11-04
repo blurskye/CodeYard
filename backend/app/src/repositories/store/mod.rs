@@ -6,24 +6,24 @@
 //! over iroh to the owning storage node. Inputs and outputs are owned values.
 //! The one exception is [`RepoStore::local_path_for_spawning_git`], used by the
 //! host OpenSSH gateway.
-use crate::cluster::context::NodeContext;
-use crate::cluster::rpc::wire::Operation;
-use crate::repositories::store::types::AsyncMergePublication;
-use crate::repositories::store::types::BlobBytes;
-use crate::repositories::store::types::BranchMergePublication;
-use crate::repositories::store::types::GitService;
-use crate::repositories::store::types::GitSession;
-use crate::repositories::store::types::GitStreams;
-use crate::repositories::store::types::MergeMethod;
-use crate::repositories::store::types::MergeRequest;
-use crate::repositories::store::types::PullBranchUpdate;
-use crate::repositories::store::types::PullHeadActor;
-use crate::repositories::store::types::RestackMove;
-use crate::repositories::store::types::RevertRequest;
-use crate::repositories::store::types::UpstreamMerge;
-use crate::repositories::store::types::MAX_ARCHIVE_RESPONSE_BYTES;
-use crate::repositories::store::types::MAX_COMMIT_OFFSET;
-use crate::repositories::store::types::MAX_COMMIT_PAGE_SIZE;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::wire::Operation;
+use codeyard_repos_core::store_types::AsyncMergePublication;
+use codeyard_repos_core::store_types::BlobBytes;
+use codeyard_repos_core::store_types::BranchMergePublication;
+use codeyard_repos_core::store_types::GitService;
+use codeyard_repos_core::store_types::GitSession;
+use codeyard_repos_core::store_types::GitStreams;
+use codeyard_repos_core::store_types::MergeMethod;
+use codeyard_repos_core::store_types::MergeRequest;
+use codeyard_repos_core::store_types::PullBranchUpdate;
+use codeyard_repos_core::store_types::PullHeadActor;
+use codeyard_repos_core::store_types::RestackMove;
+use codeyard_repos_core::store_types::RevertRequest;
+use codeyard_repos_core::store_types::UpstreamMerge;
+use codeyard_repos_core::store_types::MAX_ARCHIVE_RESPONSE_BYTES;
+use codeyard_repos_core::store_types::MAX_COMMIT_OFFSET;
+use codeyard_repos_core::store_types::MAX_COMMIT_PAGE_SIZE;
 use codeyard_db_core::models::Repository;
 use codeyard_git as git;
 use codeyard_git::error::invalid_ref;
@@ -63,7 +63,6 @@ use std::time::Instant;
 
 pub mod local;
 mod remote;
-pub mod types;
 
 pub(crate) fn primary_path(root: &Path, uuid: uuid::Uuid) -> std::path::PathBuf {
     root.join(format!("{uuid}.git"))
@@ -166,7 +165,7 @@ impl RepoStore {
     fn local(&self) -> Result<&crate::repositories::store::local::LocalStore, RepoError> {
         match &self.0 {
             Backend::Local(local) => Ok(local),
-            Backend::Remote(_) => Err(crate::cluster::rpc::wire::invalid(
+            Backend::Remote(_) => Err(codeyard_repos_core::wire::invalid(
                 "fork source is not on the destination node",
             )),
         }
@@ -259,7 +258,7 @@ impl RepoStore {
                         actor.user_id,
                         Operation::UpdateReference {
                             reference: reference.into(),
-                            sha: crate::cluster::rpc::wire::PublicationText::retain(sha, actor),
+                            sha: codeyard_repos_core::wire::PublicationText::retain(sha, actor),
                             force,
                         },
                         b"",
@@ -499,7 +498,7 @@ impl RepoStore {
                 let source = crate::cluster::rpc::repository::repository_uuid(&from.disk_path)?;
                 let operation = Operation::InitializeCopy {
                     source,
-                    default_branch: crate::cluster::rpc::wire::PublicationText::retain(
+                    default_branch: codeyard_repos_core::wire::PublicationText::retain(
                         &options.default_branch,
                         authority,
                     ),
@@ -508,7 +507,7 @@ impl RepoStore {
                 };
                 remote.call_as(actor, operation, b"").await
             }
-            _ => Err(crate::cluster::rpc::wire::invalid(
+            _ => Err(codeyard_repos_core::wire::invalid(
                 "source is not on the destination node",
             )),
         }
@@ -653,7 +652,7 @@ impl RepoStore {
     ) -> Result<std::collections::HashSet<String>, RepoError> {
         match &self.0 {
             Backend::Local(local) => local.existing_commits(ids).await,
-            Backend::Remote(_) => Err(crate::cluster::rpc::wire::invalid(
+            Backend::Remote(_) => Err(codeyard_repos_core::wire::invalid(
                 "replica commit checks run on their node",
             )),
         }
@@ -664,7 +663,7 @@ impl RepoStore {
     pub async fn mirror_refs(&self) -> Result<HashMap<String, String>, RepoError> {
         match &self.0 {
             Backend::Local(local) => local.mirror_refs().await,
-            Backend::Remote(_) => Err(crate::cluster::rpc::wire::invalid(
+            Backend::Remote(_) => Err(codeyard_repos_core::wire::invalid(
                 "replica refs are listed on their node",
             )),
         }
@@ -677,7 +676,7 @@ impl RepoStore {
     ) -> Result<(HashMap<String, String>, Option<String>), RepoError> {
         match &self.0 {
             Backend::Local(local) => local.replica_listing().await,
-            Backend::Remote(_) => Err(crate::cluster::rpc::wire::invalid(
+            Backend::Remote(_) => Err(codeyard_repos_core::wire::invalid(
                 "replica refs are listed on their node",
             )),
         }
@@ -792,7 +791,7 @@ impl RepoStore {
                             git_ref: if query.is_empty() {
                                 git_ref.into()
                             } else {
-                                crate::cluster::rpc::wire::FilePathQuery::Filtered {
+                                codeyard_repos_core::wire::FilePathQuery::Filtered {
                                     reference: git_ref.into(),
                                     query: query.into(),
                                 }
@@ -1316,7 +1315,7 @@ impl RepoStore {
                 )
                 .await
             }
-            _ => Err(crate::cluster::rpc::wire::invalid(
+            _ => Err(codeyard_repos_core::wire::invalid(
                 "comparison repositories are not on the same node",
             )),
         }
@@ -1353,7 +1352,7 @@ impl RepoStore {
                 )
                 .await
             }
-            _ => Err(crate::cluster::rpc::wire::invalid(
+            _ => Err(codeyard_repos_core::wire::invalid(
                 "comparison repositories are not on the same node",
             )),
         }
@@ -1672,7 +1671,7 @@ impl RepoStore {
                 )
                 .await
             }
-            _ => Err(crate::cluster::rpc::wire::invalid(
+            _ => Err(codeyard_repos_core::wire::invalid(
                 "fork source is not on the destination node",
             )),
         }
@@ -1700,7 +1699,7 @@ impl RepoStore {
                         authority.user_id,
                         Operation::RenameBranch {
                             old: old.into(),
-                            new: crate::cluster::rpc::wire::PublicationText::retain(new, authority),
+                            new: codeyard_repos_core::wire::PublicationText::retain(new, authority),
                         },
                         b"",
                     )
@@ -1740,7 +1739,7 @@ impl RepoStore {
                     )
                     .await
             }
-            _ => Err(crate::cluster::rpc::wire::invalid(
+            _ => Err(codeyard_repos_core::wire::invalid(
                 "fork source is not on the destination node",
             )),
         }
@@ -1767,7 +1766,7 @@ impl RepoStore {
                         actor.user_id,
                         Operation::CreateBranch {
                             name: name.into(),
-                            sha: crate::cluster::rpc::wire::PublicationText::retain(sha, actor),
+                            sha: codeyard_repos_core::wire::PublicationText::retain(sha, actor),
                         },
                         b"",
                     )
@@ -1795,7 +1794,7 @@ impl RepoStore {
                     .call_as(
                         actor.user_id,
                         Operation::TransferRepository {
-                            new_owner: crate::cluster::rpc::wire::PublicationText::retain(
+                            new_owner: codeyard_repos_core::wire::PublicationText::retain(
                                 new_owner, actor,
                             ),
                         },
@@ -1906,7 +1905,7 @@ impl RepoStore {
                     .call_as(
                         actor.user_id,
                         Operation::PatchRepository {
-                            default_branch: crate::cluster::rpc::wire::PublicationText::retain(
+                            default_branch: codeyard_repos_core::wire::PublicationText::retain(
                                 name, actor,
                             ),
                             changes,
@@ -1937,7 +1936,7 @@ impl RepoStore {
                     .call_as(
                         actor.user_id,
                         Operation::SetDefaultBranch {
-                            name: crate::cluster::rpc::wire::PublicationText::retain(name, actor),
+                            name: codeyard_repos_core::wire::PublicationText::retain(name, actor),
                         },
                         b"",
                     )
@@ -1965,7 +1964,7 @@ impl RepoStore {
                     .call_as(
                         actor.user_id,
                         Operation::DeleteBranch {
-                            name: crate::cluster::rpc::wire::PublicationText::retain(name, actor),
+                            name: codeyard_repos_core::wire::PublicationText::retain(name, actor),
                         },
                         b"",
                     )
@@ -2016,7 +2015,7 @@ impl RepoStore {
                         actor.user_id,
                         Operation::CreateTag {
                             name: name.into(),
-                            sha: crate::cluster::rpc::wire::PublicationText::retain(sha, actor),
+                            sha: codeyard_repos_core::wire::PublicationText::retain(sha, actor),
                             message: message.map(str::to_owned),
                             tagger_name: tagger_name.into(),
                             tagger_email: tagger_email.into(),
@@ -2047,7 +2046,7 @@ impl RepoStore {
                     .call_as(
                         actor.user_id,
                         Operation::DeleteTag {
-                            name: crate::cluster::rpc::wire::PublicationText::retain(name, actor),
+                            name: codeyard_repos_core::wire::PublicationText::retain(name, actor),
                         },
                         b"",
                     )
@@ -2273,7 +2272,7 @@ impl RepoStore {
                     )
                     .await
             }
-            _ => Err(crate::cluster::rpc::wire::invalid(
+            _ => Err(codeyard_repos_core::wire::invalid(
                 "pull request source is not on the destination node",
             )),
         }
@@ -2443,7 +2442,7 @@ impl RepoStore {
                             base: base.into(),
                             result: result.into(),
                             method,
-                            token: crate::cluster::rpc::wire::PublicationCredential::retain(
+                            token: codeyard_repos_core::wire::PublicationCredential::retain(
                                 authority,
                             ),
                             policy,
@@ -2508,7 +2507,7 @@ impl RepoStore {
                             base_branch: base_branch.into(),
                             base: base.into(),
                             result: result.into(),
-                            token: crate::cluster::rpc::wire::PublicationCredential::retain(
+                            token: codeyard_repos_core::wire::PublicationCredential::retain(
                                 authority,
                             ),
                             policy,
@@ -2591,7 +2590,7 @@ impl RepoStore {
                         Operation::PublishRestack {
                             stack_id,
                             versions: versions.to_vec(),
-                            base_branch: crate::cluster::rpc::wire::PublicationText::retain(
+                            base_branch: codeyard_repos_core::wire::PublicationText::retain(
                                 base_branch,
                                 authority,
                             ),
@@ -2654,7 +2653,7 @@ impl RepoStore {
     pub async fn head_target(&self) -> Result<Option<String>, RepoError> {
         match &self.0 {
             Backend::Local(local) => local.head_target().await,
-            Backend::Remote(_) => Err(crate::cluster::rpc::wire::invalid(
+            Backend::Remote(_) => Err(codeyard_repos_core::wire::invalid(
                 "HEAD is read on the owning node",
             )),
         }
@@ -2669,7 +2668,7 @@ impl RepoStore {
     ) -> anyhow::Result<std::process::ExitStatus> {
         match &self.0 {
             Backend::Local(local) => local.replica_pack(targets, have, streams).await,
-            Backend::Remote(_) => Err(crate::cluster::rpc::wire::invalid(
+            Backend::Remote(_) => Err(codeyard_repos_core::wire::invalid(
                 "replica packs come from the primary",
             )
             .into()),
@@ -2680,7 +2679,7 @@ impl RepoStore {
     pub async fn index_pack(&self, pack: &Path, strict: bool) -> Result<(), RepoError> {
         match &self.0 {
             Backend::Local(local) => local.index_pack(pack, strict).await,
-            Backend::Remote(_) => Err(crate::cluster::rpc::wire::invalid(
+            Backend::Remote(_) => Err(codeyard_repos_core::wire::invalid(
                 "replica copies live on this node",
             )),
         }
@@ -2690,7 +2689,7 @@ impl RepoStore {
     pub async fn set_refs(&self, refs: &HashMap<String, String>) -> Result<(), RepoError> {
         match &self.0 {
             Backend::Local(local) => local.set_refs(refs).await,
-            Backend::Remote(_) => Err(crate::cluster::rpc::wire::invalid(
+            Backend::Remote(_) => Err(codeyard_repos_core::wire::invalid(
                 "replica copies live on this node",
             )),
         }
@@ -2700,7 +2699,7 @@ impl RepoStore {
     pub async fn set_head_target(&self, target: &str) -> Result<(), RepoError> {
         match &self.0 {
             Backend::Local(local) => local.set_head_target(target).await,
-            Backend::Remote(_) => Err(crate::cluster::rpc::wire::invalid(
+            Backend::Remote(_) => Err(codeyard_repos_core::wire::invalid(
                 "replica copies live on this node",
             )),
         }
@@ -2719,7 +2718,7 @@ impl RepoStore {
     pub fn local_path_for_spawning_git(&self) -> Result<&Path, RepoError> {
         match &self.0 {
             Backend::Local(local) => Ok(local.path()),
-            Backend::Remote(_) => Err(crate::cluster::rpc::wire::invalid(
+            Backend::Remote(_) => Err(codeyard_repos_core::wire::invalid(
                 "Host OpenSSH cannot serve remote repositories; use HTTP or built-in SSH",
             )),
         }

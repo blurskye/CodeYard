@@ -3,8 +3,8 @@
 use crate::support::native_database as native;
 
 use codeyard_app::repositories::lifecycle;
-use codeyard_app::repositories::store::types::MergeMethod;
-use codeyard_app::repositories::store::types::MergeRequest;
+use codeyard_repos_core::store_types::MergeMethod;
+use codeyard_repos_core::store_types::MergeRequest;
 use codeyard_app::repositories::store::RepoStore;
 use codeyard_db_repos::repositories;
 use git2::{Oid, Repository, Signature};

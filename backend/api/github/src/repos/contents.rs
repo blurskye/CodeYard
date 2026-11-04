@@ -152,7 +152,7 @@ pub(crate) async fn blob_response(
     reference: &str,
     revision: &str,
     path: &str,
-    blob: codeyard_app::repositories::store::types::BlobBytes,
+    blob: codeyard_repos_core::store_types::BlobBytes,
 ) -> Result<Response> {
     if headers
         .get(header::ACCEPT)

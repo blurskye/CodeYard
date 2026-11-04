@@ -1,5 +1,5 @@
 //! Live default-branch search using the bounded native Git/RPC operations. No independent index.
-use crate::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use crate::repositories::store::repo_store;
 use crate::repositories::store::RepoStore;
 use anyhow::Context;

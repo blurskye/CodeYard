@@ -97,7 +97,7 @@ pub(crate) async fn fork_approval_required(
 pub(super) async fn resolve(
     pool: &codeyard_db_core::DbPool,
     config: &CiConfig,
-    context: Option<&crate::cluster::context::NodeContext>,
+    context: Option<&codeyard_repos_core::context::NodeContext>,
     mut request: CiRunRequest,
     rerun: bool,
     event_payload: Option<&serde_json::Value>,

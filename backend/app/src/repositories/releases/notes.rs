@@ -1,6 +1,6 @@
 //! Release notes derived from a pinned Git range and the repository's real merged pull requests.
 use super::*;
-use crate::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use crate::repositories::releases::unavailable;
 use crate::repositories::releases::validate_fields;
 use crate::repositories::releases::validate_tag;

@@ -11,19 +11,19 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::workflows::list_workflows_for_ref;
 use codeyard_app::cluster;
-use codeyard_app::cluster::context::NodeContext;
-use codeyard_app::cluster::rpc::wire::Failure;
-use codeyard_app::cluster::rpc::wire::Operation;
-use codeyard_app::cluster::rpc::wire::Reply;
-use codeyard_app::cluster::rpc::wire::Request;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::wire::Failure;
+use codeyard_repos_core::wire::Operation;
+use codeyard_repos_core::wire::Reply;
+use codeyard_repos_core::wire::Request;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_app::repositories::store::types::GitService;
-use codeyard_app::repositories::store::types::GitSession;
-use codeyard_app::repositories::store::types::GitStreams;
-use codeyard_app::repositories::store::types::MergeMethod;
-use codeyard_app::repositories::store::types::MergeRequest;
-use codeyard_app::repositories::store::types::MAX_ARCHIVE_RESPONSE_BYTES;
-use codeyard_app::repositories::store::types::MAX_BLOB_RESPONSE_BYTES;
+use codeyard_repos_core::store_types::GitService;
+use codeyard_repos_core::store_types::GitSession;
+use codeyard_repos_core::store_types::GitStreams;
+use codeyard_repos_core::store_types::MergeMethod;
+use codeyard_repos_core::store_types::MergeRequest;
+use codeyard_repos_core::store_types::MAX_ARCHIVE_RESPONSE_BYTES;
+use codeyard_repos_core::store_types::MAX_BLOB_RESPONSE_BYTES;
 use codeyard_app::repositories::store::RepoStore;
 use codeyard_ci::config::CiConfig;
 use codeyard_git as git;
@@ -250,7 +250,7 @@ async fn direct_branch_merges(
         ))
         .await
         .unwrap();
-    let publication = codeyard_app::repositories::store::types::BranchMergePublication {
+    let publication = codeyard_repos_core::store_types::BranchMergePublication {
         base_branch: "direct-base".into(),
         base: base.into(),
         head_branch: Some("direct-head".into()),
@@ -497,28 +497,28 @@ async fn compare_reads(remote: &RepoStore, local: &RepoStore, sha: &str) {
 
 async fn stream_call(connection: &iroh::endpoint::Connection, request: &Request) -> Reply {
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    codeyard_app::cluster::rpc::wire::write_frame(
+    codeyard_repos_core::wire::write_frame(
         &mut send,
         &serde_json::to_vec(request).unwrap(),
         codeyard_db_core::limits::MAX_JSON,
     )
     .await
     .unwrap();
-    codeyard_app::cluster::rpc::wire::write_frame(
+    codeyard_repos_core::wire::write_frame(
         &mut send,
         b"",
-        codeyard_app::cluster::rpc::wire::MAX_BYTES,
+        codeyard_repos_core::wire::MAX_BYTES,
     )
     .await
     .unwrap();
     send.finish().unwrap();
     let reply =
-        codeyard_app::cluster::rpc::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+        codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
             .await
             .unwrap();
-    assert!(codeyard_app::cluster::rpc::wire::read_frame(
+    assert!(codeyard_repos_core::wire::read_frame(
         &mut recv,
-        codeyard_app::cluster::rpc::wire::MAX_BYTES
+        codeyard_repos_core::wire::MAX_BYTES
     )
     .await
     .unwrap()
@@ -540,7 +540,7 @@ async fn oversized(context: &NodeContext, storage: &cluster::Cluster, binary: bo
         .unwrap();
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
     if binary {
-        codeyard_app::cluster::rpc::wire::write_frame(
+        codeyard_repos_core::wire::write_frame(
             &mut send,
             &serde_json::to_vec(&Request {
                 repository: uuid,
@@ -557,7 +557,7 @@ async fn oversized(context: &NodeContext, storage: &cluster::Cluster, binary: bo
         .unwrap();
     }
     let limit = if binary {
-        codeyard_app::cluster::rpc::wire::MAX_BYTES
+        codeyard_repos_core::wire::MAX_BYTES
     } else {
         codeyard_db_core::limits::MAX_JSON
     };
@@ -567,7 +567,7 @@ async fn oversized(context: &NodeContext, storage: &cluster::Cluster, binary: bo
     send.finish().unwrap();
     assert!(tokio::time::timeout(
         Duration::from_secs(5),
-        codeyard_app::cluster::rpc::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+        codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
     )
     .await
     .unwrap()
@@ -578,15 +578,15 @@ async fn oversized(context: &NodeContext, storage: &cluster::Cluster, binary: bo
 async fn rpc_reply(recv: &mut iroh::endpoint::RecvStream) -> Reply {
     let header = tokio::time::timeout(
         Duration::from_secs(3),
-        codeyard_app::cluster::rpc::wire::read_frame(recv, codeyard_db_core::limits::MAX_JSON),
+        codeyard_repos_core::wire::read_frame(recv, codeyard_db_core::limits::MAX_JSON),
     )
     .await
     .expect("repository RPC reply timed out")
     .unwrap();
     let reply = serde_json::from_slice(&header).unwrap();
-    assert!(codeyard_app::cluster::rpc::wire::read_frame(
+    assert!(codeyard_repos_core::wire::read_frame(
         recv,
-        codeyard_app::cluster::rpc::wire::MAX_BYTES
+        codeyard_repos_core::wire::MAX_BYTES
     )
     .await
     .unwrap()
@@ -616,14 +616,14 @@ async fn body_refusal_without_payload(
         .await
         .unwrap();
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    codeyard_app::cluster::rpc::wire::write_frame(
+    codeyard_repos_core::wire::write_frame(
         &mut send,
         &serde_json::to_vec(request).unwrap(),
         codeyard_db_core::limits::MAX_JSON,
     )
     .await
     .unwrap();
-    send.write_all(&(codeyard_app::cluster::rpc::wire::MAX_BYTES as u32).to_be_bytes())
+    send.write_all(&(codeyard_repos_core::wire::MAX_BYTES as u32).to_be_bytes())
         .await
         .unwrap();
     let error = repository_error(rpc_reply(&mut recv).await);
@@ -647,14 +647,14 @@ async fn raw_editor_call(
         .await
         .unwrap();
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    codeyard_app::cluster::rpc::wire::write_frame(
+    codeyard_repos_core::wire::write_frame(
         &mut send,
         &serde_json::to_vec(request).unwrap(),
         codeyard_db_core::limits::MAX_JSON,
     )
     .await
     .unwrap();
-    codeyard_app::cluster::rpc::wire::write_frame(&mut send, body, MAX_EDITOR_BYTES)
+    codeyard_repos_core::wire::write_frame(&mut send, body, MAX_EDITOR_BYTES)
         .await
         .unwrap();
     send.finish().unwrap();
@@ -683,7 +683,7 @@ async fn open_git_session(
         .await
         .unwrap();
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    codeyard_app::cluster::rpc::wire::write_frame(
+    codeyard_repos_core::wire::write_frame(
         &mut send,
         &serde_json::to_vec(&Request {
             repository,
@@ -698,7 +698,7 @@ async fn open_git_session(
     .unwrap();
     let header = tokio::time::timeout(
         Duration::from_secs(3),
-        codeyard_app::cluster::rpc::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON),
+        codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON),
     )
     .await
     .expect("Git admission timed out")
@@ -876,7 +876,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         .await
         .unwrap();
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    codeyard_app::cluster::rpc::wire::write_frame(
+    codeyard_repos_core::wire::write_frame(
         &mut send,
         &serde_json::to_vec(&Request {
             repository: uuid,
@@ -892,7 +892,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
     send.write_all(&1u32.to_be_bytes()).await.unwrap();
     assert!(tokio::time::timeout(
         Duration::from_secs(3),
-        codeyard_app::cluster::rpc::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+        codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
     )
     .await
     .expect("bodyless frame refusal timed out")
@@ -955,7 +955,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         .await
         .unwrap();
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    codeyard_app::cluster::rpc::wire::write_frame(
+    codeyard_repos_core::wire::write_frame(
         &mut send,
         &serde_json::to_vec(&Request {
             repository: uuid,
@@ -973,7 +973,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         .unwrap();
     assert!(tokio::time::timeout(
         Duration::from_secs(3),
-        codeyard_app::cluster::rpc::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+        codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
     )
     .await
     .expect("oversized editor frame refusal timed out")
@@ -1001,7 +1001,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         actor: Some(writer.id),
         ci_run: None,
     };
-    codeyard_app::cluster::rpc::wire::write_frame(
+    codeyard_repos_core::wire::write_frame(
         &mut send,
         &serde_json::to_vec(&request).unwrap(),
         codeyard_db_core::limits::MAX_JSON,
@@ -1104,9 +1104,9 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         open_git_session(&web, &storage, uuid).await;
     let error = repository_error(busy);
     assert_eq!(error.message, "Git sessions busy");
-    assert!(codeyard_app::cluster::rpc::wire::read_frame(
+    assert!(codeyard_repos_core::wire::read_frame(
         &mut busy_recv,
-        codeyard_app::cluster::rpc::wire::MAX_BYTES
+        codeyard_repos_core::wire::MAX_BYTES
     )
     .await
     .unwrap()
@@ -2603,7 +2603,7 @@ async fn remote_web_contract() {
     )
     .await
     .unwrap();
-    let mut update_request = codeyard_app::repositories::store::types::PullBranchUpdate {
+    let mut update_request = codeyard_repos_core::store_types::PullBranchUpdate {
         pull_request_id: update_pull.id,
         base_branch: "update-base".into(),
         branch: "update-head".into(),
@@ -2784,7 +2784,7 @@ async fn remote_web_contract() {
             .await
             .unwrap_err()
             .is_write_denied());
-        let mut request = codeyard_app::repositories::store::types::PullBranchUpdate {
+        let mut request = codeyard_repos_core::store_types::PullBranchUpdate {
             pull_request_id: pull.id,
             base_branch: "consent-base".into(),
             branch: "consent-head".into(),

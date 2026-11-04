@@ -202,10 +202,10 @@ fn address_of(node: &cluster::Cluster) -> SocketAddr {
 }
 
 /// A request that asks whether a repository exists. Any valid request serves these tests.
-fn exists_request() -> codeyard_app::cluster::rpc::wire::Request {
-    codeyard_app::cluster::rpc::wire::Request {
+fn exists_request() -> codeyard_repos_core::wire::Request {
+    codeyard_repos_core::wire::Request {
         repository: Uuid::new_v4(),
-        operation: codeyard_app::cluster::rpc::wire::Operation::Exists,
+        operation: codeyard_repos_core::wire::Operation::Exists,
         actor: None,
         ci_run: None,
     }
@@ -215,27 +215,27 @@ fn exists_request() -> codeyard_app::cluster::rpc::wire::Request {
 /// frame, and the reply. Returns the reply frame, or the error if the node closed.
 async fn exists(link: &mut Link) -> anyhow::Result<Vec<u8>> {
     let header = serde_json::to_vec(&exists_request()).unwrap();
-    codeyard_app::cluster::rpc::wire::write_frame(
+    codeyard_repos_core::wire::write_frame(
         &mut link.writer,
         &header,
         codeyard_db_core::limits::MAX_JSON,
     )
     .await?;
-    codeyard_app::cluster::rpc::wire::write_frame(
+    codeyard_repos_core::wire::write_frame(
         &mut link.writer,
         b"",
-        codeyard_app::cluster::rpc::wire::MAX_BYTES,
+        codeyard_repos_core::wire::MAX_BYTES,
     )
     .await?;
     link.finish().await?;
-    let reply = codeyard_app::cluster::rpc::wire::read_frame(
+    let reply = codeyard_repos_core::wire::read_frame(
         &mut link.reader,
         codeyard_db_core::limits::MAX_JSON,
     )
     .await?;
-    codeyard_app::cluster::rpc::wire::read_frame(
+    codeyard_repos_core::wire::read_frame(
         &mut link.reader,
-        codeyard_app::cluster::rpc::wire::MAX_BYTES,
+        codeyard_repos_core::wire::MAX_BYTES,
     )
     .await?;
     Ok(reply)
@@ -253,19 +253,19 @@ async fn request_through(
         .connect(ServerName::IpAddress(address.ip().into()), socket)
         .await?;
     let header = serde_json::to_vec(&exists_request())?;
-    codeyard_app::cluster::rpc::wire::write_frame(
+    codeyard_repos_core::wire::write_frame(
         &mut stream,
         &header,
         codeyard_db_core::limits::MAX_JSON,
     )
     .await?;
-    codeyard_app::cluster::rpc::wire::write_frame(
+    codeyard_repos_core::wire::write_frame(
         &mut stream,
         b"",
-        codeyard_app::cluster::rpc::wire::MAX_BYTES,
+        codeyard_repos_core::wire::MAX_BYTES,
     )
     .await?;
-    codeyard_app::cluster::rpc::wire::read_frame(&mut stream, codeyard_db_core::limits::MAX_JSON)
+    codeyard_repos_core::wire::read_frame(&mut stream, codeyard_db_core::limits::MAX_JSON)
         .await
 }
 
@@ -282,9 +282,9 @@ async fn tcp_only_nodes_answer_repository_calls_without_an_iroh_socket() {
     let web = start_tcp(&database, root.path(), "web-1", "web").await;
     let storage = start_tcp(&database, root.path(), "store-1", "storage").await;
     assert!(web.endpoint().is_none() && storage.endpoint().is_none());
-    let request = codeyard_app::cluster::rpc::wire::Request {
+    let request = codeyard_repos_core::wire::Request {
         repository: Uuid::new_v4(),
-        operation: codeyard_app::cluster::rpc::wire::Operation::Exists,
+        operation: codeyard_repos_core::wire::Operation::Exists,
         actor: None,
         ci_run: None,
     };
@@ -361,13 +361,13 @@ async fn unknown_keys_are_closed_on_rpc_and_events_before_any_answer() {
                 .await
                 .expect("the handshake completes for any well-formed key");
         let answer = tokio::time::timeout(Duration::from_secs(5), async {
-            let _ = codeyard_app::cluster::rpc::wire::write_frame(
+            let _ = codeyard_repos_core::wire::write_frame(
                 &mut link.writer,
                 b"{}",
                 codeyard_db_core::limits::MAX_JSON,
             )
             .await;
-            codeyard_app::cluster::rpc::wire::read_frame(
+            codeyard_repos_core::wire::read_frame(
                 &mut link.reader,
                 codeyard_db_core::limits::MAX_JSON,
             )

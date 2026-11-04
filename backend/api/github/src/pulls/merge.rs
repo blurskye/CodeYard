@@ -9,7 +9,7 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::types::MergeMethod;
+use codeyard_repos_core::store_types::MergeMethod;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use serde::Deserialize;

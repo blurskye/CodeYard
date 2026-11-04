@@ -2,13 +2,13 @@
 
 use crate::ci::push::RefUpdate;
 use crate::ci::runs::CiRuns;
-use crate::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use crate::repositories::refs::publication_error;
 use crate::repositories::refs::RefError;
 use crate::repositories::store::repo_store;
-use crate::repositories::store::types::BranchMergePublication;
-use crate::repositories::store::types::MergeMethod;
-use crate::repositories::store::types::MergeRequest;
+use codeyard_repos_core::store_types::BranchMergePublication;
+use codeyard_repos_core::store_types::MergeMethod;
+use codeyard_repos_core::store_types::MergeRequest;
 use codeyard_git as git;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;

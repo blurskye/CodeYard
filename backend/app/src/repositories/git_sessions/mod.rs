@@ -288,14 +288,14 @@ pub struct ReceiveSession<'a> {
     pub path: &'a std::path::Path,
     /// The application binary that runs the receive and reference-transaction hooks.
     pub executable: std::path::PathBuf,
-    pub session: crate::repositories::store::types::GitSession,
+    pub session: codeyard_repos_core::store_types::GitSession,
 }
 
 pub async fn receive_session(
     pool: DbPool,
     ci: Arc<CiRuns>,
     receive: ReceiveSession<'_>,
-    streams: crate::repositories::store::types::GitStreams<'_>,
+    streams: codeyard_repos_core::store_types::GitStreams<'_>,
 ) -> Result<std::process::ExitStatus> {
     #[cfg(target_os = "linux")]
     {

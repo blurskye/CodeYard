@@ -1,7 +1,7 @@
 //! Temporary remediation forks reuse repository storage placement and checked fork initialization.
 
 use crate::app::AppState;
-use crate::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::queries::credentials::Actor;

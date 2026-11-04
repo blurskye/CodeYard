@@ -5,7 +5,7 @@ use axum::Json;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::error::ApiError;
 use codeyard_api_http::shared::repos::chrome::ApiResult;
-use codeyard_app::repositories::store::types::MAX_COMMIT_PAGE_SIZE;
+use codeyard_repos_core::store_types::MAX_COMMIT_PAGE_SIZE;
 
 #[expect(
     clippy::result_large_err,

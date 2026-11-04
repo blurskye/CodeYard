@@ -1,5 +1,5 @@
 //! Discussions anchored to immutable commits, shared by REST and native forms.
-use crate::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use crate::repositories::store::repo_store;
 use codeyard_db_core::models::CommitComment;
 use codeyard_db_core::models::Repository;

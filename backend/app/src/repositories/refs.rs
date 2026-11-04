@@ -1,7 +1,7 @@
 //! Branch and tag mutations shared by JSON and native forms.
 use crate::ci::push::RefUpdate;
 use crate::ci::runs::CiRuns;
-use crate::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use crate::repositories::store::repo_store;
 use codeyard_git as git;
 use codeyard_git::error::ErrorKind;

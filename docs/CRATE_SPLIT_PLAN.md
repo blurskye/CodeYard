@@ -20,6 +20,7 @@ backend/
   db/
     core/                      DbPool, connection, migrations, models, native_operation!
     identity/ orgs/ repos/ actions/ security/ cluster/     queries by domain
+  repos-core/                  store records, wire protocol and node context
   repos/                       repository policy, imports, traffic, templates, Git editor
   ci/                          configuration, credentials, logs, environment values
     runner/                    the Actions runner
@@ -122,8 +123,8 @@ and results stay the same. A stage can be the last one.
    boundary includes CI admission, workflow discovery, push dispatch, buffered RPC,
    streamed Git sessions and replica publication. This exceeds the approved five
    small traits. The simpler cuts above move independent operations first. Next,
-   move wire records and node context below the store before introducing CI and
-   publication interfaces.
+   wire records, store records and node context now live in `backend/repos-core/`.
+   The remaining runtime moves follow before checking the workspace.
 7. **API.** Source extraction complete: HTTP plumbing, GitHub REST (one crate,
    with folders named for its operation categories), repository HTTP, GraphQL and
    the remaining routes are separate crates. Shared helpers have one direct lower

@@ -2,7 +2,7 @@
 //! commit the file and move the branch, failing if it changed since the editor loaded.
 use crate::ci::push::RefUpdate;
 use crate::ci::runs::CiRuns;
-use crate::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use crate::repositories::store::repo_store;
 use crate::repositories::store::RepoStore;
 use codeyard_git::error::ErrorKind;

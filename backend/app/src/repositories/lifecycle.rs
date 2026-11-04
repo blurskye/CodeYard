@@ -3,7 +3,7 @@ use chrono::Datelike;
 use tracing::instrument::WithSubscriber;
 use tracing::Instrument;
 
-use crate::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use crate::repositories::store::repo_store;
 use chrono::Utc;
 use codeyard_db_core::models::Repository;

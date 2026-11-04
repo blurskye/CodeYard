@@ -16,7 +16,7 @@ use codeyard_api_http::error::ApiError;
 use codeyard_api_http::shared::repos::access::check_repo_read_access;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_app::repositories::store::types::BlobBytes;
+use codeyard_repos_core::store_types::BlobBytes;
 use codeyard_git::error::RepoError;
 use codeyard_storage::range::ByteRange as BlobRange;
 /// Content type for a raw blob.

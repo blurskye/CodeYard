@@ -3,9 +3,9 @@ use crate::ci::runs::CiRuns;
 use crate::repositories::pull_requests::database_error;
 use crate::repositories::pull_requests::OperationError;
 use crate::repositories::store::repo_store;
-use crate::repositories::store::types::allowed_merge_methods;
-use crate::repositories::store::types::MergeMethod;
-use crate::repositories::store::types::MergeRequest as StoreMerge;
+use codeyard_repos_core::store_types::allowed_merge_methods;
+use codeyard_repos_core::store_types::MergeMethod;
+use codeyard_repos_core::store_types::MergeRequest as StoreMerge;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::validate_merge_revision;
@@ -1455,7 +1455,7 @@ async fn publish_prepared_merge_owned(
                 pool,
                 repository.id,
                 user.id,
-                &crate::repositories::store::types::AsyncMergePublication {
+                &codeyard_repos_core::store_types::AsyncMergePublication {
                     policy: Some(policy),
                     uuid,
                     token_id,

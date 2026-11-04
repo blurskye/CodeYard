@@ -16,7 +16,7 @@ pub fn autolink(row: codeyard_db_repos::repositories::autolinks::Autolink) -> re
 )]
 pub async fn resolve_references_with<F, Fut>(
     pool: &codeyard_db_core::DbPool,
-    cluster: Option<&codeyard_app::cluster::context::NodeContext>,
+    cluster: Option<&codeyard_repos_core::context::NodeContext>,
     repository: &codeyard_db_core::models::Repository,
     owner: &str,
     name: &str,

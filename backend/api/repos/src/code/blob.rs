@@ -20,7 +20,7 @@ use codeyard_api_http::shared::repos::chrome::store_error;
 use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_app::repositories::store::types::BlobBytes;
+use codeyard_repos_core::store_types::BlobBytes;
 use codeyard_app::repositories::store::RepoStore;
 use codeyard_git::error::RepoError;
 use codeyard_git::repository::PREVIEW_BYTES;

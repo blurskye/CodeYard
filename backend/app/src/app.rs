@@ -18,7 +18,7 @@ const DEFAULT_GRAPHQL_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::
 pub struct AppState {
     pub pool: DbPool,
     pub repos_path: PathBuf,
-    pub cluster: Option<crate::cluster::context::NodeContext>,
+    pub cluster: Option<codeyard_repos_core::context::NodeContext>,
     pub secret_encryptor: Option<Arc<SecretEncryptor>>,
     pub storage: Arc<ObjectStore>,
     pub notification_broadcaster: Arc<NotificationBroadcaster>,
@@ -48,7 +48,7 @@ impl AppState {
         storage: Arc<ObjectStore>,
         secret_encryptor: Option<Arc<SecretEncryptor>>,
         ci_config: CiConfig,
-        cluster: Option<crate::cluster::context::NodeContext>,
+        cluster: Option<codeyard_repos_core::context::NodeContext>,
     ) -> Self {
         if cluster.is_none() {
             crate::repositories::releases::immutable::register_local_identity(

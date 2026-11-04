@@ -15,7 +15,7 @@ use codeyard_app::app::AppState;
 use codeyard_app::repositories::pull_requests::restack;
 use codeyard_app::repositories::pull_requests::OperationError;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_app::repositories::store::types::RestackMove;
+use codeyard_repos_core::store_types::RestackMove;
 use codeyard_ci::config::CiConfig;
 use codeyard_storage::ObjectStore;
 use database::Database;

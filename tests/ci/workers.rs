@@ -10,11 +10,11 @@ use codeyard_app::ci::workers::CiWorkers;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
 
-use codeyard_app::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard_app::repositories::store::types::GitService;
-use codeyard_app::repositories::store::types::GitSession;
+use codeyard_repos_core::store_types::GitService;
+use codeyard_repos_core::store_types::GitSession;
 use codeyard_app::repositories::store::RepoStore;
 use codeyard_git::error::ErrorKind;
 use codeyard_model::ci::LogLine;
@@ -320,7 +320,7 @@ async fn stream_request(
     request: serde_json::Value,
 ) -> serde_json::Value {
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    codeyard_app::cluster::rpc::wire::write_frame(
+    codeyard_repos_core::wire::write_frame(
         &mut send,
         &serde_json::to_vec(&request).unwrap(),
         codeyard_db_core::limits::MAX_JSON,
@@ -329,7 +329,7 @@ async fn stream_request(
     .unwrap();
     send.finish().unwrap();
     serde_json::from_slice(
-        &codeyard_app::cluster::rpc::wire::read_frame(
+        &codeyard_repos_core::wire::read_frame(
             &mut recv,
             codeyard_db_core::limits::MAX_JSON,
         )
@@ -342,19 +342,19 @@ async fn stream_request(
 async fn repository_refused_with_claim(
     connection: &iroh::endpoint::Connection,
     repository: Uuid,
-    operation: codeyard_app::cluster::rpc::wire::Operation,
-    ci_run: Option<codeyard_app::cluster::rpc::wire::CiRunAccess>,
+    operation: codeyard_repos_core::wire::Operation,
+    ci_run: Option<codeyard_repos_core::wire::CiRunAccess>,
     message: &str,
 ) {
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
     let streaming = matches!(
         &operation,
-        codeyard_app::cluster::rpc::wire::Operation::GitSession(_)
-            | codeyard_app::cluster::rpc::wire::Operation::ReplicaPack { .. }
+        codeyard_repos_core::wire::Operation::GitSession(_)
+            | codeyard_repos_core::wire::Operation::ReplicaPack { .. }
     );
-    codeyard_app::cluster::rpc::wire::write_frame(
+    codeyard_repos_core::wire::write_frame(
         &mut send,
-        &serde_json::to_vec(&codeyard_app::cluster::rpc::wire::Request {
+        &serde_json::to_vec(&codeyard_repos_core::wire::Request {
             repository,
             operation,
             actor: None,
@@ -366,17 +366,17 @@ async fn repository_refused_with_claim(
     .await
     .unwrap();
     if !streaming {
-        codeyard_app::cluster::rpc::wire::write_frame(
+        codeyard_repos_core::wire::write_frame(
             &mut send,
             b"",
-            codeyard_app::cluster::rpc::wire::MAX_BYTES,
+            codeyard_repos_core::wire::MAX_BYTES,
         )
         .await
         .unwrap();
         send.finish().unwrap();
     }
-    let reply: codeyard_app::cluster::rpc::wire::Reply = serde_json::from_slice(
-        &codeyard_app::cluster::rpc::wire::read_frame(
+    let reply: codeyard_repos_core::wire::Reply = serde_json::from_slice(
+        &codeyard_repos_core::wire::read_frame(
             &mut recv,
             codeyard_db_core::limits::MAX_JSON,
         )
@@ -384,15 +384,15 @@ async fn repository_refused_with_claim(
         .unwrap(),
     )
     .unwrap();
-    assert!(codeyard_app::cluster::rpc::wire::read_frame(
+    assert!(codeyard_repos_core::wire::read_frame(
         &mut recv,
-        codeyard_app::cluster::rpc::wire::MAX_BYTES
+        codeyard_repos_core::wire::MAX_BYTES
     )
     .await
     .unwrap()
     .is_empty());
     match reply.result {
-        Err(codeyard_app::cluster::rpc::wire::Failure::Repository(error)) => {
+        Err(codeyard_repos_core::wire::Failure::Repository(error)) => {
             assert_eq!(error.kind, ErrorKind::Invalid);
             assert!(error.message.contains(message), "{error}");
         }
@@ -403,7 +403,7 @@ async fn repository_refused_with_claim(
 async fn repository_refused(
     connection: &iroh::endpoint::Connection,
     repository: Uuid,
-    operation: codeyard_app::cluster::rpc::wire::Operation,
+    operation: codeyard_repos_core::wire::Operation,
     message: &str,
 ) {
     repository_refused_with_claim(connection, repository, operation, None, message).await;
@@ -724,7 +724,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     repository_refused(
         &worker_connection,
         uuid,
-        codeyard_app::cluster::rpc::wire::Operation::GitSession(GitSession::new(
+        codeyard_repos_core::wire::Operation::GitSession(GitSession::new(
             GitService::UploadPack,
             true,
         )),
@@ -817,7 +817,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         } else {
             // A copy's pack is for storage nodes; every other call is for web and ssh nodes.
             let message = match operation {
-                codeyard_app::cluster::rpc::wire::Operation::ReplicaPack { .. } => {
+                codeyard_repos_core::wire::Operation::ReplicaPack { .. } => {
                     "requires a storage node"
                 }
                 _ => "requires a web or ssh node",
@@ -848,16 +848,16 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     )
     .await
     .unwrap();
-    let claim_access = codeyard_app::cluster::rpc::wire::CiRunAccess {
+    let claim_access = codeyard_repos_core::wire::CiRunAccess {
         id: claimed.run.id,
         worker: claimed.run.worker.clone().unwrap(),
     };
     for access in [
-        codeyard_app::cluster::rpc::wire::CiRunAccess {
+        codeyard_repos_core::wire::CiRunAccess {
             id: claim_access.id + 10_000,
             ..claim_access.clone()
         },
-        codeyard_app::cluster::rpc::wire::CiRunAccess {
+        codeyard_repos_core::wire::CiRunAccess {
             worker: format!("{}/other-slot", worker.key.public_key()),
             ..claim_access.clone()
         },
@@ -865,7 +865,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         repository_refused_with_claim(
             &worker_connection,
             uuid,
-            codeyard_app::cluster::rpc::wire::Operation::BlobById { id: blob.clone() },
+            codeyard_repos_core::wire::Operation::BlobById { id: blob.clone() },
             Some(access),
             "running CI claim",
         )
@@ -874,7 +874,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     repository_refused_with_claim(
         &worker_connection,
         other_uuid,
-        codeyard_app::cluster::rpc::wire::Operation::BlobById { id: blob.clone() },
+        codeyard_repos_core::wire::Operation::BlobById { id: blob.clone() },
         Some(claim_access),
         "running CI claim",
     )
@@ -925,7 +925,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     for (operation, _) in rpc_operations::operations(&revision.sha) {
         // A storage node may ask for a copy's pack, and is refused when it holds no copy.
         let message = match operation {
-            codeyard_app::cluster::rpc::wire::Operation::ReplicaPack { .. } => {
+            codeyard_repos_core::wire::Operation::ReplicaPack { .. } => {
                 "holds no copy of this repository"
             }
             _ => "requires a web or ssh node",
@@ -1103,7 +1103,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     repository_refused(
         &worker_connection,
         uuid,
-        codeyard_app::cluster::rpc::wire::Operation::GitSession(GitSession::new(
+        codeyard_repos_core::wire::Operation::GitSession(GitSession::new(
             GitService::UploadPack,
             true,
         )),
@@ -2440,7 +2440,7 @@ impl ProtocolHandler for StalledWorkflowReads {
         connection: iroh::endpoint::Connection,
     ) -> Result<(), iroh::protocol::AcceptError> {
         let (_send, mut recv) = connection.accept_bi().await.unwrap();
-        codeyard_app::cluster::rpc::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+        codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
             .await
             .unwrap();
         let _ = self.0.send(());
@@ -4565,7 +4565,7 @@ async fn a_claim_frame_that_arrives_after_its_worker_is_revoked_is_refused() {
     send.write_all(&frame).await.unwrap();
     send.finish().unwrap();
     let reply: serde_json::Value = serde_json::from_slice(
-        &codeyard_app::cluster::rpc::wire::read_frame(
+        &codeyard_repos_core::wire::read_frame(
             &mut recv,
             codeyard_db_core::limits::MAX_JSON,
         )
@@ -4722,7 +4722,7 @@ async fn a_busy_core_refuses_a_request_at_once_when_all_slots_are_taken() {
         send.write_all(&body).await.unwrap();
         send.finish().unwrap();
         let reply: serde_json::Value = serde_json::from_slice(
-            &codeyard_app::cluster::rpc::wire::read_frame(
+            &codeyard_repos_core::wire::read_frame(
                 &mut recv,
                 codeyard_db_core::limits::MAX_JSON,
             )
@@ -4796,7 +4796,7 @@ async fn stalled_ci_replies_keep_their_admission_slots() {
             .unwrap();
         let (mut send, mut recv) = connection.open_bi().await.unwrap();
         // Each stalled claim is a different slot, so it takes its own queued run.
-        codeyard_app::cluster::rpc::wire::write_frame(
+        codeyard_repos_core::wire::write_frame(
             &mut send,
             &serde_json::to_vec(
                 &json!({"worker": format!("stalled-{index}"), "operation": {"Claim": {"mode": "local", "platforms": CiConfig::default().platform_labels()}}}),
@@ -5056,7 +5056,7 @@ impl ProtocolHandler for LogReplyProxy {
         connection: iroh::endpoint::Connection,
     ) -> Result<(), iroh::protocol::AcceptError> {
         let (mut send, mut recv) = connection.accept_bi().await.unwrap();
-        let header = codeyard_app::cluster::rpc::wire::read_frame(
+        let header = codeyard_repos_core::wire::read_frame(
             &mut recv,
             codeyard_db_core::limits::MAX_JSON,
         )
@@ -5078,7 +5078,7 @@ impl ProtocolHandler for LogReplyProxy {
             .await
             .unwrap();
         let (mut writer, mut reader) = upstream.open_bi().await.unwrap();
-        codeyard_app::cluster::rpc::wire::write_frame(
+        codeyard_repos_core::wire::write_frame(
             &mut writer,
             &header,
             codeyard_db_core::limits::MAX_JSON,
@@ -5086,7 +5086,7 @@ impl ProtocolHandler for LogReplyProxy {
         .await
         .unwrap();
         writer.finish().unwrap();
-        let reply = codeyard_app::cluster::rpc::wire::read_frame(
+        let reply = codeyard_repos_core::wire::read_frame(
             &mut reader,
             codeyard_db_core::limits::MAX_JSON,
         )
@@ -5096,7 +5096,7 @@ impl ProtocolHandler for LogReplyProxy {
             let _ = self.logs.send(());
             connection.close(0u32.into(), b"lost log reply");
         } else {
-            codeyard_app::cluster::rpc::wire::write_frame(
+            codeyard_repos_core::wire::write_frame(
                 &mut send,
                 &reply,
                 codeyard_db_core::limits::MAX_JSON,

@@ -121,7 +121,7 @@ async fn create_value(
         &state.pool,
         &state.ci_runs,
         &state.notification_broadcaster,
-        codeyard_app::repositories::store::types::PullHeadActor {
+        codeyard_repos_core::store_types::PullHeadActor {
             user: actor.id,
             token: Some(viewer.token.id),
         },

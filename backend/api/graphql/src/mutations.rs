@@ -7,7 +7,7 @@ use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
 use async_graphql::ErrorExtensions;
-use codeyard_app::repositories::store::types::MergeMethod;
+use codeyard_repos_core::store_types::MergeMethod;
 use codeyard_model::node_id;
 use serde_json::json;
 use serde_json::Value;
@@ -374,7 +374,7 @@ pub(super) async fn resolve(
                     pool,
                     &request.state.ci_runs,
                     broadcaster,
-                    codeyard_app::repositories::store::types::PullHeadActor {
+                    codeyard_repos_core::store_types::PullHeadActor {
                         user: actor,
                         token: Some(request.auth.token.id),
                     },

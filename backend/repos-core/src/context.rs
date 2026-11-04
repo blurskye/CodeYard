@@ -1,4 +1,4 @@
-use crate::cluster::rpc::wire::unavailable;
+use codeyard_repos_core::wire::unavailable;
 use codeyard_cluster::transport::IrohDialer;
 use codeyard_cluster::worker::CorePeer;
 use codeyard_db_core::DbPool;

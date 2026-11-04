@@ -1548,7 +1548,7 @@ mod fixture {
             fixture.pool.clone(),
             Arc::new(codeyard_ci::config::CiConfig::default()),
             Arc::new(tokio::sync::Notify::new()),
-            Some(crate::cluster::context::NodeContext {
+            Some(codeyard_repos_core::context::NodeContext {
                 pool: Some(fixture.pool.clone()),
                 iroh: codeyard_cluster::transport::IrohDialer::with_endpoint(
                     codeyard_cluster::transport::Relay::Off,

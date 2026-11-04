@@ -15,7 +15,7 @@ use codeyard_app::ci::runner_credentials::JitConfig;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
 
-use codeyard_app::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use codeyard_cluster::transport::Listen;
 use codeyard_cluster::transport::NodeAddress;
 use codeyard_cluster::transport::Relay;

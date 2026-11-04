@@ -4,7 +4,7 @@ use crate::ci::runs::CiRuns;
 use crate::repositories::pull_requests::database_error;
 use crate::repositories::pull_requests::OperationError;
 use crate::repositories::store::repo_store;
-use crate::repositories::store::types::PullBranchUpdate;
+use codeyard_repos_core::store_types::PullBranchUpdate;
 use codeyard_db_core::DbPool;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;

@@ -86,7 +86,7 @@ pub async fn change(
 /// Sends one `pull_request` event for each team whose review request was added or removed.
 pub(super) async fn emit_events(
     pool: &codeyard_db_core::DbPool,
-    cluster: Option<&crate::cluster::context::NodeContext>,
+    cluster: Option<&codeyard_repos_core::context::NodeContext>,
     repo: &Repository,
     pull: &PullRequest,
     action: &'static str,

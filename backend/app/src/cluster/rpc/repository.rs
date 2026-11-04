@@ -1,17 +1,17 @@
 use crate::cluster::replicas::copy_path;
 use crate::cluster::replicas::moving;
 use crate::cluster::replicas::MOVE_WAIT;
-use crate::cluster::rpc::wire::invalid;
-use crate::cluster::rpc::wire::unavailable;
-use crate::cluster::rpc::wire::Failure;
-use crate::cluster::rpc::wire::Operation;
-use crate::cluster::rpc::wire::Request;
-use crate::cluster::rpc::wire::MAX_BYTES;
+use codeyard_repos_core::wire::invalid;
+use codeyard_repos_core::wire::unavailable;
+use codeyard_repos_core::wire::Failure;
+use codeyard_repos_core::wire::Operation;
+use codeyard_repos_core::wire::Request;
+use codeyard_repos_core::wire::MAX_BYTES;
 use crate::cluster::rpc::RpcHandler;
-use crate::repositories::store::types::BlobMetadata;
-use crate::repositories::store::types::GitService;
-use crate::repositories::store::types::WorkflowPayloadEntry;
-use crate::repositories::store::types::MAX_WORKFLOW_PAYLOAD_BYTES;
+use codeyard_repos_core::store_types::BlobMetadata;
+use codeyard_repos_core::store_types::GitService;
+use codeyard_repos_core::store_types::WorkflowPayloadEntry;
+use codeyard_repos_core::store_types::MAX_WORKFLOW_PAYLOAD_BYTES;
 use crate::repositories::store::RepoStore;
 use anyhow::Result;
 use codeyard_git::error::RepoError;
@@ -217,7 +217,7 @@ pub(super) struct ReadAdmission {
 
 /// Blob bytes go in the raw reply body; the JSON value carries only their metadata.
 fn blob_reply(
-    blob: crate::repositories::store::types::BlobBytes,
+    blob: codeyard_repos_core::store_types::BlobBytes,
     output: &mut Vec<u8>,
 ) -> Result<Value, Failure> {
     *output = blob.bytes;
@@ -518,7 +518,7 @@ impl RpcHandler {
                         pool,
                         &repo,
                         session.service
-                            == crate::repositories::store::types::GitService::ReceivePack,
+                            == codeyard_repos_core::store_types::GitService::ReceivePack,
                     )
                     .await
                     .map_err(|_| {
@@ -612,12 +612,12 @@ impl RpcHandler {
         {
             return Err(unavailable());
         }
-        let path = crate::cluster::context::term_path(
+        let path = codeyard_repos_core::context::term_path(
             &self.context.repos_path,
             request.repository,
             write.term,
         );
-        crate::cluster::context::literal_directory(&self.context.repos_path, &path).await?;
+        codeyard_repos_core::context::literal_directory(&self.context.repos_path, &path).await?;
         Ok((store_at(&path, self.context.node_id)?, Some(repo.id)))
     }
 
@@ -817,7 +817,7 @@ impl RpcHandler {
                     pool,
                     repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                     source_repo_id,
-                    crate::repositories::store::types::PullHeadActor {
+                    codeyard_repos_core::store_types::PullHeadActor {
                         user: actor
                             .ok_or_else(|| invalid("repository mutation requires an actor"))?,
                         token,
@@ -1402,7 +1402,7 @@ impl RpcHandler {
             )),
             Operation::Merge { request } => {
                 let result = store.prepare_merge(&request).await.map_err(|_| {
-                    Failure::Merge(crate::repositories::store::types::MergeFailure::CannotMerge)
+                    Failure::Merge(codeyard_repos_core::store_types::MergeFailure::CannotMerge)
                 })?;
                 let repo_id = repo_id.ok_or_else(|| invalid("repository unavailable"))?;
                 let repository =
@@ -1445,7 +1445,7 @@ impl RpcHandler {
                     }
                     Err(_) => {
                         return Err(Failure::Merge(
-                            crate::repositories::store::types::MergeFailure::BranchMoved,
+                            codeyard_repos_core::store_types::MergeFailure::BranchMoved,
                         ));
                     }
                 }

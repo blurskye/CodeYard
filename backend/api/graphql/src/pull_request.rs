@@ -22,8 +22,8 @@ async fn mergeable(
     pull: &codeyard_db_core::models::PullRequest,
     request: &RequestContext,
 ) -> Result<Option<(bool, String)>> {
-    use codeyard_app::repositories::store::types::MergeMethod;
-    use codeyard_app::repositories::store::types::MergeRequest;
+    use codeyard_repos_core::store_types::MergeMethod;
+    use codeyard_repos_core::store_types::MergeRequest;
     use codeyard_git::error::ErrorKind;
     let store = repo_store(repo, request.state.cluster.as_ref());
     let base = match store
@@ -99,7 +99,7 @@ pub(super) async fn resolve(
                 .map(|value| value.enum_name())
                 .transpose()?
                 .unwrap_or("MERGE");
-            let method = codeyard_app::repositories::store::types::MergeMethod::parse(
+            let method = codeyard_repos_core::store_types::MergeMethod::parse(
                 &method.to_ascii_lowercase(),
             )
             .ok_or_else(|| async_graphql::Error::new("Invalid merge method"))?;
@@ -250,11 +250,11 @@ pub(super) async fn resolve(
                     None => "UNKNOWN",
                     Some(true) => {
                         let method = if repo.allow_merge_commit {
-                            codeyard_app::repositories::store::types::MergeMethod::Merge
+                            codeyard_repos_core::store_types::MergeMethod::Merge
                         } else if repo.allow_squash_merge {
-                            codeyard_app::repositories::store::types::MergeMethod::Squash
+                            codeyard_repos_core::store_types::MergeMethod::Squash
                         } else {
-                            codeyard_app::repositories::store::types::MergeMethod::Rebase
+                            codeyard_repos_core::store_types::MergeMethod::Rebase
                         };
                         if codeyard_app::repositories::pull_requests::merge::page_blocker_messages(
                             &request.state.pool,

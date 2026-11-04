@@ -23,7 +23,7 @@ use codeyard_app::app::AppState;
 use codeyard_app::repositories::pull_requests::branches::refresh_open_pull_request;
 use codeyard_app::repositories::pull_requests::merge::MergeRequest;
 use codeyard_app::repositories::pull_requests::merge::MergeResponse;
-use codeyard_app::repositories::store::types::MergeMethod;
+use codeyard_repos_core::store_types::MergeMethod;
 use codeyard_webui::pages::repos::issues::DetailDraft;
 use codeyard_webui::pages::repos::issues::Kind;
 use std::collections::HashMap;

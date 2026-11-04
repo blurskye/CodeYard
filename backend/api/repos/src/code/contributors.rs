@@ -9,7 +9,7 @@ use codeyard_api_http::error::ApiError;
 use codeyard_api_http::shared::repos::access::access_error;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_app::repositories::store::types::MAX_CONTRIBUTOR_RESPONSE_BYTES;
+use codeyard_repos_core::store_types::MAX_CONTRIBUTOR_RESPONSE_BYTES;
 use codeyard_git::error::RepoError;
 use codeyard_identity::repository_access::AccessError;
 use serde::Serialize;

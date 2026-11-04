@@ -1,5 +1,5 @@
 //! One CI queue, reached through the database or a paired core node.
-use crate::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use crate::repositories::store::repo_store;
 use crate::repositories::store::RepoStore;
 use anyhow::ensure;
@@ -1023,7 +1023,7 @@ impl RunQueue {
                 continue;
             };
             let result = tokio::time::timeout(std::time::Duration::from_secs(100), async {
-                crate::cluster::rpc::wire::write_frame(
+                codeyard_repos_core::wire::write_frame(
                     &mut link.writer,
                     &header,
                     codeyard_db_core::limits::MAX_JSON + 64 * 1024,
@@ -1031,7 +1031,7 @@ impl RunQueue {
                 .await?;
                 link.finish().await?;
                 let reply: Reply = serde_json::from_slice(
-                    &crate::cluster::rpc::wire::read_frame(
+                    &codeyard_repos_core::wire::read_frame(
                         &mut link.reader,
                         codeyard_db_core::limits::MAX_JSON,
                     )

@@ -1,14 +1,14 @@
 //! Repository protocol composition; wire format and policy have explicit owners.
-use crate::cluster::context::NodeContext;
-use crate::cluster::rpc::wire::invalid;
-use crate::cluster::rpc::wire::read_frame;
-use crate::cluster::rpc::wire::unavailable;
-use crate::cluster::rpc::wire::write_frame;
-use crate::cluster::rpc::wire::Operation;
-use crate::cluster::rpc::wire::Reply;
-use crate::cluster::rpc::wire::Request;
-use crate::cluster::rpc::wire::MAX_BYTES;
-use crate::cluster::rpc::wire::TIMEOUT;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::wire::invalid;
+use codeyard_repos_core::wire::read_frame;
+use codeyard_repos_core::wire::unavailable;
+use codeyard_repos_core::wire::write_frame;
+use codeyard_repos_core::wire::Operation;
+use codeyard_repos_core::wire::Reply;
+use codeyard_repos_core::wire::Request;
+use codeyard_repos_core::wire::MAX_BYTES;
+use codeyard_repos_core::wire::TIMEOUT;
 use anyhow::Result;
 use codeyard_cluster::link::Link;
 use codeyard_db_core::limits::MAX_JSON;
@@ -25,7 +25,6 @@ use tokio_util::task::TaskTracker;
 mod client;
 mod git_session;
 pub mod repository;
-pub mod wire;
 
 /// Answers a request with a refusal and ends the stream. A peer that does not read cannot
 /// hold the caller's slot past the timeout.
@@ -178,7 +177,7 @@ impl RpcHandler {
             return session.await;
         }
         drop(header_slot);
-        let body_limit = crate::cluster::rpc::wire::operation_body_limit(&request.operation);
+        let body_limit = codeyard_repos_core::wire::operation_body_limit(&request.operation);
         tokio::time::timeout_at(deadline, async {
             if body_limit > 0 {
                 if let Err(error) = self.authorize_body_request(&request, peer).await {

@@ -263,7 +263,7 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
     )
     .await
     .unwrap();
-    let mut request = codeyard_app::repositories::store::types::PullBranchUpdate {
+    let mut request = codeyard_repos_core::store_types::PullBranchUpdate {
         pull_request_id: pull.id,
         base_branch: "upstream".into(),
         branch: "main".into(),

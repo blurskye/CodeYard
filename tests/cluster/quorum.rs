@@ -7,9 +7,9 @@ use codeyard_app::ci::queue::RunQueue;
 use codeyard_app::ci::runs::CiRuns;
 use codeyard_ci::config::CiConfig;
 
-use codeyard_app::cluster::context::term_path;
+use codeyard_repos_core::context::term_path;
 
-use codeyard_app::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use codeyard_cluster::pairing::PairingHandler;
 use codeyard_cluster::transport::IrohDialer;
 use codeyard_cluster::transport::NodeAddress;
@@ -18,9 +18,9 @@ use codeyard_cluster::transport::Relay;
 use codeyard_app::repositories::git_sessions::receive_session;
 use codeyard_app::repositories::git_sessions::ReceiveCredential;
 use codeyard_app::repositories::git_sessions::ReceiveSession;
-use codeyard_app::repositories::store::types::GitService;
-use codeyard_app::repositories::store::types::GitSession;
-use codeyard_app::repositories::store::types::GitStreams;
+use codeyard_repos_core::store_types::GitService;
+use codeyard_repos_core::store_types::GitSession;
+use codeyard_repos_core::store_types::GitStreams;
 use codeyard_app::repositories::store::RepoStore;
 use codeyard_db_core::models::RefValue;
 use codeyard_db_core::DbPool;
@@ -263,12 +263,12 @@ impl Stores {
         let (reply, _) = context
             .call(
                 self.fixture.primary,
-                codeyard_app::cluster::rpc::wire::Request {
+                codeyard_repos_core::wire::Request {
                     repository: codeyard_app::cluster::rpc::repository::repository_uuid(
                         &repository.disk_path,
                     )
                     .unwrap(),
-                    operation: codeyard_app::cluster::rpc::wire::Operation::Refs,
+                    operation: codeyard_repos_core::wire::Operation::Refs,
                     actor: None,
                     ci_run: None,
                 },

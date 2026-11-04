@@ -2,16 +2,16 @@
 //! method runs the matching Git code, moving blocking libgit2 work off the async
 //! threads and turning failures into [`RepoError`]s.
 use crate::repositories::store::local::writes::oid_change;
-use crate::repositories::store::types::allowed_merge_methods;
-use crate::repositories::store::types::AsyncMergePublication;
-use crate::repositories::store::types::BlobBytes;
-use crate::repositories::store::types::BlobPreviewMetadata;
-use crate::repositories::store::types::GitService;
-use crate::repositories::store::types::MergeMethod;
-use crate::repositories::store::types::MergeRequest;
-use crate::repositories::store::types::RestackMove;
-use crate::repositories::store::types::MAX_ARCHIVE_RESPONSE_BYTES;
-use crate::repositories::store::types::MAX_BLOB_RESPONSE_BYTES;
+use codeyard_repos_core::store_types::allowed_merge_methods;
+use codeyard_repos_core::store_types::AsyncMergePublication;
+use codeyard_repos_core::store_types::BlobBytes;
+use codeyard_repos_core::store_types::BlobPreviewMetadata;
+use codeyard_repos_core::store_types::GitService;
+use codeyard_repos_core::store_types::MergeMethod;
+use codeyard_repos_core::store_types::MergeRequest;
+use codeyard_repos_core::store_types::RestackMove;
+use codeyard_repos_core::store_types::MAX_ARCHIVE_RESPONSE_BYTES;
+use codeyard_repos_core::store_types::MAX_BLOB_RESPONSE_BYTES;
 use codeyard_git as git;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
@@ -75,7 +75,7 @@ pub(super) struct LocalStore {
     /// old primary afterwards. `Some(None)` expects an unplaced repository;
     /// `None` is reserved for internal stores opened from a bare path.
     node_id: Option<Option<i64>>,
-    context: Option<(crate::cluster::context::NodeContext, i64)>,
+    context: Option<(codeyard_repos_core::context::NodeContext, i64)>,
     term: Arc<tokio::sync::OnceCell<(i64, PathBuf)>>,
 }
 
@@ -164,7 +164,7 @@ fn repository_matches_path(
 async fn live_pull_read(
     pool: &codeyard_db_core::DbPool,
     repo_id: i64,
-    actor: crate::repositories::store::types::PullHeadActor,
+    actor: codeyard_repos_core::store_types::PullHeadActor,
     path: &Path,
     node_id: Option<Option<i64>>,
 ) -> Result<(), RepoError> {
@@ -289,7 +289,7 @@ async fn checked_branch_write(
 async fn live_pull_head_write(
     pool: &codeyard_db_core::DbPool,
     (head_id, base_id, actor): (i64, i64, i64),
-    request: &crate::repositories::store::types::PullBranchUpdate,
+    request: &codeyard_repos_core::store_types::PullBranchUpdate,
     target: &LocalStore,
     branch: Option<&BranchWrite<'_>>,
     history: &History<'_>,
@@ -578,7 +578,7 @@ pub(crate) async fn begin_coordinated_ref_change(
             .write_quorum
             .is_some()
     {
-        crate::cluster::context::check_term_directory(pool, &repository, node_id.flatten(), path)
+        codeyard_repos_core::context::check_term_directory(pool, &repository, node_id.flatten(), path)
             .await?;
         return Ok(count_ref_change(path).await);
     }
@@ -648,7 +648,7 @@ pub(super) async fn recover_term(
     node: i64,
     root: &Path,
 ) -> anyhow::Result<()> {
-    use crate::cluster::context::term_path;
+    use codeyard_repos_core::context::term_path;
 
     use anyhow::{ensure, Context};
     let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, repository).await?;
@@ -672,7 +672,7 @@ pub(super) async fn recover_term(
     if !tokio::fs::try_exists(&target).await? {
         let previous = term_path(root, uuid, view.term - 1);
         let source = if tokio::fs::try_exists(&previous).await? {
-            crate::cluster::context::literal_directory(root, &previous).await?;
+            codeyard_repos_core::context::literal_directory(root, &previous).await?;
             previous
         } else if view.term == 1 {
             let primary = crate::repositories::store::primary_path(root, uuid);
@@ -687,7 +687,7 @@ pub(super) async fn recover_term(
         };
         let parent = target.parent().context("invalid term path")?;
         tokio::fs::create_dir_all(parent).await?;
-        crate::cluster::context::literal_directory(root, parent).await?;
+        codeyard_repos_core::context::literal_directory(root, parent).await?;
         let stage = tempfile::tempdir_in(parent)?;
         let source = std::path::absolute(source)?;
         let source_store = LocalStore::new(source.to_str().context("invalid source path")?, None);
@@ -758,7 +758,7 @@ pub(super) async fn recover_term(
         })
         .await?;
     }
-    crate::cluster::context::literal_directory(root, &target).await?;
+    codeyard_repos_core::context::literal_directory(root, &target).await?;
     target_store.verify_canonical(&view.refs).await?;
     ensure!(
         codeyard_db_cluster::cluster::writes::mark_write_applied(
@@ -850,7 +850,7 @@ impl LocalStore {
 
     pub(super) fn with_context(
         mut self,
-        context: &crate::cluster::context::NodeContext,
+        context: &codeyard_repos_core::context::NodeContext,
         repository: i64,
     ) -> Self {
         self.context = Some((context.clone(), repository));
@@ -2044,7 +2044,7 @@ impl LocalStore {
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         source_repo_id: i64,
-        actor: impl Into<crate::repositories::store::types::PullHeadActor>,
+        actor: impl Into<codeyard_repos_core::store_types::PullHeadActor>,
         source: &LocalStore,
         number: i32,
         head: &str,
@@ -2095,7 +2095,7 @@ impl LocalStore {
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         source_repo_id: i64,
-        actor: impl Into<crate::repositories::store::types::PullHeadActor>,
+        actor: impl Into<codeyard_repos_core::store_types::PullHeadActor>,
         source: &LocalStore,
         number: i32,
         head: &str,
@@ -3135,7 +3135,7 @@ impl LocalStore {
         repo_id: i64,
         actor: i64,
         source: (i64, &LocalStore),
-        request: &crate::repositories::store::types::PullBranchUpdate,
+        request: &codeyard_repos_core::store_types::PullBranchUpdate,
     ) -> Result<String, RepoError> {
         self.admitted_path(false).await?;
         source.1.admitted_path(true).await?;
@@ -3339,7 +3339,7 @@ impl LocalStore {
 
     pub(super) async fn prepare_revert(
         &self,
-        request: &crate::repositories::store::types::RevertRequest,
+        request: &codeyard_repos_core::store_types::RevertRequest,
     ) -> Result<String, RepoError> {
         self.admitted_path(true).await?;
         let path = self.path();
@@ -3964,7 +3964,7 @@ impl LocalStore {
         &self,
         targets: &[String],
         have: &[String],
-        streams: crate::repositories::store::types::GitStreams<'_>,
+        streams: codeyard_repos_core::store_types::GitStreams<'_>,
     ) -> anyhow::Result<std::process::ExitStatus> {
         let mut revs = String::new();
         for target in targets {
@@ -4620,12 +4620,12 @@ impl LocalStore {
 
     pub(super) async fn git_session(
         &self,
-        session: crate::repositories::store::types::GitSession,
+        session: codeyard_repos_core::store_types::GitSession,
         receive: Option<(
             codeyard_db_core::DbPool,
             std::sync::Arc<crate::ci::runs::CiRuns>,
         )>,
-        streams: crate::repositories::store::types::GitStreams<'_>,
+        streams: codeyard_repos_core::store_types::GitStreams<'_>,
     ) -> anyhow::Result<std::process::ExitStatus> {
         let path = self
             .admitted_path(session.service == GitService::UploadPack)
@@ -4638,7 +4638,7 @@ impl LocalStore {
                 codeyard_db_cluster::cluster::get_repository_by_uuid(&pool, &uuid.to_string())
                     .await?
                     .ok_or_else(|| anyhow::anyhow!("repository unavailable"))?;
-            crate::cluster::context::check_term_directory(
+            codeyard_repos_core::context::check_term_directory(
                 &pool,
                 &repo,
                 self.node_id.flatten(),

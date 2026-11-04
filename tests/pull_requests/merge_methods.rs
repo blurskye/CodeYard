@@ -16,7 +16,7 @@ use codeyard_app::repositories::pull_requests::merge::prepare_pull_request_merge
 use codeyard_app::repositories::pull_requests::merge::publish_prepared_merge;
 use codeyard_app::repositories::pull_requests::merge::MergeRequest;
 use codeyard_app::repositories::pull_requests::OperationError;
-use codeyard_app::repositories::store::types::MergeMethod;
+use codeyard_repos_core::store_types::MergeMethod;
 use codeyard_ci::config::CiConfig;
 use codeyard_storage::ObjectStore;
 use database::Database;

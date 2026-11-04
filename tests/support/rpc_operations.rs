@@ -1,11 +1,11 @@
 //! Every repository operation, with whether a worker may read it while claimed.
-use codeyard_app::cluster::rpc::wire::Operation;
+use codeyard_repos_core::wire::Operation;
 use codeyard_app::repositories::git_sessions::ReceiveCredential;
-use codeyard_app::repositories::store::types::GitService;
-use codeyard_app::repositories::store::types::GitSession;
-use codeyard_app::repositories::store::types::MergeMethod;
-use codeyard_app::repositories::store::types::MergeRequest;
-use codeyard_app::repositories::store::types::RestackMove;
+use codeyard_repos_core::store_types::GitService;
+use codeyard_repos_core::store_types::GitSession;
+use codeyard_repos_core::store_types::MergeMethod;
+use codeyard_repos_core::store_types::MergeRequest;
+use codeyard_repos_core::store_types::RestackMove;
 use codeyard_repos::editor::FileWrite;
 use codeyard_storage::range::ByteRange as BlobRange;
 use uuid::Uuid;
@@ -509,7 +509,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         (
             Operation::UpdatePullBranch {
                 source: Uuid::nil(),
-                request: codeyard_app::repositories::store::types::PullBranchUpdate {
+                request: codeyard_repos_core::store_types::PullBranchUpdate {
                     pull_request_id: 1,
                     base_branch: "main".into(),
                     branch: "feature".into(),
@@ -525,7 +525,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::PublishAsyncMerge {
-                request: codeyard_app::repositories::store::types::AsyncMergePublication {
+                request: codeyard_repos_core::store_types::AsyncMergePublication {
                     policy: None,
                     uuid: uuid::Uuid::nil().to_string(),
                     token_id: 1,
@@ -554,7 +554,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::PublishBranchMerge {
-                publication: codeyard_app::repositories::store::types::BranchMergePublication {
+                publication: codeyard_repos_core::store_types::BranchMergePublication {
                     base_branch: "main".into(),
                     base: sha.into(),
                     head_branch: Some("topic".into()),

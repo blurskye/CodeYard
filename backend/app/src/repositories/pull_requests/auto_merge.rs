@@ -5,7 +5,7 @@ use crate::app::AppState;
 use crate::repositories::pull_requests::actor;
 use crate::repositories::pull_requests::require_write;
 use crate::repositories::pull_requests::OperationError;
-use crate::repositories::store::types::MergeMethod;
+use codeyard_repos_core::store_types::MergeMethod;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_repos::pull_requests::auto_merge::AutoMerge;
 use codeyard_db_repos::pull_requests::auto_merge::AutoMergeRequest;

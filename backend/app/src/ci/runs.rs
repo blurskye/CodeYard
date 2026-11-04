@@ -69,7 +69,7 @@ fn input_text(value: serde_json::Value) -> Result<String, AdmissionError> {
 #[derive(Clone)]
 pub struct CiRuns {
     pub pool: DbPool,
-    pub cluster: Option<crate::cluster::context::NodeContext>,
+    pub cluster: Option<codeyard_repos_core::context::NodeContext>,
     pub config: Arc<CiConfig>,
     pub queued: Arc<Notify>,
     notifications: Arc<NotificationBroadcaster>,
@@ -86,7 +86,7 @@ impl CiRuns {
         pool: DbPool,
         config: Arc<CiConfig>,
         queued: Arc<Notify>,
-        cluster: Option<crate::cluster::context::NodeContext>,
+        cluster: Option<codeyard_repos_core::context::NodeContext>,
         notifications: Arc<NotificationBroadcaster>,
     ) -> Self {
         Self {

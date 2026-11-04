@@ -15,16 +15,16 @@ use codeyard_app::cluster::replicas::promote::Silent;
 use codeyard_app::cluster::replicas::Copying;
 use codeyard_app::cluster::replicas::Retry;
 
-use codeyard_app::cluster::rpc::wire::Failure;
-use codeyard_app::cluster::rpc::wire::Operation;
-use codeyard_app::cluster::rpc::wire::Request;
+use codeyard_repos_core::wire::Failure;
+use codeyard_repos_core::wire::Operation;
+use codeyard_repos_core::wire::Request;
 use codeyard_support::node_identity::NodeKey;
 
 use codeyard_app::repositories::store::local::begin_ref_change;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_app::repositories::store::types::GitService;
-use codeyard_app::repositories::store::types::GitSession;
-use codeyard_app::repositories::store::types::GitStreams;
+use codeyard_repos_core::store_types::GitService;
+use codeyard_repos_core::store_types::GitSession;
+use codeyard_repos_core::store_types::GitStreams;
 use codeyard_app::repositories::store::RepoStore;
 use codeyard_db_cluster::cluster::FamilyOutcome;
 use codeyard_db_cluster::cluster::PromoteOutcome;

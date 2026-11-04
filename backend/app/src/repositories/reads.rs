@@ -1,5 +1,5 @@
 //! Repository read selection shared by browser and JSON adapters.
-use crate::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use crate::repositories::store::repo_store;
 use codeyard_git::error::RepoError;
 use std::collections::HashMap;

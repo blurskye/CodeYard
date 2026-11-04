@@ -56,7 +56,7 @@ pub(crate) fn webhook_payload(
 /// without its diff counts.
 pub(crate) async fn emit_pull_request_event(
     pool: &codeyard_db_core::DbPool,
-    cluster: Option<&crate::cluster::context::NodeContext>,
+    cluster: Option<&codeyard_repos_core::context::NodeContext>,
     repository: &codeyard_db_core::models::Repository,
     pull: &codeyard_db_core::models::PullRequest,
     action: &'static str,

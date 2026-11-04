@@ -456,8 +456,8 @@ impl Gateway {
                 "storage node unavailable"
             );
             let uuid = crate::cluster::rpc::repository::repository_uuid(&repo.disk_path)?;
-            let path = crate::cluster::context::term_path(&cluster.repos_path, uuid, term);
-            crate::cluster::context::literal_directory(&cluster.repos_path, &path).await?;
+            let path = codeyard_repos_core::context::term_path(&cluster.repos_path, uuid, term);
+            codeyard_repos_core::context::literal_directory(&cluster.repos_path, &path).await?;
             path
         } else {
             self.bare_path(&repo).await?

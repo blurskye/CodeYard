@@ -1,20 +1,20 @@
 use super::*;
-use crate::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use crate::cluster::rpc::repository::repository_uuid;
 use codeyard_ci::config::CiConfig;
 use codeyard_cluster::link::Link;
 use codeyard_cluster::transport;
 
-use crate::cluster::rpc::wire::read_frame;
-use crate::cluster::rpc::wire::write_frame;
-use crate::cluster::rpc::wire::Operation;
-use crate::cluster::rpc::wire::Request;
-use crate::cluster::rpc::wire::MAX_BYTES;
-use crate::cluster::rpc::wire::TIMEOUT;
+use codeyard_repos_core::wire::read_frame;
+use codeyard_repos_core::wire::write_frame;
+use codeyard_repos_core::wire::Operation;
+use codeyard_repos_core::wire::Request;
+use codeyard_repos_core::wire::MAX_BYTES;
+use codeyard_repos_core::wire::TIMEOUT;
 use crate::cluster::rpc::RpcHandler;
 use crate::repositories::git_sessions::ReceiveCredential;
-use crate::repositories::store::types::GitService;
-use crate::repositories::store::types::GitSession;
+use codeyard_repos_core::store_types::GitService;
+use codeyard_repos_core::store_types::GitSession;
 use crate::repositories::store::RepoStore;
 use codeyard_cluster::transport::IrohDialer;
 use codeyard_cluster::transport::Relay;
@@ -111,7 +111,7 @@ async fn rpc_and_git_admission_deadlines_include_database_waits() {
         .git_session(
             context.node_id + 1,
             request,
-            crate::repositories::store::types::GitStreams {
+            codeyard_repos_core::store_types::GitStreams {
                 input: &mut tokio::io::empty(),
                 output: &mut tokio::io::sink(),
                 errors: &mut tokio::io::sink(),
@@ -559,7 +559,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
                     .git_session(
                         primary.id,
                         request,
-                        crate::repositories::store::types::GitStreams {
+                        codeyard_repos_core::store_types::GitStreams {
                             input: &mut std::io::Cursor::new(b"0000"),
                             output: &mut tokio::io::sink(),
                             errors: &mut tokio::io::sink(),

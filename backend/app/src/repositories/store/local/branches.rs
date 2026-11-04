@@ -253,9 +253,9 @@ impl LocalStore {
         source: (i64, &LocalStore),
         branch: &str,
         token: Option<i64>,
-    ) -> Result<crate::repositories::store::types::UpstreamMerge, RepoError> {
-        use crate::repositories::store::types::UpstreamMerge;
-        use crate::repositories::store::types::UpstreamMergeType;
+    ) -> Result<codeyard_repos_core::store_types::UpstreamMerge, RepoError> {
+        use codeyard_repos_core::store_types::UpstreamMerge;
+        use codeyard_repos_core::store_types::UpstreamMergeType;
         self.admitted_path(false).await?;
         source.1.admitted_path(true).await?;
         let reference =

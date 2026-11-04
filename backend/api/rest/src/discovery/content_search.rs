@@ -7,7 +7,7 @@ use crate::discovery::search::RESULTS_PER_PAGE;
 use crate::discovery::DiscoveryReadError;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_app::repositories::store::types::MAX_COMMIT_OFFSET;
+use codeyard_repos_core::store_types::MAX_COMMIT_OFFSET;
 use codeyard_app::repositories::store::RepoStore;
 use codeyard_git::error::RepoError;
 use codeyard_git::CommitFilter;

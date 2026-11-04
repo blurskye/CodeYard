@@ -7,7 +7,7 @@ use crate::ci::workflows::list_workflows_for_ref;
 use crate::ci::workflows::should_skip_run_from_message;
 use crate::ci::workflows::WorkflowDefinition;
 use crate::repositories::store::repo_store;
-use crate::repositories::store::types::MAX_COMMIT_PAGE_SIZE;
+use codeyard_repos_core::store_types::MAX_COMMIT_PAGE_SIZE;
 use crate::repositories::store::RepoStore;
 use anyhow::Context;
 use anyhow::Result;

@@ -3,10 +3,10 @@
 //! sets its refs and HEAD to the listing. Git does the object and ref work. A bundle is
 //! not used: it leaves out the refs that point into the copy's history, so a copy that is
 //! ahead of a tag would lose the tag.
-use crate::cluster::context::NodeContext;
-use crate::cluster::rpc::wire::Operation;
-use crate::cluster::rpc::wire::Request;
-use crate::repositories::store::types::GitStreams;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::wire::Operation;
+use codeyard_repos_core::wire::Request;
+use codeyard_repos_core::store_types::GitStreams;
 use crate::repositories::store::RepoStore;
 use anyhow::ensure;
 use anyhow::Context;
@@ -327,7 +327,7 @@ mod tests {
             loop {
                 let (socket, _) = listener.accept().await.unwrap();
                 let mut stream = acceptor.accept(socket).await.unwrap();
-                let header = crate::cluster::rpc::wire::read_frame(
+                let header = codeyard_repos_core::wire::read_frame(
                     &mut stream,
                     codeyard_db_core::limits::MAX_JSON,
                 )
@@ -339,10 +339,10 @@ mod tests {
                     panic!("not a pack");
                 };
                 assert_eq!(have.is_empty(), call > 0);
-                let reply = crate::cluster::rpc::wire::Reply {
+                let reply = codeyard_repos_core::wire::Reply {
                     result: Ok(serde_json::json!({"head":null,"refs":{}})),
                 };
-                crate::cluster::rpc::wire::write_frame(
+                codeyard_repos_core::wire::write_frame(
                     &mut stream,
                     &serde_json::to_vec(&reply).unwrap(),
                     codeyard_db_core::limits::MAX_JSON,
@@ -350,17 +350,17 @@ mod tests {
                 .await
                 .unwrap();
                 // An invalid pack models a local indexing failure after a successful download.
-                crate::cluster::rpc::wire::write_frame(&mut stream, b"invalid pack", 32768)
+                codeyard_repos_core::wire::write_frame(&mut stream, b"invalid pack", 32768)
                     .await
                     .unwrap();
-                crate::cluster::rpc::wire::write_frame(&mut stream, b"", 32768)
+                codeyard_repos_core::wire::write_frame(&mut stream, b"", 32768)
                     .await
                     .unwrap();
                 let code = i32::from(primary_rejects && call == 0);
                 let exit =
                     serde_json::to_vec(&serde_json::json!({"result":{"Ok":code},"stderr":""}))
                         .unwrap();
-                crate::cluster::rpc::wire::write_frame(
+                codeyard_repos_core::wire::write_frame(
                     &mut stream,
                     &exit,
                     codeyard_db_core::limits::MAX_JSON,

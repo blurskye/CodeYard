@@ -1,14 +1,14 @@
 //! Forward repository operations to their owning storage node.
-use crate::cluster::context::NodeContext;
-use crate::cluster::rpc::wire::Failure;
-use crate::cluster::rpc::wire::Operation;
-use crate::cluster::rpc::wire::Request;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::wire::Failure;
+use codeyard_repos_core::wire::Operation;
+use codeyard_repos_core::wire::Request;
 use crate::repositories::store::local::LocalStore;
-use crate::repositories::store::types::BlobBytes;
-use crate::repositories::store::types::BlobMetadata;
-use crate::repositories::store::types::WorkflowPayloadEntry;
-use crate::repositories::store::types::MAX_BLOB_RESPONSE_BYTES;
-use crate::repositories::store::types::MAX_WORKFLOW_PAYLOAD_BYTES;
+use codeyard_repos_core::store_types::BlobBytes;
+use codeyard_repos_core::store_types::BlobMetadata;
+use codeyard_repos_core::store_types::WorkflowPayloadEntry;
+use codeyard_repos_core::store_types::MAX_BLOB_RESPONSE_BYTES;
+use codeyard_repos_core::store_types::MAX_WORKFLOW_PAYLOAD_BYTES;
 use crate::repositories::store::RepoStore;
 use codeyard_git::error::RepoError;
 use codeyard_git::BlobContent;
@@ -26,10 +26,10 @@ fn decode_json<T: DeserializeOwned>(
     raw_json: bool,
 ) -> Result<T, RepoError> {
     if raw_json && !body.is_empty() {
-        serde_json::from_slice(body).map_err(|_| crate::cluster::rpc::wire::unavailable())
+        serde_json::from_slice(body).map_err(|_| codeyard_repos_core::wire::unavailable())
     } else {
         // Peers predating raw JSON responses still return the value in the header.
-        serde_json::from_value(value).map_err(|_| crate::cluster::rpc::wire::unavailable())
+        serde_json::from_value(value).map_err(|_| codeyard_repos_core::wire::unavailable())
     }
 }
 
@@ -38,7 +38,7 @@ pub(super) struct RemoteStore {
     pub(super) disk_path: String,
     pub(super) node_id: i64,
     context: Option<NodeContext>,
-    ci_run: Option<crate::cluster::rpc::wire::CiRunAccess>,
+    ci_run: Option<codeyard_repos_core::wire::CiRunAccess>,
 }
 
 impl RemoteStore {
@@ -52,7 +52,7 @@ impl RemoteStore {
     }
 
     pub(super) fn for_ci_run(&mut self, id: i64, worker: &str) {
-        self.ci_run = Some(crate::cluster::rpc::wire::CiRunAccess {
+        self.ci_run = Some(codeyard_repos_core::wire::CiRunAccess {
             id,
             worker: worker.to_owned(),
         });
@@ -63,12 +63,12 @@ impl RemoteStore {
         actor: Option<i64>,
         operation: Operation,
         body: &[u8],
-    ) -> Result<(crate::cluster::rpc::wire::Reply, Vec<u8>), RepoError> {
+    ) -> Result<(codeyard_repos_core::wire::Reply, Vec<u8>), RepoError> {
         self.exchange_with_actor_and_limit(
             actor,
             operation,
             body,
-            crate::cluster::rpc::wire::MAX_BYTES,
+            codeyard_repos_core::wire::MAX_BYTES,
         )
         .await
     }
@@ -79,11 +79,11 @@ impl RemoteStore {
         operation: Operation,
         body: &[u8],
         response_body_limit: usize,
-    ) -> Result<(crate::cluster::rpc::wire::Reply, Vec<u8>), RepoError> {
+    ) -> Result<(codeyard_repos_core::wire::Reply, Vec<u8>), RepoError> {
         let context = self
             .context
             .as_ref()
-            .ok_or_else(crate::cluster::rpc::wire::unavailable)?;
+            .ok_or_else(codeyard_repos_core::wire::unavailable)?;
         context
             .call_with_response_limit(
                 self.node_id,
@@ -103,7 +103,7 @@ impl RemoteStore {
         &self,
         operation: Operation,
         body: &[u8],
-    ) -> Result<(crate::cluster::rpc::wire::Reply, Vec<u8>), RepoError> {
+    ) -> Result<(codeyard_repos_core::wire::Reply, Vec<u8>), RepoError> {
         self.exchange_with_actor(None, operation, body).await
     }
 
@@ -131,7 +131,7 @@ impl RemoteStore {
         let (reply, body) = self.exchange(operation, body).await?;
         let value = reply.result.map_err(|failure| match failure {
             Failure::Repository(error) => error,
-            Failure::Merge(_) => crate::cluster::rpc::wire::invalid("unexpected merge failure"),
+            Failure::Merge(_) => codeyard_repos_core::wire::invalid("unexpected merge failure"),
         })?;
         decode_json(value, &body, raw_json)
     }
@@ -147,9 +147,9 @@ impl RemoteStore {
             .await?;
         let value = reply.result.map_err(|failure| match failure {
             Failure::Repository(error) => error,
-            Failure::Merge(_) => crate::cluster::rpc::wire::invalid("unexpected merge failure"),
+            Failure::Merge(_) => codeyard_repos_core::wire::invalid("unexpected merge failure"),
         })?;
-        serde_json::from_value(value).map_err(|_| crate::cluster::rpc::wire::unavailable())
+        serde_json::from_value(value).map_err(|_| codeyard_repos_core::wire::unavailable())
     }
 
     pub(super) async fn bytes_as(
@@ -168,7 +168,7 @@ impl RemoteStore {
         match reply.result {
             Ok(_) => Ok(body),
             Err(Failure::Repository(error)) => Err(error),
-            Err(Failure::Merge(_)) => Err(crate::cluster::rpc::wire::invalid(
+            Err(Failure::Merge(_)) => Err(codeyard_repos_core::wire::invalid(
                 "unexpected merge failure",
             )),
         }
@@ -179,7 +179,7 @@ impl RemoteStore {
         operation: Operation,
         body: &[u8],
     ) -> Result<Vec<u8>, RepoError> {
-        self.bytes_with_limit(operation, body, crate::cluster::rpc::wire::MAX_BYTES)
+        self.bytes_with_limit(operation, body, codeyard_repos_core::wire::MAX_BYTES)
             .await
     }
 
@@ -195,7 +195,7 @@ impl RemoteStore {
         match reply.result {
             Ok(_) => Ok(body),
             Err(Failure::Repository(error)) => Err(error),
-            Err(Failure::Merge(_)) => Err(crate::cluster::rpc::wire::invalid(
+            Err(Failure::Merge(_)) => Err(codeyard_repos_core::wire::invalid(
                 "unexpected merge failure",
             )),
         }
@@ -217,12 +217,12 @@ impl RemoteStore {
             .await?;
         let value = reply.result.map_err(|failure| match failure {
             Failure::Repository(error) => error,
-            Failure::Merge(_) => crate::cluster::rpc::wire::invalid("unexpected merge failure"),
+            Failure::Merge(_) => codeyard_repos_core::wire::invalid("unexpected merge failure"),
         })?;
         let manifest: Vec<WorkflowPayloadEntry> =
-            serde_json::from_value(value).map_err(|_| crate::cluster::rpc::wire::unavailable())?;
+            serde_json::from_value(value).map_err(|_| codeyard_repos_core::wire::unavailable())?;
         if manifest.len() > MAX_WORKFLOW_DIRECTORY_ENTRIES {
-            return Err(crate::cluster::rpc::wire::unavailable());
+            return Err(codeyard_repos_core::wire::unavailable());
         }
 
         let mut offset = 0usize;
@@ -231,14 +231,14 @@ impl RemoteStore {
             if entry.path.len() > ".github/workflows/".len() + MAX_WORKFLOW_FILE_NAME_BYTES
                 || entry.length > MAX_CI_WORKFLOW_BYTES
             {
-                return Err(crate::cluster::rpc::wire::unavailable());
+                return Err(codeyard_repos_core::wire::unavailable());
             }
             let end = offset
                 .checked_add(entry.length)
                 .filter(|end| *end <= body.len())
-                .ok_or_else(crate::cluster::rpc::wire::unavailable)?;
+                .ok_or_else(codeyard_repos_core::wire::unavailable)?;
             let content = std::str::from_utf8(&body[offset..end])
-                .map_err(|_| crate::cluster::rpc::wire::unavailable())?
+                .map_err(|_| codeyard_repos_core::wire::unavailable())?
                 .to_owned();
             files.push(CiWorkflowSource {
                 path: entry.path,
@@ -247,7 +247,7 @@ impl RemoteStore {
             offset = end;
         }
         if offset != body.len() {
-            return Err(crate::cluster::rpc::wire::unavailable());
+            return Err(codeyard_repos_core::wire::unavailable());
         }
         Ok(files)
     }
@@ -267,13 +267,13 @@ impl RemoteStore {
         match reply.result {
             Ok(value) => {
                 let mut blob: BlobContent = serde_json::from_value(value)
-                    .map_err(|_| crate::cluster::rpc::wire::unavailable())?;
+                    .map_err(|_| codeyard_repos_core::wire::unavailable())?;
                 blob.content = String::from_utf8(body)
-                    .map_err(|_| crate::cluster::rpc::wire::unavailable())?;
+                    .map_err(|_| codeyard_repos_core::wire::unavailable())?;
                 Ok(blob)
             }
             Err(Failure::Repository(error)) => Err(error),
-            Err(Failure::Merge(_)) => Err(crate::cluster::rpc::wire::unavailable()),
+            Err(Failure::Merge(_)) => Err(codeyard_repos_core::wire::unavailable()),
         }
     }
 
@@ -311,7 +311,7 @@ impl RemoteStore {
         match reply.result {
             Ok(value) => {
                 let metadata: BlobMetadata = serde_json::from_value(value)
-                    .map_err(|_| crate::cluster::rpc::wire::unavailable())?;
+                    .map_err(|_| codeyard_repos_core::wire::unavailable())?;
                 Ok(BlobBytes {
                     id: metadata.id,
                     bytes,
@@ -323,7 +323,7 @@ impl RemoteStore {
                 })
             }
             Err(Failure::Repository(error)) => Err(error),
-            Err(Failure::Merge(_)) => Err(crate::cluster::rpc::wire::unavailable()),
+            Err(Failure::Merge(_)) => Err(codeyard_repos_core::wire::unavailable()),
         }
     }
 
@@ -338,7 +338,7 @@ impl RemoteStore {
                     crate::repositories::store::Backend::Remote(remote)
                         if remote.node_id == self.node_id => {}
                     _ => {
-                        return Err(crate::cluster::rpc::wire::invalid(
+                        return Err(codeyard_repos_core::wire::invalid(
                             "fork source is not on the destination node",
                         ))
                     }
@@ -361,13 +361,13 @@ impl RemoteStore {
 
     pub(super) async fn git_session(
         &self,
-        session: crate::repositories::store::types::GitSession,
-        streams: crate::repositories::store::types::GitStreams<'_>,
+        session: codeyard_repos_core::store_types::GitSession,
+        streams: codeyard_repos_core::store_types::GitStreams<'_>,
     ) -> anyhow::Result<std::process::ExitStatus> {
         let context = self
             .context
             .as_ref()
-            .ok_or_else(crate::cluster::rpc::wire::unavailable)?;
+            .ok_or_else(codeyard_repos_core::wire::unavailable)?;
         context
             .git_session(
                 self.node_id,
@@ -385,7 +385,7 @@ impl RemoteStore {
 
     pub(super) async fn checkout(&self, destination: &Path, sha: &str) -> Result<(), RepoError> {
         let oid = git2::Oid::from_str(sha)
-            .map_err(|_| crate::cluster::rpc::wire::invalid("invalid checkout commit"))?;
+            .map_err(|_| codeyard_repos_core::wire::invalid("invalid checkout commit"))?;
         // Network admission is separate from execution on this node or its peer.
         let permit = codeyard_git::repository::process::forwarding_permit()
             .await
@@ -395,7 +395,7 @@ impl RemoteStore {
         request.extend_from_slice(b"00000009done\n");
         let parent = destination
             .parent()
-            .ok_or_else(|| crate::cluster::rpc::wire::invalid("invalid checkout directory"))?;
+            .ok_or_else(|| codeyard_repos_core::wire::invalid("invalid checkout directory"))?;
         let pack = tempfile::NamedTempFile::new_in(parent)
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
         let mut output = tokio::fs::File::from_std(
@@ -404,11 +404,11 @@ impl RemoteStore {
         );
         let status = self
             .git_session(
-                crate::repositories::store::types::GitSession::new(
-                    crate::repositories::store::types::GitService::UploadPack,
+                codeyard_repos_core::store_types::GitSession::new(
+                    codeyard_repos_core::store_types::GitService::UploadPack,
                     true,
                 ),
-                crate::repositories::store::types::GitStreams {
+                codeyard_repos_core::store_types::GitStreams {
                     input: &mut request.as_slice(),
                     output: &mut output,
                     errors: &mut tokio::io::sink(),
@@ -417,7 +417,7 @@ impl RemoteStore {
             .await
             .map_err(RepoError::from)?;
         if !status.success() {
-            return Err(crate::cluster::rpc::wire::unavailable());
+            return Err(codeyard_repos_core::wire::unavailable());
         }
         use tokio::io::AsyncWriteExt;
         output

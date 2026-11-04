@@ -113,7 +113,7 @@ pub(crate) async fn repair_open_pull(
     ci: &CiRuns,
     repository: &codeyard_db_core::models::Repository,
     head_repository: &codeyard_db_core::models::Repository,
-    credential: crate::repositories::store::types::PullHeadActor,
+    credential: codeyard_repos_core::store_types::PullHeadActor,
     existing: &codeyard_db_core::models::PullRequest,
     suppress_ci: bool,
 ) -> Result<(), OperationError> {
@@ -171,7 +171,7 @@ pub async fn create_pull_request(
     pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
-    actor_id: impl Into<crate::repositories::store::types::PullHeadActor>,
+    actor_id: impl Into<codeyard_repos_core::store_types::PullHeadActor>,
     owner: String,
     repo: String,
     req: CreatePullRequestRequest,

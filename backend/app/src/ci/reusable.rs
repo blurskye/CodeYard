@@ -50,7 +50,7 @@ pub(super) async fn authorize(
 
 pub(super) struct Resolver<'a> {
     pub pool: &'a codeyard_db_core::DbPool,
-    pub context: Option<&'a crate::cluster::context::NodeContext>,
+    pub context: Option<&'a codeyard_repos_core::context::NodeContext>,
     pub caller: &'a codeyard_db_core::models::Repository,
     pub actor: i64,
     pub files: BTreeMap<String, serde_json::Value>,
@@ -99,7 +99,7 @@ pub(super) fn pinned_commits(
 impl<'a> Resolver<'a> {
     pub fn new(
         pool: &'a codeyard_db_core::DbPool,
-        context: Option<&'a crate::cluster::context::NodeContext>,
+        context: Option<&'a codeyard_repos_core::context::NodeContext>,
         caller: &'a codeyard_db_core::models::Repository,
         actor: i64,
         environment: Option<String>,

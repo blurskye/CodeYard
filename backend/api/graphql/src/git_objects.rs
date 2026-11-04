@@ -68,7 +68,7 @@ pub(super) async fn load(
             request.charge(blob.size.min(8_000) as usize)?;
             Ok(
                 json!({"__typename":"Blob","_repo":repo.id,"id":node_id::git_object("B",repo.id,oid),"oid":oid,"byteSize":blob.size,
-                "isBinary":blob.is_binary,"isTruncated":blob.size > codeyard_app::repositories::store::types::MAX_BLOB_RESPONSE_BYTES as u64}),
+                "isBinary":blob.is_binary,"isTruncated":blob.size > codeyard_repos_core::store_types::MAX_BLOB_RESPONSE_BYTES as u64}),
             )
         }
         "tree" => {

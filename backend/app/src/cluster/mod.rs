@@ -1,7 +1,7 @@
 //! Cluster membership: node keys, pairing, and the listeners that let paired nodes reach
 //! each other, over iroh or over TCP with TLS. A plain single node never calls into this module: it
 //! starts only when cluster settings are present in the environment.
-use crate::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::ensure;
@@ -32,7 +32,6 @@ use tokio_util::task::AbortOnDropHandle;
 use tracing::info;
 use tracing::warn;
 pub mod ci;
-pub mod context;
 pub mod placement;
 pub mod replicas;
 pub mod rpc;

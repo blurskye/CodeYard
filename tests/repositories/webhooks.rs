@@ -833,8 +833,8 @@ async fn pull_request_head_synchronize_hook(pg: bool, url: &str) {
 
 async fn server_ref_events(pg: bool, url: &str) {
     use codeyard_app::repositories::store::repo_store;
-    use codeyard_app::repositories::store::types::MergeMethod;
-    use codeyard_app::repositories::store::types::MergeRequest;
+    use codeyard_repos_core::store_types::MergeMethod;
+    use codeyard_repos_core::store_types::MergeRequest;
     use codeyard_repos::editor::FileWrite;
     let (database, _root, alice, _) = setup(pg).await;
     let repository =

@@ -17,12 +17,12 @@ async fn remote_git_streams_large_packs_and_ends_on_storage_disconnect() {
 use chrono::{Duration as ChronoDuration, Utc};
 
 use codeyard_app::cluster;
-use codeyard_app::cluster::rpc::wire::Operation;
-use codeyard_app::cluster::rpc::wire::Request;
+use codeyard_repos_core::wire::Operation;
+use codeyard_repos_core::wire::Request;
 use codeyard_app::repositories::git_sessions::ReceiveCredential;
-use codeyard_app::repositories::store::types::GitService;
-use codeyard_app::repositories::store::types::GitSession;
-use codeyard_app::repositories::store::types::GitStreams;
+use codeyard_repos_core::store_types::GitService;
+use codeyard_repos_core::store_types::GitSession;
+use codeyard_repos_core::store_types::GitStreams;
 use codeyard_db_identity::users::tokens;
 use codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert;
 use codeyard_git::error::RepoError;
@@ -39,7 +39,7 @@ use crate::support::git_remote::tool;
 use crate::support::git_remote::Server;
 
 async fn refused_receive(
-    context: &codeyard_app::cluster::context::NodeContext,
+    context: &codeyard_repos_core::context::NodeContext,
     node: i64,
     repository: uuid::Uuid,
     credential: ReceiveCredential,

@@ -1,6 +1,6 @@
 //! Diagnostics use the same tokenizer, pattern rules and live owner resolution as review gates.
 use super::*;
-use crate::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use crate::repositories::code_owners::parse;
 use crate::repositories::code_owners::pattern_error;
 use crate::repositories::code_owners::resolve_owners;

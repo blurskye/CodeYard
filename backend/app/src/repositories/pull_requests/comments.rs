@@ -1,4 +1,4 @@
-use crate::cluster::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use crate::issues::comments::CommentTarget;
 use crate::issues::discussion_link;
 use crate::issues::discussion_page;
