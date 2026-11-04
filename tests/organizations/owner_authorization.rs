@@ -66,8 +66,8 @@ fn token() -> String {
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::store::RepoStore;
-use codeyard_storage::ObjectStore;
 use codeyard_git::error::RepoError;
+use codeyard_storage::ObjectStore;
 use tower::ServiceExt;
 
 struct Actor {

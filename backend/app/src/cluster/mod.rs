@@ -66,8 +66,6 @@ pub struct Cluster {
     repository_lock: std::sync::Mutex<Option<std::fs::File>>,
 }
 
-/// The TCP address peers dial when `CLUSTER_TCP_ADVERTISE` is not set: the bound address,
-/// unless it is unspecified, which no peer can dial.
 impl Cluster {
     /// The iroh endpoint, or `None` on a node that runs without iroh.
     pub fn endpoint(&self) -> Option<&Endpoint> {

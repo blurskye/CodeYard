@@ -46,8 +46,7 @@ async fn event_document(
             .map_err(Error::unavailable)?,
         None => None,
     };
-    let mut value =
-        codeyard_webhooks::payloads::issue_event(&event, actor.as_ref(), repo, owner);
+    let mut value = codeyard_webhooks::payloads::issue_event(&event, actor.as_ref(), repo, owner);
     match event.kind.as_str() {
         "renamed" => value["rename"] = json!({"from":event.previous,"to":event.detail}),
         "labeled" | "unlabeled" => {

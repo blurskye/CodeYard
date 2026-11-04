@@ -100,8 +100,7 @@ async fn ref_activity(
     {
         Ok(page) => page,
         Err(error) => {
-            return match error.downcast_ref::<codeyard_repos::activity::InvalidQuery>()
-            {
+            return match error.downcast_ref::<codeyard_repos::activity::InvalidQuery>() {
                 Some(invalid) => ctx.error(
                     axum::http::StatusCode::UNPROCESSABLE_ENTITY,
                     &invalid.to_string(),

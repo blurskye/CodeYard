@@ -67,9 +67,7 @@ async fn list(
     rows.truncate(limit);
     page.response(
         &uri,
-        rows.iter()
-            .map(codeyard_webhooks::payloads::user)
-            .collect(),
+        rows.iter().map(codeyard_webhooks::payloads::user).collect(),
         next,
     )
 }

@@ -2,8 +2,8 @@ use crate::support::native_database::NativeDatabase;
 use crate::support::native_database::PostgresDatabase;
 
 use codeyard_cluster::pairing::InviteOptions;
-use codeyard_cluster::transport::NodeAddress;
 use codeyard_cluster::settings::Settings;
+use codeyard_cluster::transport::NodeAddress;
 use codeyard_support::node_identity::NodeKey;
 
 use codeyard_db_core::DbPool;

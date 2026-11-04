@@ -113,8 +113,10 @@ and results stay the same. A stage can be the last one.
    authority, identity mail links and delivery helpers have one lower owner.
    `RepoStore` is a concrete enum-backed type, not the trait assumed above; its local
    and remote implementations call cluster RPC and CI, which call the concrete store
-   back. These three services remain together under the move-only stop rule. A later
-   cut needs the planned store interface and injection, which is more than a move.
+   back. The store, CI engine and inbound cluster handlers remain in the app. Their
+   boundary includes CI admission, workflow discovery, push dispatch, buffered RPC,
+   streamed Git sessions and replica publication. This exceeds the approved five
+   small traits. The simpler cuts above move independent operations first.
 7. **API.** Source extraction complete: HTTP plumbing, GitHub REST (one crate,
    with folders named for its operation categories), repository HTTP, GraphQL and
    the remaining routes are separate crates. Shared helpers have one direct lower
@@ -126,8 +128,8 @@ and results stay the same. A stage can be the last one.
    stages are committed before workspace, Clippy and WASM checks begin. Broker
    tests now live in `backend/app/tests/git_broker.rs` and link the app library
    with REST through one `AppState`. Hook barriers have one shared owner.
-   All workspace targets, Clippy with warnings denied and the web WASM target are
-   clean. Runtime tests remain for the lead.
+   The earlier split passed workspace, Clippy and WASM checks. The new service
+   cuts await the combined builder checks. Runtime tests remain for the lead.
 
 ## Move only: no behaviour change
 

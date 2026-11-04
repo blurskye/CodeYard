@@ -8,10 +8,10 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_repos::traffic::Refusal;
 use codeyard_db_repos::repositories::traffic::Kind;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
+use codeyard_repos::traffic::Refusal;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -76,13 +76,10 @@ async fn paths(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let data = codeyard_repos::traffic::paths(
-        &state.pool,
-        actor.as_ref().map(|actor| &actor.user),
-        &repo,
-    )
-    .await
-    .map_err(failure)?;
+    let data =
+        codeyard_repos::traffic::paths(&state.pool, actor.as_ref().map(|actor| &actor.user), &repo)
+            .await
+            .map_err(failure)?;
     Ok(Json(Value::Array(
         data.iter()
             .map(codeyard_webhooks::payloads::content_traffic)

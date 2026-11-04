@@ -14,7 +14,6 @@ use axum::{
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
-use codeyard_storage::ObjectStore;
 use codeyard_db_identity::auth_admission::AdmissionError;
 use codeyard_db_identity::users::transitions;
 use codeyard_db_identity::users::transitions::SetupClaim;
@@ -25,6 +24,7 @@ use codeyard_identity::sessions::InitiatingSession;
 use codeyard_identity::sessions::SessionContext;
 use codeyard_identity::setup::SetupError;
 use codeyard_identity::setup::SetupInput;
+use codeyard_storage::ObjectStore;
 use database::Database;
 use serde_json::{json, Value};
 use std::sync::Arc;

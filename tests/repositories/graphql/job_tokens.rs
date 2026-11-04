@@ -2,8 +2,8 @@
 use super::*;
 use codeyard_app::ci;
 use codeyard_app::repositories;
-use codeyard_webhooks::payloads;
 use codeyard_model::node_id;
+use codeyard_webhooks::payloads;
 use std::collections::BTreeMap;
 
 async fn contract(pg: bool) {

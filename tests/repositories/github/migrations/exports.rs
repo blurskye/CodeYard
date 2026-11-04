@@ -609,9 +609,7 @@ pub(super) async fn run(
                 alice,
                 codeyard_repos::imports::GitImport {
                     generation: generation.clone(),
-                    credential: codeyard_repos::imports::ImportCredential::Token(
-                        token.id,
-                    ),
+                    credential: codeyard_repos::imports::ImportCredential::Token(token.id),
                     refs: prepared.refs,
                     default_branch: prepared.default_branch,
                 },

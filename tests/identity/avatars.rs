@@ -16,8 +16,8 @@ use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
-use codeyard_storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
+use codeyard_storage::ObjectStore;
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};
@@ -774,14 +774,16 @@ async fn contract(pg: bool) {
         OrganizationOutcome::Conflict
     );
     assert_eq!(download(&nobody, &carols).await, StatusCode::NOT_FOUND);
-    assert!(!codeyard_storage::files::deletion::delete_unreferenced_file(
-        f.pool(),
-        &storage,
-        ids[1],
-        uuid(&bobs_org_picture)
-    )
-    .await
-    .unwrap());
+    assert!(
+        !codeyard_storage::files::deletion::delete_unreferenced_file(
+            f.pool(),
+            &storage,
+            ids[1],
+            uuid(&bobs_org_picture)
+        )
+        .await
+        .unwrap()
+    );
     assert_eq!(download(&nobody, &bobs_org_picture).await, StatusCode::OK);
 
     // A former administrator who uploaded the selected organization picture

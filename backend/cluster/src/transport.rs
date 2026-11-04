@@ -1,11 +1,11 @@
 //! The iroh endpoint: protocol names, relay choice, binding, and the rule that only
 //! active cluster members may connect.
-use codeyard_cluster::link::Link;
-use codeyard_cluster::pairing::PairingHandler;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use codeyard_cluster::link::Link;
+use codeyard_cluster::pairing::PairingHandler;
 use codeyard_db_core::DbPool;
 use codeyard_support::node_identity::NodeKey;
 use futures_util::stream::FuturesUnordered;
@@ -347,12 +347,7 @@ pub async fn dial_node(
             tokio::time::sleep(std::time::Duration::from_millis(index.min(5) as u64 * 200)).await;
             tokio::time::timeout(
                 DIAL_TIMEOUT,
-                Box::pin(crate::tcp::dial(
-                    iroh.key(),
-                    *tcp_address,
-                    node,
-                    alpn,
-                )),
+                Box::pin(crate::tcp::dial(iroh.key(), *tcp_address, node, alpn)),
             )
             .await
             .map_err(|_| anyhow!("timed out reaching {tcp_address} over TCP"))?
@@ -417,9 +412,7 @@ pub async fn accept_stream(connection: &Connection) -> Option<Link> {
     ))
 }
 
-pub fn connection_slot(
-    connection: &Connection,
-) -> Result<tokio::sync::OwnedSemaphorePermit> {
+pub fn connection_slot(connection: &Connection) -> Result<tokio::sync::OwnedSemaphorePermit> {
     static CONNECTIONS: OnceLock<Arc<Semaphore>> = OnceLock::new();
     CONNECTIONS
         .get_or_init(|| Arc::new(Semaphore::new(64)))

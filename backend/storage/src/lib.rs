@@ -78,9 +78,9 @@ impl ObjectStore {
     pub async fn open(state_dir: &Path, s3: Option<crate::s3::S3Config>) -> Result<Self> {
         let backend = match s3 {
             Some(config) => Backend::S3(crate::s3::S3Store::open(config).await?),
-            None => Backend::Local(
-                crate::local::LocalStore::open(&state_dir.join("objects")).await?,
-            ),
+            None => {
+                Backend::Local(crate::local::LocalStore::open(&state_dir.join("objects")).await?)
+            }
         };
         Ok(Self {
             state_dir: std::path::absolute(state_dir)?,

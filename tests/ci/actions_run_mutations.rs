@@ -166,10 +166,9 @@ async fn contract(pg: bool) {
             .cancel_requested
     );
     let (target, runtime) = results::run(&f, repo.id, alice, "main").await;
-    let target_credentials =
-        codeyard_ci::tokens::issue(f.pool(), &target, &definitions, false)
-            .await
-            .unwrap();
+    let target_credentials = codeyard_ci::tokens::issue(f.pool(), &target, &definitions, false)
+        .await
+        .unwrap();
     let target_hash = codeyard_support::token_hash::token_hash(
         &target_credentials.workflows[".github/workflows/ci.yml"]["reader"],
     );

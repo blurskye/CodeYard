@@ -246,8 +246,7 @@ async fn repository_license(
     let path = entries
         .iter()
         .find(|entry| {
-            entry.entry_type == "file"
-                && codeyard_repos::templates::is_license_file(&entry.name)
+            entry.entry_type == "file" && codeyard_repos::templates::is_license_file(&entry.name)
         })
         .ok_or_else(Error::missing)?
         .path
@@ -296,16 +295,13 @@ async fn conduct_code(Path(key): Path<String>) -> Result<Json<Value>> {
     Ok(Json(conduct(true)))
 }
 async fn ignores() -> Json<Value> {
-    Json(json!(
-        codeyard_repos::templates::GITIGNORE_TEMPLATES
-            .iter()
-            .map(|template| template.name)
-            .collect::<Vec<_>>()
-    ))
+    Json(json!(codeyard_repos::templates::GITIGNORE_TEMPLATES
+        .iter()
+        .map(|template| template.name)
+        .collect::<Vec<_>>()))
 }
 async fn ignore(Path(name): Path<String>, headers: HeaderMap) -> Result<Response> {
-    let template =
-        codeyard_repos::templates::gitignore(&name).ok_or_else(Error::missing)?;
+    let template = codeyard_repos::templates::gitignore(&name).ok_or_else(Error::missing)?;
     if headers
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok())

@@ -12,12 +12,12 @@ use axum::http::StatusCode;
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_ci::config::CiConfig;
 use codeyard_app::repositories::pull_requests::merge::prepare_pull_request_merge;
 use codeyard_app::repositories::pull_requests::merge::publish_prepared_merge;
 use codeyard_app::repositories::pull_requests::merge::MergeRequest;
 use codeyard_app::repositories::pull_requests::OperationError;
 use codeyard_app::repositories::store::types::MergeMethod;
+use codeyard_ci::config::CiConfig;
 use codeyard_storage::ObjectStore;
 use database::Database;
 use pulls::{text, Client, Reply};

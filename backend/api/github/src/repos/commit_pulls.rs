@@ -38,9 +38,8 @@ fn operation_error(error: AssociationError) -> Error {
 }
 
 fn user(user: &User) -> Value {
-    let mut value = codeyard_webhooks::payloads::person(
-        &codeyard_webhooks::payloads::Person::of(user),
-    );
+    let mut value =
+        codeyard_webhooks::payloads::person(&codeyard_webhooks::payloads::Person::of(user));
     value["site_admin"] = json!(user.is_admin);
     value
 }

@@ -85,9 +85,7 @@ async fn get_role(
         .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let role = required_role(&state, actor.user.id, org.id, id).await?;
-    Ok(Json(codeyard_webhooks::payloads::organization_role(
-        &role,
-    )))
+    Ok(Json(codeyard_webhooks::payloads::organization_role(&role)))
 }
 async fn users(
     State(state): State<Arc<AppState>>,

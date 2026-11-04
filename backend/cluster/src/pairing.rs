@@ -4,8 +4,6 @@
 //! - an invite ticket from `cluster invite`, redeemed by `cluster join`;
 //! - the same ticket kept as `CLUSTER_JOIN_TOKEN` (reusable, for autoscaling);
 //! - a declared list of keys in `CLUSTER_NODES`, applied by core nodes at startup.
-use codeyard_cluster::link::read_to_end_within;
-use codeyard_cluster::link::Link;
 use crate::transport::NodeAddress;
 use crate::transport::Relay;
 use crate::transport::ALPN_PAIR;
@@ -17,6 +15,8 @@ use anyhow::Context;
 use anyhow::Result;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use codeyard_cluster::link::read_to_end_within;
+use codeyard_cluster::link::Link;
 use codeyard_db_cluster::cluster::Authority;
 use codeyard_db_cluster::cluster::DeclaredMember;
 use codeyard_db_cluster::cluster::JoinRequest;
@@ -360,10 +360,9 @@ async fn request_join(
         version: Some(env!("CARGO_PKG_VERSION").to_owned()),
     })?;
     // dial_node bounds each attempt itself, so the join needs no timeout of its own.
-    let mut link =
-        crate::transport::dial_node(iroh, ticket.node, &ticket.address, ALPN_PAIR)
-            .await
-            .context("could not reach the cluster node named in the ticket")?;
+    let mut link = crate::transport::dial_node(iroh, ticket.node, &ticket.address, ALPN_PAIR)
+        .await
+        .context("could not reach the cluster node named in the ticket")?;
     let answer = tokio::time::timeout(EXCHANGE_TIMEOUT, async {
         link.writer.write_all(&request).await?;
         link.finish().await?;
@@ -525,11 +524,7 @@ impl ProtocolHandler for PairingHandler {
         // One request stream per connection. Waiting for that stream counts against the
         // exchange deadline, as it always has.
         let deadline = tokio::time::Instant::now() + EXCHANGE_TIMEOUT;
-        match tokio::time::timeout_at(
-            deadline,
-            crate::transport::accept_stream(&connection),
-        )
-        .await
+        match tokio::time::timeout_at(deadline, crate::transport::accept_stream(&connection)).await
         {
             Ok(Some(link)) => self.serve_link(link, deadline, slot).await,
             Ok(None) => connection.close(1u32.into(), b"bad pairing request"),

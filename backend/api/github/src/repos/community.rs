@@ -25,9 +25,9 @@ async fn get_profile(
     )
     .await
     .map_err(store_error)?;
-    Ok(Json(codeyard_app::webhooks::repository_payloads::community_profile(
-        &profile,
-    )))
+    Ok(Json(
+        codeyard_app::webhooks::repository_payloads::community_profile(&profile),
+    ))
 }
 pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![("repos/get-community-profile-metrics", get(get_profile))]

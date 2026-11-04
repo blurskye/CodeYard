@@ -55,11 +55,10 @@ async fn token(
     {
         return Err(StatusCode::UNPROCESSABLE_ENTITY);
     }
-    let value =
-        codeyard_ci::oidc::issue(&state.oidc_keys, credential, input.audience.as_deref())
-            .await
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
-            .ok_or(StatusCode::FORBIDDEN)?;
+    let value = codeyard_ci::oidc::issue(&state.oidc_keys, credential, input.audience.as_deref())
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+        .ok_or(StatusCode::FORBIDDEN)?;
     let mut headers = HeaderMap::new();
     headers.insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
     Ok((headers, Json(json!({"value":value}))))

@@ -6,10 +6,10 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as requests;
 use crate::support::native_database as native;
 use crate::support::production_ci as production;
-use codeyard_ci::config::CiConfig;
-use codeyard_ci::config::CiPipelineKind;
 use codeyard_app::ci::runs::CiRunRequest;
 use codeyard_app::ci::runs::CiRuns;
+use codeyard_ci::config::CiConfig;
+use codeyard_ci::config::CiPipelineKind;
 
 use std::collections::BTreeSet;
 

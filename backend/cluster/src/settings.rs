@@ -182,7 +182,8 @@ pub fn hostname() -> Result<String> {
         .ok_or_else(|| anyhow!("cannot tell this machine's name; set NODE_NAME"))
 }
 
-
+/// The TCP address peers dial when `CLUSTER_TCP_ADVERTISE` is not set: the bound address,
+/// unless it is unspecified, which no peer can dial.
 pub fn default_tcp_advertise(bound: SocketAddr) -> Vec<SocketAddr> {
     if bound.ip().is_unspecified() {
         warn!(%bound, "CLUSTER_TCP_BIND is unspecified and CLUSTER_TCP_ADVERTISE is not set; peers cannot be told where to dial this node");
@@ -191,4 +192,3 @@ pub fn default_tcp_advertise(bound: SocketAddr) -> Vec<SocketAddr> {
         vec![bound]
     }
 }
-

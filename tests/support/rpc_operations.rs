@@ -1,18 +1,18 @@
 //! Every repository operation, with whether a worker may read it while claimed.
 use codeyard_app::cluster::rpc::wire::Operation;
 use codeyard_app::repositories::git_sessions::ReceiveCredential;
-use codeyard_repos::editor::FileWrite;
 use codeyard_app::repositories::store::types::GitService;
 use codeyard_app::repositories::store::types::GitSession;
 use codeyard_app::repositories::store::types::MergeMethod;
 use codeyard_app::repositories::store::types::MergeRequest;
 use codeyard_app::repositories::store::types::RestackMove;
+use codeyard_repos::editor::FileWrite;
 use codeyard_storage::range::ByteRange as BlobRange;
 use uuid::Uuid;
 
 fn prepared(sha: &str) -> codeyard_repos::editor::PreparedFile {
-    use codeyard_repos::editor::PreparedFile;
     use codeyard_git::CommitInfo;
+    use codeyard_repos::editor::PreparedFile;
     PreparedFile {
         staging: None,
         authority: None,

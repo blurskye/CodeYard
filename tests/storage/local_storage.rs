@@ -21,12 +21,12 @@ use codeyard_storage::files::uploads::UploadDeclaration;
 use codeyard_storage::files::uploads::UploadError;
 
 use codeyard_api_rest::avatar_ops::AvatarError;
+use codeyard_db_core::models::FileReason;
+use codeyard_db_core::models::FileVisibility;
 use codeyard_storage::local::LocalStore;
 use codeyard_storage::s3::S3Config;
 use codeyard_storage::ObjectStore;
 use codeyard_storage::Upload;
-use codeyard_db_core::models::FileReason;
-use codeyard_db_core::models::FileVisibility;
 use codeyard_webui::app::Page;
 use codeyard_webui::app::PageEnvelope;
 use codeyard_webui::pages::admin::storage as storage_view;
@@ -434,8 +434,13 @@ impl Fixture {
     }
 
     async fn confirm(&self, file_id: Uuid) -> Result<(), ConfirmationError> {
-        codeyard_storage::files::uploads::confirm_upload(&self.pool, &self.storage, self.owner, file_id)
-            .await
+        codeyard_storage::files::uploads::confirm_upload(
+            &self.pool,
+            &self.storage,
+            self.owner,
+            file_id,
+        )
+        .await
     }
 
     /// Reserves, uploads and confirms a file for the owner.
@@ -1495,9 +1500,12 @@ async fn the_expiry_sweep_works_through_a_backlog_in_batches() {
     let mut removed = Vec::new();
     for _ in 0..3 {
         removed.push(
-            codeyard_storage::files::deletion::remove_expired_uploads(&fixture.pool, &fixture.storage)
-                .await
-                .unwrap(),
+            codeyard_storage::files::deletion::remove_expired_uploads(
+                &fixture.pool,
+                &fixture.storage,
+            )
+            .await
+            .unwrap(),
         );
     }
     assert_eq!(removed, [100, 1, 0]);

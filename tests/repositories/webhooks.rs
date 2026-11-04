@@ -12,12 +12,12 @@ use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard_storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_db_core::queries::webhooks::WebhookFields;
 use codeyard_db_repos::webhooks::HookOwner;
+use codeyard_storage::ObjectStore;
 use codeyard_support::crypto::hmac_sha256;
 use database::Database;
 use pulls::Client;
@@ -833,10 +833,10 @@ async fn pull_request_head_synchronize_hook(pg: bool, url: &str) {
 }
 
 async fn server_ref_events(pg: bool, url: &str) {
-    use codeyard_repos::editor::FileWrite;
     use codeyard_app::repositories::store::repo_store;
     use codeyard_app::repositories::store::types::MergeMethod;
     use codeyard_app::repositories::store::types::MergeRequest;
+    use codeyard_repos::editor::FileWrite;
     let (database, _root, alice, _) = setup(pg).await;
     let repository =
         codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
@@ -971,8 +971,8 @@ async fn server_ref_events(pg: bool, url: &str) {
 
 async fn repository_creation_is_not_a_ref_event(pg: bool, url: &str) {
     use codeyard_app::repositories::lifecycle;
-    use codeyard_repos::editor::FileWrite;
     use codeyard_app::repositories::store::repo_store;
+    use codeyard_repos::editor::FileWrite;
     let mut database = Database::new(pg).await;
     database.complete_setup().await;
     let actor = database.actor("creator").await;

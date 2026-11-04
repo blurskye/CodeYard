@@ -87,12 +87,11 @@ pub(super) async fn document(state: &AppState, project: &Project, name: &str) ->
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-    let mut owner =
-        codeyard_webhooks::payloads::person(&codeyard_webhooks::payloads::Person {
-            login: name.into(),
-            id: project.owner_id,
-            site_admin: false,
-        });
+    let mut owner = codeyard_webhooks::payloads::person(&codeyard_webhooks::payloads::Person {
+        login: name.into(),
+        id: project.owner_id,
+        site_admin: false,
+    });
     if project.owner_kind == "org" {
         owner["type"] = serde_json::json!("Organization");
         owner["url"] = serde_json::json!(api_url(&format!(

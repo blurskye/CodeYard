@@ -19,9 +19,6 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_webhooks::settings::HookError;
-use codeyard_webhooks::settings::HookForm;
-use codeyard_webhooks::settings::HookPatch;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::models::WebhookDelivery;
 use codeyard_db_repos::webhooks::DeliveryOutcome;
@@ -31,6 +28,9 @@ use codeyard_db_repos::webhooks::HookSettings;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::urls::repo_url;
+use codeyard_webhooks::settings::HookError;
+use codeyard_webhooks::settings::HookForm;
+use codeyard_webhooks::settings::HookPatch;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -256,9 +256,8 @@ async fn save(
                 payload_url: config
                     .url
                     .ok_or_else(|| Error::invalid("config.url is required"))?,
-                content_type: content_type.unwrap_or_else(|| {
-                    codeyard_webhooks::settings::FORM_CONTENT_TYPE.to_owned()
-                }),
+                content_type: content_type
+                    .unwrap_or_else(|| codeyard_webhooks::settings::FORM_CONTENT_TYPE.to_owned()),
                 events,
                 active: input.active.unwrap_or(true),
                 ssl_verify: ssl_verify.unwrap_or(true),

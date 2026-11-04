@@ -113,9 +113,7 @@ async fn respond(
         _ => return ctx.error(StatusCode::NOT_FOUND, "Unknown invitation action."),
     };
     let authority = ctx.database_actor(actor);
-    match codeyard_repos::collaborators::respond(&ctx.state.pool, authority, id, accept)
-        .await
-    {
+    match codeyard_repos::collaborators::respond(&ctx.state.pool, authority, id, accept).await {
         Ok(()) => ctx.redirect("/settings/invitations"),
         Err(error) => refusal(&ctx, error),
     }

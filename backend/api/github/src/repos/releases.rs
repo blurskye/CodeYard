@@ -220,9 +220,9 @@ async fn generate_notes(
     )
     .await
     .map_err(release_error)?;
-    Ok(Json(codeyard_app::webhooks::release_payloads::release_notes(
-        &notes,
-    )))
+    Ok(Json(
+        codeyard_app::webhooks::release_payloads::release_notes(&notes),
+    ))
 }
 
 /// Whether a release may create its missing tag. A new tag queues push workflows, so a

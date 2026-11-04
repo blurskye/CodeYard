@@ -42,9 +42,9 @@ async fn documents(
         .map(|user| {
             (
                 user.id,
-                codeyard_webhooks::payloads::person(
-                    &codeyard_webhooks::payloads::Person::of(&user),
-                ),
+                codeyard_webhooks::payloads::person(&codeyard_webhooks::payloads::Person::of(
+                    &user,
+                )),
             )
         })
         .collect();

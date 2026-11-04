@@ -1,6 +1,6 @@
 use super::*;
-use crate::npm::dependency_name;
 use crate::dependencies::npm::formatted;
+use crate::npm::dependency_name;
 
 use crate::dependencies::npm::registry_url;
 use crate::dependencies::npm::Archive;

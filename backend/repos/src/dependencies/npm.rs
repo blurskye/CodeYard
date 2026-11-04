@@ -558,8 +558,7 @@ impl Archive {
             let mut entry = entry?;
             let path = entry.path()?.into_owned();
             ensure!(
-                crate::imports::archive::safe_path(&path)
-                    && path.starts_with("package"),
+                crate::imports::archive::safe_path(&path) && path.starts_with("package"),
                 "Unsafe npm archive path"
             );
             ensure!(

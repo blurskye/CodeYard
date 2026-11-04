@@ -296,9 +296,9 @@ async fn list(
             users
                 .iter()
                 .map(|user| {
-                    codeyard_webhooks::payloads::person(
-                        &codeyard_webhooks::payloads::Person::of(user),
-                    )
+                    codeyard_webhooks::payloads::person(&codeyard_webhooks::payloads::Person::of(
+                        user,
+                    ))
                 })
                 .collect::<Vec<_>>(),
         ),
@@ -329,9 +329,7 @@ async fn connections(
         users
             .iter()
             .map(|user| {
-                codeyard_webhooks::payloads::person(
-                    &codeyard_webhooks::payloads::Person::of(user),
-                )
+                codeyard_webhooks::payloads::person(&codeyard_webhooks::payloads::Person::of(user))
             })
             .collect(),
         has_next,

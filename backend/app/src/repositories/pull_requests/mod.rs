@@ -3,7 +3,7 @@ pub mod auto_merge;
 pub mod branches;
 pub mod code_owners;
 pub mod comments;
-pub(crate) pub mod merge;
+pub mod merge;
 pub mod mutations;
 pub mod restack;
 pub mod revert;

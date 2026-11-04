@@ -9,4 +9,3 @@ pub fn comment_link(owner: &str, name: &str, comment: &CommitComment) -> String 
         comment.id
     )
 }
-

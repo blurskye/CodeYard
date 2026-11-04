@@ -17,7 +17,6 @@ use codeyard_app::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_webhooks::payloads;
 use codeyard_db_actions::checks::Credential;
 use codeyard_db_actions::checks::Filter;
 use codeyard_db_actions::checks::Preference;
@@ -28,6 +27,7 @@ use codeyard_db_core::models::Repository;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::urls::repo_url;
+use codeyard_webhooks::payloads;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -285,8 +285,7 @@ async fn get_run(
         codeyard_db_actions::action_jobs::annotations(&state.pool, repo.id, job.id, 0, 1)
             .await
             .map_err(Error::unavailable)?;
-    let job_document =
-        codeyard_webhooks::payloads::action_job(&job, &[], &run, &owner, &repo.name);
+    let job_document = codeyard_webhooks::payloads::action_job(&job, &[], &run, &owner, &repo.name);
     let url = format!("{}/check-runs/{id}", repo_url(&owner, &repo.name));
     Ok(Json(
         json!({"id":id,"node_id":codeyard_model::node_id::encode("CR",id),"head_sha":run.head_sha,"name":job.name,"url":url,

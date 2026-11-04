@@ -8,10 +8,6 @@
 //! an account stops using is removed in the same database transaction as the change.
 use sha2::Digest;
 
-use codeyard_storage::files::uploads::UploadDeclaration;
-use codeyard_storage::files::uploads::UploadError;
-use codeyard_storage::media_signature_matches;
-use codeyard_storage::ObjectStore;
 use codeyard_db_core::models::FileReason;
 use codeyard_db_core::models::FileVisibility;
 use codeyard_db_core::models::User;
@@ -19,6 +15,10 @@ use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_db_core::DbPool;
 use codeyard_db_identity::users::accounts::UserAvatarOutcome;
+use codeyard_storage::files::uploads::UploadDeclaration;
+use codeyard_storage::files::uploads::UploadError;
+use codeyard_storage::media_signature_matches;
+use codeyard_storage::ObjectStore;
 use codeyard_support::credentials::AccountRestricted;
 use sha2::Sha256;
 use uuid::Uuid;

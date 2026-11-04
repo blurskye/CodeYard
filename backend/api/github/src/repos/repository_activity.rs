@@ -11,9 +11,9 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_repos::activity::InvalidQuery;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
+use codeyard_repos::activity::InvalidQuery;
 use std::sync::Arc;
 
 async fn list(

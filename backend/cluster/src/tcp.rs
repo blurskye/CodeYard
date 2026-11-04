@@ -3,11 +3,11 @@ use anyhow::{bail, Context, Result};
 use codeyard_support::node_identity::NodeKey;
 use iroh::PublicKey;
 use std::{net::SocketAddr, time::Duration};
+#[cfg(test)]
+use tokio::net::TcpListener;
 use tokio::{io::split, net::TcpStream};
 use tokio_rustls::{rustls::pki_types::ServerName, TlsConnector};
 use tracing::warn;
-#[cfg(test)]
-use tokio::net::TcpListener;
 /// Opens a request stream to `node` at `address`. The handshake must end with the key of
 /// `node`, and the node must agree to `alpn`. The caller sets the time limit.
 pub async fn dial(

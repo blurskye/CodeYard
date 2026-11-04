@@ -50,11 +50,8 @@ async fn list(
             .into_iter()
             .take(limit)
             .map(|row| {
-                let mut value = codeyard_webhooks::payloads::team_document(
-                    &row.team,
-                    &owner,
-                    row.permission,
-                );
+                let mut value =
+                    codeyard_webhooks::payloads::team_document(&row.team, &owner, row.permission);
                 if let Some(parent) = row.parent {
                     value["parent"] = codeyard_webhooks::payloads::team_document(
                         &parent,

@@ -241,10 +241,7 @@ pub async fn info_refs(
     }
     let service = query.service.unwrap();
     let mut body = Vec::new();
-    codeyard_repos::source::append_packet(
-        &mut body,
-        &format!("# service={service}\n"),
-    );
+    codeyard_repos::source::append_packet(&mut body, &format!("# service={service}\n"));
     body.extend_from_slice(b"0000");
     body.extend(refs);
     git_response(

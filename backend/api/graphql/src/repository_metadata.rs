@@ -219,8 +219,7 @@ pub(super) async fn resolve(
                 .map_err(unavailable)?;
             files.sort_by_key(|file| file.name.to_ascii_lowercase());
             let Some(file) = files.iter().find(|file| {
-                file.entry_type == "file"
-                    && codeyard_repos::templates::is_license_file(&file.name)
+                file.entry_type == "file" && codeyard_repos::templates::is_license_file(&file.name)
             }) else {
                 return Ok(Value::Null);
             };

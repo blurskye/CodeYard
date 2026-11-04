@@ -2,7 +2,6 @@
 //! errors and timeouts, and recorded with what was sent and what came back.
 use hmac::Mac;
 
-use codeyard_support::outbound::Refusal;
 use base64::Engine as _;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::models::WebhookDelivery;
@@ -10,6 +9,7 @@ use codeyard_db_core::queries::webhooks::NewDelivery;
 use codeyard_db_core::DbPool;
 use codeyard_db_repos::webhooks as hooks;
 use codeyard_support::crypto::hmac_sha256;
+use codeyard_support::outbound::Refusal;
 use codeyard_support::secrets::SecretEncryptor;
 use hmac::Hmac;
 use std::net::SocketAddr;

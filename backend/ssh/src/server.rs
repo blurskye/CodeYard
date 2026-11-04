@@ -1,10 +1,10 @@
-use codeyard_app::ci::runs::CiRuns;
 use crate::handler::AuthOutcome;
 use crate::handler::GitSshHandler;
 use crate::rate_limit::client_key;
 use crate::rate_limit::RateLimiter;
 use anyhow::Context;
 use anyhow::Result;
+use codeyard_app::ci::runs::CiRuns;
 use codeyard_db_core::DbPool;
 use rand::rngs::OsRng;
 use rand::RngCore;

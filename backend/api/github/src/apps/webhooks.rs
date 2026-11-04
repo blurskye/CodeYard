@@ -13,14 +13,14 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use codeyard_app::app::AppState;
 use codeyard_app::webhooks;
-use codeyard_webhooks::settings::HookError;
-use codeyard_webhooks::settings::HookForm;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::queries::webhooks::WebhookPatch;
 use codeyard_db_identity::github_app_hooks::Delivery;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::urls::api_url;
+use codeyard_webhooks::settings::HookError;
+use codeyard_webhooks::settings::HookForm;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Map;
@@ -119,9 +119,8 @@ pub(super) async fn update_config(
         ssl_verify: (creating || ssl.is_some()).then_some(fields.ssl_verify),
         ..WebhookPatch::default()
     };
-    let sealed =
-        codeyard_webhooks::settings::seal(state.secret_encryptor.as_deref(), &form.secret)
-            .map_err(hook_error)?;
+    let sealed = codeyard_webhooks::settings::seal(state.secret_encryptor.as_deref(), &form.secret)
+        .map_err(hook_error)?;
     if !codeyard_db_identity::github_app_hooks::save(
         &state.pool,
         app.id,

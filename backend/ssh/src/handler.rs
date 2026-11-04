@@ -1,3 +1,6 @@
+use crate::rate_limit::RateLimiter;
+use anyhow::Result;
+use bytes::Bytes;
 use codeyard_app::ci::runs::CiRuns;
 use codeyard_app::repositories::git_sessions::GitTasks;
 use codeyard_app::repositories::git_sessions::ReceiveCredential;
@@ -6,9 +9,6 @@ use codeyard_app::repositories::store::types::GitService;
 use codeyard_app::repositories::store::types::GitSession;
 use codeyard_app::repositories::store::types::GitStreams;
 use codeyard_app::repositories::store::RepoStore;
-use crate::rate_limit::RateLimiter;
-use anyhow::Result;
-use bytes::Bytes;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
@@ -452,9 +452,7 @@ impl russh::server::Handler for GitSshHandler {
             .filter(|state| state.channel.is_some())
             .filter(|_| variable_name == "GIT_PROTOCOL")
             .and_then(|state| {
-                let protocol =
-                    codeyard_repos::validation::protocol(Some(variable_value))
-                        .ok()?;
+                let protocol = codeyard_repos::validation::protocol(Some(variable_value)).ok()?;
                 state.git_protocol = protocol.map(str::to_owned);
                 Some(())
             })
@@ -782,43 +780,28 @@ mod tests {
             ("owner/project.git.git.git", "project.git.git"),
         ] {
             for (service, write) in [("git-upload-pack", false), ("git-receive-pack", true)] {
-                let parsed = codeyard_repos::validation::parse_command(
-                    &format!("{service} '{path}'"),
-                )
-                .unwrap();
+                let parsed =
+                    codeyard_repos::validation::parse_command(&format!("{service} '{path}'"))
+                        .unwrap();
                 assert_eq!(parsed.owner, "owner");
                 assert_eq!(parsed.repo, expected);
                 assert_eq!(parsed.write, write);
             }
         }
         assert!(
-            codeyard_repos::validation::parse_command(
-                "git-upload-pack 'owner/a/b.git'"
-            )
-            .is_err()
+            codeyard_repos::validation::parse_command("git-upload-pack 'owner/a/b.git'").is_err()
         );
-        assert!(
-            codeyard_repos::validation::parse_command(
-                "not-git 'owner/project.git'"
-            )
-            .is_err()
-        );
+        assert!(codeyard_repos::validation::parse_command("not-git 'owner/project.git'").is_err());
     }
 
     #[test]
     fn builtin_git_commands_use_the_shared_parser() {
         // The built-in server uses the OpenSSH helper's parser, which refuses extra slashes.
         assert!(
-            codeyard_repos::validation::parse_command(
-                "git-upload-pack //alice/repo.git"
-            )
-            .is_err()
+            codeyard_repos::validation::parse_command("git-upload-pack //alice/repo.git").is_err()
         );
         assert!(
-            codeyard_repos::validation::parse_command(
-                "git-upload-pack 'alice/repo.git'"
-            )
-            .is_ok()
+            codeyard_repos::validation::parse_command("git-upload-pack 'alice/repo.git'").is_ok()
         );
     }
 

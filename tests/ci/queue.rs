@@ -1226,9 +1226,9 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
 }
 
 async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &Database) {
-    use codeyard_ci::config::CiConfig;
     use codeyard_app::ci::queue::RunQueue;
     use codeyard_app::ci::runs::CiRuns;
+    use codeyard_ci::config::CiConfig;
     use codeyard_notifications::broadcast::NotificationBroadcaster;
     use codeyard_notifications::current_event;
     use codeyard_notifications::NotificationEvent;
@@ -1633,8 +1633,8 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
     use codeyard_ci::config::CiConfig;
-    use codeyard_storage::ObjectStore;
     use codeyard_model::ci::LogLine;
+    use codeyard_storage::ObjectStore;
     use codeyard_webui::app::PageEnvelope;
     use codeyard_webui::bootstrap::MAX_PAGE_MODEL_BYTES;
     use codeyard_webui::bootstrap::MODEL_CONTENT_TYPE;
@@ -2514,9 +2514,9 @@ macro_rules! on_both_engines {
 }
 
 async fn stale_failures_are_broadcast_after_commit(db: &Database) {
-    use codeyard_ci::config::CiConfig;
     use codeyard_app::ci::queue::RunQueue;
     use codeyard_app::ci::workers::CiWorkers;
+    use codeyard_ci::config::CiConfig;
     use codeyard_notifications::broadcast::NotificationBroadcaster;
     use codeyard_notifications::NotificationEvent;
     use std::sync::Arc;

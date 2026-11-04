@@ -5,9 +5,9 @@ use crate::git_http::ServiceQuery;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use codeyard_app::app::AppState;
-use codeyard_ci::config::CiConfig;
 use codeyard_app::repositories::git_sessions::ReceiveCredential;
 use codeyard_app::repositories::store::RepoStore;
+use codeyard_ci::config::CiConfig;
 use codeyard_storage::ObjectStore;
 
 async fn fixture() -> (tempfile::TempDir, Arc<AppState>, Repository, i64) {

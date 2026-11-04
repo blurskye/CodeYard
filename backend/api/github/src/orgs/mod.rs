@@ -385,9 +385,7 @@ async fn member_list(
     let has_next = rows.len() > limit;
     page.response(
         &uri,
-        rows.iter()
-            .map(codeyard_webhooks::payloads::user)
-            .collect(),
+        rows.iter().map(codeyard_webhooks::payloads::user).collect(),
         has_next,
     )
 }

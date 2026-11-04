@@ -8,12 +8,12 @@ use codeyard::backend::cli::cluster::Command;
 
 use codeyard_cluster::pairing::InviteOptions;
 use codeyard_cluster::pairing::JoinTicket;
+use codeyard_cluster::settings::Settings;
 use codeyard_cluster::transport::Listen;
 use codeyard_cluster::transport::NodeAddress;
 use codeyard_cluster::transport::Relay;
 use codeyard_cluster::transport::ALPN_PAIR;
 use codeyard_cluster::transport::ALPN_RPC;
-use codeyard_cluster::settings::Settings;
 use codeyard_support::node_identity::NodeKey;
 
 use codeyard_db_cluster::cluster::Authority;
@@ -588,10 +588,9 @@ async fn idle_pairing_peers_hold_their_slots_and_free_them_when_they_drop() {
     let core = Core::start(&db.pool).await;
     let mut idle = Vec::new();
     for _ in 0..16 {
-        let client =
-            codeyard_cluster::transport::bind_client(&Relay::Off, &NodeKey::generate())
-                .await
-                .unwrap();
+        let client = codeyard_cluster::transport::bind_client(&Relay::Off, &NodeKey::generate())
+            .await
+            .unwrap();
         let connection = client
             .connect(core.address.clone(), ALPN_PAIR)
             .await
@@ -627,10 +626,9 @@ async fn idle_pairing_peers_hold_their_slots_and_free_them_when_they_drop() {
     }
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        let client =
-            codeyard_cluster::transport::bind_client(&Relay::Off, &NodeKey::generate())
-                .await
-                .unwrap();
+        let client = codeyard_cluster::transport::bind_client(&Relay::Off, &NodeKey::generate())
+            .await
+            .unwrap();
         let answer = raw_pairing(&client, &core.address, b"this is not json").await;
         client.close().await;
         if answer
@@ -999,13 +997,10 @@ async fn advertised_addresses_are_what_peers_are_told_to_dial() {
         relay: Relay::Off,
         advertise: advertise.clone(),
     };
-    let endpoint = codeyard_cluster::transport::bind(
-        &listen,
-        &NodeKey::generate(),
-        database.pool.clone(),
-    )
-    .await
-    .unwrap();
+    let endpoint =
+        codeyard_cluster::transport::bind(&listen, &NodeKey::generate(), database.pool.clone())
+            .await
+            .unwrap();
     codeyard_app::cluster::wait_for_address(&endpoint).await;
     let told = NodeAddress::of(&endpoint.addr());
     for address in &advertise {

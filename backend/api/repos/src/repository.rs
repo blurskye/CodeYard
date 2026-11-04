@@ -40,8 +40,8 @@ use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_api_http::shared::repos::responses::repository_fork_counts;
 use codeyard_app::app::AppState;
-use codeyard_webhooks::settings::HookError;
 use codeyard_identity::repository_access::AccessError;
+use codeyard_webhooks::settings::HookError;
 use codeyard_webui::pages::repos as view;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -95,9 +95,7 @@ fn immutable_releases_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>
     }
 }
 
-fn invitation_error(
-    error: codeyard_repos::collaborators::Error,
-) -> (StatusCode, Json<ApiError>) {
+fn invitation_error(error: codeyard_repos::collaborators::Error) -> (StatusCode, Json<ApiError>) {
     use codeyard_repos::collaborators::Error;
     match error {
         Error::Denied => ApiError::failure(
@@ -2149,15 +2147,14 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "invite-collaborator" => {
-            let permission =
-                codeyard_repos::collaborators::permission(&field(form, "access"))
-                    .ok_or_else(|| {
-                        ApiError::failure(
-                            StatusCode::UNPROCESSABLE_ENTITY,
-                            "validation_error",
-                            "Invalid permission",
-                        )
-                    })?;
+            let permission = codeyard_repos::collaborators::permission(&field(form, "access"))
+                .ok_or_else(|| {
+                    ApiError::failure(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "validation_error",
+                        "Invalid permission",
+                    )
+                })?;
             codeyard_repos::collaborators::add(
                 pool,
                 actor.id,

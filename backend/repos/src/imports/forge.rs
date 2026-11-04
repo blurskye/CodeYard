@@ -248,10 +248,7 @@ pub async fn fetch(project: Project, credentials: Option<&Credentials>) -> Resul
 async fn fetch_inner(project: Project, credentials: Option<&Credentials>) -> Result<Metadata> {
     let addresses = tokio::time::timeout(
         Duration::from_secs(15),
-        codeyard_support::outbound::resolve(
-            &project.api,
-            crate::imports::allow_private(),
-        ),
+        codeyard_support::outbound::resolve(&project.api, crate::imports::allow_private()),
     )
     .await?
     .map_err(|_| anyhow::anyhow!("Source forge address refused"))?;

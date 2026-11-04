@@ -11,8 +11,8 @@ use axum::http::StatusCode;
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
-use codeyard_storage::ObjectStore;
 use codeyard_db_identity::users::ssh_keys;
+use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
 use database::Database;
 use serde_json::json;
@@ -407,10 +407,9 @@ async fn live_authority(pg: bool) {
     .await
     .unwrap();
     for write in [false, true] {
-        let (_, access) =
-            codeyard_repos::deploy_keys::authorize(pool, key.id, &repository, write)
-                .await
-                .unwrap();
+        let (_, access) = codeyard_repos::deploy_keys::authorize(pool, key.id, &repository, write)
+            .await
+            .unwrap();
         assert_eq!(access, codeyard_db_core::models::AccessLevel::Write);
     }
     codeyard_db_identity::users::sessions::delete_session(pool, &alice.session)
@@ -484,14 +483,9 @@ async fn live_authority(pg: bool) {
         .await;
     let organization_repository = database.repository(repository.id).await;
     assert!(
-        codeyard_repos::deploy_keys::authorize(
-            pool,
-            key.id,
-            &organization_repository,
-            false
-        )
-        .await
-        .is_err(),
+        codeyard_repos::deploy_keys::authorize(pool, key.id, &organization_repository, false)
+            .await
+            .is_err(),
         "personal site-admin authority does not extend to organizations"
     );
     let late = codeyard_db_identity::deploy_keys::NewDeployKey {

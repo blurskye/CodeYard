@@ -4,20 +4,20 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::native_database as native;
 
-use codeyard_ci::config::CiExecutionMode;
 use codeyard_app::ci::queue::RunQueue;
 use codeyard_app::cluster;
+use codeyard_app::cluster::tcp;
+use codeyard_ci::config::CiExecutionMode;
 use codeyard_cluster::link::Link;
 use codeyard_cluster::pairing::InviteOptions;
 use codeyard_cluster::pairing::JoinTicket;
-use codeyard_app::cluster::tcp;
+use codeyard_cluster::settings::Settings;
 use codeyard_cluster::transport::IrohDialer;
 use codeyard_cluster::transport::NodeAddress;
 use codeyard_cluster::transport::Relay;
 use codeyard_cluster::transport::ALPN_EVENTS;
 use codeyard_cluster::transport::ALPN_PAIR;
 use codeyard_cluster::transport::ALPN_RPC;
-use codeyard_cluster::settings::Settings;
 use codeyard_support::node_identity::NodeKey;
 use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
 use tokio::{
@@ -336,10 +336,9 @@ async fn pairing_over_tcp_admits_a_valid_ticket_and_refuses_a_bad_one() {
         },
     )
     .unwrap();
-    let error =
-        codeyard_cluster::pairing::join(&forged, &stranger, &Relay::Off, "intruder", None)
-            .await
-            .unwrap_err();
+    let error = codeyard_cluster::pairing::join(&forged, &stranger, &Relay::Off, "intruder", None)
+        .await
+        .unwrap_err();
     assert!(error.to_string().contains("not valid"), "{error:#}");
     let nodes = codeyard_db_cluster::cluster::list_nodes(&database.pool)
         .await
@@ -781,14 +780,10 @@ async fn a_tcp_dial_opens_no_iroh_socket() {
         tcp: vec![address_of(&core)],
         ..Default::default()
     };
-    let _link = codeyard_cluster::transport::dial_node(
-        &dialer,
-        core.public_key(),
-        &address,
-        ALPN_PAIR,
-    )
-    .await
-    .expect("the node answers over TCP");
+    let _link =
+        codeyard_cluster::transport::dial_node(&dialer, core.public_key(), &address, ALPN_PAIR)
+            .await
+            .expect("the node answers over TCP");
     assert!(!dialer.is_open(), "a dial over TCP opened an iroh endpoint");
 }
 
@@ -804,14 +799,10 @@ async fn a_tcp_only_dialer_reaches_an_iroh_only_node_and_opens_iroh_for_it() {
     cluster::wait_for_address(endpoint).await;
     let address = NodeAddress::of(&endpoint.addr());
     let dialer = IrohDialer::new(Relay::Off, NodeKey::generate());
-    let _link = codeyard_cluster::transport::dial_node(
-        &dialer,
-        core.public_key(),
-        &address,
-        ALPN_PAIR,
-    )
-    .await
-    .expect("the node answers over iroh");
+    let _link =
+        codeyard_cluster::transport::dial_node(&dialer, core.public_key(), &address, ALPN_PAIR)
+            .await
+            .expect("the node answers over iroh");
     assert!(
         dialer.is_open(),
         "the iroh endpoint did not open for an iroh-only node"
@@ -843,14 +834,10 @@ async fn a_dial_falls_back_from_tcp_to_iroh_and_then_uses_tcp_again() {
         addrs: iroh_addrs,
         ..Default::default()
     };
-    let _link = codeyard_cluster::transport::dial_node(
-        &dialer,
-        core.public_key(),
-        &fallback,
-        ALPN_PAIR,
-    )
-    .await
-    .expect("the dial falls back to iroh");
+    let _link =
+        codeyard_cluster::transport::dial_node(&dialer, core.public_key(), &fallback, ALPN_PAIR)
+            .await
+            .expect("the dial falls back to iroh");
     assert!(dialer.is_open(), "the dial did not reach iroh");
     // Once TCP answers, the next dial uses it first. Its iroh address is unused, so the dial
     // can succeed only over TCP.
@@ -1111,14 +1098,10 @@ async fn a_dial_reaches_iroh_after_many_silent_tcp_addresses() {
         ..Default::default()
     };
     let started = std::time::Instant::now();
-    let _link = codeyard_cluster::transport::dial_node(
-        &dialer,
-        core.public_key(),
-        &address,
-        ALPN_PAIR,
-    )
-    .await
-    .expect("iroh answers once the TCP budget is spent");
+    let _link =
+        codeyard_cluster::transport::dial_node(&dialer, core.public_key(), &address, ALPN_PAIR)
+            .await
+            .expect("iroh answers once the TCP budget is spent");
     let elapsed = started.elapsed();
     // TCP is tried first, so the dial waits until every TCP attempt has timed out before iroh
     // answers.

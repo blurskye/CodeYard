@@ -54,7 +54,6 @@ pub enum ImportError {
     Unavailable,
 }
 
-
 pub mod archive;
 pub mod forge;
 pub struct Credentials {
@@ -87,4 +86,3 @@ pub fn source_url(text: &str) -> anyhow::Result<url::Url> {
     );
     Ok(url)
 }
-

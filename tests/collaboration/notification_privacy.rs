@@ -20,9 +20,9 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 
-use codeyard_storage::ObjectStore;
 use codeyard_db_core::models::repositories::AccessLevel;
 use codeyard_notifications::NotificationEvent;
+use codeyard_storage::ObjectStore;
 use fixture::Fixture;
 use pulls::Client;
 use serde_json::{json, Value};

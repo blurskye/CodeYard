@@ -50,4 +50,3 @@ pub async fn resolve(host: &str) -> Result<Vec<SocketAddr>> {
         .with_context(|| format!("cannot resolve CLUSTER_PEERS address `{host}`"))?
         .collect())
 }
-

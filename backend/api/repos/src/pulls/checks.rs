@@ -54,10 +54,9 @@ async fn render_checks(
             comparison.base_sha.as_str()
         });
     let code_scanning = crate::pulls::security::checks(ctx, repo, &pull, head, base).await?;
-    let (target, _, _) =
-        codeyard_repos::stacks::merge_target(&ctx.state.pool, &pull)
-            .await
-            .map_err(|_| unavailable(ctx))?;
+    let (target, _, _) = codeyard_repos::stacks::merge_target(&ctx.state.pool, &pull)
+        .await
+        .map_err(|_| unavailable(ctx))?;
     let runs = codeyard_db_actions::ci::latest_ci_runs_for_commit(
         &ctx.state.pool,
         repo.record.id,

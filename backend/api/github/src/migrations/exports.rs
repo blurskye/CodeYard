@@ -14,13 +14,13 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_storage::Download;
 use codeyard_db_repos::repository_exports as exports;
 use codeyard_db_repos::repository_exports::ExportOptions;
 use codeyard_db_repos::repository_exports::ExportRefusal;
 use codeyard_db_repos::repository_exports::RepositoryExport;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
+use codeyard_storage::Download;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -187,12 +187,11 @@ async fn document(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-        let mut owner =
-            codeyard_webhooks::payloads::person(&codeyard_webhooks::payloads::Person {
-                id,
-                login: org.name,
-                site_admin: false,
-            });
+        let mut owner = codeyard_webhooks::payloads::person(&codeyard_webhooks::payloads::Person {
+            id,
+            login: org.name,
+            site_admin: false,
+        });
         owner["type"] = json!("Organization");
         owner["node_id"] = json!(codeyard_model::node_id::encode("O", id));
         owner

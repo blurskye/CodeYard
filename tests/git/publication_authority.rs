@@ -4,9 +4,9 @@ use crate::support::database;
 use crate::support::organizations::applied;
 
 use codeyard_app::repositories::lifecycle::provision;
-use codeyard_repos::editor::FileWrite;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_db_core::models::AccessLevel;
+use codeyard_repos::editor::FileWrite;
 use database::Database;
 
 fn write(branch: &str, path: &str, expected: &str) -> FileWrite {

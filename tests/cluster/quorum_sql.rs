@@ -1113,17 +1113,14 @@ async fn opt_in_and_timeout(pool: &DbPool) {
 async fn coordinator_publication(pool: &DbPool) {
     let f = setup(pool, 2, "2").await;
     let id = Uuid::new_v4().to_string();
-    let prepared =
-        codeyard_cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
-            .await
-            .unwrap();
+    let prepared = codeyard_cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
+        .await
+        .unwrap();
     assert_eq!(prepared.record().id, id);
     votes(pool, &f, &id).await;
-    assert!(
-        codeyard_cluster::writes::collect_votes(pool, &prepared)
-            .await
-            .unwrap()
-    );
+    assert!(codeyard_cluster::writes::collect_votes(pool, &prepared)
+        .await
+        .unwrap());
     let committed = codeyard_cluster::writes::decide(pool, &prepared, true)
         .await
         .unwrap();
@@ -1168,20 +1165,17 @@ async fn coordinator_missing_vote(pool: &DbPool) {
     set_timeout(pool, 1).await.unwrap();
     let id = Uuid::new_v4().to_string();
     let started = std::time::Instant::now();
-    let prepared =
-        codeyard_cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
-            .await
-            .unwrap();
+    let prepared = codeyard_cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
+        .await
+        .unwrap();
     assert!(
         codeyard_db_cluster::cluster::writes::vote_write(pool, &id, f.primary, 1)
             .await
             .unwrap()
     );
-    assert!(
-        !codeyard_cluster::writes::collect_votes(pool, &prepared)
-            .await
-            .unwrap()
-    );
+    assert!(!codeyard_cluster::writes::collect_votes(pool, &prepared)
+        .await
+        .unwrap());
     let aborted = codeyard_cluster::writes::decide(pool, &prepared, true)
         .await
         .unwrap();
@@ -1294,20 +1288,16 @@ async fn coordinator_three_voters(pool: &DbPool) {
 async fn coordinator_duplicate_begin(pool: &DbPool) {
     let f = setup(pool, 2, "2").await;
     let id = Uuid::new_v4().to_string();
-    let original =
-        codeyard_cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
-            .await
-            .unwrap();
-    let retried =
-        codeyard_cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
-            .await
-            .unwrap();
+    let original = codeyard_cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
+        .await
+        .unwrap();
+    let retried = codeyard_cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
+        .await
+        .unwrap();
     assert_eq!(original.record(), retried.record());
-    assert!(
-        !codeyard_cluster::writes::collect_votes(pool, &retried)
-            .await
-            .unwrap()
-    );
+    assert!(!codeyard_cluster::writes::collect_votes(pool, &retried)
+        .await
+        .unwrap());
     assert_eq!(
         codeyard_cluster::writes::decide(pool, &retried, true)
             .await
@@ -1327,10 +1317,9 @@ async fn coordinator_duplicate_begin(pool: &DbPool) {
 async fn coordinator_recovery(pool: &DbPool) {
     let f = setup(pool, 2, "2").await;
     let id = Uuid::new_v4().to_string();
-    let prepared =
-        codeyard_cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
-            .await
-            .unwrap();
+    let prepared = codeyard_cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
+        .await
+        .unwrap();
     votes(pool, &f, &id).await;
     let committed = codeyard_cluster::writes::decide(pool, &prepared, true)
         .await

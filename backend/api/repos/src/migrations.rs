@@ -11,8 +11,8 @@ use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::repos::chrome::load_database;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_app::app::AppState;
-use codeyard_repos::imports::ImportCredential;
 use codeyard_app::repositories::store::repo_store;
+use codeyard_repos::imports::ImportCredential;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::discovery as view;
 use codeyard_webui::pages::discovery::FormError;
@@ -356,9 +356,7 @@ pub(super) async fn submit(
                     StatusCode::UNPROCESSABLE_ENTITY
                 }
                 codeyard_repos::imports::ImportError::Running
-                | codeyard_repos::imports::ImportError::NotEmpty => {
-                    StatusCode::CONFLICT
-                }
+                | codeyard_repos::imports::ImportError::NotEmpty => StatusCode::CONFLICT,
                 codeyard_repos::imports::ImportError::Denied => StatusCode::FORBIDDEN,
                 codeyard_repos::imports::ImportError::Unavailable => {
                     StatusCode::SERVICE_UNAVAILABLE
@@ -367,12 +365,9 @@ pub(super) async fn submit(
             let form = MigrationForm {
                 repository_id: Some(loaded.repository.id),
                 name,
-                source_url: codeyard_repos::imports::source_url(field(
-                    &input,
-                    "source_url",
-                ))
-                .map(|url| url.to_string())
-                .unwrap_or_default(),
+                source_url: codeyard_repos::imports::source_url(field(&input, "source_url"))
+                    .map(|url| url.to_string())
+                    .unwrap_or_default(),
                 action: format!("{base}/migration"),
                 ..Default::default()
             };

@@ -20,10 +20,10 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_repos::collaborators::Error as MemberError;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
+use codeyard_repos::collaborators::Error as MemberError;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -207,19 +207,12 @@ async fn add(
         .ok_or_else(codeyard_app::api_shared::github::auth::required)?
         .user;
     let input = input.unwrap_or_default();
-    let level = codeyard_repos::collaborators::permission(
-        input.permission.as_deref().unwrap_or("push"),
-    )
-    .ok_or_else(|| Error::invalid("Invalid permission"))?;
-    match codeyard_repos::collaborators::add(
-        &state.pool,
-        actor.id,
-        repo.id,
-        &username,
-        level,
-    )
-    .await
-    .map_err(member_error)?
+    let level =
+        codeyard_repos::collaborators::permission(input.permission.as_deref().unwrap_or("push"))
+            .ok_or_else(|| Error::invalid("Invalid permission"))?;
+    match codeyard_repos::collaborators::add(&state.pool, actor.id, repo.id, &username, level)
+        .await
+        .map_err(member_error)?
     {
         codeyard_db_repos::repositories::collaborators::Added::Updated => {
             Ok(StatusCode::NO_CONTENT.into_response())
@@ -346,15 +339,9 @@ async fn delete_invitation(
     let actor = auth
         .ok_or_else(codeyard_app::api_shared::github::auth::required)?
         .user;
-    codeyard_repos::collaborators::update_invitation(
-        &state.pool,
-        actor.id,
-        repo.id,
-        id,
-        None,
-    )
-    .await
-    .map_err(member_error)?;
+    codeyard_repos::collaborators::update_invitation(&state.pool, actor.id, repo.id, id, None)
+        .await
+        .map_err(member_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -20,14 +20,12 @@ use codeyard_app::cluster::rpc::wire::Operation;
 use codeyard_app::cluster::rpc::wire::Request;
 use codeyard_support::node_identity::NodeKey;
 
-use codeyard_repos::editor::FileWrite;
 use codeyard_app::repositories::store::local::begin_ref_change;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_app::repositories::store::types::GitService;
 use codeyard_app::repositories::store::types::GitSession;
 use codeyard_app::repositories::store::types::GitStreams;
 use codeyard_app::repositories::store::RepoStore;
-use codeyard_storage::ObjectStore;
 use codeyard_db_cluster::cluster::FamilyOutcome;
 use codeyard_db_cluster::cluster::PromoteOutcome;
 use codeyard_db_core::models::NodeReplicaCounts;
@@ -36,6 +34,8 @@ use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
+use codeyard_repos::editor::FileWrite;
+use codeyard_storage::ObjectStore;
 use rand::RngCore;
 use std::{
     collections::HashMap,
@@ -1876,10 +1876,10 @@ async fn delete_names_the_promoted_primary_on_postgres() {
 
 #[tokio::test]
 async fn database_free_ci_checkout_uses_claimed_replica_targets() {
-    use codeyard_ci::config::CiConfig;
-    use codeyard_ci::config::CiExecutionMode;
     use codeyard_app::ci::queue::ClaimedRun;
     use codeyard_app::ci::queue::RunQueue;
+    use codeyard_ci::config::CiConfig;
+    use codeyard_ci::config::CiExecutionMode;
     use codeyard_notifications::broadcast::NotificationBroadcaster;
     let database = native::PostgresDatabase::new().await;
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)

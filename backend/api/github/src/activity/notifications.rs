@@ -204,10 +204,7 @@ async fn get_thread(
             let mut inbox = act(&state, &headers, ThreadAction::Get(thread_id(&id)?)).await?;
             let view = inbox.threads.pop().ok_or_else(Error::missing)?;
             Ok(polling(
-                Json(codeyard_webhooks::payloads::notification_thread_json(
-                    &view,
-                ))
-                .into_response(),
+                Json(codeyard_webhooks::payloads::notification_thread_json(&view)).into_response(),
             ))
         }
         .await,
@@ -261,10 +258,13 @@ async fn done_thread(
 fn subscription(inbox: ThreadInbox) -> Result<Response> {
     let thread = inbox.thread.ok_or_else(Error::missing)?;
     let subscription = inbox.subscription.ok_or_else(Error::missing)?;
-    Ok(Json(
-        codeyard_webhooks::payloads::notification_subscription_json(&thread, &subscription),
+    Ok(
+        Json(codeyard_webhooks::payloads::notification_subscription_json(
+            &thread,
+            &subscription,
+        ))
+        .into_response(),
     )
-    .into_response())
 }
 async fn get_subscription(
     State(state): State<Arc<AppState>>,

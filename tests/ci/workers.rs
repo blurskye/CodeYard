@@ -5,10 +5,10 @@ use crate::support::http_client as pulls;
 use crate::support::native_database as native;
 use crate::support::rpc_operations;
 
-use codeyard_ci::config::CiConfig;
-use codeyard_ci::config::CiExecutionMode;
 use codeyard_app::ci::queue::RunQueue;
 use codeyard_app::ci::workers::CiWorkers;
+use codeyard_ci::config::CiConfig;
+use codeyard_ci::config::CiExecutionMode;
 
 use codeyard_app::cluster::context::NodeContext;
 use codeyard_support::secrets::SecretEncryptor;
@@ -252,12 +252,9 @@ async fn client(key: &codeyard_support::node_identity::NodeKey) -> NodeContext {
         iroh: codeyard_cluster::transport::IrohDialer::with_endpoint(
             codeyard_cluster::transport::Relay::Off,
             key.clone(),
-            codeyard_cluster::transport::bind_client(
-                &codeyard_cluster::transport::Relay::Off,
-                key,
-            )
-            .await
-            .unwrap(),
+            codeyard_cluster::transport::bind_client(&codeyard_cluster::transport::Relay::Off, key)
+                .await
+                .unwrap(),
         ),
         key: key.clone(),
         node_id: 0,
@@ -5077,10 +5074,7 @@ impl ProtocolHandler for LogReplyProxy {
         }
         let upstream = self
             .upstream
-            .connect(
-                self.peer.clone(),
-                codeyard_cluster::transport::ALPN_EVENTS,
-            )
+            .connect(self.peer.clone(), codeyard_cluster::transport::ALPN_EVENTS)
             .await
             .unwrap();
         let (mut writer, mut reader) = upstream.open_bi().await.unwrap();

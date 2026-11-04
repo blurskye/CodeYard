@@ -9,29 +9,26 @@ anyhow.workspace = true
 aws-credential-types.workspace = true
 aws-sdk-s3.workspace = true
 aws-smithy-types.workspace = true
-axum.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 codeyard-db-core.workspace = true
-codeyard-db-identity.workspace = true
-codeyard-db-orgs.workspace = true
 codeyard-db-repos.workspace = true
 codeyard-model.workspace = true
 codeyard-support.workspace = true
-codeyard-webui.workspace = true
 futures-util.workspace = true
 hex.workspace = true
 libc.workspace = true
-rand.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-tokio-util.workspace = true
 tracing.workspace = true
 url.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies.tokio]
+workspace = true
+features = ["test-util"]

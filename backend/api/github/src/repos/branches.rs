@@ -68,12 +68,9 @@ async fn list(
     let mut branches = Vec::new();
     let mut budget = WorkflowMatchBudget::new();
     for (branch, sha) in refs {
-        let protected = codeyard_repos::protection::branch_is_protected(
-            &rules,
-            &branch,
-            &mut budget,
-        )
-        .map_err(Error::unavailable)?;
+        let protected =
+            codeyard_repos::protection::branch_is_protected(&rules, &branch, &mut budget)
+                .map_err(Error::unavailable)?;
         if query.protected.is_none_or(|filter| filter == protected) {
             branches.push((branch, sha, protected));
         }
@@ -212,12 +209,9 @@ async fn heads(
     let mut values = Vec::new();
     let mut budget = WorkflowMatchBudget::new();
     for branch in matches.into_iter().skip(offset).take(limit) {
-        let protected = codeyard_repos::protection::branch_is_protected(
-            &rules,
-            &branch,
-            &mut budget,
-        )
-        .map_err(Error::unavailable)?;
+        let protected =
+            codeyard_repos::protection::branch_is_protected(&rules, &branch, &mut budget)
+                .map_err(Error::unavailable)?;
         values.push(json!({"name": branch, "commit": {"sha": sha, "url": format!("{}/commits/{sha}", repo_url(&owner, &name))}, "protected": protected}));
     }
     page.response(&uri, values, has_next)

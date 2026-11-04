@@ -46,11 +46,11 @@ use codeyard_storage::files::uploads::UploadError;
 
 use codeyard_api_rest::avatar_ops::AvatarError;
 
-use codeyard_storage::s3::S3Config;
-use codeyard_storage::ObjectStore;
 use codeyard_db_core::models::File;
 use codeyard_db_core::models::FileReason;
 use codeyard_db_core::models::FileVisibility;
+use codeyard_storage::s3::S3Config;
+use codeyard_storage::ObjectStore;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -553,9 +553,14 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
     let store = Arc::new(signing_store("owned-unit-fixture").await);
     let file = reserve(&db, 7).await.unwrap();
     assert_eq!(
-        codeyard_storage::files::downloads::download_asset(&db.pool, &store, Some(db.user), file.id)
-            .await
-            .unwrap_err(),
+        codeyard_storage::files::downloads::download_asset(
+            &db.pool,
+            &store,
+            Some(db.user),
+            file.id
+        )
+        .await
+        .unwrap_err(),
         DownloadError::NotFound,
         "a pending upload is not a download"
     );
@@ -569,16 +574,22 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
             DownloadError::NotFound
         );
         assert_eq!(
-            codeyard_storage::files::downloads::open_asset_download(&db.pool, &store, actor, file.id)
-                .await
-                .unwrap_err(),
+            codeyard_storage::files::downloads::open_asset_download(
+                &db.pool, &store, actor, file.id
+            )
+            .await
+            .unwrap_err(),
             DownloadError::NotFound
         );
     }
-    let asset =
-        codeyard_storage::files::downloads::download_asset(&db.pool, &store, Some(db.user), file.id)
-            .await
-            .unwrap();
+    let asset = codeyard_storage::files::downloads::download_asset(
+        &db.pool,
+        &store,
+        Some(db.user),
+        file.id,
+    )
+    .await
+    .unwrap();
     assert_eq!(asset.capability, DownloadCapability::S3PresignedGet);
     assert_eq!(asset.filename, "fixture.txt");
     assert_eq!(asset.content_type, "text/plain");
@@ -631,10 +642,11 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
     let avatar = reserve_avatar(&db, FileVisibility::Public).await;
     activate(&db, avatar.id).await;
     for actor in [None, Some(db.user)] {
-        let opened =
-            codeyard_storage::files::downloads::open_asset_download(&db.pool, &store, actor, avatar.id)
-                .await
-                .unwrap();
+        let opened = codeyard_storage::files::downloads::open_asset_download(
+            &db.pool, &store, actor, avatar.id,
+        )
+        .await
+        .unwrap();
         assert_eq!(opened.inline_type.as_deref(), Some("image/png"));
         let DownloadTransport::RemoteUrl(remote) = opened.transport else {
             panic!("S3 downloads redirect to a signed URL")
@@ -966,9 +978,14 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
     activate(&db, file.id).await;
     s3.put(&file.object_key, b"fixture");
     assert_eq!(
-        codeyard_storage::files::deletion::delete_owned_file(&db.pool, &s3.store, db.user + 1, file.id)
-            .await
-            .unwrap_err(),
+        codeyard_storage::files::deletion::delete_owned_file(
+            &db.pool,
+            &s3.store,
+            db.user + 1,
+            file.id
+        )
+        .await
+        .unwrap_err(),
         DeleteError::NotFound
     );
     assert!(s3.deleted().is_empty());
@@ -1335,9 +1352,14 @@ async fn pg_confirmation_waits_for_the_bytes_and_then_succeeds_once() {
     )
     .await
     .unwrap();
-    codeyard_storage::files::uploads::confirm_upload(&db.pool, &store, db.user, reservation.file_id)
-        .await
-        .unwrap();
+    codeyard_storage::files::uploads::confirm_upload(
+        &db.pool,
+        &store,
+        db.user,
+        reservation.file_id,
+    )
+    .await
+    .unwrap();
     assert!(
         codeyard_db_repos::files::get_file_by_id(&db.pool, reservation.file_id)
             .await
@@ -1870,9 +1892,7 @@ impl ObjectFixture {
             bucket,
             region: "us-east-1".into(),
         };
-        let client = codeyard_storage::s3::create_client(&config)
-            .await
-            .unwrap();
+        let client = codeyard_storage::s3::create_client(&config).await.unwrap();
         let marker = client
             .get_object()
             .bucket(&config.bucket)
@@ -2319,19 +2339,28 @@ async fn actual_equal_endpoints_and_public_avatar_still_work() {
             .status()
             .is_success()
     );
-    codeyard_storage::files::uploads::confirm_upload(&db.pool, &store, db.user, reservation.file_id)
-        .await
-        .unwrap();
+    codeyard_storage::files::uploads::confirm_upload(
+        &db.pool,
+        &store,
+        db.user,
+        reservation.file_id,
+    )
+    .await
+    .unwrap();
     assert!(
         codeyard_db_repos::files::get_downloadable_file(&db.pool, reservation.file_id, None)
             .await
             .unwrap()
             .is_some()
     );
-    let shown =
-        codeyard_storage::files::downloads::download_asset(&db.pool, &store, None, reservation.file_id)
-            .await
-            .unwrap();
+    let shown = codeyard_storage::files::downloads::download_asset(
+        &db.pool,
+        &store,
+        None,
+        reservation.file_id,
+    )
+    .await
+    .unwrap();
     let received = http.get(&shown.url).send().await.unwrap();
     assert!(received.status().is_success());
     assert_eq!(received.headers().get("content-type").unwrap(), "image/png");

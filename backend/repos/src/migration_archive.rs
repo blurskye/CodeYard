@@ -1,11 +1,11 @@
 //! Migration records and bare repositories share one bounded tar.gz archive.
+use anyhow::ensure;
+use anyhow::Result;
 use codeyard_repos::imports::archive::safe_path;
 use codeyard_repos::imports::archive::MAX_ENTRIES;
 use codeyard_repos::imports::archive::MAX_METADATA_BYTES;
 use codeyard_repos::imports::archive::MAX_RECORDS;
 use codeyard_repos::imports::archive::MAX_UNPACKED_BYTES;
-use anyhow::ensure;
-use anyhow::Result;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use serde_json::Value;
