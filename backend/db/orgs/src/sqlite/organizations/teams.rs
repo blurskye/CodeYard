@@ -1,7 +1,6 @@
 use crate::organizations::teams::InvalidTeamParent;
 use crate::organizations::teams::NewTeam;
 use crate::organizations::teams::PublicTeam;
-use crate::organizations::teams::TeamIdentity;
 use crate::organizations::teams::TeamListing;
 use crate::organizations::teams::TeamPrivacy;
 use crate::organizations::teams::TeamProfile;

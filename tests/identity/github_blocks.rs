@@ -184,9 +184,9 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard_db_repos::notifications::create_notification(
+    codeyard_db_repos::notifications::records::create_notification(
         f.pool(),
-        codeyard_db_repos::notifications::NewNotification {
+        codeyard_db_core::queries::notifications::records::NewNotification {
             user_id: alice,
             actor_id: Some(bob),
             repo_id: Some(public.id),
@@ -391,9 +391,9 @@ async fn contract(pg: bool) {
     assert!(fork
         .unwrap_err()
         .is::<codeyard_db_repos::repositories::creation::RepositoryStorageRefusal>());
-    let refused = codeyard_db_repos::notifications::create_notification(
+    let refused = codeyard_db_repos::notifications::records::create_notification(
         f.pool(),
-        codeyard_db_repos::notifications::NewNotification {
+        codeyard_db_core::queries::notifications::records::NewNotification {
             user_id: alice,
             actor_id: Some(bob),
             repo_id: Some(public.id),

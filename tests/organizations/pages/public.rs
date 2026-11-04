@@ -5,9 +5,9 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use codeyard_api_rest::user::fine_grained::orgs::OrganizationProfile;
 use codeyard_webui::app::Page;
 use codeyard_webui::bootstrap;
+use codeyard_webui::pages::orgs::OrganizationProfile;
 use std::collections::HashSet;
 use tower::ServiceExt;
 

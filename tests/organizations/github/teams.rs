@@ -74,9 +74,10 @@ async fn contract(pg: bool) {
         super::create_organization(
             f.pool(),
             alice,
-            &codeyard_db_orgs::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 "team-org",
-                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
             )
             .unwrap(),
         )

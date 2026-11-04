@@ -1,11 +1,11 @@
 //! SSR document and safe bootstrap contracts using typed view fixtures.
-use codeyard_api_rest::user::fine_grained::repos;
 use codeyard_webui::app::Page;
 use codeyard_webui::app::PageEnvelope;
 use codeyard_webui::bootstrap::Bootstrap;
 use codeyard_webui::bootstrap::BOOTSTRAP_ID;
 use codeyard_webui::document;
 use codeyard_webui::document::Chrome;
+use codeyard_webui::pages::repos;
 use codeyard_webui::pages::repos::chrome::RepoChrome;
 use codeyard_webui::pages::repos::editor::Editor;
 

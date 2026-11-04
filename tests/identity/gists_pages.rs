@@ -7,8 +7,8 @@ use axum::{
     http::Request,
 };
 
-use codeyard_api_rest::user::fine_grained::gists;
 use codeyard_webui::app::Page;
+use codeyard_webui::pages::gists;
 use tower::ServiceExt;
 
 async fn pages(pg: bool) {

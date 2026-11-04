@@ -1,6 +1,6 @@
 //! Native VDOM policy tests, not browser/domain acceptance or mocked product responses.
 //! The fetched WASM browser suite must separately prove real user draft preservation.
-use codeyard_api_rest::user::fine_grained::ci;
+use codeyard_webui::pages::ci;
 use codeyard_webui::pages::repos::actions::ActionsPage;
 use codeyard_webui::pages::repos::actions::Workflow;
 use codeyard_webui::pages::repos::chrome::repo_engagement;

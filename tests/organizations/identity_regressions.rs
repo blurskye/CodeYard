@@ -6,12 +6,12 @@ use crate::support::http_client::Client;
 use crate::support::organizations::applied;
 use axum::http::StatusCode;
 
-use codeyard_api_rest::user::fine_grained::discovery;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Repository;
 use codeyard_db_orgs::organizations::*;
 use codeyard_db_repos::repositories::creation::*;
 use codeyard_webui::app::Page;
+use codeyard_webui::pages::discovery;
 
 async fn org(f: &Database, owner: i64, name: &str) -> i64 {
     applied(

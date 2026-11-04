@@ -34,7 +34,7 @@ impl Hosted {
         let repository = codeyard_app::repositories::lifecycle::provision(
             (pool, None),
             &root.path().join("repos"),
-            codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
             name,
             None,
             false,

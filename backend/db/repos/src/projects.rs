@@ -126,7 +126,7 @@ impl ListFilter {
         }
         filter
     }
-    pub fn statement(&self, postgres: bool) -> crate::discussion_search::Statement {
+    pub(crate) fn statement(&self, postgres: bool) -> crate::discussion_search::Statement {
         let mut sql = crate::discussion_search::Statement::new(postgres);
         let mut conditions = vec![readable_condition(&sql.placeholder(1))];
         if let Some(owner) = self.owner {

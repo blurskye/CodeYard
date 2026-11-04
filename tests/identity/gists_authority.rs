@@ -403,9 +403,8 @@ async fn authority(pg: bool) {
         large.snapshot.sha
     );
     let (_, model) = a.model(&format!("/gists/{}/edit", large.gist.id)).await;
-    let codeyard_webui::app::Page::Gists(
-        codeyard_api_rest::user::fine_grained::gists::Page::Editor(editor),
-    ) = model
+    let codeyard_webui::app::Page::Gists(codeyard_webui::pages::gists::Page::Editor(editor)) =
+        model
     else {
         panic!("expected editor")
     };

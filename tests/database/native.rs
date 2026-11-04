@@ -1788,9 +1788,10 @@ async fn postgres_ban_and_milestone_write_do_not_deadlock() {
         let organization = super::create_organization(
             pool,
             owner.id,
-            &codeyard_db_orgs::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 &format!("ban_org_{round}"),
-                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
             )
             .unwrap(),
         )
@@ -2406,10 +2407,12 @@ async fn repository_provisioning_visibility_floor_and_native_array_decoding_pers
     let reader = codeyard_db_identity::users::accounts::create_user(&fixture.pool, "reader", None)
         .await
         .unwrap();
-    let source = codeyard_db_repos::repositories::insert_repository(
+    let source = codeyard_db_repos::repositories::creation::insert_repository(
         &fixture.pool,
-        codeyard_db_repos::repositories::NewRepository {
-            owner: codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::creation::NewRepository {
+            owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
+                owner.id,
+            ),
             name: "source",
             description: Some("immutable storage"),
             is_private: false,
@@ -2472,9 +2475,12 @@ async fn repository_provisioning_visibility_floor_and_native_array_decoding_pers
             .is_private
     );
     assert!(
-        codeyard_db_repos::repositories::repository_visibility_locked(&fixture.pool, descendant.id)
-            .await
-            .unwrap()
+        codeyard_db_repos::repositories::creation::repository_visibility_locked(
+            &fixture.pool,
+            descendant.id
+        )
+        .await
+        .unwrap()
     );
     assert!(codeyard_db_repos::repositories::records::update_repository(
         &fixture.pool,
@@ -2607,9 +2613,10 @@ async fn check_repository_search_matches_owner_names(pool: &codeyard_db_core::Db
     let acme = match super::create_organization(
         pool,
         admin.id,
-        &codeyard_db_orgs::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "acme",
-            codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                .unwrap(),
         )
         .unwrap(),
     )
@@ -4790,7 +4797,7 @@ async fn check_partial_profile_updates_keep_omitted_fields(pool: &codeyard_db_co
     let organization = match super::create_organization(
         pool,
         owner.id,
-        &codeyard_db_orgs::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "profile-org",
             OrganizationProfile::new(Some("Old name"), Some("Old description")).unwrap(),
         )

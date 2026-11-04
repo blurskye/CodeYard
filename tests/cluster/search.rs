@@ -254,11 +254,11 @@ async fn content_search_allows_transport_fallback_and_keeps_completed_repositori
     use crate::support::fake_webui_bundle;
     use crate::support::http_client::Client;
     use codeyard_api_rest::create_router;
-    use codeyard_api_rest::user::fine_grained::discovery;
     use codeyard_app::app::AppState;
     use codeyard_app::ci::config::CiConfig;
     use codeyard_app::storage::ObjectStore;
     use codeyard_webui::app::Page;
+    use codeyard_webui::pages::discovery;
     use std::{sync::Arc, time::Duration};
     fake_webui_bundle::install();
     let database = native::PostgresDatabase::new().await;

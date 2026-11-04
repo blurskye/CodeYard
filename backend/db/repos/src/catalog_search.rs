@@ -147,7 +147,7 @@ impl Search {
         search.statement(false, "TRUE", None)?;
         Ok(search)
     }
-    pub fn statement(
+    pub(crate) fn statement(
         &self,
         postgres: bool,
         readable: &str,
@@ -223,14 +223,14 @@ impl Search {
             _ => return Err("Invalid search field"),
         })
     }
-    pub fn text(&self, sql: &mut Statement, value: &str) -> Result<String, &'static str> {
+    pub(crate) fn text(&self, sql: &mut Statement, value: &str) -> Result<String, &'static str> {
         self.fields
             .iter()
             .map(|field| Ok(sql.matches(self.field(field)?, value)))
             .collect::<Result<Vec<_>, _>>()
             .map(|parts| parts.join(" OR "))
     }
-    pub fn expr(&self, sql: &mut Statement, expr: &Expr) -> Result<String, &'static str> {
+    pub(crate) fn expr(&self, sql: &mut Statement, expr: &Expr) -> Result<String, &'static str> {
         Ok(match expr {
             Expr::And(values) | Expr::Or(values) => {
                 let parts = values

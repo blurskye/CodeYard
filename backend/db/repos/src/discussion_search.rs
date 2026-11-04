@@ -414,7 +414,11 @@ impl Search {
         }
         needs(&self.expr)
     }
-    pub fn statement(&self, postgres: bool, readable: &str) -> Result<Statement, &'static str> {
+    pub(crate) fn statement(
+        &self,
+        postgres: bool,
+        readable: &str,
+    ) -> Result<Statement, &'static str> {
         let mut sql = Statement {
             postgres,
             args: Vec::new(),

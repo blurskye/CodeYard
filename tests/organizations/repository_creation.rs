@@ -31,9 +31,10 @@ async fn organization(database: &Database, actor: i64, slug: &str) -> i64 {
         super::create_organization(
             database.pool(),
             actor,
-            &codeyard_db_orgs::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 slug,
-                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
             )
             .unwrap(),
         )

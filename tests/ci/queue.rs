@@ -1608,7 +1608,6 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
         Router,
     };
     use codeyard_api_rest::create_router;
-    use codeyard_api_rest::user::fine_grained::ci;
     use codeyard_app::app::AppState;
     use codeyard_app::ci::config::CiConfig;
     use codeyard_app::storage::ObjectStore;
@@ -1616,6 +1615,7 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
     use codeyard_webui::app::PageEnvelope;
     use codeyard_webui::bootstrap::MAX_PAGE_MODEL_BYTES;
     use codeyard_webui::bootstrap::MODEL_CONTENT_TYPE;
+    use codeyard_webui::pages::ci;
     use std::sync::Arc;
     use tower::ServiceExt;
 

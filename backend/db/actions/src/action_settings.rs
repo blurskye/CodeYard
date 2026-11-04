@@ -230,6 +230,7 @@ pub(crate) fn policy_update(existing: Option<&str>, input: &Value) -> Result<Val
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codeyard_db_core::queries::action_settings::fork_workflows_allowed;
 
     #[test]
     fn private_fork_workflows_follow_the_repository_and_organization_switches() {
@@ -243,8 +244,6 @@ mod tests {
         assert!(!fork_workflows_allowed(&on, &off));
     }
 }
-
-use codeyard_db_core::queries::action_settings::fork_workflows_allowed;
 
 use codeyard_db_core::queries::action_settings::SelectionChange;
 

@@ -2550,7 +2550,7 @@ async fn viewer_work_contract(pool: &DbPool) {
     .await
     .unwrap();
     assert!(
-        codeyard_db_repos::pull_requests::request_pull_request_reviewer(
+        codeyard_db_repos::pull_requests::reviews::request_pull_request_reviewer(
             pool,
             review_pr.id,
             owner.id,
@@ -2566,7 +2566,7 @@ async fn viewer_work_contract(pool: &DbPool) {
     .await
     .unwrap();
     assert!(
-        codeyard_db_repos::pull_requests::request_pull_request_reviewer(
+        codeyard_db_repos::pull_requests::reviews::request_pull_request_reviewer(
             pool,
             private_pr.id,
             owner.id,

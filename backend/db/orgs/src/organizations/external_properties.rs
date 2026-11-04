@@ -40,7 +40,7 @@ pub(crate) struct Changes<'a> {
 }
 
 /// Validates every value and groups them by repository, or returns `None` when one is invalid.
-pub fn changes(values: &[RepositoryValue]) -> Result<Option<Changes<'_>>> {
+pub(crate) fn changes(values: &[RepositoryValue]) -> Result<Option<Changes<'_>>> {
     let mut latest = BTreeMap::new();
     for value in values {
         if !valid_name(&value.property_name) || !valid_value(&value.value) {

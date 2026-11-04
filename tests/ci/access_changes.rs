@@ -668,9 +668,10 @@ async fn team_writer_repository(
         super::create_organization(
             pool,
             owner,
-            &codeyard_db_orgs::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 name,
-                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
             )
             .unwrap(),
         )

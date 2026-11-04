@@ -100,7 +100,7 @@ pub struct ThreadView {
     pub reason: String,
 }
 impl ThreadView {
-    pub fn new(
+    pub(crate) fn new(
         thread: NotificationThread,
         mut notification: Notification,
         repository: Repository,

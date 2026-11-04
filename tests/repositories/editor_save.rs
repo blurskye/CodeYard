@@ -12,9 +12,9 @@ use axum::{
 };
 use base64::Engine;
 
-use codeyard_api_rest::user::fine_grained::repos as view;
 use codeyard_webui::app::Page;
 use codeyard_webui::app::PageEnvelope;
+use codeyard_webui::pages::repos as view;
 use database::Database;
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -1325,7 +1325,7 @@ async fn protected_branch_contract(pg: bool) {
     .unwrap();
     codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         f.pool(),
-        codeyard_db_repos::repositories::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: owner,
             repo_id: repository.id,
             pattern: "main",
@@ -1741,7 +1741,7 @@ async fn delete_file_contract(pg: bool) {
     // Protection applies to the API and to the form exactly as it does to a save.
     codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         f.pool(),
-        codeyard_db_repos::repositories::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: owner,
             repo_id: repository.id,
             pattern: "main",

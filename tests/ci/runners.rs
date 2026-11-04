@@ -111,9 +111,10 @@ async fn contract(pg: bool) {
         super::create_organization(
             f.pool(),
             alice,
-            &codeyard_db_orgs::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 "runner-org",
-                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
             )
             .unwrap(),
         )
@@ -1184,9 +1185,10 @@ async fn runner_settings_browser() {
         super::create_organization(
             f.pool(),
             alice,
-            &codeyard_db_orgs::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 "browser-org",
-                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
             )
             .unwrap(),
         )

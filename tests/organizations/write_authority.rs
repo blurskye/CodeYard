@@ -10,8 +10,8 @@ use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::CiRun;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Repository;
-use codeyard_db_repos::repositories::insert_repository;
-use codeyard_db_repos::repositories::NewRepository;
+use codeyard_db_repos::repositories::creation::insert_repository;
+use codeyard_db_repos::repositories::creation::NewRepository;
 use uuid::Uuid;
 
 const SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -155,7 +155,9 @@ async fn fork(
     insert_repository(
         pool,
         NewRepository {
-            owner: codeyard_db_repos::repositories::RepositoryCreationOwner::personal(actor),
+            owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
+                actor,
+            ),
             name: &name,
             description: None,
             is_private: false,
@@ -210,9 +212,10 @@ async fn authority_contract(pg: bool) {
         super::create_organization(
             pool,
             owner,
-            &codeyard_db_orgs::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 "write_org",
-                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
             )
             .unwrap(),
         )
@@ -585,9 +588,10 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
         super::create_organization(
             pool,
             owner,
-            &codeyard_db_orgs::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 "team_cancel_org",
-                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
             )
             .unwrap(),
         )

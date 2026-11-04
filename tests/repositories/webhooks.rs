@@ -980,9 +980,10 @@ async fn repository_creation_is_not_a_ref_event(pg: bool, url: &str) {
     let OrganizationOutcome::Applied(org) = super::create_organization(
         pool,
         actor,
-        &codeyard_db_orgs::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "creation_org",
-            codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                .unwrap(),
         )
         .unwrap(),
     )
@@ -1108,9 +1109,10 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
     let OrganizationOutcome::Applied(org) = super::create_organization(
         pool,
         owner,
-        &codeyard_db_orgs::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "hook_org",
-            codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                .unwrap(),
         )
         .unwrap(),
     )

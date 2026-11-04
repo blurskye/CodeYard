@@ -404,7 +404,7 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     assert_eq!(provenance.publication.actor.user_id(), None);
     codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         &database.pool,
-        codeyard_db_repos::repositories::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: owner.id,
             repo_id: project.id,
             pattern: "guarded",

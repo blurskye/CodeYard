@@ -2528,9 +2528,7 @@ async fn actions_history_survives_a_stalled_git_preflight() {
     .await
     .unwrap();
     assert_eq!(status, axum::http::StatusCode::OK);
-    let codeyard_webui::app::Page::Actions(
-        codeyard_api_rest::user::fine_grained::ci::Page::Actions(model),
-    ) = page
+    let codeyard_webui::app::Page::Actions(codeyard_webui::pages::ci::Page::Actions(model)) = page
     else {
         panic!("Actions model")
     };
@@ -3911,9 +3909,10 @@ async fn fork_claims_receive_variables_but_no_repository_or_organization_secrets
             super::create_organization(
                 pool,
                 owner.id,
-                &codeyard_db_orgs::organizations::NewOrganization::new(
+                &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                     "fork_values_org",
-                    codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
+                    codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                        .unwrap(),
                 )
                 .unwrap(),
             )

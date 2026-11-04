@@ -71,7 +71,7 @@ async fn setup(pg: bool) -> World {
 async fn notify(database: &Database, user: i64, repo: Option<i64>, kind: &str, title: &str) -> i64 {
     codeyard_db_repos::notifications::records::create_notification(
         database.pool(),
-        codeyard_db_repos::notifications::NewNotification {
+        codeyard_db_core::queries::notifications::records::NewNotification {
             user_id: user,
             actor_id: None,
             repo_id: repo,
@@ -106,7 +106,7 @@ async fn bounded_previews_and_current_targets(pg: bool) {
     for actor in [w.alice_id, w.bob_id] {
         let notification = codeyard_db_repos::notifications::records::create_notification(
             w.database.pool(),
-            codeyard_db_repos::notifications::NewNotification {
+            codeyard_db_core::queries::notifications::records::NewNotification {
                 user_id: w.alice_id,
                 actor_id: Some(actor),
                 repo_id: Some(w.proj),
@@ -875,7 +875,7 @@ async fn done_is_never_unread_and_search_finds_the_subject(pg: bool) {
     let mut w = setup(pg).await;
     let subject = codeyard_db_repos::notifications::records::create_notification(
         w.database.pool(),
-        codeyard_db_repos::notifications::NewNotification {
+        codeyard_db_core::queries::notifications::records::NewNotification {
             user_id: w.alice_id,
             actor_id: None,
             repo_id: Some(w.proj),

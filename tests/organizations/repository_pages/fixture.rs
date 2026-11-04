@@ -9,11 +9,11 @@ use axum::{
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 
-use codeyard_api_rest::user::fine_grained::discovery as view;
 use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use codeyard_webui::app::Page;
 use codeyard_webui::app::PageEnvelope;
+use codeyard_webui::pages::discovery as view;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -197,9 +197,10 @@ impl Fixture {
             super::create_organization(
                 pool,
                 actor,
-                &codeyard_db_orgs::organizations::NewOrganization::new(
+                &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                     slug,
-                    codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
+                    codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                        .unwrap(),
                 )
                 .unwrap(),
             )

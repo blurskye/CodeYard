@@ -131,9 +131,10 @@ async fn populate(source: &NativeDatabase) -> Seed {
     let org = match super::create_organization(
         pool,
         alice.id,
-        &codeyard_db_orgs::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "metadata-owner",
-            codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                .unwrap(),
         )
         .unwrap(),
     )

@@ -63,7 +63,7 @@ async fn setup(pg: bool) -> World {
 async fn notify(database: &Database, user: i64, repo: Option<i64>, title: &str) -> i64 {
     codeyard_db_repos::notifications::records::create_notification(
         database.pool(),
-        codeyard_db_repos::notifications::NewNotification {
+        codeyard_db_core::queries::notifications::records::NewNotification {
             user_id: user,
             actor_id: None,
             repo_id: repo,

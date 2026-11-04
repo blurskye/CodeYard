@@ -385,7 +385,7 @@ async fn buffered_fetch_revalidates(pool: &DbPool, server: &Server, root: &Path)
         let repo = codeyard_app::repositories::lifecycle::provision(
             (pool, None),
             &root.join("repos"),
-            codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
             case,
             None,
             !anonymous,
@@ -542,7 +542,7 @@ async fn buffered_fetch_revalidates(pool: &DbPool, server: &Server, root: &Path)
                     let replacement = codeyard_app::repositories::lifecycle::provision(
                         (pool, None),
                         &root.join("repos"),
-                        codeyard_db_repos::repositories::RepositoryCreationOwner::personal(
+                        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
                             owner.id,
                         ),
                         case,
@@ -744,7 +744,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     let public = codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
-        codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
         "open",
         None,
         false,
@@ -755,7 +755,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     let private = codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
-        codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
         "closed",
         None,
         true,
@@ -991,7 +991,7 @@ async fn exercise(pool: &DbPool, url: &str) {
         let repository = codeyard_app::repositories::lifecycle::provision(
             (pool, None),
             &root.path().join("repos"),
-            codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
             name,
             None,
             false,
@@ -1082,7 +1082,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     let packed = codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
-        codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
         "packed",
         None,
         false,
@@ -1101,7 +1101,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     let many_refs = codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
-        codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
         "many-refs",
         None,
         false,
@@ -1208,7 +1208,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     assert!(codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
-        codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
         "open.git",
         None,
         false,
@@ -1347,7 +1347,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     assert_eq!(response.status(), StatusCode::OK);
     codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         pool,
-        codeyard_db_repos::repositories::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: owner.id,
             repo_id: public.id,
             pattern: "release/*",
@@ -1465,7 +1465,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     }
     codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         pool,
-        codeyard_db_repos::repositories::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: owner.id,
             repo_id: private.id,
             pattern: "main",
@@ -1698,7 +1698,7 @@ async fn push_rechecks_access_after_waiting_for_a_slot(pool: &DbPool, url: &str)
     let repo = codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
-        codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
         "open",
         None,
         false,

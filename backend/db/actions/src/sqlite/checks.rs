@@ -19,7 +19,7 @@ use sqlx::Sqlite;
 use sqlx::SqlitePool;
 use sqlx::Transaction;
 
-mod native;
+pub(crate) mod native;
 
 async fn authority(
     tx: &mut Transaction<'_, Sqlite>,

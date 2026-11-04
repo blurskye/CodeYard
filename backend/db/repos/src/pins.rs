@@ -35,7 +35,7 @@ pub(crate) struct Scope {
     pub id: i64,
     pub pull: bool,
 }
-pub fn scope(item: AssignedItem) -> Scope {
+pub(crate) fn scope(item: AssignedItem) -> Scope {
     match item {
         AssignedItem::Issue(id) => Scope {
             parent: "issues",

@@ -3,8 +3,8 @@ use crate::support::fake_webui_bundle;
 use crate::support::http_client::Client;
 use axum::http::StatusCode;
 
-use codeyard_api_rest::user::fine_grained::repos;
 use codeyard_webui::app::Page;
+use codeyard_webui::pages::repos;
 
 async fn contract(pg: bool) {
     fake_webui_bundle::install();

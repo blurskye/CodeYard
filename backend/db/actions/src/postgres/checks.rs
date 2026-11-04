@@ -19,7 +19,7 @@ use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
-mod native;
+pub(crate) mod native;
 
 async fn authority(
     tx: &mut Transaction<'_, Postgres>,

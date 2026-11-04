@@ -5,7 +5,6 @@ use crate::support::http_client::Client;
 use axum::http::StatusCode;
 
 use codeyard_api_rest::create_router;
-use codeyard_api_rest::user::fine_grained::repos as view;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;
 use codeyard_app::repositories::access;
@@ -13,6 +12,7 @@ use codeyard_app::repositories::lifecycle;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_app::storage::ObjectStore;
 use codeyard_webui::app::Page;
+use codeyard_webui::pages::repos as view;
 use serde_json::{json, Value};
 use std::sync::Arc;
 

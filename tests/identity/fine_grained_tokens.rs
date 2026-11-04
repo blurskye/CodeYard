@@ -11,12 +11,12 @@ use axum::{
     Router,
 };
 
-use codeyard_api_rest::user::fine_grained::settings::fine_grained::Model;
-use codeyard_api_rest::user::fine_grained::settings::fine_grained::View;
 use codeyard_app::repositories::lifecycle;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
+use codeyard_webui::pages::settings::fine_grained::Model;
+use codeyard_webui::pages::settings::fine_grained::View;
 use tower::ServiceExt;
 
 const BASE: &str = "/settings/personal-access-tokens";

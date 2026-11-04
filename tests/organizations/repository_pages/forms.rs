@@ -2,13 +2,13 @@ use super::fixture::{applied, Actor, Fixture, Reply};
 use axum::http::StatusCode;
 use codeyard_support::node_identity::NodeKey;
 
-use codeyard_api_rest::user::fine_grained::discovery as view;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
 use codeyard_webui::app::Page;
 use codeyard_webui::app::PageEnvelope;
 use codeyard_webui::bootstrap::Bootstrap;
 use codeyard_webui::bootstrap::BOOTSTRAP_ID;
+use codeyard_webui::pages::discovery as view;
 
 fn fields<'a>(
     name: &'a str,

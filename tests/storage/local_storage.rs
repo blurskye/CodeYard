@@ -21,7 +21,6 @@ use codeyard_app::files::uploads::UploadDeclaration;
 use codeyard_app::files::uploads::UploadError;
 
 use codeyard_api_rest::avatar_ops::AvatarError;
-use codeyard_api_rest::user::fine_grained::admin::storage as storage_view;
 use codeyard_app::storage::local::LocalStore;
 use codeyard_app::storage::s3::S3Config;
 use codeyard_app::storage::ObjectStore;
@@ -30,6 +29,7 @@ use codeyard_db_core::models::FileReason;
 use codeyard_db_core::models::FileVisibility;
 use codeyard_webui::app::Page;
 use codeyard_webui::app::PageEnvelope;
+use codeyard_webui::pages::admin::storage as storage_view;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

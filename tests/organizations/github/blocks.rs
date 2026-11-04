@@ -427,7 +427,7 @@ async fn contract(pg: bool) {
     let metadata = json!({"comment_id":owner_comment["id"]});
     let notification = codeyard_db_repos::notifications::records::create_notification(
         f.pool(),
-        codeyard_db_repos::notifications::NewNotification {
+        codeyard_db_core::queries::notifications::records::NewNotification {
             user_id: outsider,
             actor_id: Some(owner),
             repo_id: Some(repos[0].id),

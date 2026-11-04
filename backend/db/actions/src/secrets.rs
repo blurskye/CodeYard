@@ -1,12 +1,9 @@
-use codeyard_actions::values::MAX_NAME_BYTES as MAX_SECRET_NAME_BYTES;
 use codeyard_actions::values::MAX_SCOPE_VALUES as MAX_REPOSITORY_SECRETS;
 use codeyard_actions::values::MAX_SECRET_BYTES as MAX_REPOSITORY_SECRETS_BYTES;
-use codeyard_actions::values::MAX_VALUE_BYTES as MAX_SECRET_VALUE_BYTES;
 use codeyard_db_core::models::RepoSecretMeta;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
 use codeyard_support::secrets::SecretEncryptor;
-use codeyard_support::secrets::SecretError;
 
 // One bounded sample per encryption domain, from one database snapshot.
 pub(crate) const ENCRYPTION_SAMPLES_SQL: &str = "
@@ -252,6 +249,9 @@ native_operation!(crate::postgres::secrets::decrypt_repository_secrets,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codeyard_actions::values::MAX_NAME_BYTES as MAX_SECRET_NAME_BYTES;
+    use codeyard_actions::values::MAX_VALUE_BYTES as MAX_SECRET_VALUE_BYTES;
+    use codeyard_support::secrets::SecretError;
 
     #[test]
     fn repository_secret_validation_has_fixed_typed_boundaries() {

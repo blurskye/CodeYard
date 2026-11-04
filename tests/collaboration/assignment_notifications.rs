@@ -277,7 +277,7 @@ async fn assigned_reason_filters_the_list(pg: bool) {
         .await;
     codeyard_db_repos::notifications::records::create_notification(
         w.database.pool(),
-        codeyard_db_repos::notifications::NewNotification {
+        codeyard_db_core::queries::notifications::records::NewNotification {
             user_id: w.bob_id,
             actor_id: None,
             repo_id: Some(w.proj),
