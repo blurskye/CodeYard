@@ -4430,11 +4430,16 @@ impl LocalStore {
         self.settings_authority(pool, repo_id, &authority, changes)
             .await?;
         if !publication
-            .scope(self.publish_quorum_head(pool, repo_id, &reference, async {
-                self.settings_authority(pool, repo_id, &authority, changes)
-                    .await?;
-                Ok(())
-            }))
+            .scope(Box::pin(self.publish_quorum_head(
+                pool,
+                repo_id,
+                &reference,
+                async {
+                    self.settings_authority(pool, repo_id, &authority, changes)
+                        .await?;
+                    Ok(())
+                },
+            )))
             .await?
         {
             publication.scope(self.set_head_target(&reference)).await?;
@@ -4516,12 +4521,11 @@ impl LocalStore {
         }
         if let Some((context, repo)) = &self.context {
             let pool = context.database()?;
-            if self
-                .publish_quorum_head(pool, *repo, target, async {
-                    self.admitted_path(false).await?;
-                    Ok(())
-                })
-                .await?
+            if Box::pin(self.publish_quorum_head(pool, *repo, target, async {
+                self.admitted_path(false).await?;
+                Ok(())
+            }))
+            .await?
             {
                 return Ok(());
             }

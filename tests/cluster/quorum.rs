@@ -832,16 +832,20 @@ async fn new_repositories_stay_refused(pool: &DbPool) {
 
 macro_rules! engine_pair {
     ($sqlite:ident, $postgres:ident, $contract:ident) => {
-        #[tokio::test]
-        async fn $sqlite() {
-            let database = native::NativeDatabase::new().await;
-            $contract(&database.pool).await;
+        #[test]
+        fn $sqlite() {
+            crate::support::large_stack::run(|| async {
+                let database = native::NativeDatabase::new().await;
+                $contract(&database.pool).await;
+            });
         }
-        #[tokio::test]
-        async fn $postgres() {
-            let mut database = native::PostgresDatabase::new().await;
-            $contract(&database.pool).await;
-            database.finish().await;
+        #[test]
+        fn $postgres() {
+            crate::support::large_stack::run(|| async {
+                let mut database = native::PostgresDatabase::new().await;
+                $contract(&database.pool).await;
+                database.finish().await;
+            });
         }
     };
 }
