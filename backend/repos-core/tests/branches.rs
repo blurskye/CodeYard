@@ -2,15 +2,15 @@
 //! request closed. The closed pull request takes nothing from the fork, and an open one in the
 //! same fork still follows it. A pull ref that got ahead of its row, because an earlier refresh
 //! lost the row update, is recorded before a newer head is published.
-use crate::ci::runs::CiRuns;
-use crate::repositories::pull_requests::branches::refresh_one;
-use crate::repositories::pull_requests::branches::revisions;
-use crate::repositories::pull_requests::branches::ListedRefs;
-use crate::repositories::store::repo_store;
 use codeyard_ci::config::CiConfig;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::Repository;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::repositories::pull_requests::branches::refresh_one;
+use codeyard_repos_core::repositories::pull_requests::branches::revisions;
+use codeyard_repos_core::repositories::pull_requests::branches::ListedRefs;
+use codeyard_repos_core::repositories::store::repo_store;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
@@ -67,7 +67,7 @@ async fn forks() -> Forks {
         .await
         .unwrap();
     let repos = root.path().join("repos");
-    let base = crate::repositories::lifecycle::provision(
+    let base = codeyard_repos_core::repositories::lifecycle::provision(
         (&pool, None),
         &repos,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice.id),
@@ -81,7 +81,7 @@ async fn forks() -> Forks {
     let bare = git2::Repository::open_bare(&base.disk_path).unwrap();
     let main = commit(&bare, "main", None, "README.md", "# proj\n");
     let broadcaster = Arc::new(NotificationBroadcaster::new(&pool));
-    let fork = crate::repositories::lifecycle::fork(
+    let fork = codeyard_repos_core::repositories::lifecycle::fork(
         &pool,
         None,
         &repos,
@@ -390,7 +390,7 @@ async fn existing_owner_requests_do_not_take_a_write_lock() {
     let lock = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
     tokio::time::timeout(
         std::time::Duration::from_secs(1),
-        crate::repositories::pull_requests::code_owners::request_code_owner_reviews(
+        codeyard_repos_core::repositories::pull_requests::code_owners::request_code_owner_reviews(
             &forks.pool,
             &forks.ci,
             &forks.base,

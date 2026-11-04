@@ -38,6 +38,7 @@ mod transfer;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[tokio::test]
     async fn busy_copies_wait_for_the_next_pass_without_increasing_failure_backoff() {

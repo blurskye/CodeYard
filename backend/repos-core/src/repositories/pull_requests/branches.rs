@@ -84,7 +84,7 @@ const MAX_FILTERED_BRANCHES: usize = 32;
 
 /// The refs each repository listed during one refresh call, by repository id. The pull
 /// requests of the call share these listings.
-type ListedRefs = HashMap<i64, HashMap<String, String>>;
+pub type ListedRefs = HashMap<i64, HashMap<String, String>>;
 
 /// The commit that a branch of `repo_id` points at, or `None` when the branch is missing.
 /// The first attempt of a pull request reuses the listing its call already made. A retry
@@ -108,7 +108,7 @@ async fn branch_commit(
     Ok(listed[&repo_id].get(&name).cloned())
 }
 
-fn revisions(
+pub fn revisions(
     pull: codeyard_db_core::models::PullRequest,
 ) -> Option<codeyard_db_repos::pull_requests::records::PullRequestRevisions> {
     (pull.state == "open").then_some(
@@ -237,7 +237,7 @@ async fn move_head(
     clippy::too_many_arguments,
     reason = "Refresh carries the shared ref listings, an optional CI access cap and an optional head writer."
 )]
-async fn refresh_one(
+pub async fn refresh_one(
     pool: &DbPool,
     moved_repo: &Repository,
     ci: &CiRuns,
@@ -676,6 +676,3 @@ pub async fn branches_moved(pool: &DbPool, repo: &Repository, ci: &CiRuns, actor
         tracing::warn!(repo_id = repo.id, %error, "could not refresh open pull requests after a branch moved");
     }
 }
-
-#[cfg(test)]
-mod tests;
