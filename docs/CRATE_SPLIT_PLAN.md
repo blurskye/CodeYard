@@ -120,12 +120,10 @@ and results stay the same. A stage can be the last one.
 8. **`app`.** Source layout complete. `backend/app/src` is the app library;
    `backend/app/wiring` contains the existing binary package's entry points, CLI
    and node startup. SSH, backups and storage live in the app library. The source
-   stages are committed before workspace, Clippy and WASM checks begin. Broker unit
-   tests still need private test hooks and the REST listener; the app test target and
-   REST dependency use distinct `AppState` types. This needs a shared test seam or
-   keeping these tests with the composed server, beyond pure moves. Native libraries,
-   binary wiring and integration targets check; this is the only workspace check
-   error. Clippy and WASM wait for a clean workspace check.
+   stages are committed before workspace, Clippy and WASM checks begin. Broker
+   tests now live in `backend/app/tests/git_broker.rs` and link the app library
+   with REST through one `AppState`. Hook barriers have one shared owner.
+   Workspace, Clippy and WASM validation is pending.
 
 ## Move only: no behaviour change
 

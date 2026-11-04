@@ -67,7 +67,7 @@ fn valid_component(value: &str) -> bool {
             .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
-pub(crate) fn shell_safe_path(path: &Path) -> Result<&str> {
+pub fn shell_safe_path(path: &Path) -> Result<&str> {
     let value = path
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("path must be UTF-8"))?;
@@ -120,7 +120,7 @@ pub(crate) fn canonical_db_key(public_key: &str, key_type: &str) -> Result<Strin
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RefUpdate {
+pub struct RefUpdate {
     pub old: String,
     pub new: String,
     pub reference: String,

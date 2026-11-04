@@ -14,18 +14,18 @@ use tokio::time::timeout;
 use tokio::time::Duration;
 
 pub(crate) const CHUNK: usize = 32 * 1024;
-pub(crate) const STDIN: u8 = 0;
-pub(crate) const EOF: u8 = 1;
-pub(crate) const STDOUT: u8 = 2;
-pub(crate) const STDERR: u8 = 3;
-pub(crate) const EXIT: u8 = 4;
+pub const STDIN: u8 = 0;
+pub const EOF: u8 = 1;
+pub const STDOUT: u8 = 2;
+pub const STDERR: u8 = 3;
+pub const EXIT: u8 = 4;
 pub(crate) const CONTROL_TIMEOUT: Duration = Duration::from_secs(120);
 pub(crate) const SESSION_TIMEOUT: Duration = codeyard_git::repository::process::SESSION_TIMEOUT;
 const IO_TIMEOUT: Duration = codeyard_git::repository::process::IDLE_TIMEOUT;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum TransactionPhase {
+pub enum TransactionPhase {
     Prepared,
     Committed,
     Aborted,
@@ -33,7 +33,7 @@ pub(crate) enum TransactionPhase {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum Request {
+pub enum Request {
     Keys {
         user: String,
         key_type: String,
@@ -64,10 +64,7 @@ pub(crate) enum Request {
     },
 }
 
-pub(crate) async fn write_request<W: AsyncWrite + Unpin>(
-    writer: &mut W,
-    request: &Request,
-) -> Result<()> {
+pub async fn write_request<W: AsyncWrite + Unpin>(writer: &mut W, request: &Request) -> Result<()> {
     let data = serde_json::to_vec(request)?;
     ensure!(data.len() <= MAX_HEADER, "control request too large");
     timeout(Duration::from_secs(10), async {
@@ -107,7 +104,7 @@ fn validate_frame(tag: u8, len: usize) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn write_frame<W: AsyncWrite + Unpin>(
+pub async fn write_frame<W: AsyncWrite + Unpin>(
     writer: &mut W,
     tag: u8,
     bytes: &[u8],
@@ -123,7 +120,7 @@ pub(crate) async fn write_frame<W: AsyncWrite + Unpin>(
     Ok(())
 }
 
-pub(crate) async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<(u8, Vec<u8>)> {
+pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<(u8, Vec<u8>)> {
     // Session traffic can be one-way for minutes. The process owns the shared
     // idle timer; control callers wrap the entire exchange in their own timeout.
     let tag = reader.read_u8().await?;

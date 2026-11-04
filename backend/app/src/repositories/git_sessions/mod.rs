@@ -11,12 +11,14 @@ use tokio::task::JoinSet;
 #[cfg(target_os = "linux")]
 pub mod broker;
 #[cfg(target_os = "linux")]
+pub mod hook_barrier;
+#[cfg(target_os = "linux")]
 mod hooks;
 #[cfg(target_os = "linux")]
-pub(crate) mod private_files;
+pub mod private_files;
 #[cfg(target_os = "linux")]
-pub(crate) mod protocol;
-pub(crate) mod validation;
+pub mod protocol;
+pub mod validation;
 
 /// Serves until `stop` is set. After that only hooks of pushes already running are served,
 /// and other requests are refused until the connections in progress finish. The caller

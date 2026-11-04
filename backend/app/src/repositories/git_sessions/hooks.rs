@@ -413,9 +413,7 @@ impl Gateway {
         quarantine: Option<&str>,
     ) -> Result<()> {
         crate::repositories::git_sessions::validation::validate_updates(updates)?;
-        #[cfg(test)]
-        crate::repositories::git_sessions::broker::policy_tests::before_authorize(operation, post)
-            .await;
+        crate::repositories::git_sessions::hook_barrier::before_authorize(operation, post).await;
         if post {
             self.post_receive(operation, updates).await
         } else {

@@ -23,7 +23,7 @@ use tokio::net::UnixStream;
 use tokio::time::timeout;
 use tokio::time::Duration;
 
-pub(crate) fn effective_uid() -> u32 {
+pub fn effective_uid() -> u32 {
     // SAFETY: geteuid has no arguments and cannot fail.
     unsafe { libc::geteuid() }
 }
@@ -81,7 +81,7 @@ fn socket_metadata(path: &Path, uid: u32) -> Result<Metadata> {
     Ok(meta)
 }
 
-pub(crate) struct SocketGuard {
+pub struct SocketGuard {
     path: PathBuf,
     inode: Metadata,
     // This owned 0600 advisory-lock inode is intentionally retained on disk.
@@ -99,7 +99,7 @@ impl Drop for SocketGuard {
     }
 }
 
-pub(crate) async fn bind(socket: &Path, uid: u32) -> Result<(UnixListener, SocketGuard)> {
+pub async fn bind(socket: &Path, uid: u32) -> Result<(UnixListener, SocketGuard)> {
     private_parent(socket, uid, true)?;
     let mut lock_name = socket.as_os_str().to_os_string();
     lock_name.push(".lock");
@@ -161,7 +161,7 @@ pub(crate) async fn bind(socket: &Path, uid: u32) -> Result<(UnixListener, Socke
     Ok((listener, guard))
 }
 
-pub(crate) async fn connect(socket: &Path) -> Result<UnixStream> {
+pub async fn connect(socket: &Path) -> Result<UnixStream> {
     let uid = effective_uid();
     let owner = std::fs::symlink_metadata(socket)?.uid();
     ensure!(uid == 0 || owner == uid, "socket belongs to another user");
@@ -175,7 +175,7 @@ pub(crate) async fn connect(socket: &Path) -> Result<UnixStream> {
     Ok(stream)
 }
 
-pub(crate) fn trusted_executable(path: &Path, uid: u32) -> Result<PathBuf> {
+pub fn trusted_executable(path: &Path, uid: u32) -> Result<PathBuf> {
     shell_safe_path(path)?;
     ancestors(path.parent().context("executable parent required")?, uid)?;
     let meta = std::fs::symlink_metadata(path)?;
@@ -192,7 +192,7 @@ pub(crate) fn trusted_executable(path: &Path, uid: u32) -> Result<PathBuf> {
 
 /// Git as found on PATH, followed through symbolic links (`/bin` is one on many systems)
 /// so that the file and directories that are checked are the ones that run.
-pub(crate) fn git_executable(uid: u32) -> Result<PathBuf> {
+pub fn git_executable(uid: u32) -> Result<PathBuf> {
     let found = codeyard_git::repository::process::executable()?;
     trusted_executable(&std::fs::canonicalize(found)?, uid)
 }

@@ -1,6 +1,4 @@
 //! Push permission checks in the receive hooks, on a throwaway SQLite database.
-pub(in crate::repositories::git_sessions) use fixture::before_authorize;
-pub(in crate::repositories::git_sessions) use fixture::hold_next_hook;
 
 #[cfg(test)]
 mod fixture {
@@ -8,44 +6,8 @@ mod fixture {
     use crate::repositories::git_sessions::validation::ZERO_SHA;
     use base64::Engine;
 
-    use std::sync::LazyLock;
+    use crate::repositories::git_sessions::hook_barrier::hold_next_hook;
     use tokio::sync::oneshot;
-
-    struct Barrier {
-        entered: oneshot::Sender<()>,
-        release: oneshot::Receiver<()>,
-    }
-    static BARRIERS: LazyLock<Mutex<HashMap<(PathBuf, bool), Barrier>>> =
-        LazyLock::new(|| Mutex::new(HashMap::new()));
-
-    pub(crate) async fn before_authorize(operation: &Operation, post: bool) {
-        let barrier = BARRIERS
-            .lock()
-            .unwrap()
-            .remove(&(operation.path.clone(), post));
-        if let Some(barrier) = barrier {
-            barrier.entered.send(()).unwrap();
-            barrier.release.await.unwrap();
-        }
-    }
-
-    /// Holds the next hook of this kind for the repository at `path` as it enters.
-    /// `reached` resolves once it is held, and sending on `release` lets it continue.
-    pub(crate) fn hold_next_hook(
-        path: PathBuf,
-        post: bool,
-    ) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
-        let (entered, reached) = oneshot::channel();
-        let (release, wait) = oneshot::channel();
-        BARRIERS.lock().unwrap().insert(
-            (path, post),
-            Barrier {
-                entered,
-                release: wait,
-            },
-        );
-        (reached, release)
-    }
 
     /// Waits until the push reaches its hook. If the push ends first, say why
     /// instead of timing out.

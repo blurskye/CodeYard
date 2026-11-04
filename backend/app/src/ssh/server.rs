@@ -556,7 +556,7 @@ impl SshServer {
             .await
     }
 
-    pub(crate) async fn run_listener(
+    pub async fn run_listener(
         &mut self,
         socket: TcpListener,
         mut stop: watch::Receiver<bool>,

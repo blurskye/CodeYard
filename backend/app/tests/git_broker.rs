@@ -1,24 +1,26 @@
+#![cfg(target_os = "linux")]
 //! Gateway tests on throwaway databases and real Git repositories.
 //! GITSERV_TEST_OPENSSH_HELPER must point at the built codeyard binary.
-use super::*;
-use crate::ci::queue::RunQueue;
-use crate::ci::runs::CiRuns;
-use crate::ci::workers::CiWorkers;
-use crate::repositories::git_sessions::private_files;
-use crate::repositories::git_sessions::protocol;
-use crate::repositories::git_sessions::validation;
-use crate::repositories::git_sessions::ReceiveCredential;
 use base64::Engine;
+use codeyard_app::ci::queue::RunQueue;
+use codeyard_app::ci::runs::CiRuns;
+use codeyard_app::ci::workers::CiWorkers;
+use codeyard_app::repositories::git_sessions::private_files;
+use codeyard_app::repositories::git_sessions::protocol;
+use codeyard_app::repositories::git_sessions::validation;
+use codeyard_app::repositories::git_sessions::ReceiveCredential;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Output;
 use std::process::Stdio;
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::sleep;
 use tokio::time::Duration;
 
-#[path = "openssh_daemon.rs"]
+#[path = "git_broker/openssh_daemon.rs"]
 mod daemon;
 
 const MAX_SESSIONS: usize = 16;
@@ -147,7 +149,7 @@ impl Broker {
     async fn new_with_ci(
         pool: DbPool,
         git_user: String,
-        config: Option<crate::ci::config::CiConfig>,
+        config: Option<codeyard_app::ci::config::CiConfig>,
     ) -> Self {
         let uid = private_files::effective_uid();
         let helper = PathBuf::from(
@@ -425,7 +427,7 @@ async fn missing_post_hook_is_reported_after_git_publishes() {
     let source = git2::Repository::init(&source_path).unwrap();
     let id = commit(&source, "published\n");
     {
-        let (reached, release) = policy_tests::hold_next_hook(path.clone(), false);
+        let (reached, release) = hook_barrier::hold_next_hook(path.clone(), false);
         let push = broker.git(
             &source_path,
             owner_key.id,
@@ -568,7 +570,7 @@ async fn host_openssh_deploy_keys_clone_push_and_keep_repository_scope() {
         .await;
         assert!(!outside.status.success());
     }
-    let observed = crate::repositories::traffic::summary(
+    let observed = codeyard_app::repositories::traffic::summary(
         &database.pool,
         Some(&owner),
         &repo,
@@ -601,7 +603,7 @@ async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
     let broker = Broker::new_with_ci(
         database.pool.clone(),
         "git".to_owned(),
-        Some(crate::ci::config::CiConfig {
+        Some(codeyard_app::ci::config::CiConfig {
             trusted_actor_ids: [reader.id].into(),
             ..Default::default()
         }),
@@ -1192,7 +1194,7 @@ async fn stop_lets_a_running_push_finish_its_hooks() {
     .unwrap();
     // The push is held at its pre-receive hook, after Git has received the pack.
     let (reached, release) =
-        policy_tests::hold_next_hook(std::fs::canonicalize(&bare_path).unwrap(), false);
+        hook_barrier::hold_next_hook(std::fs::canonicalize(&bare_path).unwrap(), false);
 
     let source_path = broker.directory.path().join("source");
     let source = git2::Repository::init(&source_path).unwrap();
@@ -1297,7 +1299,7 @@ async fn stop_finishes_a_push_after_its_helper_disconnects() {
 
     // The push is held at its pre-receive hook, after Git has the complete pack.
     let (reached, release) =
-        policy_tests::hold_next_hook(std::fs::canonicalize(&bare_path).unwrap(), false);
+        hook_barrier::hold_next_hook(std::fs::canonicalize(&bare_path).unwrap(), false);
     let mut connection = private_files::connect(&broker.gateway.socket)
         .await
         .unwrap();
@@ -1361,7 +1363,7 @@ async fn stop_finishes_a_push_after_its_helper_disconnects() {
 
 struct PushFixture {
     directory: TempDir,
-    state: crate::app::AppState,
+    state: codeyard_app::app::AppState,
     repo: Repository,
     token: String,
     oid: git2::Oid,
@@ -1426,16 +1428,16 @@ impl PushFixture {
         let mut pack = git2::Buf::new();
         builder.write_buf(&mut pack).unwrap();
         let storage = Arc::new(
-            crate::storage::ObjectStore::open(directory.path(), None)
+            codeyard_app::storage::ObjectStore::open(directory.path(), None)
                 .await
                 .unwrap(),
         );
-        let state = crate::app::AppState::new(
+        let state = codeyard_app::app::AppState::new(
             pool,
             directory.path().to_owned(),
             storage,
             None,
-            crate::ci::config::CiConfig::default(),
+            codeyard_app::ci::config::CiConfig::default(),
             None,
         );
         Self {
@@ -1472,9 +1474,13 @@ impl PushFixture {
         let state = self.state.clone();
         let mut server = if ssh {
             Some(
-                crate::ssh::server::SshServer::new(state.pool.clone(), None, state.ci_runs.clone())
-                    .await
-                    .unwrap(),
+                codeyard_app::ssh::server::SshServer::new(
+                    state.pool.clone(),
+                    None,
+                    state.ci_runs.clone(),
+                )
+                .await
+                .unwrap(),
             )
         } else {
             None
@@ -1606,7 +1612,7 @@ impl PushFixture {
 async fn disconnected_push_drains(pool: DbPool, ssh: bool) {
     let fixture = PushFixture::new(pool).await;
     let (address, stop, mut running) = fixture.start(ssh).await;
-    let (reached, release) = policy_tests::hold_next_hook(
+    let (reached, release) = hook_barrier::hold_next_hook(
         std::fs::canonicalize(&fixture.repo.disk_path).unwrap(),
         true,
     );
@@ -1654,13 +1660,13 @@ async fn concurrent_first_pushes(pool: DbPool) {
     let fixture = PushFixture::new(pool.clone()).await;
     let (address, stop, running) = fixture.start(false).await;
     let path = std::fs::canonicalize(&fixture.repo.disk_path).unwrap();
-    let (first_reached, first_release) = policy_tests::hold_next_hook(path.clone(), true);
+    let (first_reached, first_release) = hook_barrier::hold_next_hook(path.clone(), true);
     let mut first = fixture.http_push(address, "trunk").await;
     timeout(Duration::from_secs(15), first_reached)
         .await
         .unwrap()
         .unwrap();
-    let (second_reached, second_release) = policy_tests::hold_next_hook(path.clone(), true);
+    let (second_reached, second_release) = hook_barrier::hold_next_hook(path.clone(), true);
     let mut second = fixture.http_push(address, "topic").await;
     timeout(Duration::from_secs(15), second_reached)
         .await
@@ -2120,25 +2126,25 @@ async fn pushes_move_the_open_pull_requests_that_use_the_branch() {
     broker.stop().await;
 }
 
-use crate::repositories::git_sessions::broker::MAX_CONTROLS;
+use codeyard_app::repositories::git_sessions::broker::MAX_CONTROLS;
 
-use crate::repositories::git_sessions::broker::Gateway;
+use codeyard_app::repositories::git_sessions::broker::Gateway;
 
-use crate::repositories::git_sessions::broker::listen;
+use codeyard_app::repositories::git_sessions::broker::listen;
 
-use crate::repositories::git_sessions::broker::policy_tests;
+use codeyard_app::repositories::git_sessions::hook_barrier;
 
-use crate::repositories::git_sessions::protocol::Request;
+use codeyard_app::repositories::git_sessions::protocol::Request;
 
-use crate::repositories::git_sessions::protocol::EOF;
+use codeyard_app::repositories::git_sessions::protocol::EOF;
 
-use crate::repositories::git_sessions::protocol::STDERR;
+use codeyard_app::repositories::git_sessions::protocol::STDERR;
 
-use crate::repositories::git_sessions::protocol::STDIN;
+use codeyard_app::repositories::git_sessions::protocol::STDIN;
 
-use crate::repositories::git_sessions::protocol::STDOUT;
+use codeyard_app::repositories::git_sessions::protocol::STDOUT;
 
-use crate::repositories::git_sessions::validation::RefUpdate;
+use codeyard_app::repositories::git_sessions::validation::RefUpdate;
 
 use anyhow::Result;
 

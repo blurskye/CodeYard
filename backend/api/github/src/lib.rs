@@ -1,8 +1,5 @@
 #![recursion_limit = "256"]
-#![allow(
-    clippy::result_large_err,
-    reason = "Page handlers return the original response error by value."
-)]
+#![allow(clippy::result_large_err)]
 //! GitHub Enterprise REST adapters. Domain operations keep their existing access checks.
 use crate::routes::Operation;
 use crate::routes::Support;

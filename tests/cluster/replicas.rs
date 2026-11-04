@@ -1221,7 +1221,7 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
                 tokio::process::Command::new(std::env::current_exe().unwrap())
                     .args([
                         "--exact",
-                        "codeyard_app::cluster::replicas::promotion_waits_until_copy_maintenance_releases_the_directory",
+                        "replicas::promotion_waits_until_copy_maintenance_releases_the_directory",
                         "--nocapture",
                     ])
                     .env(CHILD_ROOT, root.path())

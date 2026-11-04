@@ -44,20 +44,20 @@ const MAX_HEADERS: usize = 32;
 pub const MAX_CONTROLS: usize = 64;
 
 pub struct Gateway {
-    pub(super) socket: PathBuf,
-    pub(super) repos_root: PathBuf,
-    pub(super) executable: PathBuf,
-    pub(super) git: PathBuf,
-    pub(super) pool: DbPool,
-    pub(super) ci: Arc<CiRuns>,
-    pub(super) git_user: String,
-    pub(super) uid: u32,
-    pub(super) sessions: Arc<Semaphore>,
-    pub(super) controls: Semaphore,
-    pub(super) operations: Mutex<HashMap<String, Arc<Operation>>>,
+    pub socket: PathBuf,
+    pub repos_root: PathBuf,
+    pub executable: PathBuf,
+    pub git: PathBuf,
+    pub pool: DbPool,
+    pub ci: Arc<CiRuns>,
+    pub git_user: String,
+    pub uid: u32,
+    pub sessions: Arc<Semaphore>,
+    pub controls: Semaphore,
+    pub operations: Mutex<HashMap<String, Arc<Operation>>>,
 }
 
-pub(super) struct Operation {
+pub struct Operation {
     pub(super) credential: ReceiveCredential,
     pub(super) actor_id: i64,
     pub(super) repo_id: i64,
@@ -65,7 +65,7 @@ pub(super) struct Operation {
     pub(super) path: PathBuf,
     pub(super) publication_lease: Option<Arc<codeyard_git::locks::PublicationLease>>,
     // Only the broker holds the generated hook directory's lifetime.
-    pub(super) hooks: TempDir,
+    pub hooks: TempDir,
     pub(super) state: Mutex<HookState>,
 }
 
@@ -1276,7 +1276,3 @@ pub mod policy_tests;
 #[cfg(test)]
 #[path = "quorum_tests.rs"]
 mod quorum_tests;
-
-#[cfg(test)]
-#[cfg(target_os = "linux")]
-mod tests;
