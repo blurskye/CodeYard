@@ -80,10 +80,14 @@ async fn approve(user: &Client, code: &str) -> String {
     assert_eq!(query.get("state").unwrap().as_ref(), "opaque-state");
     query.get("code").unwrap().to_string()
 }
-async fn recorded(f: &Database, app: i64, count: usize) -> Vec<db::github_app_hooks::Delivery> {
+async fn recorded(
+    f: &Database,
+    app: i64,
+    count: usize,
+) -> Vec<codeyard_db_identity::github_app_hooks::Delivery> {
     timeout(Duration::from_secs(15), async {
         loop {
-            let rows = db::github_app_hooks::deliveries(f.pool(), app)
+            let rows = codeyard_db_identity::github_app_hooks::deliveries(f.pool(), app)
                 .await
                 .unwrap();
             if rows.len() >= count {
@@ -100,7 +104,7 @@ async fn contract(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         f.pool(),
         alice,
         "proj",
@@ -183,7 +187,7 @@ async fn contract(pg: bool) {
         json!(converted["client_id"]),
         chrono::Utc::now().timestamp() + 300,
     );
-    let hook = db::github_app_hooks::hook(f.pool(), id)
+    let hook = codeyard_db_identity::github_app_hooks::hook(f.pool(), id)
         .await
         .unwrap()
         .unwrap();
@@ -249,9 +253,9 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(reply.status, 303, "{}", reply.text());
-    let installation = db::github_apps::installations(
+    let installation = codeyard_db_identity::github_apps::installations(
         f.pool(),
-        &db::github_apps::InstallationFilter {
+        &codeyard_db_identity::github_apps::InstallationFilter {
             app: Some(id),
             ..Default::default()
         },
@@ -387,10 +391,10 @@ async fn contract(pg: bool) {
         ("redirected", Some(302), None),
         ("timed-out", None, Some("Delivery timed out")),
     ] {
-        db::github_app_hooks::insert_delivery(
+        codeyard_db_identity::github_app_hooks::insert_delivery(
             f.pool(),
             id,
-            &db::webhooks::NewDelivery {
+            &codeyard_db_core::queries::webhooks::NewDelivery {
                 redelivery: false,
                 guid: guid.into(),
                 event: "issues".into(),
@@ -447,7 +451,7 @@ async fn contract(pg: bool) {
         204,
     )
     .await;
-    let current = db::github_app_hooks::hook(f.pool(), id)
+    let current = codeyard_db_identity::github_app_hooks::hook(f.pool(), id)
         .await
         .unwrap()
         .unwrap();
@@ -455,7 +459,7 @@ async fn contract(pg: bool) {
     webhooks::delivery::send(f.pool(), &current, &outgoing).await;
     // The three sent deliveries and the two inserted failures; the removed repository adds none.
     assert_eq!(
-        db::github_app_hooks::deliveries(f.pool(), id)
+        codeyard_db_identity::github_app_hooks::deliveries(f.pool(), id)
             .await
             .unwrap()
             .len(),
@@ -521,9 +525,9 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(reply.status, 303);
     let private_id = private["id"].as_i64().unwrap();
-    let private_installation = db::github_apps::installations(
+    let private_installation = codeyard_db_identity::github_apps::installations(
         f.pool(),
-        &db::github_apps::InstallationFilter {
+        &codeyard_db_identity::github_apps::InstallationFilter {
             app: Some(private_id),
             ..Default::default()
         },
@@ -583,7 +587,7 @@ async fn contract(pg: bool) {
         401,
     )
     .await;
-    let app = db::github_apps::app(f.pool(), "manifest-bot")
+    let app = codeyard_db_identity::github_apps::app(f.pool(), "manifest-bot")
         .await
         .unwrap()
         .unwrap();
@@ -604,7 +608,7 @@ async fn contract(pg: bool) {
         }
     };
     assert!(password.is_err());
-    assert!(db::users::sessions::create_session(
+    assert!(codeyard_db_identity::users::sessions::create_session(
         f.pool(),
         &"c".repeat(64),
         app.bot_id,

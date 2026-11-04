@@ -119,5 +119,3 @@ mod tests {
 }
 
 use codeyard_db_core::queries::attestations::valid_digest;
-
-use codeyard_db_core::queries::attestations::valid_digest;

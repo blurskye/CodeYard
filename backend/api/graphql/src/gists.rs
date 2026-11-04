@@ -1,7 +1,6 @@
 //! gh's gist picker uses creation order and loads file text only when requested.
 
 use crate::arguments::Arguments;
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::RequestContext;
@@ -32,7 +31,7 @@ pub(super) async fn node(key: &str, request: &RequestContext) -> Result<Value> {
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(missing)?;
-    let gist = db::gists::get(&request.state.pool, &id)
+    let gist = codeyard_db_repos::gists::get(&request.state.pool, &id)
         .await
         .map_err(unavailable)?
         .filter(|gist| gist.ready)
@@ -69,13 +68,20 @@ pub(super) async fn list(ctx: &Arguments, request: &RequestContext, user: &Value
             .map_err(unavailable)?;
     }
     let pool = &request.state.pool;
-    let total = db::gists::count_owned(pool, owner, secret, privacy)
+    let total = codeyard_db_repos::gists::count_owned(pool, owner, secret, privacy)
         .await
         .map_err(unavailable)?;
     let page = crate::connection::Page::new(ctx, total)?;
-    let entries = db::gists::list_created(pool, owner, secret, privacy, page.limit, page.offset)
-        .await
-        .map_err(unavailable)?;
+    let entries = codeyard_db_repos::gists::list_created(
+        pool,
+        owner,
+        secret,
+        privacy,
+        page.limit,
+        page.offset,
+    )
+    .await
+    .map_err(unavailable)?;
     Ok(page.finish(entries.iter().map(object).collect()))
 }
 
@@ -127,12 +133,12 @@ pub(super) async fn text(ctx: &Arguments, request: &RequestContext, file: &Value
         return Err(Error::new("Text limit must be between 0 and 1048576"));
     }
     let repo = file["repoId"].as_i64().ok_or_else(missing)?;
-    let gist = db::gists::by_repository(&request.state.pool, repo)
+    let gist = codeyard_db_repos::gists::by_repository(&request.state.pool, repo)
         .await
         .map_err(unavailable)?
         .filter(|gist| gist.ready)
         .ok_or_else(missing)?;
-    let repository = db::gists::git_repository(&request.state.pool, &gist.id)
+    let repository = codeyard_db_repos::gists::git_repository(&request.state.pool, &gist.id)
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;

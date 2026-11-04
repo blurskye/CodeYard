@@ -13,7 +13,7 @@ async fn contract(pg: bool) {
     for _ in 0..201 {
         db.history(repo, actor).await;
     }
-    let mut filter = db::ci::CiRunFilter {
+    let mut filter = codeyard_db_actions::ci::CiRunFilter {
         status: "failed".into(),
         branch: "topic".into(),
         event: "push".into(),
@@ -22,21 +22,23 @@ async fn contract(pg: bool) {
         ..Default::default()
     };
     for scope in [Some(repo), None] {
-        let runs = db::ci::list_filtered_ci_runs(db.pool(), actor, scope, &filter, 1)
-            .await
-            .unwrap();
+        let runs =
+            codeyard_db_actions::ci::list_filtered_ci_runs(db.pool(), actor, scope, &filter, 1)
+                .await
+                .unwrap();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].id, newer);
         filter.before = Some(newer);
-        let runs = db::ci::list_filtered_ci_runs(db.pool(), actor, scope, &filter, 1)
-            .await
-            .unwrap();
+        let runs =
+            codeyard_db_actions::ci::list_filtered_ci_runs(db.pool(), actor, scope, &filter, 1)
+                .await
+                .unwrap();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].id, oldest);
         filter.before = None;
         filter.text = runs[0].run_id.to_string();
         assert_eq!(
-            db::ci::list_filtered_ci_runs(db.pool(), actor, scope, &filter, 200)
+            codeyard_db_actions::ci::list_filtered_ci_runs(db.pool(), actor, scope, &filter, 200)
                 .await
                 .unwrap()[0]
                 .id,
@@ -44,19 +46,27 @@ async fn contract(pg: bool) {
         );
         filter.text = "HISTORY".into();
     }
-    assert!(
-        db::ci::list_filtered_ci_runs(db.pool(), outsider, Some(repo), &filter, 200)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(codeyard_db_actions::ci::list_filtered_ci_runs(
+        db.pool(),
+        outsider,
+        Some(repo),
+        &filter,
+        200
+    )
+    .await
+    .unwrap()
+    .is_empty());
     filter.event = "release".into();
-    assert!(
-        db::ci::list_filtered_ci_runs(db.pool(), actor, Some(repo), &filter, 200)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(codeyard_db_actions::ci::list_filtered_ci_runs(
+        db.pool(),
+        actor,
+        Some(repo),
+        &filter,
+        200
+    )
+    .await
+    .unwrap()
+    .is_empty());
     db.finish().await;
 }
 

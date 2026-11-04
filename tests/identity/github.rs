@@ -121,17 +121,19 @@ async fn contract(pg: bool) {
         assert!(body.get("password_hash").is_none());
     }
     use db::organizations::{NewOrganization, OrganizationOutcome, OrganizationProfile};
-    let OrganizationOutcome::Applied(org) = db::organizations::create_organization(
-        f.pool(),
-        alice,
-        &NewOrganization::new(
-            "acme",
-            OrganizationProfile::new(Some("Acme"), Some("Tools")).unwrap(),
+    let OrganizationOutcome::Applied(org) =
+        codeyard_db_orgs::organizations::profiles::create_organization(
+            f.pool(),
+            alice,
+            &NewOrganization::new(
+                "acme",
+                OrganizationProfile::new(Some("Acme"), Some("Tools")).unwrap(),
+            )
+            .unwrap(),
         )
-        .unwrap(),
-    )
-    .await
-    .unwrap() else {
+        .await
+        .unwrap()
+    else {
         panic!("organization creation failed");
     };
     for token in [None, read] {
@@ -555,10 +557,12 @@ async fn contract(pg: bool) {
         404,
     )
     .await;
-    assert!(db::users::ssh_keys::list_user_keys(f.pool(), alice)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        codeyard_db_identity::users::ssh_keys::list_user_keys(f.pool(), alice)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 
     let signing_path = "/api/v3/user/ssh_signing_keys";
     request(
@@ -647,7 +651,7 @@ async fn contract(pg: bool) {
         assert_eq!(listed, json!([signing]));
     }
     assert!(
-        db::users::ssh_keys::list_user_keys(f.pool(), alice)
+        codeyard_db_identity::users::ssh_keys::list_user_keys(f.pool(), alice)
             .await
             .unwrap()
             .is_empty(),
@@ -1132,7 +1136,7 @@ async fn contract(pg: bool) {
         let repo = codeyard_app::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(owner),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
             "private",
             None,
             true,
@@ -1147,7 +1151,7 @@ async fn contract(pg: bool) {
         &[repositories[0].id],
     )
     .await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repositories[0].id,
@@ -1155,7 +1159,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         alice,
         repositories[1].id,
@@ -1190,7 +1194,7 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(public["public_repos"], 0);
     assert!(public.get("total_private_repos").is_none());
-    let credentials = db::users::tokens::list_tokens(
+    let credentials = codeyard_db_identity::users::tokens::list_tokens(
         f.pool(),
         alice,
         &crate::support::live_session(f.pool(), alice).await,
@@ -1203,14 +1207,17 @@ async fn contract(pg: bool) {
         .find(|token| token.scope == "read")
         .unwrap();
     let read_hash = &token_hashes[&read_token.id];
-    let patch = db::users::profiles::ProfilePatch {
+    let patch = codeyard_db_identity::users::profiles::ProfilePatch {
         company: Some("Must not be saved"),
-        ..db::users::profiles::ProfilePatch::default()
+        ..codeyard_db_identity::users::profiles::ProfilePatch::default()
     };
     let denied = codeyard_identity::profiles::save(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Token(read_token.id, read_hash),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+            read_token.id,
+            read_hash,
+        ),
         &patch,
     )
     .await
@@ -1225,7 +1232,10 @@ async fn contract(pg: bool) {
     let denied = codeyard_identity::profiles::save(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Token(write_token.id, read_hash),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+            write_token.id,
+            read_hash,
+        ),
         &patch,
     )
     .await
@@ -1239,14 +1249,17 @@ async fn contract(pg: bool) {
     let denied = codeyard_identity::profiles::save(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Token(write_token.id, write_hash),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+            write_token.id,
+            write_hash,
+        ),
         &patch,
     )
     .await
     .unwrap_err();
     assert_eq!(denied, codeyard_identity::profiles::ProfileError::Denied);
     assert_eq!(
-        db::users::profiles::get_profile_settings(f.pool(), alice)
+        codeyard_db_identity::users::profiles::get_profile_settings(f.pool(), alice)
             .await
             .unwrap()
             .company
@@ -1257,7 +1270,7 @@ async fn contract(pg: bool) {
         (read_token.id, read_hash.as_str()),
         (write_token.id, write_hash.as_str()),
     ] {
-        let error = db::users::ssh_keys::add_ssh_key_for_token(
+        let error = codeyard_db_identity::users::ssh_keys::add_ssh_key_for_token(
             f.pool(),
             alice,
             token,
@@ -1274,7 +1287,7 @@ async fn contract(pg: bool) {
         let error = codeyard_identity::keys::enroll_signing(
             f.pool(),
             alice,
-            &db::users::accounts::AccountCredential::Token(token, hash),
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Token(token, hash),
             "Must not be added",
             public_key,
         )
@@ -1282,10 +1295,11 @@ async fn contract(pg: bool) {
         .unwrap_err();
         assert_eq!(error, codeyard_identity::keys::KeyError::AccountRestricted);
     }
-    let key = db::users::ssh_keys::add_ssh_key(f.pool(), alice, "Kept", public_key)
-        .await
-        .unwrap();
-    let error = db::users::ssh_keys::delete_user_ssh_key_for_token(
+    let key =
+        codeyard_db_identity::users::ssh_keys::add_ssh_key(f.pool(), alice, "Kept", public_key)
+            .await
+            .unwrap();
+    let error = codeyard_db_identity::users::ssh_keys::delete_user_ssh_key_for_token(
         f.pool(),
         alice,
         write_token.id,
@@ -1299,7 +1313,7 @@ async fn contract(pg: bool) {
         Some(&codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted)
     );
     assert_eq!(
-        db::users::ssh_keys::list_user_keys(f.pool(), alice)
+        codeyard_db_identity::users::ssh_keys::list_user_keys(f.pool(), alice)
             .await
             .unwrap()
             .len(),

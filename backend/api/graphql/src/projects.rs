@@ -2,7 +2,6 @@
 use crate::arg;
 use crate::arguments::Arguments;
 use crate::bindings::boxed;
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::url;
@@ -303,7 +302,7 @@ async fn item_object(
 ) -> Result<Value> {
     charge_item(item, request)?;
     let content = if let Some(id) = item.issue_id {
-        let issue = db::issues::get_issue_by_id(&request.state.pool, id)
+        let issue = codeyard_db_repos::issues::get_issue_by_id(&request.state.pool, id)
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
@@ -312,10 +311,13 @@ async fn item_object(
         request.charge(issue.body.len() + issue.title.len())?;
         crate::issue::object(&issue)
     } else if let Some(id) = item.pull_request_id {
-        let pull = db::pull_requests::records::get_pull_request_by_id(&request.state.pool, id)
-            .await
-            .map_err(unavailable)?
-            .ok_or_else(missing)?;
+        let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
+            &request.state.pool,
+            id,
+        )
+        .await
+        .map_err(unavailable)?
+        .ok_or_else(missing)?;
         crate::repository::by_id(pull.repo_id, request).await?;
         request
             .authorize(pull.repo_id, "pull-requests", false)
@@ -620,24 +622,31 @@ pub(super) async fn resource(ctx: &Arguments, request: &RequestContext) -> Resul
     if parts.len() != 4 || !matches!(parts[2], "issues" | "pull" | "pulls") {
         return Err(missing());
     }
-    let repo = db::repositories::records::get_repository(&request.state.pool, parts[0], parts[1])
-        .await
-        .map_err(unavailable)?
-        .ok_or_else(missing)?;
+    let repo = codeyard_db_repos::repositories::records::get_repository(
+        &request.state.pool,
+        parts[0],
+        parts[1],
+    )
+    .await
+    .map_err(unavailable)?
+    .ok_or_else(missing)?;
     crate::repository::by_id(repo.id, request).await?;
     let number = parts[3].parse().map_err(|_| missing())?;
     if parts[2] == "issues" {
-        let entry = db::issues::get_issue(&request.state.pool, repo.id, number)
+        let entry = codeyard_db_repos::issues::get_issue(&request.state.pool, repo.id, number)
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
         Ok(crate::issue::object(&entry))
     } else {
-        let entry =
-            db::pull_requests::records::get_pull_request(&request.state.pool, repo.id, number)
-                .await
-                .map_err(unavailable)?
-                .ok_or_else(missing)?;
+        let entry = codeyard_db_repos::pull_requests::records::get_pull_request(
+            &request.state.pool,
+            repo.id,
+            number,
+        )
+        .await
+        .map_err(unavailable)?
+        .ok_or_else(missing)?;
         Ok(crate::issue::pull_object(&entry))
     }
 }
@@ -770,12 +779,15 @@ async fn resolve_at(
                 let mut after = 0;
                 let mut nodes = Vec::new();
                 loop {
-                    let page = db::organizations::OrganizationPage::new(after, 100)
+                    let page = codeyard_db_orgs::organizations::OrganizationPage::new(after, 100)
                         .map_err(|_| missing())?;
-                    let db::organizations::OrganizationOutcome::Applied(orgs) =
-                        db::organizations::profiles::list_actor_organizations(pool, actor, page)
-                            .await
-                            .map_err(unavailable)?
+                    let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(
+                        orgs,
+                    ) = codeyard_db_orgs::organizations::profiles::list_actor_organizations(
+                        pool, actor, page,
+                    )
+                    .await
+                    .map_err(unavailable)?
                     else {
                         return Err(missing());
                     };

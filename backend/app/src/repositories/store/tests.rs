@@ -118,10 +118,10 @@ async fn authority(fixture: &Fixture) -> Authority {
     );
     let pool = codeyard_db_core::init_db(&url).await.unwrap();
     codeyard_db_core::run_migrations(&pool).await.unwrap();
-    let actor = db::users::accounts::create_user(&pool, "store_actor", None)
+    let actor = codeyard_db_identity::users::accounts::create_user(&pool, "store_actor", None)
         .await
         .unwrap();
-    let repository = db::repositories::records::create_repository(
+    let repository = codeyard_db_repos::repositories::records::create_repository(
         &pool,
         actor.id,
         "store-tests",
@@ -174,10 +174,11 @@ async fn web_publication_updates_storage_and_keeps_deleted_branch_runs_admissibl
         .unwrap();
     let row = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
-            let row = db::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
-                .await
-                .unwrap()
-                .unwrap();
+            let row =
+                codeyard_db_repos::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
+                    .await
+                    .unwrap()
+                    .unwrap();
             if row.size_bytes > 0 {
                 break row;
             }
@@ -224,7 +225,7 @@ async fn web_publication_updates_storage_and_keeps_deleted_branch_runs_admissibl
         .delete_branch_as(&a.pool, a.repo_id, a.actor, "feature")
         .await
         .unwrap();
-    assert!(db::ci::has_ci_accepted_push(
+    assert!(codeyard_db_actions::ci::has_ci_accepted_push(
         &a.pool,
         a.repo_id,
         a.actor,
@@ -283,13 +284,13 @@ async fn failed_head_change_restores_the_previous_database_default() {
         f.repo.find_reference("HEAD").unwrap().symbolic_target(),
         Some("refs/heads/main")
     );
-    let row = db::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
+    let row = codeyard_db_repos::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(row.default_branch, "main");
     assert!(
-        !db::repositories::records::restore_repository_default_branch(
+        !codeyard_db_repos::repositories::records::restore_repository_default_branch(
             &a.pool, a.repo_id, "topic", "other"
         )
         .await
@@ -317,7 +318,7 @@ async fn cancelling_a_default_branch_request_does_not_cancel_head_synchronizatio
     // The update must still finish. Its task may reach the lock after this test does, so wait
     // for the row it writes rather than for the lock alone.
     tokio::time::timeout(std::time::Duration::from_secs(120), async {
-        while db::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
+        while codeyard_db_repos::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
             .await
             .unwrap()
             .unwrap()
@@ -335,7 +336,7 @@ async fn cancelling_a_default_branch_request_does_not_cancel_head_synchronizatio
     )
     .await
     .unwrap();
-    let row = db::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
+    let row = codeyard_db_repos::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
         .await
         .unwrap()
         .unwrap();
@@ -350,7 +351,7 @@ async fn cancelling_a_default_branch_request_does_not_cancel_head_synchronizatio
 async fn a_store_opened_before_adoption_cannot_publish_after_placement() {
     let f = fixture().await;
     let a = authority(&f).await;
-    let row = db::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
+    let row = codeyard_db_repos::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
         .await
         .unwrap()
         .unwrap();
@@ -373,22 +374,26 @@ async fn a_store_opened_before_adoption_cannot_publish_after_placement() {
         .unwrap();
     let old = storage_node(&a.pool, "adopt-old").await;
     let new = storage_node(&a.pool, "adopt-new").await;
-    assert!(db::cluster::place_repository(&a.pool, a.repo_id, old)
-        .await
-        .unwrap());
-    assert!(db::cluster::insert_replica(&a.pool, a.repo_id, new, old)
-        .await
-        .unwrap());
     assert!(
-        db::cluster::set_applied_version(&a.pool, a.repo_id, new, old, 0)
+        codeyard_db_cluster::cluster::place_repository(&a.pool, a.repo_id, old)
+            .await
+            .unwrap()
+    );
+    assert!(
+        codeyard_db_cluster::cluster::insert_replica(&a.pool, a.repo_id, new, old)
+            .await
+            .unwrap()
+    );
+    assert!(
+        codeyard_db_cluster::cluster::set_applied_version(&a.pool, a.repo_id, new, old, 0)
             .await
             .unwrap()
     );
     assert!(matches!(
-        db::cluster::promote_repository(&a.pool, a.repo_id, old, new, false)
+        codeyard_db_cluster::cluster::promote_repository(&a.pool, a.repo_id, old, new, false)
             .await
             .unwrap(),
-        db::cluster::PromoteOutcome::Promoted { .. }
+        codeyard_db_cluster::cluster::PromoteOutcome::Promoted { .. }
     ));
     assert_write_denied(
         opened
@@ -404,7 +409,7 @@ async fn a_store_opened_before_adoption_cannot_publish_after_placement() {
     );
     assert!(f.repo.find_reference("refs/heads/late").is_err());
     assert!(
-        !db::cluster::bump_write_version(&a.pool, a.repo_id, Some(None))
+        !codeyard_db_cluster::cluster::bump_write_version(&a.pool, a.repo_id, Some(None))
             .await
             .unwrap()
     );
@@ -758,11 +763,14 @@ async fn revoked_private_fetch_never_exposes_quarantined_objects() {
         "private head",
     );
     let authority = authority(&base).await;
-    let source_owner =
-        db::users::accounts::create_user(&authority.pool, "private_source_owner", None)
-            .await
-            .unwrap();
-    let source_record = db::repositories::records::create_repository(
+    let source_owner = codeyard_db_identity::users::accounts::create_user(
+        &authority.pool,
+        "private_source_owner",
+        None,
+    )
+    .await
+    .unwrap();
+    let source_record = codeyard_db_repos::repositories::records::create_repository(
         &authority.pool,
         source_owner.id,
         "private-source",
@@ -772,7 +780,7 @@ async fn revoked_private_fetch_never_exposes_quarantined_objects() {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         &authority.pool,
         authority.actor,
         source_record.id,
@@ -789,7 +797,7 @@ async fn revoked_private_fetch_never_exposes_quarantined_objects() {
     )
     .await
     .unwrap();
-    db::repositories::access::revoke_repo_access(
+    codeyard_db_repos::repositories::access::revoke_repo_access(
         &authority.pool,
         authority.actor,
         source_record.id,
@@ -823,7 +831,7 @@ async fn revoked_destination_read_denies_pull_head_publication() {
     let base = fixture().await;
     let source = fixture().await;
     let a = authority(&base).await;
-    let other = db::users::accounts::create_user(&a.pool, "other_owner", None)
+    let other = codeyard_db_identity::users::accounts::create_user(&a.pool, "other_owner", None)
         .await
         .unwrap();
     let codeyard_db_core::DbPool::Sqlite(native) = &a.pool else {
@@ -835,7 +843,7 @@ async fn revoked_destination_read_denies_pull_head_publication() {
         .execute(native)
         .await
         .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         &a.pool,
         a.actor,
         a.repo_id,
@@ -843,7 +851,7 @@ async fn revoked_destination_read_denies_pull_head_publication() {
     )
     .await
     .unwrap();
-    let source_row = db::repositories::records::create_repository(
+    let source_row = codeyard_db_repos::repositories::records::create_repository(
         &a.pool,
         a.actor,
         "source",
@@ -868,7 +876,7 @@ async fn revoked_destination_read_denies_pull_head_publication() {
     )
     .await
     .unwrap();
-    db::repositories::access::revoke_repo_access(&a.pool, a.actor, a.repo_id)
+    codeyard_db_repos::repositories::access::revoke_repo_access(&a.pool, a.actor, a.repo_id)
         .await
         .unwrap();
     let error = base
@@ -2569,11 +2577,11 @@ async fn publish_refuses_a_merge_method_turned_off_after_preparation() {
     };
     let merged = f.store.prepare_merge(&request).await.unwrap();
     // Squash is turned off after preparation. The storage node reads the setting under its lock.
-    db::repositories::records::set_merge_methods(
+    codeyard_db_repos::repositories::records::set_merge_methods(
         &authority.pool,
         authority.actor,
         authority.repo_id,
-        db::repositories::records::MergeMethodUpdate {
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
             merge: None,
             squash: Some(false),
             rebase: None,
@@ -2868,7 +2876,7 @@ fn repository_uuid_boundary_rejects_traversal_components() {
 }
 
 async fn write_version(authority: &Authority) -> i64 {
-    db::cluster::get_write_version(&authority.pool, authority.repo_id)
+    codeyard_db_cluster::cluster::get_write_version(&authority.pool, authority.repo_id)
         .await
         .unwrap()
         .unwrap()
@@ -2882,7 +2890,7 @@ async fn every_ref_change_moves_the_write_version() {
     let authority = authority(&f).await;
     let (pool, repo_id, actor) = (&authority.pool, authority.repo_id, authority.actor);
     // Only a repository that a storage node holds has replicas to tell.
-    let node = db::cluster::register_own_node(
+    let node = codeyard_db_cluster::cluster::register_own_node(
         pool,
         &codeyard_support::node_identity::NodeKey::generate().public_hex(),
         "store-node",
@@ -2891,13 +2899,15 @@ async fn every_ref_change_moves_the_write_version() {
     )
     .await
     .unwrap();
-    db::cluster::bump_write_version(pool, repo_id, None)
+    codeyard_db_cluster::cluster::bump_write_version(pool, repo_id, None)
         .await
         .unwrap();
     assert_eq!(write_version(&authority).await, 0, "no node holds it yet");
-    assert!(db::cluster::place_repository(pool, repo_id, node.id)
-        .await
-        .unwrap());
+    assert!(
+        codeyard_db_cluster::cluster::place_repository(pool, repo_id, node.id)
+            .await
+            .unwrap()
+    );
     let (first, second) = (f.first.to_string(), f.second.to_string());
     let ahead = commit(
         &f.repo,
@@ -3036,9 +3046,10 @@ async fn every_ref_change_moves_the_write_version() {
         "a missing default branch"
     );
     // The right to administer is checked in the update's transaction, not only by the caller.
-    let outsider = db::users::accounts::create_user(pool, "default_outsider", None)
-        .await
-        .unwrap();
+    let outsider =
+        codeyard_db_identity::users::accounts::create_user(pool, "default_outsider", None)
+            .await
+            .unwrap();
     assert!(f
         .store
         .set_default_branch_as(pool, repo_id, outsider.id, "main")
@@ -3046,7 +3057,7 @@ async fn every_ref_change_moves_the_write_version() {
         .is_err());
     // The refused attempt may count as a write, since it is counted before the update decides, but
     // the default branch stays where it was.
-    let default = db::repositories::records::get_repository_by_id(pool, repo_id)
+    let default = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo_id)
         .await
         .unwrap()
         .unwrap()
@@ -3058,9 +3069,11 @@ async fn every_ref_change_moves_the_write_version() {
     // An archived repository refuses the change before it counts as a write.
     let before = write_version(&authority).await;
     assert!(
-        db::repositories::records::set_repository_archived(pool, actor, repo_id, true)
-            .await
-            .unwrap()
+        codeyard_db_repos::repositories::records::set_repository_archived(
+            pool, actor, repo_id, true
+        )
+        .await
+        .unwrap()
     );
     assert!(f
         .store
@@ -3077,12 +3090,18 @@ async fn every_ref_change_moves_the_write_version() {
 /// A storage node registered in the database, to place or copy a repository on.
 async fn storage_node(pool: &codeyard_db_core::DbPool, name: &str) -> i64 {
     let key = codeyard_support::node_identity::NodeKey::generate().public_hex();
-    let id = db::cluster::register_own_node(pool, &key, name, &["storage".to_owned()], "test")
-        .await
-        .unwrap()
-        .id;
+    let id = codeyard_db_cluster::cluster::register_own_node(
+        pool,
+        &key,
+        name,
+        &["storage".to_owned()],
+        "test",
+    )
+    .await
+    .unwrap()
+    .id;
     // A promotion needs its target to be reporting in, free space included.
-    db::cluster::record_node_heartbeat(pool, &key, "test", "{}", Some(1 << 40))
+    codeyard_db_cluster::cluster::record_node_heartbeat(pool, &key, "test", "{}", Some(1 << 40))
         .await
         .unwrap();
     id
@@ -3106,10 +3125,10 @@ async fn a_store_for_the_old_primary_refuses_writes_after_promotion() {
     let (pool, repo_id, actor) = (&authority.pool, authority.repo_id, authority.actor);
     let old = storage_node(pool, "fence-old").await;
     let new = storage_node(pool, "fence-new").await;
-    let placed = db::cluster::place_repository(pool, repo_id, old)
+    let placed = codeyard_db_cluster::cluster::place_repository(pool, repo_id, old)
         .await
         .unwrap();
-    let copied = db::cluster::insert_replica(pool, repo_id, new, old)
+    let copied = codeyard_db_cluster::cluster::insert_replica(pool, repo_id, new, old)
         .await
         .unwrap();
     assert!(placed && copied);
@@ -3134,15 +3153,20 @@ async fn a_store_for_the_old_primary_refuses_writes_after_promotion() {
         .await
         .unwrap();
     // Only a copy that has been made can take over, even when forced.
-    assert!(db::cluster::set_applied_version(pool, repo_id, new, old, 0)
-        .await
-        .unwrap());
+    assert!(
+        codeyard_db_cluster::cluster::set_applied_version(pool, repo_id, new, old, 0)
+            .await
+            .unwrap()
+    );
 
-    let outcome = db::cluster::promote_repository(pool, repo_id, old, new, false)
+    let outcome = codeyard_db_cluster::cluster::promote_repository(pool, repo_id, old, new, false)
         .await
         .unwrap();
     assert!(
-        matches!(outcome, db::cluster::PromoteOutcome::Promoted { .. }),
+        matches!(
+            outcome,
+            codeyard_db_cluster::cluster::PromoteOutcome::Promoted { .. }
+        ),
         "{outcome:?}"
     );
 
@@ -3219,15 +3243,21 @@ async fn a_counted_ref_change_blocks_promotion_and_the_replica_listing() {
     let repo_id = authority.repo_id;
     let old = storage_node(pool, "fence-listing-old").await;
     let new = storage_node(pool, "fence-listing-new").await;
-    assert!(db::cluster::place_repository(pool, repo_id, old)
-        .await
-        .unwrap());
-    assert!(db::cluster::insert_replica(pool, repo_id, new, old)
-        .await
-        .unwrap());
-    assert!(db::cluster::set_applied_version(pool, repo_id, new, old, 0)
-        .await
-        .unwrap());
+    assert!(
+        codeyard_db_cluster::cluster::place_repository(pool, repo_id, old)
+            .await
+            .unwrap()
+    );
+    assert!(
+        codeyard_db_cluster::cluster::insert_replica(pool, repo_id, new, old)
+            .await
+            .unwrap()
+    );
+    assert!(
+        codeyard_db_cluster::cluster::set_applied_version(pool, repo_id, new, old, 0)
+            .await
+            .unwrap()
+    );
     let writer = RepoStore::on_node(f.store.location(), old);
 
     let change = begin_ref_change(
@@ -3240,13 +3270,13 @@ async fn a_counted_ref_change_blocks_promotion_and_the_replica_listing() {
     .unwrap();
     let busy = writer.replica_listing().await.unwrap_err();
     assert!(busy.is_replica_busy(), "{busy}");
-    let outcome = db::cluster::promote_repository(pool, repo_id, old, new, true)
+    let outcome = codeyard_db_cluster::cluster::promote_repository(pool, repo_id, old, new, true)
         .await
         .unwrap();
     assert!(
         matches!(
             outcome,
-            db::cluster::PromoteOutcome::Stale {
+            codeyard_db_cluster::cluster::PromoteOutcome::Stale {
                 applied_version: 0,
                 write_version: 1
             }
@@ -3268,9 +3298,11 @@ async fn a_refused_ref_change_is_not_counted() {
     let repo_id = authority.repo_id;
     let holder = storage_node(pool, "refused-holder").await;
     let other = storage_node(pool, "refused-other").await;
-    assert!(db::cluster::place_repository(pool, repo_id, holder)
-        .await
-        .unwrap());
+    assert!(
+        codeyard_db_cluster::cluster::place_repository(pool, repo_id, holder)
+            .await
+            .unwrap()
+    );
 
     let refused = begin_ref_change(
         pool,

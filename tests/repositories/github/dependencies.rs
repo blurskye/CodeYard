@@ -97,7 +97,7 @@ async fn controls(pg: bool) {
     let w = setup(pg).await;
     let read = credential(&w.router, &w.f, w.owner, "read").await;
     let bob = w.f.actor("bob").await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         w.f.pool(),
         bob,
         w.repo.id,

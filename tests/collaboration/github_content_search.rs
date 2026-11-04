@@ -42,7 +42,7 @@ async fn search(pg: bool) {
         codeyard_app::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(alice),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
             name,
             None,
             private,

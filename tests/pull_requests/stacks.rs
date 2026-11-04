@@ -40,7 +40,7 @@ async fn application_with_runs(f: &mut Database, root: &Path) -> Runs {
     codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root,
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -430,22 +430,24 @@ async fn stack_merge_and_retarget_contract(pg: bool) {
     assert_eq!(alice.pull(1).await["stack_id"], stack_id);
 
     // Asking again to move the same members finds nothing and fails nothing.
-    let repository = db::repositories::records::get_repository(f.pool(), "alice", "proj")
-        .await
-        .unwrap()
-        .unwrap();
+    let repository =
+        codeyard_db_repos::repositories::records::get_repository(f.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
     for _ in 0..2 {
-        let (moved, left) = db::pull_requests::records::retarget_stacked_pull_requests(
-            f.pool(),
-            alice_id,
-            repository.id,
-            stack_id,
-            "feature-1",
-            "main",
-            merge_sha.as_str().unwrap(),
-        )
-        .await
-        .unwrap();
+        let (moved, left) =
+            codeyard_db_repos::pull_requests::records::retarget_stacked_pull_requests(
+                f.pool(),
+                alice_id,
+                repository.id,
+                stack_id,
+                "feature-1",
+                "main",
+                merge_sha.as_str().unwrap(),
+            )
+            .await
+            .unwrap();
         assert!(moved.is_empty());
         assert!(left.is_empty());
     }
@@ -492,7 +494,7 @@ async fn stack_merge_and_retarget_contract(pg: bool) {
     let (status, value) = join(&alice, number_of(&five)).await;
     assert_eq!(status, StatusCode::OK, "{value}");
     let main_head = merged_two["sha"].as_str().unwrap();
-    let (moved, left) = db::pull_requests::records::retarget_stacked_pull_requests(
+    let (moved, left) = codeyard_db_repos::pull_requests::records::retarget_stacked_pull_requests(
         f.pool(),
         alice_id,
         repository.id,
@@ -508,7 +510,7 @@ async fn stack_merge_and_retarget_contract(pg: bool) {
     assert_eq!(moved[0].id, five["id"].as_i64().unwrap());
     assert_eq!(moved[0].base_branch, "main");
     assert_eq!(moved[0].base_sha, main_head);
-    let refreshed = db::pull_requests::records::move_open_pull_request_base(
+    let refreshed = codeyard_db_repos::pull_requests::records::move_open_pull_request_base(
         f.pool(),
         moved[0].id,
         main_head,
@@ -520,10 +522,11 @@ async fn stack_merge_and_retarget_contract(pg: bool) {
     .unwrap();
     assert!(refreshed);
     assert_eq!(moved[0].base_sha, main_head);
-    let row = db::pull_requests::records::get_pull_request_by_id(f.pool(), moved[0].id)
-        .await
-        .unwrap()
-        .unwrap();
+    let row =
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(f.pool(), moved[0].id)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(row.base_sha, main0);
     f.finish().await;
 }
@@ -941,33 +944,45 @@ async fn stack_unstack_by_target_contract(pg: bool) {
     assert_eq!(value["stack_id"], one_id);
 
     // The transaction returns exactly the affected members, not an earlier snapshot.
-    let removed = db::pull_requests::records::unstack_pull_requests(f.pool(), alice_id, two_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let removed = codeyard_db_repos::pull_requests::records::unstack_pull_requests(
+        f.pool(),
+        alice_id,
+        two_id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(removed.len(), 2);
     assert!(removed.iter().all(|pull| pull.stack_id.is_none()));
     assert!(removed.iter().any(|pull| pull.id == one_id));
     assert!(removed.iter().any(|pull| pull.id == two_id));
-    let joined = db::pull_requests::records::join_pull_request_stack(f.pool(), alice_id, three_id)
-        .await
-        .unwrap();
+    let joined = codeyard_db_repos::pull_requests::records::join_pull_request_stack(
+        f.pool(),
+        alice_id,
+        three_id,
+    )
+    .await
+    .unwrap();
     assert_eq!(joined, StackJoin::Joined(one_id));
 
     // Repeating the unstack by its target: it is in no stack, so nothing changes and it succeeds.
     assert!(
-        db::pull_requests::records::unstack_pull_requests(f.pool(), alice_id, two_id)
-            .await
-            .unwrap()
-            .unwrap()
-            .is_empty()
+        codeyard_db_repos::pull_requests::records::unstack_pull_requests(
+            f.pool(),
+            alice_id,
+            two_id
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .is_empty()
     );
     for (id, stack_id) in [
         (one_id, Some(one_id)),
         (three_id, Some(one_id)),
         (two_id, None),
     ] {
-        let row = db::pull_requests::records::get_pull_request_by_id(f.pool(), id)
+        let row = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(f.pool(), id)
             .await
             .unwrap()
             .unwrap();
@@ -1138,13 +1153,14 @@ async fn postgres_join_waits_for_the_merge_that_marks_its_parent() {
     // The join reads the parent as open, then waits for the row the merge holds.
     let pool = f.pool().clone();
     let joining = tokio::spawn(async move {
-        db::pull_requests::records::join_pull_request_stack(&pool, alice_id, two_id).await
+        codeyard_db_repos::pull_requests::records::join_pull_request_stack(&pool, alice_id, two_id)
+            .await
     });
     wait_until_blocked(&raw, merging_pid, 1).await;
     merging.commit().await.unwrap();
     let answer = joining.await.unwrap().unwrap();
     assert_eq!(answer, StackJoin::Refused(StackRefusal::NoParent));
-    let child = db::pull_requests::records::get_pull_request_by_id(f.pool(), two_id)
+    let child = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(f.pool(), two_id)
         .await
         .unwrap()
         .unwrap();
@@ -1257,7 +1273,10 @@ async fn postgres_join_refuses_a_replacement_parent_merged_meanwhile() {
 
     let pool = f.pool().clone();
     let joining = tokio::spawn(async move {
-        db::pull_requests::records::join_pull_request_stack(&pool, alice_id, child_id).await
+        codeyard_db_repos::pull_requests::records::join_pull_request_stack(
+            &pool, alice_id, child_id,
+        )
+        .await
     });
     // The join decides on the first parent and waits for its row.
     wait_until_blocked(&raw, first_pid, 1).await;
@@ -1269,7 +1288,7 @@ async fn postgres_join_refuses_a_replacement_parent_merged_meanwhile() {
     let answer = joining.await.unwrap().unwrap();
     assert_eq!(answer, StackJoin::Refused(StackRefusal::NoParent));
     for id in [first_id, second_id, child_id] {
-        let row = db::pull_requests::records::get_pull_request_by_id(f.pool(), id)
+        let row = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(f.pool(), id)
             .await
             .unwrap()
             .unwrap();
@@ -1280,7 +1299,7 @@ async fn postgres_join_refuses_a_replacement_parent_merged_meanwhile() {
 
 /// The repository `proj` of alice.
 async fn proj(f: &Database) -> codeyard_db_core::models::Repository {
-    db::repositories::records::get_repository(f.pool(), "alice", "proj")
+    codeyard_db_repos::repositories::records::get_repository(f.pool(), "alice", "proj")
         .await
         .unwrap()
         .unwrap()
@@ -1298,7 +1317,7 @@ fn main_tip(path: &str) -> String {
 /// The merge commit that the database recorded for pull request `number`.
 async fn merge_commit_of(f: &Database, number: i32) -> Option<String> {
     let repository = proj(f).await;
-    db::pull_requests::records::get_pull_request(f.pool(), repository.id, number)
+    codeyard_db_repos::pull_requests::records::get_pull_request(f.pool(), repository.id, number)
         .await
         .unwrap()
         .unwrap()
@@ -1446,7 +1465,7 @@ async fn stack_policy_contract(pg: bool) {
     let runs = application_with_runs(&mut f, root.path()).await;
     let alice = Client::login(&runs.router, f.pool(), runs.alice).await;
     let bob = Client::login(&runs.router, f.pool(), runs.bob).await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         runs.bob,
         proj(&f).await.id,
@@ -1455,9 +1474,9 @@ async fn stack_policy_contract(pg: bool) {
     .await
     .unwrap();
     let (one, two, three) = three_layer_stack(&alice, true).await;
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         f.pool(),
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: runs.alice,
             repo_id: proj(&f).await.id,
             pattern: "main",
@@ -1890,7 +1909,7 @@ async fn stack_upper_layer_ci_contract(pg: bool) {
     let (status, value) = join(&alice, 2).await;
     assert_eq!(status, StatusCode::OK, "{value}");
 
-    let joined = db::ci::latest_ci_runs_for_commit(
+    let joined = codeyard_db_actions::ci::latest_ci_runs_for_commit(
         f.pool(),
         repository.id,
         &two,
@@ -1908,7 +1927,7 @@ async fn stack_upper_layer_ci_contract(pg: bool) {
     assert_eq!(joined[0].status, "queued");
 
     let pushed = alice.save("feature-2", "again.txt", &two).await;
-    let queued = db::ci::latest_ci_runs_for_commit(
+    let queued = codeyard_db_actions::ci::latest_ci_runs_for_commit(
         f.pool(),
         repository.id,
         &pushed,
@@ -1921,10 +1940,13 @@ async fn stack_upper_layer_ci_contract(pg: bool) {
     assert_eq!(queued[0].pull_request_id, upper["id"].as_i64());
     assert_eq!(queued[0].branch, "main");
     assert_eq!(queued[0].status, "queued");
-    let statuses =
-        db::repositories::protection::list_commit_statuses(f.pool(), repository.id, &pushed)
-            .await
-            .unwrap();
+    let statuses = codeyard_db_repos::repositories::protection::list_commit_statuses(
+        f.pool(),
+        repository.id,
+        &pushed,
+    )
+    .await
+    .unwrap();
     assert!(
         statuses.iter().any(|status| status.state == "pending"),
         "{statuses:?}"

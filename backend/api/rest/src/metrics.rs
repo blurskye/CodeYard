@@ -1,4 +1,5 @@
 //! Private Prometheus gauges. Node ids and fixed states are the only labels.
+use subtle::ConstantTimeEq;
 
 use axum::extract::State;
 use axum::http::header;

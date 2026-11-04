@@ -577,7 +577,3 @@ pub async fn list_values(
 use codeyard_db_core::queries::postgres::organizations::properties::values_on;
 
 use codeyard_db_core::queries::postgres::organizations::properties::definition;
-
-use codeyard_db_core::queries::postgres::organizations::properties::definition;
-
-use codeyard_db_core::queries::postgres::organizations::properties::values_on;

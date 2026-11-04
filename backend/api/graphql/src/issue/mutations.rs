@@ -22,7 +22,7 @@ pub(super) async fn resolve(
     let target = id(&input, "issueId", "I")?;
     let pool = &request.state.pool;
     let actor = request.auth.user.id;
-    let issue = db::issues::get_issue_by_id(pool, target)
+    let issue = codeyard_db_repos::issues::get_issue_by_id(pool, target)
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;
@@ -42,7 +42,7 @@ pub(super) async fn resolve(
             } else {
                 Some(id(&input, "issueTypeId", "IT")?)
             };
-            db::issue_attributes::set_type(
+            codeyard_db_repos::issue_attributes::set_type(
                 pool,
                 repo.id,
                 request.auth.database_actor(),
@@ -63,7 +63,7 @@ pub(super) async fn resolve(
                 },
                 "I",
             )?;
-            let related = db::issues::get_issue_by_id(pool, other)
+            let related = codeyard_db_repos::issues::get_issue_by_id(pool, other)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -82,7 +82,7 @@ pub(super) async fn resolve(
             } else {
                 Mutation::Remove { kind, other }
             };
-            db::relationships::change_with_token(
+            codeyard_db_identity::relationships::change_with_token(
                 pool,
                 actor,
                 repo.id,
@@ -92,7 +92,7 @@ pub(super) async fn resolve(
             )
             .await
             .map_err(|e| Error::new(e.to_string()))?;
-            let related = db::issues::get_issue_by_id(pool, other)
+            let related = codeyard_db_repos::issues::get_issue_by_id(pool, other)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -105,7 +105,7 @@ pub(super) async fn resolve(
             )))
         }
     }
-    let updated = db::issues::get_issue_by_id(pool, target)
+    let updated = codeyard_db_repos::issues::get_issue_by_id(pool, target)
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;

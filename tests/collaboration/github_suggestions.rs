@@ -34,22 +34,23 @@ async fn suggestions(pg: bool) {
     let bob = f.actor("bob").await;
     let carol = f.actor("carol").await;
     let dave = f.actor("dave").await;
-    let org = match db::organizations::create_organization(
+    let org = match codeyard_db_orgs::organizations::profiles::create_organization(
         f.pool(),
         alice,
-        &db::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "collective",
-            db::organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                .unwrap(),
         )
         .unwrap(),
     )
     .await
     .unwrap()
     {
-        db::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("create organization"),
     };
-    use db::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
+    use codeyard_db_repos::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
     let root = tempfile::tempdir().unwrap();
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
@@ -65,7 +66,7 @@ async fn suggestions(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -73,7 +74,7 @@ async fn suggestions(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         carol,
         repo.id,
@@ -81,18 +82,22 @@ async fn suggestions(pg: bool) {
     )
     .await
     .unwrap();
-    let issue = db::issues::create_issue(f.pool(), repo.id, alice, "Suggestions", "")
-        .await
-        .unwrap();
-    let duplicate = db::issues::create_issue(f.pool(), repo.id, alice, "Canonical issue", "")
-        .await
-        .unwrap();
-    let label = db::labels::create_label(f.pool(), alice, repo.id, "bug", "ff0000", None)
-        .await
-        .unwrap();
-    let race_label = db::labels::create_label(f.pool(), alice, repo.id, "race", "ff0000", None)
-        .await
-        .unwrap();
+    let issue =
+        codeyard_db_repos::issues::create_issue(f.pool(), repo.id, alice, "Suggestions", "")
+            .await
+            .unwrap();
+    let duplicate =
+        codeyard_db_repos::issues::create_issue(f.pool(), repo.id, alice, "Canonical issue", "")
+            .await
+            .unwrap();
+    let label =
+        codeyard_db_repos::labels::create_label(f.pool(), alice, repo.id, "bug", "ff0000", None)
+            .await
+            .unwrap();
+    let race_label =
+        codeyard_db_repos::labels::create_label(f.pool(), alice, repo.id, "race", "ff0000", None)
+            .await
+            .unwrap();
     let router = f.router(root.path()).await;
     let browser = Client::login(&router, f.pool(), alice).await;
     let triage = Client::login(&router, f.pool(), bob).await;
@@ -220,14 +225,16 @@ async fn suggestions(pg: bool) {
             .await;
         assert_eq!(created.status, StatusCode::SEE_OTHER, "{}", created.text());
     }
-    let types = db::issue_attributes::catalog(f.pool(), repo.id, Some(alice), "type")
-        .await
-        .unwrap();
+    let types =
+        codeyard_db_repos::issue_attributes::catalog(f.pool(), repo.id, Some(alice), "type")
+            .await
+            .unwrap();
     let bug = types.iter().find(|a| a.name == "Bug").unwrap().id;
     let task = types.iter().find(|a| a.name == "Task").unwrap().id;
-    let fields = db::issue_attributes::catalog(f.pool(), repo.id, Some(alice), "field")
-        .await
-        .unwrap();
+    let fields =
+        codeyard_db_repos::issue_attributes::catalog(f.pool(), repo.id, Some(alice), "field")
+            .await
+            .unwrap();
     let priority = fields.iter().find(|a| a.name == "Priority").unwrap().id;
     let secret = fields.iter().find(|a| a.name == "Secret").unwrap().id;
     let bug_proposal = propose(
@@ -366,7 +373,7 @@ async fn suggestions(pg: bool) {
         "Optional label",
     )
     .await;
-    let before = db::issues::get_issue_by_id(f.pool(), issue.id)
+    let before = codeyard_db_repos::issues::get_issue_by_id(f.pool(), issue.id)
         .await
         .unwrap()
         .unwrap()
@@ -387,7 +394,7 @@ async fn suggestions(pg: bool) {
     assert_eq!(dismissed["state"], "dismissed");
     assert!(dismissed["issue_event_id"].is_null());
     assert_eq!(
-        db::issues::get_issue_by_id(f.pool(), issue.id)
+        codeyard_db_repos::issues::get_issue_by_id(f.pool(), issue.id)
             .await
             .unwrap()
             .unwrap()
@@ -418,7 +425,7 @@ async fn suggestions(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::labels::get_issue_labels(f.pool(), issue.repo_id, issue.id)
+        codeyard_db_repos::labels::get_issue_labels(f.pool(), issue.repo_id, issue.id)
             .await
             .unwrap()
             .len(),
@@ -473,9 +480,10 @@ async fn suggestions(pg: bool) {
         200,
     )
     .await;
-    let before = db::notifications::records::count_unread_notifications(f.pool(), carol)
-        .await
-        .unwrap();
+    let before =
+        codeyard_db_repos::notifications::records::count_unread_notifications(f.pool(), carol)
+            .await
+            .unwrap();
     let assign = propose(
         &router,
         &agent_api,
@@ -500,13 +508,16 @@ async fn suggestions(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::assignees::list_assignees(f.pool(), db::assignees::AssignedItem::Issue(issue.id))
-            .await
-            .unwrap(),
+        codeyard_db_repos::assignees::list_assignees(
+            f.pool(),
+            codeyard_db_repos::assignees::AssignedItem::Issue(issue.id)
+        )
+        .await
+        .unwrap(),
         vec!["carol"]
     );
     assert_eq!(
-        db::notifications::records::count_unread_notifications(f.pool(), carol)
+        codeyard_db_repos::notifications::records::count_unread_notifications(f.pool(), carol)
             .await
             .unwrap(),
         before + 1
@@ -534,7 +545,7 @@ async fn suggestions(pg: bool) {
         200,
     )
     .await;
-    let closed = db::issues::get_issue_by_id(f.pool(), issue.id)
+    let closed = codeyard_db_repos::issues::get_issue_by_id(f.pool(), issue.id)
         .await
         .unwrap()
         .unwrap();
@@ -592,7 +603,7 @@ async fn suggestions(pg: bool) {
         "{}",
         resolved.text()
     );
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         dave,
         repo.id,
@@ -610,7 +621,7 @@ async fn suggestions(pg: bool) {
         "Candidate loses access",
     )
     .await;
-    db::repositories::access::revoke_repo_access(f.pool(), dave, repo.id)
+    codeyard_db_repos::repositories::access::revoke_repo_access(f.pool(), dave, repo.id)
         .await
         .unwrap();
     document(
@@ -668,7 +679,7 @@ async fn suggestions(pg: bool) {
         let status = reply.status().as_u16();
         document(reply, op, status).await;
     }
-    let labels = db::labels::get_issue_labels(f.pool(), issue.repo_id, issue.id)
+    let labels = codeyard_db_repos::labels::get_issue_labels(f.pool(), issue.repo_id, issue.id)
         .await
         .unwrap();
     assert_eq!(labels.iter().any(|l| l.id == race_label.id), accepted);

@@ -25,7 +25,7 @@ async fn provision(
     lifecycle::provision(
         (pool, None),
         root,
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         name,
         description,
         private,
@@ -70,7 +70,7 @@ async fn contract(pg: bool) {
         false,
     )
     .await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         alice_id,
         shared.id,
@@ -226,7 +226,7 @@ async fn filter_contract(pg: bool) {
         false,
     )
     .await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         alice_id,
         shared.id,

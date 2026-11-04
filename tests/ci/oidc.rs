@@ -25,7 +25,7 @@ async fn contract(pg: bool) {
     let repo = repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "project",
         None,
         true,
@@ -42,9 +42,9 @@ async fn contract(pg: bool) {
         (leaf.into(), b"name: Leaf\njobs: {identity: {}}\n".to_vec()),
     ]);
     let sha = "a".repeat(40);
-    let run = db::ci::enqueue_ci_run(
+    let run = codeyard_db_actions::ci::enqueue_ci_run(
         f.pool(),
-        db::ci::NewCiRun {
+        codeyard_db_actions::ci::NewCiRun {
             repo_id: repo.id,
             triggered_by_id: actor,
             pipeline: "full",
@@ -65,7 +65,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let run = db::ci::claim_ci_run(
+    let run = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "worker",
         "local",
@@ -145,9 +145,14 @@ async fn contract(pg: bool) {
         .is_none());
     f.execute("UPDATE ci_runs SET is_fork=false WHERE id=$1", &[run.id])
         .await;
-    db::ci_tokens::finish_job(f.pool(), run.id, "worker", &format!("{path}:writer/deploy"))
-        .await
-        .unwrap();
+    codeyard_db_actions::ci_tokens::finish_job(
+        f.pool(),
+        run.id,
+        "worker",
+        &format!("{path}:writer/deploy"),
+    )
+    .await
+    .unwrap();
     assert!(ci::oidc::issue(&signing_keys, writer, None)
         .await
         .unwrap()

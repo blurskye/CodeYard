@@ -65,22 +65,24 @@ async fn contract(pg: bool) {
         .collect();
     let credentials: Vec<_> = policies
         .iter()
-        .map(|(job, hash, permissions)| db::ci_tokens::NewJobToken {
-            job,
-            hash,
-            permissions,
-            write: true,
-        })
+        .map(
+            |(job, hash, permissions)| codeyard_db_actions::ci_tokens::NewJobToken {
+                job,
+                hash,
+                permissions,
+                write: true,
+            },
+        )
         .collect();
-    db::ci_tokens::issue(f.pool(), run, "provenance-worker", &credentials)
+    codeyard_db_actions::ci_tokens::issue(f.pool(), run, "provenance-worker", &credentials)
         .await
         .unwrap();
     let other_hash = tokens::token_hash("ghs_provenance_other");
-    db::ci_tokens::issue(
+    codeyard_db_actions::ci_tokens::issue(
         f.pool(),
         other_run,
         "provenance-worker",
-        &[db::ci_tokens::NewJobToken {
+        &[codeyard_db_actions::ci_tokens::NewJobToken {
             job: "other",
             hash: &other_hash,
             permissions: &policies[0].2,

@@ -111,16 +111,16 @@ async fn native_invitations(pg: bool) {
         .page("/settings/invitations")
         .await;
     assert!(status.is_redirection());
-    let input = db::organizations::profiles::NewOrganization::new(
+    let input = codeyard_db_orgs::organizations::profiles::NewOrganization::new(
         "acme",
-        db::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
+        codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
     )
     .unwrap();
     assert!(matches!(
-        db::organizations::profiles::create_organization(f.pool(), alice, &input)
+        codeyard_db_orgs::organizations::profiles::create_organization(f.pool(), alice, &input)
             .await
             .unwrap(),
-        db::organizations::OrganizationOutcome::Applied(_)
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     let (_, org_repo) = checked(
         &router,

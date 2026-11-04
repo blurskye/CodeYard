@@ -19,9 +19,9 @@ pub(super) async fn run(
         ("git/create-ref", 201),
     )
     .await;
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         pool,
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: actor,
             repo_id: repo,
             pattern: branch,
@@ -128,12 +128,13 @@ pub(super) async fn run(
         ("repos/delete-pull-request-review-protection", 404),
     )
     .await;
-    let native = db::repositories::protection::list_branch_protection_rules(pool, repo)
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|rule| rule.pattern == branch)
-        .unwrap();
+    let native =
+        codeyard_db_repos::repositories::protection::list_branch_protection_rules(pool, repo)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|rule| rule.pattern == branch)
+            .unwrap();
     assert!(!native.require_pull_request);
     assert_eq!(native.required_approving_reviews, 0);
     assert!(!native.require_code_owner_review);

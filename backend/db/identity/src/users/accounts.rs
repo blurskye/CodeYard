@@ -174,7 +174,3 @@ pub struct AuthorDisplay {
     pub is_admin: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
-
-use codeyard_db_core::queries::users::accounts::AccountCredential;
-
-use codeyard_db_core::queries::users::accounts::AccountCredential;

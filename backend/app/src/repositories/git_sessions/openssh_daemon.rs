@@ -80,7 +80,7 @@ async fn real_fixture(act: Option<PathBuf>) {
         .trim()
         .to_owned();
     let database = database().await;
-    let actor = db::users::accounts::create_user(&database.pool, "alice", None)
+    let actor = codeyard_db_identity::users::accounts::create_user(&database.pool, "alice", None)
         .await
         .unwrap();
     let run_ci = act.is_some();
@@ -129,10 +129,14 @@ async fn real_fixture(act: Option<PathBuf>) {
         success(output(keygen).await);
     }
     let public = std::fs::read_to_string(root.join("client.pub")).unwrap();
-    let key =
-        db::users::ssh_keys::add_ssh_key(&database.pool, actor.id, "real OpenSSH fixture", &public)
-            .await
-            .unwrap();
+    let key = codeyard_db_identity::users::ssh_keys::add_ssh_key(
+        &database.pool,
+        actor.id,
+        "real OpenSSH fixture",
+        &public,
+    )
+    .await
+    .unwrap();
     let mut fingerprint = Command::new(tool("ssh-keygen"));
     fingerprint.args(["-lf"]).arg(root.join("client.pub"));
     let fingerprint = String::from_utf8(success(output(fingerprint).await).stdout).unwrap();
@@ -222,7 +226,7 @@ async fn real_fixture(act: Option<PathBuf>) {
     let mut options = git2::RepositoryInitOptions::new();
     options.bare(true).initial_head("main");
     let bare = git2::Repository::init_opts(&bare_path, &options).unwrap();
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         actor.id,
         "private",
@@ -281,7 +285,7 @@ async fn real_fixture(act: Option<PathBuf>) {
         Some(head)
     );
     if run_ci {
-        let runs = db::ci::list_ci_runs_for_repo(&database.pool, repo.id, 10)
+        let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(&database.pool, repo.id, 10)
             .await
             .unwrap();
         assert_eq!(
@@ -301,10 +305,11 @@ async fn real_fixture(act: Option<PathBuf>) {
         std::fs::write(&release, b"SSH helper exited\n").unwrap();
         let finished = timeout(Duration::from_secs(90), async {
             loop {
-                let current = db::ci::get_ci_run_by_run_id(&database.pool, run.run_id)
-                    .await
-                    .unwrap()
-                    .unwrap();
+                let current =
+                    codeyard_db_actions::ci::get_ci_run_by_run_id(&database.pool, run.run_id)
+                        .await
+                        .unwrap()
+                        .unwrap();
                 if !matches!(current.status.as_str(), "queued" | "running") {
                     break current;
                 }
@@ -313,7 +318,7 @@ async fn real_fixture(act: Option<PathBuf>) {
         })
         .await
         .expect("persistent real act workflow timeout");
-        let logs = db::ci::list_ci_logs(&database.pool, run.id, 1000)
+        let logs = codeyard_db_actions::ci::list_ci_logs(&database.pool, run.id, 1000)
             .await
             .unwrap();
         assert_eq!(finished.status, "success", "{finished:?}\n{logs:?}");
@@ -349,7 +354,7 @@ async fn real_fixture(act: Option<PathBuf>) {
             )
             .await,
         );
-        let tagged = db::ci::list_ci_runs_for_repo(&database.pool, repo.id, 10)
+        let tagged = codeyard_db_actions::ci::list_ci_runs_for_repo(&database.pool, repo.id, 10)
             .await
             .unwrap();
         assert_eq!(tagged.len(), 3, "one branch run and one per accepted tag");
@@ -377,7 +382,7 @@ async fn real_fixture(act: Option<PathBuf>) {
                 run.workflow_blobs[".github/workflows/tags.yml"],
                 expected_blob
             );
-            assert!(db::ci::has_ci_accepted_push(
+            assert!(codeyard_db_actions::ci::has_ci_accepted_push(
                 &database.pool,
                 repo.id,
                 actor.id,
@@ -386,7 +391,7 @@ async fn real_fixture(act: Option<PathBuf>) {
             )
             .await
             .unwrap());
-            assert!(!db::ci::has_ci_accepted_push(
+            assert!(!codeyard_db_actions::ci::has_ci_accepted_push(
                 &database.pool,
                 repo.id,
                 actor.id,
@@ -397,10 +402,11 @@ async fn real_fixture(act: Option<PathBuf>) {
             .unwrap());
             let finished = timeout(Duration::from_secs(90), async {
                 loop {
-                    let current = db::ci::get_ci_run_by_run_id(&database.pool, run.run_id)
-                        .await
-                        .unwrap()
-                        .unwrap();
+                    let current =
+                        codeyard_db_actions::ci::get_ci_run_by_run_id(&database.pool, run.run_id)
+                            .await
+                            .unwrap()
+                            .unwrap();
                     if !matches!(current.status.as_str(), "queued" | "running") {
                         break current;
                     }
@@ -409,7 +415,7 @@ async fn real_fixture(act: Option<PathBuf>) {
             })
             .await
             .expect("tag workflow timeout");
-            let logs = db::ci::list_ci_logs(&database.pool, run.id, 1000)
+            let logs = codeyard_db_actions::ci::list_ci_logs(&database.pool, run.id, 1000)
                 .await
                 .unwrap();
             assert_eq!(finished.status, "success", "{finished:?}\n{logs:?}");
@@ -450,13 +456,13 @@ async fn real_fixture(act: Option<PathBuf>) {
             Some(noncommit)
         );
         assert_eq!(
-            db::ci::list_ci_runs_for_repo(&database.pool, repo.id, 10)
+            codeyard_db_actions::ci::list_ci_runs_for_repo(&database.pool, repo.id, 10)
                 .await
                 .unwrap()
                 .len(),
             3
         );
-        assert!(!db::ci::has_ci_accepted_push(
+        assert!(!codeyard_db_actions::ci::has_ci_accepted_push(
             &database.pool,
             repo.id,
             actor.id,
@@ -577,7 +583,7 @@ async fn real_fixture(act: Option<PathBuf>) {
             .await
             .unwrap();
     }
-    db::users::ssh_keys::delete_ssh_key(&database.pool, key.id)
+    codeyard_db_identity::users::ssh_keys::delete_ssh_key(&database.pool, key.id)
         .await
         .unwrap();
     assert!(broker.keys(&public, &user).await.stdout.is_empty());

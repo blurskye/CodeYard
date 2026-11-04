@@ -104,7 +104,3 @@ native_operation!(crate::postgres::repository_stats::list_workflow_usage,
 use codeyard_db_core::queries::repository_stats::RepositoryDocumentFacts;
 
 use codeyard_db_core::queries::repository_stats::RepositorySnapshot;
-
-use codeyard_db_core::queries::repository_stats::RepositoryDocumentFacts;
-
-use codeyard_db_core::queries::repository_stats::RepositorySnapshot;

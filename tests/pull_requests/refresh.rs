@@ -27,7 +27,7 @@ async fn contract(pg: bool) {
     let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -35,7 +35,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob_id,
         repository.id,
@@ -550,7 +550,7 @@ async fn concurrent_refresh_converges(pg: bool) {
     let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "refresh-race",
         None,
         false,
@@ -591,9 +591,9 @@ async fn concurrent_refresh_converges(pg: bool) {
         .create_branch_as(f.pool(), repository.id, actor, "topic", &main.sha)
         .await
         .unwrap();
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: repository.id,
             head_repo_id: Some(repository.id),
             author_id: actor,
@@ -825,10 +825,11 @@ async fn concurrent_refresh_converges(pg: bool) {
     .await
     .unwrap();
 
-    let stored = db::pull_requests::records::get_pull_request_by_id(f.pool(), pull.id)
-        .await
-        .unwrap()
-        .unwrap();
+    let stored =
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(f.pool(), pull.id)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(stored.head_sha, moved[0]);
     assert_eq!(stored.base_sha, moved[1]);
     f.finish().await;
@@ -861,7 +862,7 @@ async fn refresh_touches_only_pull_requests_on_the_moved_branch(pg: bool) {
     let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -939,7 +940,7 @@ async fn merge_names_the_base_branch_it_read(pg: bool) {
     let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -1033,7 +1034,7 @@ async fn merge_into_the_default_branch_closes_named_issues(pg: bool) {
     let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,

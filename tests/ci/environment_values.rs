@@ -27,7 +27,7 @@ async fn contract(pg: bool) {
     let repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "project",
         None,
         true,
@@ -35,7 +35,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         collaborator,
         repo.id,
@@ -55,16 +55,16 @@ async fn contract(pg: bool) {
             .unwrap(),
         vec!["Production"]
     );
-    let canonical = db::environments::get(f.pool(), repo.id, "PRODUCTION")
+    let canonical = codeyard_db_actions::environments::get(f.pool(), repo.id, "PRODUCTION")
         .await
         .unwrap()
         .unwrap();
-    db::environments::upsert(
+    codeyard_db_actions::environments::upsert(
         f.pool(),
         owner,
         repo.id,
         "production",
-        &db::environments::Update {
+        &codeyard_db_actions::environments::Update {
             wait_timer: Some(17),
             prevent_self_review: Some(true),
             ..Default::default()
@@ -75,7 +75,7 @@ async fn contract(pg: bool) {
     values::create(f.pool(), owner, repo.id, "PRODUCTION")
         .await
         .unwrap();
-    let configured = db::environments::get(f.pool(), repo.id, "Production")
+    let configured = codeyard_db_actions::environments::get(f.pool(), repo.id, "Production")
         .await
         .unwrap()
         .unwrap();
@@ -567,10 +567,12 @@ async fn contract(pg: bool) {
         204,
     )
     .await;
-    assert!(db::environments::get(f.pool(), repo.id, "production")
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        codeyard_db_actions::environments::get(f.pool(), repo.id, "production")
+            .await
+            .unwrap()
+            .is_none()
+    );
     for kind in [Kind::Secret, Kind::Variable] {
         assert!(
             values::workflow_values(f.pool(), repo.id, "production", kind)
@@ -594,7 +596,7 @@ async fn contract(pg: bool) {
     let open = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "open",
         None,
         false,

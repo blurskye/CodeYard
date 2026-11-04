@@ -72,7 +72,7 @@ pub(super) async fn exercise(
     )
     .await;
     assert_eq!(gone["data"]["node"], serde_json::Value::Null);
-    use db::organizations::teams;
+    use codeyard_db_orgs::organizations::roles::teams;
     let team = applied(
         teams::create_organization_team(
             &state.pool,
@@ -90,9 +90,9 @@ pub(super) async fn exercise(
     let repo = lifecycle::provision(
         (&state.pool, None),
         &state.repos_path,
-        db::repositories::creation::RepositoryCreationOwner {
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
             actor_id: actor,
-            target: db::repositories::creation::RepositoryTarget::Organization(org),
+            target: codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(org),
         },
         "team-nodes",
         None,
@@ -122,9 +122,9 @@ pub(super) async fn exercise(
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{value}");
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         &state.pool,
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: actor,
             repo_id: repo.id,
             pattern: "main",

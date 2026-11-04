@@ -22,7 +22,7 @@ async fn autolinks_contract(pg: bool) {
     )
     .await;
     let repo = f.repository(created["id"].as_i64().unwrap()).await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -238,13 +238,13 @@ async fn autolinks_contract(pg: bool) {
     )
     .await;
     for index in 0..49 {
-        let input = db::repositories::autolinks::NewAutolink::new(
+        let input = codeyard_db_repos::repositories::autolinks::NewAutolink::new(
             &format!("F{index}-"),
             "https://fill.test/<num>",
             false,
         )
         .unwrap();
-        db::repositories::autolinks::create(f.pool(), alice, repo.id, &input)
+        codeyard_db_repos::repositories::autolinks::create(f.pool(), alice, repo.id, &input)
             .await
             .unwrap();
     }

@@ -8,6 +8,7 @@ use codeyard_db_core::models::Session;
 use codeyard_db_core::models::User;
 use codeyard_support::crypto::is_hex_token;
 use sqlx::PgPool;
+use subtle::ConstantTimeEq;
 
 pub async fn create_session(
     pool: &PgPool,

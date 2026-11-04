@@ -35,30 +35,34 @@ async fn concurrent_inserts_keep_one_key(
     pool: &codeyard_db_core::DbPool,
     other: &codeyard_db_core::DbPool,
 ) {
-    assert!(db::node_config::get_cluster_ssh_host_key(pool)
-        .await
-        .unwrap()
-        .is_none());
-    assert!(db::node_config::get_cluster_ssh_host_key(other)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        codeyard_db_cluster::node_config::get_cluster_ssh_host_key(pool)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        codeyard_db_cluster::node_config::get_cluster_ssh_host_key(other)
+            .await
+            .unwrap()
+            .is_none()
+    );
     let first_key = host_key(1);
     let second_key = host_key(2);
     let (first, second) = tokio::join!(
-        db::node_config::insert_cluster_ssh_host_key(pool, &first_key),
-        db::node_config::insert_cluster_ssh_host_key(other, &second_key),
+        codeyard_db_cluster::node_config::insert_cluster_ssh_host_key(pool, &first_key),
+        codeyard_db_cluster::node_config::insert_cluster_ssh_host_key(other, &second_key),
     );
     first.unwrap();
     second.unwrap();
 
-    let winner = db::node_config::get_cluster_ssh_host_key(pool)
+    let winner = codeyard_db_cluster::node_config::get_cluster_ssh_host_key(pool)
         .await
         .unwrap()
         .unwrap();
     assert!(winner == first_key || winner == second_key);
     assert_eq!(
-        db::node_config::get_cluster_ssh_host_key(other)
+        codeyard_db_cluster::node_config::get_cluster_ssh_host_key(other)
             .await
             .unwrap()
             .unwrap(),
@@ -69,11 +73,11 @@ async fn concurrent_inserts_keep_one_key(
     } else {
         &first_key
     };
-    db::node_config::insert_cluster_ssh_host_key(other, loser)
+    codeyard_db_cluster::node_config::insert_cluster_ssh_host_key(other, loser)
         .await
         .unwrap();
     assert_eq!(
-        db::node_config::get_cluster_ssh_host_key(pool)
+        codeyard_db_cluster::node_config::get_cluster_ssh_host_key(pool)
             .await
             .unwrap()
             .unwrap(),
@@ -89,10 +93,12 @@ async fn invalid_bootstrap_does_not_poison_database(pool: &codeyard_db_core::DbP
         let result =
             SshServer::new(pool.clone(), Some(path.to_str().unwrap()), ci_service(pool)).await;
         assert!(result.is_err());
-        assert!(db::node_config::get_cluster_ssh_host_key(pool)
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            codeyard_db_cluster::node_config::get_cluster_ssh_host_key(pool)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     let valid = host_key(9);
@@ -101,7 +107,7 @@ async fn invalid_bootstrap_does_not_poison_database(pool: &codeyard_db_core::DbP
         .await
         .unwrap();
     assert_eq!(
-        db::node_config::get_cluster_ssh_host_key(pool)
+        codeyard_db_cluster::node_config::get_cluster_ssh_host_key(pool)
             .await
             .unwrap()
             .unwrap(),
@@ -132,7 +138,7 @@ async fn simultaneous_startups_share_the_saved_key(
     );
     let first = first.unwrap();
     let second = second.unwrap();
-    let winner = db::node_config::get_cluster_ssh_host_key(pool)
+    let winner = codeyard_db_cluster::node_config::get_cluster_ssh_host_key(pool)
         .await
         .unwrap()
         .unwrap();
@@ -163,7 +169,7 @@ async fn simultaneous_startups_share_the_saved_key(
         .unwrap();
     assert_eq!(std::fs::read_to_string(first_path).unwrap(), winner);
     assert_eq!(
-        db::node_config::get_cluster_ssh_host_key(other)
+        codeyard_db_cluster::node_config::get_cluster_ssh_host_key(other)
             .await
             .unwrap()
             .unwrap(),
@@ -229,10 +235,12 @@ async fn host_key_inspection_errors_leave_the_database_empty() {
     )
     .await;
     assert!(result.is_err());
-    assert!(db::node_config::get_cluster_ssh_host_key(&fixture.pool)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        codeyard_db_cluster::node_config::get_cluster_ssh_host_key(&fixture.pool)
+            .await
+            .unwrap()
+            .is_none()
+    );
     fixture.close().await;
 }
 
@@ -240,7 +248,7 @@ async fn host_key_inspection_errors_leave_the_database_empty() {
 async fn startup_returns_configured_host_key_file_errors() {
     let fixture = NativeDatabase::new().await;
     let key = host_key(6);
-    db::node_config::insert_cluster_ssh_host_key(&fixture.pool, &key)
+    codeyard_db_cluster::node_config::insert_cluster_ssh_host_key(&fixture.pool, &key)
         .await
         .unwrap();
     let result = SshServer::new(
@@ -251,7 +259,7 @@ async fn startup_returns_configured_host_key_file_errors() {
     .await;
     assert!(result.is_err());
     assert_eq!(
-        db::node_config::get_cluster_ssh_host_key(&fixture.pool)
+        codeyard_db_cluster::node_config::get_cluster_ssh_host_key(&fixture.pool)
             .await
             .unwrap()
             .unwrap(),

@@ -610,7 +610,3 @@ pub async fn expire_objects(pool: &SqlitePool) -> Result<()> {
 use codeyard_db_core::queries::sqlite::action_objects::enforce_cache_limit;
 
 use codeyard_db_core::queries::sqlite::action_objects::cache_policy;
-
-use codeyard_db_core::queries::sqlite::action_objects::cache_policy;
-
-use codeyard_db_core::queries::sqlite::action_objects::enforce_cache_limit;

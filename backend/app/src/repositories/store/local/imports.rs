@@ -141,10 +141,11 @@ impl LocalStore {
             .await?;
         // A reserved immutable tag keeps its published object, even in a repository recreated at
         // the same owner and name.
-        let repository = db::repositories::records::get_repository_by_id(pool, repo_id)
-            .await
-            .map_err(|_| RepoError::authority_unavailable())?
-            .ok_or_else(RepoError::write_denied)?;
+        let repository =
+            codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo_id)
+                .await
+                .map_err(|_| RepoError::authority_unavailable())?
+                .ok_or_else(RepoError::write_denied)?;
         let tag_updates: Vec<_> = import
             .refs
             .iter()
@@ -249,9 +250,11 @@ impl LocalStore {
             {
                 self.set_head_target(&target).await?;
             }
-            db::repositories::records::update_repo_default_branch(pool, repo_id, branch)
-                .await
-                .map_err(|_| RepoError::authority_unavailable())?;
+            codeyard_db_repos::repositories::records::update_repo_default_branch(
+                pool, repo_id, branch,
+            )
+            .await
+            .map_err(|_| RepoError::authority_unavailable())?;
         }
         self.import_prepared_objects(
             pool,
@@ -362,7 +365,7 @@ impl LocalStore {
         let contributors = if import.refs.is_empty() {
             Ok(())
         } else {
-            db::repositories::records::advance_contribution_version(pool, repo_id)
+            codeyard_db_repos::repositories::records::advance_contribution_version(pool, repo_id)
                 .await
                 .map_err(|_| RepoError::applied_followup_failed())
         };
@@ -372,8 +375,13 @@ impl LocalStore {
             .collect::<std::collections::HashSet<_>>()
         {
             if let Ok(commit) = self.commit(tip).await {
-                if let Err(error) =
-                    db::secret_scanning::enqueue(pool, repo_id, &commit.sha, actor).await
+                if let Err(error) = codeyard_db_security::secret_scanning::enqueue(
+                    pool,
+                    repo_id,
+                    &commit.sha,
+                    actor,
+                )
+                .await
                 {
                     tracing::warn!(repo_id, %error, "imported history scan could not be queued");
                 }
@@ -409,7 +417,7 @@ impl LocalStore {
                     .0
             }
             ImportCredential::Session(session) => {
-                db::users::sessions::get_session_user(pool, session)
+                codeyard_db_identity::users::sessions::get_session_user(pool, session)
                     .await
                     .map_err(|_| RepoError::authority_unavailable())?
                     .ok_or_else(RepoError::write_denied)?
@@ -422,7 +430,7 @@ impl LocalStore {
         {
             return Err(RepoError::write_denied());
         }
-        let current = db::source_imports::get(pool, repo_id)
+        let current = codeyard_db_repos::source_imports::get(pool, repo_id)
             .await
             .map_err(|_| RepoError::authority_unavailable())?;
         if !current
@@ -446,11 +454,11 @@ impl LocalStore {
             .await
             .map_err(RepoError::from)?;
         live_read(pool, repo_id, actor, self.path(), self.node_id).await?;
-        db::source_imports::cancel(pool, actor, repo_id)
+        codeyard_db_repos::source_imports::cancel(pool, actor, repo_id)
             .await
             .map_err(|error| {
                 if error
-                    .downcast_ref::<db::source_imports::ImportRefusal>()
+                    .downcast_ref::<codeyard_db_core::queries::source_imports::ImportRefusal>()
                     .is_some()
                 {
                     RepoError::write_denied()

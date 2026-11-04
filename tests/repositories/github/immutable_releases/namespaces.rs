@@ -87,11 +87,11 @@ async fn history(pg: bool) {
         &[alice],
     )
     .await;
-    let stale = db::repositories::records::patch_repository_and_default(
+    let stale = codeyard_db_repos::repositories::records::patch_repository_and_default(
         f.pool(),
         alice,
         old,
-        &db::repositories::records::RepositoryChanges {
+        &codeyard_db_repos::repositories::records::RepositoryChanges {
             name: Some("raced"),
             ..Default::default()
         },
@@ -101,8 +101,8 @@ async fn history(pg: bool) {
     .await
     .expect_err("owner changed after the Git namespace check");
     assert!(matches!(
-        stale.downcast_ref::<db::repositories::records::RepositorySettingsRefusal>(),
-        Some(db::repositories::records::RepositorySettingsRefusal::NameConflict)
+        stale.downcast_ref::<codeyard_db_repos::repositories::records::RepositorySettingsRefusal>(),
+        Some(codeyard_db_repos::repositories::records::RepositorySettingsRefusal::NameConflict)
     ));
     let org = organization(&f, alice, "release_org").await;
     checked(
@@ -260,11 +260,11 @@ async fn history(pg: bool) {
             &[bob],
         )
         .await;
-    let legacy = db::repositories::records::patch_repository(
+    let legacy = codeyard_db_repos::repositories::records::patch_repository(
         f.pool(),
         bob,
         bob_repo,
-        &db::repositories::records::RepositoryChanges {
+        &codeyard_db_repos::repositories::records::RepositoryChanges {
             name: Some("history"),
             ..Default::default()
         },
@@ -272,8 +272,9 @@ async fn history(pg: bool) {
     .await
     .expect_err("metadata-only callers cannot bypass reserved namespaces");
     assert!(matches!(
-        legacy.downcast_ref::<db::repositories::records::RepositorySettingsRefusal>(),
-        Some(db::repositories::records::RepositorySettingsRefusal::NameConflict)
+        legacy
+            .downcast_ref::<codeyard_db_repos::repositories::records::RepositorySettingsRefusal>(),
+        Some(codeyard_db_repos::repositories::records::RepositorySettingsRefusal::NameConflict)
     ));
     let recipient = organization(&f, bob, "recipient_org").await;
     checked(

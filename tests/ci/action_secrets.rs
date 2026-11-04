@@ -166,7 +166,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "project",
         None,
         true,
@@ -177,7 +177,7 @@ async fn contract(pg: bool) {
     let second = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "other",
         None,
         true,
@@ -308,16 +308,19 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(gh_list["secrets"][0], meta);
     assert_eq!(gh_list["secrets"][1], page["secrets"][0]);
-    let delivered = db::secrets::decrypt_repository_secrets(f.pool(), &encryptor, repo.id)
-        .await
-        .unwrap();
+    let delivered =
+        codeyard_db_actions::secrets::decrypt_repository_secrets(f.pool(), &encryptor, repo.id)
+            .await
+            .unwrap();
     assert!(delivered.contains(&(
         "DEPLOY_TOKEN".into(),
         String::from_utf8(value.to_vec()).unwrap()
     )));
-    assert!(!db::secrets::repository_has_secrets(f.pool(), second.id)
-        .await
-        .unwrap());
+    assert!(
+        !codeyard_db_actions::secrets::repository_has_secrets(f.pool(), second.id)
+            .await
+            .unwrap()
+    );
     for (method, path, operation, token, status, input) in [
         (
             "GET",
@@ -448,7 +451,7 @@ async fn contract(pg: bool) {
         404,
     )
     .await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         outsider,
         repo.id,

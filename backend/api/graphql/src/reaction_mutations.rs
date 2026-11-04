@@ -1,4 +1,3 @@
-use crate::db;
 use crate::missing;
 use crate::mutations::text;
 use crate::unavailable;
@@ -24,7 +23,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         "CC" => (Subject::CommitComment, id, id),
         "IC" if id % 2 == 0 => {
             let id = id / 2;
-            let row = db::issues::get_issue_comment(pool, id)
+            let row = codeyard_db_repos::issues::get_issue_comment(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -32,17 +31,19 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         }
         "IC" | "PC" | "PRRC" => {
             let id = if kind == "IC" { id / 2 } else { id };
-            let row = db::pull_requests::reviews::get_pull_request_comment_by_id(pool, id)
-                .await
-                .map_err(unavailable)?
-                .ok_or_else(missing)?;
+            let row =
+                codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(pool, id)
+                    .await
+                    .map_err(unavailable)?
+                    .ok_or_else(missing)?;
             (Subject::PullRequestComment, id, row.pull_request_id)
         }
         "PRR" => {
-            let row = db::pull_requests::reviews::get_pull_request_review_by_id(pool, id)
-                .await
-                .map_err(unavailable)?
-                .ok_or_else(missing)?;
+            let row =
+                codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(pool, id)
+                    .await
+                    .map_err(unavailable)?
+                    .ok_or_else(missing)?;
             (Subject::PullRequestReview, id, row.pull_request_id)
         }
         _ => return Err(missing()),
@@ -77,7 +78,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     };
     let actor = request.auth.user.id;
     let reaction = if field == "addReaction" {
-        let (row, _) = db::reactions::create_reaction(
+        let (row, _) = codeyard_db_repos::reactions::create_reaction(
             pool,
             actor,
             &request.auth.credential(),
@@ -87,14 +88,21 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         .await
         .map_err(|e| codeyard_api_github::reactions::write_error(e).graphql())?;
         crate::node_objects::database("REA", row.id, request).await?
-    } else if let Some(row) = db::reactions::find_reaction(pool, actor, target, content)
-        .await
-        .map_err(unavailable)?
+    } else if let Some(row) =
+        codeyard_db_repos::reactions::find_reaction(pool, actor, target, content)
+            .await
+            .map_err(unavailable)?
     {
         let object = crate::node_objects::database("REA", row.id, request).await?;
-        db::reactions::delete_reaction(pool, actor, &request.auth.credential(), target, row.id)
-            .await
-            .map_err(|e| codeyard_api_github::reactions::write_error(e).graphql())?;
+        codeyard_db_repos::reactions::delete_reaction(
+            pool,
+            actor,
+            &request.auth.credential(),
+            target,
+            row.id,
+        )
+        .await
+        .map_err(|e| codeyard_api_github::reactions::write_error(e).graphql())?;
         object
     } else {
         Value::Null

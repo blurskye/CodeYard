@@ -63,10 +63,12 @@ async fn dispatch_contract(pg: bool) {
             &tip,
         )
         .await;
-    assert!(db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     let endpoint = "/api/v3/repos/alice/proj/dispatches";
     let client_payload =
         json!({"enabled":true,"matrix":[1,{"target":"prod"}],"text":"</script> is data"});
@@ -80,7 +82,7 @@ async fn dispatch_contract(pg: bool) {
         StatusCode::NO_CONTENT,
     )
     .await;
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
         .await
         .unwrap();
     assert_eq!(runs.len(), 2, "{runs:?}");
@@ -99,7 +101,7 @@ async fn dispatch_contract(pg: bool) {
         assert_eq!(event["repository"]["full_name"], "alice/proj");
         assert_eq!(event["sender"]["login"], "alice");
     }
-    let claimed = db::ci::claim_ci_run(
+    let claimed = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "dispatch-worker",
         "local",
@@ -155,7 +157,7 @@ async fn dispatch_contract(pg: bool) {
         .await;
     }
     assert_eq!(
-        db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
             .await
             .unwrap()
             .len(),
@@ -163,7 +165,7 @@ async fn dispatch_contract(pg: bool) {
     );
     // A repository writer without host execution approval can send an event but cannot
     // use the endpoint to run code on the site's machines.
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -182,7 +184,7 @@ async fn dispatch_contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
             .await
             .unwrap()
             .len(),
@@ -241,7 +243,7 @@ async fn dispatch_contract(pg: bool) {
         )
         .await;
     assert_eq!(accepted.status, StatusCode::SEE_OTHER);
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
         .await
         .unwrap();
     assert_eq!(runs.len(), 4);
@@ -259,7 +261,7 @@ async fn dispatch_contract(pg: bool) {
         StatusCode::NO_CONTENT,
     )
     .await;
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
         .await
         .unwrap();
     assert_eq!(runs.len(), 6);
@@ -268,11 +270,11 @@ async fn dispatch_contract(pg: bool) {
         json!({})
     );
     // Actions disabled means no execution, not a fabricated run or a failure to accept an event.
-    db::actions::save_repo_actions_settings(
+    codeyard_db_actions::actions::save_repo_actions_settings(
         f.pool(),
         alice,
         repo.id,
-        &db::actions::RepoActionsSettings {
+        &codeyard_db_actions::actions::RepoActionsSettings {
             enabled: false,
             ..Default::default()
         },
@@ -290,7 +292,7 @@ async fn dispatch_contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
             .await
             .unwrap()
             .len(),
@@ -337,12 +339,14 @@ async fn dispatch_contract(pg: bool) {
         StatusCode::NO_CONTENT,
     )
     .await;
-    assert!(
-        db::ci::list_ci_runs_for_repo(f.pool(), quiet["id"].as_i64().unwrap(), 100)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(codeyard_db_actions::ci::list_ci_runs_for_repo(
+        f.pool(),
+        quiet["id"].as_i64().unwrap(),
+        100
+    )
+    .await
+    .unwrap()
+    .is_empty());
 }
 #[tokio::test]
 async fn sqlite_github_repository_dispatch() {

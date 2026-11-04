@@ -16,7 +16,7 @@ async fn milestone_items_have_reachable_continuation_pages(pg: bool) {
     let repository = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "proj",
         None,
         false,
@@ -24,12 +24,18 @@ async fn milestone_items_have_reachable_continuation_pages(pg: bool) {
     )
     .await
     .unwrap();
-    let milestone =
-        db::milestones::create_milestone(f.pool(), owner, repository.id, "Release", None, None)
-            .await
-            .unwrap();
+    let milestone = codeyard_db_repos::milestones::create_milestone(
+        f.pool(),
+        owner,
+        repository.id,
+        "Release",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     for index in 0..101 {
-        let issue = db::issues::create_issue(
+        let issue = codeyard_db_repos::issues::create_issue(
             f.pool(),
             repository.id,
             owner,
@@ -38,7 +44,7 @@ async fn milestone_items_have_reachable_continuation_pages(pg: bool) {
         )
         .await
         .unwrap();
-        db::milestones::set_issue_milestone(
+        codeyard_db_repos::milestones::set_issue_milestone(
             f.pool(),
             owner,
             repository.id,
@@ -49,9 +55,9 @@ async fn milestone_items_have_reachable_continuation_pages(pg: bool) {
         .unwrap();
     }
     for index in 0..31 {
-        let pull = db::pull_requests::records::create_pull_request(
+        let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
             f.pool(),
-            db::pull_requests::records::NewPullRequest {
+            codeyard_db_repos::pull_requests::records::NewPullRequest {
                 repo_id: repository.id,
                 head_repo_id: Some(repository.id),
                 author_id: owner,
@@ -68,7 +74,7 @@ async fn milestone_items_have_reachable_continuation_pages(pg: bool) {
         )
         .await
         .unwrap();
-        db::milestones::set_pull_request_milestone(
+        codeyard_db_repos::milestones::set_pull_request_milestone(
             f.pool(),
             owner,
             repository.id,

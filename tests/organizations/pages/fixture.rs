@@ -192,7 +192,7 @@ impl Fixture {
             false,
         )
         .unwrap();
-        db::repositories::records::create_repository(
+        codeyard_db_repos::repositories::records::create_repository(
             pool,
             owner.id,
             "repo",
@@ -226,13 +226,13 @@ impl Fixture {
         format!("{INDEX}/{}", self.org)
     }
     pub async fn actor(pool: &codeyard_db_core::DbPool, username: &str) -> Actor {
-        let id = db::users::accounts::create_user(pool, username, None)
+        let id = codeyard_db_identity::users::accounts::create_user(pool, username, None)
             .await
             .unwrap()
             .id;
         let session = native::token();
         let csrf = native::token();
-        db::users::sessions::create_session(
+        codeyard_db_identity::users::sessions::create_session(
             pool,
             &session,
             id,
@@ -243,9 +243,15 @@ impl Fixture {
         .await
         .unwrap();
         assert_eq!(
-            db::users::sessions::get_or_create_csrf_token(pool, &session, Some(id), &csrf, 3600)
-                .await
-                .unwrap(),
+            codeyard_db_identity::users::sessions::get_or_create_csrf_token(
+                pool,
+                &session,
+                Some(id),
+                &csrf,
+                3600
+            )
+            .await
+            .unwrap(),
             Some(csrf.clone())
         );
         Actor { id, session, csrf }

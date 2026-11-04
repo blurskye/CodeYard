@@ -73,7 +73,7 @@ async fn copies(pg: bool) {
         let entry = tree.get_name("removed-secret.txt").unwrap();
         entry.id()
     };
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         source.id,
@@ -239,16 +239,16 @@ async fn copies(pg: bool) {
         assert!(git.find_commit(old).is_err());
         assert!(git.find_reference("refs/tags/v1").is_err());
     }
-    let input = db::organizations::profiles::NewOrganization::new(
+    let input = codeyard_db_orgs::organizations::profiles::NewOrganization::new(
         "acme",
-        db::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
+        codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
     )
     .unwrap();
     assert!(matches!(
-        db::organizations::profiles::create_organization(f.pool(), alice, &input)
+        codeyard_db_orgs::organizations::profiles::create_organization(f.pool(), alice, &input)
             .await
             .unwrap(),
-        db::organizations::OrganizationOutcome::Applied(_)
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     checked(
         &router,
@@ -344,10 +344,11 @@ async fn copies(pg: bool) {
         StatusCode::CREATED,
     )
     .await;
-    let org_model = db::organizations::profiles::get_public_organization(f.pool(), "acme")
-        .await
-        .unwrap()
-        .unwrap();
+    let org_model =
+        codeyard_db_orgs::organizations::profiles::get_public_organization(f.pool(), "acme")
+            .await
+            .unwrap()
+            .unwrap();
     let reply = native_owner
         .form_reply(
             "/new",

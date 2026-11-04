@@ -331,7 +331,3 @@ pub async fn touch_token(pool: &PgPool, token_id: i64, address: Option<&str>) ->
     .await?;
     Ok(())
 }
-
-use codeyard_db_core::queries::postgres::users::tokens::permits_write;
-
-use codeyard_db_core::queries::postgres::users::tokens::permits_write;

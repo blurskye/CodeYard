@@ -17,7 +17,7 @@ async fn pins(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         true,
@@ -25,7 +25,7 @@ async fn pins(pg: bool) {
     )
     .await
     .unwrap();
-    let issue = db::issues::create_issue(f.pool(), repo.id, alice, "Issue", "")
+    let issue = codeyard_db_repos::issues::create_issue(f.pool(), repo.id, alice, "Issue", "")
         .await
         .unwrap();
     let router = f.router(root.path()).await;

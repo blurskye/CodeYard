@@ -29,7 +29,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -37,7 +37,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob_id,
         repo.id,
@@ -400,13 +400,17 @@ async fn contract(pg: bool) {
         StatusCode::CREATED,
     )
     .await;
-    let before =
-        db::notifications::records::list_notifications_for_user(f.pool(), bob_id, 100, false)
-            .await
-            .unwrap()
-            .into_iter()
-            .filter(|n| n.kind == "pull_request_review_requested")
-            .count();
+    let before = codeyard_db_repos::notifications::records::list_notifications_for_user(
+        f.pool(),
+        bob_id,
+        100,
+        false,
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .filter(|n| n.kind == "pull_request_review_requested")
+    .count();
     call(
         &router,
         "pulls/rerequest-reviewers",
@@ -417,13 +421,17 @@ async fn contract(pg: bool) {
         StatusCode::CREATED,
     )
     .await;
-    let after =
-        db::notifications::records::list_notifications_for_user(f.pool(), bob_id, 100, false)
-            .await
-            .unwrap()
-            .into_iter()
-            .filter(|n| n.kind == "pull_request_review_requested")
-            .count();
+    let after = codeyard_db_repos::notifications::records::list_notifications_for_user(
+        f.pool(),
+        bob_id,
+        100,
+        false,
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .filter(|n| n.kind == "pull_request_review_requested")
+    .count();
     assert_eq!(after, before + 1);
     let removed = call(
         &router,

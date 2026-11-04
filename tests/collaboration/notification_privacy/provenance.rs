@@ -7,7 +7,7 @@ async fn provenance(pg: bool) {
     let owner = f.actor("scope_owner").await;
     let recipient = f.actor("scope_recipient").await;
     let repo = f.repo(owner, None, "scope_original").await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         recipient,
         repo,

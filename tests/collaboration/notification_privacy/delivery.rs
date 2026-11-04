@@ -39,7 +39,7 @@ async fn contract(pg: bool) {
         "local broadcasts carry only ids"
     );
     assert_eq!(local["notification_id"], account);
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &session,
         recipient,
@@ -89,7 +89,7 @@ async fn contract(pg: bool) {
     assert_eq!(kind, "account");
     assert_eq!(unread_count, 1);
     assert!(created_at > 0);
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         pool,
         recipient,
         repo,
@@ -116,7 +116,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .is_none());
-    db::notifications::records::mark_notification_read(pool, recipient, notice)
+    codeyard_db_repos::notifications::records::mark_notification_read(pool, recipient, notice)
         .await
         .unwrap()
         .unwrap();
@@ -128,7 +128,7 @@ async fn contract(pg: bool) {
     )
     .unwrap();
     assert_eq!(value["unread_count"], 1);
-    db::repositories::access::revoke_repo_access(pool, recipient, repo)
+    codeyard_db_repos::repositories::access::revoke_repo_access(pool, recipient, repo)
         .await
         .unwrap();
     assert!(current_event(pool, &session, recipient, &read)
@@ -161,7 +161,7 @@ async fn contract(pg: bool) {
                 .is_err()
         );
         assert!(
-            db::notifications::records::notification_delivery(
+            codeyard_db_repos::notifications::records::notification_delivery(
                 pool,
                 &session,
                 recipient,
@@ -184,7 +184,7 @@ async fn contract(pg: bool) {
             .is_err()
     );
     assert!(
-        db::notifications::records::notification_delivery(
+        codeyard_db_repos::notifications::records::notification_delivery(
             pool,
             &session,
             foreign,
@@ -204,16 +204,21 @@ async fn contract(pg: bool) {
         .await
         .is_err());
     assert!(
-        db::notifications::records::notification_delivery(pool, &session, recipient, Some(account))
-            .await
-            .unwrap()
-            .is_none(),
+        codeyard_db_repos::notifications::records::notification_delivery(
+            pool,
+            &session,
+            recipient,
+            Some(account)
+        )
+        .await
+        .unwrap()
+        .is_none(),
         "native delivery rejects expired original sessions"
     );
-    db::users::sessions::delete_session(pool, &session)
+    codeyard_db_identity::users::sessions::delete_session(pool, &session)
         .await
         .unwrap();
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &replacement,
         recipient,
@@ -230,10 +235,15 @@ async fn contract(pg: bool) {
         "replacement login never revives the original socket"
     );
     assert!(
-        db::notifications::records::notification_delivery(pool, &session, recipient, Some(account))
-            .await
-            .unwrap()
-            .is_none(),
+        codeyard_db_repos::notifications::records::notification_delivery(
+            pool,
+            &session,
+            recipient,
+            Some(account)
+        )
+        .await
+        .unwrap()
+        .is_none(),
         "native delivery never adopts the replacement login"
     );
     assert!(current_event(pool, &replacement, recipient, &all)
@@ -255,7 +265,7 @@ async fn canonical_links(pg: bool) {
     let owner = f.actor("link_owner").await;
     let recipient = f.actor("link_reader").await;
     let repo = f.repo(owner, None, "original").await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         recipient,
         repo,
@@ -264,7 +274,7 @@ async fn canonical_links(pg: bool) {
     .await
     .unwrap();
     let session = "ab".repeat(32);
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         f.pool(),
         &session,
         recipient,
@@ -289,7 +299,7 @@ async fn canonical_links(pg: bool) {
     )
     .await;
     for (id, suffix) in &ids {
-        let projection = db::notifications::records::notification_delivery(
+        let projection = codeyard_db_repos::notifications::records::notification_delivery(
             f.pool(),
             &session,
             recipient,
@@ -303,11 +313,11 @@ async fn canonical_links(pg: bool) {
             format!("/link_owner/renamed/{suffix}")
         );
     }
-    let inbox = db::notifications::records::notification_inbox(
+    let inbox = codeyard_db_repos::notifications::records::notification_inbox(
         f.pool(),
         &session,
         recipient,
-        db::notifications::records::NotificationInboxAction::List {
+        codeyard_db_repos::notifications::records::NotificationInboxAction::List {
             filter: Default::default(),
             limit: 100,
             before: None,
@@ -322,7 +332,7 @@ async fn canonical_links(pg: bool) {
         .as_deref()
         .unwrap()
         .starts_with("/link_owner/renamed/")));
-    db::repositories::access::revoke_repo_access(f.pool(), recipient, repo)
+    codeyard_db_repos::repositories::access::revoke_repo_access(f.pool(), recipient, repo)
         .await
         .unwrap();
     f.execute(
@@ -334,7 +344,7 @@ async fn canonical_links(pg: bool) {
     assert!(!serde_json::to_string(&inbox.notifications)
         .unwrap()
         .contains("private_namespace"));
-    let projection = db::notifications::records::notification_delivery(
+    let projection = codeyard_db_repos::notifications::records::notification_delivery(
         f.pool(),
         &session,
         recipient,
@@ -371,7 +381,7 @@ async fn postgres_delivery_waits_for_recipient_row_and_observes_session_revocati
     let recipient = fixture.actor("delivery_waiter").await;
     let notice = fixture.notify(recipient, None, "waiter-account").await;
     let session = "ab".repeat(32);
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         fixture.pool(),
         &session,
         recipient,

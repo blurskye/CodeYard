@@ -10,6 +10,7 @@ use codeyard_db_security::code_scanning::Upload;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
+use sha2::Digest;
 use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::collections::HashSet;

@@ -464,5 +464,3 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
     pool.close().await;
     result
 }
-
-use crate::backend::cli::commands::add_key_cmd;

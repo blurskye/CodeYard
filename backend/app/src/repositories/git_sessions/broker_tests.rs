@@ -1,9 +1,9 @@
 //! Gateway tests on throwaway databases and real Git repositories.
 //! GITSERV_TEST_OPENSSH_HELPER must point at the built codeyard binary.
-use codeyard_app::ci::queue::RunQueue;
-use codeyard_app::ci::runs::CiRuns;
-use codeyard_app::ci::workers::CiWorkers;
-use codeyard_app::repositories::git_sessions::ReceiveCredential;
+use crate::ci::queue::RunQueue;
+use crate::ci::runs::CiRuns;
+use crate::ci::workers::CiWorkers;
+use crate::repositories::git_sessions::ReceiveCredential;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use std::process::Output;
@@ -141,7 +141,7 @@ impl Broker {
     async fn new_with_ci(
         pool: DbPool,
         git_user: String,
-        config: Option<codeyard_app::ci::config::CiConfig>,
+        config: Option<crate::ci::config::CiConfig>,
     ) -> Self {
         let uid = private_files::effective_uid();
         let helper = PathBuf::from(
@@ -390,16 +390,22 @@ fn assert_refused(output: &Output) {
 #[tokio::test]
 async fn missing_post_hook_is_reported_after_git_publishes() {
     let database = database().await;
-    let owner = db::users::accounts::create_user(&database.pool, "post_owner", None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "post_owner", None)
+            .await
+            .unwrap();
     let broker = Broker::new(database.pool.clone()).await;
-    let owner_key = db::users::ssh_keys::add_ssh_key(&database.pool, owner.id, "owner", &key(17))
-        .await
-        .unwrap();
+    let owner_key = codeyard_db_identity::users::ssh_keys::add_ssh_key(
+        &database.pool,
+        owner.id,
+        "owner",
+        &key(17),
+    )
+    .await
+    .unwrap();
     let path = broker.gateway.repos_root.join("missing.git");
     let bare = git2::Repository::init_bare(&path).unwrap();
-    db::repositories::records::create_repository(
+    codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         owner.id,
         "missing",
@@ -452,16 +458,17 @@ async fn missing_post_hook_is_reported_after_git_publishes() {
 #[tokio::test]
 async fn host_openssh_deploy_keys_clone_push_and_keep_repository_scope() {
     let database = database().await;
-    let owner = db::users::accounts::create_user(&database.pool, "deploy_host", None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "deploy_host", None)
+            .await
+            .unwrap();
     let broker = Broker::new(database.pool.clone()).await;
     let source_path = broker.directory.path().join("source");
     let source = git2::Repository::init(&source_path).unwrap();
     commit(&source, "base\n");
     let path = broker.gateway.repos_root.join("deploy.git");
     let bare = git2::Repository::init_bare(&path).unwrap();
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         owner.id,
         "deploy",
@@ -473,7 +480,7 @@ async fn host_openssh_deploy_keys_clone_push_and_keep_repository_scope() {
     .unwrap();
     let other_path = broker.gateway.repos_root.join("other.git");
     git2::Repository::init_bare(&other_path).unwrap();
-    db::repositories::records::create_repository(
+    codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         owner.id,
         "other",
@@ -484,7 +491,7 @@ async fn host_openssh_deploy_keys_clone_push_and_keep_repository_scope() {
     .await
     .unwrap();
     let session = "d".repeat(64);
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         &database.pool,
         &session,
         owner.id,
@@ -496,12 +503,15 @@ async fn host_openssh_deploy_keys_clone_push_and_keep_repository_scope() {
     .unwrap();
     for writable in [false, true] {
         let public_key = key(if writable { 22 } else { 21 });
-        let key = db::deploy_keys::insert_deploy_key(
+        let key = codeyard_db_identity::deploy_keys::insert_deploy_key(
             &database.pool,
-            &db::deploy_keys::NewDeployKey {
+            &codeyard_db_identity::deploy_keys::NewDeployKey {
                 repo_id: repo.id,
                 title: "deploy".into(),
-                fingerprint: db::users::ssh_keys::calculate_fingerprint(&public_key).unwrap(),
+                fingerprint: codeyard_db_identity::users::ssh_keys::calculate_fingerprint(
+                    &public_key,
+                )
+                .unwrap(),
                 public_key: public_key.clone(),
                 can_write: writable,
                 created_by_id: owner.id,
@@ -552,7 +562,7 @@ async fn host_openssh_deploy_keys_clone_push_and_keep_repository_scope() {
         .await;
         assert!(!outside.status.success());
     }
-    let observed = codeyard_app::repositories::traffic::summary(
+    let observed = crate::repositories::traffic::summary(
         &database.pool,
         Some(&owner),
         &repo,
@@ -574,10 +584,10 @@ async fn host_openssh_deploy_keys_clone_push_and_keep_repository_scope() {
 #[tokio::test]
 async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
     let database = database().await;
-    let owner = db::users::accounts::create_user(&database.pool, "alice", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(&database.pool, "alice", None)
         .await
         .unwrap();
-    let reader = db::users::accounts::create_user(&database.pool, "reader", None)
+    let reader = codeyard_db_identity::users::accounts::create_user(&database.pool, "reader", None)
         .await
         .unwrap();
     // Only trusted actors run workflows, so the write collaborator is one: it still
@@ -585,23 +595,33 @@ async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
     let broker = Broker::new_with_ci(
         database.pool.clone(),
         "git".to_owned(),
-        Some(codeyard_app::ci::config::CiConfig {
+        Some(crate::ci::config::CiConfig {
             trusted_actor_ids: [reader.id].into(),
             ..Default::default()
         }),
     )
     .await;
-    let owner_key = db::users::ssh_keys::add_ssh_key(&database.pool, owner.id, "owner", &key(7))
-        .await
-        .unwrap();
-    let read_key = db::users::ssh_keys::add_ssh_key(&database.pool, reader.id, "reader", &key(8))
-        .await
-        .unwrap();
+    let owner_key = codeyard_db_identity::users::ssh_keys::add_ssh_key(
+        &database.pool,
+        owner.id,
+        "owner",
+        &key(7),
+    )
+    .await
+    .unwrap();
+    let read_key = codeyard_db_identity::users::ssh_keys::add_ssh_key(
+        &database.pool,
+        reader.id,
+        "reader",
+        &key(8),
+    )
+    .await
+    .unwrap();
     let bare_path = broker.gateway.repos_root.join("private.git");
     let mut options = git2::RepositoryInitOptions::new();
     options.bare(true).initial_head("main");
     let bare = git2::Repository::init_opts(&bare_path, &options).unwrap();
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         owner.id,
         "private",
@@ -711,7 +731,7 @@ async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
         )
         .await;
     assert!(!denied_clone.status.success());
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         &database.pool,
         reader.id,
         repo.id,
@@ -754,7 +774,7 @@ async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
         .status
         .success());
     assert!(bare.find_reference("refs/heads/topic").is_err());
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         &database.pool,
         reader.id,
         repo.id,
@@ -865,9 +885,9 @@ async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
         (protocol::EXIT, 1i32.to_be_bytes().to_vec())
     );
 
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         &database.pool,
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: owner.id,
             repo_id: repo.id,
             pattern: "main",
@@ -943,7 +963,7 @@ async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
         .success());
     assert!(bare.find_reference("refs/heads/archived").is_err());
     assert_eq!(
-        db::repositories::records::get_repository_by_id(&database.pool, repo.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(&database.pool, repo.id)
             .await
             .unwrap()
             .unwrap()
@@ -958,16 +978,24 @@ async fn helper_disconnect_releases_shared_git_session_during_negotiation_and_in
 ) {
     let database = database().await;
     let broker = Broker::new(database.pool.clone()).await;
-    let user = db::users::accounts::create_user(&database.pool, "disconnect-owner", None)
-        .await
-        .unwrap();
-    let key =
-        db::users::ssh_keys::add_ssh_key(&database.pool, user.id, "disconnect fixture", &key(41))
-            .await
-            .unwrap();
+    let user = codeyard_db_identity::users::accounts::create_user(
+        &database.pool,
+        "disconnect-owner",
+        None,
+    )
+    .await
+    .unwrap();
+    let key = codeyard_db_identity::users::ssh_keys::add_ssh_key(
+        &database.pool,
+        user.id,
+        "disconnect fixture",
+        &key(41),
+    )
+    .await
+    .unwrap();
     let bare_path = broker.gateway.repos_root.join("disconnect.git");
     git2::Repository::init_bare(&bare_path).unwrap();
-    db::repositories::records::create_repository(
+    codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         user.id,
         "disconnect",
@@ -1048,15 +1076,21 @@ async fn helper_disconnect_releases_shared_git_session_during_negotiation_and_in
 async fn stop_finishes_open_connections_and_refuses_new_ones() {
     let database = database().await;
     let mut broker = Broker::new(database.pool.clone()).await;
-    let user = db::users::accounts::create_user(&database.pool, "drain-owner", None)
-        .await
-        .unwrap();
-    let key = db::users::ssh_keys::add_ssh_key(&database.pool, user.id, "drain", &key(43))
-        .await
-        .unwrap();
+    let user =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "drain-owner", None)
+            .await
+            .unwrap();
+    let key = codeyard_db_identity::users::ssh_keys::add_ssh_key(
+        &database.pool,
+        user.id,
+        "drain",
+        &key(43),
+    )
+    .await
+    .unwrap();
     let bare_path = broker.gateway.repos_root.join("drain.git");
     git2::Repository::init_bare(&bare_path).unwrap();
-    db::repositories::records::create_repository(
+    codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         user.id,
         "drain",
@@ -1126,15 +1160,21 @@ async fn stop_finishes_open_connections_and_refuses_new_ones() {
 async fn stop_lets_a_running_push_finish_its_hooks() {
     let database = database().await;
     let mut broker = Broker::new(database.pool.clone()).await;
-    let user = db::users::accounts::create_user(&database.pool, "drain-owner", None)
-        .await
-        .unwrap();
-    let key = db::users::ssh_keys::add_ssh_key(&database.pool, user.id, "drain", &key(43))
-        .await
-        .unwrap();
+    let user =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "drain-owner", None)
+            .await
+            .unwrap();
+    let key = codeyard_db_identity::users::ssh_keys::add_ssh_key(
+        &database.pool,
+        user.id,
+        "drain",
+        &key(43),
+    )
+    .await
+    .unwrap();
     let bare_path = broker.gateway.repos_root.join("drain.git");
     git2::Repository::init_bare(&bare_path).unwrap();
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         user.id,
         "drain",
@@ -1180,10 +1220,11 @@ async fn stop_lets_a_running_push_finish_its_hooks() {
         String::from_utf8_lossy(&push.stderr)
     );
     // Post-receive ran during the drain, so the stored size reflects the pushed objects.
-    let stored = db::repositories::records::get_repository_by_id(&database.pool, repo.id)
-        .await
-        .unwrap()
-        .unwrap();
+    let stored =
+        codeyard_db_repos::repositories::records::get_repository_by_id(&database.pool, repo.id)
+            .await
+            .unwrap()
+            .unwrap();
     assert!(stored.size_bytes > 0, "post-receive metadata did not run");
     assert_refused(&refused);
     broker.no_hooks_left().await;
@@ -1203,15 +1244,21 @@ async fn stop_finishes_a_push_after_its_helper_disconnects() {
     use std::io::Write;
     let database = database().await;
     let mut broker = Broker::new(database.pool.clone()).await;
-    let user = db::users::accounts::create_user(&database.pool, "drain-owner", None)
-        .await
-        .unwrap();
-    let key = db::users::ssh_keys::add_ssh_key(&database.pool, user.id, "drain", &key(43))
-        .await
-        .unwrap();
+    let user =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "drain-owner", None)
+            .await
+            .unwrap();
+    let key = codeyard_db_identity::users::ssh_keys::add_ssh_key(
+        &database.pool,
+        user.id,
+        "drain",
+        &key(43),
+    )
+    .await
+    .unwrap();
     let bare_path = broker.gateway.repos_root.join("drain.git");
     git2::Repository::init_bare(&bare_path).unwrap();
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         user.id,
         "drain",
@@ -1294,10 +1341,11 @@ async fn stop_finishes_a_push_after_its_helper_disconnects() {
         Some(oid)
     );
     // Post-receive ran during the drain, so the stored size reflects the pushed objects.
-    let stored = db::repositories::records::get_repository_by_id(&database.pool, repo.id)
-        .await
-        .unwrap()
-        .unwrap();
+    let stored =
+        codeyard_db_repos::repositories::records::get_repository_by_id(&database.pool, repo.id)
+            .await
+            .unwrap()
+            .unwrap();
     assert!(stored.size_bytes > 0, "post-receive metadata did not run");
     broker.no_hooks_left().await;
     assert!(!broker.gateway.socket.exists());
@@ -1307,7 +1355,7 @@ async fn stop_finishes_a_push_after_its_helper_disconnects() {
 
 struct PushFixture {
     directory: TempDir,
-    state: codeyard_app::app::AppState,
+    state: crate::app::AppState,
     repo: Repository,
     token: String,
     oid: git2::Oid,
@@ -1317,10 +1365,10 @@ struct PushFixture {
 impl PushFixture {
     async fn new(pool: DbPool) -> Self {
         let directory = tempfile::tempdir().unwrap();
-        db::node_config::upsert_node_configuration(&pool, "public", true)
+        codeyard_db_cluster::node_config::upsert_node_configuration(&pool, "public", true)
             .await
             .unwrap();
-        let owner = db::users::accounts::create_user(&pool, "push-owner", None)
+        let owner = codeyard_db_identity::users::accounts::create_user(&pool, "push-owner", None)
             .await
             .unwrap();
         // Git sessions find a repository by the UUID in its directory name.
@@ -1331,7 +1379,7 @@ impl PushFixture {
             .unwrap()
             .set_head("refs/heads/main")
             .unwrap();
-        let repo = db::repositories::records::create_repository(
+        let repo = codeyard_db_repos::repositories::records::create_repository(
             &pool,
             owner.id,
             "repo",
@@ -1342,7 +1390,7 @@ impl PushFixture {
         .await
         .unwrap();
         let session = uuid::Uuid::new_v4().simple().to_string().repeat(2);
-        db::users::sessions::create_session(
+        codeyard_db_identity::users::sessions::create_session(
             &pool,
             &session,
             owner.id,
@@ -1353,7 +1401,7 @@ impl PushFixture {
         .await
         .unwrap();
         let token = uuid::Uuid::new_v4().simple().to_string().repeat(2);
-        db::users::tokens::create_token(
+        codeyard_db_identity::users::tokens::create_token(
             &pool,
             owner.id,
             &session,
@@ -1372,16 +1420,16 @@ impl PushFixture {
         let mut pack = git2::Buf::new();
         builder.write_buf(&mut pack).unwrap();
         let storage = Arc::new(
-            codeyard_app::storage::ObjectStore::open(directory.path(), None)
+            crate::storage::ObjectStore::open(directory.path(), None)
                 .await
                 .unwrap(),
         );
-        let state = codeyard_app::app::AppState::new(
+        let state = crate::app::AppState::new(
             pool,
             directory.path().to_owned(),
             storage,
             None,
-            codeyard_app::ci::config::CiConfig::default(),
+            crate::ci::config::CiConfig::default(),
             None,
         );
         Self {
@@ -1418,13 +1466,9 @@ impl PushFixture {
         let state = self.state.clone();
         let mut server = if ssh {
             Some(
-                codeyard_app::ssh::server::SshServer::new(
-                    state.pool.clone(),
-                    None,
-                    state.ci_runs.clone(),
-                )
-                .await
-                .unwrap(),
+                crate::ssh::server::SshServer::new(state.pool.clone(), None, state.ci_runs.clone())
+                    .await
+                    .unwrap(),
             )
         } else {
             None
@@ -1476,7 +1520,7 @@ impl PushFixture {
             .unwrap()
             .status
             .success());
-        db::users::ssh_keys::add_ssh_key(
+        codeyard_db_identity::users::ssh_keys::add_ssh_key(
             &self.state.pool,
             self.repo.personal_owner_id().unwrap(),
             "push",
@@ -1532,11 +1576,13 @@ impl PushFixture {
     }
 
     async fn assert_metadata(&self, branch: &str) {
-        let stored =
-            db::repositories::records::get_repository_by_id(&self.state.pool, self.repo.id)
-                .await
-                .unwrap()
-                .unwrap();
+        let stored = codeyard_db_repos::repositories::records::get_repository_by_id(
+            &self.state.pool,
+            self.repo.id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(stored.default_branch, branch);
         assert!(
             stored.size_bytes > 0,
@@ -1770,23 +1816,25 @@ async fn host_openssh_refuses_remote_repositories_without_starting_git_sqlite() 
 
 async fn remote_repository_authorization(pool: &DbPool) {
     let broker = Broker::new(pool.clone()).await;
-    let user = db::users::accounts::create_user(pool, "remote_owner", None)
+    let user = codeyard_db_identity::users::accounts::create_user(pool, "remote_owner", None)
         .await
         .unwrap();
-    let ssh_key = db::users::ssh_keys::add_ssh_key(pool, user.id, "fixture", &key(10))
+    let ssh_key =
+        codeyard_db_identity::users::ssh_keys::add_ssh_key(pool, user.id, "fixture", &key(10))
+            .await
+            .unwrap();
+    let outsider = codeyard_db_identity::users::accounts::create_user(pool, "outsider", None)
         .await
         .unwrap();
-    let outsider = db::users::accounts::create_user(pool, "outsider", None)
-        .await
-        .unwrap();
-    let outsider_key = db::users::ssh_keys::add_ssh_key(pool, outsider.id, "outsider", &key(11))
-        .await
-        .unwrap();
+    let outsider_key =
+        codeyard_db_identity::users::ssh_keys::add_ssh_key(pool, outsider.id, "outsider", &key(11))
+            .await
+            .unwrap();
     let path = broker
         .gateway
         .repos_root
         .join(format!("{}.git", uuid::Uuid::new_v4()));
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         pool,
         user.id,
         "remote",
@@ -1796,7 +1844,7 @@ async fn remote_repository_authorization(pool: &DbPool) {
     )
     .await
     .unwrap();
-    let node = db::cluster::register_own_node(
+    let node = codeyard_db_cluster::cluster::register_own_node(
         pool,
         &codeyard_support::node_identity::NodeKey::generate().public_hex(),
         "remote-storage",
@@ -1805,9 +1853,11 @@ async fn remote_repository_authorization(pool: &DbPool) {
     )
     .await
     .unwrap();
-    assert!(db::cluster::place_repository(pool, repo.id, node.id)
-        .await
-        .unwrap());
+    assert!(
+        codeyard_db_cluster::cluster::place_repository(pool, repo.id, node.id)
+            .await
+            .unwrap()
+    );
     for service in ["git-upload-pack", "git-receive-pack"] {
         let hidden = broker
             .serve(
@@ -1849,15 +1899,20 @@ async fn remote_repository_authorization(pool: &DbPool) {
 async fn live_ban_password_revocation_command_and_canonical_path_denials() {
     let database = database().await;
     let broker = Broker::new(database.pool.clone()).await;
-    let user = db::users::accounts::create_user(&database.pool, "alice", None)
+    let user = codeyard_db_identity::users::accounts::create_user(&database.pool, "alice", None)
         .await
         .unwrap();
-    let ssh_key = db::users::ssh_keys::add_ssh_key(&database.pool, user.id, "fixture", &key(10))
-        .await
-        .unwrap();
+    let ssh_key = codeyard_db_identity::users::ssh_keys::add_ssh_key(
+        &database.pool,
+        user.id,
+        "fixture",
+        &key(10),
+    )
+    .await
+    .unwrap();
     let bare_path = broker.gateway.repos_root.join("private.git");
     git2::Repository::init_bare(&bare_path).unwrap();
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         user.id,
         "private",
@@ -1923,7 +1978,7 @@ async fn live_ban_password_revocation_command_and_canonical_path_denials() {
         .execute(&database.native)
         .await
         .unwrap();
-    db::users::ssh_keys::delete_ssh_key(&database.pool, ssh_key.id)
+    codeyard_db_identity::users::ssh_keys::delete_ssh_key(&database.pool, ssh_key.id)
         .await
         .unwrap();
     assert!(broker.keys(&key(10), "git").await.stdout.is_empty());
@@ -1940,17 +1995,22 @@ async fn live_ban_password_revocation_command_and_canonical_path_denials() {
 async fn pushes_move_the_open_pull_requests_that_use_the_branch() {
     let database = database().await;
     let broker = Broker::new(database.pool.clone()).await;
-    let owner = db::users::accounts::create_user(&database.pool, "alice", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(&database.pool, "alice", None)
         .await
         .unwrap();
-    let owner_key = db::users::ssh_keys::add_ssh_key(&database.pool, owner.id, "owner", &key(31))
-        .await
-        .unwrap();
+    let owner_key = codeyard_db_identity::users::ssh_keys::add_ssh_key(
+        &database.pool,
+        owner.id,
+        "owner",
+        &key(31),
+    )
+    .await
+    .unwrap();
     let bare_path = broker.gateway.repos_root.join("proj.git");
     let mut options = git2::RepositoryInitOptions::new();
     options.bare(true).initial_head("main");
     let bare = git2::Repository::init_opts(&bare_path, &options).unwrap();
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         owner.id,
         "proj",
@@ -1983,9 +2043,9 @@ async fn pushes_move_the_open_pull_requests_that_use_the_branch() {
     let first = commit(&source, "first\n").to_string();
     push("HEAD:refs/heads/main").await;
     push("HEAD:refs/heads/topic").await;
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         &database.pool,
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             head_repo_id: None,
             repo_id: repo.id,
             author_id: owner.id,
@@ -2003,7 +2063,7 @@ async fn pushes_move_the_open_pull_requests_that_use_the_branch() {
     .await
     .unwrap();
     let current = || async {
-        db::pull_requests::records::get_pull_request_by_id(&database.pool, pull.id)
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(&database.pool, pull.id)
             .await
             .unwrap()
             .unwrap()
@@ -2054,31 +2114,27 @@ async fn pushes_move_the_open_pull_requests_that_use_the_branch() {
     broker.stop().await;
 }
 
-use codeyard_app::repositories::git_sessions::broker::MAX_CONTROLS;
+use crate::repositories::git_sessions::broker::MAX_CONTROLS;
 
-use codeyard_app::repositories::git_sessions::broker::Gateway;
+use crate::repositories::git_sessions::broker::Gateway;
 
-use codeyard_app::repositories::git_sessions::broker::run;
+use crate::repositories::git_sessions::broker::run;
 
-use codeyard_app::repositories::git_sessions::broker::listen;
+use crate::repositories::git_sessions::broker::listen;
 
-use codeyard_app::repositories::git_sessions::broker::policy_tests;
+use crate::repositories::git_sessions::broker::policy_tests;
 
-use codeyard_app::ci::runs::CiRuns;
+use crate::repositories::git_sessions::protocol::Request;
 
-use codeyard_app::repositories::git_sessions::protocol::Request;
+use crate::repositories::git_sessions::protocol::EOF;
 
-use codeyard_app::repositories::git_sessions::protocol::EOF;
+use crate::repositories::git_sessions::protocol::STDERR;
 
-use codeyard_app::repositories::git_sessions::protocol::STDERR;
+use crate::repositories::git_sessions::protocol::STDIN;
 
-use codeyard_app::repositories::git_sessions::protocol::STDIN;
+use crate::repositories::git_sessions::protocol::STDOUT;
 
-use codeyard_app::repositories::git_sessions::protocol::STDOUT;
-
-use codeyard_app::repositories::git_sessions::validation::RefUpdate;
-
-use codeyard_app::repositories::git_sessions::ReceiveCredential;
+use crate::repositories::git_sessions::validation::RefUpdate;
 
 use anyhow::Result;
 
@@ -2101,5 +2157,3 @@ use tempfile::TempDir;
 use tokio::sync::Semaphore;
 
 use tokio::time::timeout;
-
-use tokio::time::Duration;

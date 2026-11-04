@@ -9,7 +9,7 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -33,19 +33,31 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
     .await
     .unwrap();
     storage.publish().await.unwrap();
-    let owner = db::users::accounts::create_user(&database.pool, "publication_owner", None)
-        .await
-        .unwrap();
-    let writer = db::users::accounts::create_user(&database.pool, "publication_writer", None)
-        .await
-        .unwrap();
-    let outsider = db::users::accounts::create_user(&database.pool, "publication_outsider", None)
-        .await
-        .unwrap();
+    let owner = codeyard_db_identity::users::accounts::create_user(
+        &database.pool,
+        "publication_owner",
+        None,
+    )
+    .await
+    .unwrap();
+    let writer = codeyard_db_identity::users::accounts::create_user(
+        &database.pool,
+        "publication_writer",
+        None,
+    )
+    .await
+    .unwrap();
+    let outsider = codeyard_db_identity::users::accounts::create_user(
+        &database.pool,
+        "publication_outsider",
+        None,
+    )
+    .await
+    .unwrap();
     let repository = codeyard_app::repositories::lifecycle::provision(
         (&database.pool, Some(&web.context)),
         &web.context.repos_path,
-        db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
         "project",
         None,
         false,
@@ -232,9 +244,9 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
         )
         .await
         .unwrap();
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         &database.pool,
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: repository.id,
             head_repo_id: Some(repository.id),
             author_id: owner.id,

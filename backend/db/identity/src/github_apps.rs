@@ -121,7 +121,3 @@ native_operation!(crate::postgres::github_apps::token_bounds, crate::sqlite::git
     fn token_bounds(pool: &DbPool, id: i64) -> Result<Option<Token>>);
 native_operation!(crate::postgres::github_apps::revoke, crate::sqlite::github_apps::revoke,
     fn revoke(pool: &DbPool, id: i64) -> Result<()>);
-
-use codeyard_db_core::queries::github_apps::Token;
-
-use codeyard_db_core::queries::github_apps::Token;

@@ -2,7 +2,6 @@
 
 use crate::arguments::Arguments;
 use crate::connection::Page;
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::url;
@@ -172,7 +171,7 @@ pub(super) async fn resolve(
         ("Commit", "statusCheckRollup") => crate::checks::rollup(repo.id, oid, request).await,
         ("Commit", "status") => {
             request.authorize(repo.id, "statuses", false).await?;
-            let rows = db::repositories::protection::list_commit_statuses(
+            let rows = codeyard_db_repos::repositories::protection::list_commit_statuses(
                 &request.state.pool,
                 repo.id,
                 oid,
@@ -199,7 +198,7 @@ pub(super) async fn resolve(
         ("StatusCheckRollup", "contexts") => crate::checks::contexts(args, request, parent).await,
         ("Status", "contexts") => {
             request.authorize(repo.id, "statuses", false).await?;
-            let rows = db::repositories::protection::list_commit_statuses(
+            let rows = codeyard_db_repos::repositories::protection::list_commit_statuses(
                 &request.state.pool,
                 repo.id,
                 oid,
@@ -217,10 +216,13 @@ pub(super) async fn resolve(
                 if kind != "PR" {
                     return Err(missing());
                 }
-                db::pull_requests::records::get_pull_request_by_id(&request.state.pool, id)
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?
+                codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
+                    &request.state.pool,
+                    id,
+                )
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?
             } else if let Some(number) = args
                 .args
                 .get("pullRequestNumber")
@@ -228,10 +230,14 @@ pub(super) async fn resolve(
             {
                 // A number names a pull request of the status context's own repository.
                 let number = i32::try_from(number.i64()?).map_err(|_| missing())?;
-                db::pull_requests::records::get_pull_request(&request.state.pool, repo.id, number)
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?
+                codeyard_db_repos::pull_requests::records::get_pull_request(
+                    &request.state.pool,
+                    repo.id,
+                    number,
+                )
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?
             } else {
                 return Ok(json!(false));
             };

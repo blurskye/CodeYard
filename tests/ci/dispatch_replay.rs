@@ -16,7 +16,7 @@ use std::{collections::BTreeSet, sync::Arc};
 async fn contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    db::node_config::upsert_node_configuration(f.pool(), "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(f.pool(), "public", true)
         .await
         .unwrap();
     let actor = f.actor("alice").await;
@@ -24,7 +24,7 @@ async fn contract(pg: bool) {
     let repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "proj",
         None,
         false,
@@ -57,7 +57,7 @@ async fn contract(pg: bool) {
     let dispatched = client.expect("POST", "/api/ci/trigger", json!({
         "repo_owner": "alice", "repo_name": "proj", "branch": "main", "event": "workflow_dispatch", "pipeline": "full",
     }), StatusCode::OK).await;
-    let first = db::ci::get_ci_run_by_run_id(
+    let first = codeyard_db_actions::ci::get_ci_run_by_run_id(
         f.pool(),
         dispatched["job_id"].as_str().unwrap().parse().unwrap(),
     )
@@ -88,13 +88,13 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(replay.status, StatusCode::SEE_OTHER, "{}", replay.text());
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
         .await
         .unwrap();
     assert_eq!(runs.len(), 2);
     let again = runs.iter().find(|run| run.id != first.id).unwrap();
     // The run list leaves out workflow snapshots, so read the whole run.
-    let again = db::ci::get_ci_run(f.pool(), again.id)
+    let again = codeyard_db_actions::ci::get_ci_run(f.pool(), again.id)
         .await
         .unwrap()
         .unwrap();
@@ -129,7 +129,7 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
         .await
         .unwrap();
     let manual = runs
@@ -176,7 +176,7 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(
-        db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
             .await
             .unwrap()
             .len(),

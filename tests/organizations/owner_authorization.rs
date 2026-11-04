@@ -133,7 +133,7 @@ impl Fixture {
                 .unwrap();
             git.set_head("refs/heads/main").unwrap();
             sha = oid.to_string();
-            let repository = db::repositories::records::create_repository(
+            let repository = codeyard_db_repos::repositories::records::create_repository(
                 &database.pool,
                 owner.user.id,
                 name,
@@ -148,10 +148,13 @@ impl Fixture {
                     .bind(owner.user.id).bind(repository.id).execute(&database.raw).await.unwrap();
             }
             repositories.push(
-                db::repositories::records::get_repository_by_id(&database.pool, repository.id)
-                    .await
-                    .unwrap()
-                    .unwrap(),
+                codeyard_db_repos::repositories::records::get_repository_by_id(
+                    &database.pool,
+                    repository.id,
+                )
+                .await
+                .unwrap()
+                .unwrap(),
             );
         }
         let state = AppState::new(
@@ -178,12 +181,12 @@ impl Fixture {
         }
     }
     async fn actor(pool: &codeyard_db_core::DbPool, username: &str) -> Actor {
-        let user = db::users::accounts::create_user(pool, username, None)
+        let user = codeyard_db_identity::users::accounts::create_user(pool, username, None)
             .await
             .unwrap();
         let session = token();
         let csrf = token();
-        db::users::sessions::create_session(
+        codeyard_db_identity::users::sessions::create_session(
             pool,
             &session,
             user.id,
@@ -194,7 +197,7 @@ impl Fixture {
         .await
         .unwrap();
         assert_eq!(
-            db::users::sessions::get_or_create_csrf_token(
+            codeyard_db_identity::users::sessions::get_or_create_csrf_token(
                 pool,
                 &session,
                 Some(user.id),
@@ -285,10 +288,13 @@ impl Fixture {
         )
     }
     async fn enable_governance(&self) {
-        let governor =
-            db::users::accounts::create_user(&self.database.pool, "policy_governor", None)
-                .await
-                .unwrap();
+        let governor = codeyard_db_identity::users::accounts::create_user(
+            &self.database.pool,
+            "policy_governor",
+            None,
+        )
+        .await
+        .unwrap();
         sqlx::query("INSERT INTO org_memberships(org_id,user_id,role) VALUES(?1,?2,'owner')")
             .bind(self.owner.user.id)
             .bind(governor.id)
@@ -326,7 +332,7 @@ async fn denied_owner_operations(
 ) {
     assert_eq!(repository.owner_kind, "org");
     assert_eq!(repository.owner_org_id, Some(fixture.owner.user.id));
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         &fixture.database.pool,
         fixture.member.user.id,
         repository.id,
@@ -367,7 +373,7 @@ async fn denied_owner_operations(
         assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}: {body}");
     }
     assert_eq!(
-        db::repositories::access::get_user_repo_access(
+        codeyard_db_repos::repositories::access::get_user_repo_access(
             &fixture.database.pool,
             fixture.member.user.id,
             repository.id
@@ -376,7 +382,7 @@ async fn denied_owner_operations(
         .unwrap(),
         codeyard_db_core::models::AccessLevel::Read
     );
-    let rules = db::repositories::protection::list_branch_protection_rules(
+    let rules = codeyard_db_repos::repositories::protection::list_branch_protection_rules(
         &fixture.database.pool,
         repository.id,
     )
@@ -385,15 +391,17 @@ async fn denied_owner_operations(
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].pattern, "main");
     assert_eq!(rules[0].required_approving_reviews, 1);
-    assert!(db::pull_requests::reviews::get_pull_request_review_by_id(
-        &fixture.database.pool,
-        review
-    )
-    .await
-    .unwrap()
-    .unwrap()
-    .dismissed_by_id
-    .is_none());
+    assert!(
+        codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(
+            &fixture.database.pool,
+            review
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .dismissed_by_id
+        .is_none()
+    );
 }
 
 #[tokio::test]
@@ -422,7 +430,7 @@ async fn private_org_equal_user_id_denied_even_with_explicit_read_access() {
     fixture.enable_governance().await;
     // Private visibility already fails closed, but a read grant must not resurrect the collision.
     denied_owner_operations(&fixture, &fixture.private).await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         &fixture.database.pool,
         fixture.owner.user.id,
         fixture.private.id,
@@ -445,7 +453,7 @@ async fn native_forms_and_page_controls_do_not_treat_org_id_as_personal_owner() 
             .0,
         StatusCode::NOT_FOUND
     );
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         &fixture.database.pool,
         fixture.owner.user.id,
         fixture.private.id,
@@ -538,7 +546,7 @@ async fn native_forms_and_page_controls_do_not_treat_org_id_as_personal_owner() 
         StatusCode::SEE_OTHER
     );
     assert_eq!(
-        db::repositories::access::get_user_repo_access(
+        codeyard_db_repos::repositories::access::get_user_repo_access(
             &fixture.database.pool,
             fixture.member.user.id,
             fixture.personal.id
@@ -748,7 +756,7 @@ async fn collaborator_api_projects_canonical_levels_without_changing_privileges_
         (codeyard_db_core::models::AccessLevel::Owner, "owner"),
     ] {
         let actor = Fixture::actor(&fixture.database.pool, &format!("level_{name}")).await;
-        db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             &fixture.database.pool,
             actor.user.id,
             fixture.personal.id,
@@ -798,7 +806,7 @@ async fn collaborator_api_projects_canonical_levels_without_changing_privileges_
             *name
         };
         assert_eq!(
-            db::repositories::access::get_user_repo_access(
+            codeyard_db_repos::repositories::access::get_user_repo_access(
                 &fixture.database.pool,
                 actor.user.id,
                 fixture.personal.id
@@ -949,10 +957,13 @@ async fn organization_engagement_forks_and_pulls_never_notify_same_numbered_user
     );
     // Give only this owned fixture usable governance, distinct from both the
     // equal-numbered unrelated user and the contributing public Read actor.
-    let governor =
-        db::users::accounts::create_user(&fixture.database.pool, "engagement_governor", None)
-            .await
-            .unwrap();
+    let governor = codeyard_db_identity::users::accounts::create_user(
+        &fixture.database.pool,
+        "engagement_governor",
+        None,
+    )
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO org_memberships(org_id,user_id,role) VALUES(?1,?2,'owner')")
         .bind(fixture.owner.user.id)
         .bind(governor.id)
@@ -994,7 +1005,7 @@ async fn organization_engagement_forks_and_pulls_never_notify_same_numbered_user
         StatusCode::CREATED
     );
     // Personal repository notifications still reach the legitimate owner.
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         &fixture.database.pool,
         fixture.member.user.id,
         fixture.personal.id,
@@ -1157,7 +1168,7 @@ async fn deleting_a_repository_does_not_claim_success_when_its_files_remain() {
     // A directory that can be removed: the delete succeeds and the files are gone.
     let removable = base.join("removable.git");
     git2::Repository::init_bare(&removable).unwrap();
-    db::repositories::records::create_repository(
+    codeyard_db_repos::repositories::records::create_repository(
         pool,
         owner.user.id,
         "removable",
@@ -1177,19 +1188,21 @@ async fn deleting_a_repository_does_not_claim_success_when_its_files_remain() {
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     assert!(!removable.exists());
-    assert!(
-        db::repositories::records::get_repository(pool, "overlapping_user", "removable")
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::repositories::records::get_repository(
+        pool,
+        "overlapping_user",
+        "removable"
+    )
+    .await
+    .unwrap()
+    .is_none());
 
     // Storage that cannot be removed (its parent is a file, not a directory): the
     // repository row is already gone and cannot come back, so the answer is an
     // error that says the files remain, never a success.
     std::fs::write(base.join("blocker"), b"not a directory").unwrap();
     let stuck = base.join("blocker").join("stuck.git");
-    db::repositories::records::create_repository(
+    codeyard_db_repos::repositories::records::create_repository(
         pool,
         owner.user.id,
         "stuck",
@@ -1215,10 +1228,12 @@ async fn deleting_a_repository_does_not_claim_success_when_its_files_remain() {
         !message.contains(base.to_str().unwrap()),
         "the answer must not disclose where the files are"
     );
-    assert!(
-        db::repositories::records::get_repository(pool, "overlapping_user", "stuck")
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::repositories::records::get_repository(
+        pool,
+        "overlapping_user",
+        "stuck"
+    )
+    .await
+    .unwrap()
+    .is_none());
 }

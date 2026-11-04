@@ -103,7 +103,7 @@ impl Database {
         }
     }
     pub async fn actor(&self, name: &str) -> i64 {
-        db::users::accounts::create_user(self.pool(), name, None)
+        codeyard_db_identity::users::accounts::create_user(self.pool(), name, None)
             .await
             .unwrap()
             .id
@@ -128,7 +128,7 @@ impl Database {
     }
     /// Marks first-run setup as done, so the pages are served instead of the setup form.
     pub async fn complete_setup(&self) {
-        db::node_config::upsert_node_configuration(self.pool(), "public", true)
+        codeyard_db_cluster::node_config::upsert_node_configuration(self.pool(), "public", true)
             .await
             .unwrap();
     }

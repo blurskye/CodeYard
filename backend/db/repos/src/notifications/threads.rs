@@ -298,5 +298,3 @@ pub struct ThreadInbox {
 }
 
 use codeyard_db_core::queries::notifications::threads::subject;
-
-use codeyard_db_core::queries::notifications::threads::subject;

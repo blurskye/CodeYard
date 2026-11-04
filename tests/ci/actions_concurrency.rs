@@ -34,7 +34,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "project",
         None,
         true,
@@ -82,14 +82,14 @@ async fn contract(pg: bool) {
     let pending = dispatch(&api, &writer, "queued.yml").await;
     let newest = dispatch(&api, &writer, "queued.yml").await;
     assert_eq!(
-        db::ci::get_ci_run_by_id(f.pool(), repo.id, pending)
+        codeyard_db_actions::ci::get_ci_run_by_id(f.pool(), repo.id, pending)
             .await
             .unwrap()
             .unwrap()
             .status,
         "cancelled"
     );
-    let claimed = db::ci::claim_ci_run(
+    let claimed = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "first",
         "local",
@@ -100,7 +100,7 @@ async fn contract(pg: bool) {
     .unwrap()
     .unwrap();
     assert_eq!(claimed.id, first);
-    assert!(db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "blocked",
         "local",
@@ -112,7 +112,7 @@ async fn contract(pg: bool) {
     .is_none());
     let independent = dispatch(&api, &writer, "other.yml").await;
     assert_eq!(
-        db::ci::claim_ci_run(
+        codeyard_db_actions::ci::claim_ci_run(
             f.pool(),
             "other",
             "local",
@@ -190,21 +190,21 @@ async fn contract(pg: bool) {
     );
     let cancel = dispatch(&api, &writer, "cancel.yml").await;
     assert!(
-        db::ci::get_ci_run_by_id(f.pool(), repo.id, first)
+        codeyard_db_actions::ci::get_ci_run_by_id(f.pool(), repo.id, first)
             .await
             .unwrap()
             .unwrap()
             .cancel_requested
     );
     assert_eq!(
-        db::ci::get_ci_run_by_id(f.pool(), repo.id, newest)
+        codeyard_db_actions::ci::get_ci_run_by_id(f.pool(), repo.id, newest)
             .await
             .unwrap()
             .unwrap()
             .status,
         "cancelled"
     );
-    assert!(db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "blocked",
         "local",
@@ -214,12 +214,12 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .is_none());
-    db::ci::finish_ci_run(f.pool(), first, "first", "cancelled", None)
+    codeyard_db_actions::ci::finish_ci_run(f.pool(), first, "first", "cancelled", None)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(
-        db::ci::claim_ci_run(
+        codeyard_db_actions::ci::claim_ci_run(
             f.pool(),
             "replacement",
             "local",
@@ -232,7 +232,7 @@ async fn contract(pg: bool) {
         .id,
         cancel
     );
-    db::ci::finish_ci_run(f.pool(), cancel, "replacement", "success", None)
+    codeyard_db_actions::ci::finish_ci_run(f.pool(), cancel, "replacement", "success", None)
         .await
         .unwrap()
         .unwrap();

@@ -16,6 +16,7 @@ use codeyard_webui::document::Chrome;
 use codeyard_webui::document::Theme;
 use std::collections::HashMap;
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 
 const CSRF_TTL_SECONDS: i64 = 2 * 60 * 60;
 

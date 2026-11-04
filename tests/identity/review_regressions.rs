@@ -14,7 +14,7 @@ use codeyard_notifications::NotificationEvent;
 
 async fn session(pool: &codeyard_db_core::DbPool, user: i64) -> String {
     let id = token();
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &id,
         user,
@@ -106,7 +106,7 @@ async fn signup_review(pg: bool) {
             .len(),
         61
     );
-    db::users::accounts::create_user(f.pool(), "Älice", None)
+    codeyard_db_identity::users::accounts::create_user(f.pool(), "Älice", None)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -183,7 +183,7 @@ async fn profile_and_follow(pg: bool) {
     identity::profiles::update(f.pool(), actor, &original, input())
         .await
         .unwrap();
-    db::users::sessions::delete_session(f.pool(), &original)
+    codeyard_db_identity::users::sessions::delete_session(f.pool(), &original)
         .await
         .unwrap();
     assert_eq!(
@@ -205,11 +205,11 @@ async fn profile_and_follow(pg: bool) {
                 .unwrap_err(),
             identity::profiles::ProfileError::Denied
         );
-        assert!(db::following::follow_user(
+        assert!(codeyard_db_identity::following::follow_user(
             f.pool(),
             actor,
             other,
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), actor).await
             )
         )
@@ -222,14 +222,16 @@ async fn profile_and_follow(pg: bool) {
         )
         .await;
     }
-    assert!(!db::following::is_user_following(f.pool(), actor, other)
-        .await
-        .unwrap());
-    assert!(db::following::follow_user(
+    assert!(
+        !codeyard_db_identity::following::is_user_following(f.pool(), actor, other)
+            .await
+            .unwrap()
+    );
+    assert!(codeyard_db_identity::following::follow_user(
         f.pool(),
         actor,
         other,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), actor).await
         )
     )
@@ -252,14 +254,14 @@ async fn sqlite_admin_search_matches_unicode_without_interpreting_regex_syntax()
     f.actor("Émil").await;
     for query in ["Émil", "émil", "ÉMIL"] {
         assert_eq!(
-            db::users::accounts::count_matching_users(f.pool(), query)
+            codeyard_db_identity::users::accounts::count_matching_users(f.pool(), query)
                 .await
                 .unwrap()
                 .0,
             1
         );
         assert_eq!(
-            db::users::accounts::list_admin_users(f.pool(), query, "", 30, 0)
+            codeyard_db_identity::users::accounts::list_admin_users(f.pool(), query, "", 30, 0)
                 .await
                 .unwrap()
                 .len(),
@@ -267,7 +269,7 @@ async fn sqlite_admin_search_matches_unicode_without_interpreting_regex_syntax()
         );
     }
     assert_eq!(
-        db::users::accounts::count_matching_users(f.pool(), ".*")
+        codeyard_db_identity::users::accounts::count_matching_users(f.pool(), ".*")
             .await
             .unwrap()
             .0,
@@ -283,10 +285,14 @@ async fn totp_rollback(pg: bool) {
     };
     let mut f = Database::new(pg).await;
     f.complete_setup().await;
-    let actor =
-        db::users::accounts::create_user_with_password(f.pool(), "totp_actor", None, "hash")
-            .await
-            .unwrap();
+    let actor = codeyard_db_identity::users::accounts::create_user_with_password(
+        f.pool(),
+        "totp_actor",
+        None,
+        "hash",
+    )
+    .await
+    .unwrap();
     let session = session(f.pool(), actor.id).await;
     let stored = StoredTwoFactor {
         secret_encrypted: vec![1],
@@ -380,7 +386,7 @@ async fn temporary_password(pg: bool) {
     let hash = identity::passwords::hash_password("temporary password")
         .await
         .unwrap();
-    let user = db::users::accounts::create_user_with_password_and_flags(
+    let user = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         f.pool(),
         "managed_user",
         None,
@@ -405,16 +411,18 @@ async fn temporary_password(pg: bool) {
         identity::accounts::PasswordChangeError::UnchangedPassword
     );
     assert!(
-        db::users::accounts::get_user_by_id(f.pool(), user.id)
+        codeyard_db_identity::users::accounts::get_user_by_id(f.pool(), user.id)
             .await
             .unwrap()
             .unwrap()
             .must_change_password
     );
-    assert!(db::users::sessions::get_session(f.pool(), &session)
-        .await
-        .unwrap()
-        .is_some());
+    assert!(
+        codeyard_db_identity::users::sessions::get_session(f.pool(), &session)
+            .await
+            .unwrap()
+            .is_some()
+    );
     identity::accounts::change_password(
         f.pool(),
         Some(&session),
@@ -443,7 +451,7 @@ async fn audit_changes(pg: bool) {
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[actor])
         .await;
     let session = session(f.pool(), actor).await;
-    let admitted = db::users::transitions::register_password(
+    let admitted = codeyard_db_identity::users::transitions::register_password(
         f.pool(),
         "new_admin",
         None,
@@ -452,16 +460,16 @@ async fn audit_changes(pg: bool) {
     )
     .await
     .unwrap();
-    let db::users::transitions::AccountAdmission::User(user) = admitted else {
+    let codeyard_db_identity::users::transitions::AccountAdmission::User(user) = admitted else {
         panic!("managed user")
     };
     assert!(user.is_admin);
     assert!(
-        db::node_config::set_ai_crawlers(f.pool(), actor, &session, "allow")
+        codeyard_db_cluster::node_config::set_ai_crawlers(f.pool(), actor, &session, "allow")
             .await
             .unwrap()
     );
-    let node = db::cluster::register_own_node(
+    let node = codeyard_db_cluster::cluster::register_own_node(
         f.pool(),
         &"a1".repeat(32),
         "audit_node",
@@ -471,9 +479,9 @@ async fn audit_changes(pg: bool) {
     .await
     .unwrap();
     for status in ["revoked", "active"] {
-        db::cluster::set_node_status(
+        codeyard_db_cluster::cluster::set_node_status(
             f.pool(),
-            db::cluster::Authority::Administrator {
+            codeyard_db_cluster::cluster::Authority::Administrator {
                 user_id: actor,
                 session: &session,
             },
@@ -510,7 +518,7 @@ async fn audit_changes(pg: bool) {
         &[],
     )
     .await;
-    assert!(db::users::transitions::register_password(
+    assert!(codeyard_db_identity::users::transitions::register_password(
         f.pool(),
         "audit_failure",
         None,
@@ -520,7 +528,7 @@ async fn audit_changes(pg: bool) {
     .await
     .is_err());
     assert!(
-        db::users::accounts::get_user_by_username(f.pool(), "audit_failure")
+        codeyard_db_identity::users::accounts::get_user_by_username(f.pool(), "audit_failure")
             .await
             .unwrap()
             .is_none()
@@ -539,12 +547,12 @@ async fn postgres_privileged_changes_audit_atomically() {
 async fn activity_scan(pg: bool) {
     let mut f = Database::new(pg).await;
     let user = f.actor("empty_history").await;
-    let empty = db::activity::list_user_activity(f.pool(), user, None, 100, 0)
+    let empty = codeyard_db_repos::activity::list_user_activity(f.pool(), user, None, 100, 0)
         .await
         .unwrap();
     assert_eq!(empty.scanned, 0);
     assert!(empty.rows.is_empty());
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         f.pool(),
         user,
         "private_history",
@@ -555,21 +563,21 @@ async fn activity_scan(pg: bool) {
     .await
     .unwrap();
     for _ in 0..101 {
-        db::activity::record_repository_push(f.pool(), repo.id, user, "main", 1)
+        codeyard_db_repos::activity::record_repository_push(f.pool(), repo.id, user, "main", 1)
             .await
             .unwrap();
     }
-    let hidden = db::activity::list_user_activity(f.pool(), user, None, 100, 0)
+    let hidden = codeyard_db_repos::activity::list_user_activity(f.pool(), user, None, 100, 0)
         .await
         .unwrap();
     assert_eq!(hidden.scanned, 100);
     assert!(hidden.rows.is_empty());
-    let exhausted = db::activity::list_user_activity(f.pool(), user, None, 100, 100)
+    let exhausted = codeyard_db_repos::activity::list_user_activity(f.pool(), user, None, 100, 100)
         .await
         .unwrap();
     assert!(exhausted.scanned < 100 && exhausted.scanned > 0);
     assert!(exhausted.rows.is_empty());
-    let eof = db::activity::list_user_activity(f.pool(), user, None, 100, 200)
+    let eof = codeyard_db_repos::activity::list_user_activity(f.pool(), user, None, 100, 200)
         .await
         .unwrap();
     assert_eq!(eof.scanned, 0);
@@ -603,16 +611,20 @@ async fn sqlite_activity_and_cleanup_queries_seek_their_indexes() {
 
 #[tokio::test]
 async fn postgres_factor_reset_locks_the_account_before_the_factor() {
-    use db::users::two_factor::{self, FactorAuthority, StoredTwoFactor};
+    use codeyard_db_identity::users::two_factor::{self, FactorAuthority, StoredTwoFactor};
     let mut f = Database::new(true).await;
     let actor = f.actor("factor_admin").await;
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[actor])
         .await;
     let admin_session = session(f.pool(), actor).await;
-    let target =
-        db::users::accounts::create_user_with_password(f.pool(), "factor_target", None, "hash")
-            .await
-            .unwrap();
+    let target = codeyard_db_identity::users::accounts::create_user_with_password(
+        f.pool(),
+        "factor_target",
+        None,
+        "hash",
+    )
+    .await
+    .unwrap();
     let target_session = session(f.pool(), target.id).await;
     two_factor::enable_two_factor(
         f.pool(),
@@ -689,9 +701,9 @@ async fn postgres_credential_enrollment_rechecks_expiry_after_the_session_lock_w
         let pool = f.pool().clone();
         let enroll = tokio::spawn(async move {
             if ssh {
-                db::users::ssh_keys::add_ssh_key_for_session(&pool, actor, &session, "expired", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl").await.is_err()
+                codeyard_db_identity::users::ssh_keys::add_ssh_key_for_session(&pool, actor, &session, "expired", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl").await.is_err()
             } else {
-                db::users::tokens::create_token(
+                codeyard_db_identity::users::tokens::create_token(
                     &pool, actor, &session, "expired", "hash", "read", None,
                 )
                 .await

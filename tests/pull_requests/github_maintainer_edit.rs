@@ -35,7 +35,7 @@ async fn contract(pg: bool) {
     let base = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -110,13 +110,14 @@ async fn contract(pg: bool) {
     let number = pull["number"].as_i64().unwrap() as i32;
     let url = format!("{collection}/{number}");
     let update = format!("{url}/update-branch");
-    let native = db::pull_requests::records::get_pull_request(f.pool(), base.id, number)
-        .await
-        .unwrap()
-        .unwrap();
+    let native =
+        codeyard_db_repos::pull_requests::records::get_pull_request(f.pool(), base.id, number)
+            .await
+            .unwrap()
+            .unwrap();
     assert!(native.maintainer_can_modify);
     assert_eq!(native.maintainer_edit_granted_by_id, Some(bob_id));
-    let fork = db::repositories::records::get_repository_by_id(f.pool(), fork_id)
+    let fork = codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), fork_id)
         .await
         .unwrap()
         .unwrap();
@@ -169,9 +170,9 @@ async fn contract(pg: bool) {
     )
     .await;
     // A base owner is not the fork's administrator and cannot bypass its branch rules.
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         f.pool(),
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: bob_id,
             repo_id: fork_id,
             pattern: "main",
@@ -195,9 +196,9 @@ async fn contract(pg: bool) {
         target.commit_from_primary("main").await.unwrap().sha,
         fork_sha
     );
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         f.pool(),
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: bob_id,
             repo_id: fork_id,
             pattern: "main",
@@ -302,10 +303,11 @@ async fn contract(pg: bool) {
         StatusCode::ACCEPTED,
     )
     .await;
-    let current = db::pull_requests::records::get_pull_request(f.pool(), base.id, number)
-        .await
-        .unwrap()
-        .unwrap();
+    let current =
+        codeyard_db_repos::pull_requests::records::get_pull_request(f.pool(), base.id, number)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(current.state, "open");
     assert_eq!(current.title, "Retitled with consent");
     call(

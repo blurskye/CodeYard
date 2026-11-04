@@ -172,7 +172,3 @@ native_operation!(crate::postgres::actions::save_repo_actions_settings,
 use codeyard_db_core::queries::actions::CacheLimit;
 
 use codeyard_db_core::queries::actions::OrgCacheSettings;
-
-use codeyard_db_core::queries::actions::CacheLimit;
-
-use codeyard_db_core::queries::actions::OrgCacheSettings;

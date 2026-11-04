@@ -7,6 +7,7 @@ use codeyard_db_core::models::WriteRecord;
 use codeyard_db_core::models::WriteSettings;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
+use sha2::Digest;
 use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;

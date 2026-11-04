@@ -1,5 +1,4 @@
 //! Metadata writes call the REST lane's native, authorized operations and notification batch.
-use crate::db;
 use crate::missing;
 use crate::mutations::target;
 use crate::mutations::text;
@@ -58,7 +57,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             None
         } else {
             Some(
-                db::labels::get_label_by_id(pool, target(input, "id", "L")?)
+                codeyard_db_repos::labels::get_label_by_id(pool, target(input, "id", "L")?)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?,
@@ -74,9 +73,14 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         .await?;
         request.authorize(repo.id, "issues", true).await?;
         if field == "deleteLabel" {
-            db::labels::delete_label(pool, actor, repo.id, existing.ok_or_else(missing)?.id)
-                .await
-                .map_err(|e| codeyard_api_github::issues::labels::write_error(e).graphql())?;
+            codeyard_db_repos::labels::delete_label(
+                pool,
+                actor,
+                repo.id,
+                existing.ok_or_else(missing)?.id,
+            )
+            .await
+            .map_err(|e| codeyard_api_github::issues::labels::write_error(e).graphql())?;
             return Ok(payload);
         }
         let name = input["name"]
@@ -91,7 +95,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             .transpose()
             .map_err(codeyard_model::github_error::Error::graphql)?;
         let row = if let Some(old) = existing {
-            db::labels::update_label(
+            codeyard_db_repos::labels::update_label(
                 pool,
                 actor,
                 repo.id,
@@ -102,7 +106,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             )
             .await
         } else {
-            db::labels::create_label(
+            codeyard_db_repos::labels::create_label(
                 pool,
                 actor,
                 repo.id,
@@ -126,14 +130,14 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     let (kind, id) = node_id::decode(text(input, key)?).ok_or_else(missing)?;
     let (item, value) = match kind {
         "I" => {
-            let row = db::issues::get_issue_by_id(pool, id)
+            let row = codeyard_db_repos::issues::get_issue_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
             (AssignedItem::Issue(id), crate::issue::object(&row))
         }
         "PR" => {
-            let row = db::pull_requests::records::get_pull_request_by_id(pool, id)
+            let row = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -175,7 +179,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             None => None,
             _ => return Err(missing()),
         };
-        db::discussions::set_lock(
+        codeyard_db_repos::discussions::set_lock(
             pool,
             request.actor.clone(),
             repo.id,
@@ -194,9 +198,9 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         changes.dedup();
         if changes.len()
             > if label {
-                db::labels::MAX_ISSUE_LABELS
+                codeyard_db_repos::labels::MAX_ISSUE_LABELS
             } else {
-                db::assignees::MAX_ASSIGNEES as usize
+                codeyard_db_repos::assignees::MAX_ASSIGNEES as usize
             }
         {
             return Err(async_graphql::Error::new("Too many metadata IDs"));
@@ -220,7 +224,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             for label_id in changes {
                 match item {
                     AssignedItem::Issue(id) => {
-                        db::labels::remove_issue_label(
+                        codeyard_db_repos::labels::remove_issue_label(
                             pool,
                             authority.clone(),
                             repo.id,
@@ -230,7 +234,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                         .await
                     }
                     AssignedItem::PullRequest(id) => {
-                        db::labels::remove_pull_request_label(
+                        codeyard_db_repos::labels::remove_pull_request_label(
                             pool,
                             authority.clone(),
                             repo.id,
@@ -246,7 +250,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             let mut ids = changes;
             ids.sort_unstable();
             ids.dedup();
-            let users = db::users::accounts::get_users_by_ids(pool, &ids)
+            let users = codeyard_db_identity::users::accounts::get_users_by_ids(pool, &ids)
                 .await
                 .map_err(unavailable)?;
             if users.len() != ids.len() {
@@ -282,13 +286,13 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     }
     payload[payload_key] = match item {
         AssignedItem::Issue(id) => crate::issue::object(
-            &db::issues::get_issue_by_id(pool, id)
+            &codeyard_db_repos::issues::get_issue_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?,
         ),
         AssignedItem::PullRequest(id) => crate::issue::pull_object(
-            &db::pull_requests::records::get_pull_request_by_id(pool, id)
+            &codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?,

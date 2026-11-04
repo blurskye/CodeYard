@@ -109,12 +109,12 @@ pub(super) async fn run(
             .unwrap(),
         );
     }
-    db::repositories::access::grant_repo_access(pool, bob, repo, AccessLevel::Write)
+    codeyard_db_repos::repositories::access::grant_repo_access(pool, bob, repo, AccessLevel::Write)
         .await
         .unwrap();
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         pool,
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: alice,
             repo_id: repo,
             pattern: "main",

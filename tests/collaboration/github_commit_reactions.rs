@@ -16,7 +16,7 @@ async fn reactions(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "pulls",
         None,
         false,
@@ -292,10 +292,16 @@ async fn reactions(pg: bool) {
         &[repo.id],
     )
     .await;
-    let issue = db::issues::create_issue(f.pool(), repo.id, alice, "Independent reaction", "")
-        .await
-        .unwrap();
-    let issue_comment = db::issues::add_issue_comment(
+    let issue = codeyard_db_repos::issues::create_issue(
+        f.pool(),
+        repo.id,
+        alice,
+        "Independent reaction",
+        "",
+    )
+    .await
+    .unwrap();
+    let issue_comment = codeyard_db_repos::issues::add_issue_comment(
         f.pool(),
         issue.repo_id,
         issue.id,
@@ -307,14 +313,14 @@ async fn reactions(pg: bool) {
     )
     .await
     .unwrap();
-    db::reactions::create_reaction(
+    codeyard_db_repos::reactions::create_reaction(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Session(&browser.session),
-        db::reactions::Target {
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&browser.session),
+        codeyard_db_repos::reactions::Target {
             repo_id: repo.id,
             item_id: issue.id,
-            subject: db::reactions::Subject::IssueComment,
+            subject: codeyard_db_repos::reactions::Subject::IssueComment,
             subject_id: issue_comment.id,
         },
         "heart",
@@ -330,16 +336,24 @@ async fn reactions(pg: bool) {
     )
     .await;
     assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
-    assert!(
-        db::reactions::reaction_counts(f.pool(), "commit_comment", &[id], alice)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(codeyard_db_repos::reactions::reaction_counts(
+        f.pool(),
+        "commit_comment",
+        &[id],
+        alice
+    )
+    .await
+    .unwrap()
+    .is_empty());
     assert_eq!(
-        db::reactions::reaction_counts(f.pool(), "issue_comment", &[issue_comment.id], alice)
-            .await
-            .unwrap()[0]
+        codeyard_db_repos::reactions::reaction_counts(
+            f.pool(),
+            "issue_comment",
+            &[issue_comment.id],
+            alice
+        )
+        .await
+        .unwrap()[0]
             .count,
         1
     );

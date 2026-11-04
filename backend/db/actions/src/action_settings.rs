@@ -257,17 +257,3 @@ use codeyard_db_core::queries::action_settings::Refusal;
 use codeyard_db_core::queries::action_settings::Scope;
 
 use codeyard_db_core::queries::action_settings::retention;
-
-use codeyard_db_core::queries::action_settings::Refusal;
-
-use codeyard_db_core::queries::action_settings::Scope;
-
-use codeyard_db_core::queries::action_settings::SelectionChange;
-
-use codeyard_db_core::queries::action_settings::Setting;
-
-use codeyard_db_core::queries::action_settings::can_approve_reviews;
-
-use codeyard_db_core::queries::action_settings::fork_workflows_allowed;
-
-use codeyard_db_core::queries::action_settings::retention;

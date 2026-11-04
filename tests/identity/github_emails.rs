@@ -109,10 +109,12 @@ async fn contract(pg: bool) {
             422,
         )
         .await;
-        assert!(db::users::emails::list_emails(f.pool(), alice)
-            .await
-            .unwrap()
-            .is_empty());
+        assert!(
+            codeyard_db_identity::users::emails::list_emails(f.pool(), alice)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
     let (_, added) = request(
         &router,
@@ -198,7 +200,7 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(status, axum::http::StatusCode::OK);
     assert!(!links::verify_address(f.pool(), &other_code).await.unwrap());
-    let user = db::users::accounts::get_user_by_id(f.pool(), alice)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(f.pool(), alice)
         .await
         .unwrap()
         .unwrap();
@@ -246,14 +248,16 @@ async fn contract(pg: bool) {
         422,
     )
     .await;
-    assert!(db::users::accounts::create_user_from_oauth(
-        f.pool(),
-        "collision",
-        Some("WORK@example.com"),
-        None
-    )
-    .await
-    .is_err());
+    assert!(
+        codeyard_db_identity::users::accounts::create_user_from_oauth(
+            f.pool(),
+            "collision",
+            Some("WORK@example.com"),
+            None
+        )
+        .await
+        .is_err()
+    );
     request(
         &router,
         "users/delete-email-for-authenticated-user",
@@ -265,7 +269,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::users::emails::list_emails(f.pool(), alice)
+        codeyard_db_identity::users::emails::list_emails(f.pool(), alice)
             .await
             .unwrap()
             .len(),
@@ -282,7 +286,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::users::emails::list_emails(f.pool(), alice)
+        codeyard_db_identity::users::emails::list_emails(f.pool(), alice)
             .await
             .unwrap()
             .len(),
@@ -353,10 +357,12 @@ async fn contract(pg: bool) {
         204,
     )
     .await;
-    assert!(db::users::emails::list_emails(f.pool(), alice)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        codeyard_db_identity::users::emails::list_emails(f.pool(), alice)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     let reply = session
         .form_reply(
             "/settings/secondary-emails",
@@ -393,12 +399,14 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(result, Err(identity::emails::EmailError::Denied));
-    assert!(db::users::emails::list_emails(f.pool(), alice)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        codeyard_db_identity::users::emails::list_emails(f.pool(), alice)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     // The settings listing rechecks the requesting session in its own read.
-    assert!(db::users::emails::list_account_emails(
+    assert!(codeyard_db_identity::users::emails::list_account_emails(
         f.pool(),
         alice,
         &AccountCredential::Session("ended")
@@ -406,7 +414,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap_err()
     .is::<codeyard_support::credentials::AccountRestricted>());
-    assert!(db::users::emails::list_account_emails(
+    assert!(codeyard_db_identity::users::emails::list_account_emails(
         f.pool(),
         alice,
         &AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await)
@@ -436,7 +444,7 @@ async fn batch_gets_a_code_per_address(pg: bool) {
     )
     .await;
     set_up_mail(&f).await;
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         f.pool(),
         "batch-session",
         carol,

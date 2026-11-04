@@ -5,7 +5,7 @@ pub use crate::support::database::Database as Fixture;
 
 impl Fixture {
     pub async fn repo(&self, owner: i64, org: Option<i64>, name: &str) -> i64 {
-        let repo = db::repositories::records::create_repository(
+        let repo = codeyard_db_repos::repositories::records::create_repository(
             self.pool(),
             owner,
             name,
@@ -42,9 +42,9 @@ impl Fixture {
             }
             None => None,
         };
-        let id = db::notifications::records::create_notification(
+        let id = codeyard_db_repos::notifications::records::create_notification(
             self.pool(),
-            db::notifications::records::NewNotification {
+            codeyard_db_core::queries::notifications::records::NewNotification {
                 user_id: recipient,
                 actor_id: None,
                 repo_id: repo,

@@ -6,6 +6,7 @@ use crate::repositories::dependencies::npm::registry_url;
 use crate::repositories::dependencies::npm::Archive;
 use crate::repositories::dependencies::npm::Lockfile;
 use serde_json::json;
+use sha2::Digest;
 
 fn archive(document: Value) -> (Value, Vec<u8>) {
     archive_extra(document, None)

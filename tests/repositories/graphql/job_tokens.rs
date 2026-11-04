@@ -16,7 +16,7 @@ async fn contract(pg: bool) {
             repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
-                db::repositories::creation::RepositoryCreationOwner::personal(actor),
+                codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
                 name,
                 None,
                 name == "inside",
@@ -26,9 +26,9 @@ async fn contract(pg: bool) {
             .unwrap(),
         );
     }
-    let run = db::ci::enqueue_ci_run(
+    let run = codeyard_db_actions::ci::enqueue_ci_run(
         f.pool(),
-        db::ci::NewCiRun {
+        codeyard_db_actions::ci::NewCiRun {
             repo_id: repos[0].id,
             triggered_by_id: actor,
             pipeline: "ci",
@@ -46,7 +46,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let run = db::ci::claim_ci_run(
+    let run = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "worker",
         "local",
@@ -73,9 +73,9 @@ async fn contract(pg: bool) {
     let own_id = payloads::repository(&repos[0], "job-owner")["node_id"].clone();
     let other_id = payloads::repository(&repos[1], "job-owner")["node_id"].clone();
     for (index, repo) in repos.iter().enumerate() {
-        let row = db::repositories::commit_comments::create_comment(
+        let row = codeyard_db_repos::repositories::commit_comments::create_comment(
             f.pool(),
-            db::repositories::commit_comments::CommentCreate {
+            codeyard_db_repos::repositories::commit_comments::CommentCreate {
                 actor: actor.into(),
                 repo_id: repo.id,
                 sha: &"b".repeat(40),
@@ -154,7 +154,10 @@ async fn contract(pg: bool) {
         json!({}),
     )
     .await;
-    assert_eq!(metadata["viewer"]["login"], db::ci_tokens::BOT);
+    assert_eq!(
+        metadata["viewer"]["login"],
+        codeyard_db_core::queries::ci_tokens::BOT
+    );
     let (_, denied) = call(
         &router,
         Some(&tokens["contents"]),

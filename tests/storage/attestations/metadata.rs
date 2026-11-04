@@ -635,11 +635,12 @@ async fn contract(pg: bool) {
         202,
     )
     .await;
-    let token_id = db::users::tokens::find_token(f.pool(), &token_hash(&revokable))
-        .await
-        .unwrap()
-        .unwrap()
-        .id;
+    let token_id =
+        codeyard_db_identity::users::tokens::find_token(f.pool(), &token_hash(&revokable))
+            .await
+            .unwrap()
+            .unwrap()
+            .id;
     f.execute(
         "DELETE FROM personal_access_tokens WHERE id=$1",
         &[token_id],
@@ -714,7 +715,9 @@ async fn contract(pg: bool) {
         .find(|row| row["deployment_name"] == "private-pod")
         .unwrap()["attestation_id"]
         .is_null());
-    db::attestations::collect(f.pool()).await.unwrap();
+    codeyard_db_security::attestations::collect(f.pool())
+        .await
+        .unwrap();
     assert_eq!(
         f.scalar("SELECT COUNT(*) FROM attestation_bundles", &[])
             .await,
@@ -740,11 +743,11 @@ async fn contract(pg: bool) {
             &[],
         )
         .await;
-    db::repositories::records::transfer_repository(
+    codeyard_db_repos::repositories::records::transfer_repository(
         f.pool(),
         alice,
         repo,
-        db::repositories::creation::RepositoryTarget::Organization(destination),
+        codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(destination),
     )
     .await
     .unwrap();

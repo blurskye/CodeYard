@@ -39,7 +39,7 @@ async fn contract(pg: bool) {
     let repo = provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         false,
@@ -48,7 +48,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     // Host execution still requires an explicitly trusted actor and repository write access.
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -57,14 +57,14 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     let encryptor = Arc::new(SecretEncryptor::new(&[42; 32]));
-    db::secrets::create_or_update_secret(
+    codeyard_db_actions::secrets::create_or_update_secret(
         f.pool(),
         &encryptor,
         repo.id,
         "BASE_SECRET",
         "base-value",
         Some(alice),
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
     )
@@ -137,20 +137,20 @@ async fn contract(pg: bool) {
         )
         .await;
     let head = changed["commit"]["sha"].as_str().unwrap().to_owned();
-    let opened = contributor.expect("POST", "/api/repos/alice/proj/pulls", json!({"title":"Fork activity", "head_repo_id": db::repositories::records::get_repository(f.pool(), "bob", "proj").await.unwrap().unwrap().id, "head_branch":"main", "base_branch":"main"}), StatusCode::CREATED).await;
-    let pull = db::pull_requests::records::get_pull_request(f.pool(), repo.id, 1)
+    let opened = contributor.expect("POST", "/api/repos/alice/proj/pulls", json!({"title":"Fork activity", "head_repo_id": codeyard_db_repos::repositories::records::get_repository(f.pool(), "bob", "proj").await.unwrap().unwrap().id, "head_branch":"main", "base_branch":"main"}), StatusCode::CREATED).await;
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request(f.pool(), repo.id, 1)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(opened["head_sha"], head);
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
         .await
         .unwrap();
     assert_eq!(runs.len(), 2, "{runs:?}");
     let waiting = runs.iter().find(|run| run.event == "pull_request").unwrap();
     assert!(waiting.is_fork && waiting.approval_required);
     assert!(
-        db::action_concurrency::groups(f.pool(), repo.id, Some(waiting.id))
+        codeyard_db_actions::action_concurrency::groups(f.pool(), repo.id, Some(waiting.id))
             .await
             .unwrap()
             .is_empty()
@@ -159,7 +159,7 @@ async fn contract(pg: bool) {
         .iter()
         .find(|run| run.event == "pull_request_target")
         .unwrap();
-    let groups = db::action_concurrency::groups(f.pool(), repo.id, Some(run.id))
+    let groups = codeyard_db_actions::action_concurrency::groups(f.pool(), repo.id, Some(run.id))
         .await
         .unwrap();
     assert_eq!(groups.len(), 1);
@@ -214,7 +214,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
             .await
             .unwrap()
             .len(),
@@ -242,9 +242,10 @@ async fn contract(pg: bool) {
     assert!(claim.run.is_fork);
     assert_eq!(claim.run.id, waiting.id);
     assert!(!claim.run.approval_required);
-    let groups = db::action_concurrency::groups(f.pool(), repo.id, Some(claim.run.id))
-        .await
-        .unwrap();
+    let groups =
+        codeyard_db_actions::action_concurrency::groups(f.pool(), repo.id, Some(claim.run.id))
+            .await
+            .unwrap();
     assert_eq!(groups.len(), 1);
     assert_eq!(groups[0].name, "fork-refs/pull/1/merge");
     assert!(claim.secrets.is_empty());
@@ -279,7 +280,7 @@ async fn contract(pg: bool) {
         StatusCode::OK,
     )
     .await;
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
         .await
         .unwrap();
     assert_eq!(runs.len(), 3, "{runs:?}");
@@ -302,7 +303,7 @@ async fn contract(pg: bool) {
         StatusCode::OK,
     )
     .await;
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
         .await
         .unwrap();
     assert_eq!(runs.len(), 4, "{runs:?}");
@@ -319,7 +320,7 @@ async fn dispatch_contract(pg: bool) {
     let repo = provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         false,
@@ -379,7 +380,7 @@ async fn dispatch_contract(pg: bool) {
             StatusCode::NO_CONTENT,
         )
         .await;
-        let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
+        let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
             .await
             .unwrap();
         assert_eq!(runs.len(), expected_count);
@@ -391,9 +392,10 @@ async fn dispatch_contract(pg: bool) {
             assert_eq!(payload["action"], kind);
             assert_eq!(payload["client_payload"], json!({"answer":42}));
             assert_eq!(payload["sender"]["id"], alice);
-            let groups = db::action_concurrency::groups(f.pool(), repo.id, Some(run.id))
-                .await
-                .unwrap();
+            let groups =
+                codeyard_db_actions::action_concurrency::groups(f.pool(), repo.id, Some(run.id))
+                    .await
+                    .unwrap();
             assert_eq!(groups.len(), 1);
             assert_eq!(groups[0].name, "dispatch-42");
         }
@@ -481,13 +483,13 @@ async fn dispatch_contract(pg: bool) {
         StatusCode::NO_CONTENT,
     )
     .await;
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
         .await
         .unwrap();
     assert_eq!(runs.len(), 4);
     assert_eq!(
         runs[1].event_payload.as_ref().unwrap()["sender"]["login"],
-        db::ci_tokens::BOT
+        codeyard_db_core::queries::ci_tokens::BOT
     );
     assert_eq!(runs[1].triggered_by_id, Some(alice));
     use chrono::Timelike;
@@ -505,13 +507,14 @@ async fn dispatch_contract(pg: bool) {
     let (first, second) = tokio::join!(ci.queue_schedules(now), ci.queue_schedules(now));
     first.unwrap();
     second.unwrap();
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
         .await
         .unwrap();
     assert_eq!(runs.len(), 5, "{runs:?}");
-    let groups = db::action_concurrency::groups(f.pool(), repo.id, Some(runs[0].id))
-        .await
-        .unwrap();
+    let groups =
+        codeyard_db_actions::action_concurrency::groups(f.pool(), repo.id, Some(runs[0].id))
+            .await
+            .unwrap();
     assert_eq!(groups.len(), 1);
     assert_eq!(groups[0].name, format!("scheduled-{expression}"));
     assert_eq!(runs[0].event, "schedule");
@@ -533,7 +536,7 @@ async fn workflow_run_contract(pg: bool) {
     let repo = provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         false,
@@ -635,7 +638,7 @@ async fn workflow_run_contract(pg: bool) {
         .finish("source-worker", source.run.id, "success", None)
         .await
         .unwrap());
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 30)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 30)
         .await
         .unwrap();
     assert_eq!(runs.len(), 4, "{runs:?}");
@@ -645,9 +648,10 @@ async fn workflow_run_contract(pg: bool) {
         assert_eq!(run.branch, "main");
         assert_eq!(run.head_sha.as_deref(), Some(tip.as_str()));
         assert!(!run.is_fork);
-        let groups = db::action_concurrency::groups(f.pool(), repo.id, Some(run.id))
-            .await
-            .unwrap();
+        let groups =
+            codeyard_db_actions::action_concurrency::groups(f.pool(), repo.id, Some(run.id))
+                .await
+                .unwrap();
         assert_eq!(groups.len(), 1);
         let payload = run.event_payload.as_ref().unwrap();
         assert_eq!(
@@ -686,7 +690,7 @@ async fn workflow_run_contract(pg: bool) {
         StatusCode::NO_CONTENT,
     )
     .await;
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 30)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 30)
         .await
         .unwrap();
     assert_eq!(runs.len(), 9, "{runs:?}");

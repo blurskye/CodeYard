@@ -19,10 +19,14 @@ fn ci(w: &World) -> CiRuns {
 }
 
 async fn row(w: &World, number: i32) -> codeyard_db_core::models::PullRequest {
-    db::pull_requests::records::get_pull_request(w.database.pool(), w.repository.id, number)
-        .await
-        .unwrap()
-        .unwrap()
+    codeyard_db_repos::pull_requests::records::get_pull_request(
+        w.database.pool(),
+        w.repository.id,
+        number,
+    )
+    .await
+    .unwrap()
+    .unwrap()
 }
 
 async fn metadata_failure(w: &World, pg: bool) {
@@ -48,7 +52,7 @@ async fn removed_author(pg: bool) {
             &[w.bob_id, w.pull.id],
         )
         .await;
-    assert!(db::repositories::access::revoke_repo_access(
+    assert!(codeyard_db_repos::repositories::access::revoke_repo_access(
         w.database.pool(),
         w.bob_id,
         w.repository.id
@@ -83,7 +87,7 @@ async fn inline_revision(pg: bool) {
                     &[w.pull.id],
                 )
                 .await;
-            let input = db::pull_requests::reviews::NewPullRequestComment {
+            let input = codeyard_db_repos::pull_requests::reviews::NewPullRequestComment {
                 pr_id: w.pull.id,
                 author_id: w.bob_id,
                 body: "stale",
@@ -97,33 +101,47 @@ async fn inline_revision(pg: bool) {
                 expected_revisions: Some((&w.head, &w.base)),
             };
             let result = if pending {
-                db::pull_requests::reviews::add_pending_pull_request_comment(
+                codeyard_db_repos::pull_requests::reviews::add_pending_pull_request_comment(
                     w.database.pool(),
                     input,
                 )
                 .await
             } else {
-                db::pull_requests::reviews::add_pull_request_comment(w.database.pool(), input).await
+                codeyard_db_repos::pull_requests::reviews::add_pull_request_comment(
+                    w.database.pool(),
+                    input,
+                )
+                .await
             };
             assert!(matches!(
                 result
                     .unwrap_err()
-                    .downcast_ref::<db::discussions::DiscussionWriteRefusal>(),
-                Some(db::discussions::DiscussionWriteRefusal::RevisionChanged)
+                    .downcast_ref::<codeyard_db_core::queries::discussions::DiscussionWriteRefusal>(
+                    ),
+                Some(
+                    codeyard_db_core::queries::discussions::DiscussionWriteRefusal::RevisionChanged
+                )
             ));
         }
     }
     assert_eq!(
-        db::pull_requests::reviews::count_pull_request_comments(w.database.pool(), w.pull.id)
-            .await
-            .unwrap(),
+        codeyard_db_repos::pull_requests::reviews::count_pull_request_comments(
+            w.database.pool(),
+            w.pull.id
+        )
+        .await
+        .unwrap(),
         0
     );
     assert!(
-        db::pull_requests::reviews::get_pending_review(w.database.pool(), w.pull.id, w.bob_id)
-            .await
-            .unwrap()
-            .is_none()
+        codeyard_db_repos::pull_requests::reviews::get_pending_review(
+            w.database.pool(),
+            w.pull.id,
+            w.bob_id
+        )
+        .await
+        .unwrap()
+        .is_none()
     );
     w.database.finish().await;
 }
@@ -147,22 +165,24 @@ async fn deleted_comment_notifications(pg: bool) {
                 .form_reply(&format!("/alice/proj/pulls/1/comments/{id}/delete"), &[])
                 .await;
             assert!(reply.status.is_redirection(), "{}", reply.text());
-            assert!(db::pull_requests::reviews::get_pull_request_comment_by_id(
-                w.database.pool(),
-                id
-            )
-            .await
-            .unwrap()
-            .is_none());
+            assert!(
+                codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(
+                    w.database.pool(),
+                    id
+                )
+                .await
+                .unwrap()
+                .is_none()
+            );
         }
         for (kind, metadata) in [
             ("pull_request_comment", json!({"comment_id":id})),
             ("pull_request_comment_reply", json!({"comment_id":id})),
             ("mention", json!({"pull_request_comment_id":id})),
         ] {
-            let result = db::notifications::records::create_notification(
+            let result = codeyard_db_repos::notifications::records::create_notification(
                 w.database.pool(),
-                db::notifications::records::NewNotification {
+                codeyard_db_core::queries::notifications::records::NewNotification {
                     user_id: w.bob_id,
                     actor_id: Some(w.alice_id),
                     repo_id: Some(w.repository.id),
@@ -177,21 +197,23 @@ async fn deleted_comment_notifications(pg: bool) {
             if deleted {
                 assert!(result
                     .unwrap_err()
-                    .is::<db::notifications::records::NotificationSuppressed>());
+                    .is::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>());
             } else {
                 result.unwrap();
             }
         }
     }
-    assert!(db::notifications::records::list_notifications_for_user(
-        w.database.pool(),
-        w.bob_id,
-        100,
-        false
-    )
-    .await
-    .unwrap()
-    .is_empty());
+    assert!(
+        codeyard_db_repos::notifications::records::list_notifications_for_user(
+            w.database.pool(),
+            w.bob_id,
+            100,
+            false
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
     w.database.finish().await;
 }
 
@@ -204,9 +226,9 @@ async fn recovery(pg: bool) {
     let base = w.alice.save_text("main", ".github/workflows/ci.yml", "on: [pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n", &base).await;
     w.alice.branch("recover", &base).await;
     let head = w.alice.save("recover", "recovery.txt", &base).await;
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         w.database.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: w.repository.id,
             head_repo_id: Some(w.repository.id),
             author_id: w.alice_id,
@@ -235,7 +257,7 @@ async fn recovery(pg: bool) {
             .await;
         assert_eq!(value["error"], "pull_request_exists");
     }
-    let runs = db::ci::latest_ci_runs_for_commit(
+    let runs = codeyard_db_actions::ci::latest_ci_runs_for_commit(
         w.database.pool(),
         w.repository.id,
         &head,
@@ -246,10 +268,12 @@ async fn recovery(pg: bool) {
     .unwrap();
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].attempt, 1);
-    let reviewers =
-        db::pull_requests::reviews::list_pull_request_reviewers(w.database.pool(), pull.id)
-            .await
-            .unwrap();
+    let reviewers = codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(
+        w.database.pool(),
+        pull.id,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         reviewers.iter().map(|u| u.id).collect::<Vec<_>>(),
         [w.bob_id]
@@ -284,10 +308,13 @@ async fn stack_target(pg: bool) {
     let upper = w.alice.open_pull("Upper", "upper", "lower").await;
     let id = upper["id"].as_i64().unwrap();
     assert!(
-        db::pull_requests::reviews::list_pull_request_reviewers(w.database.pool(), id)
-            .await
-            .unwrap()
-            .is_empty()
+        codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(
+            w.database.pool(),
+            id
+        )
+        .await
+        .unwrap()
+        .is_empty()
     );
     w.alice
         .expect(
@@ -297,14 +324,22 @@ async fn stack_target(pg: bool) {
             StatusCode::OK,
         )
         .await;
-    let reviewers = db::pull_requests::reviews::list_pull_request_reviewers(w.database.pool(), id)
-        .await
-        .unwrap();
+    let reviewers = codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(
+        w.database.pool(),
+        id,
+    )
+    .await
+    .unwrap();
     assert!(reviewers.iter().any(|user| user.id == w.bob_id));
-    let runs =
-        db::ci::latest_ci_runs_for_commit(w.database.pool(), w.repository.id, &head, id, "main")
-            .await
-            .unwrap();
+    let runs = codeyard_db_actions::ci::latest_ci_runs_for_commit(
+        w.database.pool(),
+        w.repository.id,
+        &head,
+        id,
+        "main",
+    )
+    .await
+    .unwrap();
     assert_eq!(
         runs.len(),
         1,
@@ -314,7 +349,7 @@ async fn stack_target(pg: bool) {
         runs[0].pull_request_event.as_ref().unwrap()["base_sha"],
         base
     );
-    let snapshot = db::pull_requests::records::list_stack_members(
+    let snapshot = codeyard_db_repos::pull_requests::records::list_stack_members(
         w.database.pool(),
         w.repository.id,
         row(&w, 3).await.stack_id.unwrap(),
@@ -329,9 +364,9 @@ async fn stack_target(pg: bool) {
         .save_text("top", ".github/workflows/own.yml", own, &head)
         .await;
     // A new member joins after an earlier caller's membership read.
-    let new = db::pull_requests::records::create_pull_request(
+    let new = codeyard_db_repos::pull_requests::records::create_pull_request(
         w.database.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: w.repository.id,
             head_repo_id: Some(w.repository.id),
             author_id: w.alice_id,
@@ -348,9 +383,13 @@ async fn stack_target(pg: bool) {
     )
     .await
     .unwrap();
-    db::pull_requests::records::join_pull_request_stack(w.database.pool(), w.alice_id, new.id)
-        .await
-        .unwrap();
+    codeyard_db_repos::pull_requests::records::join_pull_request_stack(
+        w.database.pool(),
+        w.alice_id,
+        new.id,
+    )
+    .await
+    .unwrap();
     let ci = ci(&w);
     pulls::queue_pull_request_ci(
         w.database.pool(),
@@ -363,7 +402,7 @@ async fn stack_target(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(db::ci::latest_ci_runs_for_commit(
+    assert!(codeyard_db_actions::ci::latest_ci_runs_for_commit(
         w.database.pool(),
         w.repository.id,
         &top,
@@ -381,7 +420,7 @@ async fn stack_target(pg: bool) {
             StatusCode::OK,
         )
         .await;
-    let runs = db::ci::latest_ci_runs_for_commit(
+    let runs = codeyard_db_actions::ci::latest_ci_runs_for_commit(
         w.database.pool(),
         w.repository.id,
         &top,
@@ -453,9 +492,10 @@ async fn merge_followup(pg: bool) {
         .await
         .unwrap()
         .sha;
-    let runs = db::ci::list_ci_runs_for_repo(w.database.pool(), w.repository.id, 100)
-        .await
-        .unwrap();
+    let runs =
+        codeyard_db_actions::ci::list_ci_runs_for_repo(w.database.pool(), w.repository.id, 100)
+            .await
+            .unwrap();
     assert!(runs
         .iter()
         .any(|run| run.event == "push" && run.head_sha.as_deref() == Some(&merged)));
@@ -494,9 +534,10 @@ async fn restack_followup(pg: bool) {
         )
         .await;
     assert_eq!(value["error"], "restack_followup_failed");
-    let runs = db::ci::list_ci_runs_for_repo(w.database.pool(), w.repository.id, 100)
-        .await
-        .unwrap();
+    let runs =
+        codeyard_db_actions::ci::list_ci_runs_for_repo(w.database.pool(), w.repository.id, 100)
+            .await
+            .unwrap();
     for number in [1, 2] {
         let pull = row(&w, number).await;
         assert_ne!(
@@ -559,7 +600,7 @@ async fn target_specific_checks(pg: bool) {
     w.alice.branch("release", &w.base).await;
     let current = w.alice.pull(1).await;
     w.alice.expect("PUT", "/api/repos/alice/proj/pulls/1", json!({"expected_state":"open", "expected_updated":current["updated_at"], "base":"release"}), StatusCode::OK).await;
-    assert!(db::ci::latest_ci_runs_for_commit(
+    assert!(codeyard_db_actions::ci::latest_ci_runs_for_commit(
         w.database.pool(),
         w.repository.id,
         &head,
@@ -569,12 +610,13 @@ async fn target_specific_checks(pg: bool) {
     .await
     .unwrap()
     .is_empty());
-    assert!(
-        db::ci::list_pull_request_check_statuses(w.database.pool(), &[w.pull.id])
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(codeyard_db_actions::ci::list_pull_request_check_statuses(
+        w.database.pool(),
+        &[w.pull.id]
+    )
+    .await
+    .unwrap()
+    .is_empty());
     let model = bounded_model(&w.alice, "/alice/proj/pulls/1/checks").await;
     let Page::Collaboration(model) = model.page else {
         panic!("not collaboration")
@@ -625,7 +667,7 @@ async fn refs_prefixed_base(pg: bool) {
         let head = w.alice.save(&head_branch, "change.txt", &base).await;
         let pull = w.alice.open_pull("CI", &head_branch, branch).await;
         let id = pull["id"].as_i64().unwrap();
-        let runs = db::ci::latest_ci_runs_for_commit(
+        let runs = codeyard_db_actions::ci::latest_ci_runs_for_commit(
             w.database.pool(),
             w.repository.id,
             &head,
@@ -721,7 +763,7 @@ async fn path_failure_keeps_unfiltered(pg: bool) {
     )
     .await
     .unwrap();
-    let runs = db::ci::latest_ci_runs_for_commit(
+    let runs = codeyard_db_actions::ci::latest_ci_runs_for_commit(
         w.database.pool(),
         w.repository.id,
         &big,
@@ -758,7 +800,7 @@ async fn nested_comment_links(pg: bool) {
                 &[w.pull.id, w.alice_id],
             )
             .await;
-        let review = db::pull_requests::reviews::get_pending_review(
+        let review = codeyard_db_repos::pull_requests::reviews::get_pending_review(
             w.database.pool(),
             w.pull.id,
             w.alice_id,
@@ -783,7 +825,7 @@ async fn nested_comment_links(pg: bool) {
                 StatusCode::CREATED,
             )
             .await;
-        let notices = db::notifications::records::list_notifications_for_user(
+        let notices = codeyard_db_repos::notifications::records::list_notifications_for_user(
             w.database.pool(),
             w.bob_id,
             100,

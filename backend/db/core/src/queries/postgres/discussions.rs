@@ -3,9 +3,9 @@ use crate::queries::postgres::repositories::access::RepositoryRowLock as Reposit
 use anyhow::Result;
 use sqlx::Postgres;
 use sqlx::Transaction;
-struct DiscussionAuthority {
-    access: AccessLevel,
-    personal_override: bool,
+pub struct DiscussionAuthority {
+    pub access: AccessLevel,
+    pub personal_override: bool,
     personal_owner: bool,
     organization: bool,
 }

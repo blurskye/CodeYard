@@ -95,7 +95,7 @@ async fn contract(pg: bool) {
     let repository = provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "preview",
         None,
         false,
@@ -442,7 +442,7 @@ async fn commit_history_contract(pg: bool) {
     let repository = provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "history",
         None,
         false,
@@ -631,7 +631,7 @@ async fn browse_fixture(
     let repository = provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "browse",
         None,
         false,
@@ -929,7 +929,7 @@ async fn folder_header_contract() {
     let repository = provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "folders",
         None,
         false,
@@ -1032,7 +1032,7 @@ async fn merge_tree_contract(pg: bool) {
     let repository = provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "resolution",
         None,
         false,

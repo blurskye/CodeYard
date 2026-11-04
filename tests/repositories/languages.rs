@@ -44,7 +44,7 @@ async fn get_json(router: &Router, session: Option<&str>) -> (StatusCode, Value)
 }
 
 async fn languages_contract(pool: &codeyard_db_core::DbPool) {
-    let owner = match db::users::transitions::complete_setup(
+    let owner = match codeyard_db_identity::users::transitions::complete_setup(
         pool,
         "language_owner",
         None,
@@ -60,7 +60,7 @@ async fn languages_contract(pool: &codeyard_db_core::DbPool) {
     };
     let directory = tempfile::tempdir().unwrap();
     let disk_path = directory.path().join("languages.git");
-    let repository = db::repositories::records::create_repository(
+    let repository = codeyard_db_repos::repositories::records::create_repository(
         pool,
         owner.id,
         "languages",
@@ -106,7 +106,7 @@ async fn languages_contract(pool: &codeyard_db_core::DbPool) {
     }
     assert_eq!(repository.default_branch, "main");
     assert!(
-        db::repository_stats::get_repo_languages(pool, repository.id)
+        codeyard_db_repos::repository_stats::get_repo_languages(pool, repository.id)
             .await
             .unwrap()
             .is_empty()
@@ -125,7 +125,7 @@ async fn languages_contract(pool: &codeyard_db_core::DbPool) {
         "use Git's default branch, not the database's"
     );
     assert_eq!(
-        db::repository_stats::get_repo_languages(pool, repository.id)
+        codeyard_db_repos::repository_stats::get_repo_languages(pool, repository.id)
             .await
             .unwrap()
             .len(),
@@ -133,13 +133,13 @@ async fn languages_contract(pool: &codeyard_db_core::DbPool) {
         "the computed languages are stored"
     );
 
-    db::repositories::records::update_repository(
+    codeyard_db_repos::repositories::records::update_repository(
         pool,
         owner.id,
         repository.id,
         None,
         true,
-        db::repositories::records::MergeMethodUpdate {
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
             merge: None,
             squash: None,
             rebase: None,
@@ -150,7 +150,7 @@ async fn languages_contract(pool: &codeyard_db_core::DbPool) {
     let (status, body) = get_json(&router, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     let session = native::token();
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &session,
         owner.id,
@@ -175,9 +175,9 @@ async fn languages_contract(pool: &codeyard_db_core::DbPool) {
     assert!(body.to_string().contains("git_error"), "{body}");
 
     // A cache entry for another revision cannot hide unavailable Git.
-    db::repository_stats::upsert_repo_languages(
+    codeyard_db_repos::repository_stats::upsert_repo_languages(
         pool,
-        &db::repository_stats::language_source(pool, repository.id)
+        &codeyard_db_repos::repository_stats::language_source(pool, repository.id)
             .await
             .unwrap()
             .unwrap(),
@@ -195,12 +195,13 @@ async fn languages_contract(pool: &codeyard_db_core::DbPool) {
 #[tokio::test]
 async fn first_language_reader_retries_when_the_default_changes_during_publication() {
     let fixture = native::NativeDatabase::new().await;
-    let owner = db::users::accounts::create_user(&fixture.pool, "language_race", None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard_db_identity::users::accounts::create_user(&fixture.pool, "language_race", None)
+            .await
+            .unwrap();
     let root = tempfile::tempdir().unwrap();
     let disk = root.path().join("race.git");
-    let record = db::repositories::records::create_repository(
+    let record = codeyard_db_repos::repositories::records::create_repository(
         &fixture.pool,
         owner.id,
         "race",
@@ -270,9 +271,10 @@ async fn first_language_reader_retries_when_the_default_changes_during_publicati
     tx.commit().await.unwrap();
     let languages = task.await.unwrap();
     assert_eq!(languages[0].language, "Python");
-    let stored = db::repository_stats::get_repo_languages(&fixture.pool, repository_id)
-        .await
-        .unwrap();
+    let stored =
+        codeyard_db_repos::repository_stats::get_repo_languages(&fixture.pool, repository_id)
+            .await
+            .unwrap();
     assert_eq!(stored[0].language, "Python");
     fixture.close().await;
 }
@@ -347,7 +349,7 @@ async fn stored_languages(
     repo_id: i64,
 ) -> Vec<codeyard_db_core::models::RepoLanguage> {
     for _ in 0..100 {
-        let rows = db::repository_stats::get_repo_languages(pool, repo_id)
+        let rows = codeyard_db_repos::repository_stats::get_repo_languages(pool, repo_id)
             .await
             .unwrap();
         if !rows.is_empty() {
@@ -376,17 +378,17 @@ async fn page(router: &Router, path: &str) -> (StatusCode, String) {
 /// database, the repository page and Explore show of the languages it stores.
 async fn push_contract(pool: &codeyard_db_core::DbPool, database_url: &str) {
     bundle::install();
-    db::node_config::upsert_node_configuration(pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(pool, "public", true)
         .await
         .unwrap();
-    let owner = db::users::accounts::create_user(pool, "language_owner", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(pool, "language_owner", None)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
     let repository = lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
         "public-languages",
         None,
         false,
@@ -446,9 +448,9 @@ async fn push_contract(pool: &codeyard_db_core::DbPool, database_url: &str) {
     );
 
     // A push to another branch stores nothing, even with no stored languages to replace.
-    db::repository_stats::upsert_repo_languages(
+    codeyard_db_repos::repository_stats::upsert_repo_languages(
         pool,
-        &db::repository_stats::language_source(pool, repository.id)
+        &codeyard_db_repos::repository_stats::language_source(pool, repository.id)
             .await
             .unwrap()
             .unwrap(),
@@ -467,7 +469,7 @@ async fn push_contract(pool: &codeyard_db_core::DbPool, database_url: &str) {
     );
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert!(
-        db::repository_stats::get_repo_languages(pool, repository.id)
+        codeyard_db_repos::repository_stats::get_repo_languages(pool, repository.id)
             .await
             .unwrap()
             .is_empty(),

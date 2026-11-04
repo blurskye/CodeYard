@@ -311,9 +311,3 @@ use codeyard_db_core::queries::sqlite::discussions::lock_write_authority;
 use codeyard_db_core::queries::sqlite::discussions::lock_triage_authority;
 
 use codeyard_db_core::queries::sqlite::discussions::lock_discussion_authority;
-
-use codeyard_db_core::queries::sqlite::discussions::lock_discussion_authority;
-
-use codeyard_db_core::queries::sqlite::discussions::lock_triage_authority;
-
-use codeyard_db_core::queries::sqlite::discussions::lock_write_authority;

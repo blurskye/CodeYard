@@ -8,7 +8,7 @@ pub(super) async fn exercise(
     actors: (i64, i64),
 ) {
     let (alice, bob) = tokens;
-    db::repositories::access::change_personal_repository_collaborator(
+    codeyard_db_repos::repositories::access::change_personal_repository_collaborator(
         &state.pool,
         actors.0,
         repo,

@@ -122,7 +122,7 @@ pub(super) async fn contract(
         )
         .await;
     assert!(count > 0);
-    db::repositories::records::transfer_repository(
+    codeyard_db_repos::repositories::records::transfer_repository(
         f.pool(),
         owner,
         repos[0],
@@ -138,7 +138,7 @@ pub(super) async fn contract(
         .await,
         count
     );
-    let refused = db::repositories::records::transfer_repository(
+    let refused = codeyard_db_repos::repositories::records::transfer_repository(
         f.pool(),
         owner,
         repos[0],
@@ -151,7 +151,7 @@ pub(super) async fn contract(
         Some(properties::Refusal::Invalid { .. })
     ));
     assert_eq!(
-        db::repositories::records::get_repository_by_id(f.pool(), repos[0])
+        codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), repos[0])
             .await
             .unwrap()
             .unwrap()
@@ -174,7 +174,7 @@ pub(super) async fn contract(
             .await
             .unwrap(),
     );
-    db::repositories::records::transfer_repository(
+    codeyard_db_repos::repositories::records::transfer_repository(
         f.pool(),
         owner,
         repos[0],
@@ -207,7 +207,7 @@ pub(super) async fn contract(
     properties::set_repository_value(f.pool(), owner, repos[0], target[0].id, &input)
         .await
         .unwrap();
-    db::repositories::records::transfer_repository(
+    codeyard_db_repos::repositories::records::transfer_repository(
         f.pool(),
         owner,
         repos[0],

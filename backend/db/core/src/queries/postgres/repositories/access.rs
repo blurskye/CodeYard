@@ -123,7 +123,7 @@ pub enum RepositoryRowLock {
     Exclusive,
 }
 
-pub(crate) struct LockedRepositoryAccess {
+pub struct LockedRepositoryAccess {
     pub access: AccessLevel,
     pub is_admin: bool,
     pub owner_user_id: Option<i64>,

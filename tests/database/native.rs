@@ -3068,11 +3068,11 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
     let ids = codeyard_db_identity::users::accounts::get_users_by_ids(pool, &[reader.id, i64::MAX])
         .await
         .unwrap();
-    json!({"issue":[closed.number,pr.number],"closed":[closed.state,closed.title,closed.closed_by_id],"labels":db::labels::get_issue_labels(pool,repo.id,issue.id).await.unwrap().into_iter().map(|l|l.name).collect::<Vec<_>>(),
-        "comments":db::issues::list_issue_comments(pool,issue.id,100,0).await.unwrap().len(),"reviews":db::pull_requests::reviews::list_pull_request_reviews(pool,pr.id,100,0).await.unwrap().into_iter().map(|entry|entry.review.state).collect::<Vec<_>>(),
-        "languages":db::repository_stats::get_repo_languages(pool,repo.id).await.unwrap().into_iter().map(|l|(l.language,l.bytes,l.percentage)).collect::<Vec<_>>(),
-        "social":[repo.stars_count,repo.watchers_count,repo.forks_count],"followers":db::following::count_user_followers(pool,owner.id).await.unwrap(),"rule":[rule.required_status_checks,rule.push_allowances],
-        "notification":db::notifications::records::list_notifications_for_user(pool,owner.id,10,false).await.unwrap()[0].metadata,"storage":[stats.total_files,stats.total_bytes,stats.avatar_count,stats.uploads_24h,stats.bytes_24h,stats.downloads_24h],
+    json!({"issue":[closed.number,pr.number],"closed":[closed.state,closed.title,closed.closed_by_id],"labels":codeyard_db_repos::labels::get_issue_labels(pool,repo.id,issue.id).await.unwrap().into_iter().map(|l|l.name).collect::<Vec<_>>(),
+        "comments":codeyard_db_repos::issues::list_issue_comments(pool,issue.id,100,0).await.unwrap().len(),"reviews":codeyard_db_repos::pull_requests::reviews::list_pull_request_reviews(pool,pr.id,100,0).await.unwrap().into_iter().map(|entry|entry.review.state).collect::<Vec<_>>(),
+        "languages":codeyard_db_repos::repository_stats::get_repo_languages(pool,repo.id).await.unwrap().into_iter().map(|l|(l.language,l.bytes,l.percentage)).collect::<Vec<_>>(),
+        "social":[repo.stars_count,repo.watchers_count,repo.forks_count],"followers":codeyard_db_identity::following::count_user_followers(pool,owner.id).await.unwrap(),"rule":[rule.required_status_checks,rule.push_allowances],
+        "notification":codeyard_db_repos::notifications::records::list_notifications_for_user(pool,owner.id,10,false).await.unwrap()[0].metadata,"storage":[stats.total_files,stats.total_bytes,stats.avatar_count,stats.uploads_24h,stats.bytes_24h,stats.downloads_24h],
         "summaries":summaries.into_iter().map(|s|(s.username,s.total_files,s.total_bytes,s.commits_total,s.pushes_total,s.contributions_total)).collect::<Vec<_>>(),
         "activity":activity.into_iter().map(|a|(a.commits,a.pulls_opened,a.pulls_merged,a.issues_opened,a.issues_closed,a.runs,a.daily_storage_bytes,a.cumulative_storage_bytes)).collect::<Vec<_>>(),"emails":emails,"ids":ids.into_iter().map(|u|u.username).collect::<Vec<_>>()})
 }

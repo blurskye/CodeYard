@@ -1229,7 +1229,3 @@ pub async fn set_repository_default_branch(
 use codeyard_db_core::queries::postgres::repositories::records::lock_fork_ancestors;
 
 use codeyard_db_core::queries::postgres::repositories::records::ANCESTORS;
-
-use codeyard_db_core::queries::postgres::repositories::records::ANCESTORS;
-
-use codeyard_db_core::queries::postgres::repositories::records::lock_fork_ancestors;

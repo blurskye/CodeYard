@@ -317,11 +317,3 @@ use codeyard_db_core::queries::attestation_validation::subject_digest;
 use codeyard_db_core::queries::attestation_validation::Page;
 
 use codeyard_db_core::queries::attestation_validation::AttestationError;
-
-use codeyard_db_core::queries::attestation_validation::Attestation;
-
-use codeyard_db_core::queries::attestation_validation::AttestationError;
-
-use codeyard_db_core::queries::attestation_validation::Page;
-
-use codeyard_db_core::queries::attestation_validation::subject_digest;

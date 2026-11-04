@@ -205,7 +205,7 @@ async fn contract(pg: bool, source: &Source) {
     let repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "destination",
         None,
         true,
@@ -269,7 +269,7 @@ async fn contract(pg: bool, source: &Source) {
         StatusCode::NOT_FOUND,
     )
     .await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -314,7 +314,7 @@ async fn contract(pg: bool, source: &Source) {
         )
         .await;
     }
-    db::repositories::access::revoke_repo_access(f.pool(), bob, repo.id)
+    codeyard_db_repos::repositories::access::revoke_repo_access(f.pool(), bob, repo.id)
         .await
         .unwrap();
     for (method, operation) in [
@@ -478,7 +478,7 @@ async fn contract(pg: bool, source: &Source) {
         Some("refs/heads/trunk")
     );
     assert_eq!(
-        db::repositories::records::get_repository_by_id(f.pool(), repo.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), repo.id)
             .await
             .unwrap()
             .unwrap()
@@ -530,7 +530,7 @@ async fn contract(pg: bool, source: &Source) {
     let empty = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "cancelled",
         None,
         true,
@@ -613,7 +613,7 @@ async fn contract(pg: bool, source: &Source) {
     let revoked = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "revoked",
         None,
         true,
@@ -666,23 +666,29 @@ async fn contract(pg: bool, source: &Source) {
         .is_empty());
 
     let (first, second) = tokio::join!(
-        db::source_imports::start(f.pool(), alice, revoked.id, &source.url, "first"),
-        db::source_imports::start(f.pool(), alice, revoked.id, &source.url, "second"),
+        codeyard_db_repos::source_imports::start(f.pool(), alice, revoked.id, &source.url, "first"),
+        codeyard_db_repos::source_imports::start(
+            f.pool(),
+            alice,
+            revoked.id,
+            &source.url,
+            "second"
+        ),
     );
     assert_ne!(
         first.is_ok(),
         second.is_ok(),
         "Only one concurrent attempt may be admitted"
     );
-    let current = db::source_imports::get(f.pool(), revoked.id)
+    let current = codeyard_db_repos::source_imports::get(f.pool(), revoked.id)
         .await
         .unwrap()
         .unwrap();
-    db::source_imports::finish(f.pool(), revoked.id, "stale", true)
+    codeyard_db_repos::source_imports::finish(f.pool(), revoked.id, "stale", true)
         .await
         .unwrap();
     assert_eq!(
-        db::source_imports::get(f.pool(), revoked.id)
+        codeyard_db_repos::source_imports::get(f.pool(), revoked.id)
             .await
             .unwrap()
             .unwrap()
@@ -690,14 +696,14 @@ async fn contract(pg: bool, source: &Source) {
         current.generation
     );
     assert_eq!(
-        db::source_imports::get(f.pool(), revoked.id)
+        codeyard_db_repos::source_imports::get(f.pool(), revoked.id)
             .await
             .unwrap()
             .unwrap()
             .status,
         "importing"
     );
-    db::source_imports::cancel(f.pool(), alice, revoked.id)
+    codeyard_db_repos::source_imports::cancel(f.pool(), alice, revoked.id)
         .await
         .unwrap();
 
@@ -752,10 +758,14 @@ async fn contract(pg: bool, source: &Source) {
     let html = session.page_ok("/import-owner/browser/migration").await;
     assert!(html.contains("Repository migration"));
     assert!(!html.contains("do-not-leak"));
-    let browser = db::repositories::records::get_repository(f.pool(), "import-owner", "browser")
-        .await
-        .unwrap()
-        .unwrap();
+    let browser = codeyard_db_repos::repositories::records::get_repository(
+        f.pool(),
+        "import-owner",
+        "browser",
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let (status, _) = other.page("/import-owner/browser/migration").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     source.blocked.store(false, Ordering::SeqCst);

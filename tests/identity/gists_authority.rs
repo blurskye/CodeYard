@@ -110,11 +110,11 @@ async fn authority(pg: bool) {
     let id = &gist.gist.id;
     let original = &gist.snapshot.sha;
     let path = format!("/api/v3/gists/{id}");
-    let alice_user = db::users::accounts::get_user_by_id(f.pool(), alice)
+    let alice_user = codeyard_db_identity::users::accounts::get_user_by_id(f.pool(), alice)
         .await
         .unwrap()
         .unwrap();
-    let admin = db::users::accounts::get_user_by_id(f.pool(), bob)
+    let admin = codeyard_db_identity::users::accounts::get_user_by_id(f.pool(), bob)
         .await
         .unwrap()
         .unwrap();
@@ -137,27 +137,27 @@ async fn authority(pg: bool) {
             .await
             .is_err()
     );
-    assert!(db::interactions::get_restriction(
+    assert!(codeyard_db_identity::interactions::get_restriction(
         f.pool(),
         alice,
-        db::interactions::InteractionScope::Repository(repo.id)
+        codeyard_db_identity::interactions::InteractionScope::Repository(repo.id)
     )
     .await
     .is_err());
-    assert!(db::pull_caps::get_cap(
+    assert!(codeyard_db_repos::pull_caps::get_cap(
         f.pool(),
         alice,
-        db::pull_caps::PullCapScope::Repository(repo.id)
+        codeyard_db_repos::pull_caps::PullCapScope::Repository(repo.id)
     )
     .await
     .is_err());
     let sha = detached(Path::new(&repo.disk_path), original);
     for published in [false, true] {
-        db::gists::admit(
+        codeyard_db_repos::gists::admit(
             f.pool(),
             alice,
             &AccountCredential::Session(&a.session),
-            &db::gists::Admission {
+            &codeyard_db_repos::gists::Admission {
                 repo_id: repo.id,
                 disk_path: &repo.disk_path,
                 storage_node_id: Some(None),
@@ -169,11 +169,13 @@ async fn authority(pg: bool) {
         .await
         .unwrap();
         if published {
-            assert!(
-                db::cluster::bump_write_version(f.pool(), repo.id, Some(None))
-                    .await
-                    .unwrap()
-            );
+            assert!(codeyard_db_cluster::cluster::bump_write_version(
+                f.pool(),
+                repo.id,
+                Some(None)
+            )
+            .await
+            .unwrap());
             publish(Path::new(&repo.disk_path), &sha, original);
         }
         let loaded = gists::load(&state, id, None).await.unwrap();
@@ -189,7 +191,7 @@ async fn authority(pg: bool) {
                 "Original"
             }
         );
-        assert!(db::gists::pending(f.pool(), repo.id)
+        assert!(codeyard_db_repos::gists::pending(f.pool(), repo.id)
             .await
             .unwrap()
             .is_none());
@@ -253,7 +255,7 @@ async fn authority(pg: bool) {
         .map(|file| file.path.as_str())
         .collect();
     assert_eq!(paths, ["recovered.txt"]);
-    let comment = db::gists::create_comment(
+    let comment = codeyard_db_repos::gists::create_comment(
         f.pool(),
         bob,
         &AccountCredential::Session(&b.session),
@@ -262,7 +264,7 @@ async fn authority(pg: bool) {
     )
     .await
     .unwrap();
-    db::gists::star(
+    codeyard_db_repos::gists::star(
         f.pool(),
         bob,
         &AccountCredential::Session(&b.session),
@@ -271,7 +273,7 @@ async fn authority(pg: bool) {
     )
     .await
     .unwrap();
-    db::users::blocks::change_block(
+    codeyard_db_identity::users::blocks::change_block(
         f.pool(),
         alice,
         &AccountCredential::Session(&a.session),
@@ -280,8 +282,10 @@ async fn authority(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(!db::gists::starred(f.pool(), bob, repo.id).await.unwrap());
-    assert!(db::gists::star(
+    assert!(!codeyard_db_repos::gists::starred(f.pool(), bob, repo.id)
+        .await
+        .unwrap());
+    assert!(codeyard_db_repos::gists::star(
         f.pool(),
         bob,
         &AccountCredential::Session(&b.session),
@@ -290,7 +294,7 @@ async fn authority(pg: bool) {
     )
     .await
     .is_err());
-    assert!(db::gists::create_comment(
+    assert!(codeyard_db_repos::gists::create_comment(
         f.pool(),
         bob,
         &AccountCredential::Session(&b.session),
@@ -299,7 +303,7 @@ async fn authority(pg: bool) {
     )
     .await
     .is_err());
-    assert!(db::gists::change_comment(
+    assert!(codeyard_db_repos::gists::change_comment(
         f.pool(),
         bob,
         &AccountCredential::Session(&b.session),
@@ -313,7 +317,7 @@ async fn authority(pg: bool) {
         .await
         .is_err());
     request(&router, "gists/get", "GET", &path, None, Value::Null, 200).await;
-    db::gists::change_comment(
+    codeyard_db_repos::gists::change_comment(
         f.pool(),
         bob,
         &AccountCredential::Session(&b.session),
@@ -323,7 +327,7 @@ async fn authority(pg: bool) {
     )
     .await
     .unwrap();
-    db::users::blocks::change_block(
+    codeyard_db_identity::users::blocks::change_block(
         f.pool(),
         alice,
         &AccountCredential::Session(&a.session),
@@ -332,9 +336,11 @@ async fn authority(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(!db::gists::starred(f.pool(), bob, repo.id).await.unwrap());
+    assert!(!codeyard_db_repos::gists::starred(f.pool(), bob, repo.id)
+        .await
+        .unwrap());
     let count = f.count().await;
-    db::users::sessions::delete_session(f.pool(), &b.session)
+    codeyard_db_identity::users::sessions::delete_session(f.pool(), &b.session)
         .await
         .unwrap();
     assert!(gists::fork(state.clone(), bob, cb, id.clone())
@@ -471,20 +477,22 @@ async fn authority(pg: bool) {
         let backing = lifecycle::provision_gist(
             (&state.pool, None),
             &state.repos_path,
-            db::repositories::creation::RepositoryCreationOwner {
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
                 actor_id: alice,
-                target: db::repositories::creation::RepositoryTarget::Personal(alice),
+                target: codeyard_db_repos::repositories::creation::RepositoryTarget::Personal(
+                    alice,
+                ),
             },
             &format!("gist-{unknown}"),
             None,
         )
         .await
         .unwrap();
-        db::gists::reserve(
+        codeyard_db_repos::gists::reserve(
             f.pool(),
             alice,
             &AccountCredential::Session(&a.session),
-            &db::gists::NewGist {
+            &codeyard_db_repos::gists::NewGist {
                 repo_id: backing.id,
                 id: &unknown,
                 description: "Disconnected creator",
@@ -516,11 +524,11 @@ async fn authority(pg: bool) {
             .unwrap()
             .to_string()
         };
-        db::gists::admit(
+        codeyard_db_repos::gists::admit(
             f.pool(),
             alice,
             &AccountCredential::Session(&a.session),
-            &db::gists::Admission {
+            &codeyard_db_repos::gists::Admission {
                 repo_id: backing.id,
                 disk_path: &backing.disk_path,
                 storage_node_id: Some(None),
@@ -539,7 +547,7 @@ async fn authority(pg: bool) {
             );
         }
         assert!(
-            !db::gists::get(f.pool(), &unknown)
+            !codeyard_db_repos::gists::get(f.pool(), &unknown)
                 .await
                 .unwrap()
                 .unwrap()
@@ -549,14 +557,17 @@ async fn authority(pg: bool) {
         if published {
             assert!(listing.contains(&unknown));
             assert!(
-                db::gists::get(f.pool(), &unknown)
+                codeyard_db_repos::gists::get(f.pool(), &unknown)
                     .await
                     .unwrap()
                     .unwrap()
                     .ready
             );
         } else {
-            assert!(db::gists::get(f.pool(), &unknown).await.unwrap().is_none());
+            assert!(codeyard_db_repos::gists::get(f.pool(), &unknown)
+                .await
+                .unwrap()
+                .is_none());
             assert!(!Path::new(&backing.disk_path).exists());
         }
     }

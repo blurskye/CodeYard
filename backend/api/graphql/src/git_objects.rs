@@ -1,5 +1,4 @@
 //! Immutable Git node lookup and refs use RepoStore, including remote repositories.
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::RequestContext;
@@ -301,17 +300,22 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
             .filter(|id| *id > 0)
             .ok_or_else(missing)?;
         Box::pin(crate::node(&node_id::encode("PR", pull), request)).await?;
-        let row = db::pull_requests::records::get_pull_request_by_id(&request.state.pool, pull)
-            .await
-            .map_err(unavailable)?
-            .ok_or_else(missing)?;
-        let reviewer =
-            db::pull_requests::reviews::list_pull_request_reviewers(&request.state.pool, pull)
-                .await
-                .map_err(unavailable)?
-                .into_iter()
-                .find(|row| row.id == user)
-                .ok_or_else(missing)?;
+        let row = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
+            &request.state.pool,
+            pull,
+        )
+        .await
+        .map_err(unavailable)?
+        .ok_or_else(missing)?;
+        let reviewer = codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(
+            &request.state.pool,
+            pull,
+        )
+        .await
+        .map_err(unavailable)?
+        .into_iter()
+        .find(|row| row.id == user)
+        .ok_or_else(missing)?;
         return crate::pull_request::review_request(&row, &reviewer, request).await;
     }
     if kind == "REF" {
@@ -335,7 +339,7 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
         // Only a single-repository job credential gives an old, unqualified ID an unambiguous
         // origin. Other legacy IDs cannot retain repository-specific identity, so fail closed
         // instead of selecting a different fork or probing every readable repository.
-        let token = db::ci_tokens::get(&request.state.pool, request.auth.token.id)
+        let token = codeyard_db_actions::ci_tokens::get(&request.state.pool, request.auth.token.id)
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;

@@ -251,7 +251,7 @@ pub struct StoredSuite {
 }
 
 impl StoredSuite {
-    pub(crate) const SUMMARY_COLUMNS: &'static str = "s.id,s.org_id,s.repo_id,s.repository_name,s.actor_id,s.actor_name,s.ref_name,s.before_sha,s.after_sha,s.result,s.evaluation_result,'[]' AS evaluations,s.created_at";
+    pub const SUMMARY_COLUMNS: &'static str = "s.id,s.org_id,s.repo_id,s.repository_name,s.actor_id,s.actor_name,s.ref_name,s.before_sha,s.after_sha,s.result,s.evaluation_result,'[]' AS evaluations,s.created_at";
 
     pub fn decode(self) -> Result<Suite> {
         let evaluations = serde_json::from_str(&self.evaluations)

@@ -41,7 +41,7 @@ async fn setup(pg: bool) -> World {
         codeyard_app::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
             name,
             None,
             false,
@@ -122,7 +122,7 @@ async fn release_creation_uses_the_checked_repository_id(pg: bool) {
     use codeyard_app::repositories::releases::ReleaseInput;
     let mut world = setup(pg).await;
     let pool = world.database.pool();
-    let original = db::repositories::records::get_repository(pool, "alice", "proj")
+    let original = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")
         .await
         .unwrap()
         .unwrap();
@@ -137,7 +137,7 @@ async fn release_creation_uses_the_checked_repository_id(pg: bool) {
     let replacement = lifecycle::provision(
         (pool, None),
         world._root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "proj",
         None,
         false,
@@ -165,7 +165,7 @@ async fn release_creation_uses_the_checked_repository_id(pg: bool) {
             repository_id: original.id,
             tag: "private-release".into(),
             target: world.main.clone(),
-            fields: db::releases::ReleaseFields {
+            fields: codeyard_db_repos::releases::ReleaseFields {
                 body: Some("Confidential release notes".into()),
                 ..Default::default()
             },
@@ -175,17 +175,19 @@ async fn release_creation_uses_the_checked_repository_id(pg: bool) {
     .await
     .unwrap();
     assert!(
-        db::releases::get_release_by_tag(pool, original.id, &release.tag_name)
+        codeyard_db_repos::releases::get_release_by_tag(pool, original.id, &release.tag_name)
             .await
             .unwrap()
             .is_some()
     );
-    assert!(
-        db::releases::get_release_by_tag(pool, replacement.id, &release.tag_name)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::releases::get_release_by_tag(
+        pool,
+        replacement.id,
+        &release.tag_name
+    )
+    .await
+    .unwrap()
+    .is_none());
     world.database.finish().await;
 }
 #[tokio::test]
@@ -224,11 +226,14 @@ async fn long_release_target(pg: bool) {
             StatusCode::UNPROCESSABLE_ENTITY,
         )
         .await;
-    let repository =
-        db::repositories::records::get_repository(world.database.pool(), "alice", "proj")
-            .await
-            .unwrap()
-            .unwrap();
+    let repository = codeyard_db_repos::repositories::records::get_repository(
+        world.database.pool(),
+        "alice",
+        "proj",
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert!(
         !codeyard_app::repositories::store::repo_store(&repository, None)
             .refs()
@@ -808,10 +813,14 @@ async fn publish_notifies_release_watchers(pg: bool) {
             StatusCode::OK,
         )
         .await;
-    let repo = db::repositories::records::get_repository(world.database.pool(), "alice", "proj")
-        .await
-        .unwrap()
-        .unwrap();
+    let repo = codeyard_db_repos::repositories::records::get_repository(
+        world.database.pool(),
+        "alice",
+        "proj",
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let reply = world
         .bob
         .form_reply(
@@ -853,11 +862,14 @@ async fn publish_notifies_release_watchers(pg: bool) {
 #[tokio::test]
 async fn releases_do_not_read_every_tag_annotation_to_find_one_tag() {
     let world = setup(false).await;
-    let repository =
-        db::repositories::records::get_repository(world.database.pool(), "alice", "proj")
-            .await
-            .unwrap()
-            .unwrap();
+    let repository = codeyard_db_repos::repositories::records::get_repository(
+        world.database.pool(),
+        "alice",
+        "proj",
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let bare = git2::Repository::open_bare(&repository.disk_path).unwrap();
     let target = bare
         .find_commit(git2::Oid::from_str(&world.main).unwrap())
@@ -974,9 +986,10 @@ async fn asset_files_leave_through_their_release(pg: bool) {
         "{}",
         uploaded.text()
     );
-    let assets = db::releases::list_release_assets(world.database.pool(), release_id)
-        .await
-        .unwrap();
+    let assets =
+        codeyard_db_repos::releases::list_release_assets(world.database.pool(), release_id)
+            .await
+            .unwrap();
     let file = assets[0].file_id;
     let refused = alice
         .exchange(
@@ -1021,7 +1034,7 @@ async fn asset_files_leave_through_their_release(pg: bool) {
         )
         .await;
     assert_eq!(renamed.status, StatusCode::SEE_OTHER, "{}", renamed.text());
-    let asset = db::releases::list_release_assets(world.database.pool(), release_id)
+    let asset = codeyard_db_repos::releases::list_release_assets(world.database.pool(), release_id)
         .await
         .unwrap()
         .remove(0);
@@ -1034,9 +1047,10 @@ async fn asset_files_leave_through_their_release(pg: bool) {
         )
         .await;
     assert!(removed.status.is_redirection(), "{}", removed.text());
-    let remaining = db::releases::list_release_assets(world.database.pool(), release_id)
-        .await
-        .unwrap();
+    let remaining =
+        codeyard_db_repos::releases::list_release_assets(world.database.pool(), release_id)
+            .await
+            .unwrap();
     assert!(remaining.is_empty());
     world.database.finish().await;
 }
@@ -1044,7 +1058,7 @@ async fn asset_files_leave_through_their_release(pg: bool) {
 async fn release_validation_and_atomic_files(pg: bool) {
     let mut world = setup(pg).await;
     let pool = world.database.pool();
-    let repo = db::repositories::records::get_repository(pool, "alice", "proj")
+    let repo = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")
         .await
         .unwrap()
         .unwrap();
@@ -1119,9 +1133,9 @@ async fn release_validation_and_atomic_files(pg: bool) {
     )
     .await;
     assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
-    let file = db::files::reserve_upload(
+    let file = codeyard_db_repos::files::reserve_upload(
         pool,
-        db::files::ReserveUpload {
+        codeyard_db_repos::files::ReserveUpload {
             user_id: actor,
             filename: "tool.bin",
             content_type: "application/octet-stream",
@@ -1133,7 +1147,7 @@ async fn release_validation_and_atomic_files(pg: bool) {
     )
     .await
     .unwrap();
-    let input = db::releases::NewReleaseAsset {
+    let input = codeyard_db_repos::releases::NewReleaseAsset {
         file_id: file.id,
         name: "tool.bin",
         label: None,
@@ -1141,10 +1155,10 @@ async fn release_validation_and_atomic_files(pg: bool) {
         size: 1,
     };
     // Unverified uploads cannot be attached, and a refused attachment leaves expiry intact.
-    assert!(db::releases::add_release_asset(
+    assert!(codeyard_db_repos::releases::add_release_asset(
         pool,
         actor,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, actor).await
         ),
         repo.id,
@@ -1153,18 +1167,18 @@ async fn release_validation_and_atomic_files(pg: bool) {
     )
     .await
     .is_err());
-    let pending = db::files::get_file_by_id(pool, file.id)
+    let pending = codeyard_db_repos::files::get_file_by_id(pool, file.id)
         .await
         .unwrap()
         .unwrap();
     assert!(!pending.is_active && pending.upload_expires_at.is_some());
-    db::files::verify_pending_upload(pool, file.id, actor)
+    codeyard_db_repos::files::verify_pending_upload(pool, file.id, actor)
         .await
         .unwrap();
-    let asset = db::releases::add_release_asset(
+    let asset = codeyard_db_repos::releases::add_release_asset(
         pool,
         actor,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, actor).await,
         ),
         repo.id,
@@ -1173,23 +1187,25 @@ async fn release_validation_and_atomic_files(pg: bool) {
     )
     .await
     .unwrap();
-    let active = db::files::get_file_by_id(pool, file.id)
+    let active = codeyard_db_repos::files::get_file_by_id(pool, file.id)
         .await
         .unwrap()
         .unwrap();
     assert!(active.is_active && active.upload_expires_at.is_none());
     // Calling the native delete alone must remove metadata and persist cleanup.
-    let removed = db::releases::delete_release_asset(pool, actor, repo.id, release_id, asset.id)
-        .await
-        .unwrap()
-        .unwrap();
+    let removed = codeyard_db_repos::releases::delete_release_asset(
+        pool, actor, repo.id, release_id, asset.id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(removed.id, file.id);
-    assert!(db::files::get_file_by_id(pool, file.id)
+    assert!(codeyard_db_repos::files::get_file_by_id(pool, file.id)
         .await
         .unwrap()
         .is_none());
     assert!(
-        !db::files::finish_object_deletion(pool, &file.object_key)
+        !codeyard_db_repos::files::finish_object_deletion(pool, &file.object_key)
             .await
             .unwrap(),
         "PUT grace keeps the cleanup queued"
@@ -1201,14 +1217,14 @@ async fn release_validation_and_atomic_files(pg: bool) {
             &[],
         )
         .await;
-    assert!(db::files::due_object_deletions(pool, 100)
+    assert!(codeyard_db_repos::files::due_object_deletions(pool, 100)
         .await
         .unwrap()
         .contains(&file.object_key));
 
-    let file = db::files::reserve_upload(
+    let file = codeyard_db_repos::files::reserve_upload(
         pool,
-        db::files::ReserveUpload {
+        codeyard_db_repos::files::ReserveUpload {
             user_id: actor,
             filename: "second.bin",
             content_type: "application/octet-stream",
@@ -1220,29 +1236,29 @@ async fn release_validation_and_atomic_files(pg: bool) {
     )
     .await
     .unwrap();
-    db::files::verify_pending_upload(pool, file.id, actor)
+    codeyard_db_repos::files::verify_pending_upload(pool, file.id, actor)
         .await
         .unwrap();
-    db::releases::add_release_asset(
+    codeyard_db_repos::releases::add_release_asset(
         pool,
         actor,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, actor).await,
         ),
         repo.id,
         release_id,
-        &db::releases::NewReleaseAsset {
+        &codeyard_db_repos::releases::NewReleaseAsset {
             file_id: file.id,
             ..input
         },
     )
     .await
     .unwrap();
-    let removed = db::releases::delete_release(pool, actor, repo.id, release_id)
+    let removed = codeyard_db_repos::releases::delete_release(pool, actor, repo.id, release_id)
         .await
         .unwrap();
     assert_eq!(removed[0].id, file.id);
-    assert!(db::files::get_file_by_id(pool, file.id)
+    assert!(codeyard_db_repos::files::get_file_by_id(pool, file.id)
         .await
         .unwrap()
         .is_none());
@@ -1253,7 +1269,7 @@ async fn release_validation_and_atomic_files(pg: bool) {
             &[],
         )
         .await;
-    assert!(db::files::due_object_deletions(pool, 100)
+    assert!(codeyard_db_repos::files::due_object_deletions(pool, 100)
         .await
         .unwrap()
         .contains(&file.object_key));
@@ -1293,19 +1309,22 @@ async fn repository_deletion_removes_asset_uploads(pg: bool) {
         "{}",
         uploaded.text()
     );
-    let file_id = db::releases::list_release_assets(world.database.pool(), release)
+    let file_id = codeyard_db_repos::releases::list_release_assets(world.database.pool(), release)
         .await
         .unwrap()[0]
         .file_id;
-    let file = db::files::get_file_by_id(world.database.pool(), file_id)
+    let file = codeyard_db_repos::files::get_file_by_id(world.database.pool(), file_id)
         .await
         .unwrap()
         .unwrap();
-    let repository =
-        db::repositories::records::get_repository(world.database.pool(), "alice", "proj")
-            .await
-            .unwrap()
-            .unwrap();
+    let repository = codeyard_db_repos::repositories::records::get_repository(
+        world.database.pool(),
+        "alice",
+        "proj",
+    )
+    .await
+    .unwrap()
+    .unwrap();
     codeyard_app::repositories::lifecycle::delete(
         world.database.pool(),
         None,
@@ -1314,10 +1333,12 @@ async fn repository_deletion_removes_asset_uploads(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(db::files::get_file_by_id(world.database.pool(), file_id)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        codeyard_db_repos::files::get_file_by_id(world.database.pool(), file_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
     let queued: bool = match world.database.pool() {
         codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM pending_object_deletions WHERE object_key=$1)",
@@ -1464,10 +1485,14 @@ async fn release_write_regressions(pg: bool) {
     assert!(stalled.is_err());
     assert_eq!(world.upload_reads.available_permits(), 4);
 
-    let repo = db::repositories::records::get_repository(world.database.pool(), "alice", "proj")
-        .await
-        .unwrap()
-        .unwrap();
+    let repo = codeyard_db_repos::repositories::records::get_repository(
+        world.database.pool(),
+        "alice",
+        "proj",
+    )
+    .await
+    .unwrap()
+    .unwrap();
     for delete_release in [false, true] {
         let id = publish(
             &world.alice,
@@ -1490,14 +1515,14 @@ async fn release_write_regressions(pg: bool) {
             .status,
             StatusCode::SEE_OTHER
         );
-        let assets = db::releases::list_release_assets(world.database.pool(), id)
+        let assets = codeyard_db_repos::releases::list_release_assets(world.database.pool(), id)
             .await
             .unwrap();
         let asset = &assets[0];
         // Stop at the database commit, before the domain's immediate object cleanup.
         if delete_release {
             assert_eq!(
-                db::releases::delete_release(
+                codeyard_db_repos::releases::delete_release(
                     world.database.pool(),
                     repo.owner_user_id.unwrap(),
                     repo.id,
@@ -1512,7 +1537,7 @@ async fn release_write_regressions(pg: bool) {
             );
         } else {
             assert_eq!(
-                db::releases::delete_release_asset(
+                codeyard_db_repos::releases::delete_release_asset(
                     world.database.pool(),
                     repo.owner_user_id.unwrap(),
                     repo.id,
@@ -1527,7 +1552,7 @@ async fn release_write_regressions(pg: bool) {
             );
         }
         assert!(
-            db::files::get_file_by_id(world.database.pool(), asset.file_id)
+            codeyard_db_repos::files::get_file_by_id(world.database.pool(), asset.file_id)
                 .await
                 .unwrap()
                 .is_none()
@@ -1539,10 +1564,12 @@ async fn release_write_regressions(pg: bool) {
                 &[],
             )
             .await;
-        assert!(!db::files::due_object_deletions(world.database.pool(), 100)
-            .await
-            .unwrap()
-            .is_empty());
+        assert!(
+            !codeyard_db_repos::files::due_object_deletions(world.database.pool(), 100)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
     std::fs::rename(&repo.disk_path, world._root.path().join("offline.git")).unwrap();
     let reply = world
@@ -1678,33 +1705,41 @@ async fn release_edit_and_read_regressions(pg: bool) {
             StatusCode::SEE_OTHER
         );
     }
-    let assets = db::releases::list_release_assets(world.database.pool(), id)
+    let assets = codeyard_db_repos::releases::list_release_assets(world.database.pool(), id)
         .await
         .unwrap();
     assert_eq!(
-        db::releases::get_release_asset_by_name(world.database.pool(), id, "b.bin")
+        codeyard_db_repos::releases::get_release_asset_by_name(world.database.pool(), id, "b.bin")
             .await
             .unwrap()
             .unwrap()
             .id,
         assets[1].id
     );
-    assert!(
-        db::releases::get_release_asset_by_name(world.database.pool(), id, "missing.bin")
-            .await
-            .unwrap()
-            .is_none()
-    );
-    assert!(
-        db::releases::get_release_asset_by_name(world.database.pool(), -1, "a.bin")
-            .await
-            .unwrap()
-            .is_none()
-    );
-    let repo = db::repositories::records::get_repository(world.database.pool(), "alice", "proj")
-        .await
-        .unwrap()
-        .unwrap();
+    assert!(codeyard_db_repos::releases::get_release_asset_by_name(
+        world.database.pool(),
+        id,
+        "missing.bin"
+    )
+    .await
+    .unwrap()
+    .is_none());
+    assert!(codeyard_db_repos::releases::get_release_asset_by_name(
+        world.database.pool(),
+        -1,
+        "a.bin"
+    )
+    .await
+    .unwrap()
+    .is_none());
+    let repo = codeyard_db_repos::repositories::records::get_repository(
+        world.database.pool(),
+        "alice",
+        "proj",
+    )
+    .await
+    .unwrap()
+    .unwrap();
     std::fs::rename(&repo.disk_path, world._root.path().join("offline.git")).unwrap();
     for path in [
         "/alice/proj/releases".to_owned(),
@@ -1786,23 +1821,35 @@ async fn postgres_release_edit_and_read_regressions() {
 async fn postgres_concurrent_release_deletion_with_shared_files() {
     let mut world = setup(true).await;
     let pool = world.database.pool();
-    let proj = db::repositories::records::get_repository(pool, "alice", "proj")
+    let proj = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")
         .await
         .unwrap()
         .unwrap();
-    let vault = db::repositories::records::get_repository(pool, "alice", "vault")
+    let vault = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "vault")
         .await
         .unwrap()
         .unwrap();
     let actor = proj.owner_user_id.unwrap();
-    let first =
-        db::releases::create_release(pool, actor, proj.id, "first", "main", &Default::default())
-            .await
-            .unwrap();
-    let second =
-        db::releases::create_release(pool, actor, vault.id, "second", "main", &Default::default())
-            .await
-            .unwrap();
+    let first = codeyard_db_repos::releases::create_release(
+        pool,
+        actor,
+        proj.id,
+        "first",
+        "main",
+        &Default::default(),
+    )
+    .await
+    .unwrap();
+    let second = codeyard_db_repos::releases::create_release(
+        pool,
+        actor,
+        vault.id,
+        "second",
+        "main",
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     for name in ["a.bin", "b.bin"] {
         assert_eq!(
             upload(
@@ -1820,8 +1867,8 @@ async fn postgres_concurrent_release_deletion_with_shared_files() {
     // Legacy rows can share uploads across repositories, in opposite asset order.
     world.database.execute("INSERT INTO release_assets(release_id,file_id,name,content_type,size) SELECT $1,file_id,name,content_type,size FROM release_assets WHERE release_id=$2 ORDER BY id DESC", &[second.id, first.id]).await;
     let (left, right) = tokio::join!(
-        db::releases::delete_release(pool, actor, proj.id, first.id),
-        db::releases::delete_release(pool, actor, vault.id, second.id)
+        codeyard_db_repos::releases::delete_release(pool, actor, proj.id, first.id),
+        codeyard_db_repos::releases::delete_release(pool, actor, vault.id, second.id)
     );
     let removed = left
         .unwrap()
@@ -1830,7 +1877,7 @@ async fn postgres_concurrent_release_deletion_with_shared_files() {
         .collect::<Vec<_>>();
     assert_eq!(removed.len(), 2);
     for file in removed {
-        assert!(db::files::get_file_by_id(pool, file.id)
+        assert!(codeyard_db_repos::files::get_file_by_id(pool, file.id)
             .await
             .unwrap()
             .is_none());

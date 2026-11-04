@@ -1,5 +1,4 @@
 //! Repository creation and edits use native provisioning and settings transactions.
-use crate::db;
 use crate::missing;
 use crate::mutations::target;
 use crate::mutations::text;
@@ -9,10 +8,10 @@ use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
 use codeyard_api_github::node_id;
-use db::repositories::creation::RepositoryCreationOwner;
-use db::repositories::creation::RepositoryTarget;
-use db::repositories::records;
-use db::repositories::topics;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_db_repos::repositories::creation::RepositoryTarget;
+use codeyard_db_repos::repositories::records;
+use codeyard_db_repos::repositories::topics;
 use serde_json::json;
 use serde_json::Value;
 
@@ -152,15 +151,19 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             }
         }
         if let RepositoryTarget::Organization(org) = owner {
-            if db::fine_grained_tokens::classic_refused(pool, request.auth.token.id, org)
-                .await
-                .map_err(unavailable)?
+            if codeyard_db_identity::fine_grained_tokens::classic_refused(
+                pool,
+                request.auth.token.id,
+                org,
+            )
+            .await
+            .map_err(unavailable)?
             {
                 return Err(token_denied());
             }
         }
         let team = if let Some(id) = input["teamId"].as_str() {
-            let (org, slug) = db::graphql::team_locator(
+            let (org, slug) = codeyard_db_repos::graphql::team_locator(
                 pool,
                 node_id::decode(id)
                     .filter(|(kind, _)| *kind == "T")
@@ -175,11 +178,12 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                     "A team grant requires its organization as owner",
                 ));
             }
-            let team = db::organizations::teams::get_public_team(pool, actor, org, &slug)
-                .await
-                .map_err(unavailable)?
-                .filter(|v| v.manage)
-                .ok_or_else(missing)?;
+            let team =
+                codeyard_db_orgs::organizations::teams::get_public_team(pool, actor, org, &slug)
+                    .await
+                    .map_err(unavailable)?
+                    .filter(|v| v.manage)
+                    .ok_or_else(missing)?;
             Some(team.team)
         } else {
             None
@@ -215,7 +219,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 codeyard_app::repositories::lifecycle::CreationInput {
                     owner: creation,
                     properties: &[],
-                    admission: db::repositories::creation::CreationAdmission {
+                    admission: codeyard_db_repos::repositories::creation::CreationAdmission {
                         authority: Some(&authority),
                         advisory: None,
                     },
@@ -248,17 +252,19 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         .await
         .map_err(|_| partial("Repository created; settings were not confirmed"))?;
         if let Some(team) = team {
-            use db::organizations::OrganizationOutcome;
-            let granted = db::organizations::teams::grant_organization_team_repository(
-                pool,
-                actor,
-                team.org_id,
-                team.id,
-                row.id,
-                db::organizations::teams::TeamRepositoryPermission::new(3).map_err(unavailable)?,
-            )
-            .await
-            .map_err(|_| partial("Repository created; team grant was not confirmed"))?;
+            use codeyard_db_core::queries::organizations::OrganizationOutcome;
+            let granted =
+                codeyard_db_orgs::organizations::teams::grant_organization_team_repository(
+                    pool,
+                    actor,
+                    team.org_id,
+                    team.id,
+                    row.id,
+                    codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(3)
+                        .map_err(unavailable)?,
+                )
+                .await
+                .map_err(|_| partial("Repository created; team grant was not confirmed"))?;
             if !matches!(granted, OrganizationOutcome::Applied(_)) {
                 return Err(partial("Repository created; team grant was not confirmed"));
             }

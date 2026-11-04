@@ -107,7 +107,7 @@ async fn files_survive_a_web_node(pg: bool) {
     let repo = lifecycle::provision(
         (database.pool(), None),
         root1.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "proj",
         None,
         true,
@@ -129,13 +129,13 @@ async fn files_survive_a_web_node(pg: bool) {
     .await
     .unwrap()
     .value;
-    let release = db::releases::create_release(
+    let release = codeyard_db_repos::releases::create_release(
         database.pool(),
         actor,
         repo.id,
         "v1",
         "main",
-        &db::releases::ReleaseFields {
+        &codeyard_db_repos::releases::ReleaseFields {
             is_draft: true,
             ..Default::default()
         },
@@ -178,7 +178,7 @@ async fn files_survive_a_web_node(pg: bool) {
     let runtime = runtime::issue(
         database.pool(),
         &run,
-        &db::actions::ActionsSettings::default(),
+        &codeyard_db_actions::actions::ActionsSettings::default(),
     )
     .await
     .unwrap();

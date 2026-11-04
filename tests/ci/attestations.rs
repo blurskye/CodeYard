@@ -67,7 +67,7 @@ async fn contract(pg: bool) {
             lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
-                db::repositories::creation::RepositoryCreationOwner::personal(owner),
+                codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
                 name,
                 None,
                 private,
@@ -77,7 +77,7 @@ async fn contract(pg: bool) {
             .unwrap(),
         );
     }
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         reader_id,
         repos[0].id,
@@ -354,9 +354,9 @@ async fn contract(pg: bool) {
     // Job credentials use the same repository binding, granular permission and revocation
     // checks as every other Actions API, including the bundle download alias.
     let sha = "a".repeat(40);
-    let run = db::ci::enqueue_ci_run(
+    let run = codeyard_db_actions::ci::enqueue_ci_run(
         f.pool(),
-        db::ci::NewCiRun {
+        codeyard_db_actions::ci::NewCiRun {
             repo_id: repos[0].id,
             triggered_by_id: owner,
             pipeline: "ci",
@@ -374,7 +374,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let claim = db::ci::claim_ci_run(
+    let claim = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "worker",
         "local",

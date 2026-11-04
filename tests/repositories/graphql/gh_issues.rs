@@ -141,7 +141,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         true,
@@ -259,19 +259,19 @@ async fn contract(pg: bool) {
         query(&router, token, ISSUE_ID, vars.clone()).await["repository"]["issue"]["id"],
         parent
     );
-    let parent_record = db::issues::get_issue(f.pool(), repo.id, 1)
+    let parent_record = codeyard_db_repos::issues::get_issue(f.pool(), repo.id, 1)
         .await
         .unwrap()
         .unwrap();
-    let child_record = db::issues::get_issue(f.pool(), repo.id, 2)
+    let child_record = codeyard_db_repos::issues::get_issue(f.pool(), repo.id, 2)
         .await
         .unwrap()
         .unwrap();
-    let kind = db::issue_attributes::configure(
+    let kind = codeyard_db_repos::issue_attributes::configure(
         f.pool(),
         repo.id,
         alice,
-        &db::issue_attributes::Definition {
+        &codeyard_db_repos::issue_attributes::Definition {
             id: None,
             expected_updated: None,
             kind: "type".into(),
@@ -308,7 +308,7 @@ async fn contract(pg: bool) {
         parent
     );
     assert_eq!(
-        db::issue_attributes::assigned_type(f.pool(), repo.id, parent_record.id)
+        codeyard_db_repos::issue_attributes::assigned_type(f.pool(), repo.id, parent_record.id)
             .await
             .unwrap()
             .unwrap()
@@ -336,10 +336,17 @@ async fn contract(pg: bool) {
             parent
         );
     }
-    let label = db::labels::create_label(f.pool(), alice, repo.id, "bug", "ff0000", Some("A bug"))
-        .await
-        .unwrap();
-    db::labels::create_label(f.pool(), alice, repo.id, "other", "00ff00", None)
+    let label = codeyard_db_repos::labels::create_label(
+        f.pool(),
+        alice,
+        repo.id,
+        "bug",
+        "ff0000",
+        Some("A bug"),
+    )
+    .await
+    .unwrap();
+    codeyard_db_repos::labels::create_label(f.pool(), alice, repo.id, "other", "00ff00", None)
         .await
         .unwrap();
     let labels = format!("fragment label on Label{{color,createdAt,description,id,isDefault,name,updatedAt,url}}{LABELS}");
@@ -376,7 +383,7 @@ async fn contract(pg: bool) {
             ["name"],
         "other"
     );
-    db::labels::update_label(
+    codeyard_db_repos::labels::update_label(
         f.pool(),
         alice,
         repo.id,
@@ -404,16 +411,16 @@ async fn contract(pg: bool) {
         .await,
         json!({"addLabelsToLabelable":{"__typename":"AddLabelsToLabelablePayload"}})
     );
-    db::assignees::assign_user(
+    codeyard_db_repos::assignees::assign_user(
         f.pool(),
         alice,
         repo.id,
-        db::assignees::AssignedItem::Issue(parent_record.id),
+        codeyard_db_repos::assignees::AssignedItem::Issue(parent_record.id),
         alice,
     )
     .await
     .unwrap();
-    let milestone = db::milestones::create_milestone(
+    let milestone = codeyard_db_repos::milestones::create_milestone(
         f.pool(),
         alice,
         repo.id,
@@ -423,7 +430,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::milestones::set_issue_milestone(
+    codeyard_db_repos::milestones::set_issue_milestone(
         f.pool(),
         alice,
         repo.id,
@@ -669,7 +676,7 @@ async fn contract(pg: bool) {
             query(&router, token, &text, json!({"input":input})).await[field]["issue"]["id"],
             parent
         );
-        let record = db::issues::get_issue_by_id(f.pool(), parent_record.id)
+        let record = codeyard_db_repos::issues::get_issue_by_id(f.pool(), parent_record.id)
             .await
             .unwrap()
             .unwrap();
@@ -744,12 +751,14 @@ async fn contract(pg: bool) {
         json!({"input":{"labelableId":parent,"labelIds":[label_id]}}),
     )
     .await;
-    assert!(
-        db::labels::get_issue_labels(f.pool(), parent_record.repo_id, parent_record.id)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(codeyard_db_repos::labels::get_issue_labels(
+        f.pool(),
+        parent_record.repo_id,
+        parent_record.id
+    )
+    .await
+    .unwrap()
+    .is_empty());
     // gh issue edit --title --add-label sends both mutations at once, and a label change moves
     // the issue's update time while the title edit is saving.
     let edit =
@@ -771,46 +780,48 @@ async fn contract(pg: bool) {
         );
     }
     assert_eq!(
-        db::issues::get_issue_by_id(f.pool(), parent_record.id)
+        codeyard_db_repos::issues::get_issue_by_id(f.pool(), parent_record.id)
             .await
             .unwrap()
             .unwrap()
             .title,
         "Renamed by gh"
     );
-    assert!(
-        db::labels::get_issue_labels(f.pool(), parent_record.repo_id, parent_record.id)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(codeyard_db_repos::labels::get_issue_labels(
+        f.pool(),
+        parent_record.repo_id,
+        parent_record.id
+    )
+    .await
+    .unwrap()
+    .is_empty());
     let text = "mutation CommentDelete($input:DeleteIssueCommentInput!){deleteIssueComment(input: $input){clientMutationId}}";
     assert_eq!(
         query(&router, token, text, json!({"input":{"id":comment_id}})).await,
         json!({"deleteIssueComment":{"clientMutationId":null}})
     );
     assert!(
-        db::issues::list_issue_comments(f.pool(), parent_record.id, 100, 0)
+        codeyard_db_repos::issues::list_issue_comments(f.pool(), parent_record.id, 100, 0)
             .await
             .unwrap()
             .is_empty()
     );
-    assert!(db::relationships::list(
+    assert!(codeyard_db_identity::relationships::list(
         f.pool(),
         Some(alice),
         parent_record.id,
-        db::relationships::Kind::Children,
+        codeyard_db_identity::relationships::Kind::Children,
         0,
         100
     )
     .await
     .unwrap()
     .is_empty());
-    assert!(db::relationships::list(
+    assert!(codeyard_db_identity::relationships::list(
         f.pool(),
         Some(alice),
         parent_record.id,
-        db::relationships::Kind::BlockedBy,
+        codeyard_db_identity::relationships::Kind::BlockedBy,
         0,
         100
     )
@@ -837,24 +848,28 @@ async fn contract(pg: bool) {
     let milestone_id = query(&router,token,"query RepositoryMilestoneByNumber($name:String!,$number:Int!,$owner:String!){repository(owner: $owner, name: $name){milestone(number: $number){id,title}}}",json!({"name":"proj","owner":"gh-issues-alice","number":milestone.number})).await["repository"]["milestone"]["id"].clone();
     let data = query(&router, token, CREATE, json!({"input":{"repositoryId":repo_id,"title":"Metadata","assigneeIds":[assignee],"labelIds":[label_id],"milestoneId":milestone_id}})).await;
     let metadata_id = data["createIssue"]["issue"]["id"].clone();
-    let metadata_record = db::issues::get_issue(f.pool(), repo.id, 3)
+    let metadata_record = codeyard_db_repos::issues::get_issue(f.pool(), repo.id, 3)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(metadata_record.milestone_id, Some(milestone.id));
     assert_eq!(
-        db::assignees::list_assignees(
+        codeyard_db_repos::assignees::list_assignees(
             f.pool(),
-            db::assignees::AssignedItem::Issue(metadata_record.id)
+            codeyard_db_repos::assignees::AssignedItem::Issue(metadata_record.id)
         )
         .await
         .unwrap(),
         vec!["gh-issues-alice"]
     );
     assert_eq!(
-        db::labels::get_issue_labels(f.pool(), metadata_record.repo_id, metadata_record.id)
-            .await
-            .unwrap()[0]
+        codeyard_db_repos::labels::get_issue_labels(
+            f.pool(),
+            metadata_record.repo_id,
+            metadata_record.id
+        )
+        .await
+        .unwrap()[0]
             .id,
         label.id
     );
@@ -867,25 +882,29 @@ async fn contract(pg: bool) {
         json!({"input":{"id":metadata_id,"assigneeIds":[],"labelIds":[],"milestoneId":null}}),
     )
     .await;
-    assert!(db::issues::get_issue_by_id(f.pool(), metadata_record.id)
-        .await
-        .unwrap()
-        .unwrap()
-        .milestone_id
-        .is_none());
-    assert!(db::assignees::list_assignees(
+    assert!(
+        codeyard_db_repos::issues::get_issue_by_id(f.pool(), metadata_record.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .milestone_id
+            .is_none()
+    );
+    assert!(codeyard_db_repos::assignees::list_assignees(
         f.pool(),
-        db::assignees::AssignedItem::Issue(metadata_record.id)
+        codeyard_db_repos::assignees::AssignedItem::Issue(metadata_record.id)
     )
     .await
     .unwrap()
     .is_empty());
-    assert!(
-        db::labels::get_issue_labels(f.pool(), metadata_record.repo_id, metadata_record.id)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(codeyard_db_repos::labels::get_issue_labels(
+        f.pool(),
+        metadata_record.repo_id,
+        metadata_record.id
+    )
+    .await
+    .unwrap()
+    .is_empty());
     query(&router, token, update, json!({"input":{"id":metadata_id,"assigneeIds":[assignee],"labelIds":[label_id],"milestoneId":milestone_id}})).await;
     let extra = query(
         &router,
@@ -966,7 +985,7 @@ async fn contract(pg: bool) {
         "mutation IssueClose($input:CloseIssueInput!){closeIssue(input: $input){issue{id}}}";
     assert_eq!(query(&router,token,close,json!({"input":{"issueId":metadata_id,"duplicateIssueId":parent,"stateReason":"DUPLICATE"}})).await["closeIssue"]["issue"]["id"],metadata_id);
     assert_eq!(
-        db::issues::management::duplicate(f.pool(), metadata_record.id)
+        codeyard_db_repos::issues::management::duplicate(f.pool(), metadata_record.id)
             .await
             .unwrap()
             .unwrap()
@@ -974,7 +993,7 @@ async fn contract(pg: bool) {
         parent_record.id
     );
     assert_eq!(
-        db::issues::get_issue_by_id(f.pool(), metadata_record.id)
+        codeyard_db_repos::issues::get_issue_by_id(f.pool(), metadata_record.id)
             .await
             .unwrap()
             .unwrap()
@@ -1015,9 +1034,9 @@ async fn contract(pg: bool) {
         .as_str()
         .unwrap()
         .ends_with("/gh-issues-alice/proj"));
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             issue: None,
             maintainer_can_modify: false,
             repo_id: repo.id,
@@ -1097,7 +1116,7 @@ async fn contract(pg: bool) {
     let target = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "destination",
         None,
         true,
@@ -1113,15 +1132,22 @@ async fn contract(pg: bool) {
     )
     .await["repository"]["id"]
         .clone();
-    let target_label = db::labels::create_label(f.pool(), alice, target.id, "bug", "111111", None)
-        .await
-        .unwrap();
-    let target_milestone =
-        db::milestones::create_milestone(f.pool(), alice, target.id, "Release", None, None)
+    let target_label =
+        codeyard_db_repos::labels::create_label(f.pool(), alice, target.id, "bug", "111111", None)
             .await
             .unwrap();
+    let target_milestone = codeyard_db_repos::milestones::create_milestone(
+        f.pool(),
+        alice,
+        target.id,
+        "Release",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     let transfer = "mutation IssueTransfer($input:TransferIssueInput!){transferIssue(input: $input){issue{url}}}";
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -1153,7 +1179,7 @@ async fn contract(pg: bool) {
         .as_str()
         .unwrap()
         .ends_with("/destination/issues/1"));
-    let moved = db::issues::get_issue_by_id(f.pool(), metadata_record.id)
+    let moved = codeyard_db_repos::issues::get_issue_by_id(f.pool(), metadata_record.id)
         .await
         .unwrap()
         .unwrap();
@@ -1169,7 +1195,7 @@ async fn contract(pg: bool) {
         target.id
     );
     assert_eq!(
-        db::labels::get_issue_labels(f.pool(), moved.repo_id, moved.id)
+        codeyard_db_repos::labels::get_issue_labels(f.pool(), moved.repo_id, moved.id)
             .await
             .unwrap()[0]
             .id,
@@ -1190,7 +1216,7 @@ async fn contract(pg: bool) {
     );
     query(&router,token,close,json!({"input":{"issueId":parent,"duplicateIssueId":metadata_id,"stateReason":"DUPLICATE"}})).await;
     assert_eq!(
-        db::issues::management::duplicate(f.pool(), parent_record.id)
+        codeyard_db_repos::issues::management::duplicate(f.pool(), parent_record.id)
             .await
             .unwrap()
             .unwrap()
@@ -1206,7 +1232,7 @@ async fn contract(pg: bool) {
     .await;
     assert!(denied["errors"].is_array(), "{denied}");
     assert_eq!(
-        db::issues::get_issue_by_id(f.pool(), child_record.id)
+        codeyard_db_repos::issues::get_issue_by_id(f.pool(), child_record.id)
             .await
             .unwrap()
             .unwrap()
@@ -1223,12 +1249,14 @@ async fn contract(pg: bool) {
         .await["deleteIssue"]["repository"]["id"],
         target_id
     );
-    assert!(db::issues::get_issue_by_id(f.pool(), metadata_record.id)
-        .await
-        .unwrap()
-        .is_none());
     assert!(
-        db::issues::management::linked_branches(f.pool(), metadata_record.id)
+        codeyard_db_repos::issues::get_issue_by_id(f.pool(), metadata_record.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        codeyard_db_repos::issues::management::linked_branches(f.pool(), metadata_record.id)
             .await
             .unwrap()
             .is_empty()

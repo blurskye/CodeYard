@@ -23,7 +23,7 @@ async fn contract(pg: bool) {
     let repo = lifecycle::provision(
         (database.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "proj",
         None,
         false,
@@ -94,7 +94,7 @@ async fn contract(pg: bool) {
         bare.refname_to_id("refs/heads/main").unwrap().to_string(),
         result.sha
     );
-    let runs = db::ci::list_ci_runs_for_repo(database.pool(), repo.id, 100)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(database.pool(), repo.id, 100)
         .await
         .unwrap();
     assert!(runs

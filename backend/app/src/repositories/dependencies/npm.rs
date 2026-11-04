@@ -8,6 +8,7 @@ use codeyard_db_repos::repositories::dependencies::MAX_PACKAGES;
 use semver::Version;
 use semver::VersionReq;
 use serde_json::Value;
+use sha2::Digest;
 use sha2::Sha512;
 use std::collections::BTreeMap;
 

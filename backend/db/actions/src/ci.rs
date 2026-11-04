@@ -399,5 +399,3 @@ native_operation!(crate::postgres::ci::has_ci_accepted_push,
 ) -> Result<bool>);
 
 use codeyard_db_core::queries::ci::CiCredential;
-
-use codeyard_db_core::queries::ci::CiCredential;

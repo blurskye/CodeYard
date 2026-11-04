@@ -21,8 +21,3 @@ pub async fn closed_state() -> AppState {
         None,
     )
 }
-
-#[cfg(target_os = "linux")]
-#[cfg(test)]
-#[path = "git_sessions/broker_tests.rs"]
-mod git_sessions;

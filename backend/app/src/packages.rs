@@ -1,4 +1,5 @@
 //! Content-addressed objects are reserved before storage I/O so interrupted writes are collected.
+use sha2::Digest;
 
 use crate::storage::ObjectStore;
 use crate::storage::Upload;

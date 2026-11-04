@@ -9,12 +9,12 @@ use crate::support::http_client::Client;
 use axum::http::StatusCode;
 use codeyard::backend::db;
 use codeyard::backend::identity::passwords;
+use codeyard_db_identity::users::signup_requests as requests;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
-use db::users::signup_requests as requests;
 
 async fn user(f: &Database, name: &str) -> codeyard_db_core::models::User {
-    db::users::accounts::get_user_by_username(f.pool(), name)
+    codeyard_db_identity::users::accounts::get_user_by_username(f.pool(), name)
         .await
         .unwrap()
         .unwrap()
@@ -23,7 +23,7 @@ async fn user(f: &Database, name: &str) -> codeyard_db_core::models::User {
 async fn admin_forms(pg: bool) {
     fake_webui_bundle::install();
     let mut f = Database::new(pg).await;
-    db::node_config::upsert_node_configuration(f.pool(), "private", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(f.pool(), "private", true)
         .await
         .unwrap();
     let admin = f.actor("forms_admin").await;
@@ -145,7 +145,7 @@ async fn admin_forms(pg: bool) {
         Some("/admin/users?saved=request")
     );
     assert!(
-        db::users::accounts::get_user_by_username(f.pool(), "forms_decline")
+        codeyard_db_identity::users::accounts::get_user_by_username(f.pool(), "forms_decline")
             .await
             .unwrap()
             .is_none()

@@ -193,15 +193,3 @@ use codeyard_db_core::queries::code_security::apply;
 use codeyard_db_core::queries::code_security::RepositorySettings;
 
 use codeyard_db_core::queries::code_security::Configuration;
-
-use codeyard_db_core::queries::code_security::Configuration;
-
-use codeyard_db_core::queries::code_security::Refusal;
-
-use codeyard_db_core::queries::code_security::RepositorySettings;
-
-use codeyard_db_core::queries::code_security::TOGGLES;
-
-use codeyard_db_core::queries::code_security::apply;
-
-use codeyard_db_core::queries::code_security::scanning_settings;

@@ -40,7 +40,7 @@ async fn organization_assignees_require_scoped_grants_not_public_visibility() {
             )
             .await;
         }
-        let issue = db::issues::create_issue(f.pool(), r.id, owner, "Assign me", "")
+        let issue = codeyard_db_repos::issues::create_issue(f.pool(), r.id, owner, "Assign me", "")
             .await
             .unwrap();
         let expected = ["assignment_admin", "assignment_owner", "assignment_writer"];
@@ -110,7 +110,7 @@ async fn organization_assignees_require_scoped_grants_not_public_visibility() {
 
 #[tokio::test]
 async fn repository_filters_share_native_search_semantics_and_escape_literals() {
-    use db::repositories::records::{RepositoryFilter, RepositorySort};
+    use codeyard_db_repos::repositories::records::{RepositoryFilter, RepositorySort};
     for pg in [false, true] {
         let mut f = Database::new(pg).await;
         let owner = f.actor("search_owner").await;
@@ -125,9 +125,14 @@ async fn repository_filters_share_native_search_semantics_and_escape_literals() 
         )
         .await
         .unwrap();
-        db::repositories::access::grant_repo_access(f.pool(), reader, r.id, AccessLevel::Read)
-            .await
-            .unwrap();
+        codeyard_db_repos::repositories::access::grant_repo_access(
+            f.pool(),
+            reader,
+            r.id,
+            AccessLevel::Read,
+        )
+        .await
+        .unwrap();
         // Exact Unicode names work even with PostgreSQL's C collation. SQLite additionally
         // uses the same Unicode-insensitive matcher as its ordinary repository search.
         let mut queries = vec!["École", "CAFÉ", "100%_literal"];
@@ -258,7 +263,7 @@ async fn milestone_list_filters_omit_descriptions_but_keep_counts_and_dates() {
         let owner = f.actor("filter_owner").await;
         let r = repo(&f, owner, "filters").await;
         let description = "x".repeat(65_536);
-        let m = db::milestones::create_milestone(
+        let m = codeyard_db_repos::milestones::create_milestone(
             f.pool(),
             owner,
             r.id,
@@ -268,13 +273,19 @@ async fn milestone_list_filters_omit_descriptions_but_keep_counts_and_dates() {
         )
         .await
         .unwrap();
-        let issue = db::issues::create_issue(f.pool(), r.id, owner, "Open", "")
+        let issue = codeyard_db_repos::issues::create_issue(f.pool(), r.id, owner, "Open", "")
             .await
             .unwrap();
-        db::milestones::set_issue_milestone(f.pool(), owner, r.id, issue.id, Some(m.number))
-            .await
-            .unwrap();
-        let rows = db::milestones::list_milestone_filters(f.pool(), r.id)
+        codeyard_db_repos::milestones::set_issue_milestone(
+            f.pool(),
+            owner,
+            r.id,
+            issue.id,
+            Some(m.number),
+        )
+        .await
+        .unwrap();
+        let rows = codeyard_db_repos::milestones::list_milestone_filters(f.pool(), r.id)
             .await
             .unwrap();
         assert_eq!(rows.len(), 1);
@@ -284,7 +295,7 @@ async fn milestone_list_filters_omit_descriptions_but_keep_counts_and_dates() {
         assert_eq!(rows[0].open_items, 1);
         assert_eq!(rows[0].closed_items, 0);
         assert_eq!(
-            db::milestones::get_milestone(f.pool(), r.id, m.number)
+            codeyard_db_repos::milestones::get_milestone(f.pool(), r.id, m.number)
                 .await
                 .unwrap()
                 .unwrap()
@@ -302,7 +313,7 @@ async fn activity_scan_exposes_exhaustion_even_without_visible_rows() {
     for pg in [false, true] {
         let mut f = Database::new(pg).await;
         let owner = f.actor("scan_owner").await;
-        let batch = db::activity::list_user_activity(f.pool(), owner, None, 2, 0)
+        let batch = codeyard_db_repos::activity::list_user_activity(f.pool(), owner, None, 2, 0)
             .await
             .unwrap();
         let (rows, exhausted) = (batch.rows, batch.scanned < 2);
@@ -310,18 +321,18 @@ async fn activity_scan_exposes_exhaustion_even_without_visible_rows() {
         for name in ["hidden_one", "hidden_two", "hidden_three"] {
             repo(&f, owner, name).await;
         }
-        let batch = db::activity::list_user_activity(f.pool(), owner, None, 2, 0)
+        let batch = codeyard_db_repos::activity::list_user_activity(f.pool(), owner, None, 2, 0)
             .await
             .unwrap();
         let (rows, exhausted) = (batch.rows, batch.scanned < 2);
         assert!(rows.is_empty() && !exhausted);
-        let batch = db::activity::list_user_activity(f.pool(), owner, None, 2, 2)
+        let batch = codeyard_db_repos::activity::list_user_activity(f.pool(), owner, None, 2, 2)
             .await
             .unwrap();
         let (rows, exhausted) = (batch.rows, batch.scanned < 2);
         assert!(rows.is_empty() && exhausted);
         let session = uuid::Uuid::new_v4().to_string();
-        db::users::sessions::create_session(
+        codeyard_db_identity::users::sessions::create_session(
             f.pool(),
             &session,
             owner,
@@ -331,10 +342,10 @@ async fn activity_scan_exposes_exhaustion_even_without_visible_rows() {
         )
         .await
         .unwrap();
-        let batch = db::activity::list_user_activity(
+        let batch = codeyard_db_repos::activity::list_user_activity(
             f.pool(),
             owner,
-            Some(db::activity::ActivityViewer {
+            Some(codeyard_db_repos::activity::ActivityViewer {
                 user: owner,
                 session: &session,
             }),

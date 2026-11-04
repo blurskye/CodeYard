@@ -67,7 +67,7 @@ async fn environments_contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "private",
         None,
         true,
@@ -375,16 +375,21 @@ async fn environments_contract(pg: bool) {
         404,
     )
     .await;
+    assert!(codeyard_db_actions::environments::branches(
+        f.pool(),
+        env["id"].as_i64().unwrap(),
+        0,
+        10
+    )
+    .await
+    .unwrap()
+    .is_empty());
     assert!(
-        db::environments::branches(f.pool(), env["id"].as_i64().unwrap(), 0, 10)
+        codeyard_db_actions::environments::get(f.pool(), repo.id, "production")
             .await
             .unwrap()
-            .is_empty()
+            .is_none()
     );
-    assert!(db::environments::get(f.pool(), repo.id, "production")
-        .await
-        .unwrap()
-        .is_none());
     checked(
         &router,
         "repos/delete-an-environment",

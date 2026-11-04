@@ -32,7 +32,7 @@ async fn save(client: &Client, owner: &str, file: &str, previous: &str, content:
 
 /// Workflow paths admitted for one head commit, sorted.
 async fn admitted_workflows(f: &Database, repo: i64, head: &str) -> Vec<String> {
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo, 100)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo, 100)
         .await
         .unwrap();
     let mut paths: Vec<String> = runs
@@ -56,7 +56,7 @@ async fn contract(pg: bool) {
     let base = provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -66,11 +66,11 @@ async fn contract(pg: bool) {
     .unwrap();
     // This contract inspects act's isolated checkout and excludes repository secrets.
     // Select that engine explicitly now that the site's default is codeyard-actions.
-    db::actions::save_repo_actions_settings(
+    codeyard_db_actions::actions::save_repo_actions_settings(
         f.pool(),
         alice_id,
         base.id,
-        &db::actions::RepoActionsSettings {
+        &codeyard_db_actions::actions::RepoActionsSettings {
             engine: Some("act".into()),
             ..Default::default()
         },
@@ -78,27 +78,32 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     let encryptor = Arc::new(SecretEncryptor::new(&[42; 32]));
-    db::secrets::create_or_update_secret(
+    codeyard_db_actions::secrets::create_or_update_secret(
         f.pool(),
         &encryptor,
         base.id,
         "BASE_SECRET",
         "must-not-be-delivered",
         Some(alice_id),
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice_id).await,
         ),
     )
     .await
     .unwrap();
     // The fake runner below stands in for act, so the repository picks that engine.
-    let mut settings = db::actions::get_repo_actions_settings(f.pool(), base.id)
+    let mut settings = codeyard_db_actions::actions::get_repo_actions_settings(f.pool(), base.id)
         .await
         .unwrap();
     settings.engine = Some("act".into());
-    db::actions::save_repo_actions_settings(f.pool(), alice_id, base.id, &settings)
-        .await
-        .unwrap();
+    codeyard_db_actions::actions::save_repo_actions_settings(
+        f.pool(),
+        alice_id,
+        base.id,
+        &settings,
+    )
+    .await
+    .unwrap();
     let runner = root.path().join("runner");
     let config = Arc::new(CiConfig {
         mode: CiExecutionMode::Local,
@@ -154,7 +159,7 @@ async fn contract(pg: bool) {
         )
         .await;
     let fork_id = fork["repo"]["id"].as_i64().unwrap();
-    let fork = db::repositories::records::get_repository_by_id(f.pool(), fork_id)
+    let fork = codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), fork_id)
         .await
         .unwrap()
         .unwrap();
@@ -227,12 +232,12 @@ async fn contract(pg: bool) {
         diff.to_string().contains("fork.txt") && diff.to_string().contains("fork one"),
         "{diff}"
     );
-    let pending = db::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
+    let pending = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
         .await
         .unwrap();
     assert_eq!(pending.len(), 1);
     assert!(pending[0].approval_required && pending[0].is_fork);
-    assert!(db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "not-approved",
         "local",
@@ -255,7 +260,7 @@ async fn contract(pg: bool) {
         .form("/alice/proj/pulls/1/workflows", &[("expected_head", &h1)])
         .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
         .await
         .unwrap();
     assert_eq!(runs.len(), 1);
@@ -272,7 +277,7 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(
-        db::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
             .await
             .unwrap()
             .len(),
@@ -346,7 +351,7 @@ async fn contract(pg: bool) {
             .to_string(),
         h2
     );
-    let waiting = db::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
+    let waiting = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
         .await
         .unwrap();
     assert_eq!(waiting.len(), 2);
@@ -372,7 +377,7 @@ async fn contract(pg: bool) {
             StatusCode::OK,
         )
         .await;
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
         .await
         .unwrap();
     assert_eq!(runs.len(), 2);
@@ -570,7 +575,7 @@ echo isolated-checkout-only-admitted-objects
     let private = provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "private",
         None,
         true,
@@ -659,7 +664,7 @@ echo isolated-checkout-only-admitted-objects
     let t1 = alice.save("topic", "topic.txt", &tip).await;
     let same_pull = alice.open_pull("Same repository", "topic", "main").await;
     let t2 = alice.save("topic", "topic-two.txt", &t1).await;
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
         .await
         .unwrap();
     for sha in [&t1, &t2] {
@@ -677,7 +682,7 @@ echo isolated-checkout-only-admitted-objects
         json!({"content": workflow, "message": "Run both events", "branch": "topic", "expected_revision": t2}), StatusCode::OK).await;
     let t3 = text(&saved["commit"], "sha");
     assert_eq!(alice.pull(3).await["head_sha"], t3);
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
         .await
         .unwrap();
     for event in ["push", "pull_request"] {
@@ -692,7 +697,7 @@ echo isolated-checkout-only-admitted-objects
     let saved = alice.expect("POST", "/api/repos/alice/proj/contents/.github/workflows/broken.yml",
         json!({"content": malformed, "message": "Add malformed workflow", "branch": "topic", "expected_revision": t3}), StatusCode::CREATED).await;
     let t4 = text(&saved, "sha");
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), base.id, 30)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), base.id, 30)
         .await
         .unwrap();
     for event in ["push", "pull_request"] {
@@ -711,7 +716,7 @@ echo isolated-checkout-only-admitted-objects
     // A trusted writer may approve fork workflows, but a deployment workflow also needs
     // deployment rights. The refusal must be reported, the workflow that was admitted
     // must not be queued again, and someone who may deploy must still complete the head.
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob_id,
         base.id,
@@ -729,10 +734,11 @@ echo isolated-checkout-only-admitted-objects
         )
         .await;
     let new_fork_id = new_fork["repo"]["id"].as_i64().unwrap();
-    let new_fork = db::repositories::records::get_repository_by_id(f.pool(), new_fork_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let new_fork =
+        codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), new_fork_id)
+            .await
+            .unwrap()
+            .unwrap();
     let tip = repo_store(&new_fork, None)
         .commit("main")
         .await
@@ -761,7 +767,7 @@ echo isolated-checkout-only-admitted-objects
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
     assert_eq!(refused["error"], "ci_not_queued", "{refused}");
-    let pending_deploy = db::ci::list_ci_runs_for_repo(f.pool(), base.id, 100)
+    let pending_deploy = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), base.id, 100)
         .await
         .unwrap();
     assert!(pending_deploy
@@ -815,7 +821,7 @@ async fn private_preview_contract(pg: bool) {
     let base = provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -842,7 +848,7 @@ async fn private_preview_contract(pg: bool) {
         &[fork_id],
     )
     .await;
-    let fork = db::repositories::records::get_repository_by_id(f.pool(), fork_id)
+    let fork = codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), fork_id)
         .await
         .unwrap()
         .unwrap();
@@ -994,7 +1000,7 @@ async fn private_fork_revocation_contract(pg: bool) {
     let base = provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -1030,7 +1036,7 @@ async fn private_fork_revocation_contract(pg: bool) {
         &[fork_id],
     )
     .await;
-    let fork = db::repositories::records::get_repository_by_id(f.pool(), fork_id)
+    let fork = codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), fork_id)
         .await
         .unwrap()
         .unwrap();
@@ -1042,7 +1048,7 @@ async fn private_fork_revocation_contract(pg: bool) {
         "one\n",
     )
     .await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob_id,
         fork.id,
@@ -1110,7 +1116,7 @@ async fn private_fork_revocation_contract(pg: bool) {
         .await;
 
     assert!(
-        db::repositories::access::revoke_repo_access(f.pool(), bob_id, fork.id)
+        codeyard_db_repos::repositories::access::revoke_repo_access(f.pool(), bob_id, fork.id)
             .await
             .unwrap()
     );
@@ -1181,7 +1187,7 @@ async fn private_fork_revocation_contract(pg: bool) {
     )
     .await
     .is_err());
-    let stored = db::pull_requests::records::get_pull_request_by_id(
+    let stored = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
         f.pool(),
         opened["id"].as_i64().unwrap(),
     )
@@ -1190,11 +1196,13 @@ async fn private_fork_revocation_contract(pg: bool) {
     .unwrap();
     assert_eq!(stored.head_sha, first);
     assert_eq!(stored.base_sha, advanced_base.sha);
-    let later_stored =
-        db::pull_requests::records::get_pull_request_by_id(f.pool(), later["id"].as_i64().unwrap())
-            .await
-            .unwrap()
-            .unwrap();
+    let later_stored = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
+        f.pool(),
+        later["id"].as_i64().unwrap(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(later_stored.head_sha, later_second.sha);
     assert_eq!(later_stored.base_sha, advanced_base.sha);
     assert_eq!(
@@ -1220,9 +1228,9 @@ async fn private_fork_revocation_contract(pg: bool) {
         .create_branch_as(f.pool(), fork.id, carol_id, "retry", &second.sha)
         .await
         .unwrap();
-    let interrupted = db::pull_requests::records::create_pull_request(
+    let interrupted = codeyard_db_repos::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: base.id,
             head_repo_id: Some(fork.id),
             author_id: carol_id,
@@ -1345,7 +1353,7 @@ async fn private_head_rename_contract(pg: bool) {
     provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,

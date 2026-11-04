@@ -34,7 +34,7 @@ async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
     codeyard_app::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -56,7 +56,7 @@ async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
 }
 
 async fn repo_id(database: &Database) -> i64 {
-    db::repositories::records::get_repository(database.pool(), "alice", "proj")
+    codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
         .await
         .unwrap()
         .unwrap()
@@ -66,16 +66,17 @@ async fn repo_id(database: &Database) -> i64 {
 async fn stale_admin_native_mutations(pg: bool) {
     let (mut database, _root, alice, bob_client) = setup(pg).await;
     let repo = repo_id(&database).await;
-    let owner = db::users::accounts::get_user_by_username(database.pool(), "alice")
-        .await
-        .unwrap()
-        .unwrap()
-        .id;
-    let bob = db::users::accounts::get_user_by_username(database.pool(), "bob")
+    let owner =
+        codeyard_db_identity::users::accounts::get_user_by_username(database.pool(), "alice")
+            .await
+            .unwrap()
+            .unwrap()
+            .id;
+    let bob = codeyard_db_identity::users::accounts::get_user_by_username(database.pool(), "bob")
         .await
         .unwrap()
         .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         database.pool(),
         bob.id,
         repo,
@@ -84,7 +85,7 @@ async fn stale_admin_native_mutations(pg: bool) {
     .await
     .unwrap();
     let parsed = ssh_key::PublicKey::from_openssh(ED25519).unwrap();
-    let key = db::deploy_keys::NewDeployKey {
+    let key = codeyard_db_identity::deploy_keys::NewDeployKey {
         repo_id: repo,
         title: "ci".into(),
         fingerprint: parsed.fingerprint(ssh_key::HashAlg::Sha256).to_string(),
@@ -92,10 +93,14 @@ async fn stale_admin_native_mutations(pg: bool) {
         can_write: true,
         created_by_id: bob.id,
     };
-    let created = db::deploy_keys::insert_deploy_key(database.pool(), &key, &bob_client.session)
-        .await
-        .unwrap();
-    db::repositories::access::grant_repo_access(
+    let created = codeyard_db_identity::deploy_keys::insert_deploy_key(
+        database.pool(),
+        &key,
+        &bob_client.session,
+    )
+    .await
+    .unwrap();
+    codeyard_db_repos::repositories::access::grant_repo_access(
         database.pool(),
         bob.id,
         repo,
@@ -103,7 +108,7 @@ async fn stale_admin_native_mutations(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(db::deploy_keys::delete_deploy_key(
+    assert!(codeyard_db_identity::deploy_keys::delete_deploy_key(
         database.pool(),
         repo,
         created.id,
@@ -114,16 +119,25 @@ async fn stale_admin_native_mutations(pg: bool) {
     .is_err());
     let mut next = key;
     next.fingerprint = "unused-fingerprint".into();
-    assert!(
-        db::deploy_keys::insert_deploy_key(database.pool(), &next, &bob_client.session)
-            .await
-            .is_err()
-    );
+    assert!(codeyard_db_identity::deploy_keys::insert_deploy_key(
+        database.pool(),
+        &next,
+        &bob_client.session
+    )
+    .await
+    .is_err());
     assert_eq!(
-        db::deploy_keys::list_deploy_keys(database.pool(), owner, repo, &alice.session, 0, 100)
-            .await
-            .unwrap()
-            .len(),
+        codeyard_db_identity::deploy_keys::list_deploy_keys(
+            database.pool(),
+            owner,
+            repo,
+            &alice.session,
+            0,
+            100
+        )
+        .await
+        .unwrap()
+        .len(),
         1
     );
     database.finish().await;
@@ -140,18 +154,19 @@ async fn postgres_deploy_key_mutations_recheck_administration() {
 async fn keys_api_and_forms(pg: bool) {
     let (database, _root, alice, bob) = setup(pg).await;
     let repo = repo_id(&database).await;
-    let owner = db::users::accounts::get_user_by_username(database.pool(), "alice")
-        .await
-        .unwrap()
-        .unwrap()
-        .id;
+    let owner =
+        codeyard_db_identity::users::accounts::get_user_by_username(database.pool(), "alice")
+            .await
+            .unwrap()
+            .unwrap()
+            .id;
     let rid = repo.to_string();
     let path = "/api/repos/alice/proj/keys";
     let (status, _) = alice
         .api("POST", path, json!({"title":"ci\0key", "key": ED25519}))
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(db::deploy_keys::list_deploy_keys(
+    assert!(codeyard_db_identity::deploy_keys::list_deploy_keys(
         database.pool(),
         owner,
         repo,
@@ -253,10 +268,11 @@ async fn keys_api_and_forms(pg: bool) {
         .api("POST", path, json!({"title": "again", "key": ED25519}))
         .await;
     assert_eq!(status, StatusCode::CONFLICT, "{text}");
-    let owner = db::users::accounts::get_user_by_username(database.pool(), "alice")
-        .await
-        .unwrap()
-        .unwrap();
+    let owner =
+        codeyard_db_identity::users::accounts::get_user_by_username(database.pool(), "alice")
+            .await
+            .unwrap()
+            .unwrap();
     ssh_keys::add_ssh_key(database.pool(), owner.id, "laptop", ECDSA)
         .await
         .unwrap();
@@ -296,10 +312,16 @@ async fn keys_api_and_forms(pg: bool) {
         )
         .await;
     assert!(reply.status.is_redirection(), "{}", reply.text());
-    let rows =
-        db::deploy_keys::list_deploy_keys(database.pool(), owner.id, repo, &alice.session, 0, 100)
-            .await
-            .unwrap();
+    let rows = codeyard_db_identity::deploy_keys::list_deploy_keys(
+        database.pool(),
+        owner.id,
+        repo,
+        &alice.session,
+        0,
+        100,
+    )
+    .await
+    .unwrap();
     assert!(rows.is_empty(), "the form deleted the key");
 
     // An unknown key is not found, and a listed key is deleted.
@@ -345,15 +367,16 @@ async fn keys_api_and_forms(pg: bool) {
 async fn live_authority(pg: bool) {
     let (mut database, _root, alice, bob) = setup(pg).await;
     let pool = database.pool();
-    let repository = db::repositories::records::get_repository(pool, "alice", "proj")
+    let repository =
+        codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
+    let owner = codeyard_db_identity::users::accounts::get_user_by_username(pool, "alice")
         .await
         .unwrap()
         .unwrap();
-    let owner = db::users::accounts::get_user_by_username(pool, "alice")
-        .await
-        .unwrap()
-        .unwrap();
-    let bob_id = db::users::accounts::get_user_by_username(pool, "bob")
+    let bob_id = codeyard_db_identity::users::accounts::get_user_by_username(pool, "bob")
         .await
         .unwrap()
         .unwrap()
@@ -368,7 +391,7 @@ async fn live_authority(pg: bool) {
         )
         .await;
     let repository = database.repository(repository.id).await;
-    let administrator = db::users::accounts::get_user_by_id(pool, bob_id)
+    let administrator = codeyard_db_identity::users::accounts::get_user_by_id(pool, bob_id)
         .await
         .unwrap()
         .unwrap();
@@ -390,7 +413,7 @@ async fn live_authority(pg: bool) {
                 .unwrap();
         assert_eq!(access, codeyard_db_core::models::AccessLevel::Write);
     }
-    db::users::sessions::delete_session(pool, &alice.session)
+    codeyard_db_identity::users::sessions::delete_session(pool, &alice.session)
         .await
         .unwrap();
     assert!(matches!(
@@ -406,7 +429,7 @@ async fn live_authority(pg: bool) {
         .await,
         Err(codeyard_model::repositories::DeployKeyError::Denied)
     ));
-    assert!(db::deploy_keys::delete_deploy_key(
+    assert!(codeyard_db_identity::deploy_keys::delete_deploy_key(
         pool,
         repository.id,
         key.id,
@@ -427,23 +450,26 @@ async fn live_authority(pg: bool) {
     )
     .await
     .is_err());
-    assert!(db::deploy_keys::get_deploy_key(pool, key.id)
-        .await
-        .unwrap()
-        .is_some());
-    let org = match db::organizations::create_organization(
+    assert!(
+        codeyard_db_identity::deploy_keys::get_deploy_key(pool, key.id)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let org = match codeyard_db_orgs::organizations::profiles::create_organization(
         pool,
         owner.id,
-        &db::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "acme",
-            db::organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                .unwrap(),
         )
         .unwrap(),
     )
     .await
     .unwrap()
     {
-        db::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization creation"),
     };
     database.execute("UPDATE repositories SET owner_kind='org',owner_user_id=NULL,owner_org_id=$1 WHERE id=$2", &[org.id, repository.id]).await;
@@ -468,7 +494,7 @@ async fn live_authority(pg: bool) {
         .is_err(),
         "personal site-admin authority does not extend to organizations"
     );
-    let late = db::deploy_keys::NewDeployKey {
+    let late = codeyard_db_identity::deploy_keys::NewDeployKey {
         repo_id: repository.id,
         title: "late".into(),
         fingerprint: "unused".into(),
@@ -477,19 +503,25 @@ async fn live_authority(pg: bool) {
         created_by_id: bob_id,
     };
     assert!(
-        db::deploy_keys::insert_deploy_key(pool, &late, &bob.session)
+        codeyard_db_identity::deploy_keys::insert_deploy_key(pool, &late, &bob.session)
             .await
             .is_err()
     );
+    assert!(codeyard_db_identity::deploy_keys::delete_deploy_key(
+        pool,
+        repository.id,
+        key.id,
+        bob_id,
+        &bob.session
+    )
+    .await
+    .is_err());
     assert!(
-        db::deploy_keys::delete_deploy_key(pool, repository.id, key.id, bob_id, &bob.session)
+        codeyard_db_identity::deploy_keys::get_deploy_key(pool, key.id)
             .await
-            .is_err()
+            .unwrap()
+            .is_some()
     );
-    assert!(db::deploy_keys::get_deploy_key(pool, key.id)
-        .await
-        .unwrap()
-        .is_some());
     database.finish().await;
 }
 

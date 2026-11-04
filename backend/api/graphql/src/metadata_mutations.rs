@@ -1,5 +1,4 @@
 //! Translate GraphQL IDs into the REST lane's validated metadata batch, not a second write path.
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::RequestContext;
@@ -52,12 +51,12 @@ pub(super) async fn prepare(
         let mut selected = ids(value, "L")?;
         selected.sort_unstable();
         selected.dedup();
-        if selected.len() > db::labels::MAX_ISSUE_LABELS {
+        if selected.len() > codeyard_db_repos::labels::MAX_ISSUE_LABELS {
             return Err(async_graphql::Error::new("At most 100 labels are allowed"));
         }
         let mut names = vec![];
         for id in selected {
-            let row = db::labels::get_label_by_id(&request.state.pool, id)
+            let row = codeyard_db_repos::labels::get_label_by_id(&request.state.pool, id)
                 .await
                 .map_err(unavailable)?
                 .filter(|row| row.repo_id == repo.id)
@@ -70,14 +69,15 @@ pub(super) async fn prepare(
         let mut selected = ids(value, "U")?;
         selected.sort_unstable();
         selected.dedup();
-        if selected.len() > db::assignees::MAX_ASSIGNEES as usize {
+        if selected.len() > codeyard_db_repos::assignees::MAX_ASSIGNEES as usize {
             return Err(async_graphql::Error::new(
                 "At most 10 assignees are allowed",
             ));
         }
-        let users = db::users::accounts::get_users_by_ids(&request.state.pool, &selected)
-            .await
-            .map_err(unavailable)?;
+        let users =
+            codeyard_db_identity::users::accounts::get_users_by_ids(&request.state.pool, &selected)
+                .await
+                .map_err(unavailable)?;
         if users.len() != selected.len() {
             return Err(missing());
         }
@@ -96,12 +96,16 @@ pub(super) async fn prepare(
                 return Err(missing());
             }
             json!(
-                db::milestones::get_milestone_by_id(&request.state.pool, repo.id, id)
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?
-                    .milestone
-                    .number
+                codeyard_db_repos::milestones::get_milestone_by_id(
+                    &request.state.pool,
+                    repo.id,
+                    id
+                )
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?
+                .milestone
+                .number
             )
         };
     }

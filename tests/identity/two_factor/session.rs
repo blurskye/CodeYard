@@ -1,5 +1,5 @@
 use super::*;
-use db::users::sessions::{rotate_authenticated_session, SessionCredential};
+use codeyard_db_identity::users::sessions::{rotate_authenticated_session, SessionCredential};
 
 async fn checked_totp(
     database: &Database,
@@ -35,7 +35,7 @@ async fn totp_consumption_rolls_back_when_the_session_insert_fails() {
         };
         let collision = token();
         let expiry = chrono::Utc::now() + chrono::Duration::hours(1);
-        db::users::sessions::create_browser_session(
+        codeyard_db_identity::users::sessions::create_browser_session(
             database.pool(),
             &collision,
             None,
@@ -55,10 +55,11 @@ async fn totp_consumption_rolls_back_when_the_session_insert_fails() {
         )
         .await
         .is_err());
-        let stored = db::users::two_factor::get_two_factor(database.pool(), user.id)
-            .await
-            .unwrap()
-            .unwrap();
+        let stored =
+            codeyard_db_identity::users::two_factor::get_two_factor(database.pool(), user.id)
+                .await
+                .unwrap()
+                .unwrap();
         assert!(
             stored.last_used_step.unwrap() < step,
             "a failed session insert must not spend its TOTP"

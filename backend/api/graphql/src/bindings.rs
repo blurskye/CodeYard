@@ -1,7 +1,6 @@
 //! Typed schema bindings over the authorized presentation values loaded by each family.
 use crate::arg;
 use crate::arguments::Arguments;
-use crate::db;
 use crate::missing;
 use crate::node;
 use crate::unavailable;
@@ -514,9 +513,9 @@ impl Object {
             ("PullRequestReview" | "PullRequestReviewComment", "reactionGroups") => {
                 crate::collaboration::reactions(
                     if ty == "PullRequestReview" {
-                        db::reactions::Subject::PullRequestReview
+                        codeyard_db_repos::reactions::Subject::PullRequestReview
                     } else {
-                        db::reactions::Subject::PullRequestComment
+                        codeyard_db_repos::reactions::Subject::PullRequestComment
                     },
                     self.0["databaseId"].as_i64().ok_or_else(missing)?,
                     request,
@@ -614,7 +613,7 @@ impl Object {
                 boxed(|| node(&id, request)).await
             }
             ("Query", "rateLimit") => Ok(
-                json!({"limit":db::graphql::QUERY_LIMIT,"cost":1,"remaining":db::graphql::QUERY_LIMIT.saturating_sub(request.rate.used).max(0),"used":request.rate.used,"nodeCount":request.nodes.load(Ordering::Relaxed),"resetAt":request.rate.reset_at}),
+                json!({"limit":codeyard_db_repos::graphql::QUERY_LIMIT,"cost":1,"remaining":codeyard_db_repos::graphql::QUERY_LIMIT.saturating_sub(request.rate.used).max(0),"used":request.rate.used,"nodeCount":request.nodes.load(Ordering::Relaxed),"resetAt":request.rate.reset_at}),
             ),
             ("Query", "resource") => boxed(|| crate::projects::resource(arguments, request)).await,
             ("Mutation", _) if field.contains("ProjectV2") => {

@@ -235,7 +235,3 @@ pub async fn set_repository_access_default(
 use codeyard_db_core::queries::sqlite::dependabot::check_repositories;
 
 use codeyard_db_core::queries::sqlite::dependabot::authorized;
-
-use codeyard_db_core::queries::sqlite::dependabot::authorized;
-
-use codeyard_db_core::queries::sqlite::dependabot::check_repositories;

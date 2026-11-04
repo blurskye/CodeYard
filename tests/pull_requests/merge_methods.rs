@@ -42,7 +42,7 @@ async fn setup(f: &mut Database, root: &Path) -> Fixture {
     let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root,
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "proj",
         None,
         false,
@@ -50,7 +50,7 @@ async fn setup(f: &mut Database, root: &Path) -> Fixture {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         merger_id,
         repository.id,
@@ -162,9 +162,9 @@ async fn refused_form_contract(pg: bool) {
         .await;
     app.alice.open_pull("One", "feature", "main").await;
     // The rule wants one approval, and nobody has given one.
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         f.pool(),
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: app.owner,
             repo_id: app.repository.id,
             pattern: "main",
@@ -193,11 +193,14 @@ async fn refused_form_contract(pg: bool) {
 
 /// Checks that the pull request row records `sha` as its merge commit.
 async fn assert_merge_commit(f: &Database, app: &Fixture, number: i64, sha: &str) {
-    let row =
-        db::pull_requests::records::get_pull_request(f.pool(), app.repository.id, number as i32)
-            .await
-            .unwrap()
-            .unwrap();
+    let row = codeyard_db_repos::pull_requests::records::get_pull_request(
+        f.pool(),
+        app.repository.id,
+        number as i32,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(row.merge_commit_sha.as_deref(), Some(sha));
 }
 
@@ -665,14 +668,14 @@ async fn retained_history_and_merge_hook_contract(pg: bool) {
         git.refname_to_id("refs/pull/1/head").unwrap().to_string(),
         head
     );
-    let hook = db::webhooks::insert_webhook(
+    let hook = codeyard_db_repos::webhooks::insert_webhook(
         f.pool(),
-        db::webhooks::HookOwner::Repository(app.repository.id),
+        codeyard_db_repos::webhooks::HookOwner::Repository(app.repository.id),
         app.owner,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), app.owner).await,
         ),
-        &db::webhooks::WebhookFields {
+        &codeyard_db_core::queries::webhooks::WebhookFields {
             username: None,
             password: None,
             payload_url: "invalid://test".into(),
@@ -690,7 +693,9 @@ async fn retained_history_and_merge_hook_contract(pg: bool) {
     assert_eq!(status, StatusCode::OK, "{result}");
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        let deliveries = db::webhooks::list_deliveries(f.pool(), hook).await.unwrap();
+        let deliveries = codeyard_db_repos::webhooks::list_deliveries(f.pool(), hook)
+            .await
+            .unwrap();
         if let Some(delivery) = deliveries
             .iter()
             .find(|delivery| delivery.action.as_deref() == Some("closed"))
@@ -769,7 +774,7 @@ async fn sqlite_merge_queues_push_ci_when_marking_fails() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{result}");
     let sha = main_tip(&app.repository.disk_path);
     assert_ne!(sha, main);
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), app.repository.id, 100)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), app.repository.id, 100)
         .await
         .unwrap();
     assert!(

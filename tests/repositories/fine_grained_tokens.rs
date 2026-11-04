@@ -125,7 +125,7 @@ async fn contract(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("alice").await;
     let org = applied(
-        db::organizations::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             alice,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -271,13 +271,13 @@ async fn contract(pg: bool) {
     // Only an explicit contents grant may include unpublished releases. A selected public
     // repository keeps public read access, as on GitHub, so a metadata-only token still
     // reads its published releases.
-    db::releases::create_release(
+    codeyard_db_repos::releases::create_release(
         f.pool(),
         alice,
         repos[2].id,
         "unpublished",
         "main",
-        &db::releases::ReleaseFields {
+        &codeyard_db_repos::releases::ReleaseFields {
             is_draft: true,
             ..Default::default()
         },

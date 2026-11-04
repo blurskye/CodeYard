@@ -1479,11 +1479,3 @@ use codeyard_db_core::queries::postgres::ci::is_deployment;
 use codeyard_db_core::queries::postgres::ci::ci_commit_status;
 
 use codeyard_db_core::queries::postgres::ci::lock_run_repository;
-
-use codeyard_db_core::queries::postgres::ci::ci_commit_status;
-
-use codeyard_db_core::queries::postgres::ci::finish_in_tx;
-
-use codeyard_db_core::queries::postgres::ci::is_deployment;
-
-use codeyard_db_core::queries::postgres::ci::lock_run_repository;

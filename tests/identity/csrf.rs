@@ -40,19 +40,25 @@ async fn session_with_csrf(pool: &codeyard_db_core::DbPool, user: Option<i64>) -
     let session = native::token();
     let expires_at = chrono::Utc::now() + chrono::Duration::hours(1);
     if let Some(user) = user {
-        db::users::sessions::create_session(pool, &session, user, None, None, expires_at)
-            .await
-            .unwrap();
+        codeyard_db_identity::users::sessions::create_session(
+            pool, &session, user, None, None, expires_at,
+        )
+        .await
+        .unwrap();
     } else {
-        db::users::sessions::create_browser_session(pool, &session, None, None, expires_at)
-            .await
-            .unwrap();
+        codeyard_db_identity::users::sessions::create_browser_session(
+            pool, &session, None, None, expires_at,
+        )
+        .await
+        .unwrap();
     }
     let csrf = native::token();
     assert_eq!(
-        db::users::sessions::get_or_create_csrf_token(pool, &session, user, &csrf, 3600)
-            .await
-            .unwrap(),
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
+            pool, &session, user, &csrf, 3600
+        )
+        .await
+        .unwrap(),
         Some(csrf.clone())
     );
     (session, csrf)
@@ -133,7 +139,7 @@ async fn contract(pg: bool) {
     let password_hash = codeyard_identity::passwords::hash_password("current-password")
         .await
         .unwrap();
-    let login_user = db::users::accounts::create_user_with_password_and_flags(
+    let login_user = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         fixture.pool(),
         "private-user",
         None,
@@ -170,7 +176,7 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::SEE_OTHER, "private login: {body}");
 
     // A temporary-password session may submit only the operation that removes its restriction.
-    let forced_user = db::users::accounts::create_user_with_password_and_flags(
+    let forced_user = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         fixture.pool(),
         "forced-user",
         None,
@@ -213,10 +219,11 @@ async fn contract(pg: bool) {
     let cookie = headers[header::SET_COOKIE].to_str().unwrap();
     assert!(cookie.contains("Max-Age=0"), "{cookie}");
 
-    let admin = db::users::accounts::get_user_by_username(fixture.pool(), "root_admin")
-        .await
-        .unwrap()
-        .unwrap();
+    let admin =
+        codeyard_db_identity::users::accounts::get_user_by_username(fixture.pool(), "root_admin")
+            .await
+            .unwrap()
+            .unwrap();
     let (logout_session, logout_csrf) = session_with_csrf(fixture.pool(), Some(admin.id)).await;
     fixture
         .execute(
@@ -236,7 +243,7 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::FORBIDDEN, "expired token: {body}");
 
     let candidate = native::token();
-    let fresh_csrf = db::users::sessions::get_or_create_csrf_token(
+    let fresh_csrf = codeyard_db_identity::users::sessions::get_or_create_csrf_token(
         fixture.pool(),
         &logout_session,
         Some(admin.id),
@@ -258,12 +265,13 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "logout: {body}");
     assert!(headers.get(header::SET_COOKIE).is_some());
-    assert!(
-        db::users::sessions::get_session_account(fixture.pool(), &logout_session)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_identity::users::sessions::get_session_account(
+        fixture.pool(),
+        &logout_session
+    )
+    .await
+    .unwrap()
+    .is_none());
 
     // A refused form never sets a cookie, so a forged cross-site post cannot replace the
     // victim's session. A revoked cookie gets a fresh anonymous session from the next page
@@ -399,7 +407,7 @@ async fn temporary_password_settings_contract(pg: bool) {
             .unwrap(),
         SetupClaim::Completed(_)
     ));
-    let owner = db::users::accounts::create_user_with_password_and_flags(
+    let owner = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         fixture.pool(),
         "owner_admin",
         None,
@@ -409,11 +417,16 @@ async fn temporary_password_settings_contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::users::ssh_keys::add_ssh_key(fixture.pool(), owner.id, "owner-key-marker", SSH_KEY)
-        .await
-        .unwrap();
+    codeyard_db_identity::users::ssh_keys::add_ssh_key(
+        fixture.pool(),
+        owner.id,
+        "owner-key-marker",
+        SSH_KEY,
+    )
+    .await
+    .unwrap();
     let session = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         fixture.pool(),
         session,
         owner.id,
@@ -423,7 +436,7 @@ async fn temporary_password_settings_contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::users::tokens::create_token(
+    codeyard_db_identity::users::tokens::create_token(
         fixture.pool(),
         owner.id,
         session,
@@ -434,7 +447,7 @@ async fn temporary_password_settings_contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::users::signup_requests::create_signup_request(
+    codeyard_db_identity::users::signup_requests::create_signup_request(
         fixture.pool(),
         "applicant_marker",
         Some("applicant-marker@example.test"),
@@ -527,15 +540,17 @@ async fn setup_name_contract(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(body.contains("That username is reserved."));
-    assert!(!db::node_config::get_node_configuration(fixture.pool())
-        .await
-        .unwrap()
-        .is_some_and(|config| config.setup_completed));
+    assert!(
+        !codeyard_db_cluster::node_config::get_node_configuration(fixture.pool())
+            .await
+            .unwrap()
+            .is_some_and(|config| config.setup_completed)
+    );
 
     // An existing administrator named `admin` keeps that name and can finish setup
     // while configuration is incomplete.
     let hash = passwords::hash_password("setup-password").await.unwrap();
-    db::users::accounts::create_user_with_password_and_flags(
+    codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         fixture.pool(),
         "admin",
         None,
@@ -555,10 +570,12 @@ async fn setup_name_contract(pg: bool) {
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "recovery: {body}");
-    assert!(db::node_config::get_node_configuration(fixture.pool())
-        .await
-        .unwrap()
-        .is_some_and(|config| config.setup_completed));
+    assert!(
+        codeyard_db_cluster::node_config::get_node_configuration(fixture.pool())
+            .await
+            .unwrap()
+            .is_some_and(|config| config.setup_completed)
+    );
     fixture.finish().await;
 }
 
@@ -589,7 +606,7 @@ async fn native_auth_forms_contract(pg: bool) {
             .unwrap(),
         SetupClaim::Completed(_)
     ));
-    db::users::accounts::create_user_with_password_and_flags(
+    codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         fixture.pool(),
         "throttled_user",
         None,
@@ -756,7 +773,7 @@ async fn appearance_settings_contract(pg: bool) {
             .unwrap(),
         SetupClaim::Completed(_)
     ));
-    let owner = db::users::accounts::create_user_with_password_and_flags(
+    let owner = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         fixture.pool(),
         "owner_admin",
         None,

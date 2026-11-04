@@ -74,7 +74,7 @@ async fn due_after_wait(f: &Database) -> Vec<String> {
         &[],
     )
     .await;
-    db::files::due_object_deletions(f.pool(), 100)
+    codeyard_db_repos::files::due_object_deletions(f.pool(), 100)
         .await
         .unwrap()
 }
@@ -116,10 +116,11 @@ async fn contract(pg: bool) {
     .await;
     let base = "/api/v3/repos/codeql-owner/scan/code-scanning/codeql/databases";
     let uploads = "/api/uploads/repos/codeql-owner/scan/code-scanning/codeql/databases";
-    let repo = db::repositories::records::get_repository(f.pool(), "codeql-owner", "scan")
-        .await
-        .unwrap()
-        .unwrap();
+    let repo =
+        codeyard_db_repos::repositories::records::get_repository(f.pool(), "codeql-owner", "scan")
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(
         call(
             &router,
@@ -224,7 +225,7 @@ async fn contract(pg: bool) {
     assert_github_schema("code-scanning/get-codeql-database", 200, &uploaded);
     assert_eq!(uploaded["uploader"]["id"], alice);
     assert_eq!(uploaded["size"], first.len());
-    let old = db::codeql::get(f.pool(), alice, repo.id, "python")
+    let old = codeyard_db_security::codeql::get(f.pool(), alice, repo.id, "python")
         .await
         .unwrap()
         .unwrap();
@@ -322,15 +323,17 @@ async fn contract(pg: bool) {
     assert_eq!(replaced["id"], uploaded["id"]);
     assert_eq!(replaced["created_at"], uploaded["created_at"]);
     assert_eq!(replaced["name"], "replaced.zip");
-    let current = db::codeql::get(f.pool(), alice, repo.id, "python")
+    let current = codeyard_db_security::codeql::get(f.pool(), alice, repo.id, "python")
         .await
         .unwrap()
         .unwrap();
     assert_ne!(current.object_key, old.object_key);
-    assert!(!db::files::due_object_deletions(f.pool(), 100)
-        .await
-        .unwrap()
-        .contains(&old.object_key));
+    assert!(
+        !codeyard_db_repos::files::due_object_deletions(f.pool(), 100)
+            .await
+            .unwrap()
+            .contains(&old.object_key)
+    );
     let pending = due_after_wait(&f).await;
     assert!(pending.contains(&old.object_key));
     assert!(!pending.contains(&current.object_key));
@@ -401,7 +404,7 @@ async fn contract(pg: bool) {
         String::from_utf8_lossy(&body)
     );
     assert_eq!(
-        db::codeql::get(f.pool(), alice, repo.id, "python")
+        codeyard_db_security::codeql::get(f.pool(), alice, repo.id, "python")
             .await
             .unwrap()
             .unwrap()
@@ -439,7 +442,7 @@ async fn contract(pg: bool) {
         404,
     )
     .await;
-    let java = db::codeql::get(f.pool(), alice, repo.id, "java")
+    let java = codeyard_db_security::codeql::get(f.pool(), alice, repo.id, "java")
         .await
         .unwrap()
         .unwrap();

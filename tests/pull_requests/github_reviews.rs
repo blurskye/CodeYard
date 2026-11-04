@@ -17,7 +17,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -25,7 +25,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob_id,
         repo.id,
@@ -118,10 +118,11 @@ async fn contract(pg: bool) {
 
     let (status, comment) = bob.api("POST", &format!("{old}/comments"), json!({"body": "Still thinking", "path": "feature.txt", "line": 1, "side": "RIGHT", "commit_sha": head, "base_sha": base, "pending": true})).await;
     assert_eq!(status, StatusCode::CREATED, "{comment}");
-    let pending = db::pull_requests::reviews::get_pending_review(f.pool(), id, bob_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let pending =
+        codeyard_db_repos::pull_requests::reviews::get_pending_review(f.pool(), id, bob_id)
+            .await
+            .unwrap()
+            .unwrap();
     let (status, _, body) = exchange(
         &router,
         "pulls/get-review",
@@ -233,10 +234,13 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], "DISMISSED");
-    let review = db::pull_requests::reviews::get_pull_request_review_by_id(f.pool(), review_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let review = codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(
+        f.pool(),
+        review_id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(review.dismissed_by_id, Some(alice_id));
     assert_eq!(
         review.dismissed_reason.as_deref(),

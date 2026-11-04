@@ -41,10 +41,12 @@ async fn linked_target(
     if !snapshots.contains_key(&branch.repo_id) {
         snapshots.insert(branch.repo_id, None);
         if repository::optional_authority(branch.repo_id, "contents", request).await? {
-            if let Some(repo) =
-                db::repositories::records::get_repository_by_id(&request.state.pool, branch.repo_id)
-                    .await
-                    .map_err(unavailable)?
+            if let Some(repo) = codeyard_db_repos::repositories::records::get_repository_by_id(
+                &request.state.pool,
+                branch.repo_id,
+            )
+            .await
+            .map_err(unavailable)?
             {
                 let refs = codeyard_app::repositories::store::repo_store(
                     &repo,
@@ -104,7 +106,7 @@ pub(super) async fn resolve(
             .any(|issue| issue.id == id))),
         "closedByPullRequestsReferences" => {
             connection::validate(ctx)?;
-            let issue = db::issues::get_issue_by_id(&request.state.pool, id)
+            let issue = codeyard_db_repos::issues::get_issue_by_id(&request.state.pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -190,7 +192,7 @@ pub(super) async fn mutation(
                 .await
                 .map_err(error)?;
             payload["issue"] = object(
-                &db::issues::get_issue_by_id(pool, id)
+                &codeyard_db_repos::issues::get_issue_by_id(pool, id)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?,
@@ -218,7 +220,7 @@ pub(super) async fn mutation(
             );
         }
         "createLinkedBranch" => {
-            let issue = db::issues::get_issue_by_id(pool, id)
+            let issue = codeyard_db_repos::issues::get_issue_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;

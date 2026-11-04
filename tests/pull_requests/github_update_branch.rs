@@ -59,7 +59,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -115,9 +115,9 @@ async fn contract(pg: bool) {
     // A body that is not JSON is a 400, as GitHub answers "Problems parsing JSON".
     update(&router, &url, owner, "{", StatusCode::BAD_REQUEST).await;
     // Updating a head is a direct push, not a bypass of its PR/linear-history rules.
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         f.pool(),
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: alice_id,
             repo_id: repo.id,
             pattern: "feature",
@@ -134,9 +134,9 @@ async fn contract(pg: bool) {
         store.commit_from_primary("feature").await.unwrap().sha,
         head
     );
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         f.pool(),
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: alice_id,
             repo_id: repo.id,
             pattern: "feature",
@@ -161,10 +161,14 @@ async fn contract(pg: bool) {
     let changed = store.commit_from_primary("feature").await.unwrap();
     assert_ne!(changed.sha, head);
     assert_eq!(changed.parents, vec![head, main.clone()]);
-    let saved = db::pull_requests::records::get_pull_request(f.pool(), repo.id, number as i32)
-        .await
-        .unwrap()
-        .unwrap();
+    let saved = codeyard_db_repos::pull_requests::records::get_pull_request(
+        f.pool(),
+        repo.id,
+        number as i32,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(saved.head_sha, changed.sha);
     assert_eq!(saved.state, "open");
     assert!(saved.is_draft);
@@ -249,9 +253,9 @@ async fn contract(pg: bool) {
     );
     let main = alice.save("main", "later-upstream.txt", &main).await;
     // Base protections are not head protections; neither grants delegated fork write access.
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         f.pool(),
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: alice_id,
             repo_id: repo.id,
             pattern: "main",
@@ -270,7 +274,7 @@ async fn contract(pg: bool) {
         StatusCode::ACCEPTED,
     )
     .await;
-    let fork = db::repositories::records::get_repository_by_id(f.pool(), fork_id)
+    let fork = codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), fork_id)
         .await
         .unwrap()
         .unwrap();

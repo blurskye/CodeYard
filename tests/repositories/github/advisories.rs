@@ -173,13 +173,13 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     let fork_id = fork["id"].as_i64().unwrap();
-    let error = db::repositories::records::update_repository(
+    let error = codeyard_db_repos::repositories::records::update_repository(
         f.pool(),
         owner,
         fork_id,
         None,
         false,
-        db::repositories::records::MergeMethodUpdate {
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
             merge: None,
             squash: None,
             rebase: None,
@@ -189,8 +189,8 @@ async fn contract(pg: bool) {
     .unwrap_err();
     assert!(
         matches!(
-            error.downcast_ref::<db::repositories::records::RepositorySettingsRefusal>(),
-            Some(db::repositories::records::RepositorySettingsRefusal::VisibilityLocked)
+            error.downcast_ref::<codeyard_db_repos::repositories::records::RepositorySettingsRefusal>(),
+            Some(codeyard_db_repos::repositories::records::RepositorySettingsRefusal::VisibilityLocked)
         ),
         "{error:?}"
     );
@@ -259,7 +259,7 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, _, _) = request(&router, "GET", &report_api, Some(&reporting), Value::Null).await;
     assert_eq!(status, StatusCode::OK);
-    let record = db::advisories::get(f.pool(), Some(owner), repo_id, report_ghsa)
+    let record = codeyard_db_security::advisories::get(f.pool(), Some(owner), repo_id, report_ghsa)
         .await
         .unwrap()
         .unwrap();
@@ -369,17 +369,20 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(second.as_array().unwrap().len(), 2);
     assert_ne!(second[0]["ghsa_id"], list[0]["ghsa_id"]);
-    let input = db::organizations::profiles::NewOrganization::new(
+    let input = codeyard_db_orgs::organizations::profiles::NewOrganization::new(
         "advisory-org",
-        db::organizations::profiles::OrganizationProfile::new(Some("Advisory organization"), None)
-            .unwrap(),
+        codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(
+            Some("Advisory organization"),
+            None,
+        )
+        .unwrap(),
     )
     .unwrap();
     assert!(matches!(
-        db::organizations::profiles::create_organization(f.pool(), owner, &input)
+        codeyard_db_orgs::organizations::profiles::create_organization(f.pool(), owner, &input)
             .await
             .unwrap(),
-        db::organizations::OrganizationOutcome::Applied(_)
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     for private in [false, true] {
         let name = if private { "private" } else { "public" };
@@ -458,7 +461,7 @@ async fn contract(pg: bool) {
     f.execute("UPDATE users SET is_banned=true WHERE id=$1", &[reporter])
         .await;
     assert!(
-        db::advisories::get(f.pool(), Some(reporter), repo_id, report_ghsa)
+        codeyard_db_security::advisories::get(f.pool(), Some(reporter), repo_id, report_ghsa)
             .await
             .unwrap()
             .is_none(),
@@ -472,7 +475,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(
-        db::advisories::get(f.pool(), Some(reporter), repo_id, report_ghsa)
+        codeyard_db_security::advisories::get(f.pool(), Some(reporter), repo_id, report_ghsa)
             .await
             .unwrap()
             .is_none()

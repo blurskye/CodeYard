@@ -33,7 +33,7 @@ async fn branch_operations_contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         true,
@@ -164,11 +164,11 @@ async fn extended(
 ) {
     let (pool, repo, actor) = scope;
     let (writer, reader, outsider) = tokens;
-    let app = db::github_apps::register(
+    let app = codeyard_db_identity::github_apps::register(
         pool,
         actor,
         &session.session,
-        &db::github_apps::App {
+        &codeyard_db_identity::github_apps::App {
             id: 0,
             owner_id: actor,
             bot_id: 0,
@@ -189,7 +189,7 @@ async fn extended(
     .await
     .unwrap()
     .unwrap();
-    db::github_apps::install(
+    codeyard_db_identity::github_apps::install(
         pool,
         actor,
         &session.session,
@@ -630,9 +630,9 @@ pub(super) async fn run(
         ("git/create-ref", 201),
     )
     .await;
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         pool,
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id,
             repo_id,
             pattern: "policy",

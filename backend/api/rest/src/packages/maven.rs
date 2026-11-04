@@ -14,6 +14,7 @@ use codeyard_app::app::AppState;
 use codeyard_db_repos::packages::MavenFile;
 use codeyard_db_repos::packages::Permission;
 use codeyard_support::object_limits::MAX_OBJECT_BYTES;
+use sha2::Digest;
 use std::sync::Arc;
 use std::time::Duration;
 

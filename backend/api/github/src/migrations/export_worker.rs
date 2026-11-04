@@ -11,6 +11,7 @@ use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use serde_json::json;
 use serde_json::Value;
+use sha2::Digest;
 use sha2::Sha256;
 use std::sync::Arc;
 use std::time::Duration;

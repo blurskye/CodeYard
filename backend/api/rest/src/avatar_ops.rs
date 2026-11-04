@@ -6,6 +6,7 @@
 //! A picture arriving from a form is stored through the same upload checks and
 //! quotas as one uploaded through the files API, then activated when set. The picture
 //! an account stops using is removed in the same database transaction as the change.
+use sha2::Digest;
 
 use codeyard_app::files::uploads::UploadDeclaration;
 use codeyard_app::files::uploads::UploadError;

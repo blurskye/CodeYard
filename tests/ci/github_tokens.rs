@@ -73,7 +73,7 @@ async fn contract(pg: bool) {
             repositories::lifecycle::provision(
                 (f.pool(), None),
                 &repos_root,
-                db::repositories::creation::RepositoryCreationOwner::personal(actor),
+                codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
                 name,
                 None,
                 true,
@@ -85,9 +85,9 @@ async fn contract(pg: bool) {
     }
     let repo = &repos[0];
     let sha = "a".repeat(40);
-    let run = db::ci::enqueue_ci_run(
+    let run = codeyard_db_actions::ci::enqueue_ci_run(
         f.pool(),
-        db::ci::NewCiRun {
+        codeyard_db_actions::ci::NewCiRun {
             repo_id: repo.id,
             triggered_by_id: actor,
             pipeline: "ci",
@@ -105,7 +105,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let run = db::ci::claim_ci_run(
+    let run = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "worker",
         "local",
@@ -146,12 +146,13 @@ async fn contract(pg: bool) {
         .unwrap();
     assert!(credentials.act_limited);
     let jobs = &credentials.workflows[".github/workflows/ci.yml"];
-    assert!(
-        db::users::tokens::find_token(f.pool(), &ci::runtime::token_hash(&act.act))
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_identity::users::tokens::find_token(
+        f.pool(),
+        &ci::runtime::token_hash(&act.act)
+    )
+    .await
+    .unwrap()
+    .is_none());
     blob(&router, "project", &jobs["writer"], StatusCode::CREATED).await;
     blob(&router, "project", &jobs["reader"], StatusCode::FORBIDDEN).await;
     blob(&router, "other", &jobs["writer"], StatusCode::NOT_FOUND).await;
@@ -170,16 +171,19 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
     assert_eq!(merge.status(), StatusCode::FORBIDDEN);
-    let stored = db::users::tokens::find_token(f.pool(), &ci::runtime::token_hash(&jobs["writer"]))
+    let stored = codeyard_db_identity::users::tokens::find_token(
+        f.pool(),
+        &ci::runtime::token_hash(&jobs["writer"]),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let bot = codeyard_db_identity::users::tokens::token_user(f.pool(), stored.id, false)
         .await
         .unwrap()
         .unwrap();
-    let bot = db::users::tokens::token_user(f.pool(), stored.id, false)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(bot.username, db::ci_tokens::BOT);
-    assert!(db::users::sessions::create_session(
+    assert_eq!(bot.username, codeyard_db_core::queries::ci_tokens::BOT);
+    assert!(codeyard_db_identity::users::sessions::create_session(
         f.pool(),
         "bot-session",
         bot.id,
@@ -191,7 +195,7 @@ async fn contract(pg: bool) {
     .is_err());
     assert_eq!(codeyard_app::webhooks::payloads::user(&bot)["type"], "Bot");
     // The shared GraphQL implementation must not borrow this bot's grants from other runs.
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bot.id,
         repos[1].id,
@@ -209,7 +213,10 @@ async fn contract(pg: bool) {
     .await;
     let foreign = names["data"]["repository"]["id"].as_str().unwrap();
     let names=graphql(&router,&jobs["writer"],"{ viewer { login } allowed:repository(owner:\"alice\",name:\"project\") { id name } denied:repository(owner:\"alice\",name:\"other\") { id name } }",json!({})).await;
-    assert_eq!(names["data"]["viewer"]["login"], db::ci_tokens::BOT);
+    assert_eq!(
+        names["data"]["viewer"]["login"],
+        codeyard_db_core::queries::ci_tokens::BOT
+    );
     assert_eq!(names["data"]["allowed"]["name"], "project");
     assert!(names["data"]["denied"].is_null());
     assert!(names["errors"]
@@ -334,7 +341,7 @@ async fn contract(pg: bool) {
         ));
         drop(server);
     }
-    db::ci_tokens::finish_job(
+    codeyard_db_actions::ci_tokens::finish_job(
         f.pool(),
         run.id,
         "another-worker",
@@ -342,11 +349,11 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(db::ci_tokens::get(f.pool(), stored.id)
+    assert!(codeyard_db_actions::ci_tokens::get(f.pool(), stored.id)
         .await
         .unwrap()
         .is_some());
-    db::ci_tokens::finish_job(
+    codeyard_db_actions::ci_tokens::finish_job(
         f.pool(),
         run.id,
         "worker",
@@ -355,7 +362,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     assert!(
-        db::ci_tokens::get(f.pool(), stored.id)
+        codeyard_db_actions::ci_tokens::get(f.pool(), stored.id)
             .await
             .unwrap()
             .is_some(),
@@ -366,31 +373,39 @@ async fn contract(pg: bool) {
         &[stored.id],
     )
     .await;
-    assert!(db::users::tokens::token_user(f.pool(), stored.id, false)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        codeyard_db_identity::users::tokens::token_user(f.pool(), stored.id, false)
+            .await
+            .unwrap()
+            .is_none()
+    );
     f.execute(
         "UPDATE ci_runs SET status='success',completed_at='2000-01-01T00:00:00Z' WHERE id=$1",
         &[run.id],
     )
     .await;
-    let reader = db::users::tokens::find_token(f.pool(), &ci::runtime::token_hash(&jobs["reader"]))
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(db::users::tokens::token_user(f.pool(), reader.id, false)
-        .await
-        .unwrap()
-        .is_none());
-    f.execute("DELETE FROM ci_runs WHERE id=$1", &[run.id])
-        .await;
+    let reader = codeyard_db_identity::users::tokens::find_token(
+        f.pool(),
+        &ci::runtime::token_hash(&jobs["reader"]),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert!(
-        db::users::tokens::find_token(f.pool(), &ci::runtime::token_hash(&jobs["reader"]))
+        codeyard_db_identity::users::tokens::token_user(f.pool(), reader.id, false)
             .await
             .unwrap()
             .is_none()
     );
+    f.execute("DELETE FROM ci_runs WHERE id=$1", &[run.id])
+        .await;
+    assert!(codeyard_db_identity::users::tokens::find_token(
+        f.pool(),
+        &ci::runtime::token_hash(&jobs["reader"])
+    )
+    .await
+    .unwrap()
+    .is_none());
     f.finish().await;
 }
 

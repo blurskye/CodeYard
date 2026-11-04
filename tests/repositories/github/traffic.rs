@@ -99,7 +99,7 @@ async fn traffic_contract(pg: bool) {
     )
     .await;
     let repo = f.repository(created["id"].as_i64().unwrap()).await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -317,7 +317,7 @@ async fn traffic_contract(pg: bool) {
         )
         .await;
     }
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -326,7 +326,7 @@ async fn traffic_contract(pg: bool) {
     .await
     .unwrap();
     assert_eq!(views(&router, &bob_token).await["count"], 18);
-    db::repositories::access::revoke_repo_access(f.pool(), bob, repo.id)
+    codeyard_db_repos::repositories::access::revoke_repo_access(f.pool(), bob, repo.id)
         .await
         .unwrap();
     checked(
@@ -522,7 +522,7 @@ async fn traffic_contract(pg: bool) {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -621,7 +621,7 @@ async fn traffic_contract(pg: bool) {
         StatusCode::CREATED,
     )
     .await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         org_repo["id"].as_i64().unwrap(),

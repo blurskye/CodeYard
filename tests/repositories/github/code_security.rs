@@ -233,16 +233,18 @@ pub(super) async fn contract(
         new_repo["security_and_analysis"]["secret_scanning"]["status"],
         "enabled"
     );
-    let settings = db::secret_scanning::settings(pool, new_repo["id"].as_i64().unwrap())
-        .await
-        .unwrap();
+    let settings =
+        codeyard_db_security::secret_scanning::settings(pool, new_repo["id"].as_i64().unwrap())
+            .await
+            .unwrap();
     assert!(settings.enabled && settings.push_protection);
     // The configuration also turns on private vulnerability reporting for the public repository.
-    assert!(
-        db::repositories::security::enabled(pool, new_repo["id"].as_i64().unwrap())
-            .await
-            .unwrap()
-    );
+    assert!(codeyard_db_repos::repositories::security::enabled(
+        pool,
+        new_repo["id"].as_i64().unwrap()
+    )
+    .await
+    .unwrap());
     let linked = call(
         router,
         "GET",
@@ -283,7 +285,7 @@ pub(super) async fn contract(
     )
     .await;
     assert_eq!(repos.as_array().unwrap().len(), 2);
-    let org = db::organizations::profiles::get_public_organization(pool, "acme")
+    let org = codeyard_db_orgs::organizations::profiles::get_public_organization(pool, "acme")
         .await
         .unwrap()
         .unwrap();
@@ -394,7 +396,7 @@ pub(super) async fn contract(
         204,
     )
     .await;
-    let settings = db::code_security::repository_settings(pool, repo)
+    let settings = codeyard_db_security::code_security::repository_settings(pool, repo)
         .await
         .unwrap()
         .unwrap();

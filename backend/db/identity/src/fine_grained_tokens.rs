@@ -106,15 +106,3 @@ native_operation!(crate::postgres::fine_grained_tokens::classic_refused, crate::
 native_operation!(crate::postgres::fine_grained_tokens::classic_refused_repository, crate::sqlite::fine_grained_tokens::classic_refused_repository,
     /// `classic_refused` for the organization that owns `repo`, if any.
     fn classic_refused_repository(pool: &DbPool, token: i64, repo: i64) -> Result<bool>);
-
-use codeyard_db_core::queries::fine_grained_tokens::Token;
-
-use codeyard_db_core::queries::fine_grained_tokens::Bounds;
-
-use codeyard_db_core::queries::fine_grained_tokens::Policy;
-
-use codeyard_db_core::queries::fine_grained_tokens::Bounds;
-
-use codeyard_db_core::queries::fine_grained_tokens::Policy;
-
-use codeyard_db_core::queries::fine_grained_tokens::Token;

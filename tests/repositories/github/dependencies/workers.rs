@@ -64,13 +64,13 @@ async fn scan(w: &World) {
     codeyard_app::vulnerabilities::ingest(w.f.pool(), &provider::advisory())
         .await
         .unwrap();
-    db::vulnerabilities::enqueue(w.f.pool(), w.repo.id)
+    codeyard_db_security::vulnerabilities::enqueue(w.f.pool(), w.repo.id)
         .await
         .unwrap();
     // Every new repository queues its first scan, so the PostgreSQL fixture's repository may
     // come first; it is claimed and left alone.
     let (id, generation) = loop {
-        let (id, generation) = db::vulnerabilities::claim(w.f.pool())
+        let (id, generation) = codeyard_db_security::vulnerabilities::claim(w.f.pool())
             .await
             .unwrap()
             .unwrap();
@@ -106,10 +106,11 @@ async fn proposals(pg: bool) {
     assert_eq!(alert.state, AlertState::Open);
     let update = alert.update.as_ref().unwrap();
     let pull_id = update.pull_request_id.unwrap();
-    let pull = db::pull_requests::records::get_pull_request_by_id(w.f.pool(), pull_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let pull =
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(w.f.pool(), pull_id)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(pull.head_sha, update.commit_sha);
     assert_eq!(pull.head_branch, update.branch);
     assert_eq!(pull.head_repo_id, Some(w.repo.id));
@@ -139,7 +140,7 @@ async fn proposals(pg: bool) {
     assert!(html.contains("fixture 1.2.0"));
     assert!(!html.contains("<script>not markup</script>"));
     let id = w.repo.id.to_string();
-    let alerts = db::dependabot_alerts::alerts(w.f.pool(), w.owner, w.repo.id)
+    let alerts = codeyard_db_security::dependabot_alerts::alerts(w.f.pool(), w.owner, w.repo.id)
         .await
         .unwrap();
     assert_eq!(alerts.len(), 1);
@@ -184,10 +185,11 @@ async fn proposals(pg: bool) {
     .await;
     records::enqueue(w.f.pool(), w.repo.id).await.unwrap();
     run(&w, &provider).await;
-    let actual = db::pull_requests::records::get_pull_request_by_id(w.f.pool(), pull_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let actual =
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(w.f.pool(), pull_id)
+            .await
+            .unwrap()
+            .unwrap();
     update_pull_request(
         w.f.pool(),
         &w.ci,
@@ -208,10 +210,11 @@ async fn proposals(pg: bool) {
     .unwrap();
     records::enqueue(w.f.pool(), w.repo.id).await.unwrap();
     run(&w, &provider).await;
-    let actual = db::pull_requests::records::get_pull_request_by_id(w.f.pool(), pull_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let actual =
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(w.f.pool(), pull_id)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(actual.state, "closed");
     assert_eq!(
         records::snapshot(w.f.pool(), w.owner, w.repo.id)
@@ -308,7 +311,7 @@ async fn revoked(pg: bool) {
     let provider = provider::Provider::new().await;
     seed(&w, &provider);
     let bob = w.f.actor("bob").await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         w.f.pool(),
         bob,
         w.repo.id,

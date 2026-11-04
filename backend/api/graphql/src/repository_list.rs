@@ -1,15 +1,14 @@
 //! Owner-scoped repository connections used by the CLI's list and search paths.
 use crate::arg;
 use crate::arguments::Arguments;
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::RequestContext;
 use crate::Result;
+use codeyard_db_repos::repositories::github;
+use codeyard_db_repos::repositories::github::RepositoryList;
+use codeyard_db_repos::repositories::github::RepositoryListQuery;
 use codeyard_identity::repository_access::AccessError;
-use db::repositories::github;
-use db::repositories::github::RepositoryList;
-use db::repositories::github::RepositoryListQuery;
 use serde_json::json;
 use serde_json::Value;
 
@@ -21,7 +20,7 @@ pub(super) async fn organizations(
     request.require_oauth_scope("read:org")?;
     crate::connection::validate(ctx)?;
     let id = parent["databaseId"].as_i64().ok_or_else(missing)?;
-    let mut rows = db::organizations::discovery::list_organizations(
+    let mut rows = codeyard_db_orgs::organizations::discovery::list_organizations(
         &request.state.pool,
         Some(id),
         id == request.auth.user.id,
@@ -204,7 +203,9 @@ pub(super) async fn search(ctx: &Arguments, request: &RequestContext) -> Result<
     let mut sort = None;
     let mut ascending = false;
     let mut terms = Vec::new();
-    for word in db::discussion_search::tokens(&text).map_err(async_graphql::Error::new)? {
+    for word in
+        codeyard_db_repos::discussion_search::tokens(&text).map_err(async_graphql::Error::new)?
+    {
         match word.strip_prefix("sort:") {
             Some(value) => {
                 let (field, direction) = value
@@ -217,10 +218,12 @@ pub(super) async fn search(ctx: &Arguments, request: &RequestContext) -> Result<
             None => terms.push(word),
         }
     }
-    let search =
-        db::catalog_search::Search::parse(db::catalog_search::Kind::Repositories, &terms.join(" "))
-            .map_err(async_graphql::Error::new)?
-            .with_classic_policy(Some(request.auth.token.id));
+    let search = codeyard_db_repos::catalog_search::Search::parse(
+        codeyard_db_repos::catalog_search::Kind::Repositories,
+        &terms.join(" "),
+    )
+    .map_err(async_graphql::Error::new)?
+    .with_classic_policy(Some(request.auth.token.id));
     search
         .order(sort.as_deref(), ascending)
         .map_err(async_graphql::Error::new)?;
@@ -242,7 +245,7 @@ pub(super) async fn search(ctx: &Arguments, request: &RequestContext) -> Result<
     } else {
         (search, false)
     };
-    let options = |offset, limit| db::catalog_search::Options {
+    let options = |offset, limit| codeyard_db_repos::catalog_search::Options {
         repository: None,
         sort: sort.clone(),
         ascending,
@@ -250,16 +253,21 @@ pub(super) async fn search(ctx: &Arguments, request: &RequestContext) -> Result<
         limit,
     };
     // Only the retrievable window is capped; repositoryCount reports all native matches.
-    let total = db::catalog_search::search(pool, viewer, &search, &options(0, 1))
+    let total = codeyard_db_repos::catalog_search::search(pool, viewer, &search, &options(0, 1))
         .await
         .map_err(unavailable)?
         .total;
     let page = crate::connection::Page::new(ctx, total.min(1000))?;
     let hits = if page.limit > 0 {
-        db::catalog_search::search(pool, viewer, &search, &options(page.offset, page.limit))
-            .await
-            .map_err(unavailable)?
-            .items
+        codeyard_db_repos::catalog_search::search(
+            pool,
+            viewer,
+            &search,
+            &options(page.offset, page.limit),
+        )
+        .await
+        .map_err(unavailable)?
+        .items
     } else {
         Vec::new()
     };

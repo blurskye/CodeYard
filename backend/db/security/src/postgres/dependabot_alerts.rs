@@ -249,7 +249,3 @@ pub async fn organization_repositories(pool: &PgPool, actor: i64, org: i64) -> R
 use codeyard_db_core::queries::postgres::dependabot_alerts::refresh;
 
 use codeyard_db_core::queries::postgres::dependabot_alerts::global_in;
-
-use codeyard_db_core::queries::postgres::dependabot_alerts::global_in;
-
-use codeyard_db_core::queries::postgres::dependabot_alerts::refresh;

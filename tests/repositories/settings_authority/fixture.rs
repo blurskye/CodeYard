@@ -27,7 +27,7 @@ impl Fixture {
         }
     }
     pub async fn actor(&self, name: &str) -> i64 {
-        db::users::accounts::create_user(self.database.pool(), name, None)
+        codeyard_db_identity::users::accounts::create_user(self.database.pool(), name, None)
             .await
             .unwrap()
             .id
@@ -43,7 +43,7 @@ impl Fixture {
             b"original repository content\0",
         )
         .unwrap();
-        let repo = db::repositories::records::create_repository(
+        let repo = codeyard_db_repos::repositories::records::create_repository(
             self.database.pool(),
             owner,
             name,

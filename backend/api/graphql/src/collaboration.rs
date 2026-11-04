@@ -1,7 +1,6 @@
 //! Shared issue/PR metadata; all rows come from the REST lane's named operations.
 
 use crate::arguments::Arguments;
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::url;
@@ -51,38 +50,41 @@ pub(super) async fn resolve(
         "milestone" => {
             let milestone = parent["_milestone"].as_i64();
             match milestone {
-                Some(id) => match db::milestones::get_milestone_by_id(pool, repo.id, id)
-                    .await
-                    .map_err(unavailable)?
-                {
-                    Some(value) => {
-                        let mut value = crate::collaboration::milestone(value, request).await?;
-                        value["_scope"] = json!(if ty == "PullRequest" {
-                            "pull-requests"
-                        } else {
-                            "issues"
-                        });
-                        Ok(value)
+                Some(id) => {
+                    match codeyard_db_repos::milestones::get_milestone_by_id(pool, repo.id, id)
+                        .await
+                        .map_err(unavailable)?
+                    {
+                        Some(value) => {
+                            let mut value = crate::collaboration::milestone(value, request).await?;
+                            value["_scope"] = json!(if ty == "PullRequest" {
+                                "pull-requests"
+                            } else {
+                                "issues"
+                            });
+                            Ok(value)
+                        }
+                        None => Ok(Value::Null),
                     }
-                    None => Ok(Value::Null),
-                },
+                }
                 None => Ok(Value::Null),
             }
         }
         "assignees" | "assignedActors" => {
             let item = if ty == "Issue" {
-                db::assignees::AssignedItem::Issue(id)
+                codeyard_db_repos::assignees::AssignedItem::Issue(id)
             } else {
-                db::assignees::AssignedItem::PullRequest(id)
+                codeyard_db_repos::assignees::AssignedItem::PullRequest(id)
             };
-            let names = db::assignees::list_assignees(pool, item)
+            let names = codeyard_db_repos::assignees::list_assignees(pool, item)
                 .await
                 .map_err(unavailable)?;
             let mut values = vec![];
             for name in names {
-                if let Some(row) = db::users::accounts::get_user_by_username(pool, &name)
-                    .await
-                    .map_err(unavailable)?
+                if let Some(row) =
+                    codeyard_db_identity::users::accounts::get_user_by_username(pool, &name)
+                        .await
+                        .map_err(unavailable)?
                 {
                     values.push(crate::user::object(&row, request.auth.user.id));
                 }
@@ -92,9 +94,9 @@ pub(super) async fn resolve(
         "reactionGroups" => {
             reactions(
                 if ty == "Issue" {
-                    db::reactions::Subject::Issue
+                    codeyard_db_repos::reactions::Subject::Issue
                 } else {
-                    db::reactions::Subject::PullRequest
+                    codeyard_db_repos::reactions::Subject::PullRequest
                 },
                 id,
                 request,
@@ -106,7 +108,7 @@ pub(super) async fn resolve(
             if args.args.try_get("userLinkedOnly")?.deserialize::<bool>()? {
                 return crate::connection::slice(args, Vec::new());
             }
-            let pull = db::pull_requests::records::get_pull_request_by_id(pool, id)
+            let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -136,9 +138,13 @@ pub(super) async fn resolve(
                 {
                     Some(repo.clone())
                 } else {
-                    db::repositories::records::get_repository(pool, &target_owner, &name)
-                        .await
-                        .map_err(unavailable)?
+                    codeyard_db_repos::repositories::records::get_repository(
+                        pool,
+                        &target_owner,
+                        &name,
+                    )
+                    .await
+                    .map_err(unavailable)?
                 };
                 let Some(target) = target else {
                     continue;
@@ -148,9 +154,11 @@ pub(super) async fn resolve(
                 }
                 let viewer = request.private_viewer(target.id, "issues").await?;
                 for numbers in numbers.chunks(500) {
-                    let rows = db::issues::issue_ids_by_numbers(pool, target.id, viewer, numbers)
-                        .await
-                        .map_err(unavailable)?;
+                    let rows = codeyard_db_repos::issues::issue_ids_by_numbers(
+                        pool, target.id, viewer, numbers,
+                    )
+                    .await
+                    .map_err(unavailable)?;
                     request.charge(rows.len() * 32)?;
                     targets.extend(rows.into_iter().map(|(id, _)| (target.id, id)));
                 }
@@ -168,7 +176,7 @@ pub(super) async fn resolve(
             let mut nodes = vec![Value::Null; selected.len()];
             for (repo, positions) in groups {
                 let ids: Vec<_> = positions.iter().map(|(_, id)| *id).collect();
-                let rows = db::issues::get_issues_by_ids(pool, repo, &ids)
+                let rows = codeyard_db_repos::issues::get_issues_by_ids(pool, repo, &ids)
                     .await
                     .map_err(unavailable)?;
                 for row in &rows {
@@ -226,9 +234,9 @@ pub(super) async fn resolve_comment(
         "reactionGroups" => {
             reactions(
                 if parent["_pull"] == true {
-                    db::reactions::Subject::PullRequestComment
+                    codeyard_db_repos::reactions::Subject::PullRequestComment
                 } else {
-                    db::reactions::Subject::IssueComment
+                    codeyard_db_repos::reactions::Subject::IssueComment
                 },
                 parent["_comment"].as_i64().ok_or_else(missing)?,
                 request,
@@ -255,11 +263,11 @@ pub(super) async fn resolve_comment(
 }
 
 pub(super) async fn reactions(
-    subject: db::reactions::Subject,
+    subject: codeyard_db_repos::reactions::Subject,
     id: i64,
     request: &RequestContext,
 ) -> Result<Value> {
-    let counts = db::reactions::reaction_counts(
+    let counts = codeyard_db_repos::reactions::reaction_counts(
         &request.state.pool,
         subject.name(),
         &[id],

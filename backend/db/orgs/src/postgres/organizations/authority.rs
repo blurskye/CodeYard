@@ -183,7 +183,3 @@ pub(crate) async fn organization_repo_access_in_transaction(
 use codeyard_db_core::queries::postgres::organizations::authority::authority;
 
 use codeyard_db_core::queries::postgres::organizations::authority::active;
-
-use codeyard_db_core::queries::postgres::organizations::authority::active;
-
-use codeyard_db_core::queries::postgres::organizations::authority::authority;

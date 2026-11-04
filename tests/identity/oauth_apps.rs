@@ -115,12 +115,13 @@ async fn contract(pg: bool) {
         .as_str()
         .unwrap()
         .ends_with("/login/device"));
-    assert!(
-        db::oauth_apps::device_grant(f.pool(), code["user_code"].as_str().unwrap())
-            .await
-            .unwrap()
-            .is_some()
-    );
+    assert!(codeyard_db_identity::oauth_apps::device_grant(
+        f.pool(),
+        code["user_code"].as_str().unwrap()
+    )
+    .await
+    .unwrap()
+    .is_some());
     assert_eq!(poll(&router, &code).await["error"], "authorization_pending");
     let slowdown = poll(&router, &code).await;
     assert_eq!(slowdown["error"], "slow_down");
@@ -158,7 +159,7 @@ async fn contract(pg: bool) {
     assert_eq!(replay["error"], "incorrect_device_code");
     assert_eq!(token["token_type"], "bearer");
     let value = token["access_token"].as_str().unwrap();
-    let stored = db::users::tokens::find_token(f.pool(), &token_hash(value))
+    let stored = codeyard_db_identity::users::tokens::find_token(f.pool(), &token_hash(value))
         .await
         .unwrap()
         .unwrap();
@@ -210,7 +211,7 @@ async fn contract(pg: bool) {
     codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "deploy",
         None,
         true,
@@ -367,11 +368,15 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(app.status, StatusCode::OK, "{}", app.text());
-    let applications =
-        db::oauth_apps::applications(f.pool(), actor, 0, db::oauth_apps::APPLICATION_PAGE_SIZE)
-            .await
-            .unwrap()
-            .unwrap();
+    let applications = codeyard_db_identity::oauth_apps::applications(
+        f.pool(),
+        actor,
+        0,
+        codeyard_db_identity::oauth_apps::APPLICATION_PAGE_SIZE,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(applications.len(), 1);
     assert!(app.text().contains(&applications[0].client_id));
     let (status, page) = user.page("/settings/applications").await;
@@ -432,7 +437,7 @@ async fn contract(pg: bool) {
     let readonly = device(&router, "read:org").await;
     approve(&user, &readonly, "approve").await;
     let limited = poll(&router, &readonly).await;
-    let limited = db::users::tokens::find_token(
+    let limited = codeyard_db_identity::users::tokens::find_token(
         f.pool(),
         &token_hash(limited["access_token"].as_str().unwrap()),
     )
@@ -465,7 +470,7 @@ async fn contract(pg: bool) {
     );
     let path = format!("/api/v3/applications/{CLI}/token");
     let other_id = codeyard_support::crypto::random_hex();
-    let other_app = db::oauth_apps::register(
+    let other_app = codeyard_db_identity::oauth_apps::register(
         f.pool(),
         actor,
         &user.session,
@@ -674,7 +679,7 @@ async fn contract(pg: bool) {
     let active = poll(&router, &active).await;
     let value = active["access_token"].as_str().unwrap();
     // Git over a repo-only token reaches repositories but not gists.
-    let repo_only = db::users::tokens::find_token(f.pool(), &token_hash(value))
+    let repo_only = codeyard_db_identity::users::tokens::find_token(f.pool(), &token_hash(value))
         .await
         .unwrap()
         .unwrap();
@@ -710,7 +715,7 @@ async fn contract(pg: bool) {
         .unwrap()
         .1
         .into_owned();
-    db::users::sessions::delete_session(f.pool(), &browser.session)
+    codeyard_db_identity::users::sessions::delete_session(f.pool(), &browser.session)
         .await
         .unwrap();
     assert_eq!(
@@ -728,7 +733,7 @@ async fn contract(pg: bool) {
         "access_denied"
     );
     let owned_id = codeyard_support::crypto::random_hex();
-    db::oauth_apps::register(
+    codeyard_db_identity::oauth_apps::register(
         f.pool(),
         actor,
         &user.session,
@@ -743,7 +748,7 @@ async fn contract(pg: bool) {
     .unwrap();
     // Alice's application can issue a credential to a different, unrestricted account.
     let bob_browser = Client::login(&router, f.pool(), bob).await;
-    let bob_token = db::users::tokens::create_token(
+    let bob_token = codeyard_db_identity::users::tokens::create_token(
         f.pool(),
         bob,
         &bob_browser.session,
@@ -756,10 +761,12 @@ async fn contract(pg: bool) {
     .unwrap()
     .unwrap();
     f.execute(&format!("INSERT INTO oauth_app_tokens(token_id,client_id,scopes) VALUES($1,'{owned_id}','repo')"), &[bob_token.id]).await;
-    assert!(db::users::tokens::token_user(f.pool(), bob_token.id, false)
-        .await
-        .unwrap()
-        .is_some());
+    assert!(
+        codeyard_db_identity::users::tokens::token_user(f.pool(), bob_token.id, false)
+            .await
+            .unwrap()
+            .is_some()
+    );
     let owned_basic = format!(
         "Basic {}",
         base64::engine::general_purpose::STANDARD.encode(format!("{owned_id}:owned-secret"))
@@ -777,10 +784,12 @@ async fn contract(pg: bool) {
     // Suspending an account invalidates OAuth tokens just like personal tokens.
     f.execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[actor])
         .await;
-    assert!(db::users::tokens::token_user(f.pool(), bob_token.id, false)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        codeyard_db_identity::users::tokens::token_user(f.pool(), bob_token.id, false)
+            .await
+            .unwrap()
+            .is_none()
+    );
     super::github::request(
         &router,
         "users/get-authenticated",

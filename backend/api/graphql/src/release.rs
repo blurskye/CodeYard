@@ -1,7 +1,6 @@
 //! Release lists share the native draft visibility rule.
 use crate::arg;
 use crate::arguments::Arguments;
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::RequestContext;
@@ -38,12 +37,16 @@ pub(super) async fn resolve(
     match field {
         "release" | "latestRelease" => {
             let row = if field == "release" {
-                db::releases::get_release_by_tag(pool, repo.id, &arg(ctx, "tagName")?)
-                    .await
-                    .map_err(unavailable)?
-                    .map(|row| row.release)
+                codeyard_db_repos::releases::get_release_by_tag(
+                    pool,
+                    repo.id,
+                    &arg(ctx, "tagName")?,
+                )
+                .await
+                .map_err(unavailable)?
+                .map(|row| row.release)
             } else {
-                db::releases::latest_release(pool, repo.id)
+                codeyard_db_repos::releases::latest_release(pool, repo.id)
                     .await
                     .map_err(unavailable)?
             };
@@ -55,28 +58,32 @@ pub(super) async fn resolve(
             }
         }
         _ => {
-            let total = db::releases::count_releases(pool, repo.id, writer)
+            let total = codeyard_db_repos::releases::count_releases(pool, repo.id, writer)
                 .await
                 .map_err(unavailable)?;
             let page = crate::connection::Page::new(ctx, total)?;
             // The schema gives `orderBy` no default; without one, releases come newest first.
             let order = match ctx.args.get("orderBy").filter(|order| !order.is_null()) {
-                None => db::releases::ReleaseOrder::CreatedDesc,
+                None => codeyard_db_repos::releases::ReleaseOrder::CreatedDesc,
                 Some(order) => {
                     let order = order.object()?;
                     match (
                         order.try_get("field")?.enum_name()?,
                         order.try_get("direction")?.enum_name()?,
                     ) {
-                        ("CREATED_AT", "ASC") => db::releases::ReleaseOrder::CreatedAsc,
-                        ("CREATED_AT", "DESC") => db::releases::ReleaseOrder::CreatedDesc,
-                        ("NAME", "ASC") => db::releases::ReleaseOrder::NameAsc,
-                        ("NAME", "DESC") => db::releases::ReleaseOrder::NameDesc,
+                        ("CREATED_AT", "ASC") => {
+                            codeyard_db_repos::releases::ReleaseOrder::CreatedAsc
+                        }
+                        ("CREATED_AT", "DESC") => {
+                            codeyard_db_repos::releases::ReleaseOrder::CreatedDesc
+                        }
+                        ("NAME", "ASC") => codeyard_db_repos::releases::ReleaseOrder::NameAsc,
+                        ("NAME", "DESC") => codeyard_db_repos::releases::ReleaseOrder::NameDesc,
                         _ => return Err(missing()),
                     }
                 }
             };
-            let rows = db::releases::list_releases_ordered(
+            let rows = codeyard_db_repos::releases::list_releases_ordered(
                 pool,
                 repo.id,
                 writer,
@@ -107,7 +114,7 @@ pub(super) async fn field(
     match field {
         "reactionGroups" => {
             crate::collaboration::reactions(
-                db::reactions::Subject::Release,
+                codeyard_db_repos::reactions::Subject::Release,
                 parent["databaseId"].as_i64().ok_or_else(missing)?,
                 request,
             )
@@ -115,7 +122,7 @@ pub(super) async fn field(
         }
         "releaseAssets" => {
             crate::connection::validate(args)?;
-            let mut rows = db::releases::list_release_assets(
+            let mut rows = codeyard_db_repos::releases::list_release_assets(
                 &request.state.pool,
                 parent["_release"].as_i64().ok_or_else(missing)?,
             )

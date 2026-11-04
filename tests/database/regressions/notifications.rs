@@ -8,7 +8,8 @@ async fn refollows_keep_a_durable_per_actor_notification_cooldown() {
         let target = f.actor("recipient").await;
         let broadcaster = notifications::NotificationBroadcaster::new(f.pool());
         let session = crate::support::live_session(f.pool(), actor).await;
-        let credential = db::users::accounts::AccountCredential::Session(&session);
+        let credential =
+            codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
         for _ in 0..5 {
             identity::following::change(
                 f.pool(),
@@ -31,10 +32,14 @@ async fn refollows_keep_a_durable_per_actor_notification_cooldown() {
             .await
             .unwrap();
         }
-        let rows =
-            db::notifications::records::list_notifications_for_user(f.pool(), target, 100, false)
-                .await
-                .unwrap();
+        let rows = codeyard_db_repos::notifications::records::list_notifications_for_user(
+            f.pool(),
+            target,
+            100,
+            false,
+        )
+        .await
+        .unwrap();
         assert_eq!(rows.len(), 1);
         f.execute(
             "UPDATE notifications SET created_at='2000-01-01T00:00:00.000000Z' WHERE user_id=$1",
@@ -52,10 +57,15 @@ async fn refollows_keep_a_durable_per_actor_notification_cooldown() {
         .await
         .unwrap();
         assert_eq!(
-            db::notifications::records::list_notifications_for_user(f.pool(), target, 100, false)
-                .await
-                .unwrap()
-                .len(),
+            codeyard_db_repos::notifications::records::list_notifications_for_user(
+                f.pool(),
+                target,
+                100,
+                false
+            )
+            .await
+            .unwrap()
+            .len(),
             2
         );
         f.finish().await;
@@ -73,7 +83,7 @@ async fn notification_batches_keep_order_visibility_and_continuation() {
         // Notifications are only created for readers, so the hidden ones belong to a
         // repository the reader could read when they arrived and lost access to later.
         for repository in [visible.id, hidden.id] {
-            db::repositories::access::grant_repo_access(
+            codeyard_db_repos::repositories::access::grant_repo_access(
                 f.pool(),
                 reader,
                 repository,
@@ -97,16 +107,18 @@ async fn notification_batches_keep_order_visibility_and_continuation() {
             }
         }
         expected.reverse();
-        assert!(
-            db::repositories::access::revoke_repo_access(f.pool(), reader, hidden.id)
-                .await
-                .unwrap()
-        );
+        assert!(codeyard_db_repos::repositories::access::revoke_repo_access(
+            f.pool(),
+            reader,
+            hidden.id
+        )
+        .await
+        .unwrap());
         let session = session(f.pool(), reader).await;
         let mut before = None;
         let mut listed = Vec::new();
         loop {
-            let page = db::notifications::records::notification_inbox(
+            let page = codeyard_db_repos::notifications::records::notification_inbox(
                 f.pool(),
                 &session,
                 reader,
@@ -129,25 +141,25 @@ async fn notification_batches_keep_order_visibility_and_continuation() {
         }
         assert_eq!(listed, expected);
         assert_eq!(
-            db::notifications::records::count_header_unread(f.pool(), reader)
+            codeyard_db_repos::notifications::records::count_header_unread(f.pool(), reader)
                 .await
                 .unwrap(),
             205
         );
-        db::notifications::records::mark_all_notifications_read(f.pool(), reader)
+        codeyard_db_repos::notifications::records::mark_all_notifications_read(f.pool(), reader)
             .await
             .unwrap();
         assert_eq!(
-            db::notifications::records::count_header_unread(f.pool(), reader)
+            codeyard_db_repos::notifications::records::count_header_unread(f.pool(), reader)
                 .await
                 .unwrap(),
             0
         );
-        db::repositories::access::revoke_repo_access(f.pool(), reader, visible.id)
+        codeyard_db_repos::repositories::access::revoke_repo_access(f.pool(), reader, visible.id)
             .await
             .unwrap();
         assert_eq!(
-            db::notifications::records::count_header_unread(f.pool(), reader)
+            codeyard_db_repos::notifications::records::count_header_unread(f.pool(), reader)
                 .await
                 .unwrap(),
             0

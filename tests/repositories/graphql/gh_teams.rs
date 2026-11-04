@@ -105,7 +105,7 @@ async fn contract(pg: bool) {
     let repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         Some("CLI queries"),
         false,
@@ -116,7 +116,7 @@ async fn contract(pg: bool) {
     lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "secret",
         None,
         true,
@@ -125,12 +125,16 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     let org = applied(
-        db::organizations::profiles::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             alice,
-            &db::organizations::profiles::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 "teams-org",
-                db::organizations::profiles::OrganizationProfile::new(Some("Teams"), None).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(
+                    Some("Teams"),
+                    None,
+                )
+                .unwrap(),
             )
             .unwrap(),
         )
@@ -140,9 +144,11 @@ async fn contract(pg: bool) {
     lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner {
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
             actor_id: alice,
-            target: db::repositories::creation::RepositoryTarget::Organization(org.id),
+            target: codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(
+                org.id,
+            ),
         },
         "org-repo",
         None,
@@ -151,7 +157,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::topics::update_about(
+    codeyard_db_repos::repositories::topics::update_about(
         f.pool(),
         alice,
         repo.id,
@@ -215,13 +221,13 @@ async fn contract(pg: bool) {
         ("pending", true, false),
     ] {
         releases.push(
-            db::releases::create_release(
+            codeyard_db_repos::releases::create_release(
                 f.pool(),
                 alice,
                 repo.id,
                 tag,
                 "main",
-                &db::releases::ReleaseFields {
+                &codeyard_db_repos::releases::ReleaseFields {
                     name: Some(tag.into()),
                     is_draft: draft,
                     is_prerelease: prerelease,

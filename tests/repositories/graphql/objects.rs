@@ -8,7 +8,7 @@ pub(super) async fn exercise(
     repo: i64,
     actor: i64,
 ) {
-    let milestone = db::milestones::create_milestone(
+    let milestone = codeyard_db_repos::milestones::create_milestone(
         pool,
         actor,
         repo,
@@ -18,13 +18,13 @@ pub(super) async fn exercise(
     )
     .await
     .unwrap();
-    let release = db::releases::create_release(
+    let release = codeyard_db_repos::releases::create_release(
         pool,
         actor,
         repo,
         "graphql-v1",
         "main",
-        &db::releases::ReleaseFields {
+        &codeyard_db_repos::releases::ReleaseFields {
             name: Some("GraphQL release".into()),
             make_latest: true.into(),
             ..Default::default()
@@ -32,9 +32,9 @@ pub(super) async fn exercise(
     )
     .await
     .unwrap();
-    let file = db::files::reserve_upload(
+    let file = codeyard_db_repos::files::reserve_upload(
         pool,
-        db::files::ReserveUpload {
+        codeyard_db_repos::files::ReserveUpload {
             user_id: actor,
             filename: "graphql.txt",
             content_type: "text/plain",
@@ -46,18 +46,20 @@ pub(super) async fn exercise(
     )
     .await
     .unwrap();
-    assert!(db::files::verify_pending_upload(pool, file.id, actor)
-        .await
-        .unwrap());
-    let asset = db::releases::add_release_asset(
+    assert!(
+        codeyard_db_repos::files::verify_pending_upload(pool, file.id, actor)
+            .await
+            .unwrap()
+    );
+    let asset = codeyard_db_repos::releases::add_release_asset(
         pool,
         actor,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, actor).await,
         ),
         repo,
         release.id,
-        &db::releases::NewReleaseAsset {
+        &codeyard_db_repos::releases::NewReleaseAsset {
             file_id: file.id,
             name: "graphql.txt",
             label: None,
@@ -115,7 +117,7 @@ pub(super) async fn exercise(
         document["repository"]["releases"]["nodes"][0]["releaseAssets"]["nodes"][0]["id"],
         ids[2]
     );
-    for (_, id) in db::timeline::list_entries(pool, repo, None, false, false, 100, 0)
+    for (_, id) in codeyard_db_repos::timeline::list_entries(pool, repo, None, false, false, 100, 0)
         .await
         .unwrap()
         .into_iter()

@@ -61,7 +61,7 @@ async fn contract(pg: bool) {
     let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -111,7 +111,7 @@ async fn contract(pg: bool) {
         alice.save(branch, file, &main1).await;
     }
     let runs = || async {
-        db::ci::list_ci_runs_for_repo(f.pool(), repository.id, 20)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repository.id, 20)
             .await
             .unwrap()
             .len()
@@ -231,7 +231,7 @@ async fn contract(pg: bool) {
     ready(&alice, 5).await;
     assert_eq!(runs().await, before + 1, "readying queues its workflow");
     assert_eq!(
-        db::ci::list_ci_runs_for_repo(f.pool(), repository.id, 20)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repository.id, 20)
             .await
             .unwrap()[0]
             .event,
@@ -308,14 +308,19 @@ async fn cookie_bound_mutations(pg: bool) {
     let hash = codeyard_identity::passwords::hash_password("first-login-password")
         .await
         .unwrap();
-    db::users::accounts::update_user_password(fixture.pool(), newcomer, &hash, false)
-        .await
-        .unwrap();
+    codeyard_db_identity::users::accounts::update_user_password(
+        fixture.pool(),
+        newcomer,
+        &hash,
+        false,
+    )
+    .await
+    .unwrap();
     let root = tempfile::tempdir().unwrap();
     codeyard_app::repositories::lifecycle::provision(
         (fixture.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         false,
@@ -447,7 +452,7 @@ async fn cookie_bound_mutations(pg: bool) {
         request_with_headers(&router, "POST", ready_path, cookie, &[&bob.csrf], &[]).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "stale CSRF: {body}");
     assert_eq!(bob.pull(1).await["is_draft"], true);
-    bob.csrf = db::users::sessions::get_or_create_csrf_token(
+    bob.csrf = codeyard_db_identity::users::sessions::get_or_create_csrf_token(
         fixture.pool(),
         &bob.session,
         Some(bob_id),
@@ -534,12 +539,13 @@ async fn cookie_bound_mutations(pg: bool) {
         if cookie.is_some() {
             assert!(headers.get(header::SET_COOKIE).is_none());
         }
-        assert!(
-            db::users::sessions::get_session_user(fixture.pool(), &bob.session)
-                .await
-                .unwrap()
-                .is_some()
-        );
+        assert!(codeyard_db_identity::users::sessions::get_session_user(
+            fixture.pool(),
+            &bob.session
+        )
+        .await
+        .unwrap()
+        .is_some());
     }
     let (status, headers, body) = request_with_headers(
         &router,
@@ -557,7 +563,7 @@ async fn cookie_bound_mutations(pg: bool) {
         .unwrap()
         .contains("Max-Age=0"));
     assert!(
-        db::users::sessions::get_session_user(fixture.pool(), &bob.session)
+        codeyard_db_identity::users::sessions::get_session_user(fixture.pool(), &bob.session)
             .await
             .unwrap()
             .is_none()

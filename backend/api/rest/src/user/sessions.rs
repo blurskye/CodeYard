@@ -1,5 +1,6 @@
 //! The account's signed-in sessions: the list on the settings page, ending one, and ending
 //! every session except the one making the request.
+use sha2::Digest;
 
 use crate::auth::errors::database_failure;
 use crate::user::fine_grained::settings::AccountSession;

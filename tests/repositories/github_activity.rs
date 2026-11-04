@@ -76,7 +76,7 @@ async fn contract(pg: bool) {
         let repo = codeyard_app::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
             name,
             None,
             private,
@@ -201,7 +201,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(users[0]["id"], bob_id);
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob_id,
         repositories[1].id,
@@ -250,9 +250,13 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(stars[0]["name"], "secret");
-    db::repositories::access::revoke_repo_access(f.pool(), bob_id, repositories[1].id)
-        .await
-        .unwrap();
+    codeyard_db_repos::repositories::access::revoke_repo_access(
+        f.pool(),
+        bob_id,
+        repositories[1].id,
+    )
+    .await
+    .unwrap();
     let (_, stars) = request(
         &router,
         "activity/list-repos-starred-by-authenticated-user",

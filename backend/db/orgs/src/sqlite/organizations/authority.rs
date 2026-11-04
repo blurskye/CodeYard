@@ -171,9 +171,3 @@ use codeyard_db_core::queries::sqlite::organizations::authority::authority;
 use codeyard_db_core::queries::sqlite::organizations::authority::remaining_active_owner;
 
 use codeyard_db_core::queries::sqlite::organizations::authority::active;
-
-use codeyard_db_core::queries::sqlite::organizations::authority::active;
-
-use codeyard_db_core::queries::sqlite::organizations::authority::authority;
-
-use codeyard_db_core::queries::sqlite::organizations::authority::remaining_active_owner;

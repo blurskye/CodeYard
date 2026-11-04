@@ -1,10 +1,10 @@
 //! Push permission checks in the receive hooks, on a throwaway SQLite database.
-use fixture::before_authorize;
-use fixture::hold_next_hook;
+pub(in crate::repositories::git_sessions) use fixture::before_authorize;
+pub(in crate::repositories::git_sessions) use fixture::hold_next_hook;
 
 #[cfg(test)]
 mod fixture {
-    use crate::repositories::git_sessions::policy_tests::super::*;
+    use super::super::*;
     use crate::repositories::git_sessions::validation::ZERO_SHA;
     use base64::Engine;
 
@@ -111,10 +111,10 @@ mod fixture {
                 .unwrap();
             let pool = DbPool::from(native.clone());
             codeyard_db_core::run_migrations(&pool).await.unwrap();
-            let owner = db::users::accounts::create_user(&pool, "owner", None)
+            let owner = codeyard_db_identity::users::accounts::create_user(&pool, "owner", None)
                 .await
                 .unwrap();
-            let actor = db::users::accounts::create_user(&pool, "writer", None)
+            let actor = codeyard_db_identity::users::accounts::create_user(&pool, "writer", None)
                 .await
                 .unwrap();
             let mut wire = Vec::from(&b"\0\0\0\x0bssh-ed25519\0\0\0\x20"[..]);
@@ -123,12 +123,13 @@ mod fixture {
                 "ssh-ed25519 {}",
                 base64::engine::general_purpose::STANDARD.encode(wire)
             );
-            let key = db::users::ssh_keys::add_ssh_key(&pool, actor.id, "writer", &key)
-                .await
-                .unwrap();
+            let key =
+                codeyard_db_identity::users::ssh_keys::add_ssh_key(&pool, actor.id, "writer", &key)
+                    .await
+                    .unwrap();
             let token_hash = "a".repeat(64);
             let session = "b".repeat(64);
-            db::users::sessions::create_session(
+            codeyard_db_identity::users::sessions::create_session(
                 &pool,
                 &session,
                 actor.id,
@@ -138,7 +139,7 @@ mod fixture {
             )
             .await
             .unwrap();
-            let token = db::users::tokens::create_token(
+            let token = codeyard_db_identity::users::tokens::create_token(
                 &pool,
                 actor.id,
                 &session,
@@ -153,24 +154,24 @@ mod fixture {
             let (organization, team) = match access {
                 AccessKind::Direct => (None, None),
                 AccessKind::OrganizationTeam => {
-                    let organization = match db::organizations::create_organization(
+                    let organization = match codeyard_db_orgs::organizations::profiles::create_organization(
                         &pool,
                         owner.id,
-                        &db::organizations::NewOrganization::new(
+                        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                             "fixture_org",
-                            db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
                         )
                         .unwrap(),
                     )
                     .await
                     .unwrap()
                     {
-                        db::organizations::OrganizationOutcome::Applied(organization) => {
+                        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(organization) => {
                             organization
                         }
                         outcome => panic!("organization setup failed: {outcome:?}"),
                     };
-                    match db::organizations::add_organization_member(
+                    match codeyard_db_orgs::organizations::membership::add_organization_member(
                         &pool,
                         owner.id,
                         organization.id,
@@ -180,19 +181,21 @@ mod fixture {
                     .await
                     .unwrap()
                     {
-                        db::organizations::OrganizationOutcome::Applied(_) => {}
+                        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(
+                            _,
+                        ) => {}
                         outcome => panic!("organization membership setup failed: {outcome:?}"),
                     }
-                    let team = match db::organizations::create_organization_team(
+                    let team = match codeyard_db_orgs::organizations::teams::create_organization_team(
                         &pool,
                         owner.id,
                         organization.id,
-                        &db::organizations::NewTeam::new(
+                        &codeyard_db_orgs::organizations::teams::NewTeam::new(
                             "writers",
-                            db::organizations::TeamProfile::new(
+                            codeyard_db_orgs::organizations::teams::TeamProfile::new(
                                 "Writers",
                                 None,
-                                db::organizations::TeamPrivacy::Visible,
+                                codeyard_db_orgs::organizations::teams::TeamPrivacy::Visible,
                             )
                             .unwrap(),
                         )
@@ -201,21 +204,23 @@ mod fixture {
                     .await
                     .unwrap()
                     {
-                        db::organizations::OrganizationOutcome::Applied(team) => team,
+                        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(team) => team,
                         outcome => panic!("team setup failed: {outcome:?}"),
                     };
-                    match db::organizations::add_organization_team_member(
+                    match codeyard_db_orgs::organizations::teams::add_organization_team_member(
                         &pool,
                         owner.id,
                         organization.id,
                         team.id,
                         actor.id,
-                        db::organizations::TeamRole::Member,
+                        codeyard_db_orgs::organizations::teams::TeamRole::Member,
                     )
                     .await
                     .unwrap()
                     {
-                        db::organizations::OrganizationOutcome::Applied(_) => {}
+                        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(
+                            _,
+                        ) => {}
                         outcome => panic!("team membership setup failed: {outcome:?}"),
                     }
                     (Some(organization.id), Some((organization.id, team.id)))
@@ -238,7 +243,7 @@ mod fixture {
                     &[],
                 )
                 .unwrap();
-            let repo = db::repositories::records::create_repository(
+            let repo = codeyard_db_repos::repositories::records::create_repository(
                 &pool,
                 owner.id,
                 "repo",
@@ -260,7 +265,7 @@ mod fixture {
             }
             match team {
                 None => {
-                    db::repositories::access::grant_repo_access(
+                    codeyard_db_repos::repositories::access::grant_repo_access(
                         &pool,
                         actor.id,
                         repo.id,
@@ -270,18 +275,18 @@ mod fixture {
                     .unwrap();
                 }
                 Some((organization, team)) => {
-                    match db::organizations::grant_organization_team_repository(
+                    match codeyard_db_orgs::organizations::teams::grant_organization_team_repository(
                         &pool,
                         owner.id,
                         organization,
                         team,
                         repo.id,
-                        db::organizations::TeamRepositoryPermission::new(3).unwrap(),
+                        codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(3).unwrap(),
                     )
                     .await
                     .unwrap()
                     {
-                        db::organizations::OrganizationOutcome::Applied(_) => {}
+                        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_) => {}
                         outcome => panic!("team repository setup failed: {outcome:?}"),
                     }
                 }
@@ -389,14 +394,19 @@ mod fixture {
             )
             .await;
             if change == "deploy" {
-                let account =
-                    db::users::ssh_keys::get_user_by_ssh_key_id(&fixture.pool, fixture.key_id)
-                        .await
-                        .unwrap()
-                        .unwrap();
-                db::users::ssh_keys::delete_ssh_key(&fixture.pool, fixture.key_id)
-                    .await
-                    .unwrap();
+                let account = codeyard_db_identity::users::ssh_keys::get_user_by_ssh_key_id(
+                    &fixture.pool,
+                    fixture.key_id,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                codeyard_db_identity::users::ssh_keys::delete_ssh_key(
+                    &fixture.pool,
+                    fixture.key_id,
+                )
+                .await
+                .unwrap();
                 sqlx::query("INSERT INTO deploy_keys(repo_id,name,fingerprint,public_key,read_only,created_by_id) VALUES(?,'deploy',?,?,FALSE,?)")
                     .bind(fixture.repo_id).bind(account.key.fingerprint).bind(account.key.public_key).bind(fixture.actor_id)
                     .execute(&fixture.native).await.unwrap();
@@ -421,9 +431,9 @@ mod fixture {
                     &[&parent],
                 )
                 .unwrap();
-            let pull = db::pull_requests::records::create_pull_request(
+            let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
                 &fixture.pool,
-                db::pull_requests::records::NewPullRequest {
+                codeyard_db_repos::pull_requests::records::NewPullRequest {
                     repo_id: fixture.repo_id,
                     head_repo_id: None,
                     author_id: fixture.actor_id,
@@ -451,9 +461,12 @@ mod fixture {
             hook_reached(reached, &mut task).await;
             match change {
                 "ssh" => {
-                    db::users::ssh_keys::delete_ssh_key(&fixture.pool, fixture.key_id)
-                        .await
-                        .unwrap();
+                    codeyard_db_identity::users::ssh_keys::delete_ssh_key(
+                        &fixture.pool,
+                        fixture.key_id,
+                    )
+                    .await
+                    .unwrap();
                 }
                 "deploy" => {
                     sqlx::query("DELETE FROM deploy_keys")
@@ -470,7 +483,7 @@ mod fixture {
                     .unwrap();
                 }
                 "revoked-token" => {
-                    db::users::tokens::delete_token(
+                    codeyard_db_identity::users::tokens::delete_token(
                         &fixture.pool,
                         fixture.actor_id,
                         &"b".repeat(64),
@@ -488,11 +501,13 @@ mod fixture {
                 .unwrap()
                 .unwrap()
                 .is_ok());
-            let refreshed =
-                db::pull_requests::records::get_pull_request_by_id(&fixture.pool, pull.id)
-                    .await
-                    .unwrap()
-                    .unwrap();
+            let refreshed = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
+                &fixture.pool,
+                pull.id,
+            )
+            .await
+            .unwrap()
+            .unwrap();
             assert_eq!(refreshed.head_sha, next.to_string(), "{change}");
             let count: i64 = sqlx::query_scalar(
                 "SELECT SUM(commit_count) FROM repository_pushes WHERE repo_id=? AND actor_id=?",
@@ -503,12 +518,14 @@ mod fixture {
             .await
             .unwrap();
             assert_eq!(count, 1, "{change}");
-            assert!(
-                db::ci::list_ci_runs_for_repo(&fixture.pool, fixture.repo_id, 10)
-                    .await
-                    .unwrap()
-                    .is_empty()
-            );
+            assert!(codeyard_db_actions::ci::list_ci_runs_for_repo(
+                &fixture.pool,
+                fixture.repo_id,
+                10
+            )
+            .await
+            .unwrap()
+            .is_empty());
             fixture.pool.close().await;
         }
     }
@@ -541,17 +558,23 @@ mod fixture {
     #[tokio::test]
     async fn account_key_that_is_also_a_deploy_key_does_not_reauthorize() {
         let fixture = Fixture::new().await;
-        let account = db::users::ssh_keys::get_user_by_ssh_key_id(&fixture.pool, fixture.key_id)
-            .await
-            .unwrap()
-            .unwrap();
+        let account = codeyard_db_identity::users::ssh_keys::get_user_by_ssh_key_id(
+            &fixture.pool,
+            fixture.key_id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
         sqlx::query("INSERT INTO deploy_keys(repo_id,name,fingerprint,public_key,read_only,created_by_id) VALUES(?,'deploy',?,?,TRUE,?)")
             .bind(fixture.repo_id).bind(&account.key.fingerprint).bind(&account.key.public_key).bind(fixture.actor_id)
             .execute(&fixture.native).await.unwrap();
-        let repo = db::repositories::records::get_repository_by_id(&fixture.pool, fixture.repo_id)
-            .await
-            .unwrap()
-            .unwrap();
+        let repo = codeyard_db_repos::repositories::records::get_repository_by_id(
+            &fixture.pool,
+            fixture.repo_id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert!(ReceiveCredential::SshKey(fixture.key_id)
             .authorize(&fixture.pool, &repo, false)
             .await
@@ -577,7 +600,7 @@ mod fixture {
                 .await
                 .unwrap();
             if !organization {
-                db::repositories::access::revoke_repo_access(
+                codeyard_db_repos::repositories::access::revoke_repo_access(
                     &fixture.pool,
                     fixture.actor_id,
                     fixture.repo_id,
@@ -585,11 +608,13 @@ mod fixture {
                 .await
                 .unwrap();
             }
-            let repo =
-                db::repositories::records::get_repository_by_id(&fixture.pool, fixture.repo_id)
-                    .await
-                    .unwrap()
-                    .unwrap();
+            let repo = codeyard_db_repos::repositories::records::get_repository_by_id(
+                &fixture.pool,
+                fixture.repo_id,
+            )
+            .await
+            .unwrap()
+            .unwrap();
             for credential in [
                 ReceiveCredential::SshKey(fixture.key_id),
                 ReceiveCredential::Token(fixture.token_id),
@@ -697,10 +722,13 @@ mod fixture {
     async fn receive_deletion_waits_for_the_same_guard_as_default_branch_changes() {
         let mut fixture = Fixture::new().await;
         fixture.delete_spare_branch();
-        let repo = db::repositories::records::get_repository_by_id(&fixture.pool, fixture.repo_id)
-            .await
-            .unwrap()
-            .unwrap();
+        let repo = codeyard_db_repos::repositories::records::get_repository_by_id(
+            &fixture.pool,
+            fixture.repo_id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
         let guard = codeyard_git::locks::lock(&fixture.path).await;
         let (pool, repo_id, actor) = (fixture.pool.clone(), fixture.repo_id, fixture.owner_id);
         let setter = tokio::spawn(async move {
@@ -756,11 +784,12 @@ mod fixture {
         let (reached, release) = hold_next_hook(fixture.path.clone(), true);
         let mut task = fixture.receive();
         hook_reached(reached, &mut task).await;
-        assert!(
-            db::users::ssh_keys::delete_ssh_key(&fixture.pool, fixture.key_id)
-                .await
-                .unwrap()
-        );
+        assert!(codeyard_db_identity::users::ssh_keys::delete_ssh_key(
+            &fixture.pool,
+            fixture.key_id
+        )
+        .await
+        .unwrap());
         release.send(()).unwrap();
         // Git accepted the push, so its bookkeeping finishes for the admitted actor.
         assert!(
@@ -774,10 +803,13 @@ mod fixture {
             bare.find_reference("HEAD").unwrap().symbolic_target(),
             Some("refs/heads/trunk")
         );
-        let row = db::repositories::records::get_repository_by_id(&fixture.pool, fixture.repo_id)
-            .await
-            .unwrap()
-            .unwrap();
+        let row = codeyard_db_repos::repositories::records::get_repository_by_id(
+            &fixture.pool,
+            fixture.repo_id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(row.default_branch, "trunk");
         assert!(row.size_bytes > 0);
         fixture.pool.close().await;
@@ -821,14 +853,15 @@ mod fixture {
             match change {
                 "unchanged" => {}
                 "key" => {
-                    assert!(
-                        db::users::ssh_keys::delete_ssh_key(&fixture.pool, fixture.key_id)
-                            .await
-                            .unwrap()
-                    );
+                    assert!(codeyard_db_identity::users::ssh_keys::delete_ssh_key(
+                        &fixture.pool,
+                        fixture.key_id
+                    )
+                    .await
+                    .unwrap());
                 }
                 "token" => {
-                    assert!(db::users::tokens::delete_token(
+                    assert!(codeyard_db_identity::users::tokens::delete_token(
                         &fixture.pool,
                         fixture.actor_id,
                         &"b".repeat(64),
@@ -845,7 +878,7 @@ mod fixture {
                         .unwrap();
                 }
                 "reset" => {
-                    db::users::accounts::update_user_password(
+                    codeyard_db_identity::users::accounts::update_user_password(
                         &fixture.pool,
                         fixture.actor_id,
                         "fixture-only",
@@ -855,7 +888,7 @@ mod fixture {
                     .unwrap();
                 }
                 "access" => {
-                    assert!(db::repositories::access::revoke_repo_access(
+                    assert!(codeyard_db_repos::repositories::access::revoke_repo_access(
                         &fixture.pool,
                         fixture.actor_id,
                         fixture.repo_id
@@ -865,7 +898,7 @@ mod fixture {
                 }
                 "organization-team" => {
                     let (organization, team) = fixture.team.unwrap();
-                    match db::organizations::remove_organization_team_member(
+                    match codeyard_db_orgs::organizations::teams::remove_organization_team_member(
                         &fixture.pool,
                         fixture.owner_id,
                         organization,
@@ -875,7 +908,9 @@ mod fixture {
                     .await
                     .unwrap()
                     {
-                        db::organizations::OrganizationOutcome::Applied(_) => {}
+                        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(
+                            _,
+                        ) => {}
                         outcome => panic!("team authority removal failed: {outcome:?}"),
                     }
                 }
@@ -887,9 +922,9 @@ mod fixture {
                         .unwrap();
                 }
                 "protected" => {
-                    db::repositories::protection::upsert_branch_protection_rule(
+                    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
                         &fixture.pool,
-                        db::repositories::BranchProtectionRuleUpsert {
+                        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
                             actor_id: fixture.owner_id,
                             repo_id: fixture.repo_id,
                             pattern: "spare",
@@ -1078,19 +1113,24 @@ mod fixture {
         async fn protect(
             &self,
             pattern: &str,
-            change: impl FnOnce(&mut db::repositories::BranchProtectionRuleUpsert<'_>),
+            change: impl FnOnce(
+                &mut codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert<'_>,
+            ),
         ) {
-            let mut rule = db::repositories::BranchProtectionRuleUpsert {
-                actor_id: self.owner_id,
-                repo_id: self.repo_id,
-                pattern,
-                require_pull_request: false,
-                ..Default::default()
-            };
+            let mut rule =
+                codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
+                    actor_id: self.owner_id,
+                    repo_id: self.repo_id,
+                    pattern,
+                    require_pull_request: false,
+                    ..Default::default()
+                };
             change(&mut rule);
-            db::repositories::protection::upsert_branch_protection_rule(&self.pool, rule)
-                .await
-                .unwrap();
+            codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
+                &self.pool, rule,
+            )
+            .await
+            .unwrap();
         }
 
         /// Pushes `old` to `new` on `reference` as the writer and returns Git's report.
@@ -1316,7 +1356,7 @@ mod fixture {
             let mut fixture = Fixture::new().await;
             let scratch = Scratch::new(&fixture);
             if admin {
-                db::repositories::access::grant_repo_access(
+                codeyard_db_repos::repositories::access::grant_repo_access(
                     &fixture.pool,
                     fixture.actor_id,
                     fixture.repo_id,
@@ -1351,7 +1391,7 @@ mod fixture {
     async fn administrators_cannot_force_push_where_a_rule_blocks_it() {
         let mut fixture = Fixture::new().await;
         let scratch = Scratch::new(&fixture);
-        db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             &fixture.pool,
             fixture.actor_id,
             fixture.repo_id,
@@ -1393,7 +1433,7 @@ mod fixture {
             let mut fixture = Fixture::new().await;
             let scratch = Scratch::new(&fixture);
             if admin {
-                db::repositories::access::grant_repo_access(
+                codeyard_db_repos::repositories::access::grant_repo_access(
                     &fixture.pool,
                     fixture.actor_id,
                     fixture.repo_id,
@@ -1513,7 +1553,7 @@ mod fixture {
         // Only a repository that a storage node holds has replicas to tell, and a node
         // keeps its repositories at `<uuid>.git`.
         let key = codeyard_support::node_identity::NodeKey::generate();
-        let node = db::cluster::register_own_node(
+        let node = codeyard_db_cluster::cluster::register_own_node(
             &fixture.pool,
             &key.public_hex(),
             "policy-node",
@@ -1533,11 +1573,13 @@ mod fixture {
             .await
             .unwrap();
         fixture.path = held;
-        assert!(
-            db::cluster::place_repository(&fixture.pool, fixture.repo_id, node.id)
-                .await
-                .unwrap()
-        );
+        assert!(codeyard_db_cluster::cluster::place_repository(
+            &fixture.pool,
+            fixture.repo_id,
+            node.id
+        )
+        .await
+        .unwrap());
         fixture.ci = Arc::new(CiRuns::new(
             fixture.pool.clone(),
             Arc::new(crate::ci::config::CiConfig::default()),
@@ -1566,10 +1608,11 @@ mod fixture {
             ),
         ));
         let bare = git2::Repository::open_bare(&fixture.path).unwrap();
-        let version = db::cluster::get_write_version(&fixture.pool, fixture.repo_id)
-            .await
-            .unwrap()
-            .unwrap();
+        let version =
+            codeyard_db_cluster::cluster::get_write_version(&fixture.pool, fixture.repo_id)
+                .await
+                .unwrap()
+                .unwrap();
         let output = timeout(std::time::Duration::from_secs(15), fixture.receive())
             .await
             .unwrap()
@@ -1582,7 +1625,7 @@ mod fixture {
         );
         // Every transport shares this receive path, so a push is counted for replicas here.
         assert_eq!(
-            db::cluster::get_write_version(&fixture.pool, fixture.repo_id)
+            codeyard_db_cluster::cluster::get_write_version(&fixture.pool, fixture.repo_id)
                 .await
                 .unwrap(),
             Some(version + 1)
@@ -1680,7 +1723,7 @@ mod fixture {
             fixture.request = receive_request(&fixture.path, reference, ZERO_SHA, &sha.to_string());
             let output = fixture.receive().await.unwrap().unwrap();
             assert!(String::from_utf8_lossy(&output).contains(&format!("ok {reference}")));
-            assert!(db::ci::has_ci_accepted_push(
+            assert!(codeyard_db_actions::ci::has_ci_accepted_push(
                 &fixture.pool,
                 fixture.repo_id,
                 fixture.actor_id,
@@ -1691,7 +1734,7 @@ mod fixture {
             .unwrap());
         }
         assert!(
-            db::ci::list_ci_runs_for_repo(&fixture.pool, fixture.repo_id, 10)
+            codeyard_db_actions::ci::list_ci_runs_for_repo(&fixture.pool, fixture.repo_id, 10)
                 .await
                 .unwrap()
                 .is_empty()
@@ -1768,9 +1811,10 @@ mod fixture {
             .unwrap()
             .unwrap();
         assert!(String::from_utf8_lossy(&output).contains("ok refs/heads/path-filter"));
-        let runs = db::ci::list_ci_runs_for_repo(&fixture.pool, fixture.repo_id, 10)
-            .await
-            .unwrap();
+        let runs =
+            codeyard_db_actions::ci::list_ci_runs_for_repo(&fixture.pool, fixture.repo_id, 10)
+                .await
+                .unwrap();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].workflow_path, ".github/workflows/matching.yml");
         assert_eq!(runs[0].head_sha.as_deref(), Some(commit_sha.as_str()));
@@ -1814,9 +1858,9 @@ mod fixture {
                 .unwrap();
             bare.reference("refs/heads/topic", fixture.oid, false, "fixture")
                 .unwrap();
-            let pull = db::pull_requests::records::create_pull_request(
+            let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
                 &fixture.pool,
-                db::pull_requests::records::NewPullRequest {
+                codeyard_db_repos::pull_requests::records::NewPullRequest {
                     repo_id: fixture.repo_id,
                     head_repo_id: None,
                     author_id: fixture.actor_id,
@@ -1921,9 +1965,10 @@ mod fixture {
                 .unwrap()
                 .unwrap();
             assert!(String::from_utf8_lossy(&output).contains("ok refs/heads/topic"));
-            let runs = db::ci::list_ci_runs_for_repo(&fixture.pool, fixture.repo_id, 10)
-                .await
-                .unwrap();
+            let runs =
+                codeyard_db_actions::ci::list_ci_runs_for_repo(&fixture.pool, fixture.repo_id, 10)
+                    .await
+                    .unwrap();
             assert_eq!(
                 runs.iter()
                     .filter(|r| r.head_sha.as_deref() == Some(first.to_string().as_str()))
@@ -1945,7 +1990,7 @@ mod fixture {
                 }
             );
             assert_eq!(
-                db::ci::has_ci_accepted_push(
+                codeyard_db_actions::ci::has_ci_accepted_push(
                     &fixture.pool,
                     fixture.repo_id,
                     fixture.actor_id,
@@ -1956,10 +2001,13 @@ mod fixture {
                 .unwrap(),
                 change != "accepted-delete"
             );
-            let moved = db::pull_requests::records::get_pull_request_by_id(&fixture.pool, pull.id)
-                .await
-                .unwrap()
-                .unwrap();
+            let moved = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
+                &fixture.pool,
+                pull.id,
+            )
+            .await
+            .unwrap()
+            .unwrap();
             assert_eq!(
                 moved.head_sha,
                 if change == "delete" {
@@ -1968,15 +2016,17 @@ mod fixture {
                     later.to_string()
                 }
             );
-            let repository =
-                db::repositories::records::get_repository_by_id(&fixture.pool, fixture.repo_id)
-                    .await
-                    .unwrap()
-                    .unwrap();
+            let repository = codeyard_db_repos::repositories::records::get_repository_by_id(
+                &fixture.pool,
+                fixture.repo_id,
+            )
+            .await
+            .unwrap()
+            .unwrap();
             assert_eq!(repository.default_branch, "main");
             assert!(repository.size_bytes > 0);
             for _ in 0..runs.len() {
-                let run = db::ci::claim_ci_run(
+                let run = codeyard_db_actions::ci::claim_ci_run(
                     &fixture.pool,
                     "worker",
                     "local",
@@ -2009,10 +2059,16 @@ mod fixture {
                     cloned.head().unwrap().target().unwrap().to_string(),
                     run.head_sha.as_ref().unwrap().as_str()
                 );
-                db::ci::finish_ci_run(&fixture.pool, run.id, "worker", "success", None)
-                    .await
-                    .unwrap()
-                    .unwrap();
+                codeyard_db_actions::ci::finish_ci_run(
+                    &fixture.pool,
+                    run.id,
+                    "worker",
+                    "success",
+                    None,
+                )
+                .await
+                .unwrap()
+                .unwrap();
             }
             fixture.pool.close().await;
         }

@@ -20,8 +20,8 @@ fn rule<'a>(
     repo: i64,
     actor: i64,
     pattern: &'a str,
-) -> db::repositories::protection::BranchProtectionRuleUpsert<'a> {
-    db::repositories::protection::BranchProtectionRuleUpsert {
+) -> codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert<'a> {
+    codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
         actor_id: actor,
         repo_id: repo,
         pattern,
@@ -42,9 +42,9 @@ async fn enqueue(
     pipeline: &str,
     path: &str,
 ) -> codeyard_db_core::models::CiRun {
-    db::ci::enqueue_ci_run(
+    codeyard_db_actions::ci::enqueue_ci_run(
         pool,
-        db::ci::NewCiRun {
+        codeyard_db_actions::ci::NewCiRun {
             repo_id: repo,
             triggered_by_id: actor,
             pipeline,
@@ -89,7 +89,7 @@ async fn contract(pg: bool) {
     let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "proj",
         None,
         false,
@@ -97,7 +97,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         merger,
         repository.id,
@@ -142,7 +142,7 @@ async fn contract(pg: bool) {
     .unwrap();
     let mut late_rule = rule(repository.id, owner, "main");
     late_rule.required_approving_reviews = 1;
-    db::repositories::protection::upsert_branch_protection_rule(f.pool(), late_rule)
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(f.pool(), late_rule)
         .await
         .unwrap();
     assert!(matches!(
@@ -169,14 +169,16 @@ async fn contract(pg: bool) {
         base
     );
     assert_eq!(alice.pull(late_number as i64).await["state"], "open");
-    assert!(db::repositories::protection::delete_branch_protection_rule(
-        f.pool(),
-        owner,
-        repository.id,
-        "main",
-    )
-    .await
-    .unwrap());
+    assert!(
+        codeyard_db_repos::repositories::protection::delete_branch_protection_rule(
+            f.pool(),
+            owner,
+            repository.id,
+            "main",
+        )
+        .await
+        .unwrap()
+    );
     let prepared = codeyard_app::repositories::pull_requests::merge::prepare_pull_request_merge(
         f.pool(),
         &state.ci_runs,
@@ -225,12 +227,12 @@ async fn contract(pg: bool) {
         base
     );
     assert_eq!(
-        db::notifications::records::count_unread_notifications(f.pool(), owner)
+        codeyard_db_repos::notifications::records::count_unread_notifications(f.pool(), owner)
             .await
             .unwrap(),
         0
     );
-    assert!(db::ci::latest_ci_runs_for_commit(
+    assert!(codeyard_db_actions::ci::latest_ci_runs_for_commit(
         f.pool(),
         repository.id,
         &late_head,
@@ -254,7 +256,7 @@ async fn contract(pg: bool) {
     let mut case_rule = rule(repository.id, owner, "main");
     case_rule.require_status_checks = true;
     case_rule.required_status_checks = vec!["external/check".into()];
-    db::repositories::protection::upsert_branch_protection_rule(f.pool(), case_rule)
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(f.pool(), case_rule)
         .await
         .unwrap();
     alice
@@ -274,41 +276,46 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(failed["sha"], case_head);
-    let statuses =
-        db::repositories::protection::list_commit_statuses(f.pool(), repository.id, &case_upper)
-            .await
-            .unwrap();
+    let statuses = codeyard_db_repos::repositories::protection::list_commit_statuses(
+        f.pool(),
+        repository.id,
+        &case_upper,
+    )
+    .await
+    .unwrap();
     assert_eq!(statuses.len(), 1);
     assert!(statuses
         .iter()
         .all(|status| status.sha == case_head && status.state == "failure"));
     blocked(&alice, case_number, "external/check (failure)").await;
-    assert!(db::repositories::protection::delete_branch_protection_rule(
-        f.pool(),
-        owner,
-        repository.id,
-        "main",
-    )
-    .await
-    .unwrap());
+    assert!(
+        codeyard_db_repos::repositories::protection::delete_branch_protection_rule(
+            f.pool(),
+            owner,
+            repository.id,
+            "main",
+        )
+        .await
+        .unwrap()
+    );
 
     // Unsupported patterns are rejected at both write boundaries without changing rules.
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         f.pool(),
         rule(repository.id, owner, "release/*"),
     )
     .await
     .unwrap();
     for pattern in ["", "!release", "release/[ab]", "release\\*", "bad..name"] {
-        let error = db::repositories::protection::upsert_branch_protection_rule(
+        let error = codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
             f.pool(),
             rule(repository.id, owner, pattern),
         )
         .await
         .unwrap_err();
         assert_eq!(
-            error.downcast_ref::<db::repositories::protection::ProtectionWriteRefusal>(),
-            Some(&db::repositories::protection::ProtectionWriteRefusal::InvalidPattern)
+            error.downcast_ref::<codeyard_db_repos::repositories::protection::ProtectionWriteRefusal>(),
+            Some(&codeyard_db_repos::repositories::protection::ProtectionWriteRefusal::InvalidPattern)
         );
         let error = alice
             .expect(
@@ -319,10 +326,12 @@ async fn contract(pg: bool) {
             )
             .await;
         assert_eq!(error["error"], "validation_error");
-        let rules =
-            db::repositories::protection::list_branch_protection_rules(f.pool(), repository.id)
-                .await
-                .unwrap();
+        let rules = codeyard_db_repos::repositories::protection::list_branch_protection_rules(
+            f.pool(),
+            repository.id,
+        )
+        .await
+        .unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].pattern, "release/*");
     }
@@ -392,9 +401,9 @@ async fn contract(pg: bool) {
 
             blocked(&alice, number, "pending").await;
             for context in [alias, &context_a, &context_b] {
-                let error = db::repositories::protection::upsert_commit_status(
+                let error = codeyard_db_repos::repositories::protection::upsert_commit_status(
                     f.pool(),
-                    db::repositories::protection::CommitStatusUpsert {
+                    codeyard_db_repos::repositories::protection::CommitStatusUpsert {
                         repo_id: repository.id,
                         sha: &head,
                         context,
@@ -419,7 +428,7 @@ async fn contract(pg: bool) {
             }
             // Each run is taken by its own slot, since a slot holds one run at a time.
             for expected in [&a, &b] {
-                let claimed = db::ci::claim_ci_run(
+                let claimed = codeyard_db_actions::ci::claim_ci_run(
                     f.pool(),
                     &format!("worker-{}", expected.id),
                     "local",
@@ -437,7 +446,7 @@ async fn contract(pg: bool) {
                 [(&a, "failed"), (&b, "success")]
             };
             for (index, (run, status)) in order.into_iter().enumerate() {
-                assert!(db::ci::finish_ci_run(
+                assert!(codeyard_db_actions::ci::finish_ci_run(
                     f.pool(),
                     run.id,
                     &format!("worker-{}", run.id),
@@ -458,20 +467,28 @@ async fn contract(pg: bool) {
                 )
                 .await;
             }
-            let statuses =
-                db::repositories::protection::list_commit_statuses(f.pool(), repository.id, &head)
-                    .await
-                    .unwrap();
+            let statuses = codeyard_db_repos::repositories::protection::list_commit_statuses(
+                f.pool(),
+                repository.id,
+                &head,
+            )
+            .await
+            .unwrap();
             let states: HashMap<_, _> = statuses
                 .iter()
                 .map(|s| (s.context.as_str(), s.state.as_str()))
                 .collect();
             assert_eq!(states.get(context_a.as_str()), Some(&"failure"));
             assert_eq!(states.get(context_b.as_str()), Some(&"success"));
-            let latest =
-                db::ci::latest_ci_runs_for_commit(f.pool(), repository.id, &head, 0, "main")
-                    .await
-                    .unwrap();
+            let latest = codeyard_db_actions::ci::latest_ci_runs_for_commit(
+                f.pool(),
+                repository.id,
+                &head,
+                0,
+                "main",
+            )
+            .await
+            .unwrap();
             assert_eq!(latest.len(), 2);
 
             // Retries replace only this source. A late older failure cannot replace success.
@@ -479,7 +496,7 @@ async fn contract(pg: bool) {
                 enqueue(f.pool(), repository.id, owner, &head, pipeline_a, path_a).await;
             blocked(&alice, number, "pending").await;
             assert_eq!(
-                db::ci::claim_ci_run(
+                codeyard_db_actions::ci::claim_ci_run(
                     f.pool(),
                     "worker",
                     "local",
@@ -496,7 +513,7 @@ async fn contract(pg: bool) {
             blocked(&alice, number, "pending").await;
             // Another slot takes the retry, since the first one still holds its run.
             assert_eq!(
-                db::ci::claim_ci_run(
+                codeyard_db_actions::ci::claim_ci_run(
                     f.pool(),
                     "worker-2",
                     "local",
@@ -509,18 +526,27 @@ async fn contract(pg: bool) {
                 .id,
                 retry.id
             );
-            db::ci::finish_ci_run(f.pool(), retry.id, "worker-2", "success", None)
+            codeyard_db_actions::ci::finish_ci_run(f.pool(), retry.id, "worker-2", "success", None)
                 .await
                 .unwrap()
                 .unwrap();
-            db::ci::finish_ci_run(f.pool(), old_retry.id, "worker", "failed", None)
-                .await
-                .unwrap()
-                .unwrap();
-            let statuses =
-                db::repositories::protection::list_commit_statuses(f.pool(), repository.id, &head)
-                    .await
-                    .unwrap();
+            codeyard_db_actions::ci::finish_ci_run(
+                f.pool(),
+                old_retry.id,
+                "worker",
+                "failed",
+                None,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let statuses = codeyard_db_repos::repositories::protection::list_commit_statuses(
+                f.pool(),
+                repository.id,
+                &head,
+            )
+            .await
+            .unwrap();
             assert_eq!(
                 statuses
                     .iter()
@@ -529,10 +555,15 @@ async fn contract(pg: bool) {
                     .state,
                 "success"
             );
-            let latest =
-                db::ci::latest_ci_runs_for_commit(f.pool(), repository.id, &head, 0, "main")
-                    .await
-                    .unwrap();
+            let latest = codeyard_db_actions::ci::latest_ci_runs_for_commit(
+                f.pool(),
+                repository.id,
+                &head,
+                0,
+                "main",
+            )
+            .await
+            .unwrap();
             assert_eq!(latest.len(), 2);
             assert!(latest.iter().all(|run| run.status == "success"));
             assert!(latest.iter().any(|run| run.id == retry.id));
@@ -608,7 +639,7 @@ async fn protection_contract(pg: bool) {
     let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "proj",
         None,
         false,
@@ -620,9 +651,14 @@ async fn protection_contract(pg: bool) {
         (writer, codeyard_db_core::models::AccessLevel::Write),
         (reader, codeyard_db_core::models::AccessLevel::Read),
     ] {
-        db::repositories::access::grant_repo_access(f.pool(), user, repository.id, level)
-            .await
-            .unwrap();
+        codeyard_db_repos::repositories::access::grant_repo_access(
+            f.pool(),
+            user,
+            repository.id,
+            level,
+        )
+        .await
+        .unwrap();
     }
     let git = git2::Repository::open_bare(&repository.disk_path).unwrap();
     let state = Arc::new(AppState::new(
@@ -813,10 +849,10 @@ async fn protection_contract(pg: bool) {
         .await;
     assert!(saved["sha"].is_string(), "{saved}");
     // The editor save is a branch update in the owner's activity, next to pushes.
-    let activity = db::activity::list_user_activity(
+    let activity = codeyard_db_repos::activity::list_user_activity(
         f.pool(),
         owner,
-        Some(db::activity::ActivityViewer {
+        Some(codeyard_db_repos::activity::ActivityViewer {
             user: owner,
             session: &alice.session,
         }),
@@ -927,7 +963,7 @@ async fn linear_history_merge_contract(pg: bool) {
     let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "proj",
         None,
         false,
@@ -983,7 +1019,7 @@ async fn linear_history_merge_contract(pg: bool) {
 
     let mut linear = rule(repository.id, owner, "main");
     linear.require_linear_history = true;
-    db::repositories::protection::upsert_branch_protection_rule(f.pool(), linear)
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(f.pool(), linear)
         .await
         .unwrap();
     let (status, error) = merge_as(&alice, number).await;
@@ -1001,7 +1037,7 @@ async fn linear_history_merge_contract(pg: bool) {
 
     let mut plain = rule(repository.id, owner, "main");
     plain.require_linear_history = false;
-    db::repositories::protection::upsert_branch_protection_rule(f.pool(), plain)
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(f.pool(), plain)
         .await
         .unwrap();
     let (status, error) = merge_as(&alice, number).await;
@@ -1042,7 +1078,7 @@ async fn linear_history_branch_creation_contract(pg: bool) {
     let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "proj",
         None,
         false,
@@ -1089,7 +1125,7 @@ async fn linear_history_branch_creation_contract(pg: bool) {
     let mut linear = rule(repository.id, owner, "release/**");
     linear.require_pull_request = false;
     linear.require_linear_history = true;
-    db::repositories::protection::upsert_branch_protection_rule(f.pool(), linear)
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(f.pool(), linear)
         .await
         .unwrap();
 
@@ -1138,9 +1174,9 @@ async fn enqueue_pull_request_run(
     base: &str,
     sha: &str,
 ) -> codeyard_db_core::models::CiRun {
-    db::ci::enqueue_ci_run(
+    codeyard_db_actions::ci::enqueue_ci_run(
         pool,
-        db::ci::NewCiRun {
+        codeyard_db_actions::ci::NewCiRun {
             repo_id: repo,
             triggered_by_id: actor,
             pipeline: "ci",
@@ -1172,7 +1208,7 @@ async fn runs_of_another_pull_request_do_not_satisfy_a_check(pg: bool) {
     let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "proj",
         None,
         false,
@@ -1220,7 +1256,7 @@ async fn runs_of_another_pull_request_do_not_satisfy_a_check(pg: bool) {
         &head,
     )
     .await;
-    let claimed = db::ci::claim_ci_run(
+    let claimed = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "worker",
         "local",
@@ -1231,7 +1267,7 @@ async fn runs_of_another_pull_request_do_not_satisfy_a_check(pg: bool) {
     .unwrap()
     .unwrap();
     assert_eq!(claimed.id, failed.id);
-    db::ci::finish_ci_run(f.pool(), failed.id, "worker", "failed", None)
+    codeyard_db_actions::ci::finish_ci_run(f.pool(), failed.id, "worker", "failed", None)
         .await
         .unwrap()
         .unwrap();
@@ -1247,7 +1283,7 @@ async fn runs_of_another_pull_request_do_not_satisfy_a_check(pg: bool) {
         &head,
     )
     .await;
-    let claimed = db::ci::claim_ci_run(
+    let claimed = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "worker",
         "local",
@@ -1258,7 +1294,7 @@ async fn runs_of_another_pull_request_do_not_satisfy_a_check(pg: bool) {
     .unwrap()
     .unwrap();
     assert_eq!(claimed.id, passed.id);
-    db::ci::finish_ci_run(f.pool(), passed.id, "worker", "success", None)
+    codeyard_db_actions::ci::finish_ci_run(f.pool(), passed.id, "worker", "success", None)
         .await
         .unwrap()
         .unwrap();
@@ -1289,7 +1325,7 @@ async fn pull_request_checks_show_failures_and_the_head_branch(pg: bool) {
     let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "proj",
         None,
         false,
@@ -1323,7 +1359,7 @@ async fn pull_request_checks_show_failures_and_the_head_branch(pg: bool) {
         &head,
     )
     .await;
-    let claimed = db::ci::claim_ci_run(
+    let claimed = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "worker",
         "local",
@@ -1334,7 +1370,7 @@ async fn pull_request_checks_show_failures_and_the_head_branch(pg: bool) {
     .unwrap()
     .unwrap();
     assert_eq!(claimed.id, run.id);
-    db::ci::finish_ci_run(f.pool(), run.id, "worker", "failed", None)
+    codeyard_db_actions::ci::finish_ci_run(f.pool(), run.id, "worker", "failed", None)
         .await
         .unwrap()
         .unwrap();
@@ -1388,7 +1424,7 @@ async fn merge_method_history_contract(pg: bool) {
     let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "proj",
         None,
         false,
@@ -1409,9 +1445,9 @@ async fn merge_method_history_contract(pg: bool) {
     let mut main = alice.save("main", "README.md", "unborn").await;
     for (rule, up_to_date, linear) in [("up-to-date", true, false), ("linear", false, true)] {
         // The rule applies to the owner too, and direct saves to main stay possible for the test.
-        db::repositories::protection::upsert_branch_protection_rule(
+        codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
             f.pool(),
-            db::repositories::protection::BranchProtectionRuleUpsert {
+            codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
                 actor_id: owner,
                 repo_id: repository.id,
                 pattern: "main",

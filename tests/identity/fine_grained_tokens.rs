@@ -62,7 +62,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let org = applied(
-        db::organizations::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             alice,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -196,7 +196,7 @@ async fn contract(pg: bool) {
     assert_eq!(reply.status, 200, "{}", reply.text());
     let first = value(&reply.text());
     assert!(first[9..].chars().all(|c| c.is_ascii_hexdigit()));
-    let row = db::fine_grained_tokens::list_before(f.pool(), alice, None)
+    let row = codeyard_db_identity::fine_grained_tokens::list_before(f.pool(), alice, None)
         .await
         .unwrap()
         .remove(0);
@@ -324,10 +324,12 @@ async fn contract(pg: bool) {
         reply.location.as_deref(),
         Some("/settings/personal-access-tokens?deleted=1")
     );
-    assert!(db::fine_grained_tokens::get(f.pool(), token)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        codeyard_db_identity::fine_grained_tokens::get(f.pool(), token)
+            .await
+            .unwrap()
+            .is_none()
+    );
     f.finish().await;
 }
 

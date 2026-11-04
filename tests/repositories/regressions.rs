@@ -27,7 +27,7 @@ async fn contract(pg: bool) {
     let repository = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         false,
@@ -54,21 +54,27 @@ async fn contract(pg: bool) {
         &[repository.id],
     )
     .await;
-    assert!(db::repositories::access::readable_repository_ids(
-        f.pool(),
-        Some(bob),
-        &[repository.id]
-    )
-    .await
-    .unwrap()
-    .is_empty());
+    assert!(
+        codeyard_db_repos::repositories::access::readable_repository_ids(
+            f.pool(),
+            Some(bob),
+            &[repository.id]
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
     assert_eq!(
-        db::repositories::access::readable_repository_ids(f.pool(), Some(alice), &[repository.id])
-            .await
-            .unwrap(),
+        codeyard_db_repos::repositories::access::readable_repository_ids(
+            f.pool(),
+            Some(alice),
+            &[repository.id]
+        )
+        .await
+        .unwrap(),
         [repository.id]
     );
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repository.id,
@@ -77,49 +83,64 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     assert_eq!(
-        db::repositories::access::readable_repository_ids(f.pool(), Some(bob), &[repository.id])
-            .await
-            .unwrap(),
+        codeyard_db_repos::repositories::access::readable_repository_ids(
+            f.pool(),
+            Some(bob),
+            &[repository.id]
+        )
+        .await
+        .unwrap(),
         [repository.id]
     );
     access::check_admin(f.pool(), repository.id, bob)
         .await
         .unwrap();
-    db::repositories::access::revoke_repo_access(f.pool(), bob, repository.id)
+    codeyard_db_repos::repositories::access::revoke_repo_access(f.pool(), bob, repository.id)
         .await
         .unwrap();
-    let refused =
-        db::repositories::records::set_repository_archived(f.pool(), bob, repository.id, true)
-            .await
-            .unwrap_err();
-    assert!(matches!(
-        refused.downcast_ref::<db::repositories::records::RepositorySettingsRefusal>(),
-        Some(db::repositories::records::RepositorySettingsRefusal::Denied)
-    ));
-    assert!(db::repositories::records::set_repository_archived(
-        f.pool(),
-        alice,
-        repository.id,
-        true
-    )
-    .await
-    .unwrap());
-    assert!(db::repositories::records::set_repository_archived(
+    let refused = codeyard_db_repos::repositories::records::set_repository_archived(
         f.pool(),
         bob,
         repository.id,
-        false
+        true,
     )
     .await
-    .is_err());
-    assert!(db::repositories::records::set_repository_archived(
-        f.pool(),
-        alice,
-        repository.id,
-        false
-    )
-    .await
-    .unwrap());
+    .unwrap_err();
+    assert!(matches!(
+        refused
+            .downcast_ref::<codeyard_db_repos::repositories::records::RepositorySettingsRefusal>(),
+        Some(codeyard_db_repos::repositories::records::RepositorySettingsRefusal::Denied)
+    ));
+    assert!(
+        codeyard_db_repos::repositories::records::set_repository_archived(
+            f.pool(),
+            alice,
+            repository.id,
+            true
+        )
+        .await
+        .unwrap()
+    );
+    assert!(
+        codeyard_db_repos::repositories::records::set_repository_archived(
+            f.pool(),
+            bob,
+            repository.id,
+            false
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        codeyard_db_repos::repositories::records::set_repository_archived(
+            f.pool(),
+            alice,
+            repository.id,
+            false
+        )
+        .await
+        .unwrap()
+    );
     f.execute(
         "UPDATE repositories SET is_private=FALSE WHERE id=$1",
         &[repository.id],
@@ -127,7 +148,7 @@ async fn contract(pg: bool) {
     .await;
 
     // The picker and the submitted allowlist retain canonical account spellings.
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         upper,
         repository.id,
@@ -163,9 +184,12 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
-    let rules = db::repositories::protection::list_branch_protection_rules(f.pool(), repository.id)
-        .await
-        .unwrap();
+    let rules = codeyard_db_repos::repositories::protection::list_branch_protection_rules(
+        f.pool(),
+        repository.id,
+    )
+    .await
+    .unwrap();
     assert!(!rules[0].require_status_checks);
     assert!(rules[0].required_status_checks.is_empty());
     assert!(rules[0].force_push_allowances.contains(&alice));
@@ -253,9 +277,16 @@ async fn contract(pg: bool) {
 
     // Search and pagination happen before label models, including legacy long descriptions.
     f.execute("WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i<100) INSERT INTO labels(repo_id,name,color,description) SELECT $1,'label-' || CAST(i AS TEXT),'#123456','description' FROM n", &[repository.id]).await;
-    let labels = db::labels::list_repo_labels_page(f.pool(), repository.id, "", "name", 101, 0)
-        .await
-        .unwrap();
+    let labels = codeyard_db_repos::labels::list_repo_labels_page(
+        f.pool(),
+        repository.id,
+        "",
+        "name",
+        101,
+        0,
+    )
+    .await
+    .unwrap();
     assert_eq!(labels.len(), 101);
     f.execute(
         &format!(
@@ -291,7 +322,7 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
-    let stored = db::labels::list_repo_labels(f.pool(), repository.id)
+    let stored = codeyard_db_repos::labels::list_repo_labels(f.pool(), repository.id)
         .await
         .unwrap();
     let label = stored
@@ -302,10 +333,16 @@ async fn contract(pg: bool) {
     assert_eq!(label.color, "#abcdef");
     let (_, html) = client.page("/alice/proj/labels?page=2").await;
     assert!(html.contains("Previous"), "{html}");
-    let found =
-        db::labels::list_repo_labels_page(f.pool(), repository.id, "label-100", "name", 100, 0)
-            .await
-            .unwrap();
+    let found = codeyard_db_repos::labels::list_repo_labels_page(
+        f.pool(),
+        repository.id,
+        "label-100",
+        "name",
+        100,
+        0,
+    )
+    .await
+    .unwrap();
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].name, "label-100");
     client
@@ -318,10 +355,16 @@ async fn contract(pg: bool) {
         .await;
 
     // The older open PR is not hidden behind 100 newer closed/merged PRs.
-    let milestone =
-        db::milestones::create_milestone(f.pool(), alice, repository.id, "release", None, None)
-            .await
-            .unwrap();
+    let milestone = codeyard_db_repos::milestones::create_milestone(
+        f.pool(),
+        alice,
+        repository.id,
+        "release",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     f.execute(&format!("WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i<101) INSERT INTO pull_requests(repo_id,number,author_id,title,head_repo_id,head_branch,base_branch,head_sha,base_sha,state,milestone_id) SELECT $1,i+1,$2,CASE WHEN i=0 THEN 'older-open-pull' ELSE 'closed-pull' END,$1,'head-' || CAST(i AS TEXT),'main','{tip}','{tip}',CASE WHEN i=0 THEN 'open' WHEN i=1 THEN 'merged' ELSE 'closed' END,$3 FROM n"), &[repository.id, alice, milestone.id]).await;
     let (status, html) = client.page("/alice/proj/milestones/1?state=open").await;
     assert_eq!(status, StatusCode::OK, "{html}");
@@ -347,13 +390,13 @@ async fn contract(pg: bool) {
         panic!("pull list")
     };
     assert_eq!(items.len(), 2);
-    let closed = db::pull_requests::records::list_repo_pull_requests(
+    let closed = codeyard_db_repos::pull_requests::records::list_repo_pull_requests(
         f.pool(),
         repository.id,
-        &db::discussions::ListFilter {
+        &codeyard_db_repos::discussions::ListFilter {
             state: Some("closed"),
             include_merged: true,
-            milestone: db::discussions::Pick::Is(milestone.id),
+            milestone: codeyard_db_repos::discussions::Pick::Is(milestone.id),
             ..Default::default()
         },
         200,
@@ -383,7 +426,7 @@ async fn contract(pg: bool) {
     // 60-second bound, which a loaded runner can need.
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
     loop {
-        if !db::repository_stats::get_repo_languages(f.pool(), fork.id)
+        if !codeyard_db_repos::repository_stats::get_repo_languages(f.pool(), fork.id)
             .await
             .unwrap()
             .is_empty()
@@ -444,13 +487,18 @@ async fn contract(pg: bool) {
     std::fs::rename(&offline, &repository.disk_path).unwrap();
 
     // Ref forms bind to the original repository, not a replacement at the same URL.
-    db::repositories::records::rename_repository(f.pool(), alice, repository.id, "renamed")
-        .await
-        .unwrap();
+    codeyard_db_repos::repositories::records::rename_repository(
+        f.pool(),
+        alice,
+        repository.id,
+        "renamed",
+    )
+    .await
+    .unwrap();
     let replacement = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         false,
@@ -492,12 +540,14 @@ async fn contract(pg: bool) {
             .await;
         assert_eq!(reply.status, StatusCode::CONFLICT, "{}", reply.text());
     }
-    assert!(db::labels::list_repo_labels(f.pool(), replacement.id)
-        .await
-        .unwrap()
-        .is_empty());
     assert!(
-        db::milestones::list_repo_milestones(f.pool(), replacement.id, None)
+        codeyard_db_repos::labels::list_repo_labels(f.pool(), replacement.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        codeyard_db_repos::milestones::list_repo_milestones(f.pool(), replacement.id, None)
             .await
             .unwrap()
             .is_empty()

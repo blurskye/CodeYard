@@ -69,7 +69,7 @@ struct Category {
     exclude: Exclude,
 }
 impl Exclude {
-    fn excludes(&self, pull: &db::releases::ReleaseNotePull) -> bool {
+    fn excludes(&self, pull: &codeyard_db_repos::releases::notes::ReleaseNotePull) -> bool {
         self.authors
             .iter()
             .any(|author| author.eq_ignore_ascii_case(&pull.author))
@@ -207,13 +207,18 @@ pub async fn generate_notes(
     access::check_write(pool, repository_id, actor).await?;
     let config = configuration(&store, &head.sha, input.configuration_path).await?;
     access::check_write(pool, repository_id, actor).await?;
-    let pulls = db::releases::release_note_pulls(pool, repository_id, &history.commits)
-        .await
-        .map_err(unavailable)?;
-    let owner = db::repositories::records::repository_owner_name(pool, repository_id)
-        .await
-        .map_err(unavailable)?
-        .ok_or(ReleaseError::NotFound)?;
+    let pulls = codeyard_db_repos::releases::notes::release_note_pulls(
+        pool,
+        repository_id,
+        &history.commits,
+    )
+    .await
+    .map_err(unavailable)?;
+    let owner =
+        codeyard_db_repos::repositories::records::repository_owner_name(pool, repository_id)
+            .await
+            .map_err(unavailable)?
+            .ok_or(ReleaseError::NotFound)?;
     let encode = codeyard_webui::encode_component;
     let base = format!(
         "{}{}",

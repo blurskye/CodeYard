@@ -565,7 +565,3 @@ pub async fn get_user_file_stats(
 use codeyard_db_core::queries::sqlite::files::delete_if_unselected;
 
 use codeyard_db_core::queries::sqlite::files::queue_deletion;
-
-use codeyard_db_core::queries::sqlite::files::delete_if_unselected;
-
-use codeyard_db_core::queries::sqlite::files::queue_deletion;

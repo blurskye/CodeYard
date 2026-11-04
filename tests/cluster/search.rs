@@ -45,15 +45,16 @@ async fn code_search_reads_a_repository_stored_on_another_node() {
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
     let web = start_node(&database, root.path(), "web-1", "web").await;
     let storage = start_node(&database, root.path(), "store-1", "storage").await;
-    let owner = db::users::accounts::create_user(&database.pool, "search_remote", None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "search_remote", None)
+            .await
+            .unwrap();
     let repo = provision(
         (&database.pool, Some(&web.context)),
         root.path(),
@@ -108,9 +109,10 @@ async fn remote_file_lists_and_commit_walks_keep_size_limits_and_deadlines() {
     let root = tempfile::tempdir().unwrap();
     let web = start_node(&database, root.path(), "large-web", "web").await;
     let storage = start_node(&database, root.path(), "large-store", "storage").await;
-    let owner = db::users::accounts::create_user(&database.pool, "large_remote", None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "large_remote", None)
+            .await
+            .unwrap();
     let repository = provision(
         (&database.pool, Some(&web.context)),
         root.path(),
@@ -199,15 +201,16 @@ async fn code_search_on_an_unreachable_storage_node_is_an_error_not_an_empty_rep
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
     let web = start_node(&database, root.path(), "web-1", "web").await;
     let storage = start_node(&database, root.path(), "store-1", "storage").await;
-    let owner = db::users::accounts::create_user(&database.pool, "search_outage", None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "search_outage", None)
+            .await
+            .unwrap();
     let repo = provision(
         (&database.pool, Some(&web.context)),
         root.path(),
@@ -263,15 +266,16 @@ async fn content_search_allows_transport_fallback_and_keeps_completed_repositori
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
     let web = start_node(&database, root.path(), "search-web", "web").await;
     let storage = start_node(&database, root.path(), "search-storage", "storage").await;
-    let owner = db::users::accounts::create_user(&database.pool, "deadline_owner", None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "deadline_owner", None)
+            .await
+            .unwrap();
     let remote = provision(
         (&database.pool, Some(&web.context)),
         root.path(),
@@ -325,10 +329,11 @@ async fn content_search_allows_transport_fallback_and_keeps_completed_repositori
     ));
     let client = Client::anonymous(&state);
     let raw = &database.raw;
-    let node = db::cluster::get_node_by_id(&database.pool, storage.context.node_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let node =
+        codeyard_db_cluster::cluster::get_node_by_id(&database.pool, storage.context.node_id)
+            .await
+            .unwrap()
+            .unwrap();
     let mut address: cluster::NodeAddress =
         serde_json::from_str(node.addr_hint.as_deref().unwrap()).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

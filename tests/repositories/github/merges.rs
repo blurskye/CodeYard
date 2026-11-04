@@ -527,9 +527,9 @@ pub(super) async fn run(
         ("git/update-ref", 200),
     )
     .await;
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         pool,
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: alice,
             repo_id: repo,
             pattern: "merge-base",

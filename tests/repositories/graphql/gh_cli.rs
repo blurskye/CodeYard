@@ -70,7 +70,9 @@ async fn exact(router: &Router, token: &str, text: &str, variables: Value) -> Va
 }
 
 async fn contract(pg: bool) {
-    use db::repositories::protection::{self, BranchProtectionRuleUpsert, CommitStatusUpsert};
+    use codeyard_db_repos::repositories::protection::{
+        self, BranchProtectionRuleUpsert, CommitStatusUpsert,
+    };
     let f = Database::new(pg).await;
     f.complete_setup().await;
     let alice = f.actor("graphql-alice").await;
@@ -138,10 +140,11 @@ async fn contract(pg: bool) {
         created["createRepository"]["repository"]["owner"]["login"],
         "graphql-alice"
     );
-    let repo = db::repositories::records::get_repository(f.pool(), "graphql-alice", "proj")
-        .await
-        .unwrap()
-        .unwrap();
+    let repo =
+        codeyard_db_repos::repositories::records::get_repository(f.pool(), "graphql-alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
     let (status, initial) = request(
         &router,
         Some(token),
@@ -212,9 +215,16 @@ async fn contract(pg: bool) {
     ] {
         exact(&router, token, text, vars).await;
     }
-    db::labels::create_label(f.pool(), alice, repo.id, "bug", "ff0000", Some("A bug"))
-        .await
-        .unwrap();
+    codeyard_db_repos::labels::create_label(
+        f.pool(),
+        alice,
+        repo.id,
+        "bug",
+        "ff0000",
+        Some("A bug"),
+    )
+    .await
+    .unwrap();
     let labels = exact(&router, token, "query RepositoryLabelList($endCursor:String,$name:String!,$owner:String!){repository(owner: $owner, name: $name){labels(first: 100, orderBy: {field: NAME, direction: ASC}, after: $endCursor){nodes{id,name},pageInfo{hasNextPage,endCursor}}}}", json!({"owner":"graphql-alice","name":"proj"})).await;
     let bug = labels["repository"]["labels"]["nodes"]
         .as_array()
@@ -235,27 +245,27 @@ async fn contract(pg: bool) {
             exact(&router, token, label_text, json!({"input":{"labelableId":pull_id,"labelIds":[bug]}})),
         );
     }
-    let labeled = db::pull_requests::records::get_pull_request(f.pool(), repo.id, 1)
+    let labeled = codeyard_db_repos::pull_requests::records::get_pull_request(f.pool(), repo.id, 1)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(labeled.title, "Edited through gh");
     assert_eq!(
-        db::labels::get_pull_request_labels(f.pool(), labeled.repo_id, labeled.id)
+        codeyard_db_repos::labels::get_pull_request_labels(f.pool(), labeled.repo_id, labeled.id)
             .await
             .unwrap()
             .len(),
         1
     );
-    let pull = db::pull_requests::records::get_pull_request(f.pool(), repo.id, 1)
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request(f.pool(), repo.id, 1)
         .await
         .unwrap()
         .unwrap();
-    db::assignees::assign_user(
+    codeyard_db_repos::assignees::assign_user(
         f.pool(),
         alice,
         repo.id,
-        db::assignees::AssignedItem::PullRequest(pull.id),
+        codeyard_db_repos::assignees::AssignedItem::PullRequest(pull.id),
         alice,
     )
     .await
@@ -368,7 +378,7 @@ async fn contract(pg: bool) {
             ["requiredApprovingReviewCount"],
         2
     );
-    db::repositories::access::change_personal_repository_collaborator(
+    codeyard_db_repos::repositories::access::change_personal_repository_collaborator(
         f.pool(),
         alice,
         repo.id,
@@ -377,9 +387,14 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::pull_requests::reviews::request_pull_request_reviewer(f.pool(), pull.id, alice, reviewer)
-        .await
-        .unwrap();
+    codeyard_db_repos::pull_requests::reviews::request_pull_request_reviewer(
+        f.pool(),
+        pull.id,
+        alice,
+        reviewer,
+    )
+    .await
+    .unwrap();
     let status = exact(&router, token, cli!("pr-status"), status_variables).await;
     assert_eq!(status["reviewRequested"]["totalCount"], 1);
     let checks = exact(&router, token, cli!("pr-checks"), json!({"id":pull_id})).await;
@@ -397,7 +412,7 @@ async fn contract(pg: bool) {
     .await;
     assert!(blocked["errors"].is_array(), "{blocked}");
     assert!(
-        !db::pull_requests::records::get_pull_request_by_id(f.pool(), pull.id)
+        !codeyard_db_repos::pull_requests::records::get_pull_request_by_id(f.pool(), pull.id)
             .await
             .unwrap()
             .unwrap()
@@ -437,7 +452,7 @@ async fn contract(pg: bool) {
         let data = exact(&router, token, text, input.clone()).await;
         assert_eq!(data[field]["pullRequest"]["id"], *pull_id);
         assert_eq!(
-            db::pull_requests::records::get_pull_request_by_id(f.pool(), pull.id)
+            codeyard_db_repos::pull_requests::records::get_pull_request_by_id(f.pool(), pull.id)
                 .await
                 .unwrap()
                 .unwrap()
@@ -478,7 +493,7 @@ async fn contract(pg: bool) {
         *pull_id
     );
     assert!(
-        db::pull_requests::records::get_pull_request_by_id(f.pool(), pull.id)
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(f.pool(), pull.id)
             .await
             .unwrap()
             .unwrap()
@@ -490,7 +505,7 @@ async fn contract(pg: bool) {
     }
     exact(&router, token, cli!("pr-ready"), input.clone()).await;
     assert!(
-        !db::pull_requests::records::get_pull_request_by_id(f.pool(), pull.id)
+        !codeyard_db_repos::pull_requests::records::get_pull_request_by_id(f.pool(), pull.id)
             .await
             .unwrap()
             .unwrap()
@@ -588,7 +603,7 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(archived["archiveRepository"]["repository"]["id"], repo_id);
     assert!(
-        db::repositories::records::get_repository_by_id(f.pool(), repo.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), repo.id)
             .await
             .unwrap()
             .unwrap()
@@ -615,10 +630,11 @@ async fn merge_and_revert(
             "commitHeadline":"CLI merge headline","commitBody":"CLI merge body"}}),
     )
     .await;
-    let merged = db::pull_requests::records::get_pull_request_by_id(&state.pool, pull.id)
-        .await
-        .unwrap()
-        .unwrap();
+    let merged =
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(&state.pool, pull.id)
+            .await
+            .unwrap()
+            .unwrap();
     let git = git2::Repository::open_bare(&repo.disk_path).unwrap();
     let commit = git
         .find_commit(merged.merge_commit_sha.as_ref().unwrap().parse().unwrap())
@@ -630,7 +646,7 @@ async fn merge_and_revert(
         Some("CLI merge headline\n\nCLI merge body")
     );
     assert!(
-        db::pull_requests::records::get_pull_request_by_id(&state.pool, pull.id)
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(&state.pool, pull.id)
             .await
             .unwrap()
             .unwrap()
@@ -653,10 +669,11 @@ async fn merge_and_revert(
     let revert = &reverted["revertPullRequest"]["revertPullRequest"];
     assert_eq!(revert["number"], 3);
     assert!(revert["url"].as_str().unwrap().ends_with("/pull/3"));
-    let stored = db::pull_requests::records::get_pull_request(&state.pool, repo.id, 3)
-        .await
-        .unwrap()
-        .unwrap();
+    let stored =
+        codeyard_db_repos::pull_requests::records::get_pull_request(&state.pool, repo.id, 3)
+            .await
+            .unwrap()
+            .unwrap();
     assert!(stored.is_draft);
     assert_eq!(stored.title, "Undo CLI change");
     assert_eq!(stored.body, "Revert body");
@@ -720,14 +737,14 @@ async fn merge_and_revert(
         .await
         .unwrap();
     assert!(
-        db::pull_requests::records::get_pull_request_by_id(&state.pool, stored.id)
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(&state.pool, stored.id)
             .await
             .unwrap()
             .unwrap()
             .merged
     );
     assert!(
-        db::pull_requests::auto_merge::get_auto_merge(&state.pool, stored.id)
+        codeyard_db_repos::pull_requests::auto_merge::get_auto_merge(&state.pool, stored.id)
             .await
             .unwrap()
             .is_none()
@@ -766,12 +783,14 @@ async fn clone_templates(
     )
     .await;
     assert!(denied["errors"].is_array(), "{denied}");
-    assert!(
-        db::repositories::records::get_repository(f.pool(), "graphql-alice", "not-a-template")
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::repositories::records::get_repository(
+        f.pool(),
+        "graphql-alice",
+        "not-a-template"
+    )
+    .await
+    .unwrap()
+    .is_none());
     for (name, all_branches) in [("from-template", false), ("from-template-all", true)] {
         let cloned = exact(&router, token, cli!("repo-template"), json!({"input":{
             "repositoryId":repo_id,"ownerId":owner_node["viewer"]["id"],"name":name,
@@ -785,10 +804,14 @@ async fn clone_templates(
             cloned["cloneTemplateRepository"]["repository"]["owner"]["login"],
             "graphql-alice"
         );
-        let cloned = db::repositories::records::get_repository(f.pool(), "graphql-alice", name)
-            .await
-            .unwrap()
-            .unwrap();
+        let cloned = codeyard_db_repos::repositories::records::get_repository(
+            f.pool(),
+            "graphql-alice",
+            name,
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert!(!cloned.is_fork);
         assert!(cloned.forked_from_id.is_none());
         let clone_git = git2::Repository::open_bare(cloned.disk_path).unwrap();
@@ -817,7 +840,7 @@ async fn clone_templates(
         }})).await;
         assert!(denied["errors"].is_array(), "{denied}");
     }
-    assert!(db::repositories::records::get_repository(
+    assert!(codeyard_db_repos::repositories::records::get_repository(
         f.pool(),
         "graphql-alice",
         "denied-template"

@@ -338,15 +338,3 @@ pub async fn classic_refused_repository(pool: &SqlitePool, token: i64, repo: i64
     .fetch_one(pool)
     .await?)
 }
-
-use codeyard_db_core::queries::sqlite::fine_grained_tokens::selected;
-
-use codeyard_db_core::queries::sqlite::fine_grained_tokens::policy;
-
-use codeyard_db_core::queries::sqlite::fine_grained_tokens::repositories;
-
-use codeyard_db_core::queries::sqlite::fine_grained_tokens::policy;
-
-use codeyard_db_core::queries::sqlite::fine_grained_tokens::repositories;
-
-use codeyard_db_core::queries::sqlite::fine_grained_tokens::selected;

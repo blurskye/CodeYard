@@ -31,13 +31,19 @@ async fn discussions(
     viewer: i64,
     name: &str,
 ) -> (Value, Value, i64, i64) {
-    let issue = db::issues::create_issue(f.pool(), repo, author, "Assigned issue", "Issue body")
-        .await
-        .unwrap();
-    let head_branch = format!("feature-{}", issue.number);
-    let pull = db::pull_requests::records::create_pull_request(
+    let issue = codeyard_db_repos::issues::create_issue(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        repo,
+        author,
+        "Assigned issue",
+        "Issue body",
+    )
+    .await
+    .unwrap();
+    let head_branch = format!("feature-{}", issue.number);
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
+        f.pool(),
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             issue: None,
             maintainer_can_modify: false,
             repo_id: repo,
@@ -86,12 +92,13 @@ async fn contract(pg: bool) {
     let bob = f.actor("status-bob").await;
     let root = tempfile::tempdir().unwrap();
     let org = applied(
-        db::organizations::profiles::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             alice,
-            &db::organizations::profiles::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 "status-org",
-                db::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
             )
             .unwrap(),
         )
@@ -171,7 +178,7 @@ async fn contract(pg: bool) {
                 &[closed_pull],
             )
             .await;
-            db::issues::create_issue(f.pool(), repo.id, bob, "Unassigned issue", "")
+            codeyard_db_repos::issues::create_issue(f.pool(), repo.id, bob, "Unassigned issue", "")
                 .await
                 .unwrap();
         }
@@ -253,9 +260,14 @@ async fn contract(pg: bool) {
         data,
         json!({"assignments":{"nodes":&assignments[..1]},"reviewRequested":{"nodes":&reviews[..1]}})
     );
-    db::pull_requests::reviews::remove_pull_request_reviewer(f.pool(), work_pull, alice, alice)
-        .await
-        .unwrap();
+    codeyard_db_repos::pull_requests::reviews::remove_pull_request_reviewer(
+        f.pool(),
+        work_pull,
+        alice,
+        alice,
+    )
+    .await
+    .unwrap();
     let data = query(&router, &token, ASSIGNED_SEARCH, variables("")).await;
     assert_eq!(data["reviewRequested"]["nodes"], json!(&reviews[1..]));
     let mut vars = variables("");

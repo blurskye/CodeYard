@@ -25,6 +25,7 @@ use codeyard_support::object_limits::MAX_OBJECT_BYTES;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
+use sha2::Digest;
 use sha2::Sha512;
 use std::cmp::Ordering;
 use std::sync::Arc;

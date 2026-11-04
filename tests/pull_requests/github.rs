@@ -97,7 +97,7 @@ async fn contract(pg: bool) {
         codeyard_app::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
             name,
             None,
             private,
@@ -363,7 +363,7 @@ async fn contract(pg: bool) {
     let (status, _, body) = exchange(&router, "pulls/merge", "PUT", &format!("{url}/merge"), Some(&writer), json!({"sha": head, "commit_title": "Custom merge", "commit_message": "Custom description"})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["merged"], true);
-    let repo = db::repositories::records::get_repository(f.pool(), "alice", "proj")
+    let repo = codeyard_db_repos::repositories::records::get_repository(f.pool(), "alice", "proj")
         .await
         .unwrap()
         .unwrap();
@@ -466,7 +466,7 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    let repo = db::repositories::records::get_repository(f.pool(), "alice", "proj")
+    let repo = codeyard_db_repos::repositories::records::get_repository(f.pool(), "alice", "proj")
         .await
         .unwrap()
         .unwrap();

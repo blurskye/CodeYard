@@ -696,9 +696,3 @@ use codeyard_db_core::queries::postgres::runners::runner;
 use codeyard_db_core::queries::postgres::runners::RUNNER_FILTER;
 
 use codeyard_db_core::queries::postgres::runners::RUNNERS;
-
-use codeyard_db_core::queries::postgres::runners::RUNNERS;
-
-use codeyard_db_core::queries::postgres::runners::RUNNER_FILTER;
-
-use codeyard_db_core::queries::postgres::runners::runner;

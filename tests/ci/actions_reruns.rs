@@ -53,7 +53,7 @@ async fn finished(
 ) -> codeyard_db_core::models::CiRun {
     tokio::time::timeout(Duration::from_secs(60), async {
         loop {
-            let run = db::ci::get_ci_run_by_run_id(pool, run)
+            let run = codeyard_db_actions::ci::get_ci_run_by_run_id(pool, run)
                 .await
                 .unwrap()
                 .unwrap();
@@ -94,7 +94,7 @@ async fn contract(pg: bool) {
     let repo = repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "project",
         None,
         true,
@@ -102,7 +102,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -205,7 +205,7 @@ jobs:
         first.status,
         "success",
         "{:?}",
-        db::ci::list_ci_logs(f.pool(), first.id, 1000)
+        codeyard_db_actions::ci::list_ci_logs(f.pool(), first.id, 1000)
             .await
             .unwrap()
     );
@@ -296,7 +296,7 @@ jobs:
         StatusCode::CREATED,
     )
     .await;
-    let next = db::action_runs::get(f.pool(), repo.id, first.id, None)
+    let next = codeyard_db_actions::action_runs::get(f.pool(), repo.id, first.id, None)
         .await
         .unwrap()
         .unwrap();
@@ -306,7 +306,7 @@ jobs:
     assert_eq!(next.workflow_run_number, Some(1));
     assert_eq!(next.workflow_run_attempt, Some(2));
     let second = finished(f.pool(), next.run_id).await;
-    let logs = db::ci::list_ci_logs(f.pool(), second.id, 1000)
+    let logs = codeyard_db_actions::ci::list_ci_logs(f.pool(), second.id, 1000)
         .await
         .unwrap();
     assert_eq!(second.status, "success", "{logs:?}");
@@ -383,7 +383,7 @@ async fn partial(
     let repo = repositories::lifecycle::provision(
         (f.pool(), None),
         root,
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "partial",
         None,
         true,
@@ -391,7 +391,7 @@ async fn partial(
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -466,7 +466,7 @@ jobs:
         first.status,
         "failed",
         "{:?}",
-        db::ci::list_ci_logs(f.pool(), first.id, 1000)
+        codeyard_db_actions::ci::list_ci_logs(f.pool(), first.id, 1000)
             .await
             .unwrap()
     );
@@ -481,7 +481,7 @@ jobs:
         StatusCode::CREATED,
     )
     .await;
-    let next = db::action_runs::get(f.pool(), repo.id, first.id, None)
+    let next = codeyard_db_actions::action_runs::get(f.pool(), repo.id, first.id, None)
         .await
         .unwrap()
         .unwrap();
@@ -490,7 +490,7 @@ jobs:
         second.status,
         "success",
         "{:?}",
-        db::ci::list_ci_logs(f.pool(), second.id, 1000)
+        codeyard_db_actions::ci::list_ci_logs(f.pool(), second.id, 1000)
             .await
             .unwrap()
     );
@@ -548,7 +548,7 @@ jobs:
         StatusCode::CREATED,
     )
     .await;
-    let next = db::action_runs::get(f.pool(), repo.id, first.id, None)
+    let next = codeyard_db_actions::action_runs::get(f.pool(), repo.id, first.id, None)
         .await
         .unwrap()
         .unwrap();
@@ -557,7 +557,7 @@ jobs:
         third.status,
         "success",
         "{:?}",
-        db::ci::list_ci_logs(f.pool(), third.id, 1000)
+        codeyard_db_actions::ci::list_ci_logs(f.pool(), third.id, 1000)
             .await
             .unwrap()
     );

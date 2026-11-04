@@ -563,7 +563,3 @@ pub async fn list_values(
 use codeyard_db_core::queries::sqlite::organizations::properties::definition;
 
 use codeyard_db_core::queries::sqlite::organizations::properties::values_on;
-
-use codeyard_db_core::queries::sqlite::organizations::properties::definition;
-
-use codeyard_db_core::queries::sqlite::organizations::properties::values_on;

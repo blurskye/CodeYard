@@ -4,6 +4,7 @@ use crate::cluster::pairing::JoinTicket;
 use anyhow::Result;
 use serde::Deserialize;
 use serde::Serialize;
+use sha2::Digest;
 use sha2::Sha256;
 
 #[derive(Serialize, Deserialize)]

@@ -350,15 +350,3 @@ pub async fn classic_refused_repository(pool: &PgPool, token: i64, repo: i64) ->
     .fetch_one(pool)
     .await?)
 }
-
-use codeyard_db_core::queries::postgres::fine_grained_tokens::policy;
-
-use codeyard_db_core::queries::postgres::fine_grained_tokens::repositories;
-
-use codeyard_db_core::queries::postgres::fine_grained_tokens::selected;
-
-use codeyard_db_core::queries::postgres::fine_grained_tokens::policy;
-
-use codeyard_db_core::queries::postgres::fine_grained_tokens::repositories;
-
-use codeyard_db_core::queries::postgres::fine_grained_tokens::selected;

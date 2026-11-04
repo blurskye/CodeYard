@@ -16,7 +16,7 @@ async fn reactions(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         false,
@@ -249,14 +249,14 @@ async fn reactions(pg: bool) {
         404,
     )
     .await;
-    assert!(db::reactions::create_reaction(
+    assert!(codeyard_db_repos::reactions::create_reaction(
         f.pool(),
         bob,
-        &db::users::accounts::AccountCredential::Session(&outsider.session),
-        db::reactions::Target {
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&outsider.session),
+        codeyard_db_repos::reactions::Target {
             repo_id: repo.id,
             item_id: draft_id,
-            subject: db::reactions::Subject::Release,
+            subject: codeyard_db_repos::reactions::Subject::Release,
             subject_id: draft_id
         },
         "heart"
@@ -306,7 +306,7 @@ async fn reactions(pg: bool) {
     .await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert!(
-        db::reactions::reaction_counts(f.pool(), "release", &[id], alice)
+        codeyard_db_repos::reactions::reaction_counts(f.pool(), "release", &[id], alice)
             .await
             .unwrap()
             .is_empty()

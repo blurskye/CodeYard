@@ -51,7 +51,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         true,
@@ -487,13 +487,16 @@ async fn vulnerability_contract(pg: bool) {
     f.complete_setup().await;
     let owner = f.actor("vuln-owner").await;
     let outsider = f.actor("vuln-outsider").await;
-    let OrganizationOutcome::Applied(org) = db::organizations::profiles::create_organization(
-        f.pool(),
-        owner,
-        &NewOrganization::new("vuln-org", OrganizationProfile::new(None, None).unwrap()).unwrap(),
-    )
-    .await
-    .unwrap() else {
+    let OrganizationOutcome::Applied(org) =
+        codeyard_db_orgs::organizations::profiles::create_organization(
+            f.pool(),
+            owner,
+            &NewOrganization::new("vuln-org", OrganizationProfile::new(None, None).unwrap())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    else {
         panic!("organization creation refused")
     };
     let root = tempfile::tempdir().unwrap();
@@ -539,7 +542,7 @@ async fn vulnerability_contract(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     let repo_id = created["id"].as_i64().unwrap();
-    let config = db::code_security::save(
+    let config = codeyard_db_security::code_security::save(
         f.pool(),
         owner,
         org.id,
@@ -548,7 +551,7 @@ async fn vulnerability_contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::code_security::attach(
+    codeyard_db_security::code_security::attach(
         f.pool(),
         owner,
         org.id,
@@ -582,7 +585,7 @@ async fn vulnerability_contract(pg: bool) {
     let server = tokio::spawn(async move { axum::serve(listener, mirror_routes).await });
     vulnerabilities::synchronize(
         f.pool(),
-        &db::vulnerabilities::Settings {
+        &codeyard_db_security::vulnerabilities::Settings {
             base_url: mirror,
             ecosystems: r#"["crates.io"]"#.into(),
         },
@@ -609,7 +612,7 @@ async fn vulnerability_contract(pg: bool) {
     // Every new repository queues its first scan, so the PostgreSQL fixture's repository may
     // come first; it is claimed and left alone.
     let generation = loop {
-        let (claimed, generation) = db::vulnerabilities::claim(f.pool())
+        let (claimed, generation) = codeyard_db_security::vulnerabilities::claim(f.pool())
             .await
             .unwrap()
             .expect("a Git publication must queue a scan");
@@ -620,27 +623,37 @@ async fn vulnerability_contract(pg: bool) {
     vulnerabilities::scan(&state, &f.repository(repo_id).await, generation)
         .await
         .unwrap();
-    let viewer = db::dependency_graph::Reader::Viewer(Some(owner.into()));
-    let saved =
-        db::dependency_graph::snapshots(f.pool(), &viewer, repo_id, None, Some(&initial_commit))
-            .await
-            .unwrap();
+    let viewer = codeyard_db_security::dependency_graph::Reader::Viewer(Some(owner.into()));
+    let saved = codeyard_db_security::dependency_graph::snapshots(
+        f.pool(),
+        &viewer,
+        repo_id,
+        None,
+        Some(&initial_commit),
+    )
+    .await
+    .unwrap();
     assert_eq!(saved.len(), 1);
     assert_eq!(saved[0].detector.name, "Codeyard");
     assert_eq!(saved[0].manifests["Cargo.lock"].resolved.len(), 1);
-    db::vulnerabilities::enqueue(f.pool(), repo_id)
+    codeyard_db_security::vulnerabilities::enqueue(f.pool(), repo_id)
         .await
         .unwrap();
     let mut stale = saved[0].clone();
     stale.manifests.clear();
     stale.scanned = chrono::Utc::now();
-    db::vulnerabilities::save_snapshot(f.pool(), repo_id, generation, &stale)
+    codeyard_db_security::vulnerabilities::save_snapshot(f.pool(), repo_id, generation, &stale)
         .await
         .unwrap();
-    let latest =
-        db::dependency_graph::snapshots(f.pool(), &viewer, repo_id, None, Some(&initial_commit))
-            .await
-            .unwrap();
+    let latest = codeyard_db_security::dependency_graph::snapshots(
+        f.pool(),
+        &viewer,
+        repo_id,
+        None,
+        Some(&initial_commit),
+    )
+    .await
+    .unwrap();
     assert_eq!(latest[0].manifests["Cargo.lock"].resolved.len(), 1);
     let (status, _, catalogue) = request(
         &router,
@@ -681,10 +694,13 @@ async fn vulnerability_contract(pg: bool) {
     assert_eq!(status, StatusCode::OK, "{dismissed}");
     assert_github_schema("dependabot/update-alert", 200, &dismissed);
     assert_eq!(dismissed["state"], "dismissed");
-    db::vulnerabilities::enqueue(f.pool(), repo_id)
+    codeyard_db_security::vulnerabilities::enqueue(f.pool(), repo_id)
         .await
         .unwrap();
-    let (_, generation) = db::vulnerabilities::claim(f.pool()).await.unwrap().unwrap();
+    let (_, generation) = codeyard_db_security::vulnerabilities::claim(f.pool())
+        .await
+        .unwrap()
+        .unwrap();
     vulnerabilities::scan(&state, &f.repository(repo_id).await, generation)
         .await
         .unwrap();
@@ -731,7 +747,10 @@ async fn vulnerability_contract(pg: bool) {
     assert_eq!(status, StatusCode::FORBIDDEN, "{org_alerts}");
     let (status,_,fixed)=request(&router,"PUT",&format!("{base}/contents/Cargo.lock"),Some(writer),json!({"message":"Fix the vulnerable dependency","content":STANDARD.encode(lock("1.2.0")),"sha":blob})).await;
     assert_eq!(status, StatusCode::OK, "{fixed}");
-    let (_, generation) = db::vulnerabilities::claim(f.pool()).await.unwrap().unwrap();
+    let (_, generation) = codeyard_db_security::vulnerabilities::claim(f.pool())
+        .await
+        .unwrap()
+        .unwrap();
     vulnerabilities::scan(&state, &f.repository(repo_id).await, generation)
         .await
         .unwrap();
@@ -757,11 +776,14 @@ async fn vulnerability_contract(pg: bool) {
     let (status, _, vulnerable) = request(&router, "PUT", &format!("{base}/contents/Cargo.lock"), Some(writer),
         json!({"message":"Use a vulnerable prerelease","content":STANDARD.encode(lock("1.2.0-rc.1")),"sha":blob})).await;
     assert_eq!(status, StatusCode::OK, "{vulnerable}");
-    let (_, generation) = db::vulnerabilities::claim(f.pool()).await.unwrap().unwrap();
+    let (_, generation) = codeyard_db_security::vulnerabilities::claim(f.pool())
+        .await
+        .unwrap()
+        .unwrap();
     vulnerabilities::scan(&state, &f.repository(repo_id).await, generation)
         .await
         .unwrap();
-    let rows = db::dependabot_alerts::alerts(f.pool(), owner, repo_id)
+    let rows = codeyard_db_security::dependabot_alerts::alerts(f.pool(), owner, repo_id)
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
@@ -792,7 +814,7 @@ async fn vulnerability_contract(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(catalogue["withdrawn_at"], "2026-01-03T00:00:00Z");
-    db::code_security::save(
+    codeyard_db_security::code_security::save(
         f.pool(),
         owner,
         org.id,

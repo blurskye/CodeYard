@@ -12,9 +12,12 @@ use codeyard_app::app::AppState;
 use codeyard_app::repositories::store::repo_store;
 
 /// Listed metadata is reused; storage still owns placement checks and pending-write recovery.
-async fn cards(ctx: &PageContext, entries: Vec<db::gists::Gist>) -> Result<Vec<view::Card>> {
+async fn cards(
+    ctx: &PageContext,
+    entries: Vec<codeyard_db_repos::gists::Gist>,
+) -> Result<Vec<view::Card>> {
     use futures_util::{stream, StreamExt};
-    let owners = db::users::accounts::get_users_by_ids(
+    let owners = codeyard_db_identity::users::accounts::get_users_by_ids(
         &ctx.state.pool,
         &entries.iter().map(|gist| gist.owner_id).collect::<Vec<_>>(),
     )
@@ -22,7 +25,7 @@ async fn cards(ctx: &PageContext, entries: Vec<db::gists::Gist>) -> Result<Vec<v
     .into_iter()
     .map(|user| (user.id, user.username))
     .collect::<std::collections::HashMap<_, _>>();
-    let repositories = db::gists::git_repositories(
+    let repositories = codeyard_db_repos::gists::git_repositories(
         &ctx.state.pool,
         &entries.iter().map(|gist| gist.repo_id).collect::<Vec<_>>(),
     )
@@ -86,31 +89,38 @@ async fn list_model(ctx: &PageContext) -> Result<view::Listing> {
     let page = number(ctx, "page")?;
     let mut owner = None;
     let scope = if let Some(username) = ctx.query.get("user") {
-        let user = db::users::accounts::get_user_by_username(&ctx.state.pool, username)
-            .await?
-            .filter(|user| !user.is_banned)
-            .ok_or(db::gists::GistRefusal::Missing)?;
+        let user =
+            codeyard_db_identity::users::accounts::get_user_by_username(&ctx.state.pool, username)
+                .await?
+                .filter(|user| !user.is_banned)
+                .ok_or(codeyard_db_repos::gists::GistRefusal::Missing)?;
         owner = Some(user.username);
-        db::gists::ListScope::Owner(user.id, false)
+        codeyard_db_repos::gists::ListScope::Owner(user.id, false)
     } else {
         match tab {
-            "public" => db::gists::ListScope::Public,
-            "mine" => db::gists::ListScope::Owner(
-                ctx.user.as_ref().ok_or(db::gists::GistRefusal::Denied)?.id,
+            "public" => codeyard_db_repos::gists::ListScope::Public,
+            "mine" => codeyard_db_repos::gists::ListScope::Owner(
+                ctx.user
+                    .as_ref()
+                    .ok_or(codeyard_db_repos::gists::GistRefusal::Denied)?
+                    .id,
                 true,
             ),
-            "starred" => db::gists::ListScope::Starred(
-                ctx.user.as_ref().ok_or(db::gists::GistRefusal::Denied)?.id,
+            "starred" => codeyard_db_repos::gists::ListScope::Starred(
+                ctx.user
+                    .as_ref()
+                    .ok_or(codeyard_db_repos::gists::GistRefusal::Denied)?
+                    .id,
             ),
             _ => return Err(InvalidInput("Unknown gist list.").into()),
         }
     };
-    if let db::gists::ListScope::Owner(owner, true) = scope {
+    if let codeyard_db_repos::gists::ListScope::Owner(owner, true) = scope {
         domain::recover_owned(&ctx.state, owner).await?;
     }
-    let mut entries = db::gists::list_for_session(
+    let mut entries = codeyard_db_repos::gists::list_for_session(
         &ctx.state.pool,
-        &db::gists::GistList {
+        &codeyard_db_repos::gists::GistList {
             scope,
             since: None,
             limit: PAGE_SIZE as i64 + 1,
@@ -164,9 +174,12 @@ pub(super) async fn detail_model(ctx: &PageContext, id: &str) -> Result<view::De
     let store = repo_store(&loaded.repository, ctx.state.cluster.as_ref());
     let actor = ctx.user.as_ref().map(|user| user.id);
     let own = actor == Some(loaded.gist.owner_id);
-    let owner = db::users::accounts::get_user_by_id(&ctx.state.pool, loaded.gist.owner_id)
-        .await?
-        .ok_or(db::gists::GistRefusal::Missing)?;
+    let owner = codeyard_db_identity::users::accounts::get_user_by_id(
+        &ctx.state.pool,
+        loaded.gist.owner_id,
+    )
+    .await?
+    .ok_or(codeyard_db_repos::gists::GistRefusal::Missing)?;
     let mut files = Vec::new();
     let mut remaining = 256 * 1024;
     for entry in &loaded.snapshot.files {
@@ -247,10 +260,10 @@ pub(super) async fn detail_model(ctx: &PageContext, id: &str) -> Result<view::De
         });
     }
     let forks_page = number(ctx, "forks_page")?;
-    let mut entries = db::gists::list(
+    let mut entries = codeyard_db_repos::gists::list(
         &ctx.state.pool,
-        &db::gists::GistList {
-            scope: db::gists::ListScope::Forks(loaded.repository.id),
+        &codeyard_db_repos::gists::GistList {
+            scope: codeyard_db_repos::gists::ListScope::Forks(loaded.repository.id),
             since: None,
             limit: 11,
             offset: ((forks_page - 1) * 10) as i64,
@@ -261,7 +274,7 @@ pub(super) async fn detail_model(ctx: &PageContext, id: &str) -> Result<view::De
     entries.truncate(10);
     let forks = cards(ctx, entries).await?;
     let comments_page = number(ctx, "comments_page")?;
-    let mut entries = db::gists::comments(
+    let mut entries = codeyard_db_repos::gists::comments(
         &ctx.state.pool,
         loaded.repository.id,
         PAGE_SIZE as i64 + 1,
@@ -273,9 +286,11 @@ pub(super) async fn detail_model(ctx: &PageContext, id: &str) -> Result<view::De
     let mut comments = Vec::new();
     for comment in entries {
         let author = match comment.user_id {
-            Some(author) => db::users::accounts::get_user_by_id(&ctx.state.pool, author)
-                .await?
-                .map(|user| user.username),
+            Some(author) => {
+                codeyard_db_identity::users::accounts::get_user_by_id(&ctx.state.pool, author)
+                    .await?
+                    .map(|user| user.username)
+            }
             None => None,
         };
         let can_edit = actor.is_some() && comment.user_id == actor;
@@ -290,13 +305,15 @@ pub(super) async fn detail_model(ctx: &PageContext, id: &str) -> Result<view::De
         });
     }
     let parent = match loaded.gist.forked_from_id {
-        Some(parent) => db::gists::by_repository(&ctx.state.pool, parent)
+        Some(parent) => codeyard_db_repos::gists::by_repository(&ctx.state.pool, parent)
             .await?
             .map(|gist| gist.id),
         None => None,
     };
     let starred = match actor {
-        Some(actor) => db::gists::starred(&ctx.state.pool, actor, loaded.repository.id).await?,
+        Some(actor) => {
+            codeyard_db_repos::gists::starred(&ctx.state.pool, actor, loaded.repository.id).await?
+        }
         None => false,
     };
     Ok(view::Detail {
@@ -363,11 +380,12 @@ async fn legacy_target(
     uri: &Uri,
     suffix: &str,
 ) -> Result<Option<String>> {
-    if db::gists::is_identifier(&ctx.state.pool, id).await? {
+    if codeyard_db_repos::gists::is_identifier(&ctx.state.pool, id).await? {
         return Ok(None);
     }
     if let Some(repo) =
-        db::repositories::records::get_repository(&ctx.state.pool, "gists", id).await?
+        codeyard_db_repos::repositories::records::get_repository(&ctx.state.pool, "gists", id)
+            .await?
     {
         if codeyard_identity::repository_access::can_read(&ctx.state.pool, ctx.user.as_ref(), &repo)
             .await?
@@ -406,11 +424,14 @@ pub(super) async fn read(
     }
 }
 pub(super) async fn editor_model(ctx: &PageContext, id: &str) -> Result<view::Editor> {
-    let actor = ctx.user.as_ref().ok_or(db::gists::GistRefusal::Denied)?;
+    let actor = ctx
+        .user
+        .as_ref()
+        .ok_or(codeyard_db_repos::gists::GistRefusal::Denied)?;
     let loaded = domain::load(&ctx.state, id, None).await?;
     anyhow::ensure!(
         loaded.gist.owner_id == actor.id,
-        db::gists::GistRefusal::Denied
+        codeyard_db_repos::gists::GistRefusal::Denied
     );
     let store = repo_store(&loaded.repository, ctx.state.cluster.as_ref());
     let mut remaining = EDITOR_BYTES;

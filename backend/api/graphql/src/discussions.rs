@@ -7,10 +7,10 @@ use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
 use codeyard_api_github::node_id;
-use db::repository_discussions as store;
-use db::repository_discussions::Filter;
-use db::repository_discussions::Order;
-use db::repository_discussions::Write;
+use codeyard_db_repos::repository_discussions as store;
+use codeyard_db_repos::repository_discussions::Filter;
+use codeyard_db_repos::repository_discussions::Order;
+use codeyard_db_repos::repository_discussions::Write;
 use serde_json::json;
 use serde_json::Value;
 

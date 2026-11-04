@@ -51,7 +51,7 @@ async fn notice(
     repository: Option<i64>,
     title: &str,
 ) -> codeyard_db_core::models::Notification {
-    db::notifications::records::create_notification(
+    codeyard_db_repos::notifications::records::create_notification(
         pool,
         NewNotification {
             user_id: user,
@@ -70,7 +70,7 @@ async fn notice(
 
 async fn session(pool: &codeyard_db_core::DbPool, user: i64) -> String {
     let id = uuid::Uuid::new_v4().simple().to_string();
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &id,
         user,
@@ -90,15 +90,20 @@ async fn archive_writes_recheck_personal_and_organization_authority() {
         let owner = f.actor("archive_owner").await;
         let admin = f.actor("archive_admin").await;
         let r = repo(&f, owner, "archive").await;
-        db::repositories::access::grant_repo_access(f.pool(), admin, r.id, AccessLevel::Admin)
-            .await
-            .unwrap();
+        codeyard_db_repos::repositories::access::grant_repo_access(
+            f.pool(),
+            admin,
+            r.id,
+            AccessLevel::Admin,
+        )
+        .await
+        .unwrap();
         assert!(
             records::set_repository_archived(f.pool(), admin, r.id, true)
                 .await
                 .unwrap()
         );
-        db::repositories::access::revoke_repo_access(f.pool(), admin, r.id)
+        codeyard_db_repos::repositories::access::revoke_repo_access(f.pool(), admin, r.id)
             .await
             .unwrap();
         let error = records::set_repository_archived(f.pool(), admin, r.id, false)
@@ -155,22 +160,32 @@ async fn obsolete_language_refresh_does_not_replace_current_default_statistics()
             .await
             .unwrap();
         let python = vec![("Python".to_owned(), 100, 100.0, "#abcabc".to_owned())];
-        let mut source = db::repository_stats::language_source(f.pool(), r.id)
+        let mut source = codeyard_db_repos::repository_stats::language_source(f.pool(), r.id)
             .await
             .unwrap()
             .unwrap();
-        db::repository_stats::upsert_repo_languages(f.pool(), &source, "python", &python)
-            .await
-            .unwrap();
+        codeyard_db_repos::repository_stats::upsert_repo_languages(
+            f.pool(),
+            &source,
+            "python",
+            &python,
+        )
+        .await
+        .unwrap();
         for stale in [
             vec![],
             vec![("Rust".to_owned(), 200, 100.0, "#123123".to_owned())],
         ] {
             source.default_branch = "main".into();
-            db::repository_stats::upsert_repo_languages(f.pool(), &source, "rust", &stale)
-                .await
-                .unwrap();
-            let rows = db::repository_stats::get_repo_languages(f.pool(), r.id)
+            codeyard_db_repos::repository_stats::upsert_repo_languages(
+                f.pool(),
+                &source,
+                "rust",
+                &stale,
+            )
+            .await
+            .unwrap();
+            let rows = codeyard_db_repos::repository_stats::get_repo_languages(f.pool(), r.id)
                 .await
                 .unwrap();
             assert_eq!(rows.len(), 1);
@@ -186,7 +201,7 @@ async fn milestone_titles_use_ascii_case_folding_and_choices_keep_their_fields()
         let mut f = Database::new(pg).await;
         let owner = f.actor("milestone_owner").await;
         let r = repo(&f, owner, "milestones").await;
-        let first = db::milestones::create_milestone(
+        let first = codeyard_db_repos::milestones::create_milestone(
             f.pool(),
             owner,
             r.id,
@@ -196,18 +211,23 @@ async fn milestone_titles_use_ascii_case_folding_and_choices_keep_their_fields()
         )
         .await
         .unwrap();
-        db::milestones::create_milestone(f.pool(), owner, r.id, "été", None, None)
+        codeyard_db_repos::milestones::create_milestone(f.pool(), owner, r.id, "été", None, None)
             .await
             .unwrap();
-        db::milestones::create_milestone(f.pool(), owner, r.id, "ASCII", None, None)
+        codeyard_db_repos::milestones::create_milestone(f.pool(), owner, r.id, "ASCII", None, None)
             .await
             .unwrap();
-        assert!(
-            db::milestones::create_milestone(f.pool(), owner, r.id, "ascii", None, None)
-                .await
-                .is_err()
-        );
-        db::milestones::update_milestone(
+        assert!(codeyard_db_repos::milestones::create_milestone(
+            f.pool(),
+            owner,
+            r.id,
+            "ascii",
+            None,
+            None
+        )
+        .await
+        .is_err());
+        codeyard_db_repos::milestones::update_milestone(
             f.pool(),
             owner,
             r.id,
@@ -218,13 +238,19 @@ async fn milestone_titles_use_ascii_case_folding_and_choices_keep_their_fields()
         )
         .await
         .unwrap();
-        let issue = db::issues::create_issue(f.pool(), r.id, owner, "Progress", "")
+        let issue = codeyard_db_repos::issues::create_issue(f.pool(), r.id, owner, "Progress", "")
             .await
             .unwrap();
-        db::milestones::set_issue_milestone(f.pool(), owner, r.id, issue.id, Some(first.number))
-            .await
-            .unwrap();
-        let choices = db::milestones::list_milestone_choices(f.pool(), r.id)
+        codeyard_db_repos::milestones::set_issue_milestone(
+            f.pool(),
+            owner,
+            r.id,
+            issue.id,
+            Some(first.number),
+        )
+        .await
+        .unwrap();
+        let choices = codeyard_db_repos::milestones::list_milestone_choices(f.pool(), r.id)
             .await
             .unwrap();
         assert_eq!(choices.len(), 3);
@@ -233,7 +259,7 @@ async fn milestone_titles_use_ascii_case_folding_and_choices_keep_their_fields()
         assert_eq!(choices[0].description, None);
         assert_eq!(choices[0].due_date.as_deref(), Some("2030-07-01"));
         assert_eq!(
-            db::milestones::get_milestone(f.pool(), r.id, first.number)
+            codeyard_db_repos::milestones::get_milestone(f.pool(), r.id, first.number)
                 .await
                 .unwrap()
                 .unwrap()
@@ -286,9 +312,14 @@ async fn shared_selectors_include_scoped_inherited_grants_once() {
             &[foreign.id],
         )
         .await;
-        db::repositories::access::grant_repo_access(f.pool(), writer, r.id, AccessLevel::Read)
-            .await
-            .unwrap();
+        codeyard_db_repos::repositories::access::grant_repo_access(
+            f.pool(),
+            writer,
+            r.id,
+            AccessLevel::Read,
+        )
+        .await
+        .unwrap();
         for (actor, level) in [
             (owner, AccessLevel::Owner),
             (admin, AccessLevel::Admin),
@@ -342,7 +373,7 @@ async fn profiles_filter_private_repositories_before_loading() {
             [public.id]
         );
         let session = uuid::Uuid::new_v4().to_string();
-        db::users::sessions::create_session(
+        codeyard_db_identity::users::sessions::create_session(
             f.pool(),
             &session,
             owner,
@@ -378,9 +409,9 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
     for pg in [false, true] {
         let mut f = Database::new(pg).await;
         let owner = f.actor("asset_owner").await;
-        let file = db::files::reserve_upload(
+        let file = codeyard_db_repos::files::reserve_upload(
             f.pool(),
-            db::files::ReserveUpload {
+            codeyard_db_repos::files::ReserveUpload {
                 user_id: owner,
                 filename: "asset.zip",
                 content_type: "application/zip",
@@ -392,19 +423,19 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
         )
         .await
         .unwrap();
-        db::files::verify_pending_upload(f.pool(), file.id, owner)
+        codeyard_db_repos::files::verify_pending_upload(f.pool(), file.id, owner)
             .await
             .unwrap();
         let mut ids = Vec::new();
         for name in ["one", "two"] {
             let r = repo(&f, owner, name).await;
-            let release = db::releases::create_release(
+            let release = codeyard_db_repos::releases::create_release(
                 f.pool(),
                 owner,
                 r.id,
                 "v1",
                 "main",
-                &db::releases::ReleaseFields {
+                &codeyard_db_repos::releases::ReleaseFields {
                     name: Some("First".to_owned()),
                     body: Some("".to_owned()),
                     is_draft: false,
@@ -414,15 +445,15 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
             )
             .await
             .unwrap();
-            let added = db::releases::add_release_asset(
+            let added = codeyard_db_repos::releases::add_release_asset(
                 f.pool(),
                 owner,
-                &db::users::accounts::AccountCredential::Session(
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(f.pool(), owner).await,
                 ),
                 r.id,
                 release.id,
-                &db::releases::NewReleaseAsset {
+                &codeyard_db_repos::releases::NewReleaseAsset {
                     file_id: file.id,
                     name: "asset.zip",
                     label: None,
@@ -461,19 +492,19 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
         records::delete_repository(f.pool(), owner, ids[0])
             .await
             .unwrap();
-        assert!(db::files::get_file_by_id(f.pool(), file.id)
+        assert!(codeyard_db_repos::files::get_file_by_id(f.pool(), file.id)
             .await
             .unwrap()
             .is_some());
         records::delete_repository(f.pool(), owner, ids[1])
             .await
             .unwrap();
-        assert!(db::files::get_file_by_id(f.pool(), file.id)
+        assert!(codeyard_db_repos::files::get_file_by_id(f.pool(), file.id)
             .await
             .unwrap()
             .is_none());
         assert_eq!(
-            db::files::get_user_total_storage(f.pool(), owner)
+            codeyard_db_repos::files::get_user_total_storage(f.pool(), owner)
                 .await
                 .unwrap(),
             0
@@ -484,10 +515,12 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
             &[],
         )
         .await;
-        assert!(db::files::due_object_deletions(f.pool(), 100)
-            .await
-            .unwrap()
-            .contains(&file.object_key));
+        assert!(
+            codeyard_db_repos::files::due_object_deletions(f.pool(), 100)
+                .await
+                .unwrap()
+                .contains(&file.object_key)
+        );
         f.finish().await;
     }
 }
@@ -506,9 +539,14 @@ async fn transfers_drop_unmanageable_grants_and_stop_old_ci_authority() {
         )
         .await;
         let r = repo(&f, owner, "transfer").await;
-        db::repositories::access::grant_repo_access(f.pool(), outsider, r.id, AccessLevel::Admin)
-            .await
-            .unwrap();
+        codeyard_db_repos::repositories::access::grant_repo_access(
+            f.pool(),
+            outsider,
+            r.id,
+            AccessLevel::Admin,
+        )
+        .await
+        .unwrap();
         f.execute(
             "INSERT INTO teams(id,org_id,name,slug) VALUES(2001,1001,'writers','writers')",
             &[],
@@ -523,16 +561,16 @@ async fn transfers_drop_unmanageable_grants_and_stop_old_ci_authority() {
         // The old team grant is gone: adding it again would break the unique key if it stayed.
         f.execute(team_grant, &[r.id]).await;
         assert!(
-            db::repositories::access::list_repo_collaborators(f.pool(), r.id)
+            codeyard_db_repos::repositories::access::list_repo_collaborators(f.pool(), r.id)
                 .await
                 .unwrap()
                 .is_empty()
         );
         let mut run_ids = Vec::new();
         for path in [".github/workflows/a.yml", ".github/workflows/b.yml"] {
-            let run = db::ci::enqueue_ci_run(
+            let run = codeyard_db_actions::ci::enqueue_ci_run(
                 f.pool(),
-                db::ci::NewCiRun {
+                codeyard_db_actions::ci::NewCiRun {
                     repo_id: r.id,
                     triggered_by_id: owner,
                     pipeline: "ci",
@@ -563,22 +601,22 @@ async fn transfers_drop_unmanageable_grants_and_stop_old_ci_authority() {
         .await
         .unwrap();
         assert_eq!(
-            db::repositories::access::get_user_repo_access(f.pool(), owner, r.id)
+            codeyard_db_repos::repositories::access::get_user_repo_access(f.pool(), owner, r.id)
                 .await
                 .unwrap(),
             AccessLevel::None
         );
-        let running = db::ci::get_ci_run_by_run_id(f.pool(), run_ids[0])
+        let running = codeyard_db_actions::ci::get_ci_run_by_run_id(f.pool(), run_ids[0])
             .await
             .unwrap()
             .unwrap();
-        let queued = db::ci::get_ci_run_by_run_id(f.pool(), run_ids[1])
+        let queued = codeyard_db_actions::ci::get_ci_run_by_run_id(f.pool(), run_ids[1])
             .await
             .unwrap()
             .unwrap();
         assert_eq!(running.status, "running");
         assert_eq!(
-            db::ci::heartbeat_ci_run(f.pool(), running.id, "worker")
+            codeyard_db_actions::ci::heartbeat_ci_run(f.pool(), running.id, "worker")
                 .await
                 .unwrap(),
             Some(true)

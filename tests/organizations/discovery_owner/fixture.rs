@@ -244,10 +244,13 @@ impl Fixture {
         // Explicit IDs make the cross-namespace collision independent of sequence order.
         database.execute("INSERT INTO users(id,username,display_name) VALUES(700000,'discovery_user','User display is not the namespace')", &[]).await;
         database.execute("INSERT INTO organizations(id,name,display_name,billing_email) VALUES(700000,'discovery_org','Organization display is not the namespace','namespace-secret@example.test')", &[]).await;
-        let governor =
-            db::users::accounts::create_user(database.pool(), "discovery_governor", None)
-                .await
-                .unwrap();
+        let governor = codeyard_db_identity::users::accounts::create_user(
+            database.pool(),
+            "discovery_governor",
+            None,
+        )
+        .await
+        .unwrap();
         database
             .execute(
                 "INSERT INTO org_memberships(org_id,user_id,role) VALUES(700000,$1,'owner')",
@@ -256,7 +259,7 @@ impl Fixture {
             .await;
         database.complete_setup().await;
         let session = native::token();
-        db::users::sessions::create_session(
+        codeyard_db_identity::users::sessions::create_session(
             database.pool(),
             &session,
             COLLISION,

@@ -1,5 +1,4 @@
 //! Review drafts, publication and reviewer requests retain the REST lane's native authority checks.
-use crate::db;
 use crate::missing;
 use crate::mutations::pull_error;
 use crate::mutations::target;
@@ -58,7 +57,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         None
     } else {
         Some(
-            db::pull_requests::reviews::get_pull_request_review_by_id(
+            codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(
                 pool,
                 target(input, "pullRequestReviewId", "PRR")?,
             )
@@ -77,7 +76,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     } else {
         target(input, "pullRequestId", "PR")?
     };
-    let pull = db::pull_requests::records::get_pull_request_by_id(pool, pull_id)
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull_id)
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;
@@ -90,7 +89,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         let mut names = vec![];
         for id in ids {
             names.push(
-                db::users::accounts::get_user_by_id(pool, id)
+                codeyard_db_identity::users::accounts::get_user_by_id(pool, id)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?
@@ -113,9 +112,11 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             .map_err(pull_error)?;
         }
         if input["union"].as_bool() != Some(true) {
-            for row in db::pull_requests::reviews::list_pull_request_reviewers(pool, pull.id)
-                .await
-                .map_err(unavailable)?
+            for row in codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(
+                pool, pull.id,
+            )
+            .await
+            .map_err(unavailable)?
             {
                 if !names.iter().any(|n| n.eq_ignore_ascii_case(&row.username)) {
                     codeyard_app::repositories::pull_requests::reviews::remove_requested_reviewer(
@@ -137,7 +138,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         return Ok(payload);
     }
     let existing = if existing.is_none() && field == "submitPullRequestReview" {
-        db::pull_requests::reviews::get_pending_review(pool, pull.id, actor)
+        codeyard_db_repos::pull_requests::reviews::get_pending_review(pool, pull.id, actor)
             .await
             .map_err(unavailable)?
     } else {
@@ -200,9 +201,9 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 .await
                 .map_err(pull_error)?
             } else {
-                db::pull_requests::reviews::save_review_batch(
+                codeyard_db_repos::pull_requests::reviews::save_review_batch(
                     pool,
-                    db::pull_requests::reviews::ReviewBatch {
+                    codeyard_db_repos::pull_requests::reviews::ReviewBatch {
                         pr_id: pull.id,
                         author_id: actor,
                         state: None,
@@ -244,7 +245,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         )
         .await
         .map_err(pull_error)?,
-        "deletePullRequestReview" => db::pull_requests::reviews::delete_pending_review_by_id(
+        "deletePullRequestReview" => codeyard_db_repos::pull_requests::reviews::delete_pending_review_by_id(
             pool,
             pull.id,
             actor,

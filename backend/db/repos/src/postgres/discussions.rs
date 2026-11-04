@@ -357,9 +357,3 @@ use codeyard_db_core::queries::postgres::discussions::lock_triage_authority;
 use codeyard_db_core::queries::postgres::discussions::lock_discussion_authority;
 
 use codeyard_db_core::queries::postgres::discussions::lock_write_authority;
-
-use codeyard_db_core::queries::postgres::discussions::lock_discussion_authority;
-
-use codeyard_db_core::queries::postgres::discussions::lock_triage_authority;
-
-use codeyard_db_core::queries::postgres::discussions::lock_write_authority;

@@ -112,7 +112,3 @@ pub async fn change_block(
     tx.commit().await?;
     Ok(())
 }
-
-use codeyard_db_core::queries::postgres::users::blocks::repository_interaction_blocked;
-
-use codeyard_db_core::queries::postgres::users::blocks::repository_interaction_blocked;

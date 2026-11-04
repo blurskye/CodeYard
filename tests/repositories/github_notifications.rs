@@ -94,7 +94,9 @@ async fn contract(pg: bool) {
             lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
-                db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+                codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
+                    alice_id,
+                ),
                 name,
                 None,
                 private,
@@ -134,13 +136,24 @@ async fn contract(pg: bool) {
         credentials[1].as_str(),
         credentials[2].as_str(),
     );
-    let first = db::issues::create_issue(f.pool(), repos[0].id, alice_id, "First native topic", "")
-        .await
-        .unwrap();
-    let second =
-        db::issues::create_issue(f.pool(), repos[0].id, alice_id, "Second native topic", "")
-            .await
-            .unwrap();
+    let first = codeyard_db_repos::issues::create_issue(
+        f.pool(),
+        repos[0].id,
+        alice_id,
+        "First native topic",
+        "",
+    )
+    .await
+    .unwrap();
+    let second = codeyard_db_repos::issues::create_issue(
+        f.pool(),
+        repos[0].id,
+        alice_id,
+        "Second native topic",
+        "",
+    )
+    .await
+    .unwrap();
     let first_comment = comment(
         &f,
         alice_id,
@@ -157,7 +170,7 @@ async fn contract(pg: bool) {
         "@bob second real mention",
     )
     .await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob_id,
         repos[1].id,
@@ -165,9 +178,15 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let private = db::issues::create_issue(f.pool(), repos[1].id, alice_id, "HIDDEN SUBJECT", "")
-        .await
-        .unwrap();
+    let private = codeyard_db_repos::issues::create_issue(
+        f.pool(),
+        repos[1].id,
+        alice_id,
+        "HIDDEN SUBJECT",
+        "",
+    )
+    .await
+    .unwrap();
     comment(
         &f,
         alice_id,
@@ -176,7 +195,7 @@ async fn contract(pg: bool) {
         "@bob HIDDEN COMMENT",
     )
     .await;
-    db::repositories::access::revoke_repo_access(f.pool(), bob_id, repos[1].id)
+    codeyard_db_repos::repositories::access::revoke_repo_access(f.pool(), bob_id, repos[1].id)
         .await
         .unwrap();
     const LIST: &str = "activity/list-notifications-for-authenticated-user";
@@ -348,12 +367,12 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(read["unread"], false);
     assert!(read["last_read_at"].is_string());
-    let browser = db::notifications::records::notification_inbox(
+    let browser = codeyard_db_repos::notifications::records::notification_inbox(
         f.pool(),
         &bob.session,
         bob_id,
-        db::notifications::NotificationInboxAction::List {
-            filter: db::notifications::records::NotificationFilter::inbox(false),
+        codeyard_db_repos::notifications::records::NotificationInboxAction::List {
+            filter: codeyard_db_repos::notifications::records::NotificationFilter::inbox(false),
             limit: 100,
             before: None,
         },
@@ -389,11 +408,15 @@ async fn contract(pg: bool) {
         StatusCode::NO_CONTENT,
     )
     .await;
-    let before =
-        db::notifications::records::list_notifications_for_user(f.pool(), bob_id, 100, false)
-            .await
-            .unwrap()
-            .len();
+    let before = codeyard_db_repos::notifications::records::list_notifications_for_user(
+        f.pool(),
+        bob_id,
+        100,
+        false,
+    )
+    .await
+    .unwrap()
+    .len();
     comment(
         &f,
         alice_id,
@@ -403,10 +426,15 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::notifications::records::list_notifications_for_user(f.pool(), bob_id, 100, false)
-            .await
-            .unwrap()
-            .len(),
+        codeyard_db_repos::notifications::records::list_notifications_for_user(
+            f.pool(),
+            bob_id,
+            100,
+            false
+        )
+        .await
+        .unwrap()
+        .len(),
         before
     );
     let subscribed = call(
@@ -430,10 +458,15 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::notifications::records::list_notifications_for_user(f.pool(), bob_id, 100, false)
-            .await
-            .unwrap()
-            .len(),
+        codeyard_db_repos::notifications::records::list_notifications_for_user(
+            f.pool(),
+            bob_id,
+            100,
+            false
+        )
+        .await
+        .unwrap()
+        .len(),
         before + 1
     );
     let ignored = call(
@@ -457,10 +490,15 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::notifications::records::list_notifications_for_user(f.pool(), bob_id, 100, false)
-            .await
-            .unwrap()
-            .len(),
+        codeyard_db_repos::notifications::records::list_notifications_for_user(
+            f.pool(),
+            bob_id,
+            100,
+            false
+        )
+        .await
+        .unwrap()
+        .len(),
         before + 1
     );
     call(
@@ -482,10 +520,15 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::notifications::records::list_notifications_for_user(f.pool(), bob_id, 100, false)
-            .await
-            .unwrap()
-            .len(),
+        codeyard_db_repos::notifications::records::list_notifications_for_user(
+            f.pool(),
+            bob_id,
+            100,
+            false
+        )
+        .await
+        .unwrap()
+        .len(),
         before + 2
     );
     call(

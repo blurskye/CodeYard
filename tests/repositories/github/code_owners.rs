@@ -21,7 +21,7 @@ async fn diagnostics_contract(pg: bool) {
     )
     .await;
     let repo = f.repository(created["id"].as_i64().unwrap()).await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -138,7 +138,7 @@ async fn diagnostics_contract(pg: bool) {
         .await;
     assert!(page.contains("CODEOWNERS diagnostics"));
     assert!(page.contains("Invalid owner on line 3"));
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,

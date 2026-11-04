@@ -53,9 +53,9 @@ async fn release_notes_contract(pg: bool) {
     {
         let sha = note_commit(&git, title);
         let branch = format!("feature-{index}");
-        let pull = db::pull_requests::records::create_pull_request(
+        let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
             f.pool(),
-            db::pull_requests::records::NewPullRequest {
+            codeyard_db_repos::pull_requests::records::NewPullRequest {
                 repo_id: repo.id,
                 head_repo_id: None,
                 author_id: alice,
@@ -72,15 +72,17 @@ async fn release_notes_contract(pg: bool) {
         )
         .await
         .unwrap();
-        assert!(db::pull_requests::records::mark_pull_requests_merged(
-            f.pool(),
-            std::slice::from_ref(&pull),
-            alice,
-            &sha
-        )
-        .await
-        .unwrap());
-        let label = db::labels::create_label(
+        assert!(
+            codeyard_db_repos::pull_requests::records::mark_pull_requests_merged(
+                f.pool(),
+                std::slice::from_ref(&pull),
+                alice,
+                &sha
+            )
+            .await
+            .unwrap()
+        );
+        let label = codeyard_db_repos::labels::create_label(
             f.pool(),
             alice,
             repo.id,

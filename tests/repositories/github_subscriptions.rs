@@ -66,7 +66,9 @@ async fn contract(pg: bool) {
             codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
-                db::repositories::creation::RepositoryCreationOwner::personal(owner_id),
+                codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
+                    owner_id,
+                ),
                 name,
                 None,
                 private,
@@ -138,10 +140,11 @@ async fn contract(pg: bool) {
     assert_eq!(sub["subscribed"], true);
     assert_eq!(sub["ignored"], false);
     let at = sub["created_at"].clone();
-    let repo = db::repositories::records::get_repository_by_id(f.pool(), repos[0].id)
-        .await
-        .unwrap()
-        .unwrap();
+    let repo =
+        codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), repos[0].id)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(repo.watchers_count, 1);
     let watchers = call(
         &router,
@@ -189,21 +192,28 @@ async fn contract(pg: bool) {
     assert_eq!(sub["subscribed"], false);
     assert_eq!(sub["ignored"], false);
     assert_eq!(sub["created_at"], at);
-    let repo = db::repositories::records::get_repository_by_id(f.pool(), repos[0].id)
-        .await
-        .unwrap()
-        .unwrap();
+    let repo =
+        codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), repos[0].id)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(repo.watchers_count, 0);
     assert!(
-        !db::repositories::engagement::is_repo_watched(f.pool(), bob_id, repo.id)
+        !codeyard_db_repos::repositories::engagement::is_repo_watched(f.pool(), bob_id, repo.id)
             .await
             .unwrap()
     );
     assert!(
-        !db::repositories::engagement::list_event_watchers(f.pool(), repo.id, "pulls", 0, 100)
-            .await
-            .unwrap()
-            .contains(&bob_id)
+        !codeyard_db_repos::repositories::engagement::list_event_watchers(
+            f.pool(),
+            repo.id,
+            "pulls",
+            0,
+            100
+        )
+        .await
+        .unwrap()
+        .contains(&bob_id)
     );
     let sub = call(
         &router,

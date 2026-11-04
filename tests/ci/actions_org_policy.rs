@@ -83,7 +83,7 @@ async fn contract(pg: bool) {
     let mut organizations = Vec::new();
     for (name, owner) in [("builders", alice), ("outsiders", bob)] {
         organizations.push(applied(
-            db::organizations::create_organization(
+            codeyard_db_orgs::organizations::profiles::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -134,7 +134,7 @@ async fn contract(pg: bool) {
     let reader = pat(&f, &router, alice, "read").await;
     let member = pat(&f, &router, bob, "write").await;
     let administrator = pat(&f, &router, site_admin, "write").await;
-    db::actions::save_repo_actions_settings(
+    codeyard_db_actions::actions::save_repo_actions_settings(
         f.pool(),
         alice,
         repo.id,
@@ -224,17 +224,19 @@ async fn contract(pg: bool) {
         .await["max_cache_retention_days"],
         3
     );
-    let own = db::actions::get_repo_actions_settings(f.pool(), repo.id)
+    let own = codeyard_db_actions::actions::get_repo_actions_settings(f.pool(), repo.id)
         .await
         .unwrap();
     assert_eq!(own.cache_size_gib, Some(5));
     assert_eq!(own.run_timeout_minutes, Some(17));
     assert_eq!(own.org_cache_size_gib, Some(2));
     assert_eq!(own.org_cache_retention_days, Some(3));
-    let site = db::actions::get_actions_settings(f.pool()).await.unwrap();
+    let site = codeyard_db_actions::actions::get_actions_settings(f.pool())
+        .await
+        .unwrap();
     assert_eq!(site.cache_size_bytes(&own), 2 * 1024 * 1024 * 1024);
     for repo in [&repos[1], &personal] {
-        let settings = db::actions::get_repo_actions_settings(f.pool(), repo.id)
+        let settings = codeyard_db_actions::actions::get_repo_actions_settings(f.pool(), repo.id)
             .await
             .unwrap();
         assert_eq!(site.cache_size_bytes(&settings), 10 * 1024 * 1024 * 1024);
@@ -438,9 +440,15 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(matches!(
-        db::actions::set_org_cache_limit(f.pool(), bob, "builders", CacheLimit::Storage, 2)
-            .await
-            .unwrap(),
+        codeyard_db_actions::actions::set_org_cache_limit(
+            f.pool(),
+            bob,
+            "builders",
+            CacheLimit::Storage,
+            2
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Denied
     ));
     assert_eq!(f.scalar("SELECT COUNT(*) FROM audit_log WHERE action='organization.actions_cache_policy' AND target_id=$1",&[organizations[0].id]).await,3);

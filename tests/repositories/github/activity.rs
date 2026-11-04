@@ -45,7 +45,7 @@ async fn activity_contract(pg: bool) {
         .unwrap()
         .id()
         .to_string();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,

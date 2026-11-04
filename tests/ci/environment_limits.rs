@@ -16,7 +16,7 @@ async fn limits(pg: bool) {
     let repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "limits",
         None,
         true,

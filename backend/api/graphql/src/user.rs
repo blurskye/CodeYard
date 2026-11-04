@@ -1,6 +1,5 @@
 use crate::arg;
 use crate::arguments::Arguments;
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::url;
@@ -26,7 +25,7 @@ pub(super) fn organization(org: &codeyard_db_core::models::Organization) -> Valu
 }
 
 pub(super) async fn by_id(id: i64, request: &RequestContext) -> Result<Value> {
-    let user = db::users::accounts::get_user_by_id(&request.state.pool, id)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(&request.state.pool, id)
         .await
         .map_err(unavailable)?
         .filter(|user| !user.is_banned)
@@ -52,7 +51,7 @@ pub(super) async fn actor_by_id(id: i64, request: &RequestContext) -> Result<Val
 
 /// Authored content keeps its author after the account is suspended; a suspended author reads as null.
 pub(super) async fn retained_author(id: i64, request: &RequestContext) -> Result<Value> {
-    let user = db::users::accounts::get_user_by_id(&request.state.pool, id)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(&request.state.pool, id)
         .await
         .map_err(unavailable)?;
     Ok(match user.filter(|user| !user.is_banned) {
@@ -64,10 +63,13 @@ pub(super) async fn retained_author(id: i64, request: &RequestContext) -> Result
 /// An organization as another object's projection, such as a repository owner. The standalone
 /// organization queries check the read:org grant themselves.
 pub(super) async fn organization_by_id(id: i64, request: &RequestContext) -> Result<Value> {
-    let org = db::organizations::profiles::get_public_organization_by_id(&request.state.pool, id)
-        .await
-        .map_err(unavailable)?
-        .ok_or_else(missing)?;
+    let org = codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
+        &request.state.pool,
+        id,
+    )
+    .await
+    .map_err(unavailable)?
+    .ok_or_else(missing)?;
     Ok(organization(&org))
 }
 
@@ -86,7 +88,7 @@ pub(super) async fn resolve(
         "team" if ty == "Organization" => {
             crate::team::by_slug(id, &crate::arg(ctx, "slug")?, request).await
         }
-        "email" if ty == "User" => Ok(json!(db::users::profiles::public_email(
+        "email" if ty == "User" => Ok(json!(codeyard_db_identity::users::profiles::public_email(
             &request.state.pool,
             id
         )
@@ -94,7 +96,7 @@ pub(super) async fn resolve(
         .map_err(unavailable)?
         .unwrap_or_default())),
         "company" if ty == "User" => Ok(json!(
-            db::users::profiles::get_profile_settings(&request.state.pool, id)
+            codeyard_db_identity::users::profiles::get_profile_settings(&request.state.pool, id)
                 .await
                 .map_err(unavailable)?
                 .company
@@ -103,18 +105,30 @@ pub(super) async fn resolve(
         "gists" if ty == "User" => crate::gists::list(ctx, request, parent).await,
         "viewerCanFollow" => Ok(json!(
             id != request.auth.user.id
-                && !db::users::blocks::is_blocked(&request.state.pool, request.auth.user.id, id)
-                    .await
-                    .map_err(unavailable)?
-                && !db::users::blocks::is_blocked(&request.state.pool, id, request.auth.user.id)
-                    .await
-                    .map_err(unavailable)?
+                && !codeyard_db_identity::users::blocks::is_blocked(
+                    &request.state.pool,
+                    request.auth.user.id,
+                    id
+                )
+                .await
+                .map_err(unavailable)?
+                && !codeyard_db_identity::users::blocks::is_blocked(
+                    &request.state.pool,
+                    id,
+                    request.auth.user.id
+                )
+                .await
+                .map_err(unavailable)?
         )),
         "viewerIsFollowing" => Ok(json!(
             id != request.auth.user.id
-                && db::following::is_user_following(&request.state.pool, request.auth.user.id, id)
-                    .await
-                    .map_err(unavailable)?
+                && codeyard_db_identity::following::is_user_following(
+                    &request.state.pool,
+                    request.auth.user.id,
+                    id
+                )
+                .await
+                .map_err(unavailable)?
         )),
         _ => Err(async_graphql::Error::new(format!(
             "Codeyard does not support {ty}.{field} yet"
@@ -131,53 +145,64 @@ pub(super) async fn query(field: &str, ctx: &Arguments, request: &RequestContext
     }
     let login = arg(ctx, "login")?;
     if field == "repositoryOwner" {
-        if let Some(user) = db::users::accounts::get_user_by_username(&request.state.pool, &login)
-            .await
-            .map_err(unavailable)?
-            .filter(|user| !user.is_banned)
+        if let Some(user) =
+            codeyard_db_identity::users::accounts::get_user_by_username(&request.state.pool, &login)
+                .await
+                .map_err(unavailable)?
+                .filter(|user| !user.is_banned)
         {
             return Ok(object(&user, request.auth.user.id));
         }
     }
     if field == "user" {
-        let user = db::users::accounts::get_user_by_username(&request.state.pool, &login)
-            .await
-            .map_err(unavailable)?
-            .filter(|user| !user.is_banned)
-            .ok_or_else(|| {
-                codeyard_model::graphql_error::error(
-                    format!("Could not resolve to a User with the login of '{login}'."),
-                    "NOT_FOUND",
-                )
-            })?;
+        let user = codeyard_db_identity::users::accounts::get_user_by_username(
+            &request.state.pool,
+            &login,
+        )
+        .await
+        .map_err(unavailable)?
+        .filter(|user| !user.is_banned)
+        .ok_or_else(|| {
+            codeyard_model::graphql_error::error(
+                format!("Could not resolve to a User with the login of '{login}'."),
+                "NOT_FOUND",
+            )
+        })?;
         Ok(object(&user, request.auth.user.id))
     } else if field == "repositoryOwner" {
-        if let Some(user) = db::users::accounts::get_user_by_username(&request.state.pool, &login)
-            .await
-            .map_err(unavailable)?
-            .filter(|user| !user.is_banned)
+        if let Some(user) =
+            codeyard_db_identity::users::accounts::get_user_by_username(&request.state.pool, &login)
+                .await
+                .map_err(unavailable)?
+                .filter(|user| !user.is_banned)
         {
             return Ok(object(&user, request.auth.user.id));
         }
         request.require_oauth_scope("read:org")?;
-        let org = db::organizations::profiles::get_public_organization(&request.state.pool, &login)
-            .await
-            .map_err(unavailable)?
-            .ok_or_else(missing)?;
+        let org = codeyard_db_orgs::organizations::profiles::get_public_organization(
+            &request.state.pool,
+            &login,
+        )
+        .await
+        .map_err(unavailable)?
+        .ok_or_else(missing)?;
         request.authorize_organization(org.id).await?;
         Ok(organization(&org))
     } else {
         request.require_oauth_scope("read:org")?;
         // gh skips the classic-projects lookup only on GitHub's exact wording.
-        let org = db::organizations::profiles::get_public_organization(&request.state.pool, &login)
-            .await
-            .map_err(unavailable)?
-            .ok_or_else(|| {
-                codeyard_model::graphql_error::error(
-                    format!("Could not resolve to an Organization with the login of '{login}'."),
-                    "NOT_FOUND",
-                )
-            })?;
+        let org = codeyard_db_orgs::organizations::profiles::get_public_organization(
+            &request.state.pool,
+            &login,
+        )
+        .await
+        .map_err(unavailable)?
+        .ok_or_else(|| {
+            codeyard_model::graphql_error::error(
+                format!("Could not resolve to an Organization with the login of '{login}'."),
+                "NOT_FOUND",
+            )
+        })?;
         request.authorize_organization(org.id).await?;
         Ok(organization(&org))
     }

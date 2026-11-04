@@ -36,7 +36,7 @@ async fn contract(pg: bool) {
     let repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -89,7 +89,7 @@ async fn contract(pg: bool) {
         )
         .await;
     let number = created["number"].as_i64().unwrap() as i32;
-    let source = db::issues::get_issue(f.pool(), repo.id, number)
+    let source = codeyard_db_repos::issues::get_issue(f.pool(), repo.id, number)
         .await
         .unwrap()
         .unwrap();
@@ -105,7 +105,7 @@ async fn contract(pg: bool) {
         .await;
     let old_id = old_comment["id"].as_i64().unwrap();
     assert_eq!(prior["id"], old_comment["id"]);
-    let label = db::labels::create_label(
+    let label = codeyard_db_repos::labels::create_label(
         f.pool(),
         alice_id,
         repo.id,
@@ -115,23 +115,29 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::labels::add_issue_label(f.pool(), alice_id, repo.id, source.id, label.id)
+    codeyard_db_repos::labels::add_issue_label(f.pool(), alice_id, repo.id, source.id, label.id)
         .await
         .unwrap();
-    db::assignees::assign_user(
+    codeyard_db_repos::assignees::assign_user(
         f.pool(),
         alice_id,
         repo.id,
-        db::assignees::AssignedItem::Issue(source.id),
+        codeyard_db_repos::assignees::AssignedItem::Issue(source.id),
         alice_id,
     )
     .await
     .unwrap();
-    let milestone =
-        db::milestones::create_milestone(f.pool(), alice_id, repo.id, "Destination", None, None)
-            .await
-            .unwrap();
-    db::milestones::set_issue_milestone(
+    let milestone = codeyard_db_repos::milestones::create_milestone(
+        f.pool(),
+        alice_id,
+        repo.id,
+        "Destination",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    codeyard_db_repos::milestones::set_issue_milestone(
         f.pool(),
         alice_id,
         repo.id,
@@ -140,28 +146,28 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let (reaction, _) = db::reactions::create_reaction(
+    let (reaction, _) = codeyard_db_repos::reactions::create_reaction(
         f.pool(),
         alice_id,
-        &db::users::accounts::AccountCredential::Session(&alice.session),
-        db::reactions::Target {
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&alice.session),
+        codeyard_db_repos::reactions::Target {
             repo_id: repo.id,
             item_id: source.id,
-            subject: db::reactions::Subject::IssueComment,
+            subject: codeyard_db_repos::reactions::Subject::IssueComment,
             subject_id: old_id,
         },
         "heart",
     )
     .await
     .unwrap();
-    let (description_reaction, _) = db::reactions::create_reaction(
+    let (description_reaction, _) = codeyard_db_repos::reactions::create_reaction(
         f.pool(),
         alice_id,
-        &db::users::accounts::AccountCredential::Session(&alice.session),
-        db::reactions::Target {
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&alice.session),
+        codeyard_db_repos::reactions::Target {
             repo_id: repo.id,
             item_id: source.id,
-            subject: db::reactions::Subject::Issue,
+            subject: codeyard_db_repos::reactions::Subject::Issue,
             subject_id: source.id,
         },
         "+1",
@@ -189,7 +195,7 @@ async fn contract(pg: bool) {
         })
         .unwrap()["id"]
         .clone();
-    let filler = db::issues::create_issue(
+    let filler = codeyard_db_repos::issues::create_issue(
         f.pool(),
         repo.id,
         bob_id,
@@ -200,11 +206,11 @@ async fn contract(pg: bool) {
     .unwrap();
     let collection = "/api/v3/repos/alice/proj/pulls";
     let blocked_input = json!({"issue":filler.number,"head":"feature","base":"main"});
-    let kind = db::issue_attributes::configure(
+    let kind = codeyard_db_repos::issue_attributes::configure(
         f.pool(),
         repo.id,
         alice_id,
-        &db::issue_attributes::Definition {
+        &codeyard_db_repos::issue_attributes::Definition {
             id: None,
             expected_updated: None,
             kind: "type".into(),
@@ -219,9 +225,15 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::issue_attributes::set_type(f.pool(), repo.id, alice_id, filler.id, Some(kind))
-        .await
-        .unwrap();
+    codeyard_db_repos::issue_attributes::set_type(
+        f.pool(),
+        repo.id,
+        alice_id,
+        filler.id,
+        Some(kind),
+    )
+    .await
+    .unwrap();
     call(
         &router,
         "pulls/create",
@@ -233,23 +245,23 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::issue_attributes::assigned_type(f.pool(), repo.id, filler.id)
+        codeyard_db_repos::issue_attributes::assigned_type(f.pool(), repo.id, filler.id)
             .await
             .unwrap()
             .unwrap()
             .id,
         kind
     );
-    db::issue_attributes::set_type(f.pool(), repo.id, alice_id, filler.id, None)
+    codeyard_db_repos::issue_attributes::set_type(f.pool(), repo.id, alice_id, filler.id, None)
         .await
         .unwrap();
-    db::relationships::change(
+    codeyard_db_identity::relationships::change(
         f.pool(),
         alice_id,
         repo.id,
         filler.id,
-        db::relationships::Mutation::Add {
-            kind: db::relationships::Kind::Related,
+        codeyard_db_identity::relationships::Mutation::Add {
+            kind: codeyard_db_identity::relationships::Kind::Related,
             other: source.id,
             replace: false,
         },
@@ -267,11 +279,11 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::relationships::list(
+        codeyard_db_identity::relationships::list(
             f.pool(),
             Some(alice_id),
             filler.id,
-            db::relationships::Kind::Related,
+            codeyard_db_identity::relationships::Kind::Related,
             0,
             100
         )
@@ -280,39 +292,39 @@ async fn contract(pg: bool) {
         .len(),
         1
     );
-    db::relationships::change(
+    codeyard_db_identity::relationships::change(
         f.pool(),
         alice_id,
         repo.id,
         filler.id,
-        db::relationships::Mutation::Remove {
-            kind: db::relationships::Kind::Related,
+        codeyard_db_identity::relationships::Mutation::Remove {
+            kind: codeyard_db_identity::relationships::Kind::Related,
             other: source.id,
         },
     )
     .await
     .unwrap();
-    db::suggestions::set_enabled(
+    codeyard_db_repos::suggestions::set_enabled(
         f.pool(),
         repo.id,
         alice_id,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice_id).await,
         ),
         true,
     )
     .await
     .unwrap();
-    let suggestion = db::suggestions::propose(
+    let suggestion = codeyard_db_repos::suggestions::propose(
         f.pool(),
         repo.id,
         alice_id,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice_id).await,
         ),
         filler.id,
-        &db::suggestions::Proposal {
-            action: db::suggestions::Action::CloseIssue,
+        &codeyard_db_repos::suggestions::Proposal {
+            action: codeyard_db_repos::suggestions::Action::CloseIssue,
             target_id: None,
             value: Value::Null,
             rationale: None,
@@ -340,25 +352,30 @@ async fn contract(pg: bool) {
         .await,
         1
     );
-    assert!(db::issues::get_issue(f.pool(), repo.id, filler.number)
-        .await
-        .unwrap()
-        .is_some());
-    db::pins::set_pin(
+    assert!(
+        codeyard_db_repos::issues::get_issue(f.pool(), repo.id, filler.number)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    codeyard_db_repos::pins::set_pin(
         f.pool(),
         alice_id,
-        &db::users::accounts::AccountCredential::Session(&alice.session),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&alice.session),
         repo.id,
-        db::assignees::AssignedItem::Issue(source.id),
+        codeyard_db_repos::assignees::AssignedItem::Issue(source.id),
         old_id,
         true,
     )
     .await
     .unwrap();
-    let original_pin = db::pins::get_pin(f.pool(), db::assignees::AssignedItem::Issue(source.id))
-        .await
-        .unwrap()
-        .unwrap();
+    let original_pin = codeyard_db_repos::pins::get_pin(
+        f.pool(),
+        codeyard_db_repos::assignees::AssignedItem::Issue(source.id),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let input = json!({"issue":number,"head":"feature","base":"main"});
     call(
         &router,
@@ -370,10 +387,12 @@ async fn contract(pg: bool) {
         StatusCode::FORBIDDEN,
     )
     .await;
-    assert!(db::issues::get_issue(f.pool(), repo.id, number)
-        .await
-        .unwrap()
-        .is_some());
+    assert!(
+        codeyard_db_repos::issues::get_issue(f.pool(), repo.id, number)
+            .await
+            .unwrap()
+            .is_some()
+    );
     let converted = call(
         &router,
         "pulls/create",
@@ -393,10 +412,11 @@ async fn contract(pg: bool) {
     assert_eq!(converted["labels"][0]["id"], label.id);
     assert_eq!(converted["assignees"][0]["login"], "alice");
     assert_eq!(converted["milestone"]["number"], milestone.number);
-    let pull = db::pull_requests::records::get_pull_request(f.pool(), repo.id, number)
-        .await
-        .unwrap()
-        .unwrap();
+    let pull =
+        codeyard_db_repos::pull_requests::records::get_pull_request(f.pool(), repo.id, number)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(pull.author_id, bob_id);
     assert_eq!(pull.head_publisher_id, Some(alice_id));
     assert_eq!(pull.created_at, original_created);
@@ -408,11 +428,13 @@ async fn contract(pg: bool) {
         .await,
         source.id
     );
-    assert!(db::issues::get_issue(f.pool(), repo.id, number)
-        .await
-        .unwrap()
-        .is_none());
-    let next = db::issues::create_issue(
+    assert!(
+        codeyard_db_repos::issues::get_issue(f.pool(), repo.id, number)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let next = codeyard_db_repos::issues::create_issue(
         f.pool(),
         repo.id,
         bob_id,
@@ -422,43 +444,52 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     assert_eq!(next.number, filler.number + 1);
-    let new_id = db::pull_requests::reviews::converted_issue_comment(f.pool(), pull.id, old_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_ne!(new_id, old_id);
-    let carried_pin =
-        db::pins::get_pin(f.pool(), db::assignees::AssignedItem::PullRequest(pull.id))
-            .await
-            .unwrap()
-            .unwrap();
-    assert_eq!(carried_pin.comment_id, new_id);
-    assert_eq!(carried_pin.pinned_by, original_pin.pinned_by);
-    assert_eq!(carried_pin.pinned_at, original_pin.pinned_at);
-    assert!(db::pull_requests::reviews::converted_issue_comment(
+    let new_id = codeyard_db_repos::pull_requests::reviews::converted_issue_comment(
         f.pool(),
-        other["id"].as_i64().unwrap(),
-        old_id
+        pull.id,
+        old_id,
     )
     .await
     .unwrap()
-    .is_none());
-    let comment = db::pull_requests::reviews::get_pull_request_comment_by_id(f.pool(), new_id)
+    .unwrap();
+    assert_ne!(new_id, old_id);
+    let carried_pin = codeyard_db_repos::pins::get_pin(
+        f.pool(),
+        codeyard_db_repos::assignees::AssignedItem::PullRequest(pull.id),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(carried_pin.comment_id, new_id);
+    assert_eq!(carried_pin.pinned_by, original_pin.pinned_by);
+    assert_eq!(carried_pin.pinned_at, original_pin.pinned_at);
+    assert!(
+        codeyard_db_repos::pull_requests::reviews::converted_issue_comment(
+            f.pool(),
+            other["id"].as_i64().unwrap(),
+            old_id
+        )
         .await
         .unwrap()
-        .unwrap();
+        .is_none()
+    );
+    let comment =
+        codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(f.pool(), new_id)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(comment.author_id, bob_id);
     assert_eq!(comment.body, "Existing discussion");
     assert_eq!(
         comment.created_at.to_rfc3339(),
         old_comment["created_at"].as_str().unwrap()
     );
-    let reactions = db::reactions::list_reactions(
+    let reactions = codeyard_db_repos::reactions::list_reactions(
         f.pool(),
-        db::reactions::Target {
+        codeyard_db_repos::reactions::Target {
             repo_id: repo.id,
             item_id: pull.id,
-            subject: db::reactions::Subject::PullRequestComment,
+            subject: codeyard_db_repos::reactions::Subject::PullRequestComment,
             subject_id: new_id,
         },
         None,
@@ -468,12 +499,12 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     assert_eq!(reactions[0].id, reaction.id);
-    let reactions = db::reactions::list_reactions(
+    let reactions = codeyard_db_repos::reactions::list_reactions(
         f.pool(),
-        db::reactions::Target {
+        codeyard_db_repos::reactions::Target {
             repo_id: repo.id,
             item_id: pull.id,
-            subject: db::reactions::Subject::PullRequest,
+            subject: codeyard_db_repos::reactions::Subject::PullRequest,
             subject_id: pull.id,
         },
         None,
@@ -567,10 +598,12 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(rejected["message"].is_string());
-    assert!(db::issues::get_issue_by_id(f.pool(), filler.id)
-        .await
-        .unwrap()
-        .is_some());
+    assert!(
+        codeyard_db_repos::issues::get_issue_by_id(f.pool(), filler.id)
+            .await
+            .unwrap()
+            .is_some()
+    );
     for value in [0_i64, -1, i64::MAX] {
         call(
             &router,
@@ -584,9 +617,15 @@ async fn contract(pg: bool) {
         .await;
     }
     // A locked source is refused without silently unlocking or replacing the discussion.
-    let locked = db::issues::create_issue(f.pool(), repo.id, bob_id, "Locked", "Retain the lock")
-        .await
-        .unwrap();
+    let locked = codeyard_db_repos::issues::create_issue(
+        f.pool(),
+        repo.id,
+        bob_id,
+        "Locked",
+        "Retain the lock",
+    )
+    .await
+    .unwrap();
     f.execute(
         "UPDATE issues SET locked=TRUE,lock_reason='resolved' WHERE id=$1",
         &[locked.id],
@@ -603,19 +642,21 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(
-        db::issues::get_issue_by_id(f.pool(), locked.id)
+        codeyard_db_repos::issues::get_issue_by_id(f.pool(), locked.id)
             .await
             .unwrap()
             .unwrap()
             .locked
     );
-    assert!(
-        db::pull_requests::records::get_pull_request(f.pool(), repo.id, locked.number)
-            .await
-            .unwrap()
-            .is_none()
-    );
-    let closed = db::issues::create_issue(
+    assert!(codeyard_db_repos::pull_requests::records::get_pull_request(
+        f.pool(),
+        repo.id,
+        locked.number
+    )
+    .await
+    .unwrap()
+    .is_none());
+    let closed = codeyard_db_repos::issues::create_issue(
         f.pool(),
         repo.id,
         bob_id,
@@ -624,10 +665,10 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::issues::update_issue(
+    codeyard_db_repos::issues::update_issue(
         f.pool(),
         closed.id,
-        db::discussions::DiscussionEdit {
+        codeyard_db_repos::discussions::DiscussionEdit {
             actor_id: alice_id,
             expected_state: &closed.state,
             expected_updated: closed.updated_at,
@@ -655,7 +696,7 @@ async fn contract(pg: bool) {
     // historical author's identity. Future source changes use that same grant.
     let carol_id = f.actor("carol").await;
     assert!(matches!(
-        db::repositories::access::change_personal_repository_collaborator(
+        codeyard_db_repos::repositories::access::change_personal_repository_collaborator(
             f.pool(),
             alice_id,
             repo.id,
@@ -664,12 +705,12 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap(),
-        db::repositories::access::CollaboratorChange::Applied(_)
+        codeyard_db_repos::repositories::access::CollaboratorChange::Applied(_)
     ));
     let fork = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(bob_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(bob_id),
         "private-fork",
         None,
         true,
@@ -678,7 +719,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     let written = bob.expect("POST", "/api/repos/bob/private-fork/contents/private.txt", json!({"content":base64::engine::general_purpose::STANDARD.encode("Scoped contribution"),"message":"Private contribution","branch":"main","expected_revision":base}), StatusCode::CREATED).await;
-    let private_source = db::issues::create_issue(
+    let private_source = codeyard_db_repos::issues::create_issue(
         f.pool(),
         repo.id,
         carol_id,
@@ -689,19 +730,23 @@ async fn contract(pg: bool) {
     .unwrap();
     let private_pull = call(&router, "pulls/create", "POST", collection, reader, json!({"issue":private_source.number,"head":"bob:main","head_repo":"private-fork","base":"main"}), StatusCode::CREATED).await;
     assert_eq!(private_pull["user"]["login"], "carol");
-    let native =
-        db::pull_requests::records::get_pull_request(f.pool(), repo.id, private_source.number)
-            .await
-            .unwrap()
-            .unwrap();
+    let native = codeyard_db_repos::pull_requests::records::get_pull_request(
+        f.pool(),
+        repo.id,
+        private_source.number,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(native.head_publisher_id, Some(bob_id));
     assert_eq!(native.maintainer_edit_granted_by_id, Some(bob_id));
     assert_eq!(native.head_repo_id, Some(fork.id));
     let next = bob.expect("POST", "/api/repos/bob/private-fork/contents/later.txt", json!({"content":base64::engine::general_purpose::STANDARD.encode("Later contribution"),"message":"Later contribution","branch":"main","expected_revision":written["sha"]}), StatusCode::CREATED).await;
-    let updated = db::pull_requests::records::get_pull_request_by_id(f.pool(), native.id)
-        .await
-        .unwrap()
-        .unwrap();
+    let updated =
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(f.pool(), native.id)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(updated.head_sha, next["sha"].as_str().unwrap());
     assert_eq!(updated.author_id, carol_id);
     let private_url = format!("{collection}/{}", private_source.number);
@@ -732,10 +777,11 @@ async fn contract(pg: bool) {
         StatusCode::NOT_FOUND,
     )
     .await;
-    let unchanged = db::pull_requests::records::get_pull_request_by_id(f.pool(), native.id)
-        .await
-        .unwrap()
-        .unwrap();
+    let unchanged =
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(f.pool(), native.id)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(unchanged.title, "Private head");
     let visible = call(
         &router,
@@ -788,10 +834,11 @@ async fn contract(pg: bool) {
         StatusCode::ACCEPTED,
     )
     .await;
-    let delegated = db::pull_requests::records::get_pull_request_by_id(f.pool(), native.id)
-        .await
-        .unwrap()
-        .unwrap();
+    let delegated =
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(f.pool(), native.id)
+            .await
+            .unwrap()
+            .unwrap();
     assert_ne!(delegated.head_sha, next["sha"].as_str().unwrap());
     let opaque = call(
         &router,
@@ -829,7 +876,7 @@ async fn contract(pg: bool) {
         ),
     ] {
         assert!(matches!(
-            db::repositories::access::change_personal_repository_collaborator(
+            codeyard_db_repos::repositories::access::change_personal_repository_collaborator(
                 f.pool(),
                 actor,
                 repository,
@@ -838,7 +885,7 @@ async fn contract(pg: bool) {
             )
             .await
             .unwrap(),
-            db::repositories::access::CollaboratorChange::Applied(_)
+            codeyard_db_repos::repositories::access::CollaboratorChange::Applied(_)
         ));
     }
     let carol = Client::login(&router, f.pool(), carol_id).await;
@@ -862,7 +909,7 @@ async fn contract(pg: bool) {
         StatusCode::OK,
     )
     .await;
-    let source = db::issues::create_issue(
+    let source = codeyard_db_repos::issues::create_issue(
         f.pool(),
         repo.id,
         alice_id,
@@ -873,7 +920,7 @@ async fn contract(pg: bool) {
     .unwrap();
     call(&router, "pulls/create", "POST", collection, &credential, json!({"issue":source.number,"head":"bob:separate","head_repo":"private-fork","base":"main"}), StatusCode::CREATED).await;
     assert!(matches!(
-        db::repositories::access::change_personal_repository_collaborator(
+        codeyard_db_repos::repositories::access::change_personal_repository_collaborator(
             f.pool(),
             bob_id,
             fork.id,
@@ -882,7 +929,7 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap(),
-        db::repositories::access::CollaboratorChange::Applied(_)
+        codeyard_db_repos::repositories::access::CollaboratorChange::Applied(_)
     ));
     let refusal = bob
         .expect(
@@ -896,10 +943,14 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(refusal["error"], "file_write_rejected");
-    let frozen = db::pull_requests::records::get_pull_request(f.pool(), repo.id, source.number)
-        .await
-        .unwrap()
-        .unwrap();
+    let frozen = codeyard_db_repos::pull_requests::records::get_pull_request(
+        f.pool(),
+        repo.id,
+        source.number,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(frozen.head_publisher_id, Some(carol_id));
     assert_eq!(frozen.author_id, alice_id);
     assert_eq!(frozen.head_sha, next["sha"].as_str().unwrap());
@@ -925,10 +976,14 @@ async fn contract(pg: bool) {
         StatusCode::ACCEPTED,
     )
     .await;
-    let updated = db::pull_requests::records::get_pull_request(f.pool(), repo.id, source.number)
-        .await
-        .unwrap()
-        .unwrap();
+    let updated = codeyard_db_repos::pull_requests::records::get_pull_request(
+        f.pool(),
+        repo.id,
+        source.number,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_ne!(updated.head_sha, frozen.head_sha);
     let published = codeyard_app::repositories::store::repo_store(&repo, None)
         .commit_from_primary(&format!("refs/pull/{}/head", source.number))

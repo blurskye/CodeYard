@@ -6,6 +6,7 @@ use crate::storage::Upload;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_support::object_limits::MAX_OBJECT_BYTES;
+use sha2::Digest;
 use sha2::Sha256;
 use std::path::Path;
 use std::path::PathBuf;

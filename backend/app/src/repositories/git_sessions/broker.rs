@@ -1272,3 +1272,7 @@ pub mod policy_tests;
 #[cfg(test)]
 #[path = "quorum_tests.rs"]
 mod quorum_tests;
+
+#[cfg(test)]
+#[path = "broker_tests.rs"]
+mod broker_tests;

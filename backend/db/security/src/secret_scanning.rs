@@ -211,5 +211,3 @@ pub(super) fn path_digest(path: &str) -> String {
 }
 
 use codeyard_db_core::queries::secret_scanning::Settings;
-
-use codeyard_db_core::queries::secret_scanning::Settings;

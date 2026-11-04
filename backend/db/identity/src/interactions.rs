@@ -4,6 +4,7 @@ use chrono::Utc;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_db_core::DbPool;
+use sha2::Digest;
 use sha2::Sha256;
 
 #[derive(Clone, Debug, sqlx::FromRow)]

@@ -253,9 +253,3 @@ use codeyard_db_core::queries::postgres::action_settings::snapshot;
 use codeyard_db_core::queries::postgres::action_settings::repositories;
 
 use codeyard_db_core::queries::postgres::action_settings::authority;
-
-use codeyard_db_core::queries::postgres::action_settings::authority;
-
-use codeyard_db_core::queries::postgres::action_settings::repositories;
-
-use codeyard_db_core::queries::postgres::action_settings::snapshot;

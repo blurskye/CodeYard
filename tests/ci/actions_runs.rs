@@ -22,7 +22,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         &repos,
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "project",
         None,
         true,
@@ -56,7 +56,7 @@ async fn contract(pg: bool) {
         .await;
         ids.push(body["workflow_run_id"].as_i64().unwrap());
     }
-    let first = db::ci::claim_ci_run(
+    let first = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "documents",
         "local",
@@ -67,7 +67,7 @@ async fn contract(pg: bool) {
     .unwrap()
     .unwrap();
     assert_eq!(first.id, ids[0]);
-    db::ci::finish_ci_run(
+    codeyard_db_actions::ci::finish_ci_run(
         f.pool(),
         first.id,
         "documents",
@@ -77,7 +77,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .unwrap();
-    let running = db::ci::claim_ci_run(
+    let running = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "documents",
         "local",
@@ -426,7 +426,7 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(history["total_count"], 2);
     assert_eq!(
-        db::action_workflows::workflow_by_id(f.pool(), repo.id, workflow)
+        codeyard_db_actions::action_workflows::workflow_by_id(f.pool(), repo.id, workflow)
             .await
             .unwrap()
             .unwrap()
@@ -439,23 +439,33 @@ async fn contract(pg: bool) {
         &[repo.id, bob],
     )
     .await;
-    assert!(
-        db::action_runs::list(f.pool(), Some(bob), repo.id, &Default::default(), 0, 30)
-            .await
-            .unwrap()
-            .is_some()
-    );
+    assert!(codeyard_db_actions::action_runs::list(
+        f.pool(),
+        Some(bob),
+        repo.id,
+        &Default::default(),
+        0,
+        30
+    )
+    .await
+    .unwrap()
+    .is_some());
     f.execute(
         "DELETE FROM repo_access WHERE repo_id=$1 AND user_id=$2",
         &[repo.id, bob],
     )
     .await;
-    assert!(
-        db::action_runs::list(f.pool(), Some(bob), repo.id, &Default::default(), 0, 30)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_actions::action_runs::list(
+        f.pool(),
+        Some(bob),
+        repo.id,
+        &Default::default(),
+        0,
+        30
+    )
+    .await
+    .unwrap()
+    .is_none());
     f.finish().await;
 }
 

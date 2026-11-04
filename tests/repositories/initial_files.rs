@@ -18,7 +18,7 @@ async fn contract(pg: bool) {
     let repository = provision_with_initial_files(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "starter",
         Some("A starter project"),
         false,
@@ -57,7 +57,7 @@ async fn contract(pg: bool) {
     let failure = provision_with_initial_files(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "preserved",
         Some(&oversized),
         false,
@@ -69,10 +69,11 @@ async fn contract(pg: bool) {
     .await
     .unwrap_err();
     assert!(failure.message.contains("preserved"));
-    let preserved = db::repositories::records::get_repository(f.pool(), "alice", "preserved")
-        .await
-        .unwrap()
-        .unwrap();
+    let preserved =
+        codeyard_db_repos::repositories::records::get_repository(f.pool(), "alice", "preserved")
+            .await
+            .unwrap()
+            .unwrap();
     assert!(std::path::Path::new(&preserved.disk_path).exists());
     f.finish().await;
 }

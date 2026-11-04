@@ -40,10 +40,14 @@ async fn list(
     auth::authenticate(&state, &headers, false).await?;
     let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
     let (offset, limit) = page.window()?;
-    let mut comments =
-        db::gists::comments(&state.pool, gist.repo_id, (limit + 1) as i64, offset as i64)
-            .await
-            .map_err(Error::unavailable)?;
+    let mut comments = codeyard_db_repos::gists::comments(
+        &state.pool,
+        gist.repo_id,
+        (limit + 1) as i64,
+        offset as i64,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     let more = comments.len() > limit;
     comments.truncate(limit);
     let mut values = Vec::new();
@@ -60,10 +64,11 @@ async fn read(
 ) -> Result<Response> {
     auth::authenticate(&state, &headers, false).await?;
     let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
-    let comment = db::gists::comment(&state.pool, gist.repo_id, comment_id(&comment)?)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let comment =
+        codeyard_db_repos::gists::comment(&state.pool, gist.repo_id, comment_id(&comment)?)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     documents::response(&headers, documents::comment(&state, &gist, &comment).await?)
 }
 async fn create(
@@ -75,7 +80,7 @@ async fn create(
     let actor = writer(&state, &headers).await?;
     let Json(input) = input.map_err(|_| Error::validation("GistComment", "body", "invalid"))?;
     let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
-    let comment = db::gists::create_comment(
+    let comment = codeyard_db_repos::gists::create_comment(
         &state.pool,
         actor.user.id,
         &actor.credential(),
@@ -103,7 +108,7 @@ async fn update(
     let actor = writer(&state, &headers).await?;
     let Json(input) = input.map_err(|_| Error::validation("GistComment", "body", "invalid"))?;
     let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
-    let comment = db::gists::change_comment(
+    let comment = codeyard_db_repos::gists::change_comment(
         &state.pool,
         actor.user.id,
         &actor.credential(),
@@ -122,7 +127,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let actor = writer(&state, &headers).await?;
     let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
-    db::gists::change_comment(
+    codeyard_db_repos::gists::change_comment(
         &state.pool,
         actor.user.id,
         &actor.credential(),

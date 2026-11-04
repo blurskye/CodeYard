@@ -11,7 +11,7 @@ async fn associated_pulls_use_primary_storage_without_changing_refs_or_metadata(
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -35,13 +35,14 @@ async fn associated_pulls_use_primary_storage_without_changing_refs_or_metadata(
     .await
     .unwrap();
     storage.publish().await.unwrap();
-    let owner = db::users::accounts::create_user(&database.pool, "rpc_owner", None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "rpc_owner", None)
+            .await
+            .unwrap();
     let repository = codeyard_app::repositories::lifecycle::provision(
         (&database.pool, Some(&web.context)),
         &web.context.repos_path,
-        db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
         "project",
         None,
         false,
@@ -105,10 +106,14 @@ async fn associated_pulls_use_primary_storage_without_changing_refs_or_metadata(
         )
         .await;
     let number = i32::try_from(pull["number"].as_i64().unwrap()).unwrap();
-    let pull = db::pull_requests::records::get_pull_request(&database.pool, repository.id, number)
-        .await
-        .unwrap()
-        .unwrap();
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request(
+        &database.pool,
+        repository.id,
+        number,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let refs = remote.refs_from_primary().await.unwrap();
     for context in [&web.context, &storage.context] {
         let page = associated_pulls(
@@ -147,11 +152,15 @@ async fn associated_pulls_use_primary_storage_without_changing_refs_or_metadata(
     }
     assert_eq!(remote.refs_from_primary().await.unwrap(), refs);
     assert_eq!(
-        db::pull_requests::records::get_pull_request(&database.pool, repository.id, number)
-            .await
-            .unwrap()
-            .unwrap()
-            .updated_at,
+        codeyard_db_repos::pull_requests::records::get_pull_request(
+            &database.pool,
+            repository.id,
+            number
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .updated_at,
         pull.updated_at
     );
     client.expect("PUT", &format!("/api/repos/rpc_owner/project/pulls/{number}"), json!({

@@ -169,5 +169,3 @@ native_operation!(crate::postgres::action_objects::expire_objects,
     fn expire_objects(pool: &DbPool) -> Result<()>);
 
 use codeyard_db_core::queries::action_objects::OrganizationCacheUsage;
-
-use codeyard_db_core::queries::action_objects::OrganizationCacheUsage;

@@ -238,7 +238,7 @@ pub(super) async fn edit(
         Err(failure) => return error(&ctx, failure),
     };
     if ctx.user.as_ref().map(|user| user.id) != Some(loaded.gist.owner_id) {
-        return error(&ctx, db::gists::GistRefusal::Denied.into());
+        return error(&ctx, codeyard_db_repos::gists::GistRefusal::Denied.into());
     }
     let mut editor = match submitted(&ctx, Some(id.clone()), loaded.gist.is_public, &form) {
         Ok(editor) if editor.message.is_some() => {
@@ -343,11 +343,11 @@ async fn detail_error(
         Err(_) => ctx.error(status, &message),
     }
 }
-async fn ready_gist(ctx: &PageContext, id: &str) -> anyhow::Result<db::gists::Gist> {
-    db::gists::get(&ctx.state.pool, id)
+async fn ready_gist(ctx: &PageContext, id: &str) -> anyhow::Result<codeyard_db_repos::gists::Gist> {
+    codeyard_db_repos::gists::get(&ctx.state.pool, id)
         .await?
         .filter(|gist| gist.ready)
-        .ok_or_else(|| db::gists::GistRefusal::Missing.into())
+        .ok_or_else(|| codeyard_db_repos::gists::GistRefusal::Missing.into())
 }
 
 pub(super) async fn star(
@@ -366,7 +366,7 @@ pub(super) async fn star(
         Ok(gist) => gist,
         Err(failure) => return error(&ctx, failure),
     };
-    match db::gists::star(
+    match codeyard_db_repos::gists::star(
         &ctx.state.pool,
         ctx.user.as_ref().expect("protected account").id,
         &credential(&ctx).borrowed(),
@@ -444,7 +444,7 @@ pub(super) async fn comment(
         Err(failure) => return error(&ctx, failure),
     };
     let body = field(&form, "body");
-    match db::gists::create_comment(
+    match codeyard_db_repos::gists::create_comment(
         &ctx.state.pool,
         ctx.user.as_ref().expect("protected account").id,
         &credential(&ctx).borrowed(),
@@ -454,7 +454,13 @@ pub(super) async fn comment(
     .await
     {
         Ok(comment) => {
-            match db::gists::comment_position(&ctx.state.pool, gist.repo_id, comment.id).await {
+            match codeyard_db_repos::gists::comment_position(
+                &ctx.state.pool,
+                gist.repo_id,
+                comment.id,
+            )
+            .await
+            {
                 Ok(position) => ctx.redirect(&format!(
                     "/gists/{id}?comments_page={}#comment-{}",
                     position.saturating_sub(1) as usize / PAGE_SIZE + 1,
@@ -494,7 +500,7 @@ pub(super) async fn edit_comment(
         Err(failure) => return error(&ctx, failure),
     };
     let body = field(&form, "body");
-    match db::gists::change_comment(
+    match codeyard_db_repos::gists::change_comment(
         &ctx.state.pool,
         ctx.user.as_ref().expect("protected account").id,
         &credential(&ctx).borrowed(),
@@ -538,7 +544,7 @@ pub(super) async fn delete_comment(
         Ok(gist) => gist,
         Err(failure) => return error(&ctx, failure),
     };
-    match db::gists::change_comment(
+    match codeyard_db_repos::gists::change_comment(
         &ctx.state.pool,
         ctx.user.as_ref().expect("protected account").id,
         &credential(&ctx).borrowed(),

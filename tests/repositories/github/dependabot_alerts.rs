@@ -122,7 +122,7 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::OK, "{list}");
     assert_github_schema("security-advisories/list-global-advisories", 200, &list);
     assert_eq!(list.as_array().unwrap().len(), 1);
-    db::dependency_graph::submit(
+    codeyard_db_security::dependency_graph::submit(
         f.pool(),
         owner,
         repo,
@@ -130,7 +130,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::dependency_graph::submit(
+    codeyard_db_security::dependency_graph::submit(
         f.pool(),
         owner,
         repo,
@@ -235,7 +235,7 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body["dismissed_reason"].is_null());
-    db::dependency_graph::submit(
+    codeyard_db_security::dependency_graph::submit(
         f.pool(),
         owner,
         repo,
@@ -247,7 +247,7 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["state"], "fixed");
     assert!(!body["fixed_at"].is_null());
-    db::dependency_graph::submit(
+    codeyard_db_security::dependency_graph::submit(
         f.pool(),
         owner,
         repo,
@@ -262,7 +262,7 @@ async fn contract(pg: bool) {
             .state,
         "fixed"
     );
-    db::dependency_graph::submit(
+    codeyard_db_security::dependency_graph::submit(
         f.pool(),
         owner,
         repo,
@@ -278,7 +278,7 @@ async fn contract(pg: bool) {
     assert_eq!(rows[0].state, "open");
     // Published public repository advisories join the same local catalogue, never drafts.
     let repo_advisory = json!({"summary":"Repository advisory","description":"Published locally","severity":"medium","vulnerabilities":[{"package":{"ecosystem":"npm","name":"example"},"vulnerable_version_range":"< 2.0.0","patched_versions":"2.0.0"}]});
-    let a = db::advisories::create(f.pool(), owner, repo, &repo_advisory, false)
+    let a = codeyard_db_security::advisories::create(f.pool(), owner, repo, &repo_advisory, false)
         .await
         .unwrap();
     assert!(!codeyard_db_security::dependabot_alerts::global(f.pool())
@@ -286,7 +286,7 @@ async fn contract(pg: bool) {
         .unwrap()
         .iter()
         .any(|v| v["ghsa_id"] == a.ghsa_id));
-    db::advisories::update(
+    codeyard_db_security::advisories::update(
         f.pool(),
         owner,
         repo,
@@ -366,7 +366,7 @@ async fn contract(pg: bool) {
         "refs/heads/{}",
         org_repo["default_branch"].as_str().unwrap()
     );
-    db::dependency_graph::submit(
+    codeyard_db_security::dependency_graph::submit(
         f.pool(),
         owner,
         org_repo_id,
@@ -385,10 +385,16 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_github_schema("dependabot/list-alerts-for-org", 200, &body);
     assert_eq!(body.as_array().unwrap().len(), 2);
-    let private = db::advisories::create(f.pool(), owner, org_repo_id, &repo_advisory, false)
-        .await
-        .unwrap();
-    db::advisories::update(
+    let private = codeyard_db_security::advisories::create(
+        f.pool(),
+        owner,
+        org_repo_id,
+        &repo_advisory,
+        false,
+    )
+    .await
+    .unwrap();
+    codeyard_db_security::advisories::update(
         f.pool(),
         owner,
         org_repo_id,

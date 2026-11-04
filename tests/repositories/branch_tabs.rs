@@ -89,7 +89,7 @@ async fn tabs_contract(pg: bool) {
     let repository = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "proj",
         None,
         false,

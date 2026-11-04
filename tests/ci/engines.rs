@@ -87,12 +87,13 @@ async fn contract(pg: bool) {
     });
     let encryptor = Arc::new(SecretEncryptor::new(&[0x63; 32]));
     let org = crate::support::organizations::applied(
-        db::organizations::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             actor,
-            &db::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 "runner_org",
-                db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
             )
             .unwrap(),
         )
@@ -101,35 +102,35 @@ async fn contract(pg: bool) {
     );
     for (kind, name, value) in [
         (
-            db::organization_values::Kind::Secret,
+            codeyard_db_orgs::organization_values::Kind::Secret,
             "ORG_TOKEN",
             "organization-secret-value",
         ),
         (
-            db::organization_values::Kind::Secret,
+            codeyard_db_orgs::organization_values::Kind::Secret,
             "DEPLOY_TOKEN",
             "shadowed-organization-secret",
         ),
         (
-            db::organization_values::Kind::Variable,
+            codeyard_db_orgs::organization_values::Kind::Variable,
             "ORG_REGION",
             "organization-variable",
         ),
         (
-            db::organization_values::Kind::Variable,
+            codeyard_db_orgs::organization_values::Kind::Variable,
             "REGION",
             "shadowed-organization-variable",
         ),
     ] {
-        db::organization_values::save(
+        codeyard_db_orgs::organization_values::save(
             f.pool(),
             Some(&encryptor),
             actor,
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), actor).await,
             ),
             org.id,
-            &db::organization_values::Save {
+            &codeyard_db_orgs::organization_values::Save {
                 kind,
                 previous: None,
                 name,
@@ -171,9 +172,11 @@ async fn contract(pg: bool) {
         let repo = repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner {
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
                 actor_id: actor,
-                target: db::repositories::creation::RepositoryTarget::Organization(org.id),
+                target: codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(
+                    org.id,
+                ),
             },
             name,
             None,
@@ -183,23 +186,23 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
         workflow_commit(&repo.disk_path);
-        db::secrets::create_or_update_secret(
+        codeyard_db_actions::secrets::create_or_update_secret(
             f.pool(),
             &encryptor,
             repo.id,
             "DEPLOY_TOKEN",
             "repository-secret-value",
             Some(actor),
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), actor).await,
             ),
         )
         .await
         .unwrap();
-        db::variables::save(
+        codeyard_db_actions::variables::save(
             f.pool(),
             actor,
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), actor).await,
             ),
             repo.id,
@@ -235,7 +238,7 @@ async fn contract(pg: bool) {
             .unwrap();
         let finished = tokio::time::timeout(Duration::from_secs(80), async {
             loop {
-                let current = db::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
+                let current = codeyard_db_actions::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
                     .await
                     .unwrap()
                     .unwrap();
@@ -247,7 +250,9 @@ async fn contract(pg: bool) {
         })
         .await
         .expect("workflow must finish");
-        let logs = db::ci::list_ci_logs(f.pool(), run.id, 1000).await.unwrap();
+        let logs = codeyard_db_actions::ci::list_ci_logs(f.pool(), run.id, 1000)
+            .await
+            .unwrap();
         assert_eq!(finished.status, "success", "{engine}: {logs:?}");
         assert_eq!(finished.engine.as_deref(), Some(engine));
         assert!(
@@ -347,7 +352,7 @@ async fn contract(pg: bool) {
             .await;
             assert_eq!(attempt, jobs);
             assert_eq!(
-                db::ci::list_ci_logs(f.pool(), run.id, 100_000)
+                codeyard_db_actions::ci::list_ci_logs(f.pool(), run.id, 100_000)
                     .await
                     .unwrap()
                     .into_iter()

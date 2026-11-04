@@ -24,7 +24,7 @@ async fn parents(pg: bool) {
             codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
-                db::repositories::creation::RepositoryCreationOwner::personal(actor),
+                codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
                 name,
                 None,
                 true,
@@ -35,7 +35,7 @@ async fn parents(pg: bool) {
         );
     }
     for repo in &repos[..2] {
-        db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             f.pool(),
             bob,
             repo.id,
@@ -44,12 +44,14 @@ async fn parents(pg: bool) {
         .await
         .unwrap();
     }
-    let parent = db::issues::create_issue(f.pool(), repos[1].id, alice, "Parent", "")
-        .await
-        .unwrap();
-    let foreign = db::issues::create_issue(f.pool(), repos[2].id, bob, "Foreign parent", "")
-        .await
-        .unwrap();
+    let parent =
+        codeyard_db_repos::issues::create_issue(f.pool(), repos[1].id, alice, "Parent", "")
+            .await
+            .unwrap();
+    let foreign =
+        codeyard_db_repos::issues::create_issue(f.pool(), repos[2].id, bob, "Foreign parent", "")
+            .await
+            .unwrap();
     let router = f.router(root.path()).await;
     let browser = Client::login(&router, f.pool(), bob).await;
     let credential = tokens::create(
@@ -97,7 +99,7 @@ async fn parents(pg: bool) {
     .await;
     assert_eq!(linked["id"], parent.id);
     assert_eq!(
-        db::relationships::summaries(f.pool(), &[parent.id])
+        codeyard_db_identity::relationships::summaries(f.pool(), &[parent.id])
             .await
             .unwrap()
             .iter()
@@ -150,7 +152,7 @@ async fn parents(pg: bool) {
         .status(),
         StatusCode::NOT_FOUND
     );
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repos[1].id,
@@ -189,7 +191,7 @@ async fn parents(pg: bool) {
         )
         .await;
     for repo in &repos[..2] {
-        db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             f.pool(),
             bot,
             repo.id,
@@ -198,13 +200,18 @@ async fn parents(pg: bool) {
         .await
         .unwrap();
     }
-    assert!(
-        db::relationships::list(f.pool(), Some(bot), child, Kind::Parent, 0, 100)
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    let denied = db::relationships::change(
+    assert!(codeyard_db_identity::relationships::list(
+        f.pool(),
+        Some(bot),
+        child,
+        Kind::Parent,
+        0,
+        100
+    )
+    .await
+    .unwrap()
+    .is_empty());
+    let denied = codeyard_db_identity::relationships::change(
         f.pool(),
         bot,
         repos[0].id,
@@ -218,8 +225,8 @@ async fn parents(pg: bool) {
     .await
     .unwrap_err();
     assert!(matches!(
-        denied.downcast_ref::<db::relationships::Refusal>(),
-        Some(db::relationships::Refusal::Missing)
+        denied.downcast_ref::<codeyard_db_identity::relationships::Refusal>(),
+        Some(codeyard_db_identity::relationships::Refusal::Missing)
     ));
     let denied = create_child(
         f.pool(),
@@ -232,13 +239,14 @@ async fn parents(pg: bool) {
     .await
     .unwrap_err();
     assert!(matches!(
-        denied.downcast_ref::<db::relationships::Refusal>(),
-        Some(db::relationships::Refusal::Missing)
+        denied.downcast_ref::<codeyard_db_identity::relationships::Refusal>(),
+        Some(codeyard_db_identity::relationships::Refusal::Missing)
     ));
-    let local = db::issues::create_issue(f.pool(), repos[0].id, alice, "Local parent", "")
-        .await
-        .unwrap();
-    let denied = db::relationships::change(
+    let local =
+        codeyard_db_repos::issues::create_issue(f.pool(), repos[0].id, alice, "Local parent", "")
+            .await
+            .unwrap();
+    let denied = codeyard_db_identity::relationships::change(
         f.pool(),
         bot,
         repos[0].id,
@@ -252,16 +260,23 @@ async fn parents(pg: bool) {
     .await
     .unwrap_err();
     assert!(matches!(
-        denied.downcast_ref::<db::relationships::Refusal>(),
-        Some(db::relationships::Refusal::Missing)
+        denied.downcast_ref::<codeyard_db_identity::relationships::Refusal>(),
+        Some(codeyard_db_identity::relationships::Refusal::Missing)
     ));
     let same_repo = create_child(f.pool(), bot, repos[0].id, local.id, "Same-job parent", "")
         .await
         .unwrap();
     assert_eq!(
-        db::relationships::list(f.pool(), Some(bot), same_repo.id, Kind::Parent, 0, 100)
-            .await
-            .unwrap()[0]
+        codeyard_db_identity::relationships::list(
+            f.pool(),
+            Some(bot),
+            same_repo.id,
+            Kind::Parent,
+            0,
+            100
+        )
+        .await
+        .unwrap()[0]
             .id,
         local.id
     );
@@ -286,29 +301,29 @@ async fn parents(pg: bool) {
             &[bot],
         )
         .await;
-    db::suggestions::set_enabled(
+    codeyard_db_repos::suggestions::set_enabled(
         f.pool(),
         repos[0].id,
         alice,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         true,
     )
     .await
     .unwrap();
-    let proposal = db::suggestions::Proposal {
-        action: db::suggestions::Action::CloseIssue,
+    let proposal = codeyard_db_repos::suggestions::Proposal {
+        action: codeyard_db_repos::suggestions::Action::CloseIssue,
         target_id: Some(parent.id),
         value: Value::Null,
         rationale: None,
         confidence: None,
     };
-    let suggested = db::suggestions::propose(
+    let suggested = codeyard_db_repos::suggestions::propose(
         f.pool(),
         repos[0].id,
         alice,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         child,
@@ -318,11 +333,14 @@ async fn parents(pg: bool) {
     .await
     .unwrap();
     for approve in [false, true] {
-        let denied = db::suggestions::resolve(
+        let denied = codeyard_db_repos::suggestions::resolve(
             f.pool(),
             repos[0].id,
             bot,
-            &db::users::accounts::AccountCredential::Token(bot_token, BOT_TOKEN_HASH),
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+                bot_token,
+                BOT_TOKEN_HASH,
+            ),
             child,
             suggested.id,
             approve,
@@ -331,11 +349,11 @@ async fn parents(pg: bool) {
         .err()
         .unwrap();
         assert!(matches!(
-            db::suggestions::refusal(&denied),
-            Some(db::suggestions::Refusal::Missing)
+            codeyard_db_repos::suggestions::refusal(&denied),
+            Some(codeyard_db_repos::suggestions::Refusal::Missing)
         ));
     }
-    let filter = db::suggestions::ListFilter {
+    let filter = codeyard_db_repos::suggestions::ListFilter {
         state: "all",
         action: None,
         own: false,
@@ -344,16 +362,19 @@ async fn parents(pg: bool) {
         limit: 100,
     };
     assert!(
-        db::suggestions::list(f.pool(), repos[0].id, bot, child, &filter)
+        codeyard_db_repos::suggestions::list(f.pool(), repos[0].id, bot, child, &filter)
             .await
             .unwrap()
             .is_empty()
     );
-    let denied = db::suggestions::propose(
+    let denied = codeyard_db_repos::suggestions::propose(
         f.pool(),
         repos[0].id,
         bot,
-        &db::users::accounts::AccountCredential::Token(bot_token, BOT_TOKEN_HASH),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+            bot_token,
+            BOT_TOKEN_HASH,
+        ),
         child,
         &proposal,
         None,
@@ -361,11 +382,11 @@ async fn parents(pg: bool) {
     .await
     .unwrap_err();
     assert!(matches!(
-        db::suggestions::refusal(&denied),
-        Some(db::suggestions::Refusal::Invalid)
+        codeyard_db_repos::suggestions::refusal(&denied),
+        Some(codeyard_db_repos::suggestions::Refusal::Invalid)
     ));
     assert_eq!(
-        db::suggestions::list(f.pool(), repos[0].id, alice, child, &filter)
+        codeyard_db_repos::suggestions::list(f.pool(), repos[0].id, alice, child, &filter)
             .await
             .unwrap()
             .len(),
@@ -390,8 +411,8 @@ async fn parents(pg: bool) {
         .await
         .unwrap_err();
     assert!(matches!(
-        denied.downcast_ref::<db::relationships::Refusal>(),
-        Some(db::relationships::Refusal::Limit)
+        denied.downcast_ref::<codeyard_db_identity::relationships::Refusal>(),
+        Some(codeyard_db_identity::relationships::Refusal::Limit)
     ));
     assert_eq!(
         f.scalar(
@@ -421,13 +442,13 @@ async fn create_child(
     title: &str,
     body: &str,
 ) -> anyhow::Result<codeyard_db_core::models::Issue> {
-    db::issues::create_issue_with_metadata(
+    codeyard_db_repos::issues::create_issue_with_metadata(
         pool,
         repo,
         actor,
         title,
         body,
-        db::issues::IssueMetadata {
+        codeyard_db_repos::issues::IssueMetadata {
             parent: Some(parent),
             ..Default::default()
         },

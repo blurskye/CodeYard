@@ -40,7 +40,7 @@ async fn setup(f: &mut Database, root: &Path) -> App {
     let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root,
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "proj",
         None,
         false,
@@ -48,7 +48,7 @@ async fn setup(f: &mut Database, root: &Path) -> App {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob_id,
         repository.id,
@@ -443,16 +443,20 @@ async fn stale_publication_contract(pg: bool) {
     let (one, two, _three) = three_layers(&app.alice, &main0).await;
     let main1 = move_trunk(&app.alice, &main0).await;
     let store = repo_store(&app.repository, None);
-    let stack_id = db::pull_requests::records::get_pull_request(f.pool(), app.repository.id, 2)
-        .await
-        .unwrap()
-        .unwrap()
-        .stack_id
-        .expect("the layers form a stack");
-    let versions =
-        db::pull_requests::records::list_stack_versions(f.pool(), app.repository.id, stack_id)
+    let stack_id =
+        codeyard_db_repos::pull_requests::records::get_pull_request(f.pool(), app.repository.id, 2)
             .await
-            .unwrap();
+            .unwrap()
+            .unwrap()
+            .stack_id
+            .expect("the layers form a stack");
+    let versions = codeyard_db_repos::pull_requests::records::list_stack_versions(
+        f.pool(),
+        app.repository.id,
+        stack_id,
+    )
+    .await
+    .unwrap();
     let replayed = store
         .prepare_restack(&one, &two, &main1, "Tester", "tester@example.invalid")
         .await
@@ -1127,10 +1131,14 @@ async fn slow_ci_admission_contract(restack: bool) {
             let (status, result) = rebase(&app.alice, 2).await;
             assert_eq!(status, StatusCode::OK, "{result}");
         } else {
-            let pull = db::pull_requests::records::get_pull_request(f.pool(), app.repository.id, 2)
-                .await
-                .unwrap()
-                .unwrap();
+            let pull = codeyard_db_repos::pull_requests::records::get_pull_request(
+                f.pool(),
+                app.repository.id,
+                2,
+            )
+            .await
+            .unwrap()
+            .unwrap();
             let ci = codeyard_app::ci::runs::CiRuns::new(
                 f.pool().clone(),
                 Arc::new(CiConfig::default()),
@@ -1150,7 +1158,7 @@ async fn slow_ci_admission_contract(restack: bool) {
     };
     tokio::join!(admission, release);
     let head = branch_tip(&app.repository.disk_path, "feature-2");
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), app.repository.id, 100)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), app.repository.id, 100)
         .await
         .unwrap();
     assert!(
@@ -1208,10 +1216,11 @@ async fn nearer_fork_beats_older_merged_ancestor(pg: bool) {
     app.alice.save("b", "extra.txt", &rewritten).await;
     let (status, result) = merge_with(&app.alice, 2, "squash").await;
     assert_eq!(status, StatusCode::OK, "{result}");
-    let child = db::pull_requests::records::get_pull_request(f.pool(), app.repository.id, 3)
-        .await
-        .unwrap()
-        .unwrap();
+    let child =
+        codeyard_db_repos::pull_requests::records::get_pull_request(f.pool(), app.repository.id, 3)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(child.fork_sha.as_deref(), Some(b.as_str()));
     let (status, result) = rebase(&app.alice, 3).await;
     assert_eq!(status, StatusCode::OK, "{result}");
@@ -1223,10 +1232,11 @@ async fn nearer_fork_beats_older_merged_ancestor(pg: bool) {
         "older merged ancestor replayed superseded B changes"
     );
     // The rebased head contains its base, so the old fork point no longer bounds its diff.
-    let child = db::pull_requests::records::get_pull_request(f.pool(), app.repository.id, 3)
-        .await
-        .unwrap()
-        .unwrap();
+    let child =
+        codeyard_db_repos::pull_requests::records::get_pull_request(f.pool(), app.repository.id, 3)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(child.head_sha, head);
     assert_eq!(child.fork_sha, None);
     f.finish().await;

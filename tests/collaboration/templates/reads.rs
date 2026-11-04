@@ -68,10 +68,11 @@ async fn templates_use_exact_default_branch_even_when_it_resembles_a_full_ref() 
             json!({"content": base64::engine::general_purpose::STANDARD.encode(text), "message": "Edit template", "branch": branch, "expected_revision": head}), StatusCode::OK).await;
         head = saved["commit"]["sha"].as_str().unwrap().to_owned();
     }
-    let repo = db::repositories::records::get_repository(database.pool(), "alice", "proj")
-        .await
-        .unwrap()
-        .unwrap();
+    let repo =
+        codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
     let git = git2::Repository::open_bare(&repo.disk_path).unwrap();
     git.reference(
         "refs/tags/release",

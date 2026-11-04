@@ -21,6 +21,7 @@ use codeyard_support::object_limits::MAX_OBJECT_BYTES;
 use serde_json::json;
 use serde_json::Value;
 use serde_yaml::Value as Yaml;
+use sha2::Digest;
 use sha2::Sha256;
 use std::sync::Arc;
 use std::time::Duration;

@@ -41,7 +41,7 @@ async fn contract(pg: bool) {
     let repo = lifecycle::provision(
         (fixture.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "private",
         None,
         true,
@@ -495,15 +495,20 @@ async fn custom_patterns(
 ) {
     let (owner, writer, reader, outsider) = credentials;
     let (repo_id, base) = repository;
-    let input = db::organizations::profiles::NewOrganization::new(
+    let input = codeyard_db_orgs::organizations::profiles::NewOrganization::new(
         "secret-org",
-        db::organizations::profiles::OrganizationProfile::new(Some("Security"), None).unwrap(),
+        codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(Some("Security"), None)
+            .unwrap(),
     )
     .unwrap();
-    let db::organizations::OrganizationOutcome::Applied(org) =
-        db::organizations::profiles::create_organization(fixture.pool(), owner, &input)
-            .await
-            .unwrap()
+    let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) =
+        codeyard_db_orgs::organizations::profiles::create_organization(
+            fixture.pool(),
+            owner,
+            &input,
+        )
+        .await
+        .unwrap()
     else {
         panic!("create organization")
     };
@@ -511,9 +516,11 @@ async fn custom_patterns(
     let repo = lifecycle::provision(
         (fixture.pool(), None),
         &root,
-        db::repositories::creation::RepositoryCreationOwner {
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
             actor_id: owner,
-            target: db::repositories::creation::RepositoryTarget::Organization(org.id),
+            target: codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(
+                org.id,
+            ),
         },
         "org-private",
         None,

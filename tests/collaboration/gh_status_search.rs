@@ -172,7 +172,7 @@ async fn repositories_and_content(pg: bool) {
     let repo = lifecycle::provision_with_initial_files(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         Some("Needle repository"),
         false,
@@ -187,7 +187,7 @@ async fn repositories_and_content(pg: bool) {
     let hidden = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "hidden",
         Some("Needle repository"),
         true,
@@ -236,14 +236,16 @@ async fn repositories_and_content(pg: bool) {
         200,
     )
     .await;
-    let issue = db::issues::create_issue(f.pool(), repo.id, alice, "Starter task", "")
-        .await
-        .unwrap();
-    for name in ["good first issue", "help wanted"] {
-        let label = db::labels::create_label(f.pool(), alice, repo.id, name, "123456", None)
+    let issue =
+        codeyard_db_repos::issues::create_issue(f.pool(), repo.id, alice, "Starter task", "")
             .await
             .unwrap();
-        db::labels::add_issue_label(f.pool(), alice, repo.id, issue.id, label.id)
+    for name in ["good first issue", "help wanted"] {
+        let label =
+            codeyard_db_repos::labels::create_label(f.pool(), alice, repo.id, name, "123456", None)
+                .await
+                .unwrap();
+        codeyard_db_repos::labels::add_issue_label(f.pool(), alice, repo.id, issue.id, label.id)
             .await
             .unwrap();
     }
@@ -433,9 +435,10 @@ async fn repositories_and_content(pg: bool) {
         .await;
         assert_eq!(value["total_count"], 0, "{query}: {value}");
     }
-    let hidden_issue = db::issues::create_issue(f.pool(), hidden.id, alice, "Secret Needle", "")
-        .await
-        .unwrap();
+    let hidden_issue =
+        codeyard_db_repos::issues::create_issue(f.pool(), hidden.id, alice, "Secret Needle", "")
+            .await
+            .unwrap();
     assert!(hidden_issue.id > 0);
     let value = search(&f, &router, &outsider, "commits", "repo:alice/hidden", &[]).await;
     assert_eq!(value["total_count"], 0);
@@ -451,7 +454,7 @@ async fn discussions(pg: bool) {
     let repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         false,
@@ -459,7 +462,7 @@ async fn discussions(pg: bool) {
     )
     .await
     .unwrap();
-    let issue = db::issues::create_issue(
+    let issue = codeyard_db_repos::issues::create_issue(
         f.pool(),
         repo.id,
         alice,
@@ -468,9 +471,9 @@ async fn discussions(pg: bool) {
     )
     .await
     .unwrap();
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             issue: None,
             maintainer_can_modify: false,
             repo_id: repo.id,
@@ -487,7 +490,7 @@ async fn discussions(pg: bool) {
     )
     .await
     .unwrap();
-    db::issues::add_issue_comment(
+    codeyard_db_repos::issues::add_issue_comment(
         f.pool(),
         issue.repo_id,
         issue.id,
@@ -499,7 +502,7 @@ async fn discussions(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -507,11 +510,11 @@ async fn discussions(pg: bool) {
     )
     .await
     .unwrap();
-    db::pull_requests::reviews::add_pull_request_review(
+    codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
         f.pool(),
         pull.id,
         bob,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), bob).await,
         ),
         "approved",
@@ -526,10 +529,10 @@ async fn discussions(pg: bool) {
     )
     .await;
     for item in [
-        db::assignees::AssignedItem::Issue(issue.id),
-        db::assignees::AssignedItem::PullRequest(pull.id),
+        codeyard_db_repos::assignees::AssignedItem::Issue(issue.id),
+        codeyard_db_repos::assignees::AssignedItem::PullRequest(pull.id),
     ] {
-        db::assignees::assign_user(f.pool(), alice, repo.id, item, bob)
+        codeyard_db_repos::assignees::assign_user(f.pool(), alice, repo.id, item, bob)
             .await
             .unwrap();
     }
@@ -576,38 +579,38 @@ async fn discussions(pg: bool) {
         )
         .await;
     }
-    let project = db::projects::create(
+    let project = codeyard_db_repos::projects::create(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
-        db::projects::Owner::User(alice),
+        codeyard_db_repos::projects::Owner::User(alice),
         "Search board",
         None,
         false,
     )
     .await
     .unwrap();
-    db::projects::add_item(
+    codeyard_db_repos::projects::add_item(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         project.id,
-        &db::projects::Content::Issue(issue.id),
+        &codeyard_db_repos::projects::Content::Issue(issue.id),
     )
     .await
     .unwrap();
-    db::projects::add_item(
+    codeyard_db_repos::projects::add_item(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         project.id,
-        &db::projects::Content::PullRequest(pull.id),
+        &codeyard_db_repos::projects::Content::PullRequest(pull.id),
     )
     .await
     .unwrap();
@@ -745,27 +748,30 @@ async fn discussions(pg: bool) {
         .await;
         assert_eq!(value["total_count"], 0, "{query}: {value}");
     }
-    let org = match db::organizations::create_organization(
+    let org = match codeyard_db_orgs::organizations::profiles::create_organization(
         f.pool(),
         alice,
-        &db::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "yard",
-            db::organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                .unwrap(),
         )
         .unwrap(),
     )
     .await
     .unwrap()
     {
-        db::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization"),
     };
     let org_repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner {
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
             actor_id: alice,
-            target: db::repositories::creation::RepositoryTarget::Organization(org.id),
+            target: codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(
+                org.id,
+            ),
         },
         "proj",
         None,
@@ -774,9 +780,9 @@ async fn discussions(pg: bool) {
     )
     .await
     .unwrap();
-    let org_pull = db::pull_requests::records::create_pull_request(
+    let org_pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             issue: None,
             maintainer_can_modify: false,
             repo_id: org_repo.id,
@@ -876,27 +882,30 @@ async fn status(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let org = match db::organizations::create_organization(
+    let org = match codeyard_db_orgs::organizations::profiles::create_organization(
         f.pool(),
         alice,
-        &db::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "yard",
-            db::organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                .unwrap(),
         )
         .unwrap(),
     )
     .await
     .unwrap()
     {
-        db::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization"),
     };
     let repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner {
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
             actor_id: alice,
-            target: db::repositories::creation::RepositoryTarget::Organization(org.id),
+            target: codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(
+                org.id,
+            ),
         },
         "proj",
         None,
@@ -905,7 +914,7 @@ async fn status(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::engagement::watch_repo(f.pool(), alice, repo.id)
+    codeyard_db_repos::repositories::engagement::watch_repo(f.pool(), alice, repo.id)
         .await
         .unwrap();
     let router = f.router(root.path()).await;
@@ -991,7 +1000,7 @@ async fn status(pg: bool) {
     )
     .await;
     assert_eq!(notices[0]["unread"], false);
-    db::events::record_event(
+    codeyard_db_repos::events::record_event(
         f.pool(),
         repo.id,
         Some(bob),

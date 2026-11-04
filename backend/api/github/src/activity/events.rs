@@ -18,6 +18,7 @@ use codeyard_db_repos::events::EventViewer;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use serde_json::Value;
+use sha2::Digest;
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::sync::Arc;

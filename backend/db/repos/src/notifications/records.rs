@@ -303,5 +303,3 @@ native_operation!(crate::postgres::notifications::records::mark_all_notification
     fn mark_all_notifications_read(pool: &DbPool, user_id: i64) -> Result<u64>);
 
 use codeyard_db_core::queries::notifications::records::NewNotification;
-
-use codeyard_db_core::queries::notifications::records::NewNotification;

@@ -30,7 +30,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let pool = f.pool().clone();
-    let public = db::repositories::records::create_repository(
+    let public = codeyard_db_repos::repositories::records::create_repository(
         &pool,
         alice,
         "pub",
@@ -40,7 +40,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let secret = db::repositories::records::create_repository(
+    let secret = codeyard_db_repos::repositories::records::create_repository(
         &pool,
         alice,
         "secret",
@@ -51,27 +51,32 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     // alice creates a repository for an organization: it is listed under alice.
-    let acme = match db::organizations::create_organization(
+    let acme = match codeyard_db_orgs::organizations::profiles::create_organization(
         &pool,
         alice,
-        &db::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "acme",
-            db::organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                .unwrap(),
         )
         .unwrap(),
     )
     .await
     .unwrap()
     {
-        db::organizations::OrganizationOutcome::Applied(metadata) => metadata,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(metadata) => {
+            metadata
+        }
         _ => panic!("the owner creates the organization"),
     };
-    db::repositories::creation::insert_repository(
+    codeyard_db_repos::repositories::creation::insert_repository(
         &pool,
-        db::repositories::creation::NewRepository {
-            owner: db::repositories::creation::RepositoryCreationOwner {
+        codeyard_db_repos::repositories::creation::NewRepository {
+            owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
                 actor_id: alice,
-                target: db::repositories::creation::RepositoryTarget::Organization(acme.id),
+                target: codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(
+                    acme.id,
+                ),
             },
             name: "tools",
             description: None,
@@ -84,26 +89,32 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .expect("organization repository is created");
-    db::activity::record_repository_push(&pool, public.id, alice, "main", 3)
+    codeyard_db_repos::activity::record_repository_push(&pool, public.id, alice, "main", 3)
         .await
         .unwrap();
-    db::activity::record_repository_push(&pool, secret.id, alice, "main", 1)
+    codeyard_db_repos::activity::record_repository_push(&pool, secret.id, alice, "main", 1)
         .await
         .unwrap();
-    db::issues::create_issue(&pool, secret.id, alice, "hidden issue", "")
+    codeyard_db_repos::issues::create_issue(&pool, secret.id, alice, "hidden issue", "")
         .await
         .unwrap();
     // Zero-commit branch updates must not consume visible activity slots.
     for _ in 0..30 {
-        db::activity::record_repository_push(&pool, public.id, alice, "existing", 0)
+        codeyard_db_repos::activity::record_repository_push(&pool, public.id, alice, "existing", 0)
             .await
             .unwrap();
     }
     // Thirty-two public issues, so the list needs a second page.
     for number in 0..32 {
-        db::issues::create_issue(&pool, public.id, alice, &format!("issue {number}"), "")
-            .await
-            .unwrap();
+        codeyard_db_repos::issues::create_issue(
+            &pool,
+            public.id,
+            alice,
+            &format!("issue {number}"),
+            "",
+        )
+        .await
+        .unwrap();
     }
 
     let root = tempfile::tempdir().unwrap();
@@ -121,9 +132,11 @@ async fn contract(pg: bool) {
             assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
         }
     }
-    let notices = db::notifications::records::list_notifications_for_user(&pool, alice, 100, false)
-        .await
-        .unwrap();
+    let notices = codeyard_db_repos::notifications::records::list_notifications_for_user(
+        &pool, alice, 100, false,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         notices
             .iter()
@@ -177,7 +190,7 @@ async fn contract(pg: bool) {
         .iter()
         .any(|item| item["repository"] == "alice/secret"));
 
-    let raw = db::activity::list_user_activity(&pool, alice, None, 100, 0)
+    let raw = codeyard_db_repos::activity::list_user_activity(&pool, alice, None, 100, 0)
         .await
         .unwrap();
     assert!(
@@ -194,7 +207,7 @@ async fn contract(pg: bool) {
         &[public.id],
     )
     .await;
-    let later = db::activity::list_user_activity(&pool, alice, None, 100, 0)
+    let later = codeyard_db_repos::activity::list_user_activity(&pool, alice, None, 100, 0)
         .await
         .unwrap();
     assert!(later.rows.iter().all(|row| row.repo_id != public.id));
@@ -208,7 +221,7 @@ async fn repository_pages(pg: bool) {
     let alice_session = uuid::Uuid::new_v4().to_string();
     let bob_session = uuid::Uuid::new_v4().to_string();
     for (actor, session) in [(alice, &alice_session), (bob, &bob_session)] {
-        db::users::sessions::create_session(
+        codeyard_db_identity::users::sessions::create_session(
             f.pool(),
             session,
             actor,
@@ -220,7 +233,7 @@ async fn repository_pages(pg: bool) {
         .unwrap();
     }
     for index in 0..65 {
-        db::repositories::records::create_repository(
+        codeyard_db_repos::repositories::records::create_repository(
             f.pool(),
             alice,
             &format!("repo-{index:03}"),
@@ -292,7 +305,7 @@ async fn scan_stops_at_the_row_bound(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("alice").await;
     let pool = f.pool().clone();
-    let public = db::repositories::records::create_repository(
+    let public = codeyard_db_repos::repositories::records::create_repository(
         &pool,
         alice,
         "pub",
@@ -302,7 +315,7 @@ async fn scan_stops_at_the_row_bound(pg: bool) {
     )
     .await
     .unwrap();
-    let secret = db::repositories::records::create_repository(
+    let secret = codeyard_db_repos::repositories::records::create_repository(
         &pool,
         alice,
         "secret",
@@ -312,15 +325,21 @@ async fn scan_stops_at_the_row_bound(pg: bool) {
     )
     .await
     .unwrap();
-    db::issues::create_issue(&pool, public.id, alice, "older public", "")
+    codeyard_db_repos::issues::create_issue(&pool, public.id, alice, "older public", "")
         .await
         .unwrap();
     for number in 0..activity::MAX_SCAN_ROWS {
-        db::issues::create_issue(&pool, secret.id, alice, &format!("private {number}"), "")
-            .await
-            .unwrap();
+        codeyard_db_repos::issues::create_issue(
+            &pool,
+            secret.id,
+            alice,
+            &format!("private {number}"),
+            "",
+        )
+        .await
+        .unwrap();
     }
-    db::issues::create_issue(&pool, public.id, alice, "newest public", "")
+    codeyard_db_repos::issues::create_issue(&pool, public.id, alice, "newest public", "")
         .await
         .unwrap();
 

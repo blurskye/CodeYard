@@ -110,7 +110,7 @@ async fn comment_reaches_connected_clients(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         false,
@@ -118,9 +118,15 @@ async fn comment_reaches_connected_clients(pg: bool) {
     )
     .await
     .unwrap();
-    let issue = db::issues::create_issue(database.pool(), repo.id, alice, "A live issue", "")
-        .await
-        .unwrap();
+    let issue = codeyard_db_repos::issues::create_issue(
+        database.pool(),
+        repo.id,
+        alice,
+        "A live issue",
+        "",
+    )
+    .await
+    .unwrap();
     let state = AppState::new(
         database.pool().clone(),
         root.path().to_owned(),
@@ -259,7 +265,7 @@ async fn cursor_batches_and_retention(pg: bool) {
     let _serial = SERIAL.lock().await;
     let mut database = Database::new(pg).await;
     let pool = database.pool();
-    use db::notifications::events::{self, EventCursor, BATCH_SIZE};
+    use codeyard_db_repos::notifications::events::{self, EventCursor, BATCH_SIZE};
     let mut cursor = EventCursor::connect(pool).await.unwrap();
     assert!(events::announce(pool, &"x".repeat(4097)).await.is_err());
     for index in 0..=BATCH_SIZE {
@@ -320,7 +326,7 @@ async fn postgres_cursor_batches_and_retention() {
 async fn postgres_cursor_replays_late_commits_without_delaying_newer_hints() {
     let _serial = SERIAL.lock().await;
     let mut database = Database::new(true).await;
-    use db::notifications::events::{announce, EventCursor};
+    use codeyard_db_repos::notifications::events::{announce, EventCursor};
     let mut older = database.pg().begin().await.unwrap();
     sqlx::query("INSERT INTO notification_events (payload) VALUES ('older')")
         .execute(&mut *older)

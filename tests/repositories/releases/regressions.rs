@@ -36,12 +36,12 @@ async fn concurrent_release_updates_report_one_publication(pg: bool) {
     use db::releases::{ReleaseChanges, ReleaseFields};
     let mut world = setup(pg).await;
     let pool = world.database.pool();
-    let repo = db::repositories::records::get_repository(pool, "alice", "proj")
+    let repo = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")
         .await
         .unwrap()
         .unwrap();
     let actor = repo.owner_user_id.unwrap();
-    let draft = db::releases::create_release(
+    let draft = codeyard_db_repos::releases::create_release(
         pool,
         actor,
         repo.id,
@@ -63,12 +63,12 @@ async fn concurrent_release_updates_report_one_publication(pg: bool) {
         ..Default::default()
     };
     let (published, edited) = tokio::join!(
-        db::releases::update_release(pool, actor, repo.id, draft.id, &publish),
-        db::releases::update_release(pool, actor, repo.id, draft.id, &notes),
+        codeyard_db_repos::releases::update_release(pool, actor, repo.id, draft.id, &publish),
+        codeyard_db_repos::releases::update_release(pool, actor, repo.id, draft.id, &notes),
     );
     assert!(published.unwrap().1);
     assert!(!edited.unwrap().1);
-    let saved = db::releases::get_release(pool, repo.id, draft.id)
+    let saved = codeyard_db_repos::releases::get_release(pool, repo.id, draft.id)
         .await
         .unwrap()
         .unwrap()
@@ -76,7 +76,7 @@ async fn concurrent_release_updates_report_one_publication(pg: bool) {
     assert!(!saved.is_draft);
     assert_eq!(saved.body.as_deref(), Some("Edited notes"));
     assert!(
-        !db::releases::update_release(pool, actor, repo.id, draft.id, &publish)
+        !codeyard_db_repos::releases::update_release(pool, actor, repo.id, draft.id, &publish)
             .await
             .unwrap()
             .1
@@ -100,12 +100,12 @@ async fn an_edit_prepared_for_a_published_release_does_not_publish_a_draft(pg: b
     use db::releases::{ReleaseChanges, ReleaseFields, ReleaseRefusal};
     let mut world = setup(pg).await;
     let pool = world.database.pool();
-    let repo = db::repositories::records::get_repository(pool, "alice", "proj")
+    let repo = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")
         .await
         .unwrap()
         .unwrap();
     let actor = repo.owner_user_id.unwrap();
-    let release = db::releases::create_release(
+    let release = codeyard_db_repos::releases::create_release(
         pool,
         actor,
         repo.id,
@@ -127,15 +127,15 @@ async fn an_edit_prepared_for_a_published_release_does_not_publish_a_draft(pg: b
         ..Default::default()
     };
     let (unpublished, edited) = tokio::join!(
-        db::releases::update_release(pool, actor, repo.id, release.id, &unpublish),
-        db::releases::update_release(pool, actor, repo.id, release.id, &stale),
+        codeyard_db_repos::releases::update_release(pool, actor, repo.id, release.id, &unpublish),
+        codeyard_db_repos::releases::update_release(pool, actor, repo.id, release.id, &stale),
     );
     assert!(!unpublished.unwrap().1);
     if let Ok((_, published)) = edited {
         assert!(!published);
     }
     async fn draft(pool: &codeyard_db_core::DbPool, repo: i64, release: i64) -> bool {
-        db::releases::get_release(pool, repo, release)
+        codeyard_db_repos::releases::get_release(pool, repo, release)
             .await
             .unwrap()
             .unwrap()
@@ -143,9 +143,10 @@ async fn an_edit_prepared_for_a_published_release_does_not_publish_a_draft(pg: b
             .is_draft
     }
     assert!(draft(pool, repo.id, release.id).await);
-    let refused = db::releases::update_release(pool, actor, repo.id, release.id, &stale)
-        .await
-        .unwrap_err();
+    let refused =
+        codeyard_db_repos::releases::update_release(pool, actor, repo.id, release.id, &stale)
+            .await
+            .unwrap_err();
     assert!(matches!(
         refused.downcast_ref::<ReleaseRefusal>(),
         Some(ReleaseRefusal::Conflict)
@@ -157,7 +158,7 @@ async fn an_edit_prepared_for_a_published_release_does_not_publish_a_draft(pg: b
         ..Default::default()
     };
     assert!(
-        db::releases::update_release(pool, actor, repo.id, release.id, &publish)
+        codeyard_db_repos::releases::update_release(pool, actor, repo.id, release.id, &publish)
             .await
             .unwrap()
             .1

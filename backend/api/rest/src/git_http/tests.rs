@@ -18,14 +18,14 @@ async fn fixture() -> (tempfile::TempDir, Arc<AppState>, Repository, i64) {
     .await
     .unwrap();
     codeyard_db_core::run_migrations(&pool).await.unwrap();
-    db::node_config::upsert_node_configuration(&pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&pool, "public", true)
         .await
         .unwrap();
-    let owner = db::users::accounts::create_user(&pool, "owner", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(&pool, "owner", None)
         .await
         .unwrap();
     let store = RepoStore::create(root.path(), "main", None).await.unwrap();
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         &pool,
         owner.id,
         "repo",
@@ -49,7 +49,7 @@ async fn fixture() -> (tempfile::TempDir, Arc<AppState>, Repository, i64) {
 #[tokio::test]
 async fn personal_administrator_git_access_keeps_token_scopes_and_org_restrictions() {
     let (_root, state, mut repo, owner) = fixture().await;
-    let actor = db::users::accounts::create_user(&state.pool, "admin", None)
+    let actor = codeyard_db_identity::users::accounts::create_user(&state.pool, "admin", None)
         .await
         .unwrap();
     let codeyard_db_core::DbPool::Sqlite(raw) = &state.pool else {
@@ -66,23 +66,26 @@ async fn personal_administrator_git_access_keeps_token_scopes_and_org_restrictio
         .await
         .unwrap();
     repo.is_private = true;
-    let organization = match db::organizations::create_organization(
+    let organization = match codeyard_db_orgs::organizations::profiles::create_organization(
         &state.pool,
         owner,
-        &db::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "acme",
-            db::organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                .unwrap(),
         )
         .unwrap(),
     )
     .await
     .unwrap()
     {
-        db::organizations::OrganizationOutcome::Applied(organization) => organization,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(organization) => {
+            organization
+        }
         outcome => panic!("organization setup failed: {outcome:?}"),
     };
     let session = "a".repeat(64);
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         &state.pool,
         &session,
         actor.id,
@@ -93,7 +96,7 @@ async fn personal_administrator_git_access_keeps_token_scopes_and_org_restrictio
     .await
     .unwrap();
     for (scope, secret) in [("read", "read-secret"), ("write", "write-secret")] {
-        let token = db::users::tokens::create_token(
+        let token = codeyard_db_identity::users::tokens::create_token(
             &state.pool,
             actor.id,
             &session,
@@ -153,9 +156,14 @@ async fn personal_administrator_git_access_keeps_token_scopes_and_org_restrictio
             .execute(raw)
             .await
             .unwrap();
-        db::users::tokens::delete_token(&state.pool, actor.id, &session, token.id)
-            .await
-            .unwrap();
+        codeyard_db_identity::users::tokens::delete_token(
+            &state.pool,
+            actor.id,
+            &session,
+            token.id,
+        )
+        .await
+        .unwrap();
         assert!(
             authorize_repository(&state, Some(repo.clone()), &headers, false)
                 .await

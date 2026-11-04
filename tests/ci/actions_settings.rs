@@ -37,7 +37,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -63,7 +63,9 @@ async fn contract(pg: bool) {
     // Only an administrator sees or changes the site settings.
     let (status, _) = alice.page("/admin/actions").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    let defaults = db::actions::get_actions_settings(f.pool()).await.unwrap();
+    let defaults = codeyard_db_actions::actions::get_actions_settings(f.pool())
+        .await
+        .unwrap();
     assert_eq!(defaults.default_engine, "codeyard-actions");
     assert_eq!(defaults.default_workflow_permissions, "restricted");
     let refused = admin
@@ -109,7 +111,9 @@ async fn contract(pg: bool) {
     assert!(page.contains("Actions settings saved."), "{page}");
     assert!(page.contains("value=\"30\""), "{page}");
     assert!(page.contains("http://ci.example:3000"), "{page}");
-    let saved = db::actions::get_actions_settings(f.pool()).await.unwrap();
+    let saved = codeyard_db_actions::actions::get_actions_settings(f.pool())
+        .await
+        .unwrap();
     assert_eq!(saved.cache_size_gib, Some(2));
     assert_eq!(saved.cache_retention_days, Some(4));
     assert_eq!(saved.artifact_retention_days, Some(20));
@@ -146,7 +150,7 @@ async fn contract(pg: bool) {
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
     let page = alice.page_ok("/alice/proj/settings?tab=actions").await;
     assert!(page.contains("value=\"4\""), "{page}");
-    let own = db::actions::get_repo_actions_settings(f.pool(), repo.id)
+    let own = codeyard_db_actions::actions::get_repo_actions_settings(f.pool(), repo.id)
         .await
         .unwrap();
     assert_eq!(saved.cache_size_bytes(&own), 1024 * 1024 * 1024);
@@ -211,7 +215,7 @@ async fn contract(pg: bool) {
     assert_eq!(claimed.runtime.results_url, "http://ci.example:3000");
     assert_eq!(claimed.run.engine.as_deref(), Some("act"));
     assert_eq!(
-        db::action_objects::authenticate(
+        codeyard_db_actions::action_objects::authenticate(
             f.pool(),
             &codeyard_support::token_hash::token_hash(&claimed.runtime.token)
         )
@@ -245,7 +249,7 @@ async fn contract(pg: bool) {
     assert_eq!(reply.status, StatusCode::CONFLICT, "{}", reply.text());
     assert!(reply.text().contains("turned off"), "{}", reply.text());
     assert_eq!(
-        db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
             .await
             .unwrap()
             .len(),
@@ -270,8 +274,8 @@ async fn rest_settings(pg: bool) {
         results,
     };
     use crate::support::organizations::applied;
+    use codeyard_db_repos::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
     use db::organizations::{NewOrganization, OrganizationProfile};
-    use db::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
     use serde_json::Value;
 
     bundle::install();
@@ -280,7 +284,7 @@ async fn rest_settings(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let org = applied(
-        db::organizations::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             alice,
             &NewOrganization::new("builders", OrganizationProfile::new(None, None).unwrap())
@@ -309,7 +313,7 @@ async fn rest_settings(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -741,18 +745,21 @@ async fn rest_settings(pg: bool) {
             .unwrap()
             .unwrap();
         let token = &claim.github_tokens.workflows[".github/workflows/ci.yml"]["test"];
-        let pat = db::users::tokens::find_token(
+        let pat = codeyard_db_identity::users::tokens::find_token(
             f.pool(),
             &codeyard_support::token_hash::token_hash(token),
         )
         .await
         .unwrap()
         .unwrap();
-        let token = db::ci_tokens::get(f.pool(), pat.id).await.unwrap().unwrap();
+        let token = codeyard_db_actions::ci_tokens::get(f.pool(), pat.id)
+            .await
+            .unwrap()
+            .unwrap();
         let permissions: codeyard_model::permissions::Permissions =
             serde_json::from_str(&token.permissions).unwrap();
         assert_eq!(permissions.allows("contents", true), expected);
-        db::ci::finish_ci_run(f.pool(), claim.run.id, "settings", "success", None)
+        codeyard_db_actions::ci::finish_ci_run(f.pool(), claim.run.id, "settings", "success", None)
             .await
             .unwrap()
             .unwrap();
@@ -849,7 +856,7 @@ async fn rest_settings(pg: bool) {
     assert!(value["selected_repositories_url"]
         .as_str()
         .is_some_and(|url| url.ends_with("/orgs/builders/actions/permissions/repositories")));
-    let queued = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
+    let queued = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
         .await
         .unwrap()
         .len();
@@ -864,7 +871,7 @@ async fn rest_settings(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 100)
             .await
             .unwrap()
             .len(),
@@ -879,7 +886,7 @@ async fn rest_settings(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    db::ci::finish_ci_run(f.pool(), claim.run.id, "settings", "success", None)
+    codeyard_db_actions::ci::finish_ci_run(f.pool(), claim.run.id, "settings", "success", None)
         .await
         .unwrap()
         .unwrap();
@@ -938,7 +945,7 @@ async fn postgres_actions_settings_rest_round_trips() {
 
 async fn rest_reviews(pg: bool) {
     use super::{actions_objects::pat, actions_workflows::checked, results};
-    use db::repositories::creation::RepositoryCreationOwner;
+    use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
     use serde_json::Value;
     bundle::install();
     let mut f = Database::new(pg).await;
@@ -975,7 +982,7 @@ async fn rest_reviews(pg: bool) {
     )
     .await;
     for actor in [bob, carol] {
-        db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             f.pool(),
             actor,
             repo.id,
@@ -990,9 +997,9 @@ async fn rest_reviews(pg: bool) {
     let reviewer = pat(&f, &api, bob, "write").await;
     let bystander = pat(&f, &api, carol, "write").await;
     let sha = "a".repeat(40);
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: repo.id,
             head_repo_id: Some(fork.id),
             author_id: bob,
@@ -1168,7 +1175,7 @@ async fn rest_reviews(pg: bool) {
         )
         .await;
     }
-    db::repositories::access::revoke_repo_access(f.pool(), bob, repo.id)
+    codeyard_db_repos::repositories::access::revoke_repo_access(f.pool(), bob, repo.id)
         .await
         .unwrap();
     checked(

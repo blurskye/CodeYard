@@ -34,9 +34,9 @@ pub(super) async fn contract(
     .await;
     let saved=call(router,"PUT",&format!("{endpoint}/contents/README.md"),token,json!({"message":"Add unsafe call","branch":"scanning-pr","sha":file["sha"],"content":STANDARD.encode(b"unsafe();\n")}),"repos/create-or-update-file-contents",200).await;
     let head = saved["commit"]["sha"].as_str().unwrap();
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         pool,
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: repo,
             head_repo_id: Some(repo),
             author_id: actor,
@@ -116,7 +116,7 @@ pub(super) async fn contract(
         );
         assert!(html.contains("README.md:1"));
     }
-    assert!(db::code_scanning::pull_analyses(
+    assert!(codeyard_db_security::code_scanning::pull_analyses(
         pool,
         repo,
         &"f".repeat(40),
@@ -164,12 +164,12 @@ pub(super) async fn contract(
     let (_, html) = client.send("GET", &checks, "", String::new()).await;
     assert!(html.contains("No matching analysis exists for the base revision"));
     assert!(html.contains("neutral"));
-    let bob = db::users::accounts::get_user_by_username(pool, "bob")
+    let bob = codeyard_db_identity::users::accounts::get_user_by_username(pool, "bob")
         .await
         .unwrap()
         .unwrap();
     assert!(matches!(
-        db::repositories::access::change_personal_repository_collaborator(
+        codeyard_db_repos::repositories::access::change_personal_repository_collaborator(
             pool,
             actor,
             repo,
@@ -178,7 +178,7 @@ pub(super) async fn contract(
         )
         .await
         .unwrap(),
-        db::repositories::access::CollaboratorChange::Applied(_)
+        codeyard_db_repos::repositories::access::CollaboratorChange::Applied(_)
     ));
     let reader = Client::login(router, pool, bob.id).await;
     let (status, html) = reader.send("GET", &checks, "", String::new()).await;
@@ -186,11 +186,11 @@ pub(super) async fn contract(
     assert!(!html.contains("aria-label=\"Code scanning checks\""));
     assert!(!html.contains("aria-label=\"Code scanning annotation\""));
     assert!(matches!(
-        db::repositories::access::change_personal_repository_collaborator(
+        codeyard_db_repos::repositories::access::change_personal_repository_collaborator(
             pool, actor, repo, "bob", None
         )
         .await
         .unwrap(),
-        db::repositories::access::CollaboratorChange::Applied(_)
+        codeyard_db_repos::repositories::access::CollaboratorChange::Applied(_)
     ));
 }

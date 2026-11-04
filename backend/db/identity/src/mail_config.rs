@@ -3,8 +3,6 @@ use codeyard_support::secrets::SecretEncryptor;
 
 use codeyard_db_core::models::EmailSettings;
 use codeyard_db_core::DbPool;
-use lettre::message::Mailbox;
-use std::str::FromStr;
 
 fn unavailable(error: impl std::fmt::Display) -> String {
     tracing::warn!(%error, "could not read email settings");

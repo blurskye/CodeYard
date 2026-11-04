@@ -11,7 +11,7 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -35,13 +35,17 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
     .await
     .unwrap();
     storage.publish().await.unwrap();
-    let owner = db::users::accounts::create_user(&database.pool, "import_publisher", None)
-        .await
-        .unwrap();
+    let owner = codeyard_db_identity::users::accounts::create_user(
+        &database.pool,
+        "import_publisher",
+        None,
+    )
+    .await
+    .unwrap();
     let repository = codeyard_app::repositories::lifecycle::provision(
         (&database.pool, Some(&web.context)),
         &web.context.repos_path,
-        db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
         "imported",
         None,
         false,
@@ -51,7 +55,7 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
     .unwrap();
     assert_eq!(repository.storage_node_id, Some(storage.context.node_id));
     let session = native::token();
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         &database.pool,
         &session,
         owner.id,
@@ -61,7 +65,7 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
     )
     .await
     .unwrap();
-    let token = db::users::tokens::create_token(
+    let token = codeyard_db_identity::users::tokens::create_token(
         &database.pool,
         owner.id,
         &session,
@@ -74,7 +78,7 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
     .unwrap()
     .unwrap();
     let generation = Uuid::new_v4().to_string();
-    db::source_imports::start(
+    codeyard_db_repos::source_imports::start(
         &database.pool,
         owner.id,
         repository.id,

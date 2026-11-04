@@ -565,7 +565,7 @@ async fn contract(pg: bool) {
     let repository_row = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         true,
@@ -1060,9 +1060,9 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::OK, "{branches}");
     assert_github_schema("repos/list-branches-for-head-commit", 200, &branches);
     assert_eq!(branches.as_array().unwrap().len(), 3);
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         f.pool(),
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: alice,
             repo_id: repository_row.id,
             pattern: "two",
@@ -1400,18 +1400,20 @@ async fn hooks_contract(pg: bool) {
     )
     .await;
     assert!(config.get("secret").is_none());
-    let repo = db::repositories::records::get_repository(f.pool(), "alice", "proj")
+    let repo = codeyard_db_repos::repositories::records::get_repository(f.pool(), "alice", "proj")
         .await
         .unwrap()
         .unwrap();
-    assert!(
-        db::webhooks::get_webhook(f.pool(), db::webhooks::HookOwner::Repository(repo.id), id)
-            .await
-            .unwrap()
-            .unwrap()
-            .encrypted_secret
-            .is_none()
-    );
+    assert!(codeyard_db_repos::webhooks::get_webhook(
+        f.pool(),
+        codeyard_db_repos::webhooks::HookOwner::Repository(repo.id),
+        id
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .encrypted_secret
+    .is_none());
     let (_, changed) = checked(
         &router,
         "repos/update-webhook",
@@ -1459,11 +1461,14 @@ async fn hooks_contract(pg: bool) {
             StatusCode::OK,
         )
         .await;
-        let stored =
-            db::webhooks::get_webhook(f.pool(), db::webhooks::HookOwner::Repository(repo.id), id)
-                .await
-                .unwrap()
-                .unwrap();
+        let stored = codeyard_db_repos::webhooks::get_webhook(
+            f.pool(),
+            codeyard_db_repos::webhooks::HookOwner::Repository(repo.id),
+            id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(stored.encrypted_secret.is_some(), kept, "{path}");
     }
     checked(
@@ -1476,7 +1481,7 @@ async fn hooks_contract(pg: bool) {
         StatusCode::UNPROCESSABLE_ENTITY,
     )
     .await;
-    let record = db::webhooks::NewDelivery {
+    let record = codeyard_db_core::queries::webhooks::NewDelivery {
         redelivery: false,
         guid: uuid::Uuid::new_v4().to_string(),
         event: "push".into(),
@@ -1489,13 +1494,13 @@ async fn hooks_contract(pg: bool) {
         response_headers: Some("Content-Type: text/plain\n".into()),
         response_body: Some("ok".into()),
     };
-    db::webhooks::insert_delivery(f.pool(), id, &record)
+    codeyard_db_repos::webhooks::insert_delivery(f.pool(), id, &record)
         .await
         .unwrap();
-    db::webhooks::insert_delivery(f.pool(), id, &record)
+    codeyard_db_repos::webhooks::insert_delivery(f.pool(), id, &record)
         .await
         .unwrap();
-    let delivery = db::webhooks::list_deliveries(f.pool(), id)
+    let delivery = codeyard_db_repos::webhooks::list_deliveries(f.pool(), id)
         .await
         .unwrap()
         .into_iter()
@@ -1536,7 +1541,9 @@ async fn hooks_contract(pg: bool) {
     .await;
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
-        let rows = db::webhooks::list_deliveries(f.pool(), id).await.unwrap();
+        let rows = codeyard_db_repos::webhooks::list_deliveries(f.pool(), id)
+            .await
+            .unwrap();
         if let Some(redelivery) = rows.iter().find(|row| row.redelivery) {
             assert_eq!(redelivery.guid, record.guid);
             checked(
@@ -1732,11 +1739,11 @@ async fn deploy_keys_contract(pg: bool) {
     )
     .await;
     assert_eq!(key["read_only"], true);
-    let repo = db::repositories::records::get_repository(f.pool(), "alice", "proj")
+    let repo = codeyard_db_repos::repositories::records::get_repository(f.pool(), "alice", "proj")
         .await
         .unwrap()
         .unwrap();
-    let actor = db::users::accounts::get_user_by_id(f.pool(), alice)
+    let actor = codeyard_db_identity::users::accounts::get_user_by_id(f.pool(), alice)
         .await
         .unwrap()
         .unwrap();
@@ -1759,7 +1766,7 @@ async fn deploy_keys_contract(pg: bool) {
         remove_key(
             f.pool(),
             &actor,
-            db::deploy_keys::Credential::Token(
+            codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
                 read_id,
                 tokens::token_hash(reader.strip_prefix("Bearer ").unwrap())
             ),
@@ -1778,7 +1785,7 @@ async fn deploy_keys_contract(pg: bool) {
         remove_key(
             f.pool(),
             &actor,
-            db::deploy_keys::Credential::Token(
+            codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
                 token_id,
                 tokens::token_hash(writer.strip_prefix("Bearer ").unwrap())
             ),
@@ -2039,7 +2046,7 @@ async fn statistics_contract(pg: bool) {
     )
     .await;
     assert_eq!(initial[0]["login"], "alice");
-    let repo = db::repositories::records::get_repository(f.pool(), "alice", "proj")
+    let repo = codeyard_db_repos::repositories::records::get_repository(f.pool(), "alice", "proj")
         .await
         .unwrap()
         .unwrap();
@@ -2500,7 +2507,7 @@ async fn collaborators_contract(pg: bool) {
     )
     .await;
     let owner = Client::login(&router, f.pool(), alice).await;
-    let repo = db::repositories::records::get_repository(f.pool(), "alice", "proj")
+    let repo = codeyard_db_repos::repositories::records::get_repository(f.pool(), "alice", "proj")
         .await
         .unwrap()
         .unwrap();
@@ -2522,10 +2529,15 @@ async fn collaborators_contract(pg: bool) {
         html.contains("Pending invitations") && html.contains("bob"),
         "{html}"
     );
-    let pending =
-        db::repositories::collaborators::invitations(f.pool(), alice, Some(repo.id), 0, 100)
-            .await
-            .unwrap();
+    let pending = codeyard_db_repos::repositories::collaborators::invitations(
+        f.pool(),
+        alice,
+        Some(repo.id),
+        0,
+        100,
+    )
+    .await
+    .unwrap();
     let cancelled = owner
         .form_reply(
             "/alice/proj/_forms/cancel-invitation",
@@ -2541,12 +2553,16 @@ async fn collaborators_contract(pg: bool) {
         "{}",
         cancelled.text()
     );
-    assert!(
-        db::repositories::collaborators::invitations(f.pool(), alice, Some(repo.id), 0, 100)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(codeyard_db_repos::repositories::collaborators::invitations(
+        f.pool(),
+        alice,
+        Some(repo.id),
+        0,
+        100
+    )
+    .await
+    .unwrap()
+    .is_empty());
 
     use db::organizations::{membership, profiles, teams, OrganizationOutcome};
     let input = profiles::NewOrganization::new(
@@ -3130,17 +3146,19 @@ async fn metadata_contract(pg: bool) {
     .await;
     assert_eq!(page.as_array().unwrap().len(), 1);
     assert!(headers["link"].to_str().unwrap().contains("rel=\"next\""));
-    let input = db::organizations::profiles::NewOrganization::new(
+    let input = codeyard_db_orgs::organizations::profiles::NewOrganization::new(
         "acme",
-        db::organizations::profiles::OrganizationProfile::new(Some("Acme"), None).unwrap(),
+        codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(Some("Acme"), None)
+            .unwrap(),
     )
     .unwrap();
-    let org = db::organizations::profiles::create_organization(f.pool(), alice, &input)
-        .await
-        .unwrap();
+    let org =
+        codeyard_db_orgs::organizations::profiles::create_organization(f.pool(), alice, &input)
+            .await
+            .unwrap();
     assert!(matches!(
         org,
-        db::organizations::OrganizationOutcome::Applied(_)
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     checked(
         &router,
@@ -3209,13 +3227,15 @@ async fn metadata_contract(pg: bool) {
         StatusCode::NO_CONTENT,
     )
     .await;
-    assert!(db::repositories::records::get_repository_by_id(
-        f.pool(),
-        public["id"].as_i64().unwrap()
-    )
-    .await
-    .unwrap()
-    .is_none());
+    assert!(
+        codeyard_db_repos::repositories::records::get_repository_by_id(
+            f.pool(),
+            public["id"].as_i64().unwrap()
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
     checked(
         &router,
         "repos/delete",
@@ -3458,11 +3478,11 @@ async fn releases_contract(pg: bool) {
     .unwrap();
     let (pool, session, token_id) = (f.pool().clone(), client.session.clone(), doomed.token.id);
     let body = Body::from_stream(futures_util::stream::once(async move {
-        assert!(
-            db::users::tokens::delete_token(&pool, alice, &session, token_id)
-                .await
-                .unwrap()
-        );
+        assert!(codeyard_db_identity::users::tokens::delete_token(
+            &pool, alice, &session, token_id
+        )
+        .await
+        .unwrap());
         Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"late\n"))
     }));
     let response = router

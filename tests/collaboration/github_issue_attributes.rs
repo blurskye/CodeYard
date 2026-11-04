@@ -12,22 +12,23 @@ async fn attributes(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
-    let org = match db::organizations::create_organization(
+    let org = match codeyard_db_orgs::organizations::profiles::create_organization(
         f.pool(),
         alice,
-        &db::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "collective",
-            db::organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                .unwrap(),
         )
         .unwrap(),
     )
     .await
     .unwrap()
     {
-        db::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("create organization"),
     };
-    use db::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
+    use codeyard_db_repos::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
     let root = tempfile::tempdir().unwrap();
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
@@ -43,7 +44,7 @@ async fn attributes(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -51,7 +52,7 @@ async fn attributes(pg: bool) {
     )
     .await
     .unwrap();
-    let issue = db::issues::create_issue(
+    let issue = codeyard_db_repos::issues::create_issue(
         f.pool(),
         repo.id,
         alice,
@@ -226,9 +227,10 @@ async fn attributes(pg: bool) {
         "{}",
         response.text()
     );
-    let fields = db::issue_attributes::catalog(f.pool(), repo.id, Some(alice), "field")
-        .await
-        .unwrap();
+    let fields =
+        codeyard_db_repos::issue_attributes::catalog(f.pool(), repo.id, Some(alice), "field")
+            .await
+            .unwrap();
     let field = |name: &str| fields.iter().find(|f| f.name == name).unwrap();
     let values=fields.iter().map(|f|json!({"field_id":f.id,"value":match f.data_type.as_deref().unwrap(){"number"=>json!(42.5),"date"=>json!("2026-10-02"),"single_select"=>json!("High"),"multi_select"=>json!(["High"]),_ if f.name=="Internal"=>json!("private-field-secret"),_=>json!("visible <text>")}})).collect::<Vec<_>>();
     let endpoint = format!("{path}/issue-field-values");
@@ -345,7 +347,7 @@ async fn attributes(pg: bool) {
                 ("owner_key", &owner_key),
                 (
                     "expected_revision",
-                    &db::issue_attributes::revision(single).unwrap(),
+                    &codeyard_db_repos::issue_attributes::revision(single).unwrap(),
                 ),
                 ("attribute_id", &single.id.to_string()),
                 ("expected_updated", &single.updated_at.to_rfc3339()),
@@ -440,12 +442,13 @@ async fn attributes(pg: bool) {
         200,
     )
     .await;
-    let bug_current = db::issue_attributes::catalog(f.pool(), repo.id, Some(alice), "type")
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|attribute| attribute.id == bug)
-        .unwrap();
+    let bug_current =
+        codeyard_db_repos::issue_attributes::catalog(f.pool(), repo.id, Some(alice), "type")
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|attribute| attribute.id == bug)
+            .unwrap();
     let bug_updated = bug_current.updated_at.to_rfc3339();
     let disabled = browser
         .form_reply(
@@ -458,7 +461,7 @@ async fn attributes(pg: bool) {
                 ("owner_key", &owner_key),
                 (
                     "expected_revision",
-                    &db::issue_attributes::revision(&bug_current).unwrap(),
+                    &codeyard_db_repos::issue_attributes::revision(&bug_current).unwrap(),
                 ),
                 ("attribute_id", &bug.to_string()),
                 ("expected_updated", &bug_updated),
@@ -524,7 +527,7 @@ async fn attributes(pg: bool) {
         .await;
     assert_eq!(deleted.status, StatusCode::SEE_OTHER, "{}", deleted.text());
     assert!(
-        db::issue_attributes::values(f.pool(), repo.id, issue.id, Some(alice))
+        codeyard_db_repos::issue_attributes::values(f.pool(), repo.id, issue.id, Some(alice))
             .await
             .unwrap()
             .is_empty()
@@ -543,7 +546,7 @@ async fn attributes(pg: bool) {
     assert_eq!(bad_csrf.status, StatusCode::FORBIDDEN);
     // An organization admin cannot change organization-wide definitions through a repository.
     let admin = f.actor("carol").await;
-    let added = db::organizations::add_organization_member(
+    let added = codeyard_db_orgs::organizations::membership::add_organization_member(
         f.pool(),
         alice,
         org.id,
@@ -554,13 +557,13 @@ async fn attributes(pg: bool) {
     .unwrap();
     assert!(matches!(
         added,
-        db::organizations::OrganizationOutcome::Applied(_)
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
     ));
-    let refused = db::issue_attributes::configure(
+    let refused = codeyard_db_repos::issue_attributes::configure(
         f.pool(),
         repo.id,
         admin,
-        &db::issue_attributes::Definition {
+        &codeyard_db_repos::issue_attributes::Definition {
             id: None,
             expected_updated: None,
             kind: "field".into(),
@@ -576,8 +579,8 @@ async fn attributes(pg: bool) {
     .await
     .unwrap_err();
     assert!(matches!(
-        refused.downcast_ref::<db::issue_attributes::Refusal>(),
-        Some(db::issue_attributes::Refusal::Denied)
+        refused.downcast_ref::<codeyard_db_repos::issue_attributes::Refusal>(),
+        Some(codeyard_db_repos::issue_attributes::Refusal::Denied)
     ));
     f.finish().await;
 }

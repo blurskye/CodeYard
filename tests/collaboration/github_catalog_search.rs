@@ -36,7 +36,7 @@ async fn search(pg: bool) {
             codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
-                db::repositories::creation::RepositoryCreationOwner::personal(alice),
+                codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
                 name,
                 Some(desc),
                 private,
@@ -48,19 +48,20 @@ async fn search(pg: bool) {
     }
     let repo = &repositories[0];
     let private = &repositories[2];
-    let org = match db::organizations::create_organization(
+    let org = match codeyard_db_orgs::organizations::profiles::create_organization(
         f.pool(),
         alice,
-        &db::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "needlegroup",
-            db::organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                .unwrap(),
         )
         .unwrap(),
     )
     .await
     .unwrap()
     {
-        db::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization"),
     };
     let router = f.router(root.path()).await;
@@ -308,7 +309,7 @@ async fn search(pg: bool) {
     assert_eq!(groups["total_count"], 1);
     assert_eq!(groups["items"][0]["id"], org.id);
     assert_eq!(groups["items"][0]["type"], "Organization");
-    let email = db::users::accounts::get_user_by_id(f.pool(), alice)
+    let email = codeyard_db_identity::users::accounts::get_user_by_id(f.pool(), alice)
         .await
         .unwrap()
         .unwrap()

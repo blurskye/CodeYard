@@ -14,14 +14,17 @@ use codeyard_db_identity::relationships::Order;
 use codeyard_db_repos::discussion_search::Search;
 use codeyard_db_repos::discussion_search::Sort;
 
-pub(crate) fn issue_type(item: &db::issue_attributes::Attribute, repo: i64) -> Value {
+pub(crate) fn issue_type(
+    item: &codeyard_db_repos::issue_attributes::Attribute,
+    repo: i64,
+) -> Value {
     json!({"__typename":"IssueType","_repo":repo,"_scope":"issues","id":node_id::encode("IT",item.id),"name":item.name,"description":item.description,"color":item.color.as_deref().unwrap_or("gray").to_uppercase()})
 }
 
 pub(crate) async fn type_node(id: i64, request: &RequestContext) -> Result<Value> {
     let mut after = 0;
     loop {
-        let repositories = db::graphql::issue_type_repositories(
+        let repositories = codeyard_db_repos::graphql::issue_type_repositories(
             &request.state.pool,
             id,
             after,
@@ -35,7 +38,7 @@ pub(crate) async fn type_node(id: i64, request: &RequestContext) -> Result<Value
             if !repository::optional_authority(repo, "issues", request).await? {
                 continue;
             }
-            if let Some(item) = db::issue_attributes::catalog(
+            if let Some(item) = codeyard_db_repos::issue_attributes::catalog(
                 &request.state.pool,
                 repo,
                 Some(request.auth.user.id),
@@ -66,15 +69,17 @@ pub(super) async fn resolve(
 ) -> Result<Value> {
     let pool = &request.state.pool;
     match field {
-        "issueType" => Ok(db::issue_attributes::assigned_type(pool, repo.id, id)
-            .await
-            .map_err(unavailable)?
-            .as_ref()
-            .map(|item| issue_type(item, repo.id))
-            .unwrap_or(Value::Null)),
+        "issueType" => Ok(
+            codeyard_db_repos::issue_attributes::assigned_type(pool, repo.id, id)
+                .await
+                .map_err(unavailable)?
+                .as_ref()
+                .map(|item| issue_type(item, repo.id))
+                .unwrap_or(Value::Null),
+        ),
         "subIssuesSummary" => {
             let (mut total, mut completed) = (0_i64, 0_i64);
-            for counts in db::relationships::summaries(pool, &[id])
+            for counts in codeyard_db_identity::relationships::summaries(pool, &[id])
                 .await
                 .map_err(unavailable)?
             {
@@ -109,9 +114,10 @@ pub(super) async fn resolve(
             }
             let viewer = Some(request.auth.user.id);
             let (mut total, mut visible) = (0_i64, Vec::new());
-            for (repo_id, count) in db::relationships::repository_counts(pool, viewer, id, kind)
-                .await
-                .map_err(unavailable)?
+            for (repo_id, count) in
+                codeyard_db_identity::relationships::repository_counts(pool, viewer, id, kind)
+                    .await
+                    .map_err(unavailable)?
             {
                 if repository::optional_authority(repo_id, "issues", request).await? {
                     total += count;
@@ -129,9 +135,9 @@ pub(super) async fn resolve(
             let links = if limit == 0 || visible.is_empty() {
                 Vec::new()
             } else {
-                db::relationships::window(
+                codeyard_db_identity::relationships::window(
                     pool,
-                    &db::relationships::Window {
+                    &codeyard_db_identity::relationships::Window {
                         viewer,
                         root: id,
                         kind,
@@ -147,7 +153,7 @@ pub(super) async fn resolve(
             };
             let mut nodes = Vec::new();
             for link in links {
-                let issue = db::issues::get_issue_by_id(pool, link.id)
+                let issue = codeyard_db_repos::issues::get_issue_by_id(pool, link.id)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?;
@@ -177,7 +183,7 @@ pub(crate) async fn repository(
     repo: &codeyard_db_core::models::Repository,
 ) -> Result<Value> {
     connection::validate(ctx)?;
-    let rows = db::issue_attributes::catalog(
+    let rows = codeyard_db_repos::issue_attributes::catalog(
         &request.state.pool,
         repo.id,
         Some(request.auth.user.id),
@@ -254,10 +260,13 @@ pub(super) async fn list(
                     let id = value
                         .parse::<i64>()
                         .map_err(|_| Error::new("milestone must be a database ID or *"))?;
-                    let Some(milestone) =
-                        db::milestones::get_milestone_by_id(&request.state.pool, repo_id, id)
-                            .await
-                            .map_err(unavailable)?
+                    let Some(milestone) = codeyard_db_repos::milestones::get_milestone_by_id(
+                        &request.state.pool,
+                        repo_id,
+                        id,
+                    )
+                    .await
+                    .map_err(unavailable)?
                     else {
                         return connection::slice(args, Vec::new());
                     };
@@ -355,10 +364,11 @@ async fn results(
     connection::validate(args)?;
     let pool = &request.state.pool;
     let viewer = Some(request.auth.user.id);
-    let total = db::discussion_search::search(pool, viewer, query, sort, ascending, 0, 0)
-        .await
-        .map_err(unavailable)?
-        .total;
+    let total =
+        codeyard_db_repos::discussion_search::search(pool, viewer, query, sort, ascending, 0, 0)
+            .await
+            .map_err(unavailable)?
+            .total;
     let page = Page::new(args, cap.map_or(total, |cap| total.min(cap)))?;
     if cap.is_some_and(|cap| page.offset >= cap) {
         return Err(Error::new(
@@ -367,7 +377,7 @@ async fn results(
     }
     let mut nodes = Vec::new();
     if page.limit != 0 {
-        let rows = db::discussion_search::search(
+        let rows = codeyard_db_repos::discussion_search::search(
             pool,
             viewer,
             query,
@@ -384,9 +394,10 @@ async fn results(
                 .authorize(repo, if pull { "pull-requests" } else { "issues" }, false)
                 .await?;
             let value = if pull {
-                let Some(row) = db::pull_requests::records::get_pull_request_by_id(pool, id)
-                    .await
-                    .map_err(unavailable)?
+                let Some(row) =
+                    codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, id)
+                        .await
+                        .map_err(unavailable)?
                 else {
                     continue;
                 };
@@ -401,7 +412,7 @@ async fn results(
                 )?;
                 pull_object(&row)
             } else {
-                let Some(row) = db::issues::get_issue_by_id(pool, id)
+                let Some(row) = codeyard_db_repos::issues::get_issue_by_id(pool, id)
                     .await
                     .map_err(unavailable)?
                 else {

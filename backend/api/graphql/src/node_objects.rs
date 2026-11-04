@@ -1,5 +1,4 @@
 //! REST node families reconstructed only after repository and family-scope authorization.
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::url;
@@ -13,7 +12,7 @@ pub(super) async fn review(
     row: &codeyard_db_core::models::PullRequestReview,
     request: &RequestContext,
 ) -> Result<Value> {
-    let pull = db::pull_requests::records::get_pull_request_by_id(
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
         &request.state.pool,
         row.pull_request_id,
     )
@@ -41,7 +40,7 @@ pub(super) async fn review_comment(
     row: &codeyard_db_core::models::PullRequestComment,
     request: &RequestContext,
 ) -> Result<Value> {
-    let pull = db::pull_requests::records::get_pull_request_by_id(
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
         &request.state.pool,
         row.pull_request_id,
     )
@@ -51,11 +50,13 @@ pub(super) async fn review_comment(
     let repo = crate::repository::by_id(pull.repo_id, request).await?;
     request.authorize(repo.id, "pull-requests", false).await?;
     if let Some(id) = row.review_id {
-        let review =
-            db::pull_requests::reviews::get_pull_request_review_by_id(&request.state.pool, id)
-                .await
-                .map_err(unavailable)?
-                .ok_or_else(missing)?;
+        let review = codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(
+            &request.state.pool,
+            id,
+        )
+        .await
+        .map_err(unavailable)?
+        .ok_or_else(missing)?;
         if review.state == "pending"
             && request.private_viewer(repo.id, "pull-requests").await? != Some(review.author_id)
         {
@@ -95,10 +96,11 @@ pub(super) async fn asset(
     request: &RequestContext,
 ) -> Result<Value> {
     let repo = crate::repository::by_id(repo, request).await?;
-    let release = db::releases::get_release(&request.state.pool, repo.id, row.release_id)
-        .await
-        .map_err(unavailable)?
-        .ok_or_else(missing)?;
+    let release =
+        codeyard_db_repos::releases::get_release(&request.state.pool, repo.id, row.release_id)
+            .await
+            .map_err(unavailable)?
+            .ok_or_else(missing)?;
     crate::node_objects::release(&release.release, request).await?;
     let doc = codeyard_app::webhooks::payloads::release_asset(
         row,
@@ -116,7 +118,7 @@ pub(super) async fn asset(
 
 pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> Result<Value> {
     let pool = &request.state.pool;
-    let repo_id = db::graphql::node_repository(pool, kind, id)
+    let repo_id = codeyard_db_repos::graphql::node_repository(pool, kind, id)
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;
@@ -143,7 +145,7 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
     match kind {
         "CC" => {
             crate::commit_comment::object(
-                &db::repositories::commit_comments::get_comment(pool, repo.id, id)
+                &codeyard_db_repos::repositories::commit_comments::get_comment(pool, repo.id, id)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?,
@@ -153,7 +155,7 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
         }
         "M" => {
             let mut value = crate::collaboration::milestone(
-                db::milestones::get_milestone_by_id(pool, repo.id, id)
+                codeyard_db_repos::milestones::get_milestone_by_id(pool, repo.id, id)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?,
@@ -165,7 +167,7 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
         }
         "PRR" => {
             review(
-                &db::pull_requests::reviews::get_pull_request_review_by_id(pool, id)
+                &codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(pool, id)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?,
@@ -175,7 +177,7 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
         }
         "PRRC" => {
             review_comment(
-                &db::pull_requests::reviews::get_visible_pull_request_comment(
+                &codeyard_db_repos::pull_requests::reviews::get_visible_pull_request_comment(
                     pool,
                     id,
                     request
@@ -192,7 +194,7 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
         }
         "RE" => {
             release(
-                &db::releases::get_release(pool, repo.id, id)
+                &codeyard_db_repos::releases::get_release(pool, repo.id, id)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?
@@ -204,7 +206,7 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
         "RA" => {
             asset(
                 repo.id,
-                &db::releases::get_repository_release_asset(pool, repo.id, id)
+                &codeyard_db_repos::releases::get_repository_release_asset(pool, repo.id, id)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?,
@@ -214,13 +216,13 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
         }
         "CS" => Ok(crate::git::status(
             repo.id,
-            &db::graphql::status(pool, id)
+            &codeyard_db_repos::graphql::status(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?,
         )),
         "REA" => {
-            let row = db::graphql::reaction(pool, id)
+            let row = codeyard_db_repos::graphql::reaction(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -232,13 +234,14 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
                     codeyard_model::webhook_ids::conversation_comment_id(row.subject_id, false),
                 ),
                 "pr_comment" => {
-                    let comment = db::pull_requests::reviews::get_pull_request_comment_by_id(
-                        pool,
-                        row.subject_id,
-                    )
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?;
+                    let comment =
+                        codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(
+                            pool,
+                            row.subject_id,
+                        )
+                        .await
+                        .map_err(unavailable)?
+                        .ok_or_else(missing)?;
                     if comment.path.is_none() && comment.review_id.is_none() {
                         (
                             "IC",
@@ -264,7 +267,7 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
             )
         }
         "IE" => {
-            let row = db::timeline::get_event(pool, repo.id, id)
+            let row = codeyard_db_repos::timeline::get_event(pool, repo.id, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;

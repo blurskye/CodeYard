@@ -277,5 +277,3 @@ pub async fn attach_fork(
 }
 
 use codeyard_db_core::queries::postgres::advisories::administration;
-
-use codeyard_db_core::queries::postgres::advisories::administration;

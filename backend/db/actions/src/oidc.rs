@@ -48,11 +48,3 @@ use codeyard_db_core::queries::oidc::Inclusion;
 use codeyard_db_core::queries::oidc::TokenSettings;
 
 use codeyard_db_core::queries::oidc::Settings;
-
-use codeyard_db_core::queries::oidc::Inclusion;
-
-use codeyard_db_core::queries::oidc::Scope;
-
-use codeyard_db_core::queries::oidc::Settings;
-
-use codeyard_db_core::queries::oidc::TokenSettings;

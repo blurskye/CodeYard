@@ -24,7 +24,7 @@ async fn contract(pg: bool) {
     let repository = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         false,
@@ -66,9 +66,13 @@ async fn contract(pg: bool) {
             )
             .await;
         assert_eq!(
-            db::repositories::access::get_user_repo_access(f.pool(), bob, repository.id)
-                .await
-                .unwrap(),
+            codeyard_db_repos::repositories::access::get_user_repo_access(
+                f.pool(),
+                bob,
+                repository.id
+            )
+            .await
+            .unwrap(),
             codeyard_db_core::models::AccessLevel::Write
         );
     }
@@ -89,10 +93,17 @@ async fn contract(pg: bool) {
             StatusCode::CONFLICT,
         )
         .await;
-    let other = db::labels::create_label(f.pool(), alice, repository.id, "other", "#123456", None)
-        .await
-        .unwrap();
-    let duplicate = db::labels::update_label(
+    let other = codeyard_db_repos::labels::create_label(
+        f.pool(),
+        alice,
+        repository.id,
+        "other",
+        "#123456",
+        None,
+    )
+    .await
+    .unwrap();
+    let duplicate = codeyard_db_repos::labels::update_label(
         f.pool(),
         alice,
         repository.id,
@@ -104,8 +115,8 @@ async fn contract(pg: bool) {
     .await
     .unwrap_err();
     assert_eq!(
-        duplicate.downcast_ref::<db::labels::LabelWriteRefusal>(),
-        Some(&db::labels::LabelWriteRefusal::DuplicateName)
+        duplicate.downcast_ref::<codeyard_db_repos::labels::LabelWriteRefusal>(),
+        Some(&codeyard_db_repos::labels::LabelWriteRefusal::DuplicateName)
     );
     // Names are matched without regard to case, so `BUG` would shadow `bug`.
     client
@@ -116,7 +127,7 @@ async fn contract(pg: bool) {
             StatusCode::CONFLICT,
         )
         .await;
-    let renamed = db::labels::update_label(
+    let renamed = codeyard_db_repos::labels::update_label(
         f.pool(),
         alice,
         repository.id,
@@ -128,8 +139,8 @@ async fn contract(pg: bool) {
     .await
     .unwrap_err();
     assert_eq!(
-        renamed.downcast_ref::<db::labels::LabelWriteRefusal>(),
-        Some(&db::labels::LabelWriteRefusal::DuplicateName)
+        renamed.downcast_ref::<codeyard_db_repos::labels::LabelWriteRefusal>(),
+        Some(&codeyard_db_repos::labels::LabelWriteRefusal::DuplicateName)
     );
     // The edit form carries the label as the page showed it.
     let original = serde_json::to_string(&(
@@ -184,9 +195,9 @@ async fn contract(pg: bool) {
         client.expect("PUT", &format!("{api}/branch-protection"), json!({"pattern":"too-many", "require_status_checks":true, "required_status_checks":checks}), StatusCode::BAD_REQUEST).await;
     }
     for index in 1..100 {
-        db::repositories::protection::upsert_branch_protection_rule(
+        codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
             f.pool(),
-            db::repositories::protection::BranchProtectionRuleUpsert {
+            codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
                 actor_id: alice,
                 repo_id: repository.id,
                 pattern: &format!("rule-{index}"),
@@ -217,16 +228,17 @@ async fn contract(pg: bool) {
     for (number, base) in [(1, "main"), (2, "topic")] {
         f.execute(&format!("INSERT INTO pull_requests(repo_id,number,author_id,title,body,head_repo_id,head_branch,base_branch,head_sha,base_sha,state) VALUES($1,{number},$2,'pull-{number}','{}',$1,'feature','{base}','{tip}','{tip}','open')", "b".repeat(65536)), &[repository.id, alice]).await;
     }
-    let summaries = db::pull_requests::records::list_open_pull_requests_from_branches(
-        f.pool(),
-        repository.id,
-        None,
-    )
-    .await
-    .unwrap();
+    let summaries =
+        codeyard_db_repos::pull_requests::records::list_open_pull_requests_from_branches(
+            f.pool(),
+            repository.id,
+            None,
+        )
+        .await
+        .unwrap();
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].number, 1);
-    let pair = db::pull_requests::records::find_open_pull_request_from_branches(
+    let pair = codeyard_db_repos::pull_requests::records::find_open_pull_request_from_branches(
         f.pool(),
         repository.id,
         "topic",
@@ -237,7 +249,7 @@ async fn contract(pg: bool) {
     .unwrap();
     assert_eq!(pair.number, 2);
     assert!(
-        db::pull_requests::records::find_open_pull_request_from_branches(
+        codeyard_db_repos::pull_requests::records::find_open_pull_request_from_branches(
             f.pool(),
             repository.id,
             "absent",
@@ -249,7 +261,7 @@ async fn contract(pg: bool) {
     );
 
     // An archived private repository remains indistinguishable from an absent repository.
-    db::repositories::access::revoke_repo_access(f.pool(), bob, repository.id)
+    codeyard_db_repos::repositories::access::revoke_repo_access(f.pool(), bob, repository.id)
         .await
         .unwrap();
     f.execute(
@@ -316,7 +328,7 @@ async fn contract(pg: bool) {
     let replacement = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         false,
@@ -339,10 +351,12 @@ async fn contract(pg: bool) {
             .await;
         assert_eq!(reply.status, StatusCode::CONFLICT, "{}", reply.text());
     }
-    assert!(db::labels::list_repo_labels(f.pool(), replacement.id)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        codeyard_db_repos::labels::list_repo_labels(f.pool(), replacement.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 
     // A missing Git directory is not a prerequisite for lifecycle deletion.
     std::fs::remove_dir_all(&replacement.disk_path).unwrap();
@@ -357,7 +371,7 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
     assert!(
-        db::repositories::records::get_repository_by_id(f.pool(), replacement.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), replacement.id)
             .await
             .unwrap()
             .is_none()
@@ -381,7 +395,7 @@ async fn language_cache_rejects_old_primaries_and_versions_including_empty_resul
     let repository = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "cache",
         None,
         false,
@@ -389,27 +403,30 @@ async fn language_cache_rejects_old_primaries_and_versions_including_empty_resul
     )
     .await
     .unwrap();
-    let source = db::repository_stats::language_source(f.pool(), repository.id)
+    let source = codeyard_db_repos::repository_stats::language_source(f.pool(), repository.id)
         .await
         .unwrap()
         .unwrap();
     assert!(
-        !db::repository_stats::languages_computed(f.pool(), &source, "empty")
+        !codeyard_db_repos::repository_stats::languages_computed(f.pool(), &source, "empty")
+            .await
+            .unwrap()
+    );
+    assert!(codeyard_db_repos::repository_stats::upsert_repo_languages(
+        f.pool(),
+        &source,
+        "empty",
+        &[]
+    )
+    .await
+    .unwrap());
+    assert!(
+        codeyard_db_repos::repository_stats::languages_computed(f.pool(), &source, "empty")
             .await
             .unwrap()
     );
     assert!(
-        db::repository_stats::upsert_repo_languages(f.pool(), &source, "empty", &[])
-            .await
-            .unwrap()
-    );
-    assert!(
-        db::repository_stats::languages_computed(f.pool(), &source, "empty")
-            .await
-            .unwrap()
-    );
-    assert!(
-        !db::repository_stats::languages_computed(f.pool(), &source, "another")
+        !codeyard_db_repos::repository_stats::languages_computed(f.pool(), &source, "another")
             .await
             .unwrap()
     );
@@ -459,34 +476,43 @@ async fn language_cache_rejects_old_primaries_and_versions_including_empty_resul
         &[repository.id],
     )
     .await;
-    let mut current = db::repository_stats::language_source(f.pool(), repository.id)
+    let mut current = codeyard_db_repos::repository_stats::language_source(f.pool(), repository.id)
         .await
         .unwrap()
         .unwrap();
     let python = vec![("Python".into(), 100, 100.0, "#123456".into())];
-    assert!(
-        db::repository_stats::upsert_repo_languages(f.pool(), &current, "python", &python)
-            .await
-            .unwrap()
-    );
-    assert!(
-        !db::repository_stats::upsert_repo_languages(f.pool(), &source, "old-version", &[])
-            .await
-            .unwrap()
-    );
+    assert!(codeyard_db_repos::repository_stats::upsert_repo_languages(
+        f.pool(),
+        &current,
+        "python",
+        &python
+    )
+    .await
+    .unwrap());
+    assert!(!codeyard_db_repos::repository_stats::upsert_repo_languages(
+        f.pool(),
+        &source,
+        "old-version",
+        &[]
+    )
+    .await
+    .unwrap());
     current.storage_node_id = Some(999);
-    assert!(
-        !db::repository_stats::upsert_repo_languages(f.pool(), &current, "old-primary", &[])
-            .await
-            .unwrap()
-    );
+    assert!(!codeyard_db_repos::repository_stats::upsert_repo_languages(
+        f.pool(),
+        &current,
+        "old-primary",
+        &[]
+    )
+    .await
+    .unwrap());
     assert_eq!(
         languages::stored(f.pool(), repository.id).await.unwrap()[0].language,
         "Python"
     );
 
     // Size accounting changes only size, never a concurrently selected default branch.
-    db::repositories::records::set_repository_default_branch(
+    codeyard_db_repos::repositories::records::set_repository_default_branch(
         f.pool(),
         owner,
         repository.id,
@@ -494,7 +520,7 @@ async fn language_cache_rejects_old_primaries_and_versions_including_empty_resul
     )
     .await
     .unwrap();
-    db::repositories::records::update_repo_size(f.pool(), repository.id, 123)
+    codeyard_db_repos::repositories::records::update_repo_size(f.pool(), repository.id, 123)
         .await
         .unwrap();
     assert_eq!(f.repository(repository.id).await.default_branch, "topic");
@@ -519,7 +545,7 @@ async fn completed_fork_survives_accounting_failure(pg: bool) {
     let source = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "source",
         None,
         false,
@@ -536,7 +562,7 @@ async fn completed_fork_survives_accounting_failure(pg: bool) {
     let fork = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "fork",
         None,
         false,
@@ -545,7 +571,7 @@ async fn completed_fork_survives_accounting_failure(pg: bool) {
     .await
     .unwrap();
     assert!(
-        db::repositories::records::get_repository_by_id(f.pool(), fork.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), fork.id)
             .await
             .unwrap()
             .is_some()

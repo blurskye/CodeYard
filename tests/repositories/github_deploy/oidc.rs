@@ -75,7 +75,7 @@ async fn contract(pg: bool) {
     let repo = repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "project",
         None,
         true,
@@ -85,9 +85,9 @@ async fn contract(pg: bool) {
     .unwrap();
     let sha = "a".repeat(40);
     let path = ".github/workflows/ci.yml";
-    let run = db::ci::enqueue_ci_run(
+    let run = codeyard_db_actions::ci::enqueue_ci_run(
         f.pool(),
-        db::ci::NewCiRun {
+        codeyard_db_actions::ci::NewCiRun {
             repo_id: repo.id,
             triggered_by_id: actor,
             pipeline: "ci",
@@ -105,7 +105,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let run = db::ci::claim_ci_run(
+    let run = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "worker",
         "local",
@@ -340,9 +340,14 @@ async fn contract(pg: bool) {
         403
     );
     server.abort();
-    db::ci_tokens::finish_job(f.pool(), run.id, "worker", &format!("{path}:writer"))
-        .await
-        .unwrap();
+    codeyard_db_actions::ci_tokens::finish_job(
+        f.pool(),
+        run.id,
+        "worker",
+        &format!("{path}:writer"),
+    )
+    .await
+    .unwrap();
     get(&router, endpoint, Some(&jobs["writer"]), 403).await;
     f.execute(
         "UPDATE ci_runs SET cancel_requested=true WHERE id=$1",
@@ -379,13 +384,13 @@ async fn organization_contract(pg: bool) {
         credentials.push(format!("Bearer {}", token.value));
     }
     let (writer, reader, outsider) = (&credentials[0], &credentials[1], &credentials[2]);
-    let input = db::organizations::profiles::NewOrganization::new(
+    let input = codeyard_db_orgs::organizations::profiles::NewOrganization::new(
         "acme",
-        db::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
+        codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
     )
     .unwrap();
-    let db::organizations::OrganizationOutcome::Applied(org) =
-        db::organizations::profiles::create_organization(f.pool(), alice, &input)
+    let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) =
+        codeyard_db_orgs::organizations::profiles::create_organization(f.pool(), alice, &input)
             .await
             .unwrap()
     else {
@@ -394,9 +399,11 @@ async fn organization_contract(pg: bool) {
     let repo = repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner {
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
             actor_id: alice,
-            target: db::repositories::creation::RepositoryTarget::Organization(org.id),
+            target: codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(
+                org.id,
+            ),
         },
         "project",
         None,
@@ -532,9 +539,9 @@ async fn organization_contract(pg: bool) {
     );
     let path = ".github/workflows/ci.yml";
     let sha = "b".repeat(40);
-    let run = db::ci::enqueue_ci_run(
+    let run = codeyard_db_actions::ci::enqueue_ci_run(
         f.pool(),
-        db::ci::NewCiRun {
+        codeyard_db_actions::ci::NewCiRun {
             repo_id: repo.id,
             triggered_by_id: alice,
             pipeline: "ci",
@@ -552,7 +559,7 @@ async fn organization_contract(pg: bool) {
     )
     .await
     .unwrap();
-    let run = db::ci::claim_ci_run(
+    let run = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "worker",
         "local",

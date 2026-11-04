@@ -1,7 +1,6 @@
 //! Mutation adaptation only: permissions and side effects stay in the REST domain operations.
 use crate::arguments::Arguments;
 use crate::bindings::boxed;
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::RequestContext;
@@ -260,7 +259,7 @@ pub(super) async fn resolve(
                 let repo =
                     crate::repository::by_id(target(&input, "repositoryId", "R")?, request).await?;
                 request.authorize(repo.id, "administration", true).await?;
-                db::repositories::records::set_repository_archived(
+                codeyard_db_repos::repositories::records::set_repository_archived(
                     pool,
                     actor,
                     repo.id,
@@ -277,7 +276,7 @@ pub(super) async fn resolve(
         "updateIssue" => {
             boxed(|| async move {
                 let id = target(&input, "id", "I")?;
-                let current = db::issues::get_issue_by_id(pool, id)
+                let current = codeyard_db_repos::issues::get_issue_by_id(pool, id)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?;
@@ -312,14 +311,14 @@ pub(super) async fn resolve(
                 };
                 crate::metadata_mutations::apply(
                     &repo,
-                    db::assignees::AssignedItem::Issue(saved.id),
+                    codeyard_db_repos::assignees::AssignedItem::Issue(saved.id),
                     saved.number,
                     &saved.title,
                     metadata,
                     request,
                 )
                 .await?;
-                let saved = db::issues::get_issue_by_id(pool, saved.id)
+                let saved = codeyard_db_repos::issues::get_issue_by_id(pool, saved.id)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?;
@@ -392,7 +391,7 @@ pub(super) async fn resolve(
                         is_draft: input["draft"].as_bool().unwrap_or(false),
                         maintainer_can_modify: Some(
                             input["maintainerCanModify"].as_bool().unwrap_or_else(|| {
-                                db::pull_requests::records::can_grant_maintainer_edit(
+                                codeyard_db_repos::pull_requests::records::can_grant_maintainer_edit(
                                     actor, repo.id, &head,
                                 )
                             }),
@@ -408,7 +407,7 @@ pub(super) async fn resolve(
         }
         "revertPullRequest" => {
             boxed(|| async move {
-                let current = db::pull_requests::records::get_pull_request_by_id(
+                let current = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
                     pool,
                     target(&input, "pullRequestId", "PR")?,
                 )
@@ -451,7 +450,7 @@ pub(super) async fn resolve(
         | "updatePullRequestBranch"
         | "mergePullRequest" => {
             boxed(|| async move {
-                let current = db::pull_requests::records::get_pull_request_by_id(
+                let current = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
                     pool,
                     target(&input, "pullRequestId", "PR")?,
                 )
@@ -515,7 +514,7 @@ pub(super) async fn resolve(
                     )
                     .await
                     .map_err(pull_error)?;
-                    db::pull_requests::records::get_pull_request_by_id(pool, current.id)
+                    codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, current.id)
                         .await
                         .map_err(unavailable)?
                         .ok_or_else(missing)?
@@ -558,7 +557,7 @@ pub(super) async fn resolve(
                     )
                     .await
                     .map_err(pull_error)?;
-                    db::pull_requests::records::get_pull_request_by_id(pool, current.id)
+                    codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, current.id)
                         .await
                         .map_err(unavailable)?
                         .ok_or_else(missing)?
@@ -590,14 +589,14 @@ pub(super) async fn resolve(
                 let repo = crate::repository::by_id(saved.repo_id, request).await?;
                 crate::metadata_mutations::apply(
                     &repo,
-                    db::assignees::AssignedItem::PullRequest(saved.id),
+                    codeyard_db_repos::assignees::AssignedItem::PullRequest(saved.id),
                     saved.number,
                     &saved.title,
                     metadata,
                     request,
                 )
                 .await?;
-                let saved = db::pull_requests::records::get_pull_request_by_id(pool, saved.id)
+                let saved = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, saved.id)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?;
@@ -608,7 +607,7 @@ pub(super) async fn resolve(
         }
         "enablePullRequestAutoMerge" | "disablePullRequestAutoMerge" => {
             boxed(|| async move {
-                let current = db::pull_requests::records::get_pull_request_by_id(
+                let current = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
                     pool,
                     target(&input, "pullRequestId", "PR")?,
                 )
@@ -702,7 +701,7 @@ pub(super) async fn resolve(
                     return Err(crate::token_denied());
                 }
                 let id = target(&input, "userId", "U")?;
-                let current = db::users::accounts::get_user_by_id(pool, id)
+                let current = codeyard_db_identity::users::accounts::get_user_by_id(pool, id)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?;

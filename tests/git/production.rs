@@ -35,14 +35,14 @@ fn store(path: &Path) -> RepoStore {
 
 async fn publication_authority(path: &Path) -> (native::NativeDatabase, i64, i64) {
     let database = native::NativeDatabase::new().await;
-    let actor = db::users::accounts::create_user(
+    let actor = codeyard_db_identity::users::accounts::create_user(
         &database.pool,
         &format!("publisher_{}", Uuid::new_v4().simple()),
         None,
     )
     .await
     .unwrap();
-    let repository = db::repositories::records::create_repository(
+    let repository = codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         actor.id,
         &format!("repo_{}", Uuid::new_v4().simple()),
@@ -116,9 +116,10 @@ async fn divergent_merge_retains_both_contents_and_both_parents() {
         base,
         "preparation must not publish"
     );
-    let revision = db::pull_requests::merge_policy::revision(&database.pool, repo_id)
-        .await
-        .unwrap();
+    let revision =
+        codeyard_db_repos::pull_requests::merge_policy::revision(&database.pool, repo_id)
+            .await
+            .unwrap();
     repositories::protection::upsert_branch_protection_rule(
         &database.pool,
         repositories::protection::BranchProtectionRuleUpsert {
@@ -142,7 +143,7 @@ async fn divergent_merge_retains_both_contents_and_both_parents() {
             &base.to_string(),
             &result,
             MergeMethod::Merge,
-            Some(db::pull_requests::merge_policy::Snapshot {
+            Some(codeyard_db_repos::pull_requests::merge_policy::Snapshot {
                 revision,
                 auto_merge: None,
             }),
@@ -359,9 +360,13 @@ async fn database() -> native::PostgresDatabase {
     native::PostgresDatabase::new().await
 }
 async fn user(pool: &codeyard_db_core::DbPool, label: &str) -> codeyard_db_core::models::User {
-    db::users::accounts::create_user(pool, &format!("{label}_{}", Uuid::new_v4().simple()), None)
-        .await
-        .unwrap()
+    codeyard_db_identity::users::accounts::create_user(
+        pool,
+        &format!("{label}_{}", Uuid::new_v4().simple()),
+        None,
+    )
+    .await
+    .unwrap()
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn private_forks_and_descendants_cannot_be_published_through_settings() {
@@ -371,7 +376,7 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
     let reader = user(pool, "reader").await;
     let other = user(pool, "unrelated").await;
     let temp = tempfile::tempdir().unwrap();
-    let source = db::repositories::records::create_repository(
+    let source = codeyard_db_repos::repositories::records::create_repository(
         pool,
         owner.id,
         "private",
@@ -381,7 +386,7 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         pool,
         reader.id,
         source.id,
@@ -389,9 +394,9 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
     )
     .await
     .unwrap();
-    let fork = db::repositories::discovery::create_forked_repository(
+    let fork = codeyard_db_repos::repositories::discovery::create_forked_repository(
         pool,
-        db::repositories::discovery::NewForkedRepository {
+        codeyard_db_repos::repositories::discovery::NewForkedRepository {
             owner_id: reader.id,
             name: "fork",
             description: None,
@@ -408,18 +413,18 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
         "even a caller that requests public must inherit the floor"
     );
     assert_eq!(
-        db::repositories::access::get_user_repo_access(pool, other.id, fork.id)
+        codeyard_db_repos::repositories::access::get_user_repo_access(pool, other.id, fork.id)
             .await
             .unwrap(),
         codeyard_db_core::models::AccessLevel::None
     );
-    assert!(db::repositories::records::update_repository(
+    assert!(codeyard_db_repos::repositories::records::update_repository(
         pool,
         reader.id,
         fork.id,
         None,
         false,
-        db::repositories::records::MergeMethodUpdate {
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
             merge: None,
             squash: None,
             rebase: None
@@ -434,9 +439,9 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
     .execute(&fixture.raw)
     .await
     .is_err());
-    let child = db::repositories::discovery::create_forked_repository(
+    let child = codeyard_db_repos::repositories::discovery::create_forked_repository(
         pool,
-        db::repositories::discovery::NewForkedRepository {
+        codeyard_db_repos::repositories::discovery::NewForkedRepository {
             owner_id: owner.id,
             name: "child",
             description: None,
@@ -449,13 +454,13 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
     .await
     .unwrap();
     assert!(child.is_private);
-    assert!(db::repositories::records::update_repository(
+    assert!(codeyard_db_repos::repositories::records::update_repository(
         pool,
         owner.id,
         child.id,
         None,
         false,
-        db::repositories::records::MergeMethodUpdate {
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
             merge: None,
             squash: None,
             rebase: None
@@ -480,16 +485,16 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
         denied.is_err(),
         "forking a private source needs read access"
     );
-    db::repositories::records::delete_repository(pool, owner.id, source.id)
+    codeyard_db_repos::repositories::records::delete_repository(pool, owner.id, source.id)
         .await
         .unwrap();
-    assert!(db::repositories::records::update_repository(
+    assert!(codeyard_db_repos::repositories::records::update_repository(
         pool,
         reader.id,
         fork.id,
         None,
         false,
-        db::repositories::records::MergeMethodUpdate {
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
             merge: None,
             squash: None,
             rebase: None
@@ -498,12 +503,12 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
     .await
     .is_err());
     assert_eq!(
-        db::repositories::access::get_user_repo_access(pool, other.id, child.id)
+        codeyard_db_repos::repositories::access::get_user_repo_access(pool, other.id, child.id)
             .await
             .unwrap(),
         codeyard_db_core::models::AccessLevel::None
     );
-    let public = db::repositories::records::create_repository(
+    let public = codeyard_db_repos::repositories::records::create_repository(
         pool,
         owner.id,
         "initially-public",
@@ -513,9 +518,9 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
     )
     .await
     .unwrap();
-    let formerly_public = db::repositories::discovery::create_forked_repository(
+    let formerly_public = codeyard_db_repos::repositories::discovery::create_forked_repository(
         pool,
-        db::repositories::discovery::NewForkedRepository {
+        codeyard_db_repos::repositories::discovery::NewForkedRepository {
             owner_id: reader.id,
             name: "formerly-public",
             description: None,
@@ -528,13 +533,13 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
     .await
     .unwrap();
     assert!(!formerly_public.is_private);
-    db::repositories::records::update_repository(
+    codeyard_db_repos::repositories::records::update_repository(
         pool,
         owner.id,
         public.id,
         None,
         true,
-        db::repositories::records::MergeMethodUpdate {
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
             merge: None,
             squash: None,
             rebase: None,
@@ -543,19 +548,19 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
     .await
     .unwrap();
     assert!(
-        db::repositories::records::get_repository_by_id(pool, formerly_public.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, formerly_public.id)
             .await
             .unwrap()
             .unwrap()
             .is_private
     );
-    assert!(db::repositories::records::update_repository(
+    assert!(codeyard_db_repos::repositories::records::update_repository(
         pool,
         reader.id,
         formerly_public.id,
         None,
         false,
-        db::repositories::records::MergeMethodUpdate {
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
             merge: None,
             squash: None,
             rebase: None
@@ -575,7 +580,7 @@ async fn duplicate_fork_loser_never_touches_winner() {
     let temp = tempfile::tempdir().unwrap();
     let source_path = temp.path().join("source.git");
     graph(&source_path);
-    let source = db::repositories::records::create_repository(
+    let source = codeyard_db_repos::repositories::records::create_repository(
         pool,
         owner.id,
         "source",
@@ -635,11 +640,11 @@ async fn duplicate_fork_loser_never_touches_winner() {
         path.join("objects").is_dir(),
         "winner storage must survive the losing request"
     );
-    db::repositories::records::delete_repository(pool, owner.id, source.id)
+    codeyard_db_repos::repositories::records::delete_repository(pool, owner.id, source.id)
         .await
         .unwrap();
     assert!(
-        !db::repositories::records::get_repository_by_id(pool, winner.id)
+        !codeyard_db_repos::repositories::records::get_repository_by_id(pool, winner.id)
             .await
             .unwrap()
             .unwrap()
@@ -654,7 +659,7 @@ async fn duplicate_fork_loser_never_touches_winner() {
 async fn simultaneous_forks_of_one_source_by_different_users_all_succeed() {
     let fixture = database().await;
     let owner = user(&fixture.pool, "owner").await;
-    let source = db::repositories::records::create_repository(
+    let source = codeyard_db_repos::repositories::records::create_repository(
         &fixture.pool,
         owner.id,
         "source",
@@ -693,10 +698,11 @@ async fn simultaneous_forks_of_one_source_by_different_users_all_succeed() {
     for task in tasks {
         assert!(task.await.unwrap().unwrap().is_some());
     }
-    let source = db::repositories::records::get_repository_by_id(&fixture.pool, source.id)
-        .await
-        .unwrap()
-        .unwrap();
+    let source =
+        codeyard_db_repos::repositories::records::get_repository_by_id(&fixture.pool, source.id)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(source.forks_count, FORKS as i32);
 }
 
@@ -708,7 +714,7 @@ async fn real_concurrent_fork_domain_preserves_winner_and_does_not_copy_hooks_or
     let temp = tempfile::tempdir().unwrap();
     let source_path = temp.path().join("source.git");
     graph(&source_path);
-    let source = db::repositories::records::create_repository(
+    let source = codeyard_db_repos::repositories::records::create_repository(
         &fixture.pool,
         owner.id,
         "source",
@@ -797,10 +803,12 @@ async fn real_concurrent_fork_domain_preserves_winner_and_does_not_copy_hooks_or
     ];
     expected.sort();
     assert_eq!(repositories, expected);
-    assert!(
-        db::repositories::records::get_repository(&fixture.pool, &reader.username, "source")
-            .await
-            .unwrap()
-            .is_some()
-    );
+    assert!(codeyard_db_repos::repositories::records::get_repository(
+        &fixture.pool,
+        &reader.username,
+        "source"
+    )
+    .await
+    .unwrap()
+    .is_some());
 }

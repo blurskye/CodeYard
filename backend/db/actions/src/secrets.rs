@@ -396,5 +396,3 @@ mod tests {
 }
 
 use codeyard_db_core::queries::secrets::SecretsError;
-
-use codeyard_db_core::queries::secrets::SecretsError;

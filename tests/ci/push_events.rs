@@ -64,7 +64,7 @@ async fn contract(pg: bool) {
     let repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "project",
         None,
         false,
@@ -127,15 +127,21 @@ async fn contract(pg: bool) {
             },
         )
         .await;
-    assert!(db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
-        .await
-        .unwrap()
-        .is_empty());
     assert!(
-        db::ci::has_ci_accepted_push(f.pool(), repo.id, actor, "refs/heads/feature", &new)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
             .await
             .unwrap()
+            .is_empty()
     );
+    assert!(codeyard_db_actions::ci::has_ci_accepted_push(
+        f.pool(),
+        repo.id,
+        actor,
+        "refs/heads/feature",
+        &new
+    )
+    .await
+    .unwrap());
 
     // Uploading an unchanged source alongside changed documentation must not run source CI.
     use codeyard_app::repositories::files;
@@ -169,10 +175,12 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     files::write_file_bytes(
         f.pool(),
         None,
@@ -193,10 +201,12 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 
     // A new ref compares against the empty tree. src.txt matches, docs/** does not.
     {
@@ -222,7 +232,7 @@ async fn contract(pg: bool) {
             },
         )
         .await;
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
         .await
         .unwrap();
     assert_eq!(runs.len(), 1, "{runs:?}");
@@ -327,7 +337,7 @@ async fn contract(pg: bool) {
         assert_eq!(again.branch, run.branch);
         assert_eq!(again.head_sha, run.head_sha);
     }
-    let count = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 200)
+    let count = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 200)
         .await
         .unwrap()
         .len();
@@ -359,7 +369,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     assert_eq!(
-        db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 200)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 200)
             .await
             .unwrap()
             .len(),

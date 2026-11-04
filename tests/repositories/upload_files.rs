@@ -120,7 +120,7 @@ async fn contract(pg: bool) {
     let repository = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "site",
         None,
         false,
@@ -150,7 +150,7 @@ async fn contract(pg: bool) {
     let original = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "private-upload",
         None,
         true,
@@ -158,13 +158,18 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::records::rename_repository(f.pool(), owner, original.id, "renamed-upload")
-        .await
-        .unwrap();
+    codeyard_db_repos::repositories::records::rename_repository(
+        f.pool(),
+        owner,
+        original.id,
+        "renamed-upload",
+    )
+    .await
+    .unwrap();
     let replacement = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "private-upload",
         None,
         false,

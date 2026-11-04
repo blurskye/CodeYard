@@ -70,7 +70,7 @@ pub(super) async fn contract(
         );
     }
     assert!(
-        db::deploy_keys::get_deploy_key(f.pool(), id)
+        codeyard_db_identity::deploy_keys::get_deploy_key(f.pool(), id)
             .await
             .unwrap()
             .is_some(),
@@ -101,11 +101,11 @@ pub(super) async fn contract(
             .await
             .unwrap(),
     );
-    let moved = db::repositories::records::transfer_repository(
+    let moved = codeyard_db_repos::repositories::records::transfer_repository(
         f.pool(),
         owner,
         first.id,
-        db::repositories::creation::RepositoryTarget::Organization(orgs[1].id),
+        codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(orgs[1].id),
     )
     .await
     .unwrap();
@@ -134,15 +134,19 @@ pub(super) async fn contract(
     );
     request(router,UPDATE,"PATCH",path,write,json!({"default_repository_permission":"read","members_can_fork_private_repositories":false}),200).await;
     browser.expect("POST","/api/repos/acme/second/contents/source.txt",json!({"content":"U291cmNl","message":"Initial API commit","branch":"main","expected_revision":"unborn"}),StatusCode::CREATED).await;
-    let member = db::users::accounts::get_user_by_username(f.pool(), "member")
+    let member = codeyard_db_identity::users::accounts::get_user_by_username(f.pool(), "member")
         .await
         .unwrap()
         .unwrap();
     let client = Client::login(router, f.pool(), member.id).await;
     assert_eq!(
-        db::repositories::access::get_user_repo_access(f.pool(), member.id, second.id)
-            .await
-            .unwrap(),
+        codeyard_db_repos::repositories::access::get_user_repo_access(
+            f.pool(),
+            member.id,
+            second.id
+        )
+        .await
+        .unwrap(),
         AccessLevel::Read
     );
     let (status, _) = client
@@ -150,7 +154,7 @@ pub(super) async fn contract(
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(
-        db::repositories::records::get_repository(f.pool(), "member", "second")
+        codeyard_db_repos::repositories::records::get_repository(f.pool(), "member", "second")
             .await
             .unwrap()
             .is_none(),
@@ -178,10 +182,11 @@ pub(super) async fn contract(
         .api("POST", "/api/repos/acme/second/forks", json!({}))
         .await;
     assert_eq!(status, StatusCode::CREATED);
-    let fork = db::repositories::records::get_repository(f.pool(), "member", "second")
-        .await
-        .unwrap()
-        .unwrap();
+    let fork =
+        codeyard_db_repos::repositories::records::get_repository(f.pool(), "member", "second")
+            .await
+            .unwrap()
+            .unwrap();
     assert!(fork.is_private);
     assert_eq!(fork.forked_from_id, Some(second.id));
     // Prepared Git objects are not an admission: the owning store checks current policy.
@@ -197,7 +202,7 @@ pub(super) async fn contract(
     .await;
     let store = codeyard_app::repositories::store::repo_store(second, None);
     let head = store.commit("refs/heads/main").await.unwrap();
-    let actor = db::users::accounts::get_user_by_id(f.pool(), owner)
+    let actor = codeyard_db_identity::users::accounts::get_user_by_id(f.pool(), owner)
         .await
         .unwrap()
         .unwrap();

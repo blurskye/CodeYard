@@ -2,18 +2,18 @@ use super::*;
 
 #[tokio::test]
 async fn privileged_node_and_crawler_changes_require_the_original_live_session() {
-    use db::cluster::Authority;
+    use codeyard_db_cluster::cluster::Authority;
     for pg in [false, true] {
         let mut f = Database::new(pg).await;
         let admin = f.actor("session_admin").await;
         let other = f.actor("session_other").await;
         f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[admin])
             .await;
-        db::node_config::upsert_node_configuration(f.pool(), "public", true)
+        codeyard_db_cluster::node_config::upsert_node_configuration(f.pool(), "public", true)
             .await
             .unwrap();
         let key = codeyard_support::node_identity::NodeKey::generate().public_hex();
-        db::cluster::register_own_node(
+        codeyard_db_cluster::cluster::register_own_node(
             f.pool(),
             &key,
             "session-node",
@@ -25,13 +25,16 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
         let original = session(f.pool(), admin).await;
         let replacement = session(f.pool(), admin).await;
         let foreign = session(f.pool(), other).await;
-        assert!(
-            db::node_config::set_ai_crawlers(f.pool(), admin, &original, "allow")
-                .await
-                .unwrap()
-        );
+        assert!(codeyard_db_cluster::node_config::set_ai_crawlers(
+            f.pool(),
+            admin,
+            &original,
+            "allow"
+        )
+        .await
+        .unwrap());
         assert!(matches!(
-            db::cluster::set_node_status(
+            codeyard_db_cluster::cluster::set_node_status(
                 f.pool(),
                 Authority::Administrator {
                     user_id: admin,
@@ -44,17 +47,20 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
             .unwrap(),
             codeyard_db_core::models::NodeStatusChange::Changed { .. }
         ));
-        db::users::sessions::delete_session(f.pool(), &original)
+        codeyard_db_identity::users::sessions::delete_session(f.pool(), &original)
             .await
             .unwrap();
         for invalid in [&original, &foreign] {
-            assert!(
-                !db::node_config::set_ai_crawlers(f.pool(), admin, invalid, "block")
-                    .await
-                    .unwrap()
-            );
+            assert!(!codeyard_db_cluster::node_config::set_ai_crawlers(
+                f.pool(),
+                admin,
+                invalid,
+                "block"
+            )
+            .await
+            .unwrap());
             assert_eq!(
-                db::cluster::set_node_status(
+                codeyard_db_cluster::cluster::set_node_status(
                     f.pool(),
                     Authority::Administrator {
                         user_id: admin,
@@ -69,23 +75,29 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
             );
         }
         // A second login must not substitute for the revoked session, but remains usable itself.
-        assert!(
-            db::node_config::set_ai_crawlers(f.pool(), admin, &replacement, "block")
-                .await
-                .unwrap()
-        );
+        assert!(codeyard_db_cluster::node_config::set_ai_crawlers(
+            f.pool(),
+            admin,
+            &replacement,
+            "block"
+        )
+        .await
+        .unwrap());
         f.execute(
             "UPDATE sessions SET expires_at='2000-01-01T00:00:00.000000Z' WHERE user_id=$1",
             &[admin],
         )
         .await;
-        assert!(
-            !db::node_config::set_ai_crawlers(f.pool(), admin, &replacement, "allow")
-                .await
-                .unwrap()
-        );
+        assert!(!codeyard_db_cluster::node_config::set_ai_crawlers(
+            f.pool(),
+            admin,
+            &replacement,
+            "allow"
+        )
+        .await
+        .unwrap());
         assert_eq!(
-            db::cluster::set_node_status(
+            codeyard_db_cluster::cluster::set_node_status(
                 f.pool(),
                 Authority::Administrator {
                     user_id: admin,
@@ -99,9 +111,14 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
             codeyard_db_core::models::NodeStatusChange::Denied
         );
         assert!(matches!(
-            db::cluster::set_node_status(f.pool(), Authority::Operator, "session-node", "active")
-                .await
-                .unwrap(),
+            codeyard_db_cluster::cluster::set_node_status(
+                f.pool(),
+                Authority::Operator,
+                "session-node",
+                "active"
+            )
+            .await
+            .unwrap(),
             codeyard_db_core::models::NodeStatusChange::Changed { .. }
         ));
         f.finish().await;
@@ -115,9 +132,9 @@ async fn late_pr_comment_notices_and_mentions_cannot_restore_deleted_text() {
         let owner = f.actor("comment_owner").await;
         let r = repo(&f, owner, "comments").await;
         let foreign = repo(&f, owner, "foreign_comments").await;
-        let pr = db::pull_requests::records::create_pull_request(
+        let pr = codeyard_db_repos::pull_requests::records::create_pull_request(
             f.pool(),
-            db::pull_requests::records::NewPullRequest {
+            codeyard_db_repos::pull_requests::records::NewPullRequest {
                 repo_id: r.id,
                 head_repo_id: None,
                 author_id: owner,
@@ -134,9 +151,9 @@ async fn late_pr_comment_notices_and_mentions_cannot_restore_deleted_text() {
         )
         .await
         .unwrap();
-        let comment = db::pull_requests::reviews::add_pull_request_comment(
+        let comment = codeyard_db_repos::pull_requests::reviews::add_pull_request_comment(
             f.pool(),
-            db::pull_requests::reviews::NewPullRequestComment {
+            codeyard_db_repos::pull_requests::reviews::NewPullRequestComment {
                 pr_id: pr.id,
                 author_id: owner,
                 body: "deleted text",
@@ -154,15 +171,17 @@ async fn late_pr_comment_notices_and_mentions_cannot_restore_deleted_text() {
         .unwrap();
         for deleted in [false, true] {
             if deleted {
-                assert!(db::pull_requests::reviews::delete_pull_request_comment(
-                    f.pool(),
-                    owner,
-                    r.id,
-                    pr.id,
-                    comment.id
-                )
-                .await
-                .unwrap());
+                assert!(
+                    codeyard_db_repos::pull_requests::reviews::delete_pull_request_comment(
+                        f.pool(),
+                        owner,
+                        r.id,
+                        pr.id,
+                        comment.id
+                    )
+                    .await
+                    .unwrap()
+                );
             }
             for (kind, field) in [
                 ("pull_request_comment", "comment_id"),
@@ -171,7 +190,7 @@ async fn late_pr_comment_notices_and_mentions_cannot_restore_deleted_text() {
             ] {
                 for scope in [r.id, foreign.id] {
                     let metadata = serde_json::json!({(field): comment.id});
-                    let result = db::notifications::records::create_notification(
+                    let result = codeyard_db_repos::notifications::records::create_notification(
                         f.pool(),
                         NewNotification {
                             user_id: owner,
@@ -190,20 +209,22 @@ async fn late_pr_comment_notices_and_mentions_cannot_restore_deleted_text() {
                     } else {
                         assert!(result
                             .unwrap_err()
-                            .is::<db::notifications::records::NotificationSuppressed>());
+                            .is::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>());
                     }
                 }
             }
         }
-        assert!(db::notifications::records::list_notifications_for_user(
-            f.pool(),
-            owner,
-            100,
-            false
-        )
-        .await
-        .unwrap()
-        .is_empty());
+        assert!(
+            codeyard_db_repos::notifications::records::list_notifications_for_user(
+                f.pool(),
+                owner,
+                100,
+                false
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
         f.finish().await;
     }
 }
@@ -221,21 +242,30 @@ async fn delivery_batches_scopes_and_keeps_requested_read_history() {
         let original = session(f.pool(), owner).await;
         let delivery = tokio::time::timeout(
             Duration::from_secs(5),
-            db::notifications::records::notification_delivery(f.pool(), &original, owner, None),
+            codeyard_db_repos::notifications::records::notification_delivery(
+                f.pool(),
+                &original,
+                owner,
+                None,
+            ),
         )
         .await
         .unwrap()
         .unwrap()
         .unwrap();
         assert_eq!(delivery.unread_count, 1000);
-        let rows =
-            db::notifications::records::list_notifications_for_user(f.pool(), owner, 1, false)
-                .await
-                .unwrap();
+        let rows = codeyard_db_repos::notifications::records::list_notifications_for_user(
+            f.pool(),
+            owner,
+            1,
+            false,
+        )
+        .await
+        .unwrap();
         let requested = rows[0].id;
         f.execute("UPDATE notifications SET read_at=CURRENT_TIMESTAMP,done_at=CURRENT_TIMESTAMP WHERE user_id=$1", &[owner]).await;
         let unread = notice(f.pool(), owner, None, "Unread account notice").await;
-        let delivery = db::notifications::records::notification_delivery(
+        let delivery = codeyard_db_repos::notifications::records::notification_delivery(
             f.pool(),
             &original,
             owner,
@@ -246,7 +276,7 @@ async fn delivery_batches_scopes_and_keeps_requested_read_history() {
         .unwrap();
         assert_eq!(delivery.unread_count, 1);
         assert_eq!(delivery.notification.unwrap().id, requested);
-        let delivery = db::notifications::records::notification_delivery(
+        let delivery = codeyard_db_repos::notifications::records::notification_delivery(
             f.pool(),
             &original,
             owner,

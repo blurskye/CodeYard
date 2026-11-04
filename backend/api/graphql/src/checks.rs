@@ -1,7 +1,6 @@
 //! Checks and legacy statuses share a rollup, while their credential scopes remain distinct.
 
 use crate::arguments::Arguments;
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::RequestContext;
@@ -14,7 +13,7 @@ fn suite_object(repo: i64, id: i64) -> Value {
     json!({"__typename":"CheckSuite","id":node_id::encode("CSU",id),"_repo":repo,"_scope":"checks","_suite":id})
 }
 fn run_object(
-    run: &db::checks::Run,
+    run: &codeyard_db_actions::checks::Run,
     oid: &str,
     request: &RequestContext,
     output: bool,
@@ -35,7 +34,7 @@ fn run_object(
 pub(super) async fn rollup(repo: i64, oid: &str, request: &RequestContext) -> Result<Value> {
     let viewer = request.private_viewer(repo, "statuses").await?;
     request.authorize(repo, "checks", false).await?;
-    let statuses = db::repositories::protection::commit_status_page(
+    let statuses = codeyard_db_repos::repositories::protection::commit_status_page(
         &request.state.pool,
         viewer,
         repo,
@@ -47,7 +46,7 @@ pub(super) async fn rollup(repo: i64, oid: &str, request: &RequestContext) -> Re
     .await
     .map_err(unavailable)?
     .ok_or_else(missing)?;
-    let checks = db::checks::rollup_counts(&request.state.pool, repo, oid)
+    let checks = codeyard_db_actions::checks::rollup_counts(&request.state.pool, repo, oid)
         .await
         .map_err(unavailable)?;
     request.authorize(repo, "statuses", false).await?;
@@ -102,7 +101,7 @@ pub(super) async fn contexts(
         .min(status_total.saturating_sub(page.offset).max(0));
     let mut nodes = Vec::new();
     if status_limit > 0 {
-        let rows = db::repositories::protection::commit_status_page(
+        let rows = codeyard_db_repos::repositories::protection::commit_status_page(
             &request.state.pool,
             viewer,
             repo,
@@ -120,7 +119,7 @@ pub(super) async fn contexts(
     }
     let check_limit = page.limit - status_limit;
     if check_limit > 0 {
-        let rows = db::checks::rollup_runs(
+        let rows = codeyard_db_actions::checks::rollup_runs(
             &request.state.pool,
             repo,
             oid,
@@ -151,24 +150,24 @@ pub(super) async fn contexts(
 
 pub(super) async fn node(kind: &str, id: i64, request: &RequestContext) -> Result<Value> {
     let pool = &request.state.pool;
-    let repo = db::graphql::node_repository(pool, kind, id)
+    let repo = codeyard_db_repos::graphql::node_repository(pool, kind, id)
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;
     crate::repository::by_id(repo, request).await?;
     request.authorize(repo, "checks", false).await?;
     let value = if kind == "CSU" {
-        db::checks::suite(pool, repo, id)
+        codeyard_db_actions::checks::suite(pool, repo, id)
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
         suite_object(repo, id)
     } else {
-        let run = db::checks::run(pool, repo, id)
+        let run = codeyard_db_actions::checks::run(pool, repo, id)
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
-        let suite = db::checks::suite(pool, repo, run.suite_id)
+        let suite = codeyard_db_actions::checks::suite(pool, repo, run.suite_id)
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
@@ -196,7 +195,7 @@ pub(super) async fn resolve(
             parent["_suite"].as_i64().ok_or_else(missing)?,
         )),
         ("CheckRun", "summary" | "text" | "title") => {
-            let row = db::checks::run(
+            let row = codeyard_db_actions::checks::run(
                 &request.state.pool,
                 repo,
                 parent["_run"].as_i64().ok_or_else(missing)?,
@@ -216,7 +215,7 @@ pub(super) async fn resolve(
             if !crate::repository::optional_authority(repo, "actions", request).await? {
                 return Ok(Value::Null);
             }
-            let row = db::checks::workflow_metadata(
+            let row = codeyard_db_actions::checks::workflow_metadata(
                 &request.state.pool,
                 repo,
                 parent["_suite"].as_i64().ok_or_else(missing)?,

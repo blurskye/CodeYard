@@ -1,6 +1,5 @@
 //! Pull request Git reads and review presentation from the shared REST operations.
 use crate::arguments::Arguments;
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::RequestContext;
@@ -74,7 +73,7 @@ pub(super) async fn resolve(
     parent: &Value,
     repo: &codeyard_db_core::models::Repository,
 ) -> Result<Value> {
-    let mut pull = db::pull_requests::records::get_pull_request_by_id(
+    let mut pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
         &request.state.pool,
         parent["databaseId"].as_i64().ok_or_else(missing)?,
     )
@@ -186,7 +185,7 @@ pub(super) async fn resolve(
                 .into_iter()
                 .map(|s| s.to_ascii_lowercase())
                 .collect();
-            let query = db::pull_requests::reviews::ReviewQuery {
+            let query = codeyard_db_repos::pull_requests::reviews::ReviewQuery {
                 pull_id: pull.id,
                 viewer: request.private_viewer(repo.id, "pull-requests").await?,
                 author: args
@@ -199,11 +198,11 @@ pub(super) async fn resolve(
                 latest: field == "latestReviews",
             };
             let total =
-                db::pull_requests::reviews::count_filtered_reviews(&request.state.pool, &query)
+                codeyard_db_repos::pull_requests::reviews::count_filtered_reviews(&request.state.pool, &query)
                     .await
                     .map_err(unavailable)?;
             let page = crate::connection::Page::new(args, total)?;
-            let rows = db::pull_requests::reviews::filter_reviews(
+            let rows = codeyard_db_repos::pull_requests::reviews::filter_reviews(
                 &request.state.pool,
                 &query,
                 page.limit,
@@ -218,7 +217,7 @@ pub(super) async fn resolve(
             Ok(page.finish(nodes))
         }
         "reviewRequests" => {
-            let reviewers = db::pull_requests::reviews::list_pull_request_reviewers(
+            let reviewers = codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(
                 &request.state.pool,
                 pull.id,
             )
@@ -313,7 +312,7 @@ pub(super) async fn resolve(
                 return Ok(Value::Null);
             }
             let Some(head) =
-                db::repositories::records::get_repository_by_id(&request.state.pool, head_id)
+                codeyard_db_repos::repositories::records::get_repository_by_id(&request.state.pool, head_id)
                     .await
                     .map_err(unavailable)?
             else {
@@ -345,7 +344,7 @@ pub(super) async fn resolve(
         "potentialMergeCommit" => Ok(Value::Null),
         "autoMergeRequest" => {
             let Some(entry) =
-                db::pull_requests::auto_merge::get_auto_merge(&request.state.pool, pull.id)
+                codeyard_db_repos::pull_requests::auto_merge::get_auto_merge(&request.state.pool, pull.id)
                     .await
                     .map_err(unavailable)?
             else {

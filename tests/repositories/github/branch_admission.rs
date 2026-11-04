@@ -130,11 +130,11 @@ pub(super) async fn run(
         ("repos/get-branch-protection", 200),
     )
     .await;
-    let bob = db::users::accounts::get_user_by_username(scope.0, "bob")
+    let bob = codeyard_db_identity::users::accounts::get_user_by_username(scope.0, "bob")
         .await
         .unwrap()
         .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         scope.0,
         bob.id,
         scope.1,
@@ -175,7 +175,7 @@ pub(super) async fn run(
         call(router, "GET", base, reader, Value::Null, ("repos/get", 200)).await["default_branch"],
         "trunk"
     );
-    let repo = db::repositories::records::get_repository_by_id(scope.0, scope.1)
+    let repo = codeyard_db_repos::repositories::records::get_repository_by_id(scope.0, scope.1)
         .await
         .unwrap()
         .unwrap();

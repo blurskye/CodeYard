@@ -15,7 +15,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -69,14 +69,16 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-    assert!(
-        db::pull_requests::records::get_pull_request(f.pool(), repo.id, bn as i32)
-            .await
-            .unwrap()
-            .unwrap()
-            .stack_id
-            .is_none()
-    );
+    assert!(codeyard_db_repos::pull_requests::records::get_pull_request(
+        f.pool(),
+        repo.id,
+        bn as i32
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .stack_id
+    .is_none());
     let (status, _, stack) = exchange(
         &router,
         "pull-request-stacks/create",
@@ -158,14 +160,16 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     for n in [an, bn, cn] {
-        assert!(
-            db::pull_requests::records::get_pull_request(f.pool(), repo.id, n as i32)
-                .await
-                .unwrap()
-                .unwrap()
-                .stack_id
-                .is_none()
-        );
+        assert!(codeyard_db_repos::pull_requests::records::get_pull_request(
+            f.pool(),
+            repo.id,
+            n as i32
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .stack_id
+        .is_none());
     }
     f.finish().await;
 }

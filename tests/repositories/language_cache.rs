@@ -11,7 +11,7 @@ async fn empty_language_results_are_cached_by_revision(pg: bool) {
     let repository = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "assets",
         None,
         false,
@@ -43,7 +43,7 @@ async fn empty_language_results_are_cached_by_revision(pg: bool) {
             .is_empty()
     );
     assert_eq!(
-        db::repository_stats::language_revision(f.pool(), repository.id, "main")
+        codeyard_db_repos::repository_stats::language_revision(f.pool(), repository.id, "main")
             .await
             .unwrap(),
         Some(tip.to_string())
@@ -87,7 +87,7 @@ async fn empty_language_results_are_cached_by_revision(pg: bool) {
         )
         .unwrap();
     git.set_head("refs/heads/topic").unwrap();
-    db::repositories::records::set_repository_default_branch(
+    codeyard_db_repos::repositories::records::set_repository_default_branch(
         f.pool(),
         owner,
         repository.id,
@@ -101,7 +101,7 @@ async fn empty_language_results_are_cached_by_revision(pg: bool) {
         .unwrap();
     assert_eq!(result[0].language, "Rust");
     assert_eq!(
-        db::repository_stats::language_revision(f.pool(), repository.id, "topic")
+        codeyard_db_repos::repository_stats::language_revision(f.pool(), repository.id, "topic")
             .await
             .unwrap(),
         Some(next.to_string())

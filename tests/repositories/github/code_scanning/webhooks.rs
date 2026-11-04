@@ -56,7 +56,9 @@ pub(super) async fn fixed_revision(
     // The hook's host never resolves, so each delivery is recorded after its retries (7 s),
     // and a hook's deliveries go out in order: this one waits behind the six earlier events.
     for _ in 0..4500 {
-        let deliveries = db::webhooks::list_deliveries(pool, hook).await.unwrap();
+        let deliveries = codeyard_db_repos::webhooks::list_deliveries(pool, hook)
+            .await
+            .unwrap();
         for delivery in deliveries {
             let body: Value = serde_json::from_str(&delivery.request_body).unwrap();
             if delivery.event == "code_scanning_alert" && body["action"] == "fixed" {

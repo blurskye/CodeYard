@@ -589,7 +589,3 @@ pub async fn get_user_file_stats(
 use codeyard_db_core::queries::postgres::files::delete_if_unselected;
 
 use codeyard_db_core::queries::postgres::files::queue_deletion;
-
-use codeyard_db_core::queries::postgres::files::delete_if_unselected;
-
-use codeyard_db_core::queries::postgres::files::queue_deletion;

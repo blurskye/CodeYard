@@ -1,7 +1,6 @@
 //! Commit discussion reads retain REST's repository visibility and author-association rules.
 use crate::arguments::Arguments;
 use crate::connection::Page;
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::url;
@@ -33,7 +32,7 @@ pub(super) async fn object(
 pub(super) async fn field(field: &str, parent: &Value, request: &RequestContext) -> Result<Value> {
     if field == "reactionGroups" {
         return crate::collaboration::reactions(
-            db::reactions::Subject::CommitComment,
+            codeyard_db_repos::reactions::Subject::CommitComment,
             parent["databaseId"].as_i64().ok_or_else(missing)?,
             request,
         )

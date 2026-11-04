@@ -16,7 +16,7 @@ async fn comments(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         false,
@@ -27,7 +27,7 @@ async fn comments(pg: bool) {
     codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "other",
         None,
         false,
@@ -35,12 +35,12 @@ async fn comments(pg: bool) {
     )
     .await
     .unwrap();
-    let issue = db::issues::create_issue(f.pool(), repo.id, alice, "An issue", "")
+    let issue = codeyard_db_repos::issues::create_issue(f.pool(), repo.id, alice, "An issue", "")
         .await
         .unwrap();
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             issue: None,
             maintainer_can_modify: false,
             repo_id: repo.id,

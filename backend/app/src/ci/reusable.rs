@@ -5,6 +5,7 @@ use crate::repositories::store::repo_store;
 use codeyard_db_core::ci_admission::AdmissionError;
 use codeyard_git::error::ErrorKind;
 use serde_yaml::Value;
+use sha2::Digest;
 use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;

@@ -10,7 +10,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "private",
         None,
         true,
@@ -187,12 +187,16 @@ async fn contract(pg: bool) {
         404,
     )
     .await;
-    assert!(
-        db::deployments::statuses(f.pool(), None, old["id"].as_i64().unwrap(), 0, 10)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(codeyard_db_actions::deployments::statuses(
+        f.pool(),
+        None,
+        old["id"].as_i64().unwrap(),
+        0,
+        10
+    )
+    .await
+    .unwrap()
+    .is_empty());
     let (_, failed) = checked(
         &router,
         "repos/create-deployment-status",
@@ -436,7 +440,7 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(none, json!([]));
     // The effectful database entry point must not borrow the owner's token authority.
-    let denied = db::deployments::create_status(
+    let denied = codeyard_db_actions::deployments::create_status(
         f.pool(),
         bob,
         repo.id,
@@ -446,8 +450,8 @@ async fn contract(pg: bool) {
     .await
     .unwrap_err();
     assert!(matches!(
-        denied.downcast_ref::<db::deployments::Refusal>(),
-        Some(db::deployments::Refusal::Denied)
+        denied.downcast_ref::<codeyard_db_actions::deployments::Refusal>(),
+        Some(codeyard_db_actions::deployments::Refusal::Denied)
     ));
 }
 

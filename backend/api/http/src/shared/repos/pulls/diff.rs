@@ -40,5 +40,3 @@ pub(crate) fn bound_thread_projection(
     }
     Ok(())
 }
-
-use crate::shared::repos::discussion::page;

@@ -332,9 +332,3 @@ use codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQ
 use codeyard_db_core::queries::sqlite::repositories::access::readable_condition;
 
 use codeyard_db_core::queries::sqlite::repositories::access::user_repo_access_in_transaction;
-
-use codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
-
-use codeyard_db_core::queries::sqlite::repositories::access::readable_condition;
-
-use codeyard_db_core::queries::sqlite::repositories::access::user_repo_access_in_transaction;

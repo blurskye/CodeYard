@@ -59,7 +59,7 @@ async fn start(
         StatusCode::OK,
     )
     .await;
-    let run = db::ci::claim_ci_run(
+    let run = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         worker,
         "local",
@@ -70,7 +70,7 @@ async fn start(
     .unwrap()
     .unwrap();
     let generation = runtime::token_hash(&format!("runtime-{worker}"));
-    db::action_objects::issue_token(
+    codeyard_db_actions::action_objects::issue_token(
         f.pool(),
         run.id,
         run.worker.as_deref().unwrap_or(""),
@@ -86,11 +86,18 @@ async fn start(
         labels: vec!["ubuntu-latest".into()],
         matrix: None,
     });
-    let id = db::action_jobs::apply(f.pool(), worker, run.id, &generation, WORKFLOW, &queued)
-        .await
-        .unwrap()
-        .id;
-    db::action_jobs::apply(
+    let id = codeyard_db_actions::action_jobs::apply(
+        f.pool(),
+        worker,
+        run.id,
+        &generation,
+        WORKFLOW,
+        &queued,
+    )
+    .await
+    .unwrap()
+    .id;
+    codeyard_db_actions::action_jobs::apply(
         f.pool(),
         worker,
         run.id,
@@ -109,7 +116,7 @@ async fn start(
 }
 
 async fn admit(f: &Database, job: &Job) -> Option<bool> {
-    db::action_jobs::admit(
+    codeyard_db_actions::action_jobs::admit(
         f.pool(),
         job.worker,
         job.run,
@@ -130,7 +137,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "project",
         None,
         true,
@@ -157,12 +164,17 @@ async fn contract(pg: bool) {
     assert_eq!(admit(&f, &three).await, None);
     assert_eq!(admit(&f, &two).await, Some(false));
     assert_eq!(admit(&f, &one).await, Some(false));
-    assert!(
-        db::action_jobs::admit(f.pool(), "two", one.run, &one.generation, WORKFLOW, one.id)
-            .await
-            .is_err()
-    );
-    assert!(db::action_jobs::admit(
+    assert!(codeyard_db_actions::action_jobs::admit(
+        f.pool(),
+        "two",
+        one.run,
+        &one.generation,
+        WORKFLOW,
+        one.id
+    )
+    .await
+    .is_err());
+    assert!(codeyard_db_actions::action_jobs::admit(
         f.pool(),
         three.worker,
         three.run,
@@ -177,7 +189,7 @@ async fn contract(pg: bool) {
         conclusion: Conclusion::Cancelled,
         duration_ms: 0,
     });
-    db::action_jobs::apply(
+    codeyard_db_actions::action_jobs::apply(
         f.pool(),
         one.worker,
         one.run,
@@ -188,7 +200,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     assert_eq!(admit(&f, &three).await, Some(true));
-    assert!(db::action_jobs::apply(
+    assert!(codeyard_db_actions::action_jobs::apply(
         f.pool(),
         one.worker,
         one.run,

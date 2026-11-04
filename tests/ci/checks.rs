@@ -75,7 +75,7 @@ async fn contract(pg: bool) {
     let repo = repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         true,
@@ -86,7 +86,7 @@ async fn contract(pg: bool) {
     repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "other",
         None,
         true,
@@ -94,7 +94,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -443,11 +443,11 @@ async fn contract(pg: bool) {
         StatusCode::CREATED,
     )
     .await;
-    let app = db::github_apps::register(
+    let app = codeyard_db_identity::github_apps::register(
         f.pool(),
         alice,
         &owner.session,
-        &db::github_apps::App {
+        &codeyard_db_identity::github_apps::App {
             id: 0,
             owner_id: alice,
             bot_id: 0,
@@ -524,7 +524,7 @@ async fn contract(pg: bool) {
     );
     // The publisher is derived from the OAuth credential, never a supplied app_id. An App's
     // user token reaches only repositories the App is installed on, as on GitHub.
-    db::github_apps::install(
+    codeyard_db_identity::github_apps::install(
         f.pool(),
         alice,
         &owner.session,

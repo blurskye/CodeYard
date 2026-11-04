@@ -86,9 +86,11 @@ async fn namespace(pg: bool) {
         .unwrap()
         .to_string()
     };
-    assert!(db::cluster::bump_write_version(f.pool(), repo.id, None)
-        .await
-        .unwrap());
+    assert!(
+        codeyard_db_cluster::cluster::bump_write_version(f.pool(), repo.id, None)
+            .await
+            .unwrap()
+    );
     let profile = owner.page_ok("/gists/@users/gists").await;
     let alias = format!("/gists/@repos/gists/{old_id}");
     assert!(profile.contains(&format!("href=\"{alias}\"")));
@@ -150,14 +152,14 @@ async fn namespace(pg: bool) {
             .size(),
         5 * 1024 * 1024
     );
-    db::interactions::set_restriction(
+    codeyard_db_identity::interactions::set_restriction(
         f.pool(),
         legacy,
         &AccountCredential::Session(&owner.session),
-        db::interactions::InteractionScope::Repository(repo.id),
-        Some(db::interactions::NewRestriction {
-            limit: db::interactions::InteractionGroup::ContributorsOnly,
-            expiry: db::interactions::InteractionExpiry::OneDay,
+        codeyard_db_identity::interactions::InteractionScope::Repository(repo.id),
+        Some(codeyard_db_identity::interactions::NewRestriction {
+            limit: codeyard_db_identity::interactions::InteractionGroup::ContributorsOnly,
+            expiry: codeyard_db_identity::interactions::InteractionExpiry::OneDay,
         }),
     )
     .await
@@ -194,7 +196,7 @@ async fn namespace(pg: bool) {
     assert_eq!(follow.location.as_deref(), Some("/gists/@users/gists"));
     assert!(a.page_ok("/gists/@users/gists").await.contains("Unfollow"));
     assert_eq!(
-        db::repositories::records::get_git_repository(f.pool(), "gists", &old_id)
+        codeyard_db_repos::repositories::records::get_git_repository(f.pool(), "gists", &old_id)
             .await
             .unwrap()
             .unwrap()
@@ -215,11 +217,11 @@ async fn namespace(pg: bool) {
     .await
     .unwrap();
     let credential = AccountCredential::Session(&a.session);
-    let collision = db::gists::reserve(
+    let collision = codeyard_db_repos::gists::reserve(
         f.pool(),
         alice,
         &credential,
-        &db::gists::NewGist {
+        &codeyard_db_repos::gists::NewGist {
             repo_id: staged.id,
             id: &old_id,
             description: "Collision",
@@ -229,10 +231,12 @@ async fn namespace(pg: bool) {
     .await
     .unwrap_err();
     assert!(matches!(
-        collision.downcast_ref::<db::gists::GistRefusal>(),
-        Some(db::gists::GistRefusal::Conflict)
+        collision.downcast_ref::<codeyard_db_repos::gists::GistRefusal>(),
+        Some(codeyard_db_repos::gists::GistRefusal::Conflict)
     ));
-    assert!(!db::gists::is_identifier(f.pool(), &old_id).await.unwrap());
+    assert!(!codeyard_db_repos::gists::is_identifier(f.pool(), &old_id)
+        .await
+        .unwrap());
     let gist = gists::create(
         state.clone(),
         alice,
@@ -254,18 +258,20 @@ async fn namespace(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(db::gists::is_identifier(f.pool(), &id).await.unwrap());
+    assert!(codeyard_db_repos::gists::is_identifier(f.pool(), &id)
+        .await
+        .unwrap());
     assert!(
-        db::repositories::records::get_git_repository(f.pool(), "gists", &id)
+        codeyard_db_repos::repositories::records::get_git_repository(f.pool(), "gists", &id)
             .await
             .unwrap()
             .is_none()
     );
-    let reused = db::gists::reserve(
+    let reused = codeyard_db_repos::gists::reserve(
         f.pool(),
         alice,
         &credential,
-        &db::gists::NewGist {
+        &codeyard_db_repos::gists::NewGist {
             repo_id: staged.id,
             id: &id,
             description: "Reuse",
@@ -275,8 +281,8 @@ async fn namespace(pg: bool) {
     .await
     .unwrap_err();
     assert!(matches!(
-        reused.downcast_ref::<db::gists::GistRefusal>(),
-        Some(db::gists::GistRefusal::Conflict)
+        reused.downcast_ref::<codeyard_db_repos::gists::GistRefusal>(),
+        Some(codeyard_db_repos::gists::GistRefusal::Conflict)
     ));
     let count = f.count().await;
     assert!(lifecycle::provision(
@@ -291,12 +297,14 @@ async fn namespace(pg: bool) {
     .await
     .is_err());
     assert_eq!(f.count().await, count);
-    let renamed = db::repositories::records::rename_repository(f.pool(), legacy, repo.id, &id)
-        .await
-        .unwrap_err();
+    let renamed =
+        codeyard_db_repos::repositories::records::rename_repository(f.pool(), legacy, repo.id, &id)
+            .await
+            .unwrap_err();
     assert!(matches!(
-        renamed.downcast_ref::<db::repositories::records::RepositorySettingsRefusal>(),
-        Some(db::repositories::records::RepositorySettingsRefusal::NameConflict)
+        renamed
+            .downcast_ref::<codeyard_db_repos::repositories::records::RepositorySettingsRefusal>(),
+        Some(codeyard_db_repos::repositories::records::RepositorySettingsRefusal::NameConflict)
     ));
     let ordinary = lifecycle::provision(
         (f.pool(), None),
@@ -312,7 +320,7 @@ async fn namespace(pg: bool) {
     )
     .await
     .unwrap();
-    let moved = db::repositories::records::transfer_repository(
+    let moved = codeyard_db_repos::repositories::records::transfer_repository(
         f.pool(),
         legacy,
         ordinary.id,
@@ -321,8 +329,8 @@ async fn namespace(pg: bool) {
     .await
     .unwrap_err();
     assert!(matches!(
-        moved.downcast_ref::<db::repositories::records::RepositorySettingsRefusal>(),
-        Some(db::repositories::records::RepositorySettingsRefusal::NameConflict)
+        moved.downcast_ref::<codeyard_db_repos::repositories::records::RepositorySettingsRefusal>(),
+        Some(codeyard_db_repos::repositories::records::RepositorySettingsRefusal::NameConflict)
     ));
     assert_eq!(f.repository(ordinary.id).await.owner_user_id, Some(alice));
     // A legacy/imported row that bypassed admission still cannot capture an issued URL.
@@ -332,7 +340,7 @@ async fn namespace(pg: bool) {
     )
     .await;
     assert!(
-        db::repositories::records::get_git_repository(f.pool(), "gists", &id)
+        codeyard_db_repos::repositories::records::get_git_repository(f.pool(), "gists", &id)
             .await
             .unwrap()
             .is_none()
@@ -354,26 +362,32 @@ async fn namespace(pg: bool) {
         guest.page(&format!("/gists/@repos/gists/{id}")).await.0,
         200
     );
-    assert!(db::gists::discard(f.pool(), staged.id, false)
-        .await
-        .unwrap()
-        .is_some());
+    assert!(
+        codeyard_db_repos::gists::discard(f.pool(), staged.id, false)
+            .await
+            .unwrap()
+            .is_some()
+    );
     // The same namespace protection applies to pre-existing organizations, not just users.
     f.execute(
         "UPDATE users SET username='former-gists-user' WHERE id=$1",
         &[legacy],
     )
     .await;
-    let input = db::organizations::profiles::NewOrganization::new(
+    let input = codeyard_db_orgs::organizations::profiles::NewOrganization::new(
         "legacy-org",
-        db::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
+        codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
     )
     .unwrap();
-    let org = match db::organizations::profiles::create_organization(f.pool(), alice, &input)
-        .await
-        .unwrap()
+    let org = match codeyard_db_orgs::organizations::profiles::create_organization(
+        f.pool(),
+        alice,
+        &input,
+    )
+    .await
+    .unwrap()
     {
-        db::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization refused"),
     };
     f.execute(
@@ -425,7 +439,7 @@ async fn namespace(pg: bool) {
         .as_str()
         .unwrap()
         .ends_with("/gists/@users/gists"));
-    let org = db::organizations::get_public_organization(f.pool(), "gists")
+    let org = codeyard_db_orgs::organizations::profiles::get_public_organization(f.pool(), "gists")
         .await
         .unwrap()
         .unwrap();

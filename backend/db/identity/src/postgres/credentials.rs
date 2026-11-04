@@ -81,11 +81,3 @@ pub async fn ci(
     }
     repository(tx, &actor, repo, permission, true).await
 }
-
-use codeyard_db_core::queries::postgres::credentials::live;
-
-use codeyard_db_core::queries::postgres::credentials::repository;
-
-use codeyard_db_core::queries::postgres::credentials::live;
-
-use codeyard_db_core::queries::postgres::credentials::repository;

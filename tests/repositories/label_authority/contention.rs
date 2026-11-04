@@ -11,7 +11,7 @@ async fn postgres_every_label_write_waits_for_actor_row_then_rechecks_revocation
     let (issue, label) = seed(fixture.pool(), owner, repo).await;
     let raw = fixture.pg();
     for mutation in MUTATIONS {
-        db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             fixture.pool(),
             actor,
             repo,
@@ -84,7 +84,7 @@ async fn sqlite_every_label_write_contends_for_reserved_writer_then_rechecks() {
     let actor = fixture.actor("reserved_admin").await;
     let repo = fixture.label_repo(owner, None).await;
     let (issue, label) = seed(fixture.pool(), owner, repo).await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         fixture.pool(),
         actor,
         repo,

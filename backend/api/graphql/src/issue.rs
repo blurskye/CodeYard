@@ -1,7 +1,6 @@
 use crate::arguments::Arguments;
 use crate::bindings::boxed;
 use crate::connection::Page;
-use crate::db;
 use crate::missing;
 use crate::mutations::issue_error as operation;
 use crate::unavailable;
@@ -21,7 +20,7 @@ pub(super) mod metadata;
 mod mutations;
 
 pub(super) async fn linked_branch_node(id: i64, request: &RequestContext) -> Result<Value> {
-    let branch = db::graphql::linked_branch(&request.state.pool, id)
+    let branch = codeyard_db_repos::graphql::linked_branch(&request.state.pool, id)
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;
@@ -97,9 +96,9 @@ pub(super) async fn resolve(
         "labels" => {
             crate::connection::validate(ctx)?;
             let labels = if ty == "Issue" {
-                db::labels::get_issue_labels(pool, repo.id, id).await
+                codeyard_db_repos::labels::get_issue_labels(pool, repo.id, id).await
             } else {
-                db::labels::get_pull_request_labels(pool, repo.id, id).await
+                codeyard_db_repos::labels::get_pull_request_labels(pool, repo.id, id).await
             }
             .map_err(unavailable)?;
             crate::repository::label_connection(
@@ -127,21 +126,23 @@ pub(super) async fn resolve(
                     (false, false)
                 };
             let count = if ty == "Issue" {
-                db::issues::count_issue_comments(pool, &[id])
+                codeyard_db_repos::issues::count_issue_comments(pool, &[id])
                     .await
                     .map_err(unavailable)?
                     .first()
                     .map(|(_, n)| *n)
                     .unwrap_or(0)
             } else {
-                db::pull_requests::reviews::count_pull_request_conversation_comments(pool, id)
-                    .await
-                    .map_err(unavailable)?
+                codeyard_db_repos::pull_requests::reviews::count_pull_request_conversation_comments(
+                    pool, id,
+                )
+                .await
+                .map_err(unavailable)?
             };
             let page = Page::new(ctx, count)?;
             let mut nodes = Vec::new();
             if ty == "Issue" {
-                for entry in db::issues::list_issue_comments_ordered(
+                for entry in codeyard_db_repos::issues::list_issue_comments_ordered(
                     pool,
                     id,
                     page.limit,
@@ -156,7 +157,7 @@ pub(super) async fn resolve(
                 }
             } else {
                 for entry in
-                    db::pull_requests::reviews::list_pull_request_conversation_comments_ordered(
+                    codeyard_db_repos::pull_requests::reviews::list_pull_request_conversation_comments_ordered(
                         pool,
                         id,
                         page.limit,
@@ -183,7 +184,7 @@ pub(super) async fn comment(
     comment: &codeyard_db_core::models::IssueComment,
     request: &RequestContext,
 ) -> Result<Value> {
-    let issue = db::issues::get_issue_by_id(&request.state.pool, comment.issue_id)
+    let issue = codeyard_db_repos::issues::get_issue_by_id(&request.state.pool, comment.issue_id)
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;
@@ -201,7 +202,7 @@ pub(super) async fn pull_comment(
     comment: &codeyard_db_core::models::PullRequestComment,
     request: &RequestContext,
 ) -> Result<Value> {
-    let pull = db::pull_requests::records::get_pull_request_by_id(
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
         &request.state.pool,
         comment.pull_request_id,
     )
@@ -266,7 +267,7 @@ pub(super) async fn list(
         .map(|v| v.deserialize::<Vec<String>>())
         .transpose()?
         .unwrap_or_default();
-    let mut filter = db::discussions::ListFilter {
+    let mut filter = codeyard_db_repos::discussions::ListFilter {
         state,
         include_merged,
         labels: &labels,
@@ -276,18 +277,18 @@ pub(super) async fn list(
         let order = order.object()?;
         let ascending = order.try_get("direction")?.enum_name()? == "ASC";
         filter.sort = match (order.try_get("field")?.enum_name()?, ascending) {
-            ("CREATED_AT", true) => db::discussions::ListSort::Oldest,
-            ("CREATED_AT", false) => db::discussions::ListSort::Newest,
-            ("UPDATED_AT", true) => db::discussions::ListSort::LeastRecentlyUpdated,
-            ("UPDATED_AT", false) => db::discussions::ListSort::RecentlyUpdated,
-            ("COMMENTS", true) => db::discussions::ListSort::LeastCommented,
-            ("COMMENTS", false) => db::discussions::ListSort::MostCommented,
+            ("CREATED_AT", true) => codeyard_db_repos::discussions::ListSort::Oldest,
+            ("CREATED_AT", false) => codeyard_db_repos::discussions::ListSort::Newest,
+            ("UPDATED_AT", true) => codeyard_db_repos::discussions::ListSort::LeastRecentlyUpdated,
+            ("UPDATED_AT", false) => codeyard_db_repos::discussions::ListSort::RecentlyUpdated,
+            ("COMMENTS", true) => codeyard_db_repos::discussions::ListSort::LeastCommented,
+            ("COMMENTS", false) => codeyard_db_repos::discussions::ListSort::MostCommented,
             _ => return Err(Error::new("Codeyard does not support this order yet")),
         };
     }
     let pool = &request.state.pool;
     let count = if field == "issues" {
-        let counts = db::issues::count_repo_issues(pool, repo, &filter)
+        let counts = codeyard_db_repos::issues::count_repo_issues(pool, repo, &filter)
             .await
             .map_err(unavailable)?;
         match state {
@@ -296,20 +297,22 @@ pub(super) async fn list(
             _ => counts.all,
         }
     } else {
-        db::pull_requests::records::count_repo_pull_requests_by_state(pool, repo, &filter)
-            .await
-            .map_err(unavailable)?
-            .into_iter()
-            .filter(|(state, _)| states.is_empty() || states.contains(state))
-            .map(|(_, count)| count)
-            .sum()
+        codeyard_db_repos::pull_requests::records::count_repo_pull_requests_by_state(
+            pool, repo, &filter,
+        )
+        .await
+        .map_err(unavailable)?
+        .into_iter()
+        .filter(|(state, _)| states.is_empty() || states.contains(state))
+        .map(|(_, count)| count)
+        .sum()
     };
     let page = Page::new(ctx, count)?;
     filter.offset = page.offset;
     let nodes = if page.limit == 0 {
         Vec::new()
     } else if field == "issues" {
-        db::issues::list_repo_issues(pool, repo, &filter, page.limit)
+        codeyard_db_repos::issues::list_repo_issues(pool, repo, &filter, page.limit)
             .await
             .map_err(unavailable)?
             .iter()
@@ -326,22 +329,24 @@ pub(super) async fn list(
             })
             .collect::<Result<Vec<_>>>()?
     } else {
-        db::pull_requests::records::list_repo_pull_requests(pool, repo, &filter, page.limit)
-            .await
-            .map_err(unavailable)?
-            .iter()
-            .map(|entry| {
-                request.charge(
-                    entry
-                        .pull_request
-                        .title
-                        .len()
-                        .saturating_add(entry.pull_request.body.len())
-                        .saturating_mul(4),
-                )?;
-                Ok(pull_object(&entry.pull_request))
-            })
-            .collect::<Result<Vec<_>>>()?
+        codeyard_db_repos::pull_requests::records::list_repo_pull_requests(
+            pool, repo, &filter, page.limit,
+        )
+        .await
+        .map_err(unavailable)?
+        .iter()
+        .map(|entry| {
+            request.charge(
+                entry
+                    .pull_request
+                    .title
+                    .len()
+                    .saturating_add(entry.pull_request.body.len())
+                    .saturating_mul(4),
+            )?;
+            Ok(pull_object(&entry.pull_request))
+        })
+        .collect::<Result<Vec<_>>>()?
     };
     Ok(page.finish(nodes))
 }
@@ -439,7 +444,7 @@ pub(super) async fn mutation(
         .map_err(operation)?;
         payload["issue"] = object(&issue);
     } else if field == "addComment" && kind == "PR" {
-        let pull = db::pull_requests::records::get_pull_request_by_id(pool, id)
+        let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, id)
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
@@ -487,9 +492,11 @@ pub(super) async fn mutation(
                     error => Error::new(error.to_string()),
                 }
             })?;
-        let position = db::pull_requests::reviews::conversation_comment_position(pool, saved.id)
-            .await
-            .map_err(unavailable)?
+        let position = codeyard_db_repos::pull_requests::reviews::conversation_comment_position(
+            pool, saved.id,
+        )
+        .await
+        .map_err(unavailable)?
             - 1;
         payload["commentEdge"] = json!({"cursor":connection::cursor(position),"node":pull_comment(&saved,request).await?});
         payload["subject"] = pull_object(&pull);
@@ -497,7 +504,7 @@ pub(super) async fn mutation(
         if kind != "I" {
             return Err(missing());
         }
-        let issue = db::issues::get_issue_by_id(pool, id)
+        let issue = codeyard_db_repos::issues::get_issue_by_id(pool, id)
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
@@ -530,7 +537,7 @@ pub(super) async fn mutation(
             )
             .await
             .map_err(operation)?;
-            let position = db::issues::issue_comment_position(pool, saved.id)
+            let position = codeyard_db_repos::issues::issue_comment_position(pool, saved.id)
                 .await
                 .map_err(unavailable)?
                 - 1;
@@ -538,7 +545,7 @@ pub(super) async fn mutation(
             payload["subject"] = object(&issue);
         } else if field == "closeIssue" && !input["duplicateIssueId"].is_null() {
             let duplicate = crate::issue::mutations::id(&input, "duplicateIssueId", "I")?;
-            let target = db::issues::get_issue_by_id(pool, duplicate)
+            let target = codeyard_db_repos::issues::get_issue_by_id(pool, duplicate)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;

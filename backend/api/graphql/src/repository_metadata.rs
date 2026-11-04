@@ -1,7 +1,6 @@
 //! Repository-list selections use the same Git files and catalogues as native pages.
 
 use crate::arguments::Arguments;
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::url;
@@ -74,13 +73,14 @@ pub(super) async fn resolve(
             {
                 return Ok(json!([actor.noreply_email()]));
             }
-            let mut emails: Vec<_> = db::users::emails::list_emails(pool, actor.id)
-                .await
-                .map_err(unavailable)?
-                .into_iter()
-                .filter(|email| email.verified)
-                .map(|email| email.email)
-                .collect();
+            let mut emails: Vec<_> =
+                codeyard_db_identity::users::emails::list_emails(pool, actor.id)
+                    .await
+                    .map_err(unavailable)?
+                    .into_iter()
+                    .filter(|email| email.verified)
+                    .map(|email| email.email)
+                    .collect();
             emails.push(actor.noreply_email());
             emails.sort();
             emails.dedup();
@@ -93,15 +93,17 @@ pub(super) async fn resolve(
         } else {
             "REBASE"
         })),
-        "viewerHasStarred" => Ok(json!(db::repositories::engagement::is_repo_starred(
-            pool, actor.id, repo.id
-        )
-        .await
-        .map_err(unavailable)?)),
-        "viewerSubscription" => {
-            let level = db::repositories::engagement::get_watch_level(pool, actor.id, repo.id)
+        "viewerHasStarred" => Ok(json!(
+            codeyard_db_repos::repositories::engagement::is_repo_starred(pool, actor.id, repo.id)
                 .await
-                .map_err(unavailable)?;
+                .map_err(unavailable)?
+        )),
+        "viewerSubscription" => {
+            let level = codeyard_db_repos::repositories::engagement::get_watch_level(
+                pool, actor.id, repo.id,
+            )
+            .await
+            .map_err(unavailable)?;
             Ok(json!(
                 match level.as_ref().map(|(level, _)| level.as_str()) {
                     Some("ignoring") => "IGNORED",
@@ -298,14 +300,15 @@ pub(super) async fn resolve(
                 .transpose()?
                 .unwrap_or("")
                 .to_lowercase();
-            let total = db::assignees::count_assignable_users(pool, repo.id, &filter)
-                .await
-                .map_err(unavailable)?;
+            let total =
+                codeyard_db_repos::assignees::count_assignable_users(pool, repo.id, &filter)
+                    .await
+                    .map_err(unavailable)?;
             let page = crate::connection::Page::new(ctx, total)?;
             let rows = if page.limit == 0 {
                 Vec::new()
             } else {
-                db::assignees::list_assignable_users(
+                codeyard_db_repos::assignees::list_assignable_users(
                     pool,
                     repo.id,
                     &filter,

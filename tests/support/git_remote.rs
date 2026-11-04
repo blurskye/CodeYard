@@ -98,7 +98,7 @@ impl Server {
             |addresses| {
                 let client = &client;
                 async move {
-                    let node = db::cluster::get_node_by_name(&database.pool, name)
+                    let node = codeyard_db_cluster::cluster::get_node_by_name(&database.pool, name)
                         .await
                         .unwrap();
                     node.is_some_and(|node| node.addr_hint.is_some())
@@ -112,7 +112,7 @@ impl Server {
             },
         )
         .await;
-        let node = db::cluster::get_node_by_name(&database.pool, name)
+        let node = codeyard_db_cluster::cluster::get_node_by_name(&database.pool, name)
             .await
             .unwrap()
             .expect("the started node registered itself");

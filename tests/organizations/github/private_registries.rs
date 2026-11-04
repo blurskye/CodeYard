@@ -61,9 +61,12 @@ async fn contract(pg: bool) {
             codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
-                db::repositories::creation::RepositoryCreationOwner {
+                codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
                     actor_id: owner,
-                    target: db::repositories::creation::RepositoryTarget::Organization(org),
+                    target:
+                        codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(
+                            org,
+                        ),
                 },
                 name,
                 None,

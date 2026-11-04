@@ -201,12 +201,12 @@ async fn setup_competitors_have_one_transactional_admin_and_mode() {
             .count(),
         1
     );
-    let users = db::users::accounts::list_users(&fixture.pool)
+    let users = codeyard_db_identity::users::accounts::list_users(&fixture.pool)
         .await
         .unwrap();
     assert_eq!(users.len(), 1);
     assert!(users[0].is_admin);
-    let config = db::node_config::get_node_configuration(&fixture.pool)
+    let config = codeyard_db_cluster::node_config::get_node_configuration(&fixture.pool)
         .await
         .unwrap()
         .unwrap();
@@ -232,7 +232,7 @@ async fn setup_config_failure_rolls_back_and_original_admin_can_recover() {
             .is_err()
     );
     assert_eq!(
-        db::users::accounts::count_users(&fixture.pool)
+        codeyard_db_identity::users::accounts::count_users(&fixture.pool)
             .await
             .unwrap(),
         0
@@ -240,7 +240,7 @@ async fn setup_config_failure_rolls_back_and_original_admin_can_recover() {
     sqlx::raw_sql("DROP TRIGGER reject_setup_config ON node_configuration; DROP FUNCTION reject_setup_config();").execute(&fixture.raw).await.unwrap();
     // Provision the admin directly, leaving setup incomplete. Setup does not
     // auto-adopt arbitrary users.
-    let orphan = db::users::accounts::create_user_with_password_and_flags(
+    let orphan = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         &fixture.pool,
         "admin",
         None,
@@ -283,7 +283,7 @@ async fn setup_config_failure_rolls_back_and_original_admin_can_recover() {
         SetupClaim::Completed(_)
     ));
     assert_eq!(
-        db::users::accounts::count_users(&fixture.pool)
+        codeyard_db_identity::users::accounts::count_users(&fixture.pool)
             .await
             .unwrap(),
         1
@@ -302,7 +302,7 @@ async fn setup_config_failure_rolls_back_and_original_admin_can_recover() {
     .await
     .is_err());
     assert!(
-        db::node_config::get_node_configuration(&fixture.pool)
+        codeyard_db_cluster::node_config::get_node_configuration(&fixture.pool)
             .await
             .unwrap()
             .unwrap()
@@ -336,7 +336,7 @@ async fn setup_config_failure_rolls_back_and_original_admin_can_recover() {
 async fn reciprocal_admin_bans_revalidate_the_actor_and_preserve_repository_data() {
     let fixture = Database::new().await;
     let a = fixture.setup("private").await;
-    let b = db::users::accounts::create_user_with_password_and_flags(
+    let b = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         &fixture.pool,
         "admin_b",
         None,
@@ -349,7 +349,7 @@ async fn reciprocal_admin_bans_revalidate_the_actor_and_preserve_repository_data
     for id in [a.id, b.id] {
         sqlx::query("INSERT INTO repositories (owner_user_id,name,disk_path,is_private) VALUES ($1,'preserved','fixture-no-filesystem-effect',TRUE)")
             .bind(id).execute(&fixture.raw).await.unwrap();
-        db::users::sessions::create_session(
+        codeyard_db_identity::users::sessions::create_session(
             &fixture.pool,
             &random_id(),
             id,
@@ -387,7 +387,7 @@ async fn reciprocal_admin_bans_revalidate_the_actor_and_preserve_repository_data
         1
     );
     assert_eq!(
-        db::users::accounts::count_unbanned_admin_users(&fixture.pool)
+        codeyard_db_identity::users::accounts::count_unbanned_admin_users(&fixture.pool)
             .await
             .unwrap(),
         1
@@ -794,7 +794,7 @@ async fn concurrent_csrf_creation_and_expiry_share_one_token_bound_to_live_ident
     .await
     .unwrap()
     .is_some());
-    db::users::accounts::update_user_password(&fixture.pool, user.id, PHC, false)
+    codeyard_db_identity::users::accounts::update_user_password(&fixture.pool, user.id, PHC, false)
         .await
         .unwrap();
     assert!(stored::get_or_create_csrf_token(
@@ -1062,7 +1062,7 @@ async fn oauth_admission_never_bootstraps_or_bypasses_private_approval_or_passwo
         AccountAdmission::SetupRequired
     ));
     assert_eq!(
-        db::users::accounts::count_users(&fixture.pool)
+        codeyard_db_identity::users::accounts::count_users(&fixture.pool)
             .await
             .unwrap(),
         0
@@ -1074,7 +1074,7 @@ async fn oauth_admission_never_bootstraps_or_bypasses_private_approval_or_passwo
             .unwrap(),
         AccountAdmission::ApprovalRequired
     ));
-    let approved = db::users::accounts::create_user_with_password_and_flags(
+    let approved = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         &fixture.pool,
         "approved",
         None,
@@ -1120,9 +1120,14 @@ async fn oauth_admission_never_bootstraps_or_bypasses_private_approval_or_passwo
     .await
     .unwrap()
     .is_none());
-    db::users::accounts::update_user_password(&fixture.pool, approved.id, PHC, false)
-        .await
-        .unwrap();
+    codeyard_db_identity::users::accounts::update_user_password(
+        &fixture.pool,
+        approved.id,
+        PHC,
+        false,
+    )
+    .await
+    .unwrap();
     assert!(
         matches!(transitions::admit_oauth_account(&fixture.pool,"google","subject","ignored",None).await.unwrap(),AccountAdmission::User(user) if user.id==approved.id)
     );
@@ -1151,7 +1156,7 @@ async fn oauth_admission_never_bootstraps_or_bypasses_private_approval_or_passwo
     .unwrap()
     .is_none());
     assert_eq!(
-        db::users::accounts::count_users(&fixture.pool)
+        codeyard_db_identity::users::accounts::count_users(&fixture.pool)
             .await
             .unwrap(),
         2
@@ -1163,7 +1168,7 @@ async fn password_session_revocation_failure_rolls_back_both_hash_and_required_c
     let _password_work = PASSWORD_FIXTURE_WORK.lock().await;
     let fixture = Database::new().await;
     fixture.setup("private").await;
-    let user = db::users::accounts::create_user_with_password_and_flags(
+    let user = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         &fixture.pool,
         "temporary",
         None,
@@ -1220,7 +1225,7 @@ async fn password_session_revocation_failure_rolls_back_both_hash_and_required_c
     )
     .await
     .is_err());
-    let unchanged = db::users::accounts::get_user_by_id(&fixture.pool, user.id)
+    let unchanged = codeyard_db_identity::users::accounts::get_user_by_id(&fixture.pool, user.id)
         .await
         .unwrap()
         .unwrap();
@@ -1261,7 +1266,7 @@ async fn password_session_revocation_failure_rolls_back_both_hash_and_required_c
     .unwrap()
     .is_none());
     assert!(
-        !db::users::accounts::get_user_by_id(&fixture.pool, user.id)
+        !codeyard_db_identity::users::accounts::get_user_by_id(&fixture.pool, user.id)
             .await
             .unwrap()
             .unwrap()
@@ -1274,7 +1279,7 @@ async fn password_session_revocation_failure_rolls_back_both_hash_and_required_c
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn token_insert_waiting_behind_password_revocation_is_refused() {
     let fixture = Database::new().await;
-    let user = db::users::accounts::create_user_with_password_and_flags(
+    let user = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         &fixture.pool,
         "tokenrace",
         None,
@@ -1334,7 +1339,7 @@ async fn token_insert_waiting_behind_password_revocation_is_refused() {
         racing.await.unwrap(),
         Err(identity::tokens::TokenError::Denied)
     ));
-    assert!(db::users::tokens::list_tokens(
+    assert!(codeyard_db_identity::users::tokens::list_tokens(
         &fixture.pool,
         user.id,
         &crate::support::live_session(&fixture.pool, user.id).await,
@@ -1372,7 +1377,7 @@ async fn public_oauth_parallel_enrollment_has_no_orphan_user_or_second_link() {
     };
     assert_eq!(a.id, b.id);
     assert_eq!(
-        db::users::accounts::count_users(&fixture.pool)
+        codeyard_db_identity::users::accounts::count_users(&fixture.pool)
             .await
             .unwrap(),
         2
@@ -1502,7 +1507,7 @@ async fn identity_login_owns_alias_admission_and_anonymous_csrf_rotation() {
     let fixture = Database::new().await;
     fixture.setup("public").await;
     let hash = passwords::hash_password("alias-password").await.unwrap();
-    let user = db::users::accounts::create_user_with_password_and_flags(
+    let user = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         &fixture.pool,
         "alias",
         Some("alias@example.test"),
@@ -1610,7 +1615,7 @@ async fn identity_login_rehashes_a_password_stored_at_an_older_cost() {
             .to_string()
     };
     let old_hash = older_hash();
-    let user = db::users::accounts::create_user_with_password_and_flags(
+    let user = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         &fixture.pool,
         "older",
         None,
@@ -1637,7 +1642,7 @@ async fn identity_login_rehashes_a_password_stored_at_an_older_cost() {
     let stored_hash = account.user.password_hash.unwrap();
     assert_ne!(stored_hash, old_hash);
     assert!(stored_hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"));
-    let saved = db::users::accounts::get_user_by_id(&fixture.pool, user.id)
+    let saved = codeyard_db_identity::users::accounts::get_user_by_id(&fixture.pool, user.id)
         .await
         .unwrap()
         .unwrap();
@@ -1650,7 +1655,7 @@ async fn identity_login_rehashes_a_password_stored_at_an_older_cost() {
     );
 
     // Two logins racing on the first rehash both succeed; the loser adopts the winner's hash.
-    let racing = db::users::accounts::create_user_with_password_and_flags(
+    let racing = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         &fixture.pool,
         "racing",
         None,
@@ -1677,7 +1682,7 @@ async fn identity_login_rehashes_a_password_stored_at_an_older_cost() {
     let (first, second) = tokio::join!(login(first_id), login(second_id));
     signed_in(first).unwrap();
     signed_in(second).unwrap();
-    let saved = db::users::accounts::get_user_by_id(&fixture.pool, racing.id)
+    let saved = codeyard_db_identity::users::accounts::get_user_by_id(&fixture.pool, racing.id)
         .await
         .unwrap()
         .unwrap();
@@ -1711,7 +1716,7 @@ async fn identity_setup_and_registration_session_outages_leave_committed_account
         Err(SetupError::InvalidAdminSecret)
     ));
     assert_eq!(
-        db::users::accounts::count_users(&fixture.pool)
+        codeyard_db_identity::users::accounts::count_users(&fixture.pool)
             .await
             .unwrap(),
         0
@@ -1743,7 +1748,7 @@ async fn identity_setup_and_registration_session_outages_leave_committed_account
             .setup_completed
     );
     assert_eq!(
-        db::users::accounts::count_users(&fixture.pool)
+        codeyard_db_identity::users::accounts::count_users(&fixture.pool)
             .await
             .unwrap(),
         1
@@ -1763,7 +1768,7 @@ async fn identity_setup_and_registration_session_outages_leave_committed_account
         Err(RegistrationError::Session(SessionIssueError::Unavailable))
     ));
     assert_eq!(
-        db::users::accounts::count_users(&fixture.pool)
+        codeyard_db_identity::users::accounts::count_users(&fixture.pool)
             .await
             .unwrap(),
         2
@@ -1813,12 +1818,13 @@ async fn identity_setup_and_registration_session_outages_leave_committed_account
             SessionIssueError::InvalidInitiator
         ))
     ));
-    assert!(
-        db::users::accounts::get_user_by_username(&fixture.pool, "invalid_context")
-            .await
-            .unwrap()
-            .is_some()
-    );
+    assert!(codeyard_db_identity::users::accounts::get_user_by_username(
+        &fixture.pool,
+        "invalid_context"
+    )
+    .await
+    .unwrap()
+    .is_some());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1858,7 +1864,7 @@ async fn identity_private_registration_managed_password_change_and_review_share_
         RegistrationOutcome::Requested
     ));
     assert_eq!(
-        db::users::accounts::count_users(&fixture.pool)
+        codeyard_db_identity::users::accounts::count_users(&fixture.pool)
             .await
             .unwrap(),
         1
@@ -1951,11 +1957,16 @@ async fn identity_private_registration_managed_password_change_and_review_share_
     .await
     .unwrap()
     .is_none());
-    let request =
-        db::users::signup_requests::list_signup_requests(&fixture.pool, "pending", 100, 0, 0)
-            .await
-            .unwrap()
-            .remove(0);
+    let request = codeyard_db_identity::users::signup_requests::list_signup_requests(
+        &fixture.pool,
+        "pending",
+        100,
+        0,
+        0,
+    )
+    .await
+    .unwrap()
+    .remove(0);
     assert!(matches!(identity::accounts::review_signup(
         &fixture.pool, Some(&admin_session), request.id, Some(SignupDecision::Approve),
     ).await.unwrap(), SignupReviewOutcome::Approved(user) if user.username == "requested"));

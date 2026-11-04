@@ -69,7 +69,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "project",
         None,
         true,
@@ -82,11 +82,11 @@ async fn contract(pg: bool) {
         &[bob, repo.id],
     )
     .await;
-    db::actions::save_repo_actions_settings(
+    codeyard_db_actions::actions::save_repo_actions_settings(
         f.pool(),
         alice,
         repo.id,
-        &db::actions::RepoActionsSettings {
+        &codeyard_db_actions::actions::RepoActionsSettings {
             enabled: false,
             engine: Some("act".to_owned()),
             run_timeout_minutes: Some(17),
@@ -256,7 +256,7 @@ async fn contract(pg: bool) {
         .await["max_cache_retention_days"],
         2
     );
-    let own = db::actions::get_repo_actions_settings(f.pool(), repo.id)
+    let own = codeyard_db_actions::actions::get_repo_actions_settings(f.pool(), repo.id)
         .await
         .unwrap();
     assert!(!own.enabled);
@@ -307,11 +307,11 @@ async fn contract(pg: bool) {
     assert!(page.contains("value=\"2\""));
     assert_eq!(f.scalar("SELECT COUNT(*) FROM audit_log WHERE action='repository.actions_cache_policy' AND target_id=$1",&[repo.id]).await,3);
     // A native settings save applies its cache retention to the stored caches as well.
-    db::actions::save_repo_actions_settings(
+    codeyard_db_actions::actions::save_repo_actions_settings(
         f.pool(),
         alice,
         repo.id,
-        &db::actions::RepoActionsSettings {
+        &codeyard_db_actions::actions::RepoActionsSettings {
             engine: Some("act".to_owned()),
             cache_size_gib: Some(1),
             cache_retention_days: Some(1),

@@ -678,7 +678,3 @@ pub async fn expire_objects(pool: &PgPool) -> Result<()> {
 use codeyard_db_core::queries::postgres::action_objects::enforce_cache_limit;
 
 use codeyard_db_core::queries::postgres::action_objects::cache_policy;
-
-use codeyard_db_core::queries::postgres::action_objects::cache_policy;
-
-use codeyard_db_core::queries::postgres::action_objects::enforce_cache_limit;

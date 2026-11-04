@@ -7,6 +7,7 @@ use codeyard_model::ci::LogLine;
 use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
+use sha2::Digest;
 use sha2::Sha256;
 
 const MAX_ENCODED_BYTES: usize = 2 * 1024 * 1024;

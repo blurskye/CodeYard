@@ -1,6 +1,5 @@
 //! Branch creation uses the normal ref publication checks before recording the link.
 use crate::app::AppState;
-use crate::issues::db;
 use crate::issues::OperationError;
 use crate::repositories::store::repo_store;
 use codeyard_git::error::ErrorKind;
@@ -35,12 +34,12 @@ pub fn default_name(issue: &codeyard_db_core::models::Issue) -> String {
 
 pub async fn create(
     state: &AppState,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     issue: &codeyard_db_core::models::Issue,
     target: &codeyard_db_core::models::Repository,
     name: &str,
     oid: &str,
-) -> Result<db::issues::management::LinkedBranch, OperationError> {
+) -> Result<codeyard_db_repos::issues::management::LinkedBranch, OperationError> {
     let authority = actor.into();
     codeyard_identity::repository_access::check_write(
         &state.pool,
@@ -52,13 +51,14 @@ pub async fn create(
         code: "forbidden",
         message: "Write access is required".into(),
     })?;
-    let owner = db::repositories::records::repository_owner_name(&state.pool, target.id)
-        .await
-        .map_err(crate::issues::database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Repository not found".into(),
-        })?;
+    let owner =
+        codeyard_db_repos::repositories::records::repository_owner_name(&state.pool, target.id)
+            .await
+            .map_err(crate::issues::database_error)?
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Repository not found".into(),
+            })?;
     let created = crate::repositories::refs::create_branch(
         &state.pool,
         state.cluster.as_ref(),
@@ -119,7 +119,7 @@ pub async fn create(
         },
         Err(crate::repositories::refs::RefError::Unavailable) => return Err(unconfirmed()),
     }
-    db::issues::management::link_branch(
+    codeyard_db_repos::issues::management::link_branch(
         &state.pool,
         authority,
         issue.repo_id,

@@ -1,5 +1,4 @@
 use crate::arguments::Arguments;
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::RequestContext;
@@ -15,7 +14,7 @@ pub(super) async fn resolve(
     request.authorize(repo.id, "issues", false).await?;
     let pool = &request.state.pool;
     if field == "milestone" {
-        return match db::milestones::get_milestone(
+        return match codeyard_db_repos::milestones::get_milestone(
             pool,
             repo.id,
             args.args.try_get("number")?.i64()? as i32,
@@ -77,11 +76,16 @@ pub(super) async fn resolve(
     };
     let page = crate::connection::Page::new(
         args,
-        db::milestones::count_matching_milestones(pool, repo.id, state.as_deref(), query)
-            .await
-            .map_err(unavailable)?,
+        codeyard_db_repos::milestones::count_matching_milestones(
+            pool,
+            repo.id,
+            state.as_deref(),
+            query,
+        )
+        .await
+        .map_err(unavailable)?,
     )?;
-    let rows = db::milestones::search_milestones_page(
+    let rows = codeyard_db_repos::milestones::search_milestones_page(
         pool,
         repo.id,
         state.as_deref(),

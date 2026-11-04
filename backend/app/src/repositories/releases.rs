@@ -27,6 +27,7 @@ use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::watchers::notify_watchers;
 use codeyard_notifications::watchers::WatchEvent;
 use codeyard_notifications::watchers::WatchedItem;
+use sha2::Digest;
 use sha2::Sha256;
 use std::collections::HashMap;
 use uuid::Uuid;

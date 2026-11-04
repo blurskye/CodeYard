@@ -12,7 +12,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         false,
@@ -48,9 +48,10 @@ async fn contract(pg: bool) {
     assert!(data["repository"]["id"].is_string());
     assert_eq!(data["repository"]["databaseId"], repo.id);
     assert_eq!(data["repository"]["hasDiscussionsEnabled"], false);
-    let label = db::labels::create_label(f.pool(), alice, repo.id, "help", "abcdef", None)
-        .await
-        .unwrap();
+    let label =
+        codeyard_db_repos::labels::create_label(f.pool(), alice, repo.id, "help", "abcdef", None)
+            .await
+            .unwrap();
     let data = query(&router, &token, LABELS, vars).await;
     let connection = &data["repository"]["labels"];
     assert_eq!(connection["nodes"].as_array().unwrap().len(), 1);
@@ -224,7 +225,7 @@ async fn discussions(
     assert_eq!(second["number"], 3);
     refused(router, &read_token, create, json!({"input":new})).await;
     refused(router, &bob_token, create, json!({"input":new})).await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo,
@@ -264,7 +265,7 @@ async fn discussions(
         json!({"input":{"discussionId":discussion,"body":"Reader cannot comment"}}),
     )
     .await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo,
@@ -320,7 +321,7 @@ async fn discussions(
     let update_comment="mutation($input:UpdateDiscussionCommentInput!){updateDiscussionComment(input:$input){comment{id}}}";
     let charlie = f.actor("discussion-charlie").await;
     let charlie_token = credentials(f, router, charlie, "write").await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         charlie,
         repo,
@@ -371,12 +372,12 @@ async fn discussions(
     let direct=query(router,token,&format!("query($id:ID!){{node(id:$id){{__typename ...on DiscussionComment{{{COMMENT} discussion{{id}}}}}}}}"),json!({"id":comment})).await;
     assert_eq!(direct["node"]["__typename"], "DiscussionComment");
     // gh's numeric comment URL path emits compact MessagePack rather than our full-width encoding.
-    let stored = db::repository_discussions::by_number(f.pool(), repo, 1)
+    let stored = codeyard_db_repos::repository_discussions::by_number(f.pool(), repo, 1)
         .await
         .unwrap()
         .unwrap();
     let (_, stored_comments) =
-        db::repository_discussions::comments(f.pool(), stored.id, None, 0, 100)
+        codeyard_db_repos::repository_discussions::comments(f.pool(), stored.id, None, 0, 100)
             .await
             .unwrap();
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -480,7 +481,7 @@ async fn discussions(
     assert_eq!(unmarked["discussion"]["isAnswered"], false);
     assert!(unmarked["discussion"]["answer"].is_null());
     // Labels are repository-scoped and require triage, not just read access.
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo,
@@ -490,7 +491,7 @@ async fn discussions(
     .unwrap();
     let labels_input = json!({"labelableId":discussion,"labelIds":[label]});
     refused(router,&bob_token,"mutation($input:AddLabelsToLabelableInput!){addLabelsToLabelable(input:$input){labelable{...on Discussion{id}}}}",json!({"input":labels_input})).await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo,
@@ -554,7 +555,7 @@ async fn discussions(
     )
     .await;
     // The author keeps edit/delete authority with only read access.
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo,

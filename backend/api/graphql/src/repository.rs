@@ -1,6 +1,5 @@
 use crate::arg;
 use crate::arguments::Arguments;
-use crate::db;
 use crate::missing;
 use crate::unavailable;
 use crate::url;
@@ -56,10 +55,11 @@ pub(super) async fn by_id(
     id: i64,
     request: &RequestContext,
 ) -> Result<codeyard_db_core::models::Repository> {
-    let repo = db::repositories::records::get_repository_by_id(&request.state.pool, id)
-        .await
-        .map_err(unavailable)?
-        .ok_or_else(missing)?;
+    let repo =
+        codeyard_db_repos::repositories::records::get_repository_by_id(&request.state.pool, id)
+            .await
+            .map_err(unavailable)?
+            .ok_or_else(missing)?;
     check(repo, request).await
 }
 
@@ -85,7 +85,7 @@ pub(super) async fn owner(
     repo: &codeyard_db_core::models::Repository,
     request: &RequestContext,
 ) -> Result<String> {
-    db::repositories::records::repository_owner_name(&request.state.pool, repo.id)
+    codeyard_db_repos::repositories::records::repository_owner_name(&request.state.pool, repo.id)
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)
@@ -100,10 +100,14 @@ pub(super) async fn query(ctx: &Arguments, request: &RequestContext) -> Result<V
             "NOT_FOUND",
         )
     };
-    let repo = db::repositories::records::get_repository(&request.state.pool, &owner, &name)
-        .await
-        .map_err(unavailable)?
-        .ok_or_else(unresolved)?;
+    let repo = codeyard_db_repos::repositories::records::get_repository(
+        &request.state.pool,
+        &owner,
+        &name,
+    )
+    .await
+    .map_err(unavailable)?
+    .ok_or_else(unresolved)?;
     match check(repo, request).await {
         Ok(repo) => Ok(object(&repo)),
         Err(error) if crate::is_not_found(&error) => Err(unresolved()),
@@ -188,11 +192,11 @@ pub(super) async fn resolve(
     let repo = by_id(id, request).await?;
     let pool = &request.state.pool;
     match field {
-        "forkCount" => Ok(json!(db::repositories::records::network_fork_count(
-            pool, repo.id
-        )
-        .await
-        .map_err(unavailable)?)),
+        "forkCount" => Ok(json!(
+            codeyard_db_repos::repositories::records::network_fork_count(pool, repo.id)
+                .await
+                .map_err(unavailable)?
+        )),
         "hasWikiEnabled"
         | "hasIssuesEnabled"
         | "hasProjectsEnabled"
@@ -202,9 +206,10 @@ pub(super) async fn resolve(
         | "allowUpdateBranch"
         | "squashMergeCommitTitle"
         | "squashMergeCommitMessage" => {
-            let features = db::repositories::records::repository_features(pool, repo.id)
-                .await
-                .map_err(unavailable)?;
+            let features =
+                codeyard_db_repos::repositories::records::repository_features(pool, repo.id)
+                    .await
+                    .map_err(unavailable)?;
             Ok(match field {
                 "hasWikiEnabled" => json!(features.wiki),
                 "hasIssuesEnabled" => json!(features.has_issues),
@@ -218,11 +223,11 @@ pub(super) async fn resolve(
             })
         }
         "isTemplate" => Ok(json!(repo.is_template)),
-        "pushedAt" => Ok(json!(db::repositories::github::repository_pushed_at(
-            pool, id
-        )
-        .await
-        .map_err(unavailable)?)),
+        "pushedAt" => Ok(json!(
+            codeyard_db_repos::repositories::github::repository_pushed_at(pool, id)
+                .await
+                .map_err(unavailable)?
+        )),
         "owner" => {
             if repo.owner_kind == "org" {
                 crate::user::organization_by_id(repo.owner_id(), request).await
@@ -248,9 +253,10 @@ pub(super) async fn resolve(
         "issueTypes" => crate::issue::metadata::repository(ctx, request, &repo).await,
         "parent" => match repo.forked_from_id {
             Some(id) => {
-                let Some(parent) = db::repositories::records::get_repository_by_id(pool, id)
-                    .await
-                    .map_err(unavailable)?
+                let Some(parent) =
+                    codeyard_db_repos::repositories::records::get_repository_by_id(pool, id)
+                        .await
+                        .map_err(unavailable)?
                 else {
                     return Ok(Value::Null);
                 };
@@ -290,7 +296,7 @@ pub(super) async fn resolve(
             })
         }
         "repositoryTopics" => {
-            let names = db::repositories::topics::repository_topics(pool, &[id])
+            let names = codeyard_db_repos::repositories::topics::repository_topics(pool, &[id])
                 .await
                 .map_err(unavailable)?
                 .remove(&id)
@@ -305,7 +311,7 @@ pub(super) async fn resolve(
         }
         "watchers" => {
             let page = crate::connection::Page::new(ctx, i64::from(repo.watchers_count))?;
-            let watchers = db::repositories::engagement::list_repo_watchers(
+            let watchers = codeyard_db_repos::repositories::engagement::list_repo_watchers(
                 &request.state.pool,
                 repo.id,
                 page.limit,
@@ -348,7 +354,7 @@ pub(super) async fn resolve(
         }
         "issue" | "issueOrPullRequest" => {
             let number = ctx.args.try_get("number")?.i64()? as i32;
-            if let Some(item) = db::issues::get_issue(pool, id, number)
+            if let Some(item) = codeyard_db_repos::issues::get_issue(pool, id, number)
                 .await
                 .map_err(unavailable)?
             {
@@ -357,28 +363,31 @@ pub(super) async fn resolve(
             }
             if field == "issueOrPullRequest" {
                 request.authorize(id, "pull-requests", false).await?;
-                return Ok(
-                    db::pull_requests::records::get_pull_request(pool, id, number)
-                        .await
-                        .map_err(unavailable)?
-                        .as_ref()
-                        .map(crate::issue::pull_object)
-                        .unwrap_or(Value::Null),
-                );
+                return Ok(codeyard_db_repos::pull_requests::records::get_pull_request(
+                    pool, id, number,
+                )
+                .await
+                .map_err(unavailable)?
+                .as_ref()
+                .map(crate::issue::pull_object)
+                .unwrap_or(Value::Null));
             }
             Ok(Value::Null)
         }
         "pullRequest" => {
             let number = ctx.args.try_get("number")?.i64()? as i32;
-            let pull = db::pull_requests::records::get_pull_request(pool, id, number)
-                .await
-                .map_err(unavailable)?
-                .ok_or_else(|| {
-                    codeyard_model::graphql_error::error(
-                        format!("Could not resolve to a PullRequest with the number of {number}."),
-                        "NOT_FOUND",
-                    )
-                })?;
+            let pull =
+                codeyard_db_repos::pull_requests::records::get_pull_request(pool, id, number)
+                    .await
+                    .map_err(unavailable)?
+                    .ok_or_else(|| {
+                        codeyard_model::graphql_error::error(
+                            format!(
+                                "Could not resolve to a PullRequest with the number of {number}."
+                            ),
+                            "NOT_FOUND",
+                        )
+                    })?;
             Ok(crate::issue::pull_object(&pull))
         }
         "issues" | "pullRequests" => crate::issue::list(field, ctx, request, id).await,
@@ -402,16 +411,23 @@ pub(super) async fn resolve(
                 ("NAME", "DESC") => "name-desc",
                 _ => return Err(Error::new("Codeyard does not support this label order yet")),
             };
-            let count = db::labels::count_repo_labels(pool, id, query)
+            let count = codeyard_db_repos::labels::count_repo_labels(pool, id, query)
                 .await
                 .map_err(unavailable)?;
             let page = crate::connection::Page::new(ctx, count)?;
             let labels = if page.limit == 0 {
                 Vec::new()
             } else {
-                db::labels::list_repo_labels_page(pool, id, query, sort, page.limit, page.offset)
-                    .await
-                    .map_err(unavailable)?
+                codeyard_db_repos::labels::list_repo_labels_page(
+                    pool,
+                    id,
+                    query,
+                    sort,
+                    page.limit,
+                    page.offset,
+                )
+                .await
+                .map_err(unavailable)?
             };
             Ok(page.finish(labels.iter().map(label).collect()))
         }

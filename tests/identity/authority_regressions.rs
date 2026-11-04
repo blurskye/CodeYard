@@ -15,7 +15,7 @@ async fn administration(pg: bool) {
     let actor = f.actor("administrator").await;
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[actor])
         .await;
-    let target = db::users::accounts::create_user_with_password(
+    let target = codeyard_db_identity::users::accounts::create_user_with_password(
         f.pool(),
         "target",
         Some("needle@example.test"),
@@ -25,71 +25,80 @@ async fn administration(pg: bool) {
     .unwrap();
     f.execute("WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n<31) INSERT INTO users(username) SELECT 'listed-' || n FROM numbers", &[]).await;
     assert_eq!(
-        db::users::accounts::count_matching_users(f.pool(), "LISTED-")
+        codeyard_db_identity::users::accounts::count_matching_users(f.pool(), "LISTED-")
             .await
             .unwrap(),
         (31, 0, 0)
     );
-    let first = db::users::accounts::list_admin_users(f.pool(), "listed-", "", 25, 0)
-        .await
-        .unwrap();
-    let second = db::users::accounts::list_admin_users(f.pool(), "listed-", "", 25, 25)
-        .await
-        .unwrap();
+    let first =
+        codeyard_db_identity::users::accounts::list_admin_users(f.pool(), "listed-", "", 25, 0)
+            .await
+            .unwrap();
+    let second =
+        codeyard_db_identity::users::accounts::list_admin_users(f.pool(), "listed-", "", 25, 25)
+            .await
+            .unwrap();
     assert_eq!((first.len(), second.len()), (25, 6));
     assert!(first.iter().all(|a| second.iter().all(|b| a.id != b.id)));
     assert_eq!(
-        db::users::accounts::count_matching_users(f.pool(), "needle@")
+        codeyard_db_identity::users::accounts::count_matching_users(f.pool(), "needle@")
             .await
             .unwrap()
             .0,
         1
     );
     assert_eq!(
-        db::users::accounts::count_matching_users(f.pool(), "%")
+        codeyard_db_identity::users::accounts::count_matching_users(f.pool(), "%")
             .await
             .unwrap()
             .0,
         0
     );
     assert!(matches!(
-        db::users::transitions::change_admin_role(f.pool(), actor, target.id, true)
-            .await
-            .unwrap(),
-        db::users::transitions::RoleChange::Updated(_)
+        codeyard_db_identity::users::transitions::change_admin_role(
+            f.pool(),
+            actor,
+            target.id,
+            true
+        )
+        .await
+        .unwrap(),
+        codeyard_db_identity::users::transitions::RoleChange::Updated(_)
     ));
     assert!(matches!(
-        db::users::transitions::change_ban(f.pool(), actor, target.id, true)
+        codeyard_db_identity::users::transitions::change_ban(f.pool(), actor, target.id, true)
             .await
             .unwrap(),
-        db::users::transitions::BanChange::Updated(_)
+        codeyard_db_identity::users::transitions::BanChange::Updated(_)
     ));
     // The filters on the users page: the target is now both an administrator and banned.
-    let (all, admins, banned) = db::users::accounts::count_matching_users(f.pool(), "")
-        .await
-        .unwrap();
+    let (all, admins, banned) =
+        codeyard_db_identity::users::accounts::count_matching_users(f.pool(), "")
+            .await
+            .unwrap();
     assert_eq!((admins, banned), (2, 1));
     for (role, expected) in [
         ("admins", vec!["administrator", "target"]),
         ("banned", vec!["target"]),
     ] {
-        let names: Vec<String> = db::users::accounts::list_admin_users(f.pool(), "", role, 100, 0)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|account| account.username)
-            .collect();
+        let names: Vec<String> =
+            codeyard_db_identity::users::accounts::list_admin_users(f.pool(), "", role, 100, 0)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|account| account.username)
+                .collect();
         assert_eq!(names, expected);
     }
     assert_eq!(
-        db::users::accounts::list_admin_users(f.pool(), "", "", 100, 0)
+        codeyard_db_identity::users::accounts::list_admin_users(f.pool(), "", "", 100, 0)
             .await
             .unwrap()
             .len() as i64,
         all
     );
     let session = token();
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         f.pool(),
         &session,
         actor,
@@ -99,16 +108,18 @@ async fn administration(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(!db::users::two_factor::disable_two_factor(
-        f.pool(),
-        target.id,
-        db::users::two_factor::FactorAuthority::Administrator {
-            user_id: actor,
-            session: &session
-        },
-    )
-    .await
-    .unwrap());
+    assert!(
+        !codeyard_db_identity::users::two_factor::disable_two_factor(
+            f.pool(),
+            target.id,
+            codeyard_db_identity::users::two_factor::FactorAuthority::Administrator {
+                user_id: actor,
+                session: &session
+            },
+        )
+        .await
+        .unwrap()
+    );
     let sql =
         "SELECT action,target_id FROM audit_log WHERE actor_id=$1 AND org_id IS NULL ORDER BY id";
     let rows: Vec<(String, i64)> = match f.pool() {
@@ -144,7 +155,7 @@ async fn postgres_account_metadata_and_privileged_audit() {
 }
 
 async fn audit_count(f: &Database, action: &str, actor: &str) -> i64 {
-    db::audit::count_audit_entries(f.pool(), action, actor)
+    codeyard_db_identity::audit::count_audit_entries(f.pool(), action, actor)
         .await
         .unwrap()
 }
@@ -171,10 +182,10 @@ async fn audit_log_listing(pg: bool) {
     assert_eq!(audit_count(&f, ".", "").await, 4);
     assert_eq!(audit_count(&f, "%", "").await, 0);
 
-    let first = db::audit::list_audit_entries(f.pool(), "", "", 3, 0)
+    let first = codeyard_db_identity::audit::list_audit_entries(f.pool(), "", "", 3, 0)
         .await
         .unwrap();
-    let rest = db::audit::list_audit_entries(f.pool(), "", "", 3, 3)
+    let rest = codeyard_db_identity::audit::list_audit_entries(f.pool(), "", "", 3, 3)
         .await
         .unwrap();
     let order: Vec<_> = first
@@ -193,7 +204,7 @@ async fn audit_log_listing(pg: bool) {
     );
     assert!(first.windows(2).all(|pair| pair[0].id > pair[1].id));
     assert_eq!(first[0].details, "{}");
-    let filtered = db::audit::list_audit_entries(f.pool(), "ban", "alice", 50, 0)
+    let filtered = codeyard_db_identity::audit::list_audit_entries(f.pool(), "ban", "alice", 50, 0)
         .await
         .unwrap();
     assert_eq!(filtered.len(), 1);
@@ -239,7 +250,7 @@ async fn blank_email(pg: bool) {
     assert_eq!(account.user.commit_email(), "blank_mail@users.noreply");
     f.execute("UPDATE users SET email='' WHERE id=$1", &[account.user.id])
         .await;
-    let existing = db::users::accounts::get_user_by_id(f.pool(), account.user.id)
+    let existing = codeyard_db_identity::users::accounts::get_user_by_id(f.pool(), account.user.id)
         .await
         .unwrap()
         .unwrap();
@@ -266,7 +277,7 @@ async fn postgres_credential_enrollment_holds_the_original_session_until_commit(
         sqlx::query(&format!("CREATE TRIGGER wait_enrollment BEFORE INSERT ON {table} FOR EACH ROW EXECUTE FUNCTION wait_enrollment()"))
             .execute(raw).await.unwrap();
         let session = token();
-        db::users::sessions::create_session(
+        codeyard_db_identity::users::sessions::create_session(
             f.pool(),
             &session,
             user,
@@ -289,11 +300,13 @@ async fn postgres_credential_enrollment_holds_the_original_session_until_commit(
         let original = session.clone();
         let enrollment = tokio::spawn(async move {
             if table == "ssh_keys" {
-                db::users::ssh_keys::add_ssh_key_for_session(&pool, user, &original, "laptop", KEY)
-                    .await
-                    .unwrap();
+                codeyard_db_identity::users::ssh_keys::add_ssh_key_for_session(
+                    &pool, user, &original, "laptop", KEY,
+                )
+                .await
+                .unwrap();
             } else {
-                assert!(db::users::tokens::create_token(
+                assert!(codeyard_db_identity::users::tokens::create_token(
                     &pool,
                     user,
                     &original,
@@ -338,7 +351,7 @@ async fn postgres_privileged_writes_observe_a_waited_for_demotion() {
     let actor = f.actor("revoked_admin").await;
     let target = f.actor("reset_target").await;
     let session = token();
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         f.pool(),
         &session,
         actor,
@@ -366,10 +379,10 @@ async fn postgres_privileged_writes_observe_a_waited_for_demotion() {
         let original = session.clone();
         let mutation = tokio::spawn(async move {
             if reset {
-                assert!(db::users::two_factor::disable_two_factor(
+                assert!(codeyard_db_identity::users::two_factor::disable_two_factor(
                     &pool,
                     target,
-                    db::users::two_factor::FactorAuthority::Administrator {
+                    codeyard_db_identity::users::two_factor::FactorAuthority::Administrator {
                         user_id: actor,
                         session: &original
                     },
@@ -377,11 +390,11 @@ async fn postgres_privileged_writes_observe_a_waited_for_demotion() {
                 .await
                 .is_err());
             } else {
-                assert!(
-                    !db::node_config::set_ai_crawlers(&pool, actor, &original, "allow")
-                        .await
-                        .unwrap()
-                );
+                assert!(!codeyard_db_cluster::node_config::set_ai_crawlers(
+                    &pool, actor, &original, "allow"
+                )
+                .await
+                .unwrap());
             }
         });
         wait_until_blocked(raw, blocker, 1).await;
@@ -389,7 +402,7 @@ async fn postgres_privileged_writes_observe_a_waited_for_demotion() {
         mutation.await.unwrap();
     }
     assert_eq!(
-        db::node_config::get_node_configuration(f.pool())
+        codeyard_db_cluster::node_config::get_node_configuration(f.pool())
             .await
             .unwrap()
             .unwrap()

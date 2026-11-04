@@ -33,7 +33,7 @@ async fn contract(pg: bool) {
     let repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -98,10 +98,11 @@ async fn contract(pg: bool) {
     assert_eq!(created["start_side"], "RIGHT");
     assert_eq!(created["original_start_line"], 2);
     let id = created["id"].as_i64().unwrap();
-    let stored = db::pull_requests::reviews::get_pull_request_comment_by_id(f.pool(), id)
-        .await
-        .unwrap()
-        .unwrap();
+    let stored =
+        codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(f.pool(), id)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(stored.start_line, Some(2));
     assert_eq!(stored.start_side.as_deref(), Some("RIGHT"));
     let reply = call(

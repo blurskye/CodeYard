@@ -18,7 +18,9 @@ async fn attempt(
             actor,
             repo,
             NAME,
-            &db::users::accounts::AccountCredential::Session(&format!("{actor:064x}")),
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+                "{actor:064x}"
+            )),
         )
         .await
         .map(|_| ()),
@@ -52,14 +54,23 @@ async fn postgres_secrets_wait_for_uncommitted_grant_revocation() {
     for repo in [personal, organization] {
         put(d.pool(), repo, Some(owner)).await.unwrap();
         for operation in 0..3 {
-            db::repositories::access::grant_repo_access(d.pool(), actor, repo, AccessLevel::Admin)
-                .await
-                .unwrap();
+            codeyard_db_repos::repositories::access::grant_repo_access(
+                d.pool(),
+                actor,
+                repo,
+                AccessLevel::Admin,
+            )
+            .await
+            .unwrap();
             // Simulate an ingress projection before revocation. It is no permit.
             assert_eq!(
-                db::repositories::access::get_user_repo_access(d.pool(), actor, repo)
-                    .await
-                    .unwrap(),
+                codeyard_db_repos::repositories::access::get_user_repo_access(
+                    d.pool(),
+                    actor,
+                    repo
+                )
+                .await
+                .unwrap(),
                 AccessLevel::Admin
             );
             let before = d.snapshot(repo).await;
@@ -99,9 +110,14 @@ async fn postgres_secret_write_keeps_its_grant_until_commit() {
     let actor = d.secret_actor("secret_commit_admin").await;
     let repo = d.repo(owner, None, "secret_commit_repo", true).await;
     put(d.pool(), repo, Some(owner)).await.unwrap();
-    db::repositories::access::grant_repo_access(d.pool(), actor, repo, AccessLevel::Admin)
-        .await
-        .unwrap();
+    codeyard_db_repos::repositories::access::grant_repo_access(
+        d.pool(),
+        actor,
+        repo,
+        AccessLevel::Admin,
+    )
+    .await
+    .unwrap();
     let raw = d.pg();
 
     let mut secret = raw.begin().await.unwrap();
@@ -121,7 +137,7 @@ async fn postgres_secret_write_keeps_its_grant_until_commit() {
 
     let pool = d.pool().clone();
     let revocation = tokio::spawn(async move {
-        db::repositories::access::revoke_repo_access(&pool, actor, repo).await
+        codeyard_db_repos::repositories::access::revoke_repo_access(&pool, actor, repo).await
     });
     wait_until_blocked(raw, blocker, 2).await;
     assert!(!revocation.is_finished());
@@ -147,9 +163,14 @@ async fn sqlite_secrets_require_reserved_writer_even_for_metadata() {
     let actor = d.secret_actor("secret_reserved_admin").await;
     let repo = d.repo(owner, None, "secret_reserved_repo", true).await;
     put(d.pool(), repo, Some(owner)).await.unwrap();
-    db::repositories::access::grant_repo_access(d.pool(), actor, repo, AccessLevel::Admin)
-        .await
-        .unwrap();
+    codeyard_db_repos::repositories::access::grant_repo_access(
+        d.pool(),
+        actor,
+        repo,
+        AccessLevel::Admin,
+    )
+    .await
+    .unwrap();
     let before = d.snapshot(repo).await;
     let Database::Sqlite(f) = &d else {
         unreachable!()

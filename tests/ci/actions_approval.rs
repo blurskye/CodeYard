@@ -20,7 +20,7 @@ async fn contract(pg: bool) {
     let repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "project",
         None,
         false,
@@ -35,7 +35,7 @@ async fn contract(pg: bool) {
     let fork = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(bob),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(bob),
         "project",
         None,
         false,
@@ -61,14 +61,14 @@ async fn contract(pg: bool) {
         StatusCode::CREATED,
     )
     .await;
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
         .await
         .unwrap();
     assert_eq!(runs.len(), 1);
     let pending = &runs[0];
     assert_eq!(pending.head_sha.as_deref(), Some(head.as_str()));
     assert!(pending.is_fork && pending.approval_required);
-    assert!(db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "blocked",
         "local",
@@ -122,7 +122,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(approved, serde_json::json!({}));
-    let released = db::ci::claim_ci_run(
+    let released = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "approved",
         "local",
@@ -146,7 +146,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
             .await
             .unwrap()
             .len(),

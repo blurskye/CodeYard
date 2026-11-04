@@ -109,7 +109,7 @@ async fn contract(pg: bool) {
         client.form_reply(native_path, &form).await.status,
         StatusCode::SEE_OTHER
     );
-    let saved = db::actions::get_repo_actions_settings(f.pool(), repo.id)
+    let saved = codeyard_db_actions::actions::get_repo_actions_settings(f.pool(), repo.id)
         .await
         .unwrap();
     let workflow = base64::engine::general_purpose::STANDARD.encode("name: Manual\non: workflow_dispatch\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo test\n");
@@ -138,7 +138,7 @@ async fn contract(pg: bool) {
     let mut disabled = saved.clone();
     disabled.enabled = false;
     assert_eq!(
-        db::actions::get_repo_actions_settings(f.pool(), repo.id)
+        codeyard_db_actions::actions::get_repo_actions_settings(f.pool(), repo.id)
             .await
             .unwrap(),
         disabled
@@ -147,7 +147,7 @@ async fn contract(pg: bool) {
     assert!(page.contains("value=\"10\""), "{page}");
     assert!(page.contains("name=\"enabled\""), "{page}");
     assert!(
-        !db::actions::get_repo_actions_settings(f.pool(), repo.id)
+        !codeyard_db_actions::actions::get_repo_actions_settings(f.pool(), repo.id)
             .await
             .unwrap()
             .enabled
@@ -175,7 +175,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .is_none());
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
         .await
         .unwrap();
     assert_eq!(runs.len(), 1);
@@ -191,7 +191,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::actions::get_repo_actions_settings(f.pool(), repo.id)
+        codeyard_db_actions::actions::get_repo_actions_settings(f.pool(), repo.id)
             .await
             .unwrap(),
         saved

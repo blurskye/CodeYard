@@ -12,13 +12,15 @@ use codeyard_app::repositories::store::repo_store;
 use serde_json::json;
 use serde_json::Map;
 use serde_json::Value;
+use sha2::Digest;
 use sha2::Sha256;
 
 pub(super) async fn base(state: &AppState, loaded: &LoadedGist, contents: bool) -> Result<Value> {
-    let owner = db::users::accounts::get_user_by_id(&state.pool, loaded.gist.owner_id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let owner =
+        codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, loaded.gist.owner_id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     let store = repo_store(&loaded.repository, state.cluster.as_ref());
     let mut files = Map::new();
     for entry in &loaded.snapshot.files {
@@ -72,10 +74,10 @@ pub(super) async fn base(state: &AppState, loaded: &LoadedGist, contents: bool) 
 pub(super) async fn detail(state: &AppState, loaded: &LoadedGist) -> Result<Value> {
     let mut value = base(state, loaded, true).await?;
     value["history"] = json!(history(state, loaded, 0, 30).await?);
-    let forks = db::gists::list(
+    let forks = codeyard_db_repos::gists::list(
         &state.pool,
-        &db::gists::GistList {
-            scope: db::gists::ListScope::Forks(loaded.repository.id),
+        &codeyard_db_repos::gists::GistList {
+            scope: codeyard_db_repos::gists::ListScope::Forks(loaded.repository.id),
             since: None,
             limit: 30,
             offset: 0,
@@ -85,10 +87,11 @@ pub(super) async fn detail(state: &AppState, loaded: &LoadedGist) -> Result<Valu
     .map_err(Error::unavailable)?;
     let mut entries = Vec::new();
     for fork in forks {
-        let user = db::users::accounts::get_user_by_id(&state.pool, fork.owner_id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let user =
+            codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, fork.owner_id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
         // GitHub lists each fork's owner as a full public profile.
         let user = crate::users::document(state, &user, None).await?;
         entries.push(json!({"id":fork.id,"url":codeyard_model::urls::api_url(&format!("/gists/{}",fork.id)),"user":user,"created_at":fork.created_at,"updated_at":fork.updated_at}));
@@ -96,7 +99,7 @@ pub(super) async fn detail(state: &AppState, loaded: &LoadedGist) -> Result<Valu
     value["forks"] = json!(entries);
     value["fork_of"] = Value::Null;
     if let Some(parent) = loaded.gist.forked_from_id {
-        if let Some(parent) = db::gists::by_repository(&state.pool, parent)
+        if let Some(parent) = codeyard_db_repos::gists::by_repository(&state.pool, parent)
             .await
             .map_err(Error::unavailable)?
         {
@@ -146,11 +149,11 @@ pub(super) async fn history(
 }
 pub(super) async fn comment(
     state: &AppState,
-    gist: &db::gists::Gist,
-    comment: &db::gists::Comment,
+    gist: &codeyard_db_repos::gists::Gist,
+    comment: &codeyard_db_repos::gists::Comment,
 ) -> Result<Value> {
     let author = match comment.user_id {
-        Some(user) => db::users::accounts::get_user_by_id(&state.pool, user)
+        Some(user) => codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, user)
             .await
             .map_err(Error::unavailable)?,
         None => None,

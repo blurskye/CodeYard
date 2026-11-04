@@ -15,7 +15,7 @@ pub struct SecretSnapshot {
 impl Database {
     pub async fn secret_actor(&self, name: &str) -> i64 {
         let actor = self.actor(name).await;
-        db::users::sessions::create_session(
+        codeyard_db_identity::users::sessions::create_session(
             self.pool(),
             &format!("{actor:064x}"),
             actor,
@@ -28,7 +28,7 @@ impl Database {
         actor
     }
     pub async fn repo(&self, owner: i64, org: Option<i64>, name: &str, private: bool) -> i64 {
-        let repo = db::repositories::records::create_repository(
+        let repo = codeyard_db_repos::repositories::records::create_repository(
             self.pool(),
             owner,
             name,

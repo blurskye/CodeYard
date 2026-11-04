@@ -23,7 +23,7 @@ async fn relationships(pg: bool) {
             codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
-                db::repositories::creation::RepositoryCreationOwner::personal(actor),
+                codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
                 name,
                 None,
                 private,
@@ -33,7 +33,7 @@ async fn relationships(pg: bool) {
             .unwrap(),
         );
     }
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         alice,
         repos[2].id,
@@ -50,7 +50,7 @@ async fn relationships(pg: bool) {
         (&repos[2], "Public issue"),
     ] {
         issues.push(
-            db::issues::create_issue(f.pool(), repo.id, repo.owner_id(), title, "")
+            codeyard_db_repos::issues::create_issue(f.pool(), repo.id, repo.owner_id(), title, "")
                 .await
                 .unwrap(),
         );
@@ -427,14 +427,14 @@ async fn relationships(pg: bool) {
     let mut nodes = Vec::new();
     for _ in 0..4 {
         nodes.push(
-            db::issues::create_issue(f.pool(), repos[0].id, alice, "Concurrent", "")
+            codeyard_db_repos::issues::create_issue(f.pool(), repos[0].id, alice, "Concurrent", "")
                 .await
                 .unwrap(),
         );
     }
     use db::relationships::{Kind, Mutation};
     for (source, target) in [(0, 1), (2, 3)] {
-        db::relationships::change(
+        codeyard_db_identity::relationships::change(
             f.pool(),
             alice,
             repos[0].id,

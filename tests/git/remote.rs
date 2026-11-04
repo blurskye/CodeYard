@@ -77,12 +77,13 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
-    let owner = db::users::accounts::create_user(&database.pool, "remote_owner", None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "remote_owner", None)
+            .await
+            .unwrap();
     let root = tempfile::tempdir().unwrap();
     let key_path = root.path().join("key");
     let keygen = Command::new(tool("ssh-keygen"))
@@ -94,7 +95,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
         .await
         .unwrap();
     assert!(keygen.status.success());
-    let key = db::users::ssh_keys::add_ssh_key(
+    let key = codeyard_db_identity::users::ssh_keys::add_ssh_key(
         &database.pool,
         owner.id,
         "remote",
@@ -103,7 +104,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
     .await
     .unwrap();
     let session = native::token();
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         &database.pool,
         &session,
         owner.id,
@@ -151,7 +152,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
     let cookie = format!("session_id={session}");
     let csrf = native::token();
     assert_eq!(
-        db::users::sessions::get_or_create_csrf_token(
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
             &database.pool,
             &session,
             Some(owner.id),
@@ -173,7 +174,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
         StatusCode::CREATED,
     )
     .await;
-    let repository = db::repositories::records::get_repository_by_id(
+    let repository = codeyard_db_repos::repositories::records::get_repository_by_id(
         &database.pool,
         created["id"].as_i64().unwrap(),
     )
@@ -381,7 +382,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
             );
         }
     }
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         &database.pool,
         BranchProtectionRuleUpsert {
             actor_id: owner.id,
@@ -460,7 +461,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
     .trim()
     .to_owned();
     for allow_force_pushes in [false, true] {
-        db::repositories::protection::upsert_branch_protection_rule(
+        codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
             &database.pool,
             BranchProtectionRuleUpsert {
                 actor_id: owner.id,
@@ -497,7 +498,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
             .to_string();
         assert_eq!(held == rewritten, allow_force_pushes);
     }
-    db::users::ssh_keys::delete_ssh_key(&database.pool, key.id)
+    codeyard_db_identity::users::ssh_keys::delete_ssh_key(&database.pool, key.id)
         .await
         .unwrap();
     let denied = git(
@@ -570,7 +571,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
         .execute(raw)
         .await
         .unwrap();
-    let elsewhere = db::repositories::records::create_repository(
+    let elsewhere = codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         owner.id,
         "elsewhere",
@@ -607,10 +608,13 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
     )
     .await;
     caller.shutdown().await;
-    let fresh = db::repositories::records::get_repository_by_id(&database.pool, repository.id)
-        .await
-        .unwrap()
-        .unwrap();
+    let fresh = codeyard_db_repos::repositories::records::get_repository_by_id(
+        &database.pool,
+        repository.id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert!(fresh.size_bytes > 0);
     assert_eq!(fresh.default_branch, "main");
     assert!(!Path::new(&repository.disk_path).exists());

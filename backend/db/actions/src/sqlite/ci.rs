@@ -1386,9 +1386,3 @@ use codeyard_db_core::queries::sqlite::ci::ci_commit_status;
 use codeyard_db_core::queries::sqlite::ci::finish_in_tx;
 
 use codeyard_db_core::queries::sqlite::ci::is_deployment;
-
-use codeyard_db_core::queries::sqlite::ci::ci_commit_status;
-
-use codeyard_db_core::queries::sqlite::ci::finish_in_tx;
-
-use codeyard_db_core::queries::sqlite::ci::is_deployment;

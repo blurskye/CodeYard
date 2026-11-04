@@ -1,7 +1,7 @@
 //! Original-session persisted inbox contracts on real native stores.
 use super::{db, ids, Fixture};
 use chrono::{Duration as ChronoDuration, Utc};
-use db::notifications::records::{
+use codeyard_db_repos::notifications::records::{
     NotificationFilter, NotificationInbox, NotificationInboxAction as Action,
 };
 
@@ -19,7 +19,7 @@ fn actions(notification_id: i64) -> [Action; 3] {
 
 pub(super) async fn session(pool: &codeyard_db_core::DbPool, user: i64) -> String {
     let id = uuid::Uuid::new_v4().simple().to_string().repeat(2);
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &id,
         user,
@@ -33,7 +33,7 @@ pub(super) async fn session(pool: &codeyard_db_core::DbPool, user: i64) -> Strin
 }
 
 async fn inbox(f: &Fixture, session: &str, user: i64, action: Action) -> NotificationInbox {
-    db::notifications::records::notification_inbox(f.pool(), session, user, action)
+    codeyard_db_repos::notifications::records::notification_inbox(f.pool(), session, user, action)
         .await
         .unwrap()
         .unwrap()
@@ -43,10 +43,15 @@ async fn denied(f: &Fixture, session: &str, user: i64, notice: i64) {
     let before = f.history(user).await;
     for action in actions(notice) {
         assert!(
-            db::notifications::records::notification_inbox(f.pool(), session, user, action)
-                .await
-                .unwrap()
-                .is_none()
+            codeyard_db_repos::notifications::records::notification_inbox(
+                f.pool(),
+                session,
+                user,
+                action
+            )
+            .await
+            .unwrap()
+            .is_none()
         );
         assert_eq!(f.history(user).await, before, "invalid session cannot ack");
     }
@@ -181,7 +186,7 @@ async fn contract(pg: bool) {
     assert!(result.notifications.is_empty());
     assert_eq!((result.updated, result.unread_count), (0, 1));
     assert_eq!(f.history(foreign).await, before);
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         user,
         repo,
@@ -190,11 +195,11 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     visible(&f, &original, user, &[account, notice]).await;
-    db::repositories::access::revoke_repo_access(f.pool(), user, repo)
+    codeyard_db_repos::repositories::access::revoke_repo_access(f.pool(), user, repo)
         .await
         .unwrap();
     visible(&f, &original, user, &[account]).await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         user,
         repo,
@@ -258,7 +263,7 @@ async fn contract(pg: bool) {
     )
     .await;
     denied(&f, &original, user, account).await;
-    db::users::sessions::delete_session(f.pool(), &original)
+    codeyard_db_identity::users::sessions::delete_session(f.pool(), &original)
         .await
         .unwrap();
     denied(&f, &original, user, account).await;
@@ -268,11 +273,15 @@ async fn contract(pg: bool) {
     // SQL failures remain unavailable, never valid empty/zero success.
     f.drop_notifications().await;
     for action in actions(account) {
-        let error =
-            db::notifications::records::notification_inbox(f.pool(), &replacement, user, action)
-                .await
-                .err()
-                .expect("native SQL failure");
+        let error = codeyard_db_repos::notifications::records::notification_inbox(
+            f.pool(),
+            &replacement,
+            user,
+            action,
+        )
+        .await
+        .err()
+        .expect("native SQL failure");
         assert!(error.downcast_ref::<sqlx::Error>().is_some());
     }
     f.finish().await;
@@ -385,7 +394,7 @@ async fn expiry_during_acknowledgment_rolls_back(pg: bool) {
             .await;
         let before = fixture.history(user).await;
         assert!(
-            db::notifications::records::notification_inbox(
+            codeyard_db_repos::notifications::records::notification_inbox(
                 fixture.pool(),
                 &doomed,
                 user,
@@ -504,7 +513,7 @@ async fn page_walk(pg: bool) {
         let repo = fixture
             .repo(owner, None, &format!("page_walk_read_{index}"))
             .await;
-        db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             fixture.pool(),
             user,
             repo,
@@ -568,7 +577,7 @@ async fn hidden_backlog(pg: bool) {
     }
     let pool = fixture.pool();
     assert_eq!(
-        db::notifications::records::count_unread_notifications(pool, user)
+        codeyard_db_repos::notifications::records::count_unread_notifications(pool, user)
             .await
             .unwrap(),
         256

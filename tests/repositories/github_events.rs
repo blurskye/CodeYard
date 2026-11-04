@@ -90,7 +90,7 @@ async fn contract(pg: bool) {
     let repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -101,7 +101,7 @@ async fn contract(pg: bool) {
     let private = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "secret",
         None,
         true,
@@ -154,36 +154,39 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::following::follow_user(
+    codeyard_db_identity::following::follow_user(
         f.pool(),
         bob_id,
         alice_id,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), bob_id).await,
         ),
     )
     .await
     .unwrap();
-    let org = db::organizations::profiles::create_organization(
+    let org = codeyard_db_orgs::organizations::profiles::create_organization(
         f.pool(),
         alice_id,
-        &db::organizations::profiles::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "acme",
-            db::organizations::profiles::OrganizationProfile::new(Some("Acme"), None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(Some("Acme"), None)
+                .unwrap(),
         )
         .unwrap(),
     )
     .await
     .unwrap();
-    let db::organizations::OrganizationOutcome::Applied(org) = org else {
+    let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) = org else {
         panic!("organization creation failed")
     };
     let _org_repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner {
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
             actor_id: alice_id,
-            target: db::repositories::creation::RepositoryTarget::Organization(org.id),
+            target: codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(
+                org.id,
+            ),
         },
         "team-project",
         None,
@@ -454,7 +457,12 @@ async fn contract(pg: bool) {
     assert!(!own.as_array().unwrap().is_empty());
     assert!(own.as_array().unwrap().iter().all(|e| e["public"] == false));
     f.execute("UPDATE events SET created_at='2000-01-01T00:00:00.000000Z' WHERE id=(SELECT MIN(id) FROM events)",&[]).await;
-    assert_eq!(db::events::prune_events(f.pool()).await.unwrap(), 1);
+    assert_eq!(
+        codeyard_db_repos::events::prune_events(f.pool())
+            .await
+            .unwrap(),
+        1
+    );
     let private_url = feeds["current_user_actor_url"].as_str().unwrap();
     let forged = private_url.replacen("/alice/", "/bob/", 1);
     assert_eq!(atom_feed(&router, &forged).await.0, StatusCode::NOT_FOUND);

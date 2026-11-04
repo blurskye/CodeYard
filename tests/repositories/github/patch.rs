@@ -93,7 +93,7 @@ async fn postgres_github_patch_atomicity() {
 #[test]
 fn github_repository_patch_preserves_nullable_presence_over_rpc() {
     use codeyard_app::cluster::rpc::wire::Operation;
-    use db::repositories::records::{MergeMethodUpdate, RepositoryChanges};
+    use codeyard_db_repos::repositories::records::{MergeMethodUpdate, RepositoryChanges};
     let input = RepositoryChanges {
         token: None,
         name: Some("renamed"),

@@ -124,7 +124,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         Some("GraphQL repository"),
         true,
@@ -133,12 +133,12 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     let org = applied(
-        db::organizations::profiles::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             alice,
-            &db::organizations::profiles::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 "graphql-org",
-                db::organizations::profiles::OrganizationProfile::new(
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(
                     Some("GraphQL organization"),
                     None,
                 )
@@ -149,9 +149,16 @@ async fn contract(pg: bool) {
         .await
         .unwrap(),
     );
-    let label = db::labels::create_label(f.pool(), alice, repo.id, "bug", "ff0000", Some("A bug"))
-        .await
-        .unwrap();
+    let label = codeyard_db_repos::labels::create_label(
+        f.pool(),
+        alice,
+        repo.id,
+        "bug",
+        "ff0000",
+        Some("A bug"),
+    )
+    .await
+    .unwrap();
     let state = patient(AppState::new(
         f.pool().clone(),
         root.path().to_owned(),
@@ -200,9 +207,9 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{branch}");
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             issue: None,
             maintainer_can_modify: false,
             repo_id: repo.id,
@@ -365,27 +372,34 @@ async fn contract(pg: bool) {
             "A comment"
         );
     }
-    let stored = db::issues::get_issue(f.pool(), repo.id, issue_number.as_i64().unwrap() as i32)
-        .await
-        .unwrap()
-        .unwrap();
-    db::assignees::assign_user(
+    let stored = codeyard_db_repos::issues::get_issue(
+        f.pool(),
+        repo.id,
+        issue_number.as_i64().unwrap() as i32,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    codeyard_db_repos::assignees::assign_user(
         f.pool(),
         alice,
         repo.id,
-        db::assignees::AssignedItem::Issue(stored.id),
+        codeyard_db_repos::assignees::AssignedItem::Issue(stored.id),
         alice,
     )
     .await
     .unwrap();
-    db::reactions::create_reaction(
+    codeyard_db_repos::reactions::create_reaction(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Token(token_ids[0], &tokens::token_hash(token)),
-        db::reactions::Target {
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+            token_ids[0],
+            &tokens::token_hash(token),
+        ),
+        codeyard_db_repos::reactions::Target {
             repo_id: repo.id,
             item_id: stored.id,
-            subject: db::reactions::Subject::Issue,
+            subject: codeyard_db_repos::reactions::Subject::Issue,
             subject_id: stored.id,
         },
         "+1",
@@ -597,7 +611,7 @@ async fn contract(pg: bool) {
         assert!(result.get("errors").is_none(), "{result}");
         assert_eq!(result["data"][field]["pullRequest"]["id"], pull_id);
         assert_eq!(
-            db::pull_requests::records::get_pull_request_by_id(f.pool(), pull.id)
+            codeyard_db_repos::pull_requests::records::get_pull_request_by_id(f.pool(), pull.id)
                 .await
                 .unwrap()
                 .unwrap()
@@ -606,7 +620,7 @@ async fn contract(pg: bool) {
         );
     }
     assert!(
-        !db::pull_requests::records::get_pull_request_by_id(f.pool(), pull.id)
+        !codeyard_db_repos::pull_requests::records::get_pull_request_by_id(f.pool(), pull.id)
             .await
             .unwrap()
             .unwrap()
@@ -718,7 +732,7 @@ async fn contract(pg: bool) {
             total as usize
         );
     }
-    let counts = db::pull_requests::records::count_repo_pull_requests(
+    let counts = codeyard_db_repos::pull_requests::records::count_repo_pull_requests(
         f.pool(),
         repo.id,
         &Default::default(),
@@ -726,9 +740,16 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     assert_eq!((counts.open, counts.closed, counts.all), (0, 1, 1));
-    db::labels::create_label(f.pool(), alice, repo.id, "enhancement", "00ff00", None)
-        .await
-        .unwrap();
+    codeyard_db_repos::labels::create_label(
+        f.pool(),
+        alice,
+        repo.id,
+        "enhancement",
+        "00ff00",
+        None,
+    )
+    .await
+    .unwrap();
     let data = query(&router,token,"{ repository(owner:\"graphql-alice\",name:\"proj\") { labels(first:1) { totalCount edges { cursor node { name } } pageInfo { hasNextPage } } } }",json!({})).await;
     assert_eq!(data["repository"]["labels"]["totalCount"], 2);
     assert_eq!(
@@ -785,9 +806,9 @@ async fn contract(pg: bool) {
             enabled
         );
     }
-    db::repositories::protection::upsert_commit_status(
+    codeyard_db_repos::repositories::protection::upsert_commit_status(
         f.pool(),
-        db::repositories::protection::CommitStatusUpsert {
+        codeyard_db_repos::repositories::protection::CommitStatusUpsert {
             repo_id: repo.id,
             sha: changed["commit"]["sha"].as_str().unwrap(),
             context: "graphql-check",

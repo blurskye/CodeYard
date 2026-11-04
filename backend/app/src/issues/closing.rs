@@ -1,5 +1,4 @@
 //! Closing keyword references in pull request descriptions.
-use crate::issues::db;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -139,7 +138,7 @@ pub async fn references(
         let mut visible = HashMap::new();
         let mut before = 0;
         loop {
-            let candidates = db::issues::management::closing_candidates(
+            let candidates = codeyard_db_repos::issues::management::closing_candidates(
                 pool,
                 viewer.map(|user| user.id),
                 issue.repo_id,
@@ -165,8 +164,11 @@ pub async fn references(
                 if let std::collections::hash_map::Entry::Vacant(slot) = visible.entry(pull.repo_id)
                 {
                     let allowed =
-                        match db::repositories::records::get_repository_by_id(pool, pull.repo_id)
-                            .await?
+                        match codeyard_db_repos::repositories::records::get_repository_by_id(
+                            pool,
+                            pull.repo_id,
+                        )
+                        .await?
                         {
                             Some(repo) => {
                                 codeyard_identity::repository_access::can_read(pool, viewer, &repo)

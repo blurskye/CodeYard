@@ -95,21 +95,30 @@ async fn contract(pg: bool) {
         .to_owned();
     assert_eq!(first.len(), 40);
     assert_eq!(created["history"][0]["user"]["id"], alice);
-    let record = db::gists::get(f.pool(), id).await.unwrap().unwrap();
+    let record = codeyard_db_repos::gists::get(f.pool(), id)
+        .await
+        .unwrap()
+        .unwrap();
     let backing = f.repository(record.repo_id).await;
     assert!(backing.is_gist);
     assert!(!backing.is_private);
     assert!(std::path::Path::new(&backing.disk_path).exists());
-    assert!(
-        db::repositories::records::get_repository(f.pool(), "alice", &backing.name)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::repositories::records::get_repository(
+        f.pool(),
+        "alice",
+        &backing.name
+    )
+    .await
+    .unwrap()
+    .is_none());
     assert_eq!(
-        db::repositories::records::count_user_repositories(f.pool(), alice, Some(&a.session))
-            .await
-            .unwrap(),
+        codeyard_db_repos::repositories::records::count_user_repositories(
+            f.pool(),
+            alice,
+            Some(&a.session)
+        )
+        .await
+        .unwrap(),
         0
     );
     let (_, anonymous) = request(&router, "gists/get", "GET", &path, None, Value::Null, 200).await;
@@ -483,7 +492,10 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(!std::path::Path::new(&backing.disk_path).exists());
-    assert!(db::gists::get(f.pool(), id).await.unwrap().is_none());
+    assert!(codeyard_db_repos::gists::get(f.pool(), id)
+        .await
+        .unwrap()
+        .is_none());
     request(&router, "gists/get", "GET", &path, None, Value::Null, 404).await;
     let (_, surviving) = request(
         &router,

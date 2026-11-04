@@ -326,7 +326,3 @@ pub async fn touch_token(pool: &SqlitePool, token_id: i64, address: Option<&str>
         .await?;
     Ok(())
 }
-
-use codeyard_db_core::queries::sqlite::users::tokens::permits_write;
-
-use codeyard_db_core::queries::sqlite::users::tokens::permits_write;

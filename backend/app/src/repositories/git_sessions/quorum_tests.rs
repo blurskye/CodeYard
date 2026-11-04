@@ -35,7 +35,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
         .unwrap();
     let pool = DbPool::from(native.clone());
     codeyard_db_core::run_migrations(&pool).await.unwrap();
-    db::node_config::upsert_node_configuration(&pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&pool, "public", true)
         .await
         .unwrap();
     sqlx::query(
@@ -45,7 +45,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
     .await
     .unwrap();
     let key = NodeKey::generate();
-    let primary = db::cluster::register_own_node(
+    let primary = codeyard_db_cluster::cluster::register_own_node(
         &pool,
         &key.public_hex(),
         "primary",
@@ -56,7 +56,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
     .unwrap()
     .id;
     let follower_key = NodeKey::generate();
-    let follower = db::cluster::register_own_node(
+    let follower = codeyard_db_cluster::cluster::register_own_node(
         &pool,
         &follower_key.public_hex(),
         "follower",
@@ -72,7 +72,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
         tcp: vec![listener.local_addr().unwrap()],
         ..Default::default()
     };
-    db::cluster::record_node_heartbeat(
+    codeyard_db_cluster::cluster::record_node_heartbeat(
         &pool,
         &follower_key.public_hex(),
         "test",
@@ -81,7 +81,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
     )
     .await
     .unwrap();
-    let owner = db::users::accounts::create_user(&pool, "owner", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(&pool, "owner", None)
         .await
         .unwrap();
     let mut wire = Vec::from(&b"\0\0\0\x0bssh-ed25519\0\0\0\x20"[..]);
@@ -90,9 +90,10 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
         "ssh-ed25519 {}",
         base64::engine::general_purpose::STANDARD.encode(wire)
     );
-    let credential = db::users::ssh_keys::add_ssh_key(&pool, owner.id, "owner", &public_key)
-        .await
-        .unwrap();
+    let credential =
+        codeyard_db_identity::users::ssh_keys::add_ssh_key(&pool, owner.id, "owner", &public_key)
+            .await
+            .unwrap();
     let root = directory.path().join("repos");
     std::fs::create_dir(&root).unwrap();
     let path = crate::cluster::context::term_path(&root, uuid::Uuid::new_v4(), 1);
@@ -109,7 +110,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
         )
         .unwrap();
     repository.set_head("refs/heads/main").unwrap();
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         &pool,
         owner.id,
         "repo",
@@ -119,9 +120,11 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
     )
     .await
     .unwrap();
-    assert!(db::cluster::place_repository(&pool, repo.id, primary)
-        .await
-        .unwrap());
+    assert!(
+        codeyard_db_cluster::cluster::place_repository(&pool, repo.id, primary)
+            .await
+            .unwrap()
+    );
     codeyard_db_cluster::cluster::writes::bootstrap_writes(
         &pool,
         repo.id,

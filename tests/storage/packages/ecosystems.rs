@@ -1021,11 +1021,11 @@ async fn ecosystems(pg: bool) {
         ("contents".into(), 2),
     ])))
     .unwrap();
-    db::ci_tokens::issue(
+    codeyard_db_actions::ci_tokens::issue(
         f.pool(),
         run,
         "ecosystem-worker",
-        &[db::ci_tokens::NewJobToken {
+        &[codeyard_db_actions::ci_tokens::NewJobToken {
             job: "publish",
             hash: &hash,
             permissions: &permissions,
@@ -1070,7 +1070,7 @@ async fn ecosystems(pg: bool) {
         404,
     )
     .await;
-    db::ci_tokens::finish_job(f.pool(), run, "ecosystem-worker", "publish")
+    codeyard_db_actions::ci_tokens::finish_job(f.pool(), run, "ecosystem-worker", "publish")
         .await
         .unwrap();
     f.execute(

@@ -1,5 +1,4 @@
 //! Resolve human issue references without exposing private repositories.
-use crate::issues::db;
 use crate::issues::OperationError;
 
 pub async fn resolve(
@@ -35,7 +34,7 @@ pub async fn resolve(
         .filter(|n| *n > 0)
         .ok_or_else(invalid)?;
     let actor = crate::issues::actor(pool, actor_id).await?;
-    let repo = db::repositories::records::get_repository(pool, owner, repo)
+    let repo = codeyard_db_repos::repositories::records::get_repository(pool, owner, repo)
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;
@@ -45,7 +44,7 @@ pub async fn resolve(
             OperationError::Missing { .. } => missing(),
             other => other,
         })?;
-    db::issues::get_issue(pool, repo.id, number)
+    codeyard_db_repos::issues::get_issue(pool, repo.id, number)
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)

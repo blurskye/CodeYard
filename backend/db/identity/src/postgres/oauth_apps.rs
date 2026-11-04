@@ -7,7 +7,6 @@ use crate::oauth_apps::APPLICATION_PAGE_SIZE;
 use anyhow::Result;
 use chrono::Utc;
 use codeyard_db_core::queries::credentials::Actor;
-use codeyard_db_core::queries::oauth_apps::Token;
 use codeyard_support::token_hash::token_hash;
 use sqlx::PgConnection;
 use sqlx::PgPool;
@@ -321,7 +320,3 @@ pub async fn revoke(pool: &PgPool, client: &str, hash: &str, authorization: bool
     tx.commit().await?;
     Ok(())
 }
-
-use codeyard_db_core::queries::postgres::oauth_apps::token;
-
-use codeyard_db_core::queries::postgres::oauth_apps::token;

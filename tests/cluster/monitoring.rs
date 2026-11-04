@@ -56,7 +56,7 @@ async fn get(
 async fn token(database: &Database, user: i64) -> String {
     let value = format!("cy_pat_{}", crate::support::native_database::token());
     let session = crate::support::native_database::token();
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         database.pool(),
         &session,
         user,
@@ -66,7 +66,7 @@ async fn token(database: &Database, user: i64) -> String {
     )
     .await
     .unwrap();
-    db::users::tokens::create_token(
+    codeyard_db_identity::users::tokens::create_token(
         database.pool(),
         user,
         &session,
@@ -219,15 +219,25 @@ async fn metrics_aggregate_storage_replicas_queue_and_node_states() {
         let mut database = Database::new(pg).await;
         let pool = database.pool();
         let storage = vec!["storage".to_owned()];
-        let primary =
-            db::cluster::register_own_node(pool, &"a".repeat(64), "primary", &storage, "test")
-                .await
-                .unwrap();
-        let replica =
-            db::cluster::register_own_node(pool, &"b".repeat(64), "replica", &storage, "test")
-                .await
-                .unwrap();
-        let web = db::cluster::register_own_node(
+        let primary = codeyard_db_cluster::cluster::register_own_node(
+            pool,
+            &"a".repeat(64),
+            "primary",
+            &storage,
+            "test",
+        )
+        .await
+        .unwrap();
+        let replica = codeyard_db_cluster::cluster::register_own_node(
+            pool,
+            &"b".repeat(64),
+            "replica",
+            &storage,
+            "test",
+        )
+        .await
+        .unwrap();
+        let web = codeyard_db_cluster::cluster::register_own_node(
             pool,
             &"c".repeat(64),
             "web",
@@ -249,7 +259,7 @@ async fn metrics_aggregate_storage_replicas_queue_and_node_states() {
             .execute("UPDATE nodes SET status='revoked' WHERE id=$1", &[web.id])
             .await;
         let owner = database.actor("private-owner").await;
-        let repo = db::repositories::records::create_repository(
+        let repo = codeyard_db_repos::repositories::records::create_repository(
             pool,
             owner,
             "secret-repo",
@@ -267,7 +277,7 @@ async fn metrics_aggregate_storage_replicas_queue_and_node_states() {
             "INSERT INTO ci_runs(run_id,repo_id,mode,event,branch,workflow_path,created_at) VALUES(X'00000000000000000000000000000001',$1,'local','push','main','ci.yml',strftime('%Y-%m-%dT%H:%M:%f000Z','now','-120 seconds'))"
         };
         database.execute(insert, &[repo.id]).await;
-        let queue = db::metrics::ci_queue(pool).await.unwrap();
+        let queue = codeyard_db_cluster::metrics::ci_queue(pool).await.unwrap();
         assert_eq!(queue.queued, 1);
         assert!(
             (119..=125).contains(&queue.oldest_seconds),
@@ -325,7 +335,7 @@ async fn metrics_aggregate_storage_replicas_queue_and_node_states() {
                 &[repo.id],
             )
             .await;
-        let queue = db::metrics::ci_queue(pool).await.unwrap();
+        let queue = codeyard_db_cluster::metrics::ci_queue(pool).await.unwrap();
         assert_eq!((queue.queued, queue.oldest_seconds), (0, 0));
         database
             .execute(
@@ -333,7 +343,12 @@ async fn metrics_aggregate_storage_replicas_queue_and_node_states() {
                 &[repo.id],
             )
             .await;
-        assert_eq!(db::metrics::replica_lag(pool).await.unwrap(), 0);
+        assert_eq!(
+            codeyard_db_cluster::metrics::replica_lag(pool)
+                .await
+                .unwrap(),
+            0
+        );
         database.finish().await;
     }
 }

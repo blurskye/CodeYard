@@ -12,7 +12,7 @@ impl LocalStore {
     ) -> Result<(), RepoError> {
         let _lock = git::locks::lock(self.path()).await;
         live_read(pool, repo, actor, self.path(), self.node_id).await?;
-        db::repository_exports::lock_repository(pool, actor, migration, repo)
+        codeyard_db_repos::repository_exports::lock_repository(pool, actor, migration, repo)
             .await
             .map_err(|_| RepoError::write_denied())
     }

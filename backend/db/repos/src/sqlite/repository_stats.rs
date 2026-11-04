@@ -199,5 +199,3 @@ pub async fn list_workflow_usage(
 }
 
 use codeyard_db_core::queries::sqlite::repository_stats::DOCUMENT_FACTS;
-
-use codeyard_db_core::queries::sqlite::repository_stats::DOCUMENT_FACTS;

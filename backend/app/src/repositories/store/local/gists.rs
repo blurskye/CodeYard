@@ -29,7 +29,7 @@ impl LocalStore {
         read: bool,
     ) -> Result<codeyard_db_core::models::Repository, RepoError> {
         self.admitted_path(read).await?;
-        let repo = db::repositories::records::get_repository_by_id(pool, id)
+        let repo = codeyard_db_repos::repositories::records::get_repository_by_id(pool, id)
             .await
             .map_err(failure)?
             .filter(|repo| repo.is_gist)
@@ -54,7 +54,7 @@ impl LocalStore {
                         .parent()
                         .and_then(std::path::Path::file_name)
                         .is_some_and(|name| name == "mirrors")
-                    && db::cluster::replica_applied_version(pool, id, node)
+                    && codeyard_db_cluster::cluster::replica_applied_version(pool, id, node)
                         .await
                         .map_err(failure)?
                         .is_some_and(|version| version >= 0)
@@ -191,7 +191,7 @@ impl LocalStore {
             return Err(RepoError::write_denied());
         }
         self.finish_pending(pool, id).await?;
-        let user = db::users::accounts::get_user_by_id(pool, actor)
+        let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor)
             .await
             .map_err(failure)?
             .filter(|user| !user.is_banned && !user.must_change_password)

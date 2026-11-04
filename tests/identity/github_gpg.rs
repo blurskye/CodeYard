@@ -273,7 +273,7 @@ async fn contract(pg: bool) {
     identity::emails::change(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Session(&session.session),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session.session),
         &["work@example.com".into()],
         true,
     )
@@ -358,7 +358,7 @@ async fn contract(pg: bool) {
         "{}",
         reply.text()
     );
-    let keys = db::users::gpg_keys::list_gpg_keys(f.pool(), alice, 100, 0)
+    let keys = codeyard_db_identity::users::gpg_keys::list_gpg_keys(f.pool(), alice, 100, 0)
         .await
         .unwrap();
     let native = keys
@@ -369,14 +369,16 @@ async fn contract(pg: bool) {
         .form_reply(&format!("/settings/gpg-keys/{}/delete", native.id), &[])
         .await;
     assert_eq!(reply.status, axum::http::StatusCode::SEE_OTHER);
-    assert!(db::users::gpg_keys::get_gpg_key(f.pool(), alice, native.id)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        codeyard_db_identity::users::gpg_keys::get_gpg_key(f.pool(), alice, native.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
     let error = gpg::enroll(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Token(i64::MAX, ""),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(i64::MAX, ""),
         None,
         &armored,
     )

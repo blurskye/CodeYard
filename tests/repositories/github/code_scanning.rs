@@ -79,18 +79,18 @@ async fn contract(pg: bool) {
         201,
     )
     .await;
-    let repo = db::repositories::records::get_repository(f.pool(), "alice", "scan")
+    let repo = codeyard_db_repos::repositories::records::get_repository(f.pool(), "alice", "scan")
         .await
         .unwrap()
         .unwrap();
-    let hook = db::webhooks::insert_webhook(
+    let hook = codeyard_db_repos::webhooks::insert_webhook(
         f.pool(),
-        db::webhooks::HookOwner::Repository(repo.id),
+        codeyard_db_repos::webhooks::HookOwner::Repository(repo.id),
         alice,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
-        &db::webhooks::WebhookFields {
+        &codeyard_db_core::queries::webhooks::WebhookFields {
             username: None,
             password: None,
             payload_url: "https://example.test/scanning".into(),
@@ -301,7 +301,9 @@ async fn contract(pg: bool) {
     let mut delivered = false;
     // The hook's host never resolves, so the delivery is recorded after its retries (7 s).
     for _ in 0..1500 {
-        let deliveries = db::webhooks::list_deliveries(f.pool(), hook).await.unwrap();
+        let deliveries = codeyard_db_repos::webhooks::list_deliveries(f.pool(), hook)
+            .await
+            .unwrap();
         if let Some(delivery) = deliveries.iter().find(|d| {
             d.event == "code_scanning_alert"
                 && serde_json::from_str::<Value>(&d.request_body).unwrap()["action"] == "created"
@@ -630,16 +632,17 @@ async fn contract(pg: bool) {
         .as_str()
         .unwrap()
         .contains("API rate limit exceeded"));
-    let input = db::organizations::profiles::NewOrganization::new(
+    let input = codeyard_db_orgs::organizations::profiles::NewOrganization::new(
         "acme",
-        db::organizations::profiles::OrganizationProfile::new(Some("Acme"), None).unwrap(),
+        codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(Some("Acme"), None)
+            .unwrap(),
     )
     .unwrap();
     assert!(matches!(
-        db::organizations::profiles::create_organization(f.pool(), alice, &input)
+        codeyard_db_orgs::organizations::profiles::create_organization(f.pool(), alice, &input)
             .await
             .unwrap(),
-        db::organizations::OrganizationOutcome::Applied(_)
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     call(
         &router,
@@ -686,9 +689,9 @@ async fn workflow_tokens(
     base: &str,
 ) {
     use std::collections::BTreeMap;
-    let run = db::ci::enqueue_ci_run(
+    let run = codeyard_db_actions::ci::enqueue_ci_run(
         pool,
-        db::ci::NewCiRun {
+        codeyard_db_actions::ci::NewCiRun {
             repo_id: repo,
             triggered_by_id: actor,
             pipeline: "security",
@@ -706,7 +709,7 @@ async fn workflow_tokens(
     )
     .await
     .unwrap();
-    let mut run = db::ci::claim_ci_run(
+    let mut run = codeyard_db_actions::ci::claim_ci_run(
         pool,
         "scanner-worker",
         "local",

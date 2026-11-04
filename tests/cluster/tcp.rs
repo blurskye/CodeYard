@@ -249,7 +249,7 @@ async fn tcp_only_nodes_answer_repository_calls_without_an_iroh_socket() {
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -312,7 +312,9 @@ async fn pairing_over_tcp_admits_a_valid_ticket_and_refuses_a_bad_one() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("not valid"), "{error:#}");
-    let nodes = db::cluster::list_nodes(&database.pool).await.unwrap();
+    let nodes = codeyard_db_cluster::cluster::list_nodes(&database.pool)
+        .await
+        .unwrap();
     assert!(nodes.iter().all(|node| node.name != "intruder"));
 }
 
@@ -366,9 +368,13 @@ async fn revoked_member_is_refused_on_its_next_connection() {
         .await
         .expect("an active member gets an answer");
 
-    cluster::revoke(&database.pool, db::cluster::Authority::Operator, "web-2")
-        .await
-        .unwrap();
+    cluster::revoke(
+        &database.pool,
+        codeyard_db_cluster::cluster::Authority::Operator,
+        "web-2",
+    )
+    .await
+    .unwrap();
     let mut link = tcp::dial(&member, address_of(&core), core.public_key(), ALPN_RPC)
         .await
         .unwrap();

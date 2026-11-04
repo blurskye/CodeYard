@@ -48,7 +48,7 @@ async fn contract(pg: bool) {
     let repository = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "proj",
         None,
         false,
@@ -184,9 +184,9 @@ async fn contract(pg: bool) {
     // Branch pages need one small summary per head, not every open pull's body.
     let mut numbers = Vec::new();
     for base in ["main", "refs/heads/main"] {
-        let pull = db::pull_requests::records::create_pull_request(
+        let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
             f.pool(),
-            db::pull_requests::records::NewPullRequest {
+            codeyard_db_repos::pull_requests::records::NewPullRequest {
                 repo_id: repository.id,
                 head_repo_id: Some(repository.id),
                 author_id: owner,
@@ -205,22 +205,24 @@ async fn contract(pg: bool) {
         .unwrap();
         numbers.push(pull.number);
     }
-    let summaries = db::pull_requests::records::list_open_pull_requests_from_branches(
-        f.pool(),
-        repository.id,
-        None,
-    )
-    .await
-    .unwrap();
+    let summaries =
+        codeyard_db_repos::pull_requests::records::list_open_pull_requests_from_branches(
+            f.pool(),
+            repository.id,
+            None,
+        )
+        .await
+        .unwrap();
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].number, numbers[0]);
-    let summaries = db::pull_requests::records::list_open_pull_requests_from_branches(
-        f.pool(),
-        repository.id,
-        Some("refs/heads/main"),
-    )
-    .await
-    .unwrap();
+    let summaries =
+        codeyard_db_repos::pull_requests::records::list_open_pull_requests_from_branches(
+            f.pool(),
+            repository.id,
+            Some("refs/heads/main"),
+        )
+        .await
+        .unwrap();
     assert_eq!(summaries[0].number, numbers[1]);
     let (_, page) = alice.model("/alice/proj/branches").await;
     let Page::Repositories(view::page::Page::Refs { rows, .. }) = page else {
@@ -239,9 +241,9 @@ async fn contract(pg: bool) {
 
     git.set_head("refs/heads/refs/topic").unwrap();
     let current = f.repository(repository.id).await;
-    db::repository_stats::upsert_repo_languages(
+    codeyard_db_repos::repository_stats::upsert_repo_languages(
         f.pool(),
-        &db::repository_stats::language_source(f.pool(), repository.id)
+        &codeyard_db_repos::repository_stats::language_source(f.pool(), repository.id)
             .await
             .unwrap()
             .unwrap(),
@@ -256,9 +258,13 @@ async fn contract(pg: bool) {
     };
     assert_eq!(page.reference, "refs/heads/refs/topic");
     assert_eq!(
-        db::repository_stats::language_revision(f.pool(), repository.id, &current.default_branch)
-            .await
-            .unwrap(),
+        codeyard_db_repos::repository_stats::language_revision(
+            f.pool(),
+            repository.id,
+            &current.default_branch
+        )
+        .await
+        .unwrap(),
         Some(second.to_string())
     );
     git.set_head("refs/heads/unborn").unwrap();
@@ -304,13 +310,13 @@ async fn contract(pg: bool) {
     .await;
 
     // Database-only release pages do not enumerate a legacy oversized ref listing.
-    let release = db::releases::create_release(
+    let release = codeyard_db_repos::releases::create_release(
         f.pool(),
         owner,
         repository.id,
         "v1",
         &first.to_string(),
-        &db::releases::ReleaseFields {
+        &codeyard_db_repos::releases::ReleaseFields {
             name: Some("Version 1".into()),
             body: Some("Notes".into()),
             is_draft: false,

@@ -4,7 +4,7 @@ use codeyard_app::webhooks::delivery;
 
 async fn insert_hook(database: &Database, url: &str) -> codeyard_db_core::models::Webhook {
     let (owner, id) = try_insert_hook(database, url).await;
-    db::webhooks::get_webhook(database.pool(), owner, id.unwrap().unwrap())
+    codeyard_db_repos::webhooks::get_webhook(database.pool(), owner, id.unwrap().unwrap())
         .await
         .unwrap()
         .unwrap()
@@ -14,16 +14,17 @@ async fn try_insert_hook(
     database: &Database,
     url: &str,
 ) -> (HookOwner, anyhow::Result<Option<i64>>) {
-    let repo = db::repositories::records::get_repository(database.pool(), "alice", "proj")
-        .await
-        .unwrap()
-        .unwrap();
+    let repo =
+        codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
     let owner = HookOwner::Repository(repo.id);
-    let id = db::webhooks::insert_webhook(
+    let id = codeyard_db_repos::webhooks::insert_webhook(
         database.pool(),
         owner,
         repo.owner_user_id.unwrap(),
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(database.pool(), repo.owner_user_id.unwrap()).await,
         ),
         &WebhookFields {
@@ -44,11 +45,13 @@ async fn try_insert_hook(
 async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
     let (mut database, _root, alice, _) = setup(pg).await;
     // Each hook has its own URL, since an equivalent second hook is refused as on GitHub.
-    for n in 0..db::webhooks::MAX_HOOKS_PER_OWNER {
+    for n in 0..codeyard_db_repos::webhooks::MAX_HOOKS_PER_OWNER {
         insert_hook(&database, &format!("https://hooks.example/push/{n}")).await;
     }
     let (owner, refused) = try_insert_hook(&database, "https://hooks.example/push/over").await;
-    assert!(refused.unwrap_err().is::<db::webhooks::HookLimit>());
+    assert!(refused
+        .unwrap_err()
+        .is::<codeyard_db_repos::webhooks::HookLimit>());
     // The settings panel bounds its page even when an owner holds more hooks than the limit,
     // so the rest of the paging fixture goes straight into the table.
     let HookOwner::Repository(repo_id) = owner else {
@@ -62,11 +65,11 @@ async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
             &[repo_id],
         )
         .await;
-    let hooks = db::webhooks::list_webhooks(database.pool(), owner)
+    let hooks = codeyard_db_repos::webhooks::list_webhooks(database.pool(), owner)
         .await
         .unwrap();
     assert_eq!(hooks.len(), 32);
-    let mut record = db::webhooks::NewDelivery {
+    let mut record = codeyard_db_core::queries::webhooks::NewDelivery {
         redelivery: false,
         guid: uuid::Uuid::new_v4().to_string(),
         event: "push".into(),
@@ -79,27 +82,30 @@ async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
         response_headers: None,
         response_body: None,
     };
-    db::webhooks::insert_delivery(database.pool(), hooks[1].id, &record)
+    codeyard_db_repos::webhooks::insert_delivery(database.pool(), hooks[1].id, &record)
         .await
         .unwrap();
     record.guid = uuid::Uuid::new_v4().to_string();
     record.status_code = None;
     record.error = Some("failed".into());
-    db::webhooks::insert_delivery(database.pool(), hooks[1].id, &record)
+    codeyard_db_repos::webhooks::insert_delivery(database.pool(), hooks[1].id, &record)
         .await
         .unwrap();
     record.guid = uuid::Uuid::new_v4().to_string();
     record.status_code = Some(201);
-    db::webhooks::insert_delivery(database.pool(), hooks[2].id, &record)
+    codeyard_db_repos::webhooks::insert_delivery(database.pool(), hooks[2].id, &record)
         .await
         .unwrap();
-    let actor =
-        db::users::accounts::get_user_by_id(database.pool(), hooks[0].created_by_id.unwrap())
-            .await
-            .unwrap()
-            .unwrap();
+    let actor = codeyard_db_identity::users::accounts::get_user_by_id(
+        database.pool(),
+        hooks[0].created_by_id.unwrap(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let session = crate::support::live_session(database.pool(), actor.id).await;
-    let credential = db::users::accounts::AccountCredential::Session(&session);
+    let credential =
+        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
     let place = webhooks::panel::Place {
         owner: HookOwner::Repository(hooks[0].repo_id.unwrap()),
         base: "/alice/proj/settings?tab=webhooks",
@@ -211,7 +217,7 @@ pub(super) async fn retry_backoff_frees_send_slots(pg: bool) {
         send.await.unwrap();
     }
     assert_eq!(
-        db::webhooks::list_deliveries(database.pool(), hook.id)
+        codeyard_db_repos::webhooks::list_deliveries(database.pool(), hook.id)
             .await
             .unwrap()
             .len(),
@@ -259,7 +265,7 @@ pub(super) async fn queued_delivery_recovers_from_database_failure(pg: bool) {
         )
         .await;
     send.await.unwrap();
-    let recorded = db::webhooks::list_deliveries(database.pool(), id)
+    let recorded = codeyard_db_repos::webhooks::list_deliveries(database.pool(), id)
         .await
         .unwrap();
     assert_eq!(recorded.len(), 1);

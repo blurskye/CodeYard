@@ -16,7 +16,7 @@ async fn milestones(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         true,
@@ -194,16 +194,17 @@ async fn milestones(pg: bool) {
             StatusCode::FORBIDDEN
         );
     }
-    let issue = db::issues::create_issue(f.pool(), repo.id, alice, "An issue", "")
+    let issue = codeyard_db_repos::issues::create_issue(f.pool(), repo.id, alice, "An issue", "")
         .await
         .unwrap();
-    db::milestones::set_issue_milestone(f.pool(), alice, repo.id, issue.id, Some(1))
+    codeyard_db_repos::milestones::set_issue_milestone(f.pool(), alice, repo.id, issue.id, Some(1))
         .await
         .unwrap();
-    let label = db::labels::create_label(f.pool(), alice, repo.id, "bug", "#123456", None)
-        .await
-        .unwrap();
-    db::labels::add_issue_label(f.pool(), alice, repo.id, issue.id, label.id)
+    let label =
+        codeyard_db_repos::labels::create_label(f.pool(), alice, repo.id, "bug", "#123456", None)
+            .await
+            .unwrap();
+    codeyard_db_repos::labels::add_issue_label(f.pool(), alice, repo.id, issue.id, label.id)
         .await
         .unwrap();
     let count = document(
@@ -233,19 +234,21 @@ async fn milestones(pg: bool) {
         .await
         .unwrap()
         .is_empty());
-    assert!(db::issues::get_issue(f.pool(), repo.id, issue.number)
-        .await
-        .unwrap()
-        .unwrap()
-        .milestone_id
-        .is_none());
+    assert!(
+        codeyard_db_repos::issues::get_issue(f.pool(), repo.id, issue.number)
+            .await
+            .unwrap()
+            .unwrap()
+            .milestone_id
+            .is_none()
+    );
     document(
         request(&router, "GET", &url, Some(read), Value::Null).await,
         "issues/get-milestone",
         404,
     )
     .await;
-    let native = db::milestones::create_milestone(
+    let native = codeyard_db_repos::milestones::create_milestone(
         f.pool(),
         alice,
         repo.id,
@@ -260,7 +263,7 @@ async fn milestones(pg: bool) {
         native.due_on.unwrap().to_rfc3339(),
         "2027-03-02T00:00:00+00:00"
     );
-    db::milestones::update_milestone(
+    codeyard_db_repos::milestones::update_milestone(
         f.pool(),
         alice,
         repo.id,
@@ -271,7 +274,7 @@ async fn milestones(pg: bool) {
     )
     .await
     .unwrap();
-    let updated = db::milestones::get_milestone(f.pool(), repo.id, native.number)
+    let updated = codeyard_db_repos::milestones::get_milestone(f.pool(), repo.id, native.number)
         .await
         .unwrap()
         .unwrap();

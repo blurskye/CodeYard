@@ -40,12 +40,13 @@ pub async fn exercise(remote: bool) {
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
-    let owner = db::users::accounts::create_user(&database.pool, "stream_owner", None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "stream_owner", None)
+            .await
+            .unwrap();
     let root = tempfile::tempdir().unwrap();
     let key = root.path().join("key");
     assert!(Command::new(tool("ssh-keygen"))
@@ -57,7 +58,7 @@ pub async fn exercise(remote: bool) {
         .unwrap()
         .status
         .success());
-    db::users::ssh_keys::add_ssh_key(
+    codeyard_db_identity::users::ssh_keys::add_ssh_key(
         &database.pool,
         owner.id,
         "streaming",
@@ -66,7 +67,7 @@ pub async fn exercise(remote: bool) {
     .await
     .unwrap();
     let cookie_token = native::token();
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         &database.pool,
         &cookie_token,
         owner.id,
@@ -92,7 +93,7 @@ pub async fn exercise(remote: bool) {
     let cookie = format!("session_id={cookie_token}");
     let csrf = native::token();
     assert_eq!(
-        db::users::sessions::get_or_create_csrf_token(
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
             &database.pool,
             &cookie_token,
             Some(owner.id),
@@ -308,7 +309,7 @@ pub async fn exercise(remote: bool) {
                         && entry.metadata().unwrap().len() > 128 * 1024 * 1024
                 )
         );
-        db::repositories::protection::upsert_branch_protection_rule(
+        codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
             &database.pool,
             BranchProtectionRuleUpsert {
                 actor_id: owner.id,

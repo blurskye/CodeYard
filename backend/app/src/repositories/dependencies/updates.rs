@@ -1,5 +1,6 @@
 //! Verified proposals only. No package manager, repository script, force push or auto-merge.
 use anyhow::Context;
+use sha2::Digest;
 
 use crate::ci::runs::CiRuns;
 use crate::repositories::dependencies::registry::Client;

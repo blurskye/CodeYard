@@ -39,7 +39,7 @@ async fn contract(pg: bool) {
     let repo = lifecycle::provision(
         (fixture.pool(), None),
         &repos,
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "protected",
         None,
         true,

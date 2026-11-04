@@ -240,20 +240,25 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(advertisement.starts_with(b"001e# service=git-upload-pack\n"));
-    let resolved = db::repositories::records::get_git_repository(f.pool(), "gist", id)
-        .await
-        .unwrap()
-        .unwrap();
+    let resolved =
+        codeyard_db_repos::repositories::records::get_git_repository(f.pool(), "gist", id)
+            .await
+            .unwrap()
+            .unwrap();
     assert!(resolved.is_gist);
     assert_eq!(
         resolved.id,
-        db::gists::get(f.pool(), id).await.unwrap().unwrap().repo_id
+        codeyard_db_repos::gists::get(f.pool(), id)
+            .await
+            .unwrap()
+            .unwrap()
+            .repo_id
     );
     send(&router, "DELETE", &path, read, None, 403).await;
     send(&router, "DELETE", &path, write, None, 204).await;
     send(&router, "GET", &path, write, None, 404).await;
     assert!(
-        db::repositories::records::get_git_repository(f.pool(), "gist", id)
+        codeyard_db_repos::repositories::records::get_git_repository(f.pool(), "gist", id)
             .await
             .unwrap()
             .is_none()

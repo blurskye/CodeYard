@@ -25,7 +25,7 @@ async fn postgres_direct_grant_changes_conflict_with_repository_authority_reads(
         let request = tokio::spawn(async move {
             match operation {
                 0 => {
-                    db::repositories::access::grant_repo_access(
+                    codeyard_db_repos::repositories::access::grant_repo_access(
                         &pool,
                         target,
                         r.id,
@@ -35,9 +35,11 @@ async fn postgres_direct_grant_changes_conflict_with_repository_authority_reads(
                     .unwrap();
                 }
                 1 => {
-                    db::repositories::access::revoke_repo_access(&pool, target, r.id)
-                        .await
-                        .unwrap();
+                    codeyard_db_repos::repositories::access::revoke_repo_access(
+                        &pool, target, r.id,
+                    )
+                    .await
+                    .unwrap();
                 }
                 2 | 3 => {
                     codeyard_identity::repository_access::change_collaborator(
@@ -67,9 +69,9 @@ async fn postgres_transfer_locks_target_organization_before_a_forks_source() {
     let owner = f.actor("transfer_order_owner").await;
     organization(&f, 1001, owner).await;
     let source = repo(&f, owner, "transfer_source").await;
-    let fork = db::repositories::discovery::create_forked_repository(
+    let fork = codeyard_db_repos::repositories::discovery::create_forked_repository(
         f.pool(),
-        db::repositories::discovery::NewForkedRepository {
+        codeyard_db_repos::repositories::discovery::NewForkedRepository {
             owner_id: owner,
             name: "transfer_fork",
             description: None,
@@ -126,11 +128,11 @@ async fn postgres_privileged_node_and_crawler_writes_retain_their_session() {
     let admin = f.actor("retained_admin").await;
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[admin])
         .await;
-    db::node_config::upsert_node_configuration(f.pool(), "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(f.pool(), "public", true)
         .await
         .unwrap();
     let key = codeyard_support::node_identity::NodeKey::generate().public_hex();
-    let node = db::cluster::register_own_node(
+    let node = codeyard_db_cluster::cluster::register_own_node(
         f.pool(),
         &key,
         "retained-node",
@@ -161,16 +163,16 @@ async fn postgres_privileged_node_and_crawler_writes_retain_their_session() {
         let session = original.clone();
         let mutation = tokio::spawn(async move {
             if crawler {
-                assert!(
-                    db::node_config::set_ai_crawlers(&pool, admin, &session, "allow")
-                        .await
-                        .unwrap()
-                );
+                assert!(codeyard_db_cluster::node_config::set_ai_crawlers(
+                    &pool, admin, &session, "allow"
+                )
+                .await
+                .unwrap());
             } else {
                 assert!(matches!(
-                    db::cluster::set_node_status(
+                    codeyard_db_cluster::cluster::set_node_status(
                         &pool,
-                        db::cluster::Authority::Administrator {
+                        codeyard_db_cluster::cluster::Authority::Administrator {
                             user_id: admin,
                             session: &session
                         },
@@ -186,7 +188,7 @@ async fn postgres_privileged_node_and_crawler_writes_retain_their_session() {
         wait_until_blocked(raw, pid, 1).await;
         let pool = f.pool().clone();
         let revocation = tokio::spawn(async move {
-            db::users::sessions::delete_session(&pool, &original)
+            codeyard_db_identity::users::sessions::delete_session(&pool, &original)
                 .await
                 .unwrap();
         });
@@ -204,7 +206,7 @@ async fn postgres_unstar_locks_parent_before_the_star() {
     let mut f = Database::new(true).await;
     let owner = f.actor("star_owner").await;
     let r = repo(&f, owner, "star").await;
-    db::repositories::engagement::star_repo(f.pool(), owner, r.id)
+    codeyard_db_repos::repositories::engagement::star_repo(f.pool(), owner, r.id)
         .await
         .unwrap();
     let raw = f.pg();
@@ -219,10 +221,9 @@ async fn postgres_unstar_locks_parent_before_the_star() {
         .await
         .unwrap();
     let pool = f.pool().clone();
-    let request =
-        tokio::spawn(
-            async move { db::repositories::engagement::unstar_repo(&pool, owner, r.id).await },
-        );
+    let request = tokio::spawn(async move {
+        codeyard_db_repos::repositories::engagement::unstar_repo(&pool, owner, r.id).await
+    });
     wait_until_blocked(raw, holder, 1).await;
     sqlx::query("SELECT user_id FROM stars WHERE repo_id=$1 FOR UPDATE NOWAIT")
         .bind(r.id)
@@ -365,7 +366,7 @@ async fn postgres_inbox_and_transfer_retry_scope_deadlocks() {
     wait_until_blocked(raw, holder, 1).await;
     let pool = f.pool().clone();
     let inbox = tokio::spawn(async move {
-        db::notifications::records::notification_inbox(
+        codeyard_db_repos::notifications::records::notification_inbox(
             &pool,
             &session,
             owner,
@@ -425,7 +426,7 @@ async fn postgres_family_promotion_refuses_a_fork_committed_during_its_lock_wait
     let mut nodes = Vec::new();
     for name in ["former", "target"] {
         nodes.push(
-            db::cluster::register_own_node(
+            codeyard_db_cluster::cluster::register_own_node(
                 f.pool(),
                 &codeyard_support::node_identity::NodeKey::generate().public_hex(),
                 name,
@@ -472,13 +473,14 @@ async fn postgres_family_promotion_refuses_a_fork_committed_during_its_lock_wait
     let child: i64 = sqlx::query_scalar("INSERT INTO repositories(owner_kind,owner_user_id,name,disk_path,is_private,is_fork,forked_from_id,storage_node_id,created_by_id) VALUES('user',$1,'new-fork',$2,TRUE,TRUE,$3,$4,$1) RETURNING id")
         .bind(owner).bind(uuid::Uuid::new_v4().to_string()).bind(r.id).bind(from).fetch_one(&mut *fork).await.unwrap();
     let pool = f.pool().clone();
-    let promotion =
-        tokio::spawn(async move { db::cluster::promote_fork_family(&pool, r.id, from, to).await });
+    let promotion = tokio::spawn(async move {
+        codeyard_db_cluster::cluster::promote_fork_family(&pool, r.id, from, to).await
+    });
     wait_until_blocked(raw, holder, 1).await;
     fork.commit().await.unwrap();
     assert_eq!(
         promotion.await.unwrap().unwrap(),
-        db::cluster::FamilyOutcome::Refused
+        codeyard_db_cluster::cluster::FamilyOutcome::Refused
     );
     assert_eq!(f.repository(r.id).await.storage_node_id, Some(from));
     assert_eq!(f.repository(child).await.storage_node_id, Some(from));

@@ -16,7 +16,7 @@ async fn reactions(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         false,
@@ -24,13 +24,14 @@ async fn reactions(pg: bool) {
     )
     .await
     .unwrap();
-    let issue = db::issues::create_issue(f.pool(), repo.id, alice, "An issue", "")
+    let issue = codeyard_db_repos::issues::create_issue(f.pool(), repo.id, alice, "An issue", "")
         .await
         .unwrap();
-    let another = db::issues::create_issue(f.pool(), repo.id, alice, "Another issue", "")
-        .await
-        .unwrap();
-    let comment = db::issues::add_issue_comment(
+    let another =
+        codeyard_db_repos::issues::create_issue(f.pool(), repo.id, alice, "Another issue", "")
+            .await
+            .unwrap();
+    let comment = codeyard_db_repos::issues::add_issue_comment(
         f.pool(),
         issue.repo_id,
         issue.id,
@@ -42,9 +43,9 @@ async fn reactions(pg: bool) {
     )
     .await
     .unwrap();
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: repo.id,
             head_repo_id: Some(repo.id),
             author_id: alice,
@@ -61,9 +62,9 @@ async fn reactions(pg: bool) {
     )
     .await
     .unwrap();
-    let inline = db::pull_requests::reviews::add_pull_request_comment(
+    let inline = codeyard_db_repos::pull_requests::reviews::add_pull_request_comment(
         f.pool(),
-        db::pull_requests::reviews::NewPullRequestComment {
+        codeyard_db_repos::pull_requests::reviews::NewPullRequestComment {
             pr_id: pull.id,
             author_id: alice,
             body: "An inline comment",
@@ -79,9 +80,9 @@ async fn reactions(pg: bool) {
     )
     .await
     .unwrap();
-    let pending = db::pull_requests::reviews::add_pending_pull_request_comment(
+    let pending = codeyard_db_repos::pull_requests::reviews::add_pending_pull_request_comment(
         f.pool(),
-        db::pull_requests::reviews::NewPullRequestComment {
+        codeyard_db_repos::pull_requests::reviews::NewPullRequestComment {
             pr_id: pull.id,
             author_id: alice,
             body: "A pending comment",

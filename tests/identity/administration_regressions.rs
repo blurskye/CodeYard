@@ -16,7 +16,7 @@ async fn bounded_administration(pg: bool) {
         .await;
     for index in 0..105 {
         f.actor(&format!("page_user_{index:03}")).await;
-        db::users::signup_requests::create_signup_request(
+        codeyard_db_identity::users::signup_requests::create_signup_request(
             f.pool(),
             &format!("pending_{index:03}"),
             None,
@@ -27,24 +27,29 @@ async fn bounded_administration(pg: bool) {
         f.execute(&format!("INSERT INTO ssh_keys(user_id,name,fingerprint,public_key,key_type) VALUES($1,'key-{index}','fingerprint-{index}','{}','ssh-ed25519')", "x".repeat(32000)), &[admin]).await;
     }
     assert_eq!(
-        db::users::accounts::list_admin_account_summaries(f.pool(), 1000, 0)
+        codeyard_db_identity::users::accounts::list_admin_account_summaries(f.pool(), 1000, 0)
             .await
             .unwrap()
             .len(),
         100
     );
     assert!(
-        !db::users::accounts::list_admin_account_summaries(f.pool(), 100, 100)
+        !codeyard_db_identity::users::accounts::list_admin_account_summaries(f.pool(), 100, 100)
             .await
             .unwrap()
             .is_empty()
     );
-    let requests =
-        db::users::signup_requests::list_signup_requests(f.pool(), "pending", 1000, 0, 0)
-            .await
-            .unwrap();
+    let requests = codeyard_db_identity::users::signup_requests::list_signup_requests(
+        f.pool(),
+        "pending",
+        1000,
+        0,
+        0,
+    )
+    .await
+    .unwrap();
     assert_eq!(requests.len(), 100);
-    let next = db::users::signup_requests::list_signup_requests(
+    let next = codeyard_db_identity::users::signup_requests::list_signup_requests(
         f.pool(),
         "pending",
         100,
@@ -56,15 +61,15 @@ async fn bounded_administration(pg: bool) {
     assert_eq!(next.len(), 5);
     assert!(next.iter().all(|row| row.id > requests.last().unwrap().id));
     assert_eq!(
-        db::users::signup_requests::count_signup_requests(f.pool(), "pending")
+        codeyard_db_identity::users::signup_requests::count_signup_requests(f.pool(), "pending")
             .await
             .unwrap(),
         105
     );
-    let keys = db::users::ssh_keys::list_user_key_summaries(
+    let keys = codeyard_db_identity::users::ssh_keys::list_user_key_summaries(
         f.pool(),
         admin,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), admin).await,
         ),
         0,
@@ -73,10 +78,10 @@ async fn bounded_administration(pg: bool) {
     .unwrap();
     assert_eq!(keys.len(), 100);
     assert_eq!(
-        db::users::ssh_keys::list_user_key_summaries(
+        codeyard_db_identity::users::ssh_keys::list_user_key_summaries(
             f.pool(),
             admin,
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), admin).await
             ),
             keys.last().unwrap().id
@@ -197,12 +202,15 @@ async fn account_writes(pg: bool) {
         );
     }
     let actor = signed_in.user.id;
-    assert!(
-        db::node_config::set_ai_crawlers(f.pool(), actor, &signed_in.session_id, "allow")
-            .await
-            .unwrap()
-    );
-    db::cluster::register_own_node(
+    assert!(codeyard_db_cluster::node_config::set_ai_crawlers(
+        f.pool(),
+        actor,
+        &signed_in.session_id,
+        "allow"
+    )
+    .await
+    .unwrap());
+    codeyard_db_cluster::cluster::register_own_node(
         f.pool(),
         &"a".repeat(64),
         "test-node",
@@ -211,26 +219,34 @@ async fn account_writes(pg: bool) {
     )
     .await
     .unwrap();
-    let authority = || db::cluster::Authority::Administrator {
+    let authority = || codeyard_db_cluster::cluster::Authority::Administrator {
         user_id: actor,
         session: &signed_in.session_id,
     };
     assert!(matches!(
-        db::cluster::set_node_status(f.pool(), authority(), "test-node", "revoked")
-            .await
-            .unwrap(),
+        codeyard_db_cluster::cluster::set_node_status(
+            f.pool(),
+            authority(),
+            "test-node",
+            "revoked"
+        )
+        .await
+        .unwrap(),
         codeyard_db_core::models::NodeStatusChange::Changed { .. }
     ));
-    db::users::sessions::delete_session(f.pool(), &signed_in.session_id)
+    codeyard_db_identity::users::sessions::delete_session(f.pool(), &signed_in.session_id)
         .await
         .unwrap();
-    assert!(
-        !db::node_config::set_ai_crawlers(f.pool(), actor, &signed_in.session_id, "block")
-            .await
-            .unwrap()
-    );
+    assert!(!codeyard_db_cluster::node_config::set_ai_crawlers(
+        f.pool(),
+        actor,
+        &signed_in.session_id,
+        "block"
+    )
+    .await
+    .unwrap());
     assert_eq!(
-        db::cluster::set_node_status(f.pool(), authority(), "test-node", "active")
+        codeyard_db_cluster::cluster::set_node_status(f.pool(), authority(), "test-node", "active")
             .await
             .unwrap(),
         codeyard_db_core::models::NodeStatusChange::Denied
@@ -253,12 +269,14 @@ async fn account_writes(pg: bool) {
         .unwrap_err(),
         identity::profiles::ProfileError::Denied
     );
-    assert!(db::users::accounts::get_user_by_id(f.pool(), actor)
-        .await
-        .unwrap()
-        .unwrap()
-        .display_name
-        .is_none());
+    assert!(
+        codeyard_db_identity::users::accounts::get_user_by_id(f.pool(), actor)
+            .await
+            .unwrap()
+            .unwrap()
+            .display_name
+            .is_none()
+    );
     f.finish().await;
 }
 

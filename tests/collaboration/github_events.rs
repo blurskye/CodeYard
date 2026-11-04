@@ -15,7 +15,7 @@ async fn events(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         true,
@@ -26,7 +26,7 @@ async fn events(pg: bool) {
     codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "other",
         None,
         false,
@@ -34,7 +34,7 @@ async fn events(pg: bool) {
     )
     .await
     .unwrap();
-    let issue = db::issues::create_issue(f.pool(), repo.id, alice, "Original", "")
+    let issue = codeyard_db_repos::issues::create_issue(f.pool(), repo.id, alice, "Original", "")
         .await
         .unwrap();
     let router = f.router(root.path()).await;
@@ -252,9 +252,9 @@ async fn events(pg: bool) {
             document(response, operation, 404).await;
         }
     }
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             issue: None,
             maintainer_can_modify: false,
             repo_id: repo.id,
@@ -271,11 +271,11 @@ async fn events(pg: bool) {
     )
     .await
     .unwrap();
-    db::pull_requests::reviews::add_pull_request_review(
+    codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
         f.pool(),
         pull.id,
         alice,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         "commented",
@@ -284,9 +284,9 @@ async fn events(pg: bool) {
     )
     .await
     .unwrap();
-    db::pull_requests::reviews::add_pending_pull_request_comment(
+    codeyard_db_repos::pull_requests::reviews::add_pending_pull_request_comment(
         f.pool(),
-        db::pull_requests::reviews::NewPullRequestComment {
+        codeyard_db_repos::pull_requests::reviews::NewPullRequestComment {
             start_line: None,
             start_side: None,
             pr_id: pull.id,

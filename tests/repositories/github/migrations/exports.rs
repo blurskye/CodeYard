@@ -257,14 +257,14 @@ pub(super) async fn run(
     assert!(child_repos.is_empty());
     let mut projects = Vec::new();
     for owner in [
-        db::projects::Owner::User(alice),
-        db::projects::Owner::Organization(org),
+        codeyard_db_repos::projects::Owner::User(alice),
+        codeyard_db_repos::projects::Owner::Organization(org),
     ] {
         projects.push(
-            db::projects::create(
+            codeyard_db_repos::projects::create(
                 f.pool(),
                 alice,
-                &db::users::accounts::AccountCredential::Session(
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(f.pool(), alice).await,
                 ),
                 owner,
@@ -276,13 +276,13 @@ pub(super) async fn run(
             .unwrap(),
         );
     }
-    db::projects::create(
+    codeyard_db_repos::projects::create(
         f.pool(),
         bob,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), bob).await,
         ),
-        db::projects::Owner::User(bob),
+        codeyard_db_repos::projects::Owner::User(bob),
         "Unrelated private project",
         None,
         false,
@@ -291,14 +291,14 @@ pub(super) async fn run(
     .unwrap();
     // A project holds at most 100 fields, and Title and Status are built in.
     for n in 0..98 {
-        db::projects::add_field(
+        codeyard_db_repos::projects::add_field(
             f.pool(),
             alice,
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), alice).await,
             ),
             projects[0].id,
-            &db::projects::NewField {
+            &codeyard_db_repos::projects::NewField {
                 name: format!("Migration field {n}"),
                 data_type: "text".into(),
                 single_select_options: None,
@@ -308,10 +308,10 @@ pub(super) async fn run(
         .await
         .unwrap();
     }
-    assert!(db::projects::list_page(
+    assert!(codeyard_db_repos::projects::list_page(
         f.pool(),
         Some(bob),
-        db::projects::Owner::User(alice),
+        codeyard_db_repos::projects::Owner::User(alice),
         0,
         100
     )
@@ -319,24 +319,24 @@ pub(super) async fn run(
     .unwrap()
     .is_empty());
     assert!(
-        db::projects::fields_page(f.pool(), Some(bob), projects[0].id, 0, 100)
+        codeyard_db_repos::projects::fields_page(f.pool(), Some(bob), projects[0].id, 0, 100)
             .await
             .is_err()
     );
     // A page reads at most one row past 100, to tell whether another page follows.
-    assert!(db::projects::list_page(
+    assert!(codeyard_db_repos::projects::list_page(
         f.pool(),
         Some(alice),
-        db::projects::Owner::User(alice),
+        codeyard_db_repos::projects::Owner::User(alice),
         0,
         102
     )
     .await
     .is_err());
-    projects[0] = db::projects::get(
+    projects[0] = codeyard_db_repos::projects::get(
         f.pool(),
         Some(alice),
-        db::projects::Owner::User(alice),
+        codeyard_db_repos::projects::Owner::User(alice),
         projects[0].number,
     )
     .await
@@ -440,7 +440,7 @@ pub(super) async fn run(
         )
         .await;
         assert_eq!(repositories[0]["id"], repo.id);
-        let actor = db::users::accounts::get_user_by_id(f.pool(), alice)
+        let actor = codeyard_db_identity::users::accounts::get_user_by_id(f.pool(), alice)
             .await
             .unwrap()
             .unwrap();
@@ -449,11 +449,15 @@ pub(super) async fn run(
                 .await
                 .unwrap()
         );
-        assert!(
-            db::issues::create_issue(f.pool(), repo.id, alice, "Blocked", "Migration lock")
-                .await
-                .is_err()
-        );
+        assert!(codeyard_db_repos::issues::create_issue(
+            f.pool(),
+            repo.id,
+            alice,
+            "Blocked",
+            "Migration lock"
+        )
+        .await
+        .is_err());
         assert!(repo_store(repo, None)
             .create_branch_as(f.pool(), repo.id, alice, "blocked", "trunk")
             .await
@@ -534,7 +538,7 @@ pub(super) async fn run(
         .await
         .unwrap();
         let generation = uuid::Uuid::new_v4().to_string();
-        db::source_imports::start(
+        codeyard_db_repos::source_imports::start(
             f.pool(),
             alice,
             restored.id,
@@ -543,7 +547,7 @@ pub(super) async fn run(
         )
         .await
         .unwrap();
-        let token = db::users::tokens::find_token(
+        let token = codeyard_db_identity::users::tokens::find_token(
             f.pool(),
             &codeyard_support::token_hash::token_hash(writer.split_once(' ').unwrap().1),
         )
@@ -567,7 +571,7 @@ pub(super) async fn run(
             )
             .await
             .unwrap();
-        db::source_imports::finish(f.pool(), restored.id, &generation, true)
+        codeyard_db_repos::source_imports::finish(f.pool(), restored.id, &generation, true)
             .await
             .unwrap();
         let store = repo_store(&restored, None);
@@ -630,7 +634,7 @@ pub(super) async fn run(
             .iter()
             .find(|field| field["name"] == "Status")
             .unwrap();
-        let source_fields = db::projects::fields(f.pool(), Some(alice), project.id)
+        let source_fields = codeyard_db_repos::projects::fields(f.pool(), Some(alice), project.id)
             .await
             .unwrap();
         let source_status = source_fields
@@ -639,7 +643,7 @@ pub(super) async fn run(
             .unwrap();
         assert_eq!(
             status["source_configuration"],
-            db::projects::field_configuration(source_status).unwrap()
+            codeyard_db_repos::projects::field_configuration(source_status).unwrap()
         );
         assert_eq!(status["project"], project_records[0]["url"]);
         assert_eq!(status["created_at"], json!(source_status.created_at));
@@ -736,9 +740,11 @@ pub(super) async fn run(
             StatusCode::NOT_FOUND,
         )
         .await;
-        assert!(db::repository_exports::locked(f.pool(), repo.id)
-            .await
-            .unwrap());
+        assert!(
+            codeyard_db_repos::repository_exports::locked(f.pool(), repo.id)
+                .await
+                .unwrap()
+        );
         call(
             router,
             "DELETE",
@@ -845,12 +851,12 @@ pub(super) async fn run(
     )
     .await
     .unwrap();
-    let row = db::repository_exports::create(
+    let row = codeyard_db_repos::repository_exports::create(
         f.pool(),
         alice,
         None,
         &[personal.id, deleted.id],
-        &db::repository_exports::ExportOptions {
+        &codeyard_db_repos::repository_exports::ExportOptions {
             lock_repositories: true,
             ..Default::default()
         },
@@ -861,13 +867,15 @@ pub(super) async fn run(
         .lock_migration_as(f.pool(), personal.id, alice, row.id)
         .await
         .unwrap();
-    db::repositories::records::delete_repository(f.pool(), alice, deleted.id)
+    codeyard_db_repos::repositories::records::delete_repository(f.pool(), alice, deleted.id)
         .await
         .unwrap();
-    assert!(db::repository_exports::by_guid(f.pool(), alice, &row.guid)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        codeyard_db_repos::repository_exports::by_guid(f.pool(), alice, &row.guid)
+            .await
+            .unwrap()
+            .is_none()
+    );
     let path = format!("/api/v3/user/migrations/{}", row.id);
     let status = call(
         router,
@@ -890,10 +898,12 @@ pub(super) async fn run(
         StatusCode::NO_CONTENT,
     )
     .await;
-    assert!(!db::repository_exports::locked(f.pool(), personal.id)
-        .await
-        .unwrap());
-    db::repository_exports::finish(f.pool(), row.id, "failed")
+    assert!(
+        !codeyard_db_repos::repository_exports::locked(f.pool(), personal.id)
+            .await
+            .unwrap()
+    );
+    codeyard_db_repos::repository_exports::finish(f.pool(), row.id, "failed")
         .await
         .unwrap();
     call(

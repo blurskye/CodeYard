@@ -77,7 +77,7 @@ async fn teams_contract(pg: bool) {
         ));
     }
     for user in [bob, carol] {
-        db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             f.pool(),
             user,
             id,

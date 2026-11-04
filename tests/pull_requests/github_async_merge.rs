@@ -55,7 +55,7 @@ async fn contract(pg: bool) {
     let repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -141,7 +141,7 @@ async fn contract(pg: bool) {
     // on recovery. Starting a different node must not cancel it.
     let abandoned = uuid::Uuid::new_v4().to_string();
     let details = json!({"message":"Merge request accepted","uuid":abandoned,"merge_method":"merge","merge_action":"default","expected_head_sha":head,"bypass_rules":false});
-    assert!(db::pull_requests::async_merge::insert(f.pool(),db::pull_requests::async_merge::NewAsyncMerge{uuid:&abandoned,repo_id:repo.id,pull_request_id:id,token_id:write.token.id,worker_node_id:None,owner:"alice",name:"proj",number:number as i32,request:&json!({"expected_head":head,"expected_base":base,"expected_base_branch":"main"}),details:&details}).await.unwrap());
+    assert!(codeyard_db_repos::pull_requests::async_merge::insert(f.pool(),codeyard_db_repos::pull_requests::async_merge::NewAsyncMerge{uuid:&abandoned,repo_id:repo.id,pull_request_id:id,token_id:write.token.id,worker_node_id:None,owner:"alice",name:"proj",number:number as i32,request:&json!({"expected_head":head,"expected_base":base,"expected_base_branch":"main"}),details:&details}).await.unwrap());
     let existing = call(
         &router,
         "pulls/get-merge-async-result",
@@ -215,7 +215,7 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(reference["object"]["sha"], result["details"]["sha"]);
     assert!(
-        db::pull_requests::records::get_pull_request_by_id(f.pool(), id)
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(f.pool(), id)
             .await
             .unwrap()
             .unwrap()
@@ -234,12 +234,13 @@ async fn contract(pg: bool) {
     assert_eq!(again["status"], "merged");
     // A request left pending after its merge was recorded is reported as that merge on recovery.
     let completed = uuid::Uuid::new_v4().to_string();
-    assert!(db::pull_requests::async_merge::insert(f.pool(),db::pull_requests::async_merge::NewAsyncMerge{uuid:&completed,repo_id:repo.id,pull_request_id:id,token_id:write.token.id,worker_node_id:None,owner:"alice",name:"proj",number:number as i32,request:&json!({"expected_head":head,"expected_base":base,"expected_base_branch":"main"}),details:&details}).await.unwrap());
+    assert!(codeyard_db_repos::pull_requests::async_merge::insert(f.pool(),codeyard_db_repos::pull_requests::async_merge::NewAsyncMerge{uuid:&completed,repo_id:repo.id,pull_request_id:id,token_id:write.token.id,worker_node_id:None,owner:"alice",name:"proj",number:number as i32,request:&json!({"expected_head":head,"expected_base":base,"expected_base_branch":"main"}),details:&details}).await.unwrap());
     assert_eq!(async_merge::recover(f.pool(), None).await.unwrap(), 1);
-    let settled = db::pull_requests::async_merge::get(f.pool(), repo.id, id, &completed)
-        .await
-        .unwrap()
-        .unwrap();
+    let settled =
+        codeyard_db_repos::pull_requests::async_merge::get(f.pool(), repo.id, id, &completed)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(settled.status, "merged");
     assert_eq!(settled.details["sha"], result["details"]["sha"]);
     f.execute(
@@ -258,7 +259,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::pull_requests::async_merge::prune(f.pool())
+        codeyard_db_repos::pull_requests::async_merge::prune(f.pool())
             .await
             .unwrap(),
         3

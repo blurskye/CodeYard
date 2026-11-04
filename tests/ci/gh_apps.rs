@@ -191,7 +191,7 @@ async fn contract(pg: bool) {
     let repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         true,
@@ -345,7 +345,7 @@ async fn contract(pg: bool) {
         )
         .await;
     }
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
         .await
         .unwrap();
     assert_eq!(runs.len(), 2);
@@ -590,7 +590,7 @@ async fn contract(pg: bool) {
         201,
     )
     .await;
-    let reruns = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
+    let reruns = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
         .await
         .unwrap();
     assert_eq!(reruns.len(), 3);
@@ -602,12 +602,12 @@ async fn contract(pg: bool) {
     );
     assert_eq!(rerun.workflow_path, ".github/workflows/ci.yml");
     // The run list leaves out workflow snapshots, so compare the whole runs.
-    let rerun_blobs = db::ci::get_ci_run(f.pool(), rerun.id)
+    let rerun_blobs = codeyard_db_actions::ci::get_ci_run(f.pool(), rerun.id)
         .await
         .unwrap()
         .unwrap()
         .workflow_blobs;
-    let source_blobs = db::ci::get_ci_run(f.pool(), id)
+    let source_blobs = codeyard_db_actions::ci::get_ci_run(f.pool(), id)
         .await
         .unwrap()
         .unwrap()
@@ -620,9 +620,9 @@ async fn contract(pg: bool) {
     // The lookup must filter before first:1, not select a newer unrelated branch.
     let mut matching = None;
     for head in ["feature", "unrelated"] {
-        let pull = db::pull_requests::records::create_pull_request(
+        let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
             f.pool(),
-            db::pull_requests::records::NewPullRequest {
+            codeyard_db_repos::pull_requests::records::NewPullRequest {
                 repo_id: repo.id,
                 head_repo_id: Some(repo.id),
                 author_id: alice,
@@ -817,14 +817,14 @@ async fn contract(pg: bool) {
     )
     .await;
     // Credentials go only to the worker that holds the claim, so issue them for the claimed row.
-    let runtime = db::ci::get_ci_run(f.pool(), rerun.id)
+    let runtime = codeyard_db_actions::ci::get_ci_run(f.pool(), rerun.id)
         .await
         .unwrap()
         .unwrap();
     let token = codeyard_app::ci::runtime::issue(
         f.pool(),
         &runtime,
-        &db::actions::ActionsSettings::default(),
+        &codeyard_db_actions::actions::ActionsSettings::default(),
     )
     .await
     .unwrap();

@@ -1,5 +1,4 @@
 //! Team identities use native active-membership and secret-team visibility, not repository grants.
-use crate::db;
 use crate::missing;
 use crate::token_denied;
 use crate::unavailable;
@@ -12,11 +11,11 @@ pub(super) async fn by_id(id: i64, request: &RequestContext) -> Result<Value> {
         return Err(token_denied());
     }
     request.require_oauth_scope("read:org")?;
-    let team = db::organizations::teams::team_identity(
+    let team = codeyard_db_orgs::organizations::teams::team_identity(
         &request.state.pool,
         request.auth.user.id,
         request.auth.token.id,
-        db::organizations::teams::TeamIdentity::Id(id),
+        codeyard_db_orgs::organizations::teams::TeamIdentity::Id(id),
     )
     .await
     .map_err(unavailable)?
@@ -29,11 +28,11 @@ pub(super) async fn by_slug(org: i64, slug: &str, request: &RequestContext) -> R
         return Err(token_denied());
     }
     request.authorize_organization(org).await?;
-    let team = db::organizations::teams::team_identity(
+    let team = codeyard_db_orgs::organizations::teams::team_identity(
         &request.state.pool,
         request.auth.user.id,
         request.auth.token.id,
-        db::organizations::teams::TeamIdentity::Slug(org, slug),
+        codeyard_db_orgs::organizations::teams::TeamIdentity::Slug(org, slug),
     )
     .await
     .map_err(unavailable)?;

@@ -17,7 +17,7 @@ impl LocalStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo: i64,
-        authority: db::credentials::Actor,
+        authority: codeyard_db_core::queries::credentials::Actor,
         old: &str,
         new: &str,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, RepoError>> + Send>>
@@ -39,7 +39,7 @@ impl LocalStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo: i64,
-        authority: db::credentials::Actor,
+        authority: codeyard_db_core::queries::credentials::Actor,
         old: &str,
         new: &str,
     ) -> Result<String, RepoError> {
@@ -60,9 +60,10 @@ impl LocalStore {
             .get(&old_ref)
             .ok_or_else(|| RepoError::new(ErrorKind::NotFound, "Branch not found"))?
             .clone();
-        let rules = db::repositories::protection::list_branch_protection_rules(pool, repo)
-            .await
-            .map_err(|_| RepoError::authority_unavailable())?;
+        let rules =
+            codeyard_db_repos::repositories::protection::list_branch_protection_rules(pool, repo)
+                .await
+                .map_err(|_| RepoError::authority_unavailable())?;
         if refs.contains_key(&new_ref) || rules.iter().any(|rule| rule.pattern == new) {
             return Err(RepoError::new(ErrorKind::Invalid, "Branch already exists"));
         }
@@ -133,7 +134,7 @@ impl LocalStore {
             )
         }));
         if advertised_default.as_deref() == Some(old) {
-            changes.push(db::models::RefChange {
+            changes.push(codeyard_db_core::models::cluster::RefChange {
                 name: "HEAD".into(),
                 kind: "symbolic".into(),
                 old_target: Some(old_ref.clone()),
@@ -159,9 +160,11 @@ impl LocalStore {
             }
         }
         let followup = async {
-            db::repositories::protection::rename_branch_settings(pool, actor, repo, old, new)
-                .await
-                .map_err(|_| RepoError::applied_followup_failed())?;
+            codeyard_db_repos::repositories::protection::rename_branch_settings(
+                pool, actor, repo, old, new,
+            )
+            .await
+            .map_err(|_| RepoError::applied_followup_failed())?;
             self.after_ref_change(
                 pool,
                 repo,
@@ -182,7 +185,7 @@ impl LocalStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo: i64,
-        authority: &db::credentials::Actor,
+        authority: &codeyard_db_core::queries::credentials::Actor,
         old: &str,
         new: &str,
     ) -> Result<codeyard_db_core::models::User, RepoError> {
@@ -274,7 +277,7 @@ impl LocalStore {
             .await
             .map_err(RepoError::from)?
             .ok_or_else(|| RepoError::new(ErrorKind::Invalid, "Branch not found"))?;
-        let user = db::users::accounts::get_user_by_id(pool, actor)
+        let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor)
             .await
             .map_err(|_| RepoError::authority_unavailable())?
             .ok_or_else(RepoError::write_denied)?;

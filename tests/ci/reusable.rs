@@ -143,7 +143,7 @@ async fn contract(pg: bool) {
     let remote = repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(other),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(other),
         "library",
         None,
         false,
@@ -154,7 +154,7 @@ async fn contract(pg: bool) {
     let caller = repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "caller",
         None,
         true,
@@ -162,14 +162,14 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::secrets::create_or_update_secret(
+    codeyard_db_actions::secrets::create_or_update_secret(
         f.pool(),
         &encryptor,
         caller.id,
         "CALL_PASSWORD",
         "reusable-server-password",
         Some(actor),
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), actor).await,
         ),
     )
@@ -366,7 +366,7 @@ jobs:
         )
         .await
         .is_err());
-    let failed = db::ci::get_ci_run_by_run_id(f.pool(), revoked.run_id)
+    let failed = codeyard_db_actions::ci::get_ci_run_by_run_id(f.pool(), revoked.run_id)
         .await
         .unwrap()
         .unwrap();
@@ -411,7 +411,7 @@ jobs:
             format!("{error:#}").contains("exceed caller permissions"),
             "{error:#}"
         );
-        let failed = db::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
+        let failed = codeyard_db_actions::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
             .await
             .unwrap()
             .unwrap();
@@ -463,7 +463,7 @@ jobs:
         workers.startup().await.unwrap();
         let finished = tokio::time::timeout(Duration::from_secs(80), async {
             loop {
-                let current = db::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
+                let current = codeyard_db_actions::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
                     .await
                     .unwrap()
                     .unwrap();
@@ -475,7 +475,9 @@ jobs:
         })
         .await
         .expect("reusable workflow must finish");
-        let logs = db::ci::list_ci_logs(f.pool(), run.id, 1000).await.unwrap();
+        let logs = codeyard_db_actions::ci::list_ci_logs(f.pool(), run.id, 1000)
+            .await
+            .unwrap();
         assert_eq!(finished.status, "success", "{engine}: {logs:?}");
         assert!(
             logs.iter()

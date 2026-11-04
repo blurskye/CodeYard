@@ -126,7 +126,7 @@ async fn real_engines(pg: bool) {
         let repo = lifecycle::provision(
             (f.pool(), None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(actor),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
             name,
             None,
             true,
@@ -135,23 +135,23 @@ async fn real_engines(pg: bool) {
         .await
         .unwrap();
         workflow_commit(&repo.disk_path, &scoped_workflow());
-        db::secrets::create_or_update_secret(
+        codeyard_db_actions::secrets::create_or_update_secret(
             f.pool(),
             &encryptor,
             repo.id,
             "TOKEN",
             "repository-private-marker",
             Some(actor),
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), actor).await,
             ),
         )
         .await
         .unwrap();
-        db::variables::save(
+        codeyard_db_actions::variables::save(
             f.pool(),
             actor,
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), actor).await,
             ),
             repo.id,
@@ -211,7 +211,7 @@ async fn real_engines(pg: bool) {
             .unwrap();
         let finished = tokio::time::timeout(Duration::from_secs(80), async {
             loop {
-                let current = db::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
+                let current = codeyard_db_actions::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
                     .await
                     .unwrap()
                     .unwrap();
@@ -223,7 +223,9 @@ async fn real_engines(pg: bool) {
         })
         .await
         .expect("environment workflow must finish");
-        let logs = db::ci::list_ci_logs(f.pool(), run.id, 2000).await.unwrap();
+        let logs = codeyard_db_actions::ci::list_ci_logs(f.pool(), run.id, 2000)
+            .await
+            .unwrap();
         assert_eq!(finished.status, "success", "{engine}: {logs:?}");
         for job in ["ordinary", "deploy_a", "deploy_b"] {
             assert!(
@@ -267,7 +269,7 @@ async fn fork_claims(pg: bool) {
     let repo = lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "claims",
         None,
         true,
@@ -276,11 +278,11 @@ async fn fork_claims(pg: bool) {
     .await
     .unwrap();
     // The claims below include a fork run, which a private repository runs only once allowed.
-    db::action_settings::settings(
+    codeyard_db_actions::action_settings::settings(
         f.pool(),
         actor,
-        &db::action_settings::Scope::Repository(repo.id),
-        db::action_settings::Setting::ForkWorkflows,
+        &codeyard_db_core::queries::action_settings::Scope::Repository(repo.id),
+        codeyard_db_core::queries::action_settings::Setting::ForkWorkflows,
         Some(&serde_json::json!({"run_workflows_from_fork_pull_requests": true})),
     )
     .await
@@ -307,23 +309,23 @@ async fn fork_claims(pg: bool) {
         .await
         .unwrap();
     }
-    db::secrets::create_or_update_secret(
+    codeyard_db_actions::secrets::create_or_update_secret(
         f.pool(),
         &encryptor,
         repo.id,
         "TOKEN",
         "repository-private-claim-marker",
         Some(actor),
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), actor).await,
         ),
     )
     .await
     .unwrap();
-    db::variables::save(
+    codeyard_db_actions::variables::save(
         f.pool(),
         actor,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), actor).await,
         ),
         repo.id,
@@ -396,12 +398,12 @@ async fn fork_claims(pg: bool) {
                 .finish("worker", run.id, "success", None)
                 .await
                 .unwrap();
-            db::secrets::delete_secret(
+            codeyard_db_actions::secrets::delete_secret(
                 f.pool(),
                 actor,
                 repo.id,
                 "TOKEN",
-                &db::users::accounts::AccountCredential::Session(
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(f.pool(), actor).await,
                 ),
             )
@@ -419,7 +421,7 @@ async fn fork_claims(pg: bool) {
                 .expect("environment secret must require the master key");
             assert!(!error.to_string().contains("private-claim-marker"));
             assert_eq!(
-                db::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
+                codeyard_db_actions::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
                     .await
                     .unwrap()
                     .unwrap()

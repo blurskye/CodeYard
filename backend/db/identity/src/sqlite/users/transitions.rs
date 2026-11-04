@@ -676,11 +676,3 @@ pub async fn reset_password_with_link(
     tx.commit().await?;
     Ok(Some(user_id))
 }
-
-use codeyard_db_core::queries::sqlite::users::transitions::credential_live;
-
-use codeyard_db_core::queries::sqlite::users::transitions::live_session;
-
-use codeyard_db_core::queries::sqlite::users::transitions::credential_live;
-
-use codeyard_db_core::queries::sqlite::users::transitions::live_session;

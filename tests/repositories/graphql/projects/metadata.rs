@@ -18,15 +18,18 @@ async fn metadata_contract(pg: bool) {
     let bob = f.actor("project-metadata-bob").await;
     let alice_session = crate::support::live_session(f.pool(), alice).await;
     let bob_session = crate::support::live_session(f.pool(), bob).await;
-    let alice_credential = db::users::accounts::AccountCredential::Session(&alice_session);
-    let bob_credential = db::users::accounts::AccountCredential::Session(&bob_session);
+    let alice_credential =
+        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&alice_session);
+    let bob_credential =
+        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&bob_session);
     let org = applied(
-        db::organizations::profiles::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             alice,
-            &db::organizations::profiles::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 "project-metadata-org",
-                db::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
             )
             .unwrap(),
         )
@@ -38,7 +41,7 @@ async fn metadata_contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(bob),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(bob),
         "metadata",
         None,
         false,
@@ -46,12 +49,12 @@ async fn metadata_contract(pg: bool) {
     )
     .await
     .unwrap();
-    let issue = db::issues::create_issue(f.pool(), repo.id, bob, "Issue", "")
+    let issue = codeyard_db_repos::issues::create_issue(f.pool(), repo.id, bob, "Issue", "")
         .await
         .unwrap();
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: repo.id,
             head_repo_id: Some(repo.id),
             author_id: bob,
@@ -89,7 +92,7 @@ async fn metadata_contract(pg: bool) {
         );
     }
     let token = &credentials[0];
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         alice,
         repo.id,
@@ -144,7 +147,7 @@ async fn metadata_contract(pg: bool) {
         }
     }
     assert!(
-        db::repositories::access::revoke_repo_access(f.pool(), alice, repo.id)
+        codeyard_db_repos::repositories::access::revoke_repo_access(f.pool(), alice, repo.id)
             .await
             .unwrap()
     );

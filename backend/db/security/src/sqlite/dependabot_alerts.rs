@@ -244,7 +244,3 @@ pub async fn organization_repositories(
 use codeyard_db_core::queries::sqlite::dependabot_alerts::refresh;
 
 use codeyard_db_core::queries::sqlite::dependabot_alerts::global_in;
-
-use codeyard_db_core::queries::sqlite::dependabot_alerts::global_in;
-
-use codeyard_db_core::queries::sqlite::dependabot_alerts::refresh;

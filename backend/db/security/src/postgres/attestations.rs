@@ -183,5 +183,3 @@ pub async fn delete(
 }
 
 use codeyard_db_core::queries::postgres::attestations::lock;
-
-use codeyard_db_core::queries::postgres::attestations::lock;

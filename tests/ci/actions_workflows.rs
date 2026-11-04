@@ -109,7 +109,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         &repos_root,
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "project",
         None,
         true,
@@ -283,9 +283,9 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .blob_id;
-    let refused = db::ci::enqueue_ci_run(
+    let refused = codeyard_db_actions::ci::enqueue_ci_run(
         f.pool(),
-        db::ci::NewCiRun {
+        codeyard_db_actions::ci::NewCiRun {
             repo_id: repo.id,
             triggered_by_id: alice,
             pipeline: "ci",
@@ -357,14 +357,14 @@ async fn contract(pg: bool) {
         StatusCode::NO_CONTENT,
     )
     .await;
-    let runs = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
         .await
         .unwrap();
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].head_sha.as_deref(), Some(admitted_sha.as_str()));
     assert_eq!(runs[0].workflow_inputs, Some(json!({"text":"hello"})));
     // The run list leaves out workflow snapshots, so read the whole run.
-    let dispatched = db::ci::get_ci_run(f.pool(), runs[0].id)
+    let dispatched = codeyard_db_actions::ci::get_ci_run(f.pool(), runs[0].id)
         .await
         .unwrap()
         .unwrap();
@@ -383,7 +383,7 @@ async fn contract(pg: bool) {
     )
     .await;
     let run_id = details["workflow_run_id"].as_i64().unwrap();
-    let second = db::ci::get_ci_run_by_id(f.pool(), repo.id, run_id)
+    let second = codeyard_db_actions::ci::get_ci_run_by_id(f.pool(), repo.id, run_id)
         .await
         .unwrap()
         .unwrap();
@@ -392,7 +392,7 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::OK);
     assert!(String::from_utf8(svg).unwrap().contains("queued"));
     for _ in 0..2 {
-        let run = db::ci::claim_ci_run(
+        let run = codeyard_db_actions::ci::claim_ci_run(
             f.pool(),
             "badge-worker",
             "local",
@@ -402,7 +402,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-        db::ci::finish_ci_run(f.pool(), run.id, "badge-worker", "success", None)
+        codeyard_db_actions::ci::finish_ci_run(f.pool(), run.id, "badge-worker", "success", None)
             .await
             .unwrap()
             .unwrap();

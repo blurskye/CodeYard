@@ -20,5 +20,3 @@ native_operation!(crate::postgres::ci_tokens::finish_job,
     fn finish_job(pool: &DbPool, run_id: i64, worker: &str, job: &str) -> Result<()>);
 
 use codeyard_db_core::queries::ci_tokens::JobToken;
-
-use codeyard_db_core::queries::ci_tokens::JobToken;

@@ -33,7 +33,7 @@ pub(super) async fn contract(
         204,
     )
     .await;
-    let settings = db::code_security::repository_settings(pool, repo)
+    let settings = codeyard_db_security::code_security::repository_settings(pool, repo)
         .await
         .unwrap()
         .unwrap();

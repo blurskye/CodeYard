@@ -8,7 +8,7 @@ use db::notifications::{
 use serde_json::json;
 
 async fn act(f: &Fixture, user: i64, token: i64, action: ThreadAction) -> ThreadInbox {
-    db::notifications::records::notification_inbox_with_credential(
+    codeyard_db_repos::notifications::records::notification_inbox_with_credential(
         f.pool(),
         NotificationCredential::Token(token),
         user,
@@ -26,9 +26,9 @@ async fn notice(
     repo: i64,
     kind: &str,
 ) -> anyhow::Result<codeyard_db_core::models::Notification> {
-    db::notifications::records::create_notification(
+    codeyard_db_repos::notifications::records::create_notification(
         f.pool(),
-        db::notifications::NewNotification {
+        codeyard_db_core::queries::notifications::records::NewNotification {
             user_id: user,
             actor_id: None,
             repo_id: Some(repo),
@@ -83,9 +83,14 @@ async fn contract(pg: bool) {
     assert!(list.threads[0].unread);
     let read = act(&f, user, token, ThreadAction::Read(thread)).await;
     assert_eq!(read.updated, 2);
-    let rows = db::notifications::records::list_notifications_for_user(f.pool(), user, 100, false)
-        .await
-        .unwrap();
+    let rows = codeyard_db_repos::notifications::records::list_notifications_for_user(
+        f.pool(),
+        user,
+        100,
+        false,
+    )
+    .await
+    .unwrap();
     assert!(rows
         .iter()
         .find(|n| n.id == first)
@@ -136,8 +141,8 @@ async fn contract(pg: bool) {
     assert!(notice(&f, user, repo, "test_notice")
         .await
         .unwrap_err()
-        .is::<db::notifications::records::NotificationSuppressed>());
-    assert!(db::notifications::threads::subscribers(
+        .is::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>());
+    assert!(codeyard_db_repos::notifications::threads::subscribers(
         f.pool(),
         repo,
         "Repository",
@@ -172,9 +177,14 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::notifications::threads::subscribers(f.pool(), repo, "Repository", &repo.to_string())
-            .await
-            .unwrap(),
+        codeyard_db_repos::notifications::threads::subscribers(
+            f.pool(),
+            repo,
+            "Repository",
+            &repo.to_string()
+        )
+        .await
+        .unwrap(),
         vec![user]
     );
     act(&f, user, token, ThreadAction::Done(thread)).await;
@@ -193,10 +203,14 @@ async fn contract(pg: bool) {
     .await
     .threads
     .is_empty());
-    let native =
-        db::notifications::records::list_notifications_for_user(f.pool(), user, 100, false)
-            .await
-            .unwrap();
+    let native = codeyard_db_repos::notifications::records::list_notifications_for_user(
+        f.pool(),
+        user,
+        100,
+        false,
+    )
+    .await
+    .unwrap();
     assert!(native
         .iter()
         .filter(|n| n.repo_id == Some(repo))
@@ -226,7 +240,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(
-        db::notifications::records::notification_inbox_with_credential(
+        codeyard_db_repos::notifications::records::notification_inbox_with_credential(
             f.pool(),
             NotificationCredential::Token(token),
             user,

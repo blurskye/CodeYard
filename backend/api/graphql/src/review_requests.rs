@@ -1,6 +1,5 @@
 //! Pull review requests project the native user/team records and use the same mutations as REST.
 use crate::arguments::Arguments;
-use crate::db;
 use crate::missing;
 use crate::mutations::pull_error as operation;
 use crate::unavailable;
@@ -31,10 +30,11 @@ pub(super) async fn team_object(
 }
 
 async fn pull(id: i64, request: &RequestContext) -> Result<codeyard_db_core::models::PullRequest> {
-    let pull = db::pull_requests::records::get_pull_request_by_id(&request.state.pool, id)
-        .await
-        .map_err(unavailable)?
-        .ok_or_else(missing)?;
+    let pull =
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(&request.state.pool, id)
+            .await
+            .map_err(unavailable)?
+            .ok_or_else(missing)?;
     // Reviewer requests belong to the base repository, which stays readable after its fork is deleted.
     crate::repository::by_id(pull.repo_id, request).await?;
     request
@@ -47,23 +47,25 @@ async fn pull(id: i64, request: &RequestContext) -> Result<codeyard_db_core::mod
 async fn window(
     pull: &codeyard_db_core::models::PullRequest,
     request: &RequestContext,
-) -> Result<db::pull_requests::team_reviewers::RequestWindow> {
-    Ok(db::pull_requests::team_reviewers::RequestWindow {
-        pull: pull.id,
-        repo: pull.repo_id,
-        viewer: request
-            .private_viewer(pull.repo_id, "pull-requests")
-            .await?,
-        target: None,
-        offset: 0,
-        limit: 0,
-        count: true,
-    })
+) -> Result<codeyard_db_repos::pull_requests::team_reviewers::RequestWindow> {
+    Ok(
+        codeyard_db_repos::pull_requests::team_reviewers::RequestWindow {
+            pull: pull.id,
+            repo: pull.repo_id,
+            viewer: request
+                .private_viewer(pull.repo_id, "pull-requests")
+                .await?,
+            target: None,
+            offset: 0,
+            limit: 0,
+            count: true,
+        },
+    )
 }
 
 async fn objects(
     pull: &codeyard_db_core::models::PullRequest,
-    origins: &[db::pull_requests::reviews::ReviewRequestOrigin],
+    origins: &[codeyard_db_repos::pull_requests::reviews::ReviewRequestOrigin],
     viewer: Option<i64>,
     request: &RequestContext,
 ) -> Result<Vec<Value>> {
@@ -73,7 +75,7 @@ async fn objects(
     let users: std::collections::HashMap<_, _> = if ids.is_empty() {
         std::collections::HashMap::new()
     } else {
-        db::users::accounts::get_users_by_ids(pool, &ids)
+        codeyard_db_identity::users::accounts::get_users_by_ids(pool, &ids)
             .await
             .map_err(unavailable)?
             .into_iter()
@@ -84,7 +86,7 @@ async fn objects(
     let teams: std::collections::HashMap<_, _> = if ids.is_empty() {
         std::collections::HashMap::new()
     } else {
-        db::pull_requests::team_reviewers::by_ids(pool, pull.repo_id, viewer, &ids)
+        codeyard_db_repos::pull_requests::team_reviewers::by_ids(pool, pull.repo_id, viewer, &ids)
             .await
             .map_err(unavailable)?
             .into_iter()
@@ -132,10 +134,13 @@ async fn objects(
 pub(super) async fn count(id: i64, request: &RequestContext) -> Result<i64> {
     let pull = pull(id, request).await?;
     let window = window(&pull, request).await?;
-    let total = db::pull_requests::team_reviewers::request_page(&request.state.pool, &window)
-        .await
-        .map_err(unavailable)?
-        .0;
+    let total = codeyard_db_repos::pull_requests::team_reviewers::request_page(
+        &request.state.pool,
+        &window,
+    )
+    .await
+    .map_err(unavailable)?
+    .0;
     if request
         .private_viewer(pull.repo_id, "pull-requests")
         .await?
@@ -150,10 +155,13 @@ pub(super) async fn list(ctx: &Arguments, request: &RequestContext, id: i64) -> 
     crate::connection::validate(ctx)?;
     let pull = pull(id, request).await?;
     let mut window = window(&pull, request).await?;
-    let total = db::pull_requests::team_reviewers::request_page(&request.state.pool, &window)
-        .await
-        .map_err(unavailable)?
-        .0;
+    let total = codeyard_db_repos::pull_requests::team_reviewers::request_page(
+        &request.state.pool,
+        &window,
+    )
+    .await
+    .map_err(unavailable)?
+    .0;
     let page = crate::connection::Page::new(ctx, total)?;
     window.offset = page.offset;
     window.limit = page.limit;
@@ -161,7 +169,7 @@ pub(super) async fn list(ctx: &Arguments, request: &RequestContext, id: i64) -> 
     let rows = if page.limit == 0 {
         Vec::new()
     } else {
-        db::pull_requests::team_reviewers::request_page(&request.state.pool, &window)
+        codeyard_db_repos::pull_requests::team_reviewers::request_page(&request.state.pool, &window)
             .await
             .map_err(unavailable)?
             .1
@@ -176,10 +184,13 @@ pub(super) async fn node(id: &str, request: &RequestContext) -> Result<Value> {
     window.target = Some((team, target));
     window.count = false;
     window.limit = 1;
-    let rows = db::pull_requests::team_reviewers::request_page(&request.state.pool, &window)
-        .await
-        .map_err(unavailable)?
-        .1;
+    let rows = codeyard_db_repos::pull_requests::team_reviewers::request_page(
+        &request.state.pool,
+        &window,
+    )
+    .await
+    .map_err(unavailable)?
+    .1;
     objects(&pull, &rows, window.viewer, request)
         .await?
         .into_iter()
@@ -261,7 +272,7 @@ pub(super) async fn mutation(
         actor,
         &repo,
         &pull,
-        &db::pull_requests::team_reviewers::ReviewRequests {
+        &codeyard_db_repos::pull_requests::team_reviewers::ReviewRequests {
             users: &user_ids,
             teams: &team_ids,
             union: input["union"].as_bool().unwrap_or(false),

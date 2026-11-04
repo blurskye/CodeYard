@@ -35,7 +35,7 @@ async fn insights_flow(pg: bool) {
         codeyard_app::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
             name,
             None,
             false,

@@ -166,13 +166,17 @@ async fn remote_first_reader_persists_languages() {
     .await
     .unwrap();
     storage.publish().await.unwrap();
-    let owner = db::users::accounts::create_user(&database.pool, "remote_language_owner", None)
-        .await
-        .unwrap();
+    let owner = codeyard_db_identity::users::accounts::create_user(
+        &database.pool,
+        "remote_language_owner",
+        None,
+    )
+    .await
+    .unwrap();
     let repository = codeyard_app::repositories::lifecycle::provision(
         (&database.pool, Some(&web.context)),
         &web.context.repos_path,
-        db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
         "languages",
         None,
         false,
@@ -211,9 +215,10 @@ async fn remote_first_reader_persists_languages() {
     .unwrap();
     assert_eq!(languages.len(), 1);
     assert_eq!(languages[0].language, "Rust");
-    let rows = db::repository_stats::get_repo_languages(&database.pool, repository.id)
-        .await
-        .unwrap();
+    let rows =
+        codeyard_db_repos::repository_stats::get_repo_languages(&database.pool, repository.id)
+            .await
+            .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].language, "Rust");
     storage.shutdown().await;
@@ -253,9 +258,9 @@ async fn direct_branch_merges(
         result: result.clone(),
         authority: actor.into(),
     };
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         pool,
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: actor,
             repo_id: repo,
             pattern: "direct-base",
@@ -279,9 +284,14 @@ async fn direct_branch_merges(
             .unwrap_err()
     );
     assert_eq!(local.commit("direct-base").await.unwrap().sha, base);
-    db::repositories::protection::delete_branch_protection_rule(pool, actor, repo, "direct-base")
-        .await
-        .unwrap();
+    codeyard_db_repos::repositories::protection::delete_branch_protection_rule(
+        pool,
+        actor,
+        repo,
+        "direct-base",
+    )
+    .await
+    .unwrap();
     assert!(remote
         .publish_branch_merge_as(pool, repo, outsider, &publication)
         .await
@@ -676,7 +686,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -720,18 +730,27 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
     .await
     .unwrap();
     storage_caller.publish().await.unwrap();
-    let owner = db::users::accounts::create_user(&database.pool, "admission_owner", None)
-        .await
-        .unwrap();
-    let writer = db::users::accounts::create_user(&database.pool, "admission_writer", None)
-        .await
-        .unwrap();
-    let stranger = db::users::accounts::create_user(&database.pool, "admission_stranger", None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "admission_owner", None)
+            .await
+            .unwrap();
+    let writer = codeyard_db_identity::users::accounts::create_user(
+        &database.pool,
+        "admission_writer",
+        None,
+    )
+    .await
+    .unwrap();
+    let stranger = codeyard_db_identity::users::accounts::create_user(
+        &database.pool,
+        "admission_stranger",
+        None,
+    )
+    .await
+    .unwrap();
     let uuid = Uuid::new_v4();
     let disk_path = root.path().join(format!("{uuid}.git"));
-    let repository = db::repositories::records::create_repository(
+    let repository = codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         owner.id,
         "admission-project",
@@ -748,7 +767,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         .execute(pg)
         .await
         .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         &database.pool,
         writer.id,
         repository.id,
@@ -990,11 +1009,13 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
     })
     .await
     .expect("early editor authorization did not finish");
-    assert!(
-        db::repositories::access::revoke_repo_access(&database.pool, writer.id, repository.id,)
-            .await
-            .unwrap()
-    );
+    assert!(codeyard_db_repos::repositories::access::revoke_repo_access(
+        &database.pool,
+        writer.id,
+        repository.id,
+    )
+    .await
+    .unwrap());
     send.write_all(b"d").await.unwrap();
     send.finish().unwrap();
     let error = repository_error(rpc_reply(&mut recv).await);
@@ -1134,10 +1155,11 @@ async fn control_heavy_blame_uses_the_raw_response_body() {
             );
         }
     }
-    let owner = db::users::accounts::create_user(&database.pool, "blame_owner", None)
-        .await
-        .unwrap();
-    let repo = db::repositories::records::create_repository(
+    let owner =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "blame_owner", None)
+            .await
+            .unwrap();
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         owner.id,
         "controls",
@@ -1147,9 +1169,13 @@ async fn control_heavy_blame_uses_the_raw_response_body() {
     )
     .await
     .unwrap();
-    db::cluster::place_repository(&database.pool, repo.id, storage.context.node_id)
-        .await
-        .unwrap();
+    codeyard_db_cluster::cluster::place_repository(
+        &database.pool,
+        repo.id,
+        storage.context.node_id,
+    )
+    .await
+    .unwrap();
     let expected = local.blame("main", "control.txt").await.unwrap();
     assert!(serde_json::to_vec(&expected).unwrap().len() > rpc::MAX_JSON);
     assert_eq!(
@@ -1169,7 +1195,7 @@ async fn remote_workflow_discovery_uses_the_bounded_rpc() {
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -1193,11 +1219,15 @@ async fn remote_workflow_discovery_uses_the_bounded_rpc() {
     .await
     .unwrap();
     storage.publish().await.unwrap();
-    let owner = db::users::accounts::create_user(&database.pool, "workflow_rpc_owner", None)
-        .await
-        .unwrap();
+    let owner = codeyard_db_identity::users::accounts::create_user(
+        &database.pool,
+        "workflow_rpc_owner",
+        None,
+    )
+    .await
+    .unwrap();
     let uuid = Uuid::new_v4();
-    let repository = db::repositories::records::create_repository(
+    let repository = codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         owner.id,
         "workflow-rpc",
@@ -1214,10 +1244,13 @@ async fn remote_workflow_discovery_uses_the_bounded_rpc() {
         .execute(pg)
         .await
         .unwrap();
-    let repository = db::repositories::records::get_repository_by_id(&database.pool, repository.id)
-        .await
-        .unwrap()
-        .unwrap();
+    let repository = codeyard_db_repos::repositories::records::get_repository_by_id(
+        &database.pool,
+        repository.id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
 
     let storage_path = storage.context.repos_path.join(format!("{uuid}.git"));
     let bare = git2::Repository::init_bare(&storage_path).unwrap();
@@ -1401,7 +1434,7 @@ async fn remote_web_contract() {
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let web_disk = tempfile::tempdir().unwrap();
@@ -1438,17 +1471,19 @@ async fn remote_web_contract() {
         "a stale RPC generation reached the server"
     );
 
-    let reported = db::cluster::get_node_by_name(&database.pool, "rpc-storage")
+    let reported = codeyard_db_cluster::cluster::get_node_by_name(&database.pool, "rpc-storage")
         .await
         .unwrap()
         .unwrap();
     assert!(reported.disk_free.unwrap() > 0);
-    let owner = db::users::accounts::create_user(&database.pool, "rpc_owner", None)
-        .await
-        .unwrap();
-    let fork_owner = db::users::accounts::create_user(&database.pool, "rpc_forker", None)
-        .await
-        .unwrap();
+    let owner =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "rpc_owner", None)
+            .await
+            .unwrap();
+    let fork_owner =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "rpc_forker", None)
+            .await
+            .unwrap();
     let router = create_router(AppState::new(
         database.pool.clone(),
         web_disk.path().to_owned(),
@@ -1466,7 +1501,7 @@ async fn remote_web_contract() {
             StatusCode::CREATED,
         )
         .await;
-    let repository = db::repositories::records::get_repository_by_id(
+    let repository = codeyard_db_repos::repositories::records::get_repository_by_id(
         &database.pool,
         created["id"].as_i64().unwrap(),
     )
@@ -1726,10 +1761,13 @@ async fn remote_web_contract() {
     // reader must populate the shared rows on the storage node, including Explore.
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
-            if !db::repository_stats::get_repo_languages(&database.pool, repository.id)
-                .await
-                .unwrap()
-                .is_empty()
+            if !codeyard_db_repos::repository_stats::get_repo_languages(
+                &database.pool,
+                repository.id,
+            )
+            .await
+            .unwrap()
+            .is_empty()
             {
                 break;
             }
@@ -1738,9 +1776,9 @@ async fn remote_web_contract() {
     })
     .await
     .unwrap();
-    db::repository_stats::upsert_repo_languages(
+    codeyard_db_repos::repository_stats::upsert_repo_languages(
         &database.pool,
-        &db::repository_stats::language_source(&database.pool, repository.id)
+        &codeyard_db_repos::repository_stats::language_source(&database.pool, repository.id)
             .await
             .unwrap()
             .unwrap(),
@@ -1758,9 +1796,10 @@ async fn remote_web_contract() {
         )
         .await;
     assert_eq!(languages[0]["language"], "Rust");
-    let stored = db::repository_stats::get_repo_languages(&database.pool, repository.id)
-        .await
-        .unwrap();
+    let stored =
+        codeyard_db_repos::repository_stats::get_repo_languages(&database.pool, repository.id)
+            .await
+            .unwrap();
     assert_eq!(stored[0].language, "Rust");
     let (status, explore) = client.page("/explore?language=Rust").await;
     assert_eq!(status, StatusCode::OK);
@@ -1777,9 +1816,9 @@ async fn remote_web_contract() {
         .unwrap();
         bare.set_head("refs/heads/trunk").unwrap();
     }
-    db::repository_stats::upsert_repo_languages(
+    codeyard_db_repos::repository_stats::upsert_repo_languages(
         &database.pool,
-        &db::repository_stats::language_source(&database.pool, repository.id)
+        &codeyard_db_repos::repository_stats::language_source(&database.pool, repository.id)
             .await
             .unwrap()
             .unwrap(),
@@ -1797,7 +1836,7 @@ async fn remote_web_contract() {
         )
         .await;
     assert_eq!(
-        db::repository_stats::get_repo_languages(&database.pool, repository.id)
+        codeyard_db_repos::repository_stats::get_repo_languages(&database.pool, repository.id)
             .await
             .unwrap()[0]
             .language,
@@ -2007,10 +2046,11 @@ async fn remote_web_contract() {
     assert!(local_error.is_response_too_large());
     equal(&remote_error, &local_error);
 
-    let late_writer = db::users::accounts::create_user(&database.pool, "rpc_late_writer", None)
-        .await
-        .unwrap();
-    db::repositories::access::grant_repo_access(
+    let late_writer =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "rpc_late_writer", None)
+            .await
+            .unwrap();
+    codeyard_db_repos::repositories::access::grant_repo_access(
         &database.pool,
         late_writer.id,
         repository.id,
@@ -2027,7 +2067,7 @@ async fn remote_web_contract() {
         )
         .await
         .unwrap();
-    assert!(db::repositories::access::revoke_repo_access(
+    assert!(codeyard_db_repos::repositories::access::revoke_repo_access(
         &database.pool,
         late_writer.id,
         repository.id,
@@ -2496,9 +2536,9 @@ async fn remote_web_contract() {
         )
         .await
         .unwrap();
-    let update_pull = db::pull_requests::records::create_pull_request(
+    let update_pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         &database.pool,
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: repository.id,
             head_repo_id: Some(repository.id),
             author_id: owner.id,
@@ -2599,7 +2639,7 @@ async fn remote_web_contract() {
             StatusCode::CREATED,
         )
         .await;
-    let fork = db::repositories::records::get_repository_by_id(
+    let fork = codeyard_db_repos::repositories::records::get_repository_by_id(
         &database.pool,
         fork["repo"]["id"].as_i64().unwrap(),
     )
@@ -2659,9 +2699,9 @@ async fn remote_web_contract() {
             )
             .await
             .unwrap();
-        let pull = db::pull_requests::records::create_pull_request(
+        let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
             &database.pool,
-            db::pull_requests::records::NewPullRequest {
+            codeyard_db_repos::pull_requests::records::NewPullRequest {
                 repo_id: repository.id,
                 head_repo_id: Some(fork.id),
                 author_id: fork_owner.id,
@@ -2721,14 +2761,17 @@ async fn remote_web_contract() {
             fork_store.commit(&updated).await.unwrap().parents,
             vec![head.sha, base.sha]
         );
-        let current = db::pull_requests::records::get_pull_request_by_id(&database.pool, pull.id)
-            .await
-            .unwrap()
-            .unwrap();
-        db::pull_requests::records::update_pull_request(
+        let current = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
             &database.pool,
             pull.id,
-            db::discussions::DiscussionEdit {
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        codeyard_db_repos::pull_requests::records::update_pull_request(
+            &database.pool,
+            pull.id,
+            codeyard_db_repos::discussions::DiscussionEdit {
                 actor_id: fork_owner.id,
                 expected_state: &current.state,
                 expected_updated: current.updated_at,
@@ -2736,7 +2779,7 @@ async fn remote_web_contract() {
                 body: None,
                 state: None,
             },
-            db::pull_requests::records::PullRequestUpdate {
+            codeyard_db_repos::pull_requests::records::PullRequestUpdate {
                 base: None,
                 maintainer_can_modify: Some(false),
             },
@@ -2916,7 +2959,7 @@ async fn remote_web_contract() {
 
     // Even a member cannot ask this node for a repository stored elsewhere.
     let elsewhere_path = web_disk.path().join(format!("{}.git", Uuid::new_v4()));
-    let elsewhere = db::repositories::records::create_repository(
+    let elsewhere = codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         owner.id,
         "elsewhere",
@@ -3004,17 +3047,25 @@ async fn remote_web_contract() {
         ci_run: None,
     };
     assert!(stream_call(&connection, &request).await.result.is_ok());
-    cluster::revoke(&database.pool, db::cluster::Authority::Operator, "rpc-web")
-        .await
-        .unwrap();
+    cluster::revoke(
+        &database.pool,
+        codeyard_db_cluster::cluster::Authority::Operator,
+        "rpc-web",
+    )
+    .await
+    .unwrap();
     assert!(
         matches!(stream_call(&connection, &request).await.result, Err(Failure::Repository(error)) if error.kind == ErrorKind::Invalid)
     );
     connection.close(0u32.into(), b"test complete");
     assert!(remote.refs().await.is_err());
-    cluster::approve(&database.pool, db::cluster::Authority::Operator, "rpc-web")
-        .await
-        .unwrap();
+    cluster::approve(
+        &database.pool,
+        codeyard_db_cluster::cluster::Authority::Operator,
+        "rpc-web",
+    )
+    .await
+    .unwrap();
     oversized(&web.context, &storage, false, uuid).await;
     oversized(&web.context, &storage, true, uuid).await;
 
@@ -3043,7 +3094,7 @@ async fn remote_web_contract() {
         .unwrap_err()
         .is_storage_node_unavailable());
     // Recreate only a DB row to test the visible outage through smart HTTP.
-    let outage = db::repositories::records::create_repository(
+    let outage = codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         owner.id,
         "offline",
@@ -3071,9 +3122,9 @@ async fn remote_web_contract() {
         .await;
     assert_eq!(response.status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(response.text(), "storage node unavailable");
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         &database.pool,
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: outage.id,
             head_repo_id: Some(outage.id),
             author_id: owner.id,
@@ -3100,7 +3151,7 @@ async fn remote_web_contract() {
         .await;
     assert_eq!(error["message"], "storage node unavailable");
     // An unreachable primary can still have a fresh heartbeat when creation starts.
-    db::cluster::record_node_heartbeat(
+    codeyard_db_cluster::cluster::record_node_heartbeat(
         &database.pool,
         &reported.public_key,
         reported.version.as_deref().unwrap(),
@@ -3130,7 +3181,7 @@ async fn remote_web_contract() {
         .with_subscriber(log.dispatch.clone())
         .await;
     assert!(
-        db::repositories::records::get_repository_by_id(&database.pool, outage.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(&database.pool, outage.id)
             .await
             .unwrap()
             .is_none()
@@ -3165,7 +3216,7 @@ async fn remote_web_contract() {
             assert!(line.contains(&format!("repo_id={}", outage.id)), "{line}");
         }
     }
-    assert!(db::repositories::records::get_repository(
+    assert!(codeyard_db_repos::repositories::records::get_repository(
         &database.pool,
         "rpc_owner",
         "failed_creation"

@@ -12,7 +12,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         false,
@@ -72,9 +72,9 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(issue["createIssue"]["issue"]["id"].is_string());
-    db::pull_requests::records::create_pull_request(
+    codeyard_db_repos::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             issue: None,
             maintainer_can_modify: false,
             repo_id: repo.id,
@@ -91,7 +91,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::milestones::create_milestone(
+    codeyard_db_repos::milestones::create_milestone(
         f.pool(),
         alice,
         repo.id,
@@ -101,33 +101,39 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let project = db::projects::create(
+    let project = codeyard_db_repos::projects::create(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Session(&session.session),
-        db::projects::Owner::User(alice),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session.session),
+        codeyard_db_repos::projects::Owner::User(alice),
         "Roadmap",
         None,
         true,
     )
     .await
     .unwrap();
-    db::projects::link_repository(
+    codeyard_db_repos::projects::link_repository(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Session(&session.session),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session.session),
         project.id,
         repo.id,
         true,
     )
     .await
     .unwrap();
-    db::repositories::engagement::star_repo(f.pool(), alice, repo.id)
+    codeyard_db_repos::repositories::engagement::star_repo(f.pool(), alice, repo.id)
         .await
         .unwrap();
-    db::repositories::engagement::set_watch_level(f.pool(), alice, repo.id, "watching", "")
-        .await
-        .unwrap();
+    codeyard_db_repos::repositories::engagement::set_watch_level(
+        f.pool(),
+        alice,
+        repo.id,
+        "watching",
+        "",
+    )
+    .await
+    .unwrap();
     for text in [
         gh_teams::LIST_OWNER,
         gh_teams::LIST_VIEWER,

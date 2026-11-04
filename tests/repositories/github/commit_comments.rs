@@ -12,7 +12,10 @@ use tower::ServiceExt;
 async fn delivery(pool: &codeyard_db_core::DbPool, hook: i64, comment: i64) -> Value {
     // The hook's host never resolves, so the delivery is recorded after its retries (7 s).
     for _ in 0..1500 {
-        for row in db::webhooks::list_deliveries(pool, hook).await.unwrap() {
+        for row in codeyard_db_repos::webhooks::list_deliveries(pool, hook)
+            .await
+            .unwrap()
+        {
             let body: Value = serde_json::from_str(&row.request_body).unwrap();
             if row.event == "commit_comment" && body["comment"]["id"] == comment {
                 return body;
@@ -36,15 +39,15 @@ pub(super) async fn run(
     change_collaborator(pool, alice, repo, "bob", Some(AccessLevel::Read))
         .await
         .unwrap();
-    let hook_owner = db::webhooks::HookOwner::Repository(repo);
-    let hook = db::webhooks::insert_webhook(
+    let hook_owner = codeyard_db_repos::webhooks::HookOwner::Repository(repo);
+    let hook = codeyard_db_repos::webhooks::insert_webhook(
         pool,
         hook_owner,
         alice,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, alice).await,
         ),
-        &db::webhooks::WebhookFields {
+        &codeyard_db_core::queries::webhooks::WebhookFields {
             username: None,
             password: None,
             payload_url: "https://example.test/commit-comment-hook".into(),
@@ -91,9 +94,11 @@ pub(super) async fn run(
     let (status, _, body) = request(router, "HEAD", &item, Some(reader), Value::Null).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, Value::Null);
-    let notices = db::notifications::records::list_notifications_for_user(pool, bob, 100, false)
-        .await
-        .unwrap();
+    let notices = codeyard_db_repos::notifications::records::list_notifications_for_user(
+        pool, bob, 100, false,
+    )
+    .await
+    .unwrap();
     assert!(notices
         .iter()
         .any(|notice| notice.metadata["commit_comment_id"] == id));
@@ -414,7 +419,7 @@ pub(super) async fn run(
         .await;
     assert_eq!(created.status, StatusCode::SEE_OTHER, "{}", created.text());
     let native_id = created.id_after("#commitcomment-");
-    let revision = db::discussions::comment_revision("native body");
+    let revision = codeyard_db_repos::discussions::comment_revision("native body");
     let native_item = format!("{base}/comments/{native_id}");
     call(
         router,
@@ -481,7 +486,7 @@ pub(super) async fn run(
         .await;
     assert_eq!(missing.status, StatusCode::NOT_FOUND, "{}", missing.text());
     assert!(missing.text().contains("missing parent draft"));
-    let fresh = db::discussions::comment_revision("newer body");
+    let fresh = codeyard_db_repos::discussions::comment_revision("newer body");
     let saved = session
         .form_reply(
             &format!("{native}/comments/{native_id}/edit"),
@@ -510,7 +515,7 @@ pub(super) async fn run(
         "{}",
         stale_delete.text()
     );
-    let current = db::discussions::comment_revision("Saved natively");
+    let current = codeyard_db_repos::discussions::comment_revision("Saved natively");
     let deleted = session
         .form_reply(
             &format!("{native}/comments/{native_id}/delete"),
@@ -549,7 +554,7 @@ pub(super) async fn run(
         "a rejected draft must not silently adopt a different target"
     );
     assert!(
-        db::repositories::records::set_repository_archived(pool, alice, repo, true)
+        codeyard_db_repos::repositories::records::set_repository_archived(pool, alice, repo, true)
             .await
             .unwrap()
     );
@@ -600,7 +605,7 @@ pub(super) async fn run(
         count
     );
     assert!(
-        db::repositories::records::set_repository_archived(pool, alice, repo, false)
+        codeyard_db_repos::repositories::records::set_repository_archived(pool, alice, repo, false)
             .await
             .unwrap()
     );
@@ -643,17 +648,19 @@ pub(super) async fn run(
         "permalink selects the actual comment page: {html}"
     );
     // Notification cleanup applies to commit-author notices as well as mentions.
-    let notices = db::notifications::records::list_notifications_for_user(pool, alice, 100, false)
-        .await
-        .unwrap();
+    let notices = codeyard_db_repos::notifications::records::list_notifications_for_user(
+        pool, alice, 100, false,
+    )
+    .await
+    .unwrap();
     assert!(!notices
         .iter()
         .any(|notice| notice.metadata["commit_comment_id"] == second["id"]));
-    assert!(db::webhooks::delete_webhook(
+    assert!(codeyard_db_repos::webhooks::delete_webhook(
         pool,
         hook_owner,
         alice,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, alice).await
         ),
         hook
@@ -684,7 +691,7 @@ pub(super) async fn run(
     ));
     // The owner still has access, but the session that sent the comment has ended.
     let ended = crate::support::live_session(pool, alice).await;
-    db::users::sessions::delete_session(pool, &ended)
+    codeyard_db_identity::users::sessions::delete_session(pool, &ended)
         .await
         .unwrap();
     let refused = records::create_comment(

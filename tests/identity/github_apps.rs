@@ -56,7 +56,7 @@ async fn contract(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         f.pool(),
         alice,
         "proj",
@@ -67,7 +67,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .id;
-    let excluded = db::repositories::records::create_repository(
+    let excluded = codeyard_db_repos::repositories::records::create_repository(
         f.pool(),
         alice,
         "excluded",
@@ -122,7 +122,7 @@ async fn contract(pg: bool) {
         .next()
         .unwrap()
         .to_owned();
-    let app = db::github_apps::app(f.pool(), "builder-app")
+    let app = codeyard_db_identity::github_apps::app(f.pool(), "builder-app")
         .await
         .unwrap()
         .unwrap();
@@ -414,20 +414,24 @@ async fn contract(pg: bool) {
         401,
     )
     .await;
-    let org_input = db::organizations::NewOrganization::new(
+    let org_input = codeyard_db_orgs::organizations::profiles::NewOrganization::new(
         "app-org",
-        db::organizations::OrganizationProfile::new(None, None).unwrap(),
+        codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
     )
     .unwrap();
-    let org = match db::organizations::profiles::create_organization(f.pool(), alice, &org_input)
-        .await
-        .unwrap()
+    let org = match codeyard_db_orgs::organizations::profiles::create_organization(
+        f.pool(),
+        alice,
+        &org_input,
+    )
+    .await
+    .unwrap()
     {
-        db::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization creation"),
     };
     assert!(matches!(
-        db::organizations::membership::add_organization_member(
+        codeyard_db_orgs::organizations::membership::add_organization_member(
             f.pool(),
             alice,
             org.id,
@@ -436,7 +440,7 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap(),
-        db::organizations::OrganizationOutcome::Applied(_)
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     let response = other
         .form_reply(
@@ -490,9 +494,9 @@ async fn contract(pg: bool) {
     assert_eq!(requests, json!([]));
     // A real OAuth exchange supplies an app-owned user credential for narrowing.
     let code = codeyard_support::crypto::random_hex();
-    db::oauth_apps::save_grant(
+    codeyard_db_identity::oauth_apps::save_grant(
         f.pool(),
-        &db::oauth_apps::Grant {
+        &codeyard_db_identity::oauth_apps::Grant {
             hash: tokens::token_hash(&code),
             client_id: app.client_id.clone(),
             user_code: codeyard_support::crypto::random_hex(),
@@ -512,7 +516,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     assert!(matches!(
-        db::oauth_apps::exchange(
+        codeyard_db_identity::oauth_apps::exchange(
             f.pool(),
             &tokens::token_hash(&code),
             &app.client_id,
@@ -524,7 +528,7 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap(),
-        db::oauth_apps::Exchange::Token(_)
+        codeyard_db_identity::oauth_apps::Exchange::Token(_)
     ));
     registry_denied(&router, "user-app-token").await;
     let parent_expiry = chrono::Utc::now() + chrono::Duration::minutes(5);
@@ -713,10 +717,12 @@ async fn contract(pg: bool) {
         .await,
         1
     );
-    assert!(db::oauth_apps::application(f.pool(), &app.client_id)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        codeyard_db_identity::oauth_apps::application(f.pool(), &app.client_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
     request(
         &router,
         "users/get-authenticated",
@@ -742,7 +748,7 @@ async fn contract(pg: bool) {
         &[],
     )
     .await;
-    db::users::sessions::remove_expired_identity_rows(f.pool())
+    codeyard_db_identity::users::sessions::remove_expired_identity_rows(f.pool())
         .await
         .unwrap();
     assert_eq!(

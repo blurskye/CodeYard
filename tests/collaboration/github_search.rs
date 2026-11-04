@@ -23,7 +23,7 @@ async fn search(pg: bool) {
             codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
-                db::repositories::creation::RepositoryCreationOwner::personal(alice),
+                codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
                 name,
                 None,
                 private,
@@ -35,14 +35,20 @@ async fn search(pg: bool) {
     }
     let repo = &repos[0];
     let hidden = &repos[1];
-    let first =
-        db::issues::create_issue(f.pool(), repo.id, alice, "Fix café search", "needle @bob")
+    let first = codeyard_db_repos::issues::create_issue(
+        f.pool(),
+        repo.id,
+        alice,
+        "Fix café search",
+        "needle @bob",
+    )
+    .await
+    .unwrap();
+    let second =
+        codeyard_db_repos::issues::create_issue(f.pool(), repo.id, alice, "Other title", "payload")
             .await
             .unwrap();
-    let second = db::issues::create_issue(f.pool(), repo.id, alice, "Other title", "payload")
-        .await
-        .unwrap();
-    let secret = db::issues::create_issue(
+    let secret = codeyard_db_repos::issues::create_issue(
         f.pool(),
         hidden.id,
         alice,
@@ -51,9 +57,9 @@ async fn search(pg: bool) {
     )
     .await
     .unwrap();
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             issue: None,
             maintainer_can_modify: false,
             repo_id: repo.id,
@@ -70,7 +76,7 @@ async fn search(pg: bool) {
     )
     .await
     .unwrap();
-    db::issues::add_issue_comment(
+    codeyard_db_repos::issues::add_issue_comment(
         f.pool(),
         second.repo_id,
         second.id,
@@ -82,11 +88,11 @@ async fn search(pg: bool) {
     )
     .await
     .unwrap();
-    db::pull_requests::reviews::add_pull_request_review(
+    codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
         f.pool(),
         pull.id,
         alice,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         "commented",
@@ -95,9 +101,9 @@ async fn search(pg: bool) {
     )
     .await
     .unwrap();
-    db::pull_requests::reviews::add_pending_pull_request_comment(
+    codeyard_db_repos::pull_requests::reviews::add_pending_pull_request_comment(
         f.pool(),
-        db::pull_requests::reviews::NewPullRequestComment {
+        codeyard_db_repos::pull_requests::reviews::NewPullRequestComment {
             start_line: None,
             start_side: None,
             pr_id: pull.id,
@@ -113,19 +119,26 @@ async fn search(pg: bool) {
     )
     .await
     .unwrap();
-    db::assignees::assign_user(
+    codeyard_db_repos::assignees::assign_user(
         f.pool(),
         alice,
         repo.id,
-        db::assignees::AssignedItem::Issue(first.id),
+        codeyard_db_repos::assignees::AssignedItem::Issue(first.id),
         alice,
     )
     .await
     .unwrap();
-    let label = db::labels::create_label(f.pool(), alice, repo.id, "priority: bug", "123456", None)
-        .await
-        .unwrap();
-    db::labels::add_issue_label(f.pool(), alice, repo.id, first.id, label.id)
+    let label = codeyard_db_repos::labels::create_label(
+        f.pool(),
+        alice,
+        repo.id,
+        "priority: bug",
+        "123456",
+        None,
+    )
+    .await
+    .unwrap();
+    codeyard_db_repos::labels::add_issue_label(f.pool(), alice, repo.id, first.id, label.id)
         .await
         .unwrap();
     let router = f.router(root.path()).await;
@@ -161,11 +174,11 @@ async fn search(pg: bool) {
         200,
     )
     .await;
-    db::discussions::set_lock(
+    codeyard_db_repos::discussions::set_lock(
         f.pool(),
         alice,
         repo.id,
-        db::assignees::AssignedItem::Issue(second.id),
+        codeyard_db_repos::assignees::AssignedItem::Issue(second.id),
         true,
         Some("resolved"),
     )
@@ -245,11 +258,11 @@ async fn search(pg: bool) {
         ("privateterm", 0),
         ("\"' OR 1=1 --\"", 0),
     ] {
-        let native = db::discussion_search::search(
+        let native = codeyard_db_repos::discussion_search::search(
             f.pool(),
             Some(bob),
-            &db::discussion_search::Search::parse(q).unwrap(),
-            db::discussion_search::Sort::Best,
+            &codeyard_db_repos::discussion_search::Search::parse(q).unwrap(),
+            codeyard_db_repos::discussion_search::Sort::Best,
             false,
             0,
             30,

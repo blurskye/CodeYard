@@ -131,7 +131,9 @@ async fn fields(pg: bool) {
         let project = projects::create(
             f.pool(),
             alice,
-            &db::users::accounts::AccountCredential::Session(&session.session),
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &session.session,
+            ),
             owner,
             "Roadmap",
             Some("Plans"),
@@ -142,7 +144,7 @@ async fn fields(pg: bool) {
         assert!(projects::create(
             f.pool(),
             bob,
-            &db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), bob).await
             ),
             owner,
@@ -274,7 +276,7 @@ async fn fields(pg: bool) {
             )
             .await
             .unwrap();
-            db::fine_grained_tokens::review(
+            codeyard_db_identity::fine_grained_tokens::review(
                 f.pool(),
                 org,
                 alice,
@@ -321,7 +323,9 @@ async fn fields(pg: bool) {
         projects::save(
             f.pool(),
             alice,
-            &db::users::accounts::AccountCredential::Session(&session.session),
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &session.session,
+            ),
             project.id,
             &projects::Settings {
                 title: Some("Published".into()),
@@ -336,7 +340,9 @@ async fn fields(pg: bool) {
         let unchanged = projects::save(
             f.pool(),
             alice,
-            &db::users::accounts::AccountCredential::Session(&session.session),
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &session.session,
+            ),
             project.id,
             &projects::Settings {
                 title: None,
@@ -378,7 +384,9 @@ async fn fields(pg: bool) {
         projects::delete(
             f.pool(),
             alice,
-            &db::users::accounts::AccountCredential::Session(&session.session),
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &session.session,
+            ),
             project.id,
         )
         .await
@@ -396,7 +404,9 @@ async fn fields(pg: bool) {
         let next = projects::create(
             f.pool(),
             alice,
-            &db::users::accounts::AccountCredential::Session(&session.session),
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &session.session,
+            ),
             owner,
             "Next",
             None,
@@ -407,7 +417,7 @@ async fn fields(pg: bool) {
         assert_eq!(next.number, project.number + 1);
     }
     native_pages(&f, &router, &session, alice, bob).await;
-    db::projects::list(
+    codeyard_db_repos::projects::list(
         f.pool(),
         None,
         &projects::ListFilter {

@@ -87,7 +87,3 @@ native_operation!(crate::postgres::oauth_apps::reset_token,
 native_operation!(crate::postgres::oauth_apps::revoke,
     crate::sqlite::oauth_apps::revoke,
     fn revoke(pool: &DbPool, client: &str, hash: &str, authorization: bool) -> Result<()>);
-
-use codeyard_db_core::queries::oauth_apps::Token;
-
-use codeyard_db_core::queries::oauth_apps::Token;

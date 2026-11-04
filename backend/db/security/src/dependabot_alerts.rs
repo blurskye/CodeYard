@@ -423,11 +423,3 @@ use codeyard_db_core::queries::dependabot_alerts::Alert;
 use codeyard_db_core::queries::dependabot_alerts::published;
 
 use codeyard_db_core::queries::dependabot_alerts::ecosystem;
-
-use codeyard_db_core::queries::dependabot_alerts::Alert;
-
-use codeyard_db_core::queries::dependabot_alerts::ecosystem;
-
-use codeyard_db_core::queries::dependabot_alerts::matches;
-
-use codeyard_db_core::queries::dependabot_alerts::published;

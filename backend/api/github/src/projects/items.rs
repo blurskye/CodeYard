@@ -64,21 +64,24 @@ async fn item_document(
     selected: Option<&str>,
     readable: &std::collections::HashSet<i64>,
 ) -> Result<Value> {
-    let creator = db::users::accounts::get_user_by_id(&state.pool, item.creator_id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let creator =
+        codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, item.creator_id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     let content = match item.repo_id {
         Some(_) if !readable.contains(&item.id) => Value::Null,
         Some(id) => {
-            let repo = db::repositories::records::get_repository_by_id(&state.pool, id)
-                .await
-                .map_err(Error::unavailable)?
-                .ok_or_else(Error::missing)?;
-            let owner = db::repositories::records::repository_owner_name(&state.pool, id)
-                .await
-                .map_err(Error::unavailable)?
-                .ok_or_else(Error::missing)?;
+            let repo =
+                codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, id)
+                    .await
+                    .map_err(Error::unavailable)?
+                    .ok_or_else(Error::missing)?;
+            let owner =
+                codeyard_db_repos::repositories::records::repository_owner_name(&state.pool, id)
+                    .await
+                    .map_err(Error::unavailable)?
+                    .ok_or_else(Error::missing)?;
             if let Some(id) = item.issue_id {
                 let auth = auth::authenticate(state, headers, false).await?;
                 codeyard_app::api_shared::github::issues::document(
@@ -86,11 +89,11 @@ async fn item_document(
                     codeyard_app::api_shared::github::issues::Reader::Request(state, auth.as_ref()),
                     &repo,
                     &owner,
-                    db::assignees::AssignedItem::Issue(id),
+                    codeyard_db_repos::assignees::AssignedItem::Issue(id),
                 )
                 .await?
             } else {
-                let pull = db::pull_requests::records::get_pull_request_by_id(
+                let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
                     &state.pool,
                     item.pull_request_id.ok_or_else(Error::missing)?,
                 )
@@ -150,31 +153,41 @@ async fn add_item(
     }
     let issue = input.kind == "Issue";
     let (repo_id, id) = match (input.id, input.owner, input.repo, input.number) {
-        (Some(id), None, None, None) if issue => db::issues::get_issue_by_id(&state.pool, id)
-            .await
-            .map_err(Error::unavailable)?
-            .map(|issue| (issue.repo_id, issue.id)),
+        (Some(id), None, None, None) if issue => {
+            codeyard_db_repos::issues::get_issue_by_id(&state.pool, id)
+                .await
+                .map_err(Error::unavailable)?
+                .map(|issue| (issue.repo_id, issue.id))
+        }
         (Some(id), None, None, None) => {
-            db::pull_requests::records::get_pull_request_by_id(&state.pool, id)
+            codeyard_db_repos::pull_requests::records::get_pull_request_by_id(&state.pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .map(|pull| (pull.repo_id, pull.id))
         }
         (None, Some(owner), Some(name), Some(number)) => {
-            let repo = db::repositories::records::get_repository(&state.pool, &owner, &name)
-                .await
-                .map_err(Error::unavailable)?
-                .ok_or_else(Error::missing)?;
+            let repo = codeyard_db_repos::repositories::records::get_repository(
+                &state.pool,
+                &owner,
+                &name,
+            )
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
             if issue {
-                db::issues::get_issue(&state.pool, repo.id, number)
+                codeyard_db_repos::issues::get_issue(&state.pool, repo.id, number)
                     .await
                     .map_err(Error::unavailable)?
                     .map(|issue| (repo.id, issue.id))
             } else {
-                db::pull_requests::records::get_pull_request(&state.pool, repo.id, number)
-                    .await
-                    .map_err(Error::unavailable)?
-                    .map(|pull| (repo.id, pull.id))
+                codeyard_db_repos::pull_requests::records::get_pull_request(
+                    &state.pool,
+                    repo.id,
+                    number,
+                )
+                .await
+                .map_err(Error::unavailable)?
+                .map(|pull| (repo.id, pull.id))
             }
         }
         _ => return Err(Error::validation("ProjectV2Item", "content", "invalid")),

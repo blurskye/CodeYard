@@ -23,12 +23,13 @@ async fn app_contract(pg: bool) {
     let router = f.router(root.path()).await;
     let session = Client::login(&router, f.pool(), alice).await;
     let org = applied(
-        db::organizations::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             alice,
-            &db::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 "apps-org",
-                db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
             )
             .unwrap(),
         )
@@ -96,7 +97,7 @@ async fn app_contract(pg: bool) {
         )
         .await;
     assert_eq!(response.status, 200, "{}", response.text());
-    let app = db::github_apps::app(f.pool(), "policy-app")
+    let app = codeyard_db_identity::github_apps::app(f.pool(), "policy-app")
         .await
         .unwrap()
         .unwrap();
@@ -121,7 +122,7 @@ async fn app_contract(pg: bool) {
         ("repos/add-app-access-restrictions", 422),
     )
     .await;
-    let installation = db::github_apps::install(
+    let installation = codeyard_db_identity::github_apps::install(
         f.pool(),
         alice,
         &session.session,
@@ -199,7 +200,7 @@ async fn app_contract(pg: bool) {
         ("git/create-commit", 201),
     )
     .await;
-    let repository = db::repositories::records::get_repository_by_id(f.pool(), repo)
+    let repository = codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), repo)
         .await
         .unwrap()
         .unwrap();
@@ -241,9 +242,14 @@ async fn app_contract(pg: bool) {
         ("repos/add-app-access-restrictions", 200),
     )
     .await;
-    db::github_apps::change_installation(f.pool(), app.id, installation.id, "suspend")
-        .await
-        .unwrap();
+    codeyard_db_identity::github_apps::change_installation(
+        f.pool(),
+        app.id,
+        installation.id,
+        "suspend",
+    )
+    .await
+    .unwrap();
     call(
         &router,
         "PUT",
@@ -291,9 +297,9 @@ pub(super) async fn run(
         ("git/create-ref", 201),
     )
     .await;
-    db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         pool,
-        db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: alice,
             repo_id: repo,
             pattern: branch,
@@ -432,7 +438,7 @@ pub(super) async fn run(
     let candidate = call(router, "POST", &format!("{base}/git/commits"), writer,
         json!({"message":"A restricted branch update", "tree": original["tree"]["sha"], "parents":[sha]}), ("git/create-commit", 201)).await;
     let candidate = candidate["sha"].as_str().unwrap();
-    let repository = db::repositories::records::get_repository_by_id(pool, repo)
+    let repository = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo)
         .await
         .unwrap()
         .unwrap();
@@ -531,20 +537,20 @@ pub(super) async fn run(
     codeyard_identity::repository_access::change_collaborator(pool, alice, repo, "bob", None)
         .await
         .unwrap();
-    let refused = db::repositories::protection::update_branch_protection_rule(
+    let refused = codeyard_db_repos::repositories::protection::update_branch_protection_rule(
         pool,
         alice,
         repo,
         branch,
-        db::repositories::protection::ProtectionUpdate::PushUsers(
-            db::repositories::protection::ActorListUpdate::Add(vec![bob]),
+        codeyard_db_repos::repositories::protection::ProtectionUpdate::PushUsers(
+            codeyard_db_repos::repositories::protection::ActorListUpdate::Add(vec![bob]),
         ),
     )
     .await
     .unwrap_err();
     assert_eq!(
-        refused.downcast_ref::<db::repositories::protection::ProtectionWriteRefusal>(),
-        Some(&db::repositories::protection::ProtectionWriteRefusal::InvalidPushAllowances)
+        refused.downcast_ref::<codeyard_db_repos::repositories::protection::ProtectionWriteRefusal>(),
+        Some(&codeyard_db_repos::repositories::protection::ProtectionWriteRefusal::InvalidPushAllowances)
     );
     assert_eq!(
         call(

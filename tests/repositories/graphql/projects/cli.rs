@@ -89,12 +89,13 @@ async fn cli_contract(pg: bool) {
     let alice = f.actor("project-cli-alice").await;
     let bob = f.actor("project-cli-bob").await;
     let org = applied(
-        db::organizations::profiles::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             alice,
-            &db::organizations::profiles::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 "project-cli-org",
-                db::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
             )
             .unwrap(),
         )
@@ -102,16 +103,16 @@ async fn cli_contract(pg: bool) {
         .unwrap(),
     );
     let team = applied(
-        db::organizations::teams::create_organization_team(
+        codeyard_db_orgs::organizations::teams::create_organization_team(
             f.pool(),
             alice,
             org.id,
-            &db::organizations::teams::NewTeam::new(
+            &codeyard_db_orgs::organizations::teams::NewTeam::new(
                 "planning",
-                db::organizations::teams::TeamProfile::new(
+                codeyard_db_orgs::organizations::teams::TeamProfile::new(
                     "Planning",
                     None,
-                    db::organizations::teams::TeamPrivacy::Visible,
+                    codeyard_db_orgs::organizations::teams::TeamPrivacy::Visible,
                 )
                 .unwrap(),
             )
@@ -124,7 +125,7 @@ async fn cli_contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "plan",
         Some("Project repository"),
         true,
@@ -132,12 +133,13 @@ async fn cli_contract(pg: bool) {
     )
     .await
     .unwrap();
-    let issue = db::issues::create_issue(f.pool(), repo.id, alice, "Issue", "Issue body")
-        .await
-        .unwrap();
-    let pull = db::pull_requests::records::create_pull_request(
+    let issue =
+        codeyard_db_repos::issues::create_issue(f.pool(), repo.id, alice, "Issue", "Issue body")
+            .await
+            .unwrap();
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: repo.id,
             head_repo_id: Some(repo.id),
             author_id: alice,
@@ -233,17 +235,22 @@ async fn cli_contract(pg: bool) {
         created["createProjectV2"]["projectV2"]["items"]["totalCount"],
         0
     );
-    let project_id = db::projects::get(f.pool(), Some(alice), db::projects::Owner::User(alice), 1)
-        .await
-        .unwrap()
-        .id;
-    let org_project = db::projects::create(
+    let project_id = codeyard_db_repos::projects::get(
+        f.pool(),
+        Some(alice),
+        codeyard_db_repos::projects::Owner::User(alice),
+        1,
+    )
+    .await
+    .unwrap()
+    .id;
+    let org_project = codeyard_db_repos::projects::create(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
-        db::projects::Owner::Organization(org.id),
+        codeyard_db_repos::projects::Owner::Organization(org.id),
         "Organization plan",
         None,
         false,
@@ -334,10 +341,17 @@ async fn cli_contract(pg: bool) {
         );
     }
     // Built-in fields carry the linked content's labels and repository.
-    let label = db::labels::create_label(f.pool(), alice, repo.id, "planning", "#123456", None)
-        .await
-        .unwrap();
-    db::labels::add_issue_label(f.pool(), alice, repo.id, issue.id, label.id)
+    let label = codeyard_db_repos::labels::create_label(
+        f.pool(),
+        alice,
+        repo.id,
+        "planning",
+        "#123456",
+        None,
+    )
+    .await
+    .unwrap();
+    codeyard_db_repos::labels::add_issue_label(f.pool(), alice, repo.id, issue.id, label.id)
         .await
         .unwrap();
     let listed = send(
@@ -426,21 +440,21 @@ async fn cli_contract(pg: bool) {
         );
     }
     // Iteration fields already exist in the native store, even though gh cannot create them.
-    let iteration = db::projects::add_field(
+    let iteration = codeyard_db_repos::projects::add_field(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         project_id,
-        &db::projects::NewField {
+        &codeyard_db_repos::projects::NewField {
             name: "Sprint".into(),
             data_type: "iteration".into(),
             single_select_options: None,
-            iteration_configuration: Some(db::projects::IterationConfiguration {
+            iteration_configuration: Some(codeyard_db_repos::projects::IterationConfiguration {
                 start_date: "2026-10-24".parse().unwrap(),
                 duration: 14,
-                iterations: vec![db::projects::Iteration {
+                iterations: vec![codeyard_db_repos::projects::Iteration {
                     title: "Sprint 1".into(),
                     start_date: "2026-10-24".parse().unwrap(),
                     duration: 14,
@@ -450,7 +464,7 @@ async fn cli_contract(pg: bool) {
     )
     .await
     .unwrap();
-    let config = db::projects::field_configuration(&iteration).unwrap();
+    let config = codeyard_db_repos::projects::field_configuration(&iteration).unwrap();
     let data = send(&router,token,document!("UpdateItemValues"),json!({"input":{"projectId":pid,"itemId":item,"fieldId":node_id::encode("PVTIF",iteration.id),"value":{"iterationId":config["iterations"][0]["id"]}}})).await;
     assert!(
         data["updateProjectV2ItemFieldValue"]["projectV2Item"]["fieldValues"]["nodes"]
@@ -459,14 +473,14 @@ async fn cli_contract(pg: bool) {
             .iter()
             .any(|v| v["title"] == "Sprint 1" && v["duration"] == 14)
     );
-    db::projects::add_item(
+    codeyard_db_repos::projects::add_item(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         org_project.id,
-        &db::projects::Content::Draft {
+        &codeyard_db_repos::projects::Content::Draft {
             title: "Org draft".into(),
             body: Some("Body".into()),
         },

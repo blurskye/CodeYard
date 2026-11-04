@@ -11,24 +11,28 @@ async fn lists(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
-    let org = match db::organizations::create_organization(
+    let org = match codeyard_db_orgs::organizations::profiles::create_organization(
         f.pool(),
         alice,
-        &db::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "collective",
-            db::organizations::OrganizationProfile::new(Some("Collective"), None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(
+                Some("Collective"),
+                None,
+            )
+            .unwrap(),
         )
         .unwrap(),
     )
     .await
     .unwrap()
     {
-        db::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization creation"),
     };
     let root = tempfile::tempdir().unwrap();
     let mut repos = Vec::new();
-    use db::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
+    use codeyard_db_repos::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
     for (owner, name, private) in [
         (RepositoryCreationOwner::personal(alice), "proj", true),
         (RepositoryCreationOwner::personal(bob), "other", false),
@@ -62,12 +66,12 @@ async fn lists(pg: bool) {
         (&repos[2], alice, "Organization"),
     ] {
         issues.push(
-            db::issues::create_issue(f.pool(), repo.id, author, "Issue", body)
+            codeyard_db_repos::issues::create_issue(f.pool(), repo.id, author, "Issue", body)
                 .await
                 .unwrap(),
         );
     }
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         alice,
         repos[1].id,
@@ -76,22 +80,35 @@ async fn lists(pg: bool) {
     .await
     .unwrap();
     for index in [0, 2] {
-        db::assignees::assign_user(
+        codeyard_db_repos::assignees::assign_user(
             f.pool(),
             alice,
             repos[index].id,
-            db::assignees::AssignedItem::Issue(issues[index].id),
+            codeyard_db_repos::assignees::AssignedItem::Issue(issues[index].id),
             alice,
         )
         .await
         .unwrap();
     }
-    let label = db::labels::create_label(f.pool(), alice, repos[0].id, "bug", "123456", None)
-        .await
-        .unwrap();
-    db::labels::add_issue_label(f.pool(), alice, repos[0].id, issues[0].id, label.id)
-        .await
-        .unwrap();
+    let label = codeyard_db_repos::labels::create_label(
+        f.pool(),
+        alice,
+        repos[0].id,
+        "bug",
+        "123456",
+        None,
+    )
+    .await
+    .unwrap();
+    codeyard_db_repos::labels::add_issue_label(
+        f.pool(),
+        alice,
+        repos[0].id,
+        issues[0].id,
+        label.id,
+    )
+    .await
+    .unwrap();
     let router = f.router(root.path()).await;
     let mut tokens_out = Vec::new();
     for id in [alice, bob] {
@@ -229,9 +246,15 @@ async fn lists(pg: bool) {
         404,
     )
     .await;
-    db::repositories::engagement::set_watch_level(f.pool(), alice, repos[0].id, "ignoring", "")
-        .await
-        .unwrap();
+    codeyard_db_repos::repositories::engagement::set_watch_level(
+        f.pool(),
+        alice,
+        repos[0].id,
+        "ignoring",
+        "",
+    )
+    .await
+    .unwrap();
     let got = document(
         request(
             &router,
@@ -272,9 +295,9 @@ async fn lists(pg: bool) {
     )
     .await;
     assert!(got.as_array().unwrap().is_empty());
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             issue: None,
             maintainer_can_modify: false,
             repo_id: repos[0].id,
@@ -291,11 +314,11 @@ async fn lists(pg: bool) {
     )
     .await
     .unwrap();
-    db::assignees::assign_user(
+    codeyard_db_repos::assignees::assign_user(
         f.pool(),
         alice,
         repos[0].id,
-        db::assignees::AssignedItem::PullRequest(pull.id),
+        codeyard_db_repos::assignees::AssignedItem::PullRequest(pull.id),
         alice,
     )
     .await

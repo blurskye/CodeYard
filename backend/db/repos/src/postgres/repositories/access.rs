@@ -343,9 +343,3 @@ use codeyard_db_core::queries::postgres::repositories::access::user_repo_access_
 use codeyard_db_core::queries::postgres::repositories::access::readable_condition;
 
 use codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
-
-use codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
-
-use codeyard_db_core::queries::postgres::repositories::access::readable_condition;
-
-use codeyard_db_core::queries::postgres::repositories::access::user_repo_access_in_transaction;

@@ -20,13 +20,18 @@ async fn codeowners_does_not_expand_secret_teams_even_for_repository_writers() {
             &[r.id],
         )
         .await;
-        let r = db::repositories::records::get_repository_by_id(f.pool(), r.id)
+        let r = codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), r.id)
             .await
             .unwrap()
             .unwrap();
-        db::repositories::access::grant_repo_access(f.pool(), member, r.id, AccessLevel::Write)
-            .await
-            .unwrap();
+        codeyard_db_repos::repositories::access::grant_repo_access(
+            f.pool(),
+            member,
+            r.id,
+            AccessLevel::Write,
+        )
+        .await
+        .unwrap();
         f.execute(
             "INSERT INTO team_repo_access(team_id,repo_id,permission) VALUES(10001,$1,3)",
             &[r.id],
@@ -53,7 +58,7 @@ async fn retargeting_a_pull_request_excludes_checks_for_its_previous_target() {
         let mut f = Database::new(pg).await;
         let owner = f.actor("retarget_owner").await;
         let r = repo(&f, owner, "retarget").await;
-        let node = db::cluster::register_own_node(
+        let node = codeyard_db_cluster::cluster::register_own_node(
             f.pool(),
             &"ab".repeat(32),
             "ci-retention",
@@ -62,13 +67,15 @@ async fn retargeting_a_pull_request_excludes_checks_for_its_previous_target() {
         )
         .await
         .unwrap();
-        assert!(db::cluster::place_repository(f.pool(), r.id, node.id)
-            .await
-            .unwrap());
+        assert!(
+            codeyard_db_cluster::cluster::place_repository(f.pool(), r.id, node.id)
+                .await
+                .unwrap()
+        );
         let sha = "a".repeat(40);
-        let pull = db::pull_requests::records::create_pull_request(
+        let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
             f.pool(),
-            db::pull_requests::records::NewPullRequest {
+            codeyard_db_repos::pull_requests::records::NewPullRequest {
                 repo_id: r.id,
                 head_repo_id: Some(r.id),
                 author_id: owner,
@@ -86,9 +93,9 @@ async fn retargeting_a_pull_request_excludes_checks_for_its_previous_target() {
         .await
         .unwrap();
         let path = ".github/workflows/check.yml";
-        let run = db::ci::enqueue_ci_run(
+        let run = codeyard_db_actions::ci::enqueue_ci_run(
             f.pool(),
-            db::ci::NewCiRun {
+            codeyard_db_actions::ci::NewCiRun {
                 repo_id: r.id,
                 triggered_by_id: owner,
                 pipeline: "ci",
@@ -107,26 +114,34 @@ async fn retargeting_a_pull_request_excludes_checks_for_its_previous_target() {
         .await
         .unwrap();
         assert_eq!(
-            db::cluster::get_write_version(f.pool(), r.id)
+            codeyard_db_cluster::cluster::get_write_version(f.pool(), r.id)
                 .await
                 .unwrap(),
             Some(1)
         );
         assert_eq!(
-            db::ci::retained_ci_commits(f.pool(), r.id).await.unwrap(),
+            codeyard_db_actions::ci::retained_ci_commits(f.pool(), r.id)
+                .await
+                .unwrap(),
             vec![sha.clone()]
         );
         f.execute("UPDATE ci_runs SET status='success' WHERE id=$1", &[run.id])
             .await;
         assert_eq!(
-            db::ci::latest_ci_runs_for_commit(f.pool(), r.id, &sha, pull.id, "main")
-                .await
-                .unwrap()
-                .len(),
+            codeyard_db_actions::ci::latest_ci_runs_for_commit(
+                f.pool(),
+                r.id,
+                &sha,
+                pull.id,
+                "main"
+            )
+            .await
+            .unwrap()
+            .len(),
             1
         );
         assert_eq!(
-            db::ci::list_pull_request_check_statuses(f.pool(), &[pull.id])
+            codeyard_db_actions::ci::list_pull_request_check_statuses(f.pool(), &[pull.id])
                 .await
                 .unwrap(),
             vec![(pull.id, "success".into())]
@@ -136,14 +151,18 @@ async fn retargeting_a_pull_request_excludes_checks_for_its_previous_target() {
             &[pull.id],
         )
         .await;
+        assert!(codeyard_db_actions::ci::latest_ci_runs_for_commit(
+            f.pool(),
+            r.id,
+            &sha,
+            pull.id,
+            "release"
+        )
+        .await
+        .unwrap()
+        .is_empty());
         assert!(
-            db::ci::latest_ci_runs_for_commit(f.pool(), r.id, &sha, pull.id, "release")
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        assert!(
-            db::ci::list_pull_request_check_statuses(f.pool(), &[pull.id])
+            codeyard_db_actions::ci::list_pull_request_check_statuses(f.pool(), &[pull.id])
                 .await
                 .unwrap()
                 .is_empty()
@@ -152,14 +171,20 @@ async fn retargeting_a_pull_request_excludes_checks_for_its_previous_target() {
         f.execute("UPDATE ci_runs SET branch='release' WHERE id=$1", &[run.id])
             .await;
         assert_eq!(
-            db::ci::latest_ci_runs_for_commit(f.pool(), r.id, &sha, pull.id, "release")
-                .await
-                .unwrap()
-                .len(),
+            codeyard_db_actions::ci::latest_ci_runs_for_commit(
+                f.pool(),
+                r.id,
+                &sha,
+                pull.id,
+                "release"
+            )
+            .await
+            .unwrap()
+            .len(),
             1
         );
         assert_eq!(
-            db::ci::list_pull_request_check_statuses(f.pool(), &[pull.id])
+            codeyard_db_actions::ci::list_pull_request_check_statuses(f.pool(), &[pull.id])
                 .await
                 .unwrap()
                 .len(),
@@ -176,11 +201,16 @@ async fn native_notification_projections_refresh_links_before_returning() {
         let owner = f.actor("link_owner").await;
         let reader = f.actor("link_reader").await;
         let r = repo(&f, owner, "old_name").await;
-        db::repositories::access::grant_repo_access(f.pool(), reader, r.id, AccessLevel::Read)
-            .await
-            .unwrap();
+        codeyard_db_repos::repositories::access::grant_repo_access(
+            f.pool(),
+            reader,
+            r.id,
+            AccessLevel::Read,
+        )
+        .await
+        .unwrap();
         let session = session(f.pool(), reader).await;
-        let n = db::notifications::records::create_notification(
+        let n = codeyard_db_repos::notifications::records::create_notification(
             f.pool(),
             NewNotification {
                 user_id: reader,
@@ -198,7 +228,7 @@ async fn native_notification_projections_refresh_links_before_returning() {
         records::rename_repository(f.pool(), owner, r.id, "new_name")
             .await
             .unwrap();
-        let inbox = db::notifications::records::notification_inbox(
+        let inbox = codeyard_db_repos::notifications::records::notification_inbox(
             f.pool(),
             &session,
             reader,
@@ -211,7 +241,7 @@ async fn native_notification_projections_refresh_links_before_returning() {
         .await
         .unwrap()
         .unwrap();
-        let delivery = db::notifications::records::notification_delivery(
+        let delivery = codeyard_db_repos::notifications::records::notification_delivery(
             f.pool(),
             &session,
             reader,
@@ -226,7 +256,7 @@ async fn native_notification_projections_refresh_links_before_returning() {
             delivery.notification.as_ref().unwrap().link.as_deref(),
             expected
         );
-        db::repositories::access::revoke_repo_access(f.pool(), reader, r.id)
+        codeyard_db_repos::repositories::access::revoke_repo_access(f.pool(), reader, r.id)
             .await
             .unwrap();
         records::rename_repository(f.pool(), owner, r.id, "hidden_name")
@@ -234,17 +264,19 @@ async fn native_notification_projections_refresh_links_before_returning() {
             .unwrap();
         assert_eq!(inbox.notifications[0].link.as_deref(), expected);
         assert_eq!(delivery.notification.unwrap().link.as_deref(), expected);
-        assert!(db::notifications::records::notification_delivery(
-            f.pool(),
-            &session,
-            reader,
-            Some(n.id)
-        )
-        .await
-        .unwrap()
-        .unwrap()
-        .notification
-        .is_none());
+        assert!(
+            codeyard_db_repos::notifications::records::notification_delivery(
+                f.pool(),
+                &session,
+                reader,
+                Some(n.id)
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .notification
+            .is_none()
+        );
         f.finish().await;
     }
 }
@@ -263,15 +295,20 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
             &[admin],
         )
         .await;
-        db::repositories::access::grant_repo_access(f.pool(), admin, r.id, AccessLevel::Admin)
-            .await
-            .unwrap();
+        codeyard_db_repos::repositories::access::grant_repo_access(
+            f.pool(),
+            admin,
+            r.id,
+            AccessLevel::Admin,
+        )
+        .await
+        .unwrap();
         for scope in [HookOwner::Repository(r.id), HookOwner::Organization(1001)] {
             let hook = webhooks::insert_webhook(
                 f.pool(),
                 scope,
                 owner,
-                &db::users::accounts::AccountCredential::Session(
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(f.pool(), owner).await,
                 ),
                 &WebhookFields {
@@ -309,14 +346,14 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
             .unwrap();
             let id = webhooks::list_deliveries(f.pool(), hook).await.unwrap()[0].id;
             let revoked = crate::support::live_session(f.pool(), owner).await;
-            db::users::sessions::delete_session(f.pool(), &revoked)
+            codeyard_db_identity::users::sessions::delete_session(f.pool(), &revoked)
                 .await
                 .unwrap();
             assert!(webhooks::delete_webhook(
                 f.pool(),
                 scope,
                 owner,
-                &db::users::accounts::AccountCredential::Session(&revoked),
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&revoked),
                 hook
             )
             .await
@@ -326,7 +363,7 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
                 f.pool(),
                 scope,
                 admin,
-                &db::users::accounts::AccountCredential::Session(
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(f.pool(), admin).await,
                 ),
                 Some(hook),
@@ -345,11 +382,13 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
             assert_eq!(snapshot.deliveries.len(), 1);
             match scope {
                 HookOwner::Repository(_) => {
-                    assert!(
-                        db::repositories::access::revoke_repo_access(f.pool(), admin, r.id)
-                            .await
-                            .unwrap()
-                    );
+                    assert!(codeyard_db_repos::repositories::access::revoke_repo_access(
+                        f.pool(),
+                        admin,
+                        r.id
+                    )
+                    .await
+                    .unwrap());
                 }
                 HookOwner::Organization(_) => {
                     f.execute(
@@ -363,7 +402,7 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
                 f.pool(),
                 scope,
                 admin,
-                &db::users::accounts::AccountCredential::Session(
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(f.pool(), admin).await
                 ),
                 Some(hook),

@@ -16,7 +16,7 @@ async fn issues(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         true,
@@ -24,12 +24,20 @@ async fn issues(pg: bool) {
     )
     .await
     .unwrap();
-    let label = db::labels::create_label(f.pool(), alice, repo.id, "bug", "#123456", Some("A bug"))
-        .await
-        .unwrap();
-    let milestone = db::milestones::create_milestone(f.pool(), alice, repo.id, "v1", None, None)
-        .await
-        .unwrap();
+    let label = codeyard_db_repos::labels::create_label(
+        f.pool(),
+        alice,
+        repo.id,
+        "bug",
+        "#123456",
+        Some("A bug"),
+    )
+    .await
+    .unwrap();
+    let milestone =
+        codeyard_db_repos::milestones::create_milestone(f.pool(), alice, repo.id, "v1", None, None)
+            .await
+            .unwrap();
     let router = f.router(root.path()).await;
     let mut credentials = Vec::new();
     for (id, scope) in [(alice, "write"), (alice, "read"), (bob, "write")] {
@@ -248,9 +256,9 @@ async fn issues(pg: bool) {
         .status(),
         StatusCode::UNPROCESSABLE_ENTITY
     );
-    let pull = db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         f.pool(),
-        db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             issue: None,
             maintainer_can_modify: false,
             repo_id: repo.id,
@@ -267,9 +275,9 @@ async fn issues(pg: bool) {
     )
     .await
     .unwrap();
-    db::pull_requests::reviews::add_pull_request_comment(
+    codeyard_db_repos::pull_requests::reviews::add_pull_request_comment(
         f.pool(),
-        db::pull_requests::reviews::NewPullRequestComment {
+        codeyard_db_repos::pull_requests::reviews::NewPullRequestComment {
             start_line: None,
             start_side: None,
             pr_id: pull.id,
@@ -313,11 +321,11 @@ async fn issues(pg: bool) {
     .await;
     assert_eq!(saved["title"], "Edited pull");
     assert_eq!(saved["labels"][0]["name"], "bug");
-    db::assignees::assign_user(
+    codeyard_db_repos::assignees::assign_user(
         f.pool(),
         alice,
         repo.id,
-        db::assignees::AssignedItem::PullRequest(pull.id),
+        codeyard_db_repos::assignees::AssignedItem::PullRequest(pull.id),
         alice,
     )
     .await

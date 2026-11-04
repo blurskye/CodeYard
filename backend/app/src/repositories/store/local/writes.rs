@@ -24,12 +24,12 @@ impl LocalStore {
         pool: &codeyard_db_core::DbPool,
         repo: i64,
     ) -> Result<Option<(&crate::cluster::context::NodeContext, i64)>, RepoError> {
-        let repository = db::repositories::records::get_repository_by_id(pool, repo)
+        let repository = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo)
             .await
             .map_err(|_| RepoError::authority_unavailable())?
             .ok_or_else(RepoError::write_denied)?;
         if repository.storage_node_id.is_none()
-            || db::cluster::writes::write_settings(pool)
+            || codeyard_db_cluster::cluster::writes::write_settings(pool)
                 .await
                 .map_err(RepoError::from)?
                 .write_quorum
@@ -103,7 +103,7 @@ impl LocalStore {
 
     pub(super) async fn publish_quorum_head<F>(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
         target: &str,
         authorize: F,
@@ -183,7 +183,7 @@ impl LocalStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo: i64,
-        authority: &db::credentials::Actor,
+        authority: &codeyard_db_core::queries::credentials::Actor,
         reference: &str,
         old: Option<&str>,
         new: Option<&str>,

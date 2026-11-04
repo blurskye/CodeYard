@@ -94,7 +94,7 @@ pub(super) async fn run(
         let value = session.expect("POST",&format!("/api{native}/pulls"),json!({"title":format!("Association <script> {index}"),"head_branch":"association-source","base_branch":branch}),StatusCode::CREATED).await;
         let number = i32::try_from(value["number"].as_i64().unwrap()).unwrap();
         pulls.push(
-            db::pull_requests::records::get_pull_request(pool, repo, number)
+            codeyard_db_repos::pull_requests::records::get_pull_request(pool, repo, number)
                 .await
                 .unwrap()
                 .unwrap(),
@@ -173,7 +173,7 @@ pub(super) async fn run(
         json!([])
     );
 
-    let label = db::labels::create_label(
+    let label = codeyard_db_repos::labels::create_label(
         pool,
         alice,
         repo,
@@ -183,19 +183,19 @@ pub(super) async fn run(
     )
     .await
     .unwrap();
-    db::labels::add_pull_request_labels(pool, alice, repo, pulls[0].id, &[label.id])
+    codeyard_db_repos::labels::add_pull_request_labels(pool, alice, repo, pulls[0].id, &[label.id])
         .await
         .unwrap();
-    db::assignees::assign_user(
+    codeyard_db_repos::assignees::assign_user(
         pool,
         alice,
         repo,
-        db::assignees::AssignedItem::PullRequest(pulls[0].id),
+        codeyard_db_repos::assignees::AssignedItem::PullRequest(pulls[0].id),
         alice,
     )
     .await
     .unwrap();
-    let milestone = db::milestones::create_milestone(
+    let milestone = codeyard_db_repos::milestones::create_milestone(
         pool,
         alice,
         repo,
@@ -205,18 +205,18 @@ pub(super) async fn run(
     )
     .await
     .unwrap();
-    let before = db::milestones::milestone_document_facts(pool, repo, milestone.id)
+    let before = codeyard_db_repos::milestones::milestone_document_facts(pool, repo, milestone.id)
         .await
         .unwrap();
     assert_eq!(before.creator_id, Some(alice));
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let due_on: chrono::DateTime<chrono::Utc> = "2027-01-02T15:12:31.123Z".parse().unwrap();
-    db::milestones::save_milestone(
+    codeyard_db_repos::milestones::save_milestone(
         pool,
         alice,
         repo,
         Some(milestone.number),
-        db::milestones::MilestoneInput {
+        codeyard_db_repos::milestones::MilestoneInput {
             title: Some("Updated association release"),
             description: Some(Some("Native milestone")),
             due_on: Some(Some(due_on)),
@@ -225,11 +225,11 @@ pub(super) async fn run(
     )
     .await
     .unwrap();
-    let facts = db::milestones::milestone_document_facts(pool, repo, milestone.id)
+    let facts = codeyard_db_repos::milestones::milestone_document_facts(pool, repo, milestone.id)
         .await
         .unwrap();
     assert!(facts.updated_at > before.updated_at);
-    db::milestones::set_pull_request_milestone(
+    codeyard_db_repos::milestones::set_pull_request_milestone(
         pool,
         alice,
         repo,
@@ -272,7 +272,7 @@ pub(super) async fn run(
         due_on
     );
     assert_eq!(document["milestone"]["open_issues"], 1);
-    let repo_facts = db::repository_stats::repository_document_facts(pool, repo)
+    let repo_facts = codeyard_db_repos::repository_stats::repository_document_facts(pool, repo)
         .await
         .unwrap();
     assert_eq!(
@@ -347,10 +347,11 @@ pub(super) async fn run(
         (OP, 422),
     )
     .await;
-    let before = db::pull_requests::records::get_pull_request(pool, repo, pulls[0].number)
-        .await
-        .unwrap()
-        .unwrap();
+    let before =
+        codeyard_db_repos::pull_requests::records::get_pull_request(pool, repo, pulls[0].number)
+            .await
+            .unwrap()
+            .unwrap();
     let (status, _, body) = request(
         router,
         "HEAD",
@@ -362,7 +363,7 @@ pub(super) async fn run(
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, Value::Null);
     assert_eq!(
-        db::pull_requests::records::get_pull_request(pool, repo, pulls[0].number)
+        codeyard_db_repos::pull_requests::records::get_pull_request(pool, repo, pulls[0].number)
             .await
             .unwrap()
             .unwrap()
@@ -370,7 +371,7 @@ pub(super) async fn run(
         before.updated_at
     );
     assert_eq!(
-        db::milestones::milestone_document_facts(pool, repo, milestone.id)
+        codeyard_db_repos::milestones::milestone_document_facts(pool, repo, milestone.id)
             .await
             .unwrap()
             .updated_at,
@@ -386,10 +387,11 @@ pub(super) async fn run(
             .len(),
         11
     );
-    let current = db::pull_requests::records::get_pull_request(pool, repo, pulls[0].number)
-        .await
-        .unwrap()
-        .unwrap();
+    let current =
+        codeyard_db_repos::pull_requests::records::get_pull_request(pool, repo, pulls[0].number)
+            .await
+            .unwrap()
+            .unwrap();
     let merged = session
         .expect(
             "POST",
@@ -420,7 +422,7 @@ pub(super) async fn run(
     assert!(html.contains("Merged"), "{html}");
 
     // The fork from the comparison fixture is private and independently authorized.
-    let fork = db::repositories::records::get_repository(pool, "bob", "proj")
+    let fork = codeyard_db_repos::repositories::records::get_repository(pool, "bob", "proj")
         .await
         .unwrap()
         .unwrap();
@@ -434,7 +436,7 @@ pub(super) async fn run(
     .await
     .unwrap();
     // A read collaborator is a collaborator on issues and pull requests too, as on GitHub.
-    let record = db::repositories::records::get_repository_by_id(pool, repo)
+    let record = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo)
         .await
         .unwrap()
         .unwrap();

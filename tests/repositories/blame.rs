@@ -60,7 +60,7 @@ async fn blame_contract(pg: bool) {
     let public = provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "public",
         None,
         false,
@@ -71,7 +71,7 @@ async fn blame_contract(pg: bool) {
     let secret = provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "secret",
         None,
         true,

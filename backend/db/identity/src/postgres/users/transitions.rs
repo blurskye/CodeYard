@@ -830,19 +830,3 @@ pub async fn reset_password_with_link(
     tx.commit().await?;
     Ok(Some(user_id))
 }
-
-use codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared;
-
-use codeyard_db_core::queries::postgres::users::transitions::live_session;
-
-use codeyard_db_core::queries::postgres::users::transitions::account_locks;
-
-use codeyard_db_core::queries::postgres::users::transitions::credential_live;
-
-use codeyard_db_core::queries::postgres::users::transitions::account_locks;
-
-use codeyard_db_core::queries::postgres::users::transitions::credential_live;
-
-use codeyard_db_core::queries::postgres::users::transitions::live_session;
-
-use codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared;

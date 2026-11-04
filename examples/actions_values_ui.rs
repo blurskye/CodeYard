@@ -26,17 +26,17 @@ async fn main() {
             .await
             .unwrap();
     codeyard_db_core::run_migrations(&pool).await.unwrap();
-    db::node_config::upsert_node_configuration(&pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&pool, "public", true)
         .await
         .unwrap();
-    let owner = db::users::accounts::create_user(&pool, "alice", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
         .await
         .unwrap()
         .id;
     let repo = lifecycle::provision(
         (&pool, None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "project",
         None,
         true,
@@ -45,7 +45,7 @@ async fn main() {
     .await
     .unwrap();
     let session = uuid::Uuid::new_v4().simple().to_string().repeat(2);
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         &pool,
         &session,
         owner,
@@ -55,9 +55,10 @@ async fn main() {
     )
     .await
     .unwrap();
-    let credential = db::users::accounts::AccountCredential::Session(&session);
+    let credential =
+        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
     let encryptor = Arc::new(SecretEncryptor::new(&[0x63; 32]));
-    db::secrets::create_or_update_secret(
+    codeyard_db_actions::secrets::create_or_update_secret(
         &pool,
         &encryptor,
         repo.id,
@@ -68,7 +69,7 @@ async fn main() {
     )
     .await
     .unwrap();
-    db::variables::save(
+    codeyard_db_actions::variables::save(
         &pool,
         owner,
         &credential,
@@ -108,18 +109,19 @@ async fn main() {
         .await
         .unwrap();
     }
-    let org = db::organizations::create_organization(
+    let org = codeyard_db_orgs::organizations::profiles::create_organization(
         &pool,
         owner,
-        &db::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "browser_org",
-            db::organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                .unwrap(),
         )
         .unwrap(),
     )
     .await
     .unwrap();
-    let db::organizations::OrganizationOutcome::Applied(org) = org else {
+    let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) = org else {
         panic!("browser organization must be created")
     };
     for (kind, name, value) in [
@@ -130,13 +132,13 @@ async fn main() {
         ),
         (Kind::Variable, "ORGANIZATION_REGION", "org-visible"),
     ] {
-        db::organization_values::save(
+        codeyard_db_orgs::organization_values::save(
             &pool,
             Some(&encryptor),
             owner,
             &credential,
             org.id,
-            &db::organization_values::Save {
+            &codeyard_db_orgs::organization_values::Save {
                 kind,
                 previous: None,
                 name,

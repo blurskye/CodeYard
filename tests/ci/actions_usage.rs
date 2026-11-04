@@ -23,7 +23,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "project",
         None,
         true,
@@ -64,7 +64,7 @@ async fn contract(pg: bool) {
     assert_eq!(empty, json!({"billable":{},"run_duration_ms":0}));
     let mut expected_jobs = Vec::new();
     for attempt in 0..2 {
-        let run = db::ci::claim_ci_run(
+        let run = codeyard_db_actions::ci::claim_ci_run(
             f.pool(),
             "usage",
             "local",
@@ -75,7 +75,7 @@ async fn contract(pg: bool) {
         .unwrap()
         .unwrap();
         let generation = runtime::token_hash(&format!("usage-{attempt}"));
-        db::action_objects::issue_token(
+        codeyard_db_actions::action_objects::issue_token(
             f.pool(),
             run.id,
             run.worker.as_deref().unwrap_or(""),
@@ -104,7 +104,7 @@ async fn contract(pg: bool) {
                     duration_ms: duration,
                 },
             ] {
-                job_id = db::action_jobs::apply(
+                job_id = codeyard_db_actions::action_jobs::apply(
                     f.pool(),
                     "usage",
                     run.id,
@@ -125,7 +125,7 @@ async fn contract(pg: bool) {
                 expected_jobs.push(json!({"job_id":job_id,"duration_ms":1234}));
             }
         }
-        db::ci::finish_ci_run(f.pool(), run.id, "usage", "success", None)
+        codeyard_db_actions::ci::finish_ci_run(f.pool(), run.id, "usage", "success", None)
             .await
             .unwrap()
             .unwrap();

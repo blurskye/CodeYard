@@ -112,9 +112,13 @@ pub(super) async fn run(
             .await
             .unwrap(),
     };
-    let credentials = runtime::issue(f.pool(), &row, &db::actions::ActionsSettings::default())
-        .await
-        .unwrap();
+    let credentials = runtime::issue(
+        f.pool(),
+        &row,
+        &codeyard_db_actions::actions::ActionsSettings::default(),
+    )
+    .await
+    .unwrap();
     (row, credentials)
 }
 
@@ -181,7 +185,7 @@ async fn contract(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "results",
         None,
         false,
@@ -196,7 +200,7 @@ async fn contract(pg: bool) {
     let other_repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "separate",
         None,
         false,
@@ -745,7 +749,7 @@ async fn eviction(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "eviction",
         None,
         false,
@@ -798,7 +802,7 @@ async fn pending_uploads_share_the_cache_quota(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "pending-quota",
         None,
         false,
@@ -942,7 +946,7 @@ async fn shared_s3_across_routers(pg: bool) {
     let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         first.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "shared",
         None,
         false,

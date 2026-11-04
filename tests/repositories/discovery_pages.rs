@@ -60,7 +60,7 @@ async fn repo(
     lifecycle::provision(
         (site.database.pool(), None),
         site.root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         name,
         Some(description),
         private,
@@ -180,7 +180,7 @@ async fn search_contract(pg: bool) {
     .await;
     let rust_cli = repo(&site, site.bob, "rust-cli", "Command line rust", false).await;
     // Issue times are read to the second in the results, so the two public ones are a second apart.
-    db::issues::create_issue(
+    codeyard_db_repos::issues::create_issue(
         site.database.pool(),
         rustacean.id,
         site.alice,
@@ -190,7 +190,7 @@ async fn search_contract(pg: bool) {
     .await
     .unwrap();
     tokio::time::sleep(Duration::from_millis(1100)).await;
-    db::issues::create_issue(
+    codeyard_db_repos::issues::create_issue(
         site.database.pool(),
         rust_cli.id,
         site.bob,
@@ -199,7 +199,7 @@ async fn search_contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::issues::create_issue(
+    codeyard_db_repos::issues::create_issue(
         site.database.pool(),
         secret.id,
         site.alice,
@@ -208,7 +208,7 @@ async fn search_contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::users::accounts::create_user(site.database.pool(), "zebra_fan", None)
+    codeyard_db_identity::users::accounts::create_user(site.database.pool(), "zebra_fan", None)
         .await
         .unwrap();
     let alice = Client::login(&site.router, site.database.pool(), site.alice).await;
@@ -422,7 +422,7 @@ async fn explore_contract(pg: bool) {
         .join("bob-rustacean.git")
         .display()
         .to_string();
-    db::repositories::discovery::create_forked_repository(
+    codeyard_db_repos::repositories::discovery::create_forked_repository(
         site.database.pool(),
         NewForkedRepository {
             owner_id: site.bob,

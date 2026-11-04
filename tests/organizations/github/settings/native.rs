@@ -15,7 +15,7 @@ pub(super) async fn contract(
     assert_eq!(status, StatusCode::OK);
     assert!(page.contains("private-billing@example.test"));
     assert!(page.contains("Concurrent company"));
-    let member = db::users::accounts::get_user_by_username(f.pool(), "member")
+    let member = codeyard_db_identity::users::accounts::get_user_by_username(f.pool(), "member")
         .await
         .unwrap()
         .unwrap();
@@ -51,15 +51,20 @@ pub(super) async fn contract(
         )
         .await;
     assert_eq!(created.status, StatusCode::SEE_OTHER);
-    let repository = db::repositories::records::get_repository(f.pool(), "acme", "member-native")
-        .await
-        .unwrap()
-        .unwrap();
+    let repository =
+        codeyard_db_repos::repositories::records::get_repository(f.pool(), "acme", "member-native")
+            .await
+            .unwrap()
+            .unwrap();
     assert!(repository.is_private);
     assert_eq!(
-        db::repositories::access::get_user_repo_access(f.pool(), member.id, repository.id)
-            .await
-            .unwrap(),
+        codeyard_db_repos::repositories::access::get_user_repo_access(
+            f.pool(),
+            member.id,
+            repository.id
+        )
+        .await
+        .unwrap(),
         AccessLevel::Admin
     );
     let (status, profile) = member_browser.model("/acme").await;
@@ -204,7 +209,7 @@ pub(super) async fn contract(
     assert_eq!(unsigned.status, StatusCode::BAD_REQUEST);
     assert!(unsigned.text().contains("Signed-off-by"));
     assert!(unsigned.text().contains("kept content"));
-    let user = db::users::accounts::get_user_by_id(f.pool(), owner)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(f.pool(), owner)
         .await
         .unwrap()
         .unwrap();

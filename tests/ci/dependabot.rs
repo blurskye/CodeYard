@@ -22,7 +22,7 @@ async fn repository_secrets(pg: bool) {
     let repo = provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "project",
         None,
         true,
@@ -151,7 +151,7 @@ async fn repository_secrets(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::secrets::decrypt_repository_secrets(f.pool(), &encryptor, repo.id)
+        codeyard_db_actions::secrets::decrypt_repository_secrets(f.pool(), &encryptor, repo.id)
             .await
             .unwrap(),
         vec![("REGISTRY_TOKEN".into(), "actions-only-value".into())]
@@ -233,7 +233,7 @@ async fn repository_secrets(pg: bool) {
         )
         .await;
     }
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         outsider,
         repo.id,
@@ -297,7 +297,7 @@ async fn repository_secrets(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::secrets::decrypt_repository_secrets(f.pool(), &encryptor, repo.id)
+        codeyard_db_actions::secrets::decrypt_repository_secrets(f.pool(), &encryptor, repo.id)
             .await
             .unwrap()[0]
             .1,
@@ -335,13 +335,15 @@ async fn repository_secrets(pg: bool) {
     assert!(!page.contains("never-echo-form-value"));
     let page = client.page_ok("/alice/project/settings?tab=secrets").await;
     assert!(!page.contains("FORM_ONLY"));
-    assert!(
-        db::secrets::decrypt_repository_secrets(f.pool(), &encryptor, repo.id)
-            .await
-            .unwrap()
-            .iter()
-            .all(|(name, _)| name != "FORM_ONLY")
-    );
+    assert!(codeyard_db_actions::secrets::decrypt_repository_secrets(
+        f.pool(),
+        &encryptor,
+        repo.id
+    )
+    .await
+    .unwrap()
+    .iter()
+    .all(|(name, _)| name != "FORM_ONLY"));
     let response = client
         .form_reply(
             "/alice/project/_forms/secret-delete",
@@ -367,12 +369,12 @@ async fn repository_secrets(pg: bool) {
 }
 
 async fn organization_secrets(pg: bool) {
+    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_db_orgs::organizations::profiles::NewOrganization;
+    use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
+    use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+    use codeyard_db_repos::repositories::creation::RepositoryTarget;
     use db::organizations;
-    use db::organizations::NewOrganization;
-    use db::organizations::OrganizationOutcome;
-    use db::organizations::OrganizationProfile;
-    use db::repositories::creation::RepositoryCreationOwner;
-    use db::repositories::creation::RepositoryTarget;
     fake_webui_bundle::install();
     let mut f = Database::new(pg).await;
     f.complete_setup().await;

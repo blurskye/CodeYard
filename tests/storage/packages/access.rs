@@ -47,14 +47,16 @@ async fn access(pg: bool) {
         .collect();
     let credentials: Vec<_> = policies
         .iter()
-        .map(|(job, hash, permissions)| db::ci_tokens::NewJobToken {
-            job,
-            hash,
-            permissions,
-            write: true,
-        })
+        .map(
+            |(job, hash, permissions)| codeyard_db_actions::ci_tokens::NewJobToken {
+                job,
+                hash,
+                permissions,
+                write: true,
+            },
+        )
         .collect();
-    db::ci_tokens::issue(f.pool(), run, "package-worker", &credentials)
+    codeyard_db_actions::ci_tokens::issue(f.pool(), run, "package-worker", &credentials)
         .await
         .unwrap();
     let job_writer = "Bearer ghs_package_writer";
@@ -204,11 +206,11 @@ async fn access(pg: bool) {
         &[org, alice, bob],
     )
     .await;
-    db::repositories::records::transfer_repository(
+    codeyard_db_repos::repositories::records::transfer_repository(
         f.pool(),
         alice,
         repo,
-        db::repositories::creation::RepositoryTarget::Organization(org),
+        codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(org),
     )
     .await
     .unwrap();

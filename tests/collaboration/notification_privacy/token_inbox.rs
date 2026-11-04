@@ -1,10 +1,10 @@
 //! Token and browser inboxes use the same native rows and transaction-scoped authority.
 use super::{db, ids, Fixture};
-use codeyard_identity::tokens;
-use codeyard_identity::tokens::TokenInput;
-use db::notifications::records::{
+use codeyard_db_repos::notifications::records::{
     NotificationCredential as Credential, NotificationFilter, NotificationInboxAction as Action,
 };
+use codeyard_identity::tokens;
+use codeyard_identity::tokens::TokenInput;
 
 fn list() -> Action {
     Action::List {
@@ -46,7 +46,7 @@ async fn contract(pg: bool) {
     let account = f.notify(user, None, "account").await;
     let repo = f.repo(owner, None, "token_private").await;
     let hidden = f.notify(user, Some(repo), "HIDDEN TOKEN PAYLOAD").await;
-    let visible = db::notifications::records::notification_inbox_with_credential(
+    let visible = codeyard_db_repos::notifications::records::notification_inbox_with_credential(
         f.pool(),
         Credential::Token(reader.token.id),
         user,
@@ -58,7 +58,7 @@ async fn contract(pg: bool) {
     assert_eq!(ids(&visible.notifications), vec![account]);
     let before = f.history(user).await;
     assert!(
-        db::notifications::records::notification_inbox_with_credential(
+        codeyard_db_repos::notifications::records::notification_inbox_with_credential(
             f.pool(),
             Credential::Token(reader.token.id),
             user,
@@ -72,7 +72,7 @@ async fn contract(pg: bool) {
     );
     assert_eq!(before, f.history(user).await);
     assert!(
-        db::notifications::records::notification_inbox_with_credential(
+        codeyard_db_repos::notifications::records::notification_inbox_with_credential(
             f.pool(),
             Credential::Token(writer.token.id),
             foreign,
@@ -82,20 +82,21 @@ async fn contract(pg: bool) {
         .unwrap()
         .is_none()
     );
-    let inaccessible = db::notifications::records::notification_inbox_with_credential(
-        f.pool(),
-        Credential::Token(writer.token.id),
-        user,
-        Action::Read {
-            notification_id: hidden,
-        },
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let inaccessible =
+        codeyard_db_repos::notifications::records::notification_inbox_with_credential(
+            f.pool(),
+            Credential::Token(writer.token.id),
+            user,
+            Action::Read {
+                notification_id: hidden,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
     assert!(inaccessible.notifications.is_empty());
     assert_eq!(inaccessible.updated, 0);
-    let read = db::notifications::records::notification_inbox_with_credential(
+    let read = codeyard_db_repos::notifications::records::notification_inbox_with_credential(
         f.pool(),
         Credential::Token(writer.token.id),
         user,
@@ -107,17 +108,22 @@ async fn contract(pg: bool) {
     .unwrap()
     .unwrap();
     assert_eq!(read.updated, 1);
-    let browser = db::notifications::records::notification_inbox(f.pool(), &session, user, list())
-        .await
-        .unwrap()
-        .unwrap();
+    let browser = codeyard_db_repos::notifications::records::notification_inbox(
+        f.pool(),
+        &session,
+        user,
+        list(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert!(browser.notifications[0].read_at.is_some());
     tokens::delete(f.pool(), user, Some(&session), writer.token.id)
         .await
         .unwrap();
     let before = f.history(user).await;
     assert!(
-        db::notifications::records::notification_inbox_with_credential(
+        codeyard_db_repos::notifications::records::notification_inbox_with_credential(
             f.pool(),
             Credential::Token(writer.token.id),
             user,
@@ -134,7 +140,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(
-        db::notifications::records::notification_inbox_with_credential(
+        codeyard_db_repos::notifications::records::notification_inbox_with_credential(
             f.pool(),
             Credential::Token(reader.token.id),
             user,

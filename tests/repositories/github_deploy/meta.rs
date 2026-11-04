@@ -192,7 +192,7 @@ async fn contract(pg: bool) {
     codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "private",
         None,
         true,
@@ -316,9 +316,9 @@ async fn contract(pg: bool) {
     )
     .await;
     let concurrent = futures_util::future::join_all((0..20).map(|_| {
-        db::api_limits::budget(
+        codeyard_db_identity::api_limits::budget(
             f.pool(),
-            db::api_limits::Request {
+            codeyard_db_identity::api_limits::Request {
                 key: "concurrent",
                 resource: "search",
                 now: 100,
@@ -334,9 +334,9 @@ async fn contract(pg: bool) {
     assert!(concurrent
         .iter()
         .all(|(budget, _)| budget.used <= 5 && budget.reset_at == 160));
-    let (first, accepted) = db::api_limits::budget(
+    let (first, accepted) = codeyard_db_identity::api_limits::budget(
         f.pool(),
-        db::api_limits::Request {
+        codeyard_db_identity::api_limits::Request {
             key: "test",
             resource: "core",
             now: 100,
@@ -349,9 +349,9 @@ async fn contract(pg: bool) {
     .unwrap();
     assert!(accepted);
     assert_eq!(first.used, 1);
-    let (_, accepted) = db::api_limits::budget(
+    let (_, accepted) = codeyard_db_identity::api_limits::budget(
         f.pool(),
-        db::api_limits::Request {
+        codeyard_db_identity::api_limits::Request {
             key: "test",
             resource: "core",
             now: 100,
@@ -363,9 +363,9 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     assert!(!accepted);
-    let (_, accepted) = db::api_limits::budget(
+    let (_, accepted) = codeyard_db_identity::api_limits::budget(
         f.pool(),
-        db::api_limits::Request {
+        codeyard_db_identity::api_limits::Request {
             key: "test",
             resource: "core",
             now: 161,

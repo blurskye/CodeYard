@@ -25,23 +25,29 @@ async fn invisible(
     op: Operation,
 ) -> anyhow::Result<bool> {
     Ok(match op {
-        Operation::List => {
-            db::notifications::records::list_notifications_for_user(pool, recipient, 100, false)
-                .await?
-                .is_empty()
-        }
+        Operation::List => codeyard_db_repos::notifications::records::list_notifications_for_user(
+            pool, recipient, 100, false,
+        )
+        .await?
+        .is_empty(),
         Operation::Count => {
-            db::notifications::records::count_unread_notifications(pool, recipient).await? == 0
-        }
-        Operation::One => {
-            db::notifications::records::mark_notification_read(pool, recipient, notification)
+            codeyard_db_repos::notifications::records::count_unread_notifications(pool, recipient)
                 .await?
-                .is_none()
+                == 0
         }
+        Operation::One => codeyard_db_repos::notifications::records::mark_notification_read(
+            pool,
+            recipient,
+            notification,
+        )
+        .await?
+        .is_none(),
         Operation::All => {
-            db::notifications::records::mark_all_notifications_read(pool, recipient).await? == 0
+            codeyard_db_repos::notifications::records::mark_all_notifications_read(pool, recipient)
+                .await?
+                == 0
         }
-        Operation::Delivery => db::notifications::records::notification_delivery(
+        Operation::Delivery => codeyard_db_repos::notifications::records::notification_delivery(
             pool,
             &"00".repeat(32),
             recipient,
@@ -61,7 +67,7 @@ async fn postgres_notification_operations_wait_for_recipient_row_then_recheck() 
     let notice = fixture
         .notify(recipient, Some(repo), "lock-private-payload")
         .await;
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         fixture.pool(),
         &"00".repeat(32),
         recipient,
@@ -73,7 +79,7 @@ async fn postgres_notification_operations_wait_for_recipient_row_then_recheck() 
     .unwrap();
     let raw = fixture.pg();
     for op in OPERATIONS {
-        db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             fixture.pool(),
             recipient,
             repo,
@@ -144,7 +150,7 @@ async fn postgres_notification_operations_wait_for_uncommitted_grant_revocation(
         .await;
     let raw = fixture.pg();
     // Delivery returns early without a live session, so the probe needs one.
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         fixture.pool(),
         &"00".repeat(32),
         recipient,
@@ -156,7 +162,7 @@ async fn postgres_notification_operations_wait_for_uncommitted_grant_revocation(
     .unwrap();
 
     for op in OPERATIONS {
-        db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             fixture.pool(),
             recipient,
             repo,
@@ -202,7 +208,7 @@ async fn postgres_notification_write_keeps_its_grant_until_commit() {
     let owner = fixture.actor("notification_commit_owner").await;
     let recipient = fixture.actor("notification_commit_recipient").await;
     let repo = fixture.repo(owner, None, "notification_commit_repo").await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         fixture.pool(),
         recipient,
         repo,
@@ -227,13 +233,14 @@ async fn postgres_notification_write_keeps_its_grant_until_commit() {
         .unwrap();
     let pool = fixture.pool().clone();
     let effect = tokio::spawn(async move {
-        db::notifications::records::mark_notification_read(&pool, recipient, notice).await
+        codeyard_db_repos::notifications::records::mark_notification_read(&pool, recipient, notice)
+            .await
     });
     wait_until_blocked(raw, blocker, 1).await;
 
     let pool = fixture.pool().clone();
     let revocation = tokio::spawn(async move {
-        db::repositories::access::revoke_repo_access(&pool, recipient, repo).await
+        codeyard_db_repos::repositories::access::revoke_repo_access(&pool, recipient, repo).await
     });
     wait_until_blocked(raw, blocker, 2).await;
     assert!(!revocation.is_finished());
@@ -241,15 +248,17 @@ async fn postgres_notification_write_keeps_its_grant_until_commit() {
 
     assert_eq!(effect.await.unwrap().unwrap().unwrap().id, notice);
     assert!(revocation.await.unwrap().unwrap());
-    assert!(db::notifications::records::list_notifications_for_user(
-        fixture.pool(),
-        recipient,
-        100,
-        false,
-    )
-    .await
-    .unwrap()
-    .is_empty());
+    assert!(
+        codeyard_db_repos::notifications::records::list_notifications_for_user(
+            fixture.pool(),
+            recipient,
+            100,
+            false,
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
     assert!(fixture.history(recipient).await[0]["read_at"].is_string());
     fixture.finish().await;
 }
@@ -265,7 +274,7 @@ async fn sqlite_notification_operations_require_reserved_writer_then_recheck() {
     let notice = fixture
         .notify(recipient, Some(repo), "reserved-private-payload")
         .await;
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         fixture.pool(),
         &"00".repeat(32),
         recipient,
@@ -275,7 +284,7 @@ async fn sqlite_notification_operations_require_reserved_writer_then_recheck() {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         fixture.pool(),
         recipient,
         repo,
@@ -337,7 +346,7 @@ async fn missing_table_is_error(pg: bool) {
     let mut fixture = Fixture::new(pg).await;
     let recipient = fixture.actor("notification_error_recipient").await;
     let notice = fixture.notify(recipient, None, "owned-error-fixture").await;
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         fixture.pool(),
         &"00".repeat(32),
         recipient,
@@ -393,7 +402,8 @@ async fn delete_fork_during_read(
         .unwrap();
     let deletion_pool = pool.clone();
     let deletion = tokio::spawn(async move {
-        db::repositories::records::delete_repository(&deletion_pool, owner, fork).await
+        codeyard_db_repos::repositories::records::delete_repository(&deletion_pool, owner, fork)
+            .await
     });
     wait_until_blocked(raw, holder_pid, 1).await;
     let deletion_pid: i32 = sqlx::query_scalar(
@@ -406,11 +416,16 @@ async fn delete_fork_during_read(
     let read_pool = pool.clone();
     let read = tokio::spawn(async move {
         if acknowledge {
-            db::notifications::records::mark_all_notifications_read(&read_pool, reader)
-                .await
-                .map(|count| count as i64)
+            codeyard_db_repos::notifications::records::mark_all_notifications_read(
+                &read_pool, reader,
+            )
+            .await
+            .map(|count| count as i64)
         } else {
-            db::notifications::records::count_unread_notifications(&read_pool, reader).await
+            codeyard_db_repos::notifications::records::count_unread_notifications(
+                &read_pool, reader,
+            )
+            .await
         }
     });
     wait_until_blocked(raw, deletion_pid, 1).await;
@@ -447,9 +462,9 @@ async fn postgres_fork_deletion_and_notification_reads_take_the_source_first() {
             let source = fixture
                 .repo(owner, None, &format!("order_source_{round}_{acknowledge}"))
                 .await;
-            let fork = db::repositories::discovery::create_forked_repository(
+            let fork = codeyard_db_repos::repositories::discovery::create_forked_repository(
                 fixture.pool(),
-                db::repositories::discovery::NewForkedRepository {
+                codeyard_db_repos::repositories::discovery::NewForkedRepository {
                     owner_id: owner,
                     name: &format!("order_fork_{round}_{acknowledge}"),
                     description: None,
@@ -463,7 +478,7 @@ async fn postgres_fork_deletion_and_notification_reads_take_the_source_first() {
             .unwrap()
             .id;
             for repo in [source, fork] {
-                db::repositories::access::grant_repo_access(
+                codeyard_db_repos::repositories::access::grant_repo_access(
                     fixture.pool(),
                     reader,
                     repo,
@@ -497,25 +512,26 @@ async fn postgres_fork_deletion_and_notification_reads_take_the_source_first() {
 async fn postgres_fork_rename_and_owner_ban_do_not_deadlock() {
     let mut fixture = Fixture::new(true).await;
     let owner = fixture.actor("fork_ban_owner").await;
-    let org = match db::organizations::create_organization(
+    let org = match codeyard_db_orgs::organizations::profiles::create_organization(
         fixture.pool(),
         owner,
-        &db::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "fork_ban_org",
-            db::organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                .unwrap(),
         )
         .unwrap(),
     )
     .await
     .unwrap()
     {
-        db::organizations::OrganizationOutcome::Applied(org) => org.id,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org.id,
         other => panic!("organization must be created: {other:?}"),
     };
     let source = fixture.repo(owner, Some(org), "fork_ban_source").await;
-    let fork = db::repositories::discovery::create_forked_repository(
+    let fork = codeyard_db_repos::repositories::discovery::create_forked_repository(
         fixture.pool(),
-        db::repositories::discovery::NewForkedRepository {
+        codeyard_db_repos::repositories::discovery::NewForkedRepository {
             owner_id: owner,
             name: "fork_ban_fork",
             description: None,
@@ -546,7 +562,13 @@ async fn postgres_fork_rename_and_owner_ban_do_not_deadlock() {
         .unwrap();
     let pool = fixture.pool().clone();
     let rename = tokio::spawn(async move {
-        db::repositories::records::rename_repository(&pool, owner, fork, "fork_ban_renamed").await
+        codeyard_db_repos::repositories::records::rename_repository(
+            &pool,
+            owner,
+            fork,
+            "fork_ban_renamed",
+        )
+        .await
     });
     wait_until_blocked(raw, blocker, 1).await;
     // The ban's next lock is the owner's account. A rename that already holds it while it

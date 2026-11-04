@@ -8,24 +8,31 @@ pub(super) async fn append(
     archive: &mut MigrationArchive,
 ) -> Result<()> {
     let (owner, name) = if let Some(org) = row.owner_org_id {
-        let org = db::organizations::get_public_organization_by_id(&state.pool, org)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        (db::projects::Owner::Organization(org.id), org.name)
+        let org = codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
+            &state.pool,
+            org,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
+        (
+            codeyard_db_repos::projects::Owner::Organization(org.id),
+            org.name,
+        )
     } else {
         let id = row.owner_user_id.ok_or_else(Error::missing)?;
-        let user = db::users::accounts::get_user_by_id(&state.pool, id)
+        let user = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        (db::projects::Owner::User(id), user.username)
+        (codeyard_db_repos::projects::Owner::User(id), user.username)
     };
     let mut after = 0;
     loop {
-        let rows = db::projects::list_page(&state.pool, Some(actor), owner, after, 100)
-            .await
-            .map_err(Error::unavailable)?;
+        let rows =
+            codeyard_db_repos::projects::list_page(&state.pool, Some(actor), owner, after, 100)
+                .await
+                .map_err(Error::unavailable)?;
         let count = rows.len();
         let mut values = Vec::new();
         for project in rows {
@@ -39,7 +46,7 @@ pub(super) async fn append(
             values.push(value);
             let mut field_after = 0;
             loop {
-                let fields = db::projects::fields_page(
+                let fields = codeyard_db_repos::projects::fields_page(
                     &state.pool,
                     Some(actor),
                     project.id,
@@ -59,7 +66,8 @@ pub(super) async fn append(
                     value["updated_at"] = json!(field.updated_at);
                     // Preserve raw configuration as well as its API projection (including option ids).
                     value["source_configuration"] =
-                        db::projects::field_configuration(&field).map_err(Error::unavailable)?;
+                        codeyard_db_repos::projects::field_configuration(&field)
+                            .map_err(Error::unavailable)?;
                     values.push(value);
                 }
                 archive
@@ -73,7 +81,7 @@ pub(super) async fn append(
             // state; views keep their saved configuration. Items in repositories the exporter
             // cannot read are left out, as the project page leaves them out.
             let mut values = Vec::new();
-            for item in db::projects::items(&state.pool, Some(actor), project.id)
+            for item in codeyard_db_repos::projects::items(&state.pool, Some(actor), project.id)
                 .await
                 .map_err(Error::unavailable)?
             {
@@ -88,7 +96,7 @@ pub(super) async fn append(
                 .records("project_item", values)
                 .map_err(Error::unavailable)?;
             let mut values = Vec::new();
-            for view in db::projects::views(&state.pool, Some(actor), project.id)
+            for view in codeyard_db_repos::projects::views(&state.pool, Some(actor), project.id)
                 .await
                 .map_err(Error::unavailable)?
             {
