@@ -402,7 +402,7 @@ async fn dist_tags(
     state: &AppState,
     namespace: &str,
     path: &str,
-    auth: Option<&codeyard_app::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
     request: Request,
 ) -> Result<Response> {
     let (slug, rest) = package_name(namespace, path)?;

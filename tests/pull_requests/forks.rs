@@ -8,11 +8,11 @@ use base64::Engine;
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::queue::RunQueue;
-use codeyard_app::ci::runs::CiRuns;
-use codeyard_app::ci::workers::CiWorkers;
-use codeyard_app::repositories::lifecycle::provision;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::ci::queue::RunQueue;
+use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::ci::workers::CiWorkers;
+use codeyard_repos_core::repositories::lifecycle::provision;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
 use codeyard_repos::editor::FileWrite;
@@ -328,7 +328,7 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap();
-    codeyard_app::repositories::pull_requests::branches::refresh_open_pull_requests(
+    codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
         f.pool(),
         &fork,
         None,
@@ -1177,7 +1177,7 @@ async fn private_fork_revocation_contract(pg: bool) {
         .await
         .unwrap();
     assert!(
-        codeyard_app::repositories::pull_requests::branches::refresh_open_pull_requests(
+        codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
             f.pool(),
             &base,
             Some(&["main", "later"][..]),

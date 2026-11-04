@@ -7,7 +7,7 @@ use crate::support::database::Database;
 use crate::support::fake_webui_bundle;
 use axum::http::StatusCode;
 
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos::editor::FileWrite;
 use serde_json::{json, Value};
 
@@ -19,7 +19,7 @@ async fn contract(pg: bool) {
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
     let repos = root.path().join("repos");
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         &repos,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -328,7 +328,7 @@ async fn contract(pg: bool) {
     );
     let aggregate = native
         .ci_runs
-        .trigger_run(codeyard_app::ci::runs::CiRunRequest {
+        .trigger_run(codeyard_repos_core::ci::runs::CiRunRequest {
             repo_id: repo.id,
             repo_owner: "alice".into(),
             repo_name: "project".into(),

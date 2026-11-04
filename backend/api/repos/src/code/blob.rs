@@ -19,9 +19,9 @@ use codeyard_api_http::shared::repos::access::check_repo_read_access;
 use codeyard_api_http::shared::repos::chrome::store_error;
 use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::BlobBytes;
-use codeyard_app::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_git::error::RepoError;
 use codeyard_git::repository::PREVIEW_BYTES;
 use codeyard_git::repository::PREVIEW_LINES;
@@ -398,14 +398,14 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         codeowners_errors: None,
         codeowners_notice: None,
     };
-    if codeyard_app::repositories::code_owners::is_codeowners_file(&page.path) {
+    if codeyard_repos_core::repositories::code_owners::is_codeowners_file(&page.path) {
         if page.truncated || page.binary {
             page.codeowners_notice = Some(
                 "CODEOWNERS diagnostics are unavailable for binary files or partial previews."
                     .to_owned(),
             );
         } else {
-            match codeyard_app::repositories::code_owners::diagnostics::diagnose(&ctx.state.pool,&loaded.repository,&page.path,&page.content).await {
+            match codeyard_repos_core::repositories::code_owners::diagnostics::diagnose(&ctx.state.pool,&loaded.repository,&page.path,&page.content).await {
             Ok(errors)=>page.codeowners_errors=Some(errors.into_iter().map(|error|view::blob::CodeOwnerError {line:error.line,kind:error.kind}).collect()),
             Err(_)=>page.codeowners_notice=Some("CODEOWNERS diagnostics are unavailable; the file may exceed its analysis limits.".to_owned()),
         }
@@ -540,7 +540,7 @@ mod tests {
         let user = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
-        let repository = codeyard_app::repositories::lifecycle::provision(
+        let repository = codeyard_repos_core::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(user.id),

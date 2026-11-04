@@ -57,7 +57,7 @@ pub(crate) fn from_api<T>(ctx: &PageContext, result: ApiResult<T>) -> Result<T, 
 /// Database chrome with optional Git enrichment for pages that display refs.
 pub async fn load_metadata(ctx: &PageContext, owner: &str, name: &str) -> Result<Loaded, Response> {
     let mut loaded = load_database(ctx, owner, name).await?;
-    let git = codeyard_app::repositories::reads::refs_and_default(
+    let git = codeyard_repos_core::repositories::reads::refs_and_default(
         &loaded.repository,
         ctx.state.cluster.as_ref(),
     )
@@ -163,7 +163,7 @@ pub async fn load_database(ctx: &PageContext, owner: &str, name: &str) -> Result
         chrome.is_owner = repository.is_personal_owner(user.id);
         chrome.can_manage_collaborators = chrome.is_owner;
         chrome.fork_refusal =
-            codeyard_app::repositories::lifecycle::fork_refusal(&repository, user.id)
+            codeyard_repos_core::repositories::lifecycle::fork_refusal(&repository, user.id)
                 .map(|error| error.message.to_owned());
         if !chrome.is_owner {
             chrome.is_owner = codeyard_db_repos::repositories::access::get_user_repo_access(

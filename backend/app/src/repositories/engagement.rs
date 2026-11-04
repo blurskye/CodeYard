@@ -161,7 +161,7 @@ pub async fn change(
     if changed && matches!(kind, Engagement::Star) {
         let action = if enabled { "created" } else { "deleted" };
         let repository_for_hook = updated.clone();
-        crate::webhooks::emit(
+        codeyard_repos_core::webhooks::emit(
             pool,
             &updated,
             codeyard_model::webhook_events::STAR,

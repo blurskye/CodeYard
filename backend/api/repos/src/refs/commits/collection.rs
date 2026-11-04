@@ -27,7 +27,7 @@ use codeyard_api_http::shared::repos::chrome::commit;
 use codeyard_api_http::shared::repos::chrome::store_error;
 use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::CommitFilter;
 use codeyard_identity::repository_access::AccessError;
 use codeyard_webui::pages::repos as view;
@@ -63,7 +63,7 @@ pub async fn list_commits(
         // Qualified, so a branch named like `refs/topic` is not read as a full reference.
         format!(
             "refs/heads/{}",
-            codeyard_app::repositories::reads::default_branch(
+            codeyard_repos_core::repositories::reads::default_branch(
                 &refs,
                 &repository_default_branch(&state, &repository).await?,
                 &repository.default_branch,
@@ -81,7 +81,7 @@ pub async fn list_commits(
         .map(|commit| commit.author_email.clone())
         .collect();
     // The same lookup as a single commit, so both name the account behind a noreply address.
-    let user_map = codeyard_app::repositories::reads::commit_authors(&state.pool, &emails)
+    let user_map = codeyard_repos_core::repositories::reads::commit_authors(&state.pool, &emails)
         .await
         .map_err(|_| access_error(AccessError::Unavailable))?;
 

@@ -1,6 +1,6 @@
 //! Dependency inventories pin Git before reading either file and never execute package managers.
 use crate::app::AppState;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::models::Repository;
 use codeyard_db_security::dependency_graph::Reader;
 use codeyard_git::error::ErrorKind;
@@ -27,7 +27,7 @@ fn graph_error(error: codeyard_model::dependency_graph::GraphError) -> RepoError
 }
 
 async fn file(
-    store: &crate::repositories::store::RepoStore,
+    store: &codeyard_repos_core::repositories::store::RepoStore,
     sha: &str,
     name: &str,
 ) -> Result<Option<Vec<u8>>, RepoError> {
@@ -75,7 +75,7 @@ fn invalid(message: impl Into<String>) -> RepoError {
 }
 
 async fn npm_packages(
-    store: &crate::repositories::store::RepoStore,
+    store: &codeyard_repos_core::repositories::store::RepoStore,
     sha: &str,
     directory: &str,
     path: &str,

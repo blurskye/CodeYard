@@ -15,7 +15,7 @@ use axum::{
     Router,
 };
 
-use codeyard_app::repositories::lifecycle;
+use codeyard_repos_core::repositories::lifecycle;
 use codeyard_db_identity::users::transitions::SetupClaim;
 use serde_json::{json, Value};
 use std::{path::Path, time::Duration};
@@ -230,10 +230,10 @@ async fn first_language_reader_retries_when_the_default_changes_during_publicati
     git.set_head("refs/heads/main").unwrap();
     let tx = fixture.raw.begin_with("BEGIN IMMEDIATE").await.unwrap();
     let pool = fixture.pool.clone();
-    let store = codeyard_app::repositories::store::repo_store(&record, None);
+    let store = codeyard_repos_core::repositories::store::repo_store(&record, None);
     let repository_id = record.id;
     let task = tokio::spawn(async move {
-        codeyard_app::repositories::languages::compute_and_store(&pool, &store, &record, "main")
+        codeyard_repos_core::repositories::languages::compute_and_store(&pool, &store, &record, "main")
             .await
             .unwrap()
     });

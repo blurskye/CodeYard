@@ -223,9 +223,9 @@ pub fn repo_store_error(
 }
 
 pub(crate) fn lifecycle_status(
-    error: &codeyard_app::repositories::lifecycle::StorageError,
+    error: &codeyard_repos_core::repositories::lifecycle::StorageError,
 ) -> StatusCode {
-    use codeyard_app::repositories::lifecycle::LifecycleFailure;
+    use codeyard_repos_core::repositories::lifecycle::LifecycleFailure;
     match error.kind {
         LifecycleFailure::Invalid | LifecycleFailure::OwnRepositoryFork => StatusCode::BAD_REQUEST,
         LifecycleFailure::Denied => StatusCode::FORBIDDEN,
@@ -246,9 +246,9 @@ pub(crate) fn storage_unavailable() -> (StatusCode, Json<ApiError>) {
 }
 
 pub(crate) fn lifecycle_error(
-    error: codeyard_app::repositories::lifecycle::StorageError,
+    error: codeyard_repos_core::repositories::lifecycle::StorageError,
 ) -> (StatusCode, Json<ApiError>) {
-    use codeyard_app::repositories::lifecycle::LifecycleFailure;
+    use codeyard_repos_core::repositories::lifecycle::LifecycleFailure;
     let code = match error.kind {
         LifecycleFailure::Invalid => "validation_error",
         LifecycleFailure::OwnRepositoryFork => "invalid_operation",
@@ -266,9 +266,9 @@ pub(crate) fn lifecycle_error(
 }
 
 pub(crate) fn ref_error(
-    error: codeyard_app::repositories::refs::RefError,
+    error: codeyard_repos_core::repositories::refs::RefError,
 ) -> (StatusCode, Json<ApiError>) {
-    use codeyard_app::repositories::refs::RefError;
+    use codeyard_repos_core::repositories::refs::RefError;
     let (status, code, message) = match error {
         RefError::Access(error) => return codeyard_api_http::shared::repos::access::access_error(error),
         RefError::Git(error) => return repo_store_error(error, StatusCode::BAD_REQUEST),
@@ -337,7 +337,7 @@ mod error_tests {
 
     #[test]
     fn unreachable_storage_is_503_and_only_refused_refs_are_400() {
-        use codeyard_app::repositories::refs::RefError;
+        use codeyard_repos_core::repositories::refs::RefError;
         let (status, _) = ref_error(RefError::Git(RepoError::authority_unavailable()));
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         let (status, _) = ref_error(RefError::Git(RepoError::new(

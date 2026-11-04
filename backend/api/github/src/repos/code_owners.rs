@@ -5,7 +5,7 @@ use axum::http::HeaderMap;
 use axum::routing::get;
 use axum::routing::MethodRouter;
 use axum::Json;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_model::github_error::Error;
@@ -28,7 +28,7 @@ async fn errors(
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let reference = query.reference.as_deref().unwrap_or(&repo.default_branch);
-    let errors = codeyard_app::repositories::code_owners::diagnostics::load_diagnostics(
+    let errors = codeyard_repos_core::repositories::code_owners::diagnostics::load_diagnostics(
         &state.pool,
         &repo,
         state.cluster.as_ref(),

@@ -1,6 +1,6 @@
 //! README and license predicates use pinned Git snapshots, bounded like live code search.
 use codeyard_repos_core::context::NodeContext;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
 use codeyard_db_repos::catalog_search::Options;

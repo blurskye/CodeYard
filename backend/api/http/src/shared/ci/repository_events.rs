@@ -12,7 +12,7 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::events::valid_dispatch;
+use codeyard_repos_core::ci::events::valid_dispatch;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::repos::actions::RepositoryEventForm;
 use codeyard_webui::pages::repos::page::Page as RepoPage;

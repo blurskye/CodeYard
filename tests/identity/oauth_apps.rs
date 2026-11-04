@@ -208,7 +208,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     let setup = format!("Bearer {}", setup.value);
-    codeyard_app::repositories::lifecycle::provision(
+    codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),

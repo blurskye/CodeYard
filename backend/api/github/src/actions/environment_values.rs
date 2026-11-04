@@ -99,7 +99,7 @@ async fn target(
     write: bool,
 ) -> Result<(
     codeyard_db_core::models::Repository,
-    codeyard_app::api_shared::github::auth::Authentication,
+    codeyard_repos_core::api_shared::github::auth::Authentication,
 )> {
     let (owner, name) = if let Some(id) = params.get("repository_id") {
         let id = id.parse::<i64>().map_err(|_| Error::missing())?;
@@ -124,7 +124,7 @@ async fn target(
     {
         return Err(Error::missing());
     }
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     if write {
         auth.require_write()?;
         values::list(

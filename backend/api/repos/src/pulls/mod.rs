@@ -347,14 +347,14 @@ pub(crate) const OPENED_MESSAGE: &str =
 pub(crate) const UPDATED_MESSAGE: &str = "The change was saved, but pull request revisions could not be refreshed. Reload before retrying.";
 
 pub(crate) fn operation_error(
-    error: codeyard_app::repositories::pull_requests::OperationError,
+    error: codeyard_repos_core::repositories::pull_requests::OperationError,
 ) -> (
     axum::http::StatusCode,
     axum::Json<codeyard_api_http::error::ApiError>,
 ) {
     use axum::{http::StatusCode, Json};
     use codeyard_api_http::error::ApiError;
-    use codeyard_app::repositories::pull_requests::OperationError;
+    use codeyard_repos_core::repositories::pull_requests::OperationError;
     let (status, code, message) = match error {
         OperationError::Invalid { code, message } => (StatusCode::BAD_REQUEST, code, message),
         OperationError::Missing { code, message } => (StatusCode::NOT_FOUND, code, message),
@@ -392,7 +392,7 @@ pub(crate) fn operation_error(
 mod tests {
     use super::*;
     use crate::discussion::safe_api_error;
-    use codeyard_app::repositories::pull_requests::OperationError;
+    use codeyard_repos_core::repositories::pull_requests::OperationError;
 
     #[test]
     fn merge_partial_failure_has_a_truthful_public_projection() {

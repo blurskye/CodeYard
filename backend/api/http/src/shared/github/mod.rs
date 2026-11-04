@@ -14,7 +14,7 @@ pub(crate) async fn interaction_actor(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Option<codeyard_db_core::models::User> {
-    let credential = codeyard_app::api_shared::github::auth::credential(headers)?;
+    let credential = codeyard_repos_core::api_shared::github::auth::credential(headers)?;
     let token = codeyard_db_identity::users::tokens::find_token(
         &state.pool,
         &codeyard_support::token_hash::token_hash(credential),

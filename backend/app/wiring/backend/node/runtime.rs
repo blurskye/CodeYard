@@ -72,7 +72,7 @@ async fn prepare_application(
     if cluster.is_none() {
         let (state_dir, repos) = (state_dir.to_owned(), repos_path.clone());
         tokio::task::spawn_blocking(move || {
-            codeyard_app::repositories::releases::immutable::configure_local_identity(
+            codeyard_repos_core::repositories::releases::immutable::configure_local_identity(
                 &state_dir, &repos,
             )
         })
@@ -163,8 +163,8 @@ async fn remove_expired_rows(
                 codeyard_db_core::queries::files::RESTORE_WINDOW_SECONDS as u64,
             );
             let sweep = tokio::task::spawn_blocking(move || {
-                let mirrors = root.join(codeyard_app::cluster::replicas::MIRRORS);
-                let quarantines = mirrors.join(codeyard_app::cluster::replicas::QUARANTINES);
+                let mirrors = root.join(codeyard_repos_core::cluster::replicas::MIRRORS);
+                let quarantines = mirrors.join(codeyard_repos_core::cluster::replicas::QUARANTINES);
                 let mut removed = 0;
                 for root in [root, mirrors, quarantines] {
                     removed += codeyard_git::mirror::remove_expired_deleted(&root, window)?;
@@ -286,11 +286,11 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
     let (context, peers) = tokio::select! {
         biased;
         result = &mut signal => return result,
-        result = codeyard_app::cluster::worker::worker_context(state_dir, settings) => result?,
+        result = codeyard_repos_core::cluster::worker::worker_context(state_dir, settings) => result?,
     };
     let config = std::sync::Arc::new(codeyard_ci::config::CiConfig::from_env()?);
-    let workers = codeyard_app::ci::workers::CiWorkers::new(
-        codeyard_app::ci::queue::RunQueue::Remote {
+    let workers = codeyard_repos_core::ci::workers::CiWorkers::new(
+        codeyard_repos_core::ci::queue::RunQueue::Remote {
             preferred: Default::default(),
             context: context.clone(),
             peers,
@@ -356,7 +356,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         Some(settings) => Some(tokio::select! {
             biased;
             result = &mut signal => { pool.close().await; return result; }
-            result = codeyard_app::cluster::start(&pool, &config.state_dir, &repos_path, &config.roles, settings) => result?,
+            result = codeyard_repos_core::cluster::start(&pool, &config.state_dir, &repos_path, &config.roles, settings) => result?,
         }),
         None => None,
     };
@@ -420,8 +420,8 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     let ci_runs = state.ci_runs.clone();
     let notifications = state.notification_broadcaster.clone();
     let git_tasks = state.git_tasks.clone();
-    let workers = codeyard_app::ci::workers::CiWorkers::with_wakeup(
-        codeyard_app::ci::queue::RunQueue::Database {
+    let workers = codeyard_repos_core::ci::workers::CiWorkers::with_wakeup(
+        codeyard_repos_core::ci::queue::RunQueue::Database {
             pool: pool.clone(),
             config: ci_runs.config.clone(),
             secrets: state.secret_encryptor.clone(),
@@ -480,7 +480,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     });
     let (stop_schedules, schedules_stop) = tokio::sync::watch::channel(false);
     let schedules = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(codeyard_app::ci::schedule::run(
+        tokio::spawn(codeyard_repos_core::ci::schedule::run(
             ci_runs.clone(),
             schedules_stop,
         ))
@@ -536,7 +536,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         .as_ref()
         .filter(|_| config.roles.contains(NodeRole::Storage))
         .map(|member| {
-            tokio::spawn(codeyard_app::cluster::replicas::run(
+            tokio::spawn(codeyard_repos_core::cluster::replicas::run(
                 member.context.clone(),
                 replica_stop,
             ))
@@ -574,7 +574,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             #[cfg(unix)]
             codeyard_support::ssh_mode::SshMode::Openssh if !transport.setup_required => {
                 info!("using host OpenSSH for Git over SSH");
-                let gateway = codeyard_app::repositories::git_sessions::run_gateway(
+                let gateway = codeyard_repos_core::repositories::git_sessions::run_gateway(
                     transport.socket,
                     repos_path,
                     pool.clone(),
@@ -749,7 +749,7 @@ mod tests {
     fn shutdown_phases_fit_inside_the_stop_grace() {
         // The withdrawal runs twice: before the drain, and again in `Cluster::shutdown`.
         let phases = SHUTDOWN_GRACE
-            + codeyard_app::ci::workers::SHUTDOWN_GRACE
+            + codeyard_repos_core::ci::workers::SHUTDOWN_GRACE
             + codeyard_cluster::settings::WITHDRAW_TIMEOUT * 2;
         assert!(
             phases < MAX_SHUTDOWN,

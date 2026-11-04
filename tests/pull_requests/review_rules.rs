@@ -41,7 +41,7 @@ impl World {
         let dave_id = database.actor("dave").await;
         let erin_id = database.actor("erin").await;
         let root = tempfile::tempdir().unwrap();
-        let repository = codeyard_app::repositories::lifecycle::provision(
+        let repository = codeyard_repos_core::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

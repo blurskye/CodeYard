@@ -73,7 +73,7 @@ async fn contract(pg: bool) {
     let root = tempfile::tempdir().unwrap();
     let mut repositories = Vec::new();
     for (name, private) in [("proj", false), ("secret", true)] {
-        let repo = codeyard_app::repositories::lifecycle::provision(
+        let repo = codeyard_repos_core::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

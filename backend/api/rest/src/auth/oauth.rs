@@ -106,7 +106,7 @@ pub async fn oauth_redirect(
     };
     match codeyard_db_identity::auth_admission::admit_oauth_start(
         &state.pool,
-        codeyard_app::api_shared::http::session::client_address(&headers),
+        codeyard_repos_core::api_shared::http::session::client_address(&headers),
     )
     .await
     {

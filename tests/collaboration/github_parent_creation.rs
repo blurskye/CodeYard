@@ -22,7 +22,7 @@ async fn parents(pg: bool) {
     let mut repos = Vec::new();
     for (actor, name) in [(alice, "proj"), (alice, "other"), (bob, "foreign")] {
         repos.push(
-            codeyard_app::repositories::lifecycle::provision(
+            codeyard_repos_core::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),

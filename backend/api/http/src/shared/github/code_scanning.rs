@@ -33,10 +33,10 @@ pub async fn scope(
     admin: bool,
 ) -> Result<(
     codeyard_db_core::models::Repository,
-    codeyard_app::api_shared::github::auth::Authentication,
+    codeyard_repos_core::api_shared::github::auth::Authentication,
 )> {
     let (repo, auth) = repository(state, headers, owner, name, write).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let allowed = if admin {
         codeyard_identity::repository_access::can_admin(&state.pool, &auth.user, &repo).await
     } else if write {

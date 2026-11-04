@@ -22,10 +22,10 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-fn failure(error: codeyard_app::repositories::pull_requests::OperationError) -> Error {
+fn failure(error: codeyard_repos_core::repositories::pull_requests::OperationError) -> Error {
     match error {
-        codeyard_app::repositories::pull_requests::OperationError::Invalid { message, .. }
-        | codeyard_app::repositories::pull_requests::OperationError::Conflict { message, .. } => {
+        codeyard_repos_core::repositories::pull_requests::OperationError::Invalid { message, .. }
+        | codeyard_repos_core::repositories::pull_requests::OperationError::Conflict { message, .. } => {
             Error::invalid_simple(message)
         }
         other => crate::pulls::mutations::operation_error(other),
@@ -56,7 +56,7 @@ async fn create(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = viewer.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = viewer.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = &auth.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Create = if body.is_empty() {
@@ -82,10 +82,10 @@ async fn create(
         .any(|comment| comment.position.is_some() && comment.line.is_none())
     {
         Some(
-            codeyard_app::repositories::store::repo_store(&repo, state.cluster.as_ref())
+            codeyard_repos_core::repositories::store::repo_store(&repo, state.cluster.as_ref())
                 .diff(pull.diff_base(), &pull.head_sha)
                 .await
-                .map_err(codeyard_app::api_shared::github::contents::store_error)?,
+                .map_err(codeyard_repos_core::api_shared::github::contents::store_error)?,
         )
     } else {
         None
@@ -164,7 +164,7 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Body = serde_json::from_slice(&body).map_err(json_parse_error)?;
@@ -188,7 +188,7 @@ async fn remove(
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let review =
@@ -207,7 +207,7 @@ async fn remove(
         id,
     )
     .await
-    .map_err(|e| failure(codeyard_app::repositories::pull_requests::write_error(e)))?
+    .map_err(|e| failure(codeyard_repos_core::repositories::pull_requests::write_error(e)))?
     .ok_or_else(Error::missing)?;
     Ok(Json(
         document(&state, &owner, &repo, &pull, &deleted).await?,
@@ -225,7 +225,7 @@ async fn submit(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = viewer.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = viewer.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = &auth.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Submit = serde_json::from_slice(&body).map_err(json_parse_error)?;
@@ -274,7 +274,7 @@ async fn change_reviewers(
     let (owner, name, number) = namespace;
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     if !codeyard_identity::repository_access::can_write(&state.pool, &actor, &repo)
@@ -328,7 +328,7 @@ async fn change_reviewers(
             "Review team not found or lacks write access",
         ));
     }
-    codeyard_app::repositories::pull_requests::team_reviewers::change(
+    codeyard_repos_core::repositories::pull_requests::team_reviewers::change(
         &state.pool,
         &state.notification_broadcaster,
         &actor,

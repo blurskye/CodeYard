@@ -59,7 +59,7 @@ type Result<T> = async_graphql::Result<T>;
 
 struct RequestContext {
     state: Arc<AppState>,
-    auth: codeyard_app::api_shared::github::auth::Authentication,
+    auth: codeyard_repos_core::api_shared::github::auth::Authentication,
     actor: codeyard_db_core::queries::credentials::Actor,
     /// Scopes granted to an OAuth token; other credentials have none.
     oauth_scopes: Option<String>,
@@ -537,7 +537,7 @@ async fn execute(
     headers: HeaderMap,
     body: std::result::Result<Json<Value>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
-    let authentication = match codeyard_app::api_shared::github::auth::authenticate(
+    let authentication = match codeyard_repos_core::api_shared::github::auth::authenticate(
         &state, &headers, true,
     )
     .await

@@ -38,9 +38,9 @@ async fn get_policy(
     name: &str,
     kind: CacheLimit,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(state, headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user
         .id;
     let own = outcome(
@@ -68,9 +68,9 @@ async fn set_policy(
     kind: CacheLimit,
     input: Input,
 ) -> Result<StatusCode> {
-    let authentication = codeyard_app::api_shared::github::auth::authenticate(state, headers, true)
+    let authentication = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     authentication.require_write()?;
     let value = input.value(kind)?;
     outcome(

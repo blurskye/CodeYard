@@ -4,7 +4,7 @@ use crate::rate_limit::client_key;
 use crate::rate_limit::RateLimiter;
 use anyhow::Context;
 use anyhow::Result;
-use codeyard_app::ci::runs::CiRuns;
+use codeyard_repos_core::ci::runs::CiRuns;
 use codeyard_db_core::DbPool;
 use rand::rngs::OsRng;
 use rand::RngCore;
@@ -40,8 +40,8 @@ fn new_host_key() -> PrivateKey {
 fn open_host_key_file(path: &str) -> Result<std::fs::File> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
     let path = std::path::absolute(path)?;
-    let uid = codeyard_app::repositories::git_sessions::private_files::effective_uid();
-    codeyard_app::repositories::git_sessions::private_files::ancestors(
+    let uid = codeyard_repos_core::repositories::git_sessions::private_files::effective_uid();
+    codeyard_repos_core::repositories::git_sessions::private_files::ancestors(
         path.parent().context("Host key parent required")?,
         uid,
     )?;
@@ -71,8 +71,8 @@ fn write_host_key_file(path: &str, key_pem: &str) -> Result<()> {
 
     let path_ref = std::path::absolute(path_ref)?;
     let parent = path_ref.parent().context("Host key parent required")?;
-    let uid = codeyard_app::repositories::git_sessions::private_files::effective_uid();
-    codeyard_app::repositories::git_sessions::private_files::ancestors(parent, uid)?;
+    let uid = codeyard_repos_core::repositories::git_sessions::private_files::effective_uid();
+    codeyard_repos_core::repositories::git_sessions::private_files::ancestors(parent, uid)?;
     match open_host_key_file(path) {
         Ok(_) => {}
         Err(error)

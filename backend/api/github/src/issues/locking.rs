@@ -41,7 +41,7 @@ async fn change(
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
     let actor = auth
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .database_actor();
     let item =
         codeyard_app::api_shared::github::labels::item(&state.pool, repo.id, &p["issue_number"])

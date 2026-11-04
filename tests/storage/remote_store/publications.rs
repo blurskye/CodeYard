@@ -54,7 +54,7 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
     )
     .await
     .unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (&database.pool, Some(&web.context)),
         &web.context.repos_path,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),

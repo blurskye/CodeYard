@@ -53,7 +53,7 @@ async fn read(
 ) -> Result<Json<Value>> {
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
     let viewer =
-        codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+        codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
     let review = codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(
         &state.pool,
         review_id,
@@ -80,7 +80,7 @@ async fn list(
 ) -> Result<Response> {
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
     let viewer =
-        codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+        codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
     let (offset, limit) = page.window()?;
     let rows = codeyard_db_repos::pull_requests::reviews::list_visible_pull_request_reviews(
         &state.pool,
@@ -113,7 +113,7 @@ async fn dismiss(
 ) -> Result<Json<Value>> {
     let (_, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = auth
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     // GitHub documents this 422 with plain string errors.
     let Json(input) =
@@ -141,13 +141,13 @@ async fn dismiss(
     )
     .await
     .map_err(|error| match error {
-        codeyard_app::repositories::pull_requests::OperationError::Invalid { message, .. } => {
+        codeyard_repos_core::repositories::pull_requests::OperationError::Invalid { message, .. } => {
             Error::invalid_simple(message)
         }
-        codeyard_app::repositories::pull_requests::OperationError::Missing { .. } => {
+        codeyard_repos_core::repositories::pull_requests::OperationError::Missing { .. } => {
             Error::missing()
         }
-        codeyard_app::repositories::pull_requests::OperationError::Denied { message, .. } => {
+        codeyard_repos_core::repositories::pull_requests::OperationError::Denied { message, .. } => {
             Error::new(StatusCode::FORBIDDEN, message)
         }
         _ => Error::unavailable(()),
@@ -165,7 +165,7 @@ async fn requested(
 ) -> Result<Response> {
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
     let viewer =
-        codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+        codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
     let teams = crate::pulls::team_reviewers::documents(
         &state,
         repo.id,

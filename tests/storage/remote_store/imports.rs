@@ -42,7 +42,7 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
     )
     .await
     .unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (&database.pool, Some(&web.context)),
         &web.context.repos_path,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),

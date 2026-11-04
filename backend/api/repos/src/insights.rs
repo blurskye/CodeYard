@@ -13,7 +13,7 @@ use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_api_http::shared::repos::code::contributors::contributor_accounts;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_webui::app::Page;
 use codeyard_webui::components::charts::normalize_days;
 use codeyard_webui::components::charts::DailyActivity;

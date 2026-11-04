@@ -23,7 +23,7 @@ pub(super) const FIELDS: &[&str] = &[
 fn settings(error: anyhow::Error) -> Error {
     codeyard_api_github::repos::settings_error(error).graphql()
 }
-fn provision(error: codeyard_app::repositories::lifecycle::StorageError) -> Error {
+fn provision(error: codeyard_repos_core::repositories::lifecycle::StorageError) -> Error {
     codeyard_app::api_shared::github::repos::lifecycle_error(error).graphql()
 }
 fn partial(message: &str) -> Error {
@@ -104,10 +104,10 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         .map_err(settings)?;
     let description = input.get("description").map(|v| v.as_str().unwrap_or(""));
     if let Some(value) = description {
-        codeyard_app::repositories::lifecycle::validate_description(value).map_err(provision)?;
+        codeyard_repos_core::repositories::lifecycle::validate_description(value).map_err(provision)?;
     }
     if let Some(name) = input["name"].as_str() {
-        codeyard_app::repositories::lifecycle::validate_name(name).map_err(provision)?;
+        codeyard_repos_core::repositories::lifecycle::validate_name(name).map_err(provision)?;
     }
     let saved = if matches!(field, "createRepository" | "cloneTemplateRepository") {
         if request.auth.is_job() {
@@ -197,12 +197,12 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             let source =
                 crate::repository::by_id(target(input, "repositoryId", "R")?, request).await?;
             request.authorize(source.id, "contents", false).await?;
-            codeyard_app::repositories::lifecycle::generate(
+            codeyard_repos_core::repositories::lifecycle::generate(
                 (pool, request.state.cluster.as_ref()),
                 &request.state.repos_path,
                 creation,
                 source.id,
-                codeyard_app::repositories::lifecycle::TemplateOptions {
+                codeyard_repos_core::repositories::lifecycle::TemplateOptions {
                     name: text(input, "name")?,
                     description,
                     private,
@@ -213,10 +213,10 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             )
             .await
         } else {
-            codeyard_app::repositories::lifecycle::provision_with_properties(
+            codeyard_repos_core::repositories::lifecycle::provision_with_properties(
                 (pool, request.state.cluster.as_ref()),
                 &request.state.repos_path,
-                codeyard_app::repositories::lifecycle::CreationInput {
+                codeyard_repos_core::repositories::lifecycle::CreationInput {
                     owner: creation,
                     properties: &[],
                     admission: codeyard_db_repos::repositories::creation::CreationAdmission {

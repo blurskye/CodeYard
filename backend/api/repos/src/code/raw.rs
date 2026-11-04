@@ -15,7 +15,7 @@ use codeyard_api_http::context::PageContext;
 use codeyard_api_http::error::ApiError;
 use codeyard_api_http::shared::repos::access::check_repo_read_access;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::BlobBytes;
 use codeyard_git::error::RepoError;
 use codeyard_storage::range::ByteRange as BlobRange;
@@ -290,7 +290,7 @@ async fn token_raw_page(
         return StatusCode::UNAUTHORIZED.into_response();
     };
     let credential =
-        codeyard_app::repositories::git_sessions::ReceiveCredential::Token(authentication.token.id);
+        codeyard_repos_core::repositories::git_sessions::ReceiveCredential::Token(authentication.token.id);
     if credential
         .authorize(&state.pool, &repository, false)
         .await

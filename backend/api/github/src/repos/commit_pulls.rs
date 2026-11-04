@@ -8,7 +8,7 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::routing::MethodRouter;
 use codeyard_api_http::shared::github::pagination::Pagination;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::commit_pulls::AssociationError;
@@ -106,7 +106,7 @@ async fn document(
     repo: &Repository,
     owner: &str,
     pull: &PullRequest,
-    auth: Option<&codeyard_app::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
     documents: &mut HashMap<i64, Value>,
     associations: &HashMap<i64, String>,
 ) -> Result<Value> {

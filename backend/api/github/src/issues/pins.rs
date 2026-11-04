@@ -34,13 +34,13 @@ async fn change(
     pinned: bool,
 ) -> Result<(
     codeyard_db_core::models::Repository,
-    codeyard_app::api_shared::github::comments::Comment,
+    codeyard_repos_core::api_shared::github::comments::Comment,
 )> {
     let (repo, auth) = repository(state, headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let id = p["comment_id"].parse().map_err(|_| Error::missing())?;
     let comment =
-        codeyard_app::api_shared::github::comments::find(&state.pool, repo.id, id).await?;
+        codeyard_repos_core::api_shared::github::comments::find(&state.pool, repo.id, id).await?;
     codeyard_db_repos::pins::set_pin(
         &state.pool,
         actor.user.id,
@@ -61,7 +61,7 @@ async fn pin(
 ) -> Result<Json<Value>> {
     let (repo, comment) = change(&state, &headers, &p, true).await?;
     Ok(Json(
-        codeyard_app::api_shared::github::comments::document(
+        codeyard_repos_core::api_shared::github::comments::document(
             &state.pool,
             &repo,
             &p["owner"],

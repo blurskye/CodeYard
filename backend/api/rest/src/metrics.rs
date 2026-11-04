@@ -26,7 +26,7 @@ async fn allowed(state: &AppState, headers: &HeaderMap) -> bool {
         return true;
     }
     let Ok(Some(auth)) =
-        codeyard_app::api_shared::github::auth::authenticate(state, headers, true).await
+        codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true).await
     else {
         return false;
     };

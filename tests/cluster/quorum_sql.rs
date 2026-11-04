@@ -1417,7 +1417,7 @@ async fn term_directory_admission(pool: &DbPool) {
         .unwrap()
         .unwrap();
     let uuid =
-        codeyard_app::cluster::rpc::repository::repository_uuid(&repository.disk_path).unwrap();
+        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repository.disk_path).unwrap();
     assert!(context
         .repository_path(f.repo, uuid, true, None)
         .await
@@ -1512,7 +1512,7 @@ async fn quorum_promotion_fences(pool: &DbPool) {
     .await
     .unwrap();
     assert!(
-        codeyard_app::cluster::replicas::promote::promote(pool, f.repo, Some(target), true)
+        codeyard_repos_core::cluster::replicas::promote::promote(pool, f.repo, Some(target), true)
             .await
             .is_err()
     );
@@ -1524,10 +1524,10 @@ async fn quorum_promotion_fences(pool: &DbPool) {
         (f.primary, 1, true)
     );
     let pending =
-        codeyard_app::cluster::replicas::promote::promote(pool, f.repo, Some(target), false)
+        codeyard_repos_core::cluster::replicas::promote::promote(pool, f.repo, Some(target), false)
             .await
             .unwrap_err();
-    assert!(pending.is::<codeyard_app::cluster::replicas::promote::RecoveryPending>());
+    assert!(pending.is::<codeyard_repos_core::cluster::replicas::promote::RecoveryPending>());
     let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
         .await
         .unwrap();
@@ -1540,10 +1540,10 @@ async fn quorum_promotion_fences(pool: &DbPool) {
         .iter()
         .all(|voter| voter.term == 2 && voter.applied_version == -1));
     assert!(
-        codeyard_app::cluster::replicas::promote::promote(pool, f.repo, Some(target), false)
+        codeyard_repos_core::cluster::replicas::promote::promote(pool, f.repo, Some(target), false)
             .await
             .unwrap_err()
-            .is::<codeyard_app::cluster::replicas::promote::RecoveryPending>()
+            .is::<codeyard_repos_core::cluster::replicas::promote::RecoveryPending>()
     );
     assert_eq!(
         codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
@@ -1552,7 +1552,7 @@ async fn quorum_promotion_fences(pool: &DbPool) {
             .term,
         2
     );
-    assert!(codeyard_app::cluster::replicas::promote::promote(
+    assert!(codeyard_repos_core::cluster::replicas::promote::promote(
         pool,
         f.repo,
         Some(f.primary),
@@ -1590,7 +1590,7 @@ async fn quorum_directory_recovery(pool: &DbPool) {
         .await
         .unwrap()
         .unwrap();
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&row.disk_path).unwrap();
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path).unwrap();
     let roots = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
     for root in &roots {
         let path = term_path(root.path(), uuid, 1);
@@ -1615,12 +1615,12 @@ async fn quorum_directory_recovery(pool: &DbPool) {
     .await
     .unwrap();
     assert!(
-        codeyard_app::cluster::replicas::promote::promote(pool, f.repo, Some(target), false)
+        codeyard_repos_core::cluster::replicas::promote::promote(pool, f.repo, Some(target), false)
             .await
             .unwrap_err()
-            .is::<codeyard_app::cluster::replicas::promote::RecoveryPending>()
+            .is::<codeyard_repos_core::cluster::replicas::promote::RecoveryPending>()
     );
-    assert!(!codeyard_app::cluster::replicas::promote::recover_family(
+    assert!(!codeyard_repos_core::cluster::replicas::promote::recover_family(
         pool,
         f.repo,
         f.primary,
@@ -1634,7 +1634,7 @@ async fn quorum_directory_recovery(pool: &DbPool) {
             .unwrap()
             .serving
     );
-    assert!(codeyard_app::cluster::replicas::promote::recover_family(
+    assert!(codeyard_repos_core::cluster::replicas::promote::recover_family(
         pool,
         f.repo,
         target,
@@ -1675,7 +1675,7 @@ async fn legacy_publishers_refused(pool: &DbPool) {
         .unwrap_err();
     assert!(error.is::<codeyard_cluster::writes::PublisherUnavailable>());
     let root = tempfile::tempdir().unwrap();
-    assert!(codeyard_app::repositories::store::local::begin_ref_change(
+    assert!(codeyard_repos_core::repositories::store::local::begin_ref_change(
         pool,
         f.repo,
         root.path(),
@@ -1720,7 +1720,7 @@ async fn legacy_publishers_refused(pool: &DbPool) {
     codeyard_cluster::writes::require_legacy_publisher(pool, f.repo)
         .await
         .unwrap();
-    let change = codeyard_app::repositories::store::local::begin_ref_change(
+    let change = codeyard_repos_core::repositories::store::local::begin_ref_change(
         pool,
         f.repo,
         root.path(),

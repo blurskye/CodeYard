@@ -48,7 +48,7 @@ pub async fn fork_repo(
     let pool = state.pool.clone();
     let user = get_current_user(&pool, &headers).await?;
     let source_repo = readable_repository(&pool, &owner, &repo, &headers).await?;
-    let forked_repo = codeyard_app::repositories::lifecycle::fork(
+    let forked_repo = codeyard_repos_core::repositories::lifecycle::fork(
         &pool,
         state.cluster.as_ref(),
         &state.repos_path,

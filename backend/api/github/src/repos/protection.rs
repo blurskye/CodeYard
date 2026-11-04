@@ -12,10 +12,10 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::routing::MethodRouter;
 use axum::Json;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::models::BranchProtectionRule;
 use codeyard_db_repos::repositories::protection::ProtectionUpdate;
 use codeyard_model::github_error::Error;
@@ -54,7 +54,7 @@ pub(super) async fn protected(
     String,
 )> {
     let (repo, auth) = repository(state, headers, owner, name, write).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = &auth.user;
     if !codeyard_identity::repository_access::can_admin(&state.pool, actor, &repo)
         .await

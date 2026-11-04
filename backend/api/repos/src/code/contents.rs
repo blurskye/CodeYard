@@ -16,7 +16,7 @@ use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos::editor::FileWrite;
 use codeyard_repos::editor::MAX_EDITOR_BYTES;
 use codeyard_storage::range::ByteRange as BlobRange;

@@ -68,7 +68,7 @@ async fn contract(pg: bool) {
         ("foreign", other.id, true),
     ] {
         repos.push(
-            codeyard_app::repositories::lifecycle::provision(
+            codeyard_repos_core::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 RepositoryCreationOwner {
@@ -705,7 +705,7 @@ async fn transfer_selections(pg: bool) {
         ));
     }
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner {
@@ -757,7 +757,7 @@ async fn transfer_selections(pg: bool) {
             1
         );
     }
-    codeyard_app::repositories::lifecycle::transfer(
+    codeyard_repos_core::repositories::lifecycle::transfer(
         f.pool(),
         None,
         owner,
@@ -793,7 +793,7 @@ async fn transfer_selections(pg: bool) {
         .1
         .is_empty());
     }
-    codeyard_app::repositories::lifecycle::transfer(
+    codeyard_repos_core::repositories::lifecycle::transfer(
         f.pool(),
         None,
         owner,

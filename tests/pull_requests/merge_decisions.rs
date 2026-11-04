@@ -86,7 +86,7 @@ async fn contract(pg: bool) {
     let owner = f.actor("alice").await;
     let merger = f.actor("late_merger").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -154,7 +154,7 @@ async fn contract(pg: bool) {
         )
         .await,
         Err(
-            codeyard_app::repositories::pull_requests::OperationError::Conflict {
+            codeyard_repos_core::repositories::pull_requests::OperationError::Conflict {
                 code: "branch_protection",
                 ..
             }
@@ -210,7 +210,7 @@ async fn contract(pg: bool) {
             prepared,
         )
         .await,
-        Err(codeyard_app::repositories::pull_requests::OperationError::Denied { .. })
+        Err(codeyard_repos_core::repositories::pull_requests::OperationError::Denied { .. })
     ));
     f.execute(
         "UPDATE repositories SET is_archived=FALSE WHERE id=$1",
@@ -636,7 +636,7 @@ async fn protection_contract(pg: bool) {
     let writer = f.actor("bob").await;
     let reader = f.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -960,7 +960,7 @@ async fn linear_history_merge_contract(pg: bool) {
     f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -1075,7 +1075,7 @@ async fn linear_history_branch_creation_contract(pg: bool) {
     f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -1205,7 +1205,7 @@ async fn runs_of_another_pull_request_do_not_satisfy_a_check(pg: bool) {
     f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -1322,7 +1322,7 @@ async fn pull_request_checks_show_failures_and_the_head_branch(pg: bool) {
     f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -1421,7 +1421,7 @@ async fn merge_method_history_contract(pg: bool) {
     f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),

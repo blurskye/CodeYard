@@ -24,7 +24,7 @@ async fn contract(pg: bool) {
     let bob_id = f.actor("bob").await;
     let carol_id = f.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -73,7 +73,7 @@ async fn contract(pg: bool) {
     }
     let protected_tip = tip_of("guarded/stable");
     assert!(git.find_reference("refs/heads/guarded/new").is_err());
-    let refs_before = codeyard_app::repositories::store::repo_store(&repository, None)
+    let refs_before = codeyard_repos_core::repositories::store::repo_store(&repository, None)
         .refs()
         .await
         .unwrap();
@@ -136,7 +136,7 @@ async fn contract(pg: bool) {
             "native delete-branch {alias}: {page}"
         );
     }
-    let refs_after = codeyard_app::repositories::store::repo_store(&repository, None)
+    let refs_after = codeyard_repos_core::repositories::store::repo_store(&repository, None)
         .refs()
         .await
         .unwrap();
@@ -547,7 +547,7 @@ async fn concurrent_refresh_converges(pg: bool) {
         })
         .await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
@@ -567,7 +567,7 @@ async fn concurrent_refresh_converges(pg: bool) {
         None,
     );
     let ci = state.ci_runs.clone();
-    let store = codeyard_app::repositories::store::repo_store(&repository, None);
+    let store = codeyard_repos_core::repositories::store::repo_store(&repository, None);
     let main = store
         .save_file_as(
             f.pool(),
@@ -744,7 +744,7 @@ async fn concurrent_refresh_converges(pg: bool) {
         let repository = repository.clone();
         let ci = ci.clone();
         tokio::spawn(async move {
-            codeyard_app::repositories::pull_requests::branches::refresh_open_pull_requests(
+            codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
                 &pool,
                 &repository,
                 Some(&["main", "topic"][..]),
@@ -859,7 +859,7 @@ async fn refresh_touches_only_pull_requests_on_the_moved_branch(pg: bool) {
     f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -937,7 +937,7 @@ async fn merge_names_the_base_branch_it_read(pg: bool) {
     f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -1031,7 +1031,7 @@ async fn merge_into_the_default_branch_closes_named_issues(pg: bool) {
     f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

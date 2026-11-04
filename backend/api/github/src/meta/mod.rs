@@ -17,7 +17,7 @@ use base64::Engine;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::node_id;
@@ -32,7 +32,7 @@ pub(super) async fn root(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>> {
-    codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
     let mut value = json!({});
     for (key, path) in [
         ("current_user_url", "/user"),
@@ -109,7 +109,7 @@ pub(super) async fn root(
 }
 
 async fn meta(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Result<Json<Value>> {
-    codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
     Ok(Json(
         json!({"verifiable_password_authentication":false,"installed_version":env!("CARGO_PKG_VERSION")}),
     ))
@@ -236,12 +236,12 @@ async fn repository_license(
     let revision = store
         .commit(reference)
         .await
-        .map_err(codeyard_app::api_shared::github::contents::store_error)?
+        .map_err(codeyard_repos_core::api_shared::github::contents::store_error)?
         .sha;
     let mut entries = store
         .tree_metadata(&revision, "")
         .await
-        .map_err(codeyard_app::api_shared::github::contents::store_error)?;
+        .map_err(codeyard_repos_core::api_shared::github::contents::store_error)?;
     entries.sort_by_key(|entry| entry.name.to_ascii_lowercase());
     let path = entries
         .iter()
@@ -254,7 +254,7 @@ async fn repository_license(
     let blob = store
         .blob_bytes(&revision, &path)
         .await
-        .map_err(codeyard_app::api_shared::github::contents::store_error)?;
+        .map_err(codeyard_repos_core::api_shared::github::contents::store_error)?;
     if headers
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok())
@@ -359,7 +359,7 @@ async fn markdown(
 }
 pub(super) async fn resolve_references(
     state: &AppState,
-    authentication: Option<&codeyard_app::api_shared::github::auth::Authentication>,
+    authentication: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
     repo: &codeyard_db_core::models::Repository,
     owner: &str,
     name: &str,
@@ -376,7 +376,7 @@ pub(super) async fn resolve_references(
         document,
         |records| async move {
             let ids: Vec<_> = records.iter().map(|repo| repo.id).collect();
-            codeyard_app::api_shared::github::auth::readable_repositories(
+            codeyard_repos_core::api_shared::github::auth::readable_repositories(
                 state,
                 authentication,
                 &ids,

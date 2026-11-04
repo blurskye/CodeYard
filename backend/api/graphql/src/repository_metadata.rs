@@ -7,8 +7,8 @@ use crate::url;
 use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
-use codeyard_app::repositories::store::repo_store;
-use codeyard_app::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use serde_json::json;
 use serde_json::Value;
 

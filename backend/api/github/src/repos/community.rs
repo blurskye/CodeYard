@@ -4,7 +4,7 @@ use axum::http::HeaderMap;
 use axum::routing::get;
 use axum::routing::MethodRouter;
 use axum::Json;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_model::github_error::Result;
@@ -26,7 +26,7 @@ async fn get_profile(
     .await
     .map_err(store_error)?;
     Ok(Json(
-        codeyard_app::webhooks::repository_payloads::community_profile(&profile),
+        codeyard_app::webhook_payloads::repository::community_profile(&profile),
     ))
 }
 pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

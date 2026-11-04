@@ -1,7 +1,7 @@
 use codeyard_repos_core::context::NodeContext;
-use crate::repositories::pull_requests::database_error;
-use crate::repositories::pull_requests::OperationError;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::repositories::pull_requests::database_error;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::error::ErrorKind;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
@@ -55,8 +55,8 @@ pub async fn edit_review(
     id: i64,
     body: &str,
 ) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
-    let actor = crate::repositories::pull_requests::actor(pool, actor_id).await?;
-    crate::repositories::pull_requests::require_read(pool, &actor, repo).await?;
+    let actor = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+    codeyard_repos_core::repositories::pull_requests::require_read(pool, &actor, repo).await?;
     if pull.repo_id != repo.id {
         return Err(OperationError::Missing {
             code: "not_found",
@@ -90,7 +90,7 @@ pub async fn edit_review(
         pool, pull.id, actor.id, id, body,
     )
     .await
-    .map_err(crate::repositories::pull_requests::write_error)?
+    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?
     .ok_or_else(|| OperationError::Missing {
         code: "not_found",
         message: "Review not found".into(),
@@ -140,7 +140,7 @@ async fn emit_review_webhook(
     let (review_for_hook, pull_for_hook, repository_for_hook) =
         (review.clone(), pull.clone(), repository.clone());
     let (pull_author_id, reviewer_id) = (pull.author_id, review.author_id);
-    crate::webhooks::emit(
+    codeyard_repos_core::webhooks::emit(
         pool,
         repository,
         codeyard_model::webhook_events::PULL_REQUEST_REVIEW,
@@ -266,7 +266,7 @@ async fn create_review(
         number,
         expected,
     } = target;
-    let user = crate::repositories::pull_requests::actor(pool, actor_id).await?;
+    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
 
     let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -284,7 +284,7 @@ async fn create_review(
 
     // As on GitHub, anyone who can read the repository may review; only writers' approvals
     // count toward the merge rules (see `eligible_reviews`).
-    crate::repositories::pull_requests::require_read(pool, &user, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository).await?;
 
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
@@ -454,7 +454,7 @@ async fn create_review(
         },
     )
     .await
-    .map_err(crate::repositories::pull_requests::write_error)?;
+    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?;
     if review.state == "pending" {
         return Ok(review);
     }
@@ -582,7 +582,7 @@ pub async fn dismiss_pull_request_review(
     review_id: i64,
     req: DismissPullRequestReviewRequest,
 ) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
-    let actor = crate::repositories::pull_requests::actor(pool, actor_id).await?;
+    let actor = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
 
     let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -592,9 +592,9 @@ pub async fn dismiss_pull_request_review(
             message: "Repository not found".to_owned(),
         })?;
 
-    crate::repositories::pull_requests::require_read(pool, &actor, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_read(pool, &actor, &repository).await?;
 
-    crate::repositories::pull_requests::require_admin(pool, &actor, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_admin(pool, &actor, &repository).await?;
     if repository.owner_kind == "user" && !actor.is_admin && !repository.is_personal_owner(actor.id)
     {
         return Err(OperationError::Missing {
@@ -643,7 +643,7 @@ pub async fn dismiss_pull_request_review(
         req.reason.as_deref(),
     )
     .await
-    .map_err(crate::repositories::pull_requests::write_error)?;
+    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?;
 
     emit_review_webhook(
         pool,
@@ -695,8 +695,8 @@ pub async fn request_reviewer_bound(
         })?;
 
     check_repository_binding(expected_repository, repository.id)?;
-    let requester = crate::repositories::pull_requests::actor(pool, actor_id).await?;
-    crate::repositories::pull_requests::require_write(pool, &requester, &repository).await?;
+    let requester = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+    codeyard_repos_core::repositories::pull_requests::require_write(pool, &requester, &repository).await?;
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
@@ -732,7 +732,7 @@ pub async fn request_reviewer_bound(
             code: "invalid_review_team",
             message: "Review team not found or lacks write access".to_owned(),
         })?;
-        let changed = crate::repositories::pull_requests::team_reviewers::change(
+        let changed = codeyard_repos_core::repositories::pull_requests::team_reviewers::change(
             pool,
             broadcaster,
             &requester,
@@ -797,7 +797,7 @@ pub(super) async fn add_review_request(
         target.id,
     )
     .await
-    .map_err(crate::repositories::pull_requests::write_error)?;
+    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?;
 
     if created {
         notify_review_request(
@@ -822,74 +822,6 @@ pub(super) async fn add_review_request(
         .await;
     }
     Ok(created)
-}
-
-/// Sends the `pull_request` event for a review request to `target`, or its removal.
-pub(super) async fn emit_reviewer_event(
-    pool: &codeyard_db_core::DbPool,
-    cluster: Option<&NodeContext>,
-    repository: &codeyard_db_core::models::Repository,
-    pull_request: &codeyard_db_core::models::PullRequest,
-    action: &'static str,
-    sender_id: i64,
-    target: &codeyard_db_core::models::User,
-) {
-    let mut extra = serde_json::Map::new();
-    extra.insert(
-        "requested_reviewer".into(),
-        codeyard_webhooks::payloads::user(target),
-    );
-    crate::repositories::pull_requests::emit_pull_request_event(
-        pool,
-        cluster,
-        repository,
-        pull_request,
-        action,
-        sender_id,
-        extra,
-    )
-    .await;
-}
-
-pub(super) async fn notify_review_request(
-    pool: &codeyard_db_core::DbPool,
-    broadcaster: &NotificationBroadcaster,
-    requester: &codeyard_db_core::models::User,
-    owner: &str,
-    repository: &codeyard_db_core::models::Repository,
-    pull_request: &codeyard_db_core::models::PullRequest,
-    target: &codeyard_db_core::models::User,
-) {
-    if target.id != requester.id {
-        let title = format!(
-            "{} requested your review on pull request #{}",
-            requester.username, pull_request.number
-        );
-        let link = format!(
-            "/{}/{}/pulls/{}",
-            owner, repository.name, pull_request.number
-        );
-        let _ = create_and_broadcast_notification(
-            pool,
-            broadcaster,
-            NotificationRequest {
-                user_id: target.id,
-                actor_id: Some(requester.id),
-                repo_id: Some(repository.id),
-                kind: "pull_request_review_requested",
-                title: &title,
-                body: Some(&pull_request.title),
-                link: Some(&link),
-                metadata: json!({
-                    "repo_owner": owner,
-                    "repo_name": repository.name,
-                    "pull_number": pull_request.number,
-                    "subject": pull_request.title,
-                }),
-            },
-        )
-        .await;
-    }
 }
 
 fn check_repository_binding(expected: Option<i64>, actual: i64) -> Result<(), OperationError> {
@@ -929,8 +861,8 @@ pub async fn remove_requested_reviewer_bound(
         })?;
 
     check_repository_binding(expected_repository, repository.id)?;
-    let actor = crate::repositories::pull_requests::actor(pool, actor_id).await?;
-    crate::repositories::pull_requests::require_write(pool, &actor, &repository).await?;
+    let actor = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+    codeyard_repos_core::repositories::pull_requests::require_write(pool, &actor, &repository).await?;
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
@@ -959,8 +891,8 @@ pub async fn remove_requested_reviewer_bound(
             None,
         )
         .await
-        .map_err(crate::repositories::pull_requests::team_reviewers::error)?;
-        crate::repositories::pull_requests::team_reviewers::emit_events(
+        .map_err(codeyard_repos_core::repositories::pull_requests::team_reviewers::error)?;
+        codeyard_repos_core::repositories::pull_requests::team_reviewers::emit_events(
             pool,
             None,
             &repository,
@@ -987,7 +919,7 @@ pub async fn remove_requested_reviewer_bound(
         target.id,
     )
     .await
-    .map_err(crate::repositories::pull_requests::write_error)?;
+    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?;
 
     if removed {
         emit_reviewer_event(
@@ -1027,9 +959,9 @@ pub async fn discard_pending_review(
             message: "Repository not found".to_owned(),
         })?;
 
-    crate::repositories::pull_requests::require_read(
+    codeyard_repos_core::repositories::pull_requests::require_read(
         pool,
-        &crate::repositories::pull_requests::actor(pool, actor_id).await?,
+        &codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?,
         &repository,
     )
     .await?;
@@ -1050,7 +982,7 @@ pub async fn discard_pending_review(
             review,
         )
         .await
-        .map_err(crate::repositories::pull_requests::write_error)?
+        .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?
         .is_some(),
         None => codeyard_db_repos::pull_requests::reviews::discard_pending_review(
             pool,
@@ -1058,7 +990,7 @@ pub async fn discard_pending_review(
             actor_id,
         )
         .await
-        .map_err(crate::repositories::pull_requests::write_error)?,
+        .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?,
     };
     if discarded {
         Ok(())

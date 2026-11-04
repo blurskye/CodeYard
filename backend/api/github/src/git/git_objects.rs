@@ -13,10 +13,10 @@ use axum::routing::get;
 use axum::routing::post;
 use axum::routing::MethodRouter;
 use axum::Json;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::objects::ObjectWrite;
 use codeyard_git::objects::Signature;
 use codeyard_git::objects::TagObject;
@@ -118,7 +118,7 @@ async fn create_blob(
     request: Request,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = auth.user.id;
     codeyard_identity::repository_access::check_write(&state.pool, repo.id, actor)
         .await
@@ -200,7 +200,7 @@ async fn create_tree(
     Json(input): Json<Tree>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = auth.user.id;
     let store = repo_store(&repo, state.cluster.as_ref());
     let sha = store
@@ -250,7 +250,7 @@ async fn create_commit(
     Json(input): Json<Commit>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = auth.user;
     let author = input.author.unwrap_or(Signature {
         name: actor
@@ -324,7 +324,7 @@ async fn create_tag(
     Json(input): Json<Tag>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = auth.user;
     let tagger = input.tagger.unwrap_or(Signature {
         name: actor

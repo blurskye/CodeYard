@@ -102,7 +102,7 @@ pub(crate) async fn forgot_post(
     }
     let sent = codeyard_identity::email_links::send_password_reset(
         &ctx.state.pool,
-        codeyard_app::api_shared::http::session::client_address(&ctx.headers),
+        codeyard_repos_core::api_shared::http::session::client_address(&ctx.headers),
         address,
     )
     .await;

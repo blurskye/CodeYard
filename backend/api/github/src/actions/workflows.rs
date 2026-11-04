@@ -17,11 +17,11 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use axum::Router;
 use codeyard_api_http::shared::github::pagination::Pagination;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::runs::DispatchRequest;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::ci::runs::DispatchRequest;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_actions::action_workflows as workflows;
 use codeyard_db_actions::action_workflows::Workflow;
 use codeyard_db_core::ci_admission::AdmissionError;
@@ -42,7 +42,7 @@ pub(super) async fn discover(
     if store.refs().await.map_err(store_error)?.is_empty() {
         return Ok(Vec::new());
     }
-    let definitions = codeyard_app::ci::workflows::list_workflows_for_ref(
+    let definitions = codeyard_repos_core::ci::workflows::list_workflows_for_ref(
         &store,
         &format!("refs/heads/{}", repo.default_branch),
     )
@@ -156,7 +156,7 @@ async fn enabled(
 ) -> Result<StatusCode> {
     let (repo, authentication) = repository(state, headers, owner, name, true).await?;
     let authentication =
-        authentication.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        authentication.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let workflow = lookup(state, &repo, key).await?;
     workflows::set_workflow_enabled(
         &state.pool,
@@ -212,7 +212,7 @@ async fn dispatch(
 ) -> Result<Response> {
     let (repo, authentication) = repository(&state, &headers, &owner, &name, true).await?;
     let authentication =
-        authentication.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        authentication.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let credential = authentication.ci_credential(&headers, "actions")?;
     let actor = authentication.workflow_actor(&state, repo.id).await?;
     let Json(input) = input.map_err(|_| Error::invalid("Invalid workflow dispatch"))?;

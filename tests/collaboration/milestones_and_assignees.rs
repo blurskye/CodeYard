@@ -56,7 +56,7 @@ async fn contract(pg: bool) {
     let stranger = f.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
     let pool = f.pool();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -649,7 +649,7 @@ async fn postgres_concurrent_assignments_stop_at_the_limit() {
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     let pool = f.pool().clone();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (&pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),

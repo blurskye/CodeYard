@@ -35,7 +35,7 @@ async fn setup(pg: bool) -> World {
     let carol_id = database.actor("carol").await;
     let dave_id = database.actor("dave").await;
     let root = tempfile::tempdir().unwrap();
-    let proj = codeyard_app::repositories::lifecycle::provision(
+    let proj = codeyard_repos_core::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

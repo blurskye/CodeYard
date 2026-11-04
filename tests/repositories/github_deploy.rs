@@ -64,7 +64,7 @@ async fn environments_contract(pg: bool) {
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),

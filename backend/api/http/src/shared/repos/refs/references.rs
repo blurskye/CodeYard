@@ -170,7 +170,7 @@ where
                     }
                     format!("{base}/issues/{number}")
                 } else {
-                    let store = codeyard_app::repositories::store::repo_store(record, cluster);
+                    let store = codeyard_repos_core::repositories::store::repo_store(record, cluster);
                     let Ok(commit) = store.commit(&token).await else {
                         continue;
                     };

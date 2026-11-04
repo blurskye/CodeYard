@@ -11,7 +11,7 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD, Engine};
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::runner_credentials::JitConfig;
+use codeyard_repos_core::ci::runner_credentials::JitConfig;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
 
@@ -150,7 +150,7 @@ async fn contract(pg: bool) {
         codeyard_cluster::pairing::PairingHandler::new(f.pool().clone()),
     )
     .spawn();
-    codeyard_app::cluster::wait_for_address(core.endpoint()).await;
+    codeyard_repos_core::cluster::wait_for_address(core.endpoint()).await;
     let address = NodeAddress::of(&core.endpoint().addr());
     let node = codeyard_db_cluster::cluster::register_own_node(
         f.pool(),
@@ -992,7 +992,7 @@ async fn contract(pg: bool) {
                 String::from_utf8_lossy(&output.stderr)
             );
             assert_eq!(
-                codeyard_app::ci::runner_credentials::work_root(&state).unwrap(),
+                codeyard_repos_core::ci::runner_credentials::work_root(&state).unwrap(),
                 state.join("runner-workspaces/jit-work")
             );
             let node = codeyard_db_cluster::cluster::get_node_by_name(f.pool(), &config.node_name)

@@ -1,14 +1,14 @@
 use crate::openssh::Commands;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_app::repositories::git_sessions::private_files::connect as connect_private;
-use codeyard_app::repositories::git_sessions::protocol::Request;
-use codeyard_app::repositories::git_sessions::protocol::CHUNK;
-use codeyard_app::repositories::git_sessions::protocol::EOF;
-use codeyard_app::repositories::git_sessions::protocol::EXIT;
-use codeyard_app::repositories::git_sessions::protocol::STDERR;
-use codeyard_app::repositories::git_sessions::protocol::STDIN;
-use codeyard_app::repositories::git_sessions::protocol::STDOUT;
+use codeyard_repos_core::repositories::git_sessions::private_files::connect as connect_private;
+use codeyard_repos_core::repositories::git_sessions::protocol::Request;
+use codeyard_repos_core::repositories::git_sessions::protocol::CHUNK;
+use codeyard_repos_core::repositories::git_sessions::protocol::EOF;
+use codeyard_repos_core::repositories::git_sessions::protocol::EXIT;
+use codeyard_repos_core::repositories::git_sessions::protocol::STDERR;
+use codeyard_repos_core::repositories::git_sessions::protocol::STDIN;
+use codeyard_repos_core::repositories::git_sessions::protocol::STDOUT;
 use codeyard_repos::validation::canonical_key;
 use codeyard_repos::validation::parse_command;
 use codeyard_repos::validation::parse_updates;
@@ -69,7 +69,7 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
             key_id,
             deploy_key_id,
         } => {
-            use codeyard_app::repositories::git_sessions::ReceiveCredential;
+            use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
             let credential = match (key_id, deploy_key_id) {
                 (Some(id), None) => ReceiveCredential::SshKey(id),
                 (None, Some(id)) => ReceiveCredential::DeployKey(id),
@@ -109,7 +109,7 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
             repo_id,
             phase,
         } => {
-            use codeyard_app::repositories::git_sessions::protocol::TransactionPhase;
+            use codeyard_repos_core::repositories::git_sessions::protocol::TransactionPhase;
             let phase = match phase.as_str() {
                 // Newer Git runs the hook once before it locks the references; only the
                 // later phases carry the final old and new values.
@@ -136,7 +136,7 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
         ),
     };
     let mut connection = connect_private(&socket).await?;
-    codeyard_app::repositories::git_sessions::protocol::write_request(&mut connection, &request)
+    codeyard_repos_core::repositories::git_sessions::protocol::write_request(&mut connection, &request)
         .await?;
     let (mut reader, mut writer) = connection.into_split();
     let mut output = stdio(std::io::stdout().as_fd())?;
@@ -146,7 +146,7 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
     let status = if streaming {
         let input = pump_input(stdin()?, &mut writer);
         tokio::pin!(input);
-        timeout(codeyard_app::repositories::git_sessions::protocol::SESSION_TIMEOUT + Duration::from_secs(5), async {
+        timeout(codeyard_repos_core::repositories::git_sessions::protocol::SESSION_TIMEOUT + Duration::from_secs(5), async {
             tokio::select! {
                 result = &mut receive => result,
                 result = &mut input => {
@@ -171,7 +171,7 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
         .await??
     } else {
         timeout(
-            codeyard_app::repositories::git_sessions::protocol::CONTROL_TIMEOUT
+            codeyard_repos_core::repositories::git_sessions::protocol::CONTROL_TIMEOUT
                 + Duration::from_secs(5),
             receive,
         )
@@ -206,7 +206,7 @@ async fn refuse_unreadable_objects() -> Result<()> {
         .stderr(std::process::Stdio::null());
     process::read_stream_inherited(
         command,
-        codeyard_app::repositories::git_sessions::protocol::CONTROL_TIMEOUT,
+        codeyard_repos_core::repositories::git_sessions::protocol::CONTROL_TIMEOUT,
         |stdout, _| async move {
             let mut lines = BufReader::new(stdout).lines();
             while let Some(line) = lines.next_line().await? {
@@ -231,7 +231,7 @@ async fn hook_request(
     key_id: i64,
     repo_id: i64,
     post: bool,
-    phase: Option<codeyard_app::repositories::git_sessions::protocol::TransactionPhase>,
+    phase: Option<codeyard_repos_core::repositories::git_sessions::protocol::TransactionPhase>,
 ) -> Result<Request> {
     ensure!(key_id > 0 && repo_id > 0, "invalid key/repository ID");
     let token = std::env::var("GITSERV_OPENSSH_OPERATION")
@@ -280,13 +280,13 @@ async fn pump_input<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     loop {
         let count = input.read(&mut bytes).await?;
         if count == 0 {
-            codeyard_app::repositories::git_sessions::protocol::write_frame(writer, EOF, &[])
+            codeyard_repos_core::repositories::git_sessions::protocol::write_frame(writer, EOF, &[])
                 .await?;
             // Do not half-close: keep the socket open until the exit frame so
             // the broker can distinguish stdin EOF from a helper disconnect.
             return Ok(());
         }
-        codeyard_app::repositories::git_sessions::protocol::write_frame(
+        codeyard_repos_core::repositories::git_sessions::protocol::write_frame(
             writer,
             STDIN,
             &bytes[..count],
@@ -302,7 +302,7 @@ async fn receive_output<R: AsyncRead + Unpin, W: AsyncWrite + Unpin, E: AsyncWri
 ) -> Result<i32> {
     loop {
         let (tag, bytes) =
-            codeyard_app::repositories::git_sessions::protocol::read_frame(reader).await?;
+            codeyard_repos_core::repositories::git_sessions::protocol::read_frame(reader).await?;
         match tag {
             STDOUT => {
                 output.write_all(&bytes).await?;

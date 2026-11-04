@@ -21,7 +21,7 @@ async fn contract(pg: bool) {
     let owner_id = f.actor("owner").await;
     let root = tempfile::tempdir().unwrap();
     // The bare repository has bytes on disk, but no size has been recorded for it.
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner_id),

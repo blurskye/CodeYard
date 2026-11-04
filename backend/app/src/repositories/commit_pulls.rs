@@ -1,8 +1,8 @@
 //! Associations are derived from published Git ancestry, not commit-message references.
 
 use codeyard_repos_core::context::NodeContext;
-use crate::repositories::store::repo_store;
-use crate::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::Repository;
 use codeyard_git as git;

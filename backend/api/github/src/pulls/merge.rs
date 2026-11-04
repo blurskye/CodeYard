@@ -25,8 +25,8 @@ struct Merge {
     commit_message: Option<String>,
 }
 
-fn operation_error(error: codeyard_app::repositories::pull_requests::OperationError) -> Error {
-    use codeyard_app::repositories::pull_requests::OperationError;
+fn operation_error(error: codeyard_repos_core::repositories::pull_requests::OperationError) -> Error {
+    use codeyard_repos_core::repositories::pull_requests::OperationError;
     match error {
         OperationError::Conflict {
             code: "revision_conflict",
@@ -52,7 +52,7 @@ async fn merge_pull(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     // The merge moves the base branch, so the credential needs contents write as well as the
     // pull request grant the route asked for.
     auth.repository_scope(&state.pool, repo.id, "contents", true)
@@ -75,7 +75,7 @@ async fn merge_pull(
         .ok_or_else(|| Error::invalid("Invalid merge method"))?;
     let (_, mut pull) = target(&state, &headers, &owner, &name, number).await?;
     if pull.state == "open" {
-        codeyard_app::repositories::pull_requests::branches::refresh_open_pull_request(
+        codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_request(
             &state.pool,
             &repo,
             &state.ci_runs,
@@ -143,7 +143,7 @@ async fn update_branch(
     body: Bytes,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = viewer.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = viewer.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     // The update moves the head branch, which may live in a fork, so the credential needs
     // contents write on the head repository.
     let pull =

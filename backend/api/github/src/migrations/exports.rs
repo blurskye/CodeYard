@@ -81,12 +81,12 @@ async fn scope(
     params: &Params,
     write: bool,
 ) -> Result<(
-    codeyard_app::api_shared::github::auth::Authentication,
+    codeyard_repos_core::api_shared::github::auth::Authentication,
     Option<i64>,
 )> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(state, headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     if write {
         actor.require_write()?;
     }
@@ -113,7 +113,7 @@ fn id(params: &Params) -> Result<i64> {
 
 async fn selected(
     state: &AppState,
-    actor: &codeyard_app::api_shared::github::auth::Authentication,
+    actor: &codeyard_repos_core::api_shared::github::auth::Authentication,
     row: &RepositoryExport,
 ) -> Result<Vec<Value>> {
     let mut values = Vec::new();
@@ -153,7 +153,7 @@ fn exclude_repositories(uri: &axum::http::Uri) -> Result<bool> {
 
 async fn document(
     state: &AppState,
-    actor: &codeyard_app::api_shared::github::auth::Authentication,
+    actor: &codeyard_repos_core::api_shared::github::auth::Authentication,
     row: &RepositoryExport,
     org_name: Option<&str>,
     exclude: bool,
@@ -407,9 +407,9 @@ pub(crate) async fn archive(
     Path(guid): Path<String>,
     method: axum::http::Method,
 ) -> Result<Response> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let row = exports::by_guid(&state.pool, actor.user.id, &guid)
         .await
         .map_err(failure)?

@@ -13,7 +13,7 @@ use codeyard_api_http::shared::user::responses::field;
 use codeyard_api_http::shared::user::responses::Fields;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::files::native_text;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::gist_types::GistEdit;
 use codeyard_git::gist_types::GistFileChange;
 use std::collections::btree_map::Entry;

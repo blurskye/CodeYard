@@ -31,7 +31,7 @@ async fn get_repository(
     let (repo, actor) =
         codeyard_app::api_shared::github::repository(&state, &headers, &owner, &name, false)
             .await?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     if !codeyard_identity::repository_access::can_admin(&state.pool, &actor.user, &repo)
         .await
         .map_err(Error::unavailable)?
@@ -57,7 +57,7 @@ async fn put_repository(
 ) -> Result<StatusCode> {
     let (repo, actor) =
         codeyard_app::api_shared::github::repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     if input
         .allowed_actions
         .as_deref()

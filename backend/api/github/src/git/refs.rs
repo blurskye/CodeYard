@@ -14,10 +14,10 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use axum::Router;
 use codeyard_api_http::shared::github::pagination::Pagination;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::urls::repo_url;
@@ -59,7 +59,7 @@ async fn read(
 }
 
 async fn object_kind(
-    store: &codeyard_app::repositories::store::RepoStore,
+    store: &codeyard_repos_core::repositories::store::RepoStore,
     full: &str,
     sha: &str,
 ) -> Result<String> {
@@ -108,8 +108,8 @@ struct Create {
     sha: String,
 }
 
-pub(crate) fn ref_error(error: codeyard_app::repositories::refs::RefError) -> Error {
-    use codeyard_app::repositories::refs::RefError;
+pub(crate) fn ref_error(error: codeyard_repos_core::repositories::refs::RefError) -> Error {
+    use codeyard_repos_core::repositories::refs::RefError;
     match error {
         RefError::Git(error)
             if matches!(
@@ -137,13 +137,13 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = auth.database_actor();
     if !codeyard_git::is_full_commit_id(&input.sha) {
         return Err(Error::invalid("sha must be a full object ID"));
     }
     let sha = if let Some(branch) = input.reference.strip_prefix("refs/heads/") {
-        codeyard_app::repositories::refs::create_branch(
+        codeyard_repos_core::repositories::refs::create_branch(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
@@ -156,7 +156,7 @@ async fn create(
         .await
         .map_err(ref_error)?
     } else if let Some(tag) = input.reference.strip_prefix("refs/tags/") {
-        codeyard_app::repositories::refs::create_tag(
+        codeyard_repos_core::repositories::refs::create_tag(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
@@ -199,7 +199,7 @@ async fn remove(
     Path((owner, name, reference)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = auth.database_actor();
     let store = repo_store(&repo, state.cluster.as_ref());
     if !store
@@ -211,7 +211,7 @@ async fn remove(
         return Err(Error::invalid("Reference does not exist"));
     }
     if let Some(branch) = reference.strip_prefix("heads/") {
-        codeyard_app::repositories::refs::delete_branch(
+        codeyard_repos_core::repositories::refs::delete_branch(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
@@ -222,7 +222,7 @@ async fn remove(
         .await
         .map_err(ref_error)?;
     } else if let Some(tag) = reference.strip_prefix("tags/") {
-        codeyard_app::repositories::refs::delete_tag(
+        codeyard_repos_core::repositories::refs::delete_tag(
             &state.pool,
             state.cluster.as_ref(),
             actor,
@@ -251,10 +251,10 @@ async fn update(
     Json(input): Json<Update>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = auth.database_actor();
     let full = format!("refs/{reference}");
-    let sha = codeyard_app::repositories::refs::update_reference(
+    let sha = codeyard_repos_core::repositories::refs::update_reference(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,

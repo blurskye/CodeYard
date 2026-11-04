@@ -163,7 +163,7 @@ async fn contract(pg: bool) {
     let owner = f.actor("alice").await;
     let outsider = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -174,7 +174,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let second = codeyard_app::repositories::lifecycle::provision(
+    let second = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),

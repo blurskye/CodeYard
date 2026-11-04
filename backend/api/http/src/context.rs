@@ -192,7 +192,7 @@ impl PageContext {
                 None => {
                     match codeyard_db_identity::auth_admission::admit_anonymous_session(
                         &state.pool,
-                        codeyard_app::api_shared::http::session::client_address(&headers),
+                        codeyard_repos_core::api_shared::http::session::client_address(&headers),
                     )
                     .await
                     {

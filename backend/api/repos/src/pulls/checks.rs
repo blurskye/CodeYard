@@ -164,7 +164,7 @@ mod tests {
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
-        let record = codeyard_app::repositories::lifecycle::provision(
+        let record = codeyard_repos_core::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),

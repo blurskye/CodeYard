@@ -39,7 +39,7 @@ async fn setup(pg: bool) -> World {
     let root = tempfile::tempdir().unwrap();
     let mut repositories = Vec::new();
     for (name, private) in [("proj", false), ("docs", false), ("vault", true)] {
-        let repo = codeyard_app::repositories::lifecycle::provision(
+        let repo = codeyard_repos_core::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -151,7 +151,7 @@ async fn bounded_previews_and_current_targets(pg: bool) {
         .unwrap(),
         OrganizationOutcome::Applied(_)
     ));
-    codeyard_app::repositories::lifecycle::transfer(
+    codeyard_repos_core::repositories::lifecycle::transfer(
         w.database.pool(),
         None,
         w.alice_id,

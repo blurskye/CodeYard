@@ -20,7 +20,7 @@ async fn search(pg: bool) {
     let mut repos = Vec::new();
     for (name, private) in [("proj", false), ("hidden", true)] {
         repos.push(
-            codeyard_app::repositories::lifecycle::provision(
+            codeyard_repos_core::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),

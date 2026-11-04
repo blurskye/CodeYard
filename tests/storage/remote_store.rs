@@ -9,14 +9,14 @@ use axum::http::StatusCode;
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::workflows::list_workflows_for_ref;
-use codeyard_app::cluster;
+use codeyard_repos_core::ci::workflows::list_workflows_for_ref;
+use codeyard_repos_core::cluster;
 use codeyard_repos_core::context::NodeContext;
 use codeyard_repos_core::wire::Failure;
 use codeyard_repos_core::wire::Operation;
 use codeyard_repos_core::wire::Reply;
 use codeyard_repos_core::wire::Request;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::GitService;
 use codeyard_repos_core::store_types::GitSession;
 use codeyard_repos_core::store_types::GitStreams;
@@ -24,7 +24,7 @@ use codeyard_repos_core::store_types::MergeMethod;
 use codeyard_repos_core::store_types::MergeRequest;
 use codeyard_repos_core::store_types::MAX_ARCHIVE_RESPONSE_BYTES;
 use codeyard_repos_core::store_types::MAX_BLOB_RESPONSE_BYTES;
-use codeyard_app::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_ci::config::CiConfig;
 use codeyard_git as git;
 use codeyard_git::error::ErrorKind;
@@ -172,7 +172,7 @@ async fn remote_first_reader_persists_languages() {
     )
     .await
     .unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (&database.pool, Some(&web.context)),
         &web.context.repos_path,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
@@ -184,7 +184,7 @@ async fn remote_first_reader_persists_languages() {
     .await
     .unwrap();
     let uuid =
-        codeyard_app::cluster::rpc::repository::repository_uuid(&repository.disk_path).unwrap();
+        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repository.disk_path).unwrap();
     let path = storage.context.repos_path.join(format!("{uuid}.git"));
     {
         let bare = git2::Repository::open_bare(&path).unwrap();
@@ -205,7 +205,7 @@ async fn remote_first_reader_persists_languages() {
         .unwrap();
     }
     let remote = repo_store(&repository, Some(&web.context));
-    let languages = codeyard_app::repositories::languages::compute_and_store(
+    let languages = codeyard_repos_core::repositories::languages::compute_and_store(
         &database.pool,
         &remote,
         &repository,
@@ -1395,7 +1395,7 @@ fn repository_rpc_operation_role_table() {
                 allowed
             };
             let result =
-                codeyard_app::cluster::rpc::repository::authorize_operation(&roles, &operation);
+                codeyard_repos_core::cluster::rpc::repository::authorize_operation(&roles, &operation);
             assert_eq!(result.is_ok(), allowed, "{roles:?}: {operation:?}");
             if let Err(error) = result {
                 assert_eq!(error.kind, ErrorKind::Invalid);
@@ -1561,7 +1561,7 @@ async fn remote_web_contract() {
         Some(storage.context.node_id)
     );
     let uuid =
-        codeyard_app::cluster::rpc::repository::repository_uuid(&repository.disk_path).unwrap();
+        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repository.disk_path).unwrap();
     let storage_path = storage_disk.path().join(format!("{uuid}.git"));
     assert!(!Path::new(&repository.disk_path).exists());
     assert!(storage_path.exists());
@@ -3065,7 +3065,7 @@ async fn remote_web_contract() {
         .is_err());
     // The node answers as for a repository it cannot serve, so a reader tries the next copy.
     let request = Request {
-        repository: codeyard_app::cluster::rpc::repository::repository_uuid(&elsewhere.disk_path)
+        repository: codeyard_repos_core::cluster::rpc::repository::repository_uuid(&elsewhere.disk_path)
             .unwrap(),
         operation: Operation::Refs,
         actor: None,
@@ -3077,10 +3077,10 @@ async fn remote_web_contract() {
     for (repository, source) in [
         (
             uuid,
-            codeyard_app::cluster::rpc::repository::repository_uuid(&elsewhere.disk_path).unwrap(),
+            codeyard_repos_core::cluster::rpc::repository::repository_uuid(&elsewhere.disk_path).unwrap(),
         ),
         (
-            codeyard_app::cluster::rpc::repository::repository_uuid(&elsewhere.disk_path).unwrap(),
+            codeyard_repos_core::cluster::rpc::repository::repository_uuid(&elsewhere.disk_path).unwrap(),
             uuid,
         ),
     ] {
@@ -3268,7 +3268,7 @@ async fn remote_web_contract() {
             .split_whitespace()
             .next()
             .unwrap();
-        codeyard_app::cluster::rpc::repository::repository_uuid(path)
+        codeyard_repos_core::cluster::rpc::repository::repository_uuid(path)
             .expect("the logged path preserves the repository UUID");
         if message == "deleted repository storage remains" {
             assert_eq!(path, outage.disk_path);

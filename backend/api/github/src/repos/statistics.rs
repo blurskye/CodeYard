@@ -13,10 +13,10 @@ use axum::Json;
 use chrono::Datelike;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_api_http::shared::repos::code::contributors::contributor_accounts;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::models::User;
 use codeyard_git::AuthorWeek;
 use codeyard_git::CommitStatistics;
@@ -68,7 +68,7 @@ fn history_weeks(stats: &CommitStatistics) -> Result<Vec<i64>> {
 
 async fn live_read(
     state: &AppState,
-    auth: Option<&codeyard_app::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
     repo: i64,
 ) -> Result<()> {
     if let Some(auth) = auth {
@@ -77,7 +77,7 @@ async fn live_read(
             .map_err(Error::unavailable)?
             .is_none()
         {
-            return Err(codeyard_app::api_shared::github::auth::required());
+            return Err(codeyard_repos_core::api_shared::github::auth::required());
         }
         auth.repository_scope(&state.pool, repo, "metadata", false)
             .await

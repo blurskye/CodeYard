@@ -1,6 +1,6 @@
 use crate::support::database::Database;
 
-use codeyard_app::repositories::lifecycle;
+use codeyard_repos_core::repositories::lifecycle;
 use codeyard_db_actions::environment_values as values;
 use codeyard_db_actions::environment_values::Save;
 use codeyard_db_actions::environment_values::ValueError;

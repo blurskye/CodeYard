@@ -9,7 +9,7 @@ use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_repos::gists::Gist;
 use serde_json::json;
 use serde_json::Value;

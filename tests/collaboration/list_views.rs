@@ -50,7 +50,7 @@ async fn milestone_titles(client: &Client, sort: &str) -> Vec<String> {
 
 /// Provisions `proj` for alice, public, with bob able to read it.
 async fn provision(database: &Database, root: &std::path::Path, alice: i64, bob: i64) -> i64 {
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (database.pool(), None),
         root,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),

@@ -10,8 +10,8 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::pull_requests::workflows::run_pull_request_workflows;
-use codeyard_app::repositories::pull_requests::workflows::RunWorkflowsRequest;
+use codeyard_repos_core::repositories::pull_requests::workflows::run_pull_request_workflows;
+use codeyard_repos_core::repositories::pull_requests::workflows::RunWorkflowsRequest;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use serde_json::json;
@@ -25,7 +25,7 @@ async fn approve(
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, authentication) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = authentication
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user
         .id;
     let run = run(&state, repo.id, id).await?;

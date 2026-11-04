@@ -19,7 +19,7 @@ use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_app::issues::comments::CommentTarget;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::DiffFileInfo;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
@@ -29,7 +29,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-fn operation_error(error: codeyard_app::repositories::pull_requests::OperationError) -> Error {
+fn operation_error(error: codeyard_repos_core::repositories::pull_requests::OperationError) -> Error {
     crate::pulls::mutations::operation_error(error)
 }
 
@@ -65,7 +65,7 @@ pub(super) async fn visible(
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
         if review.state == "pending"
-            && !codeyard_app::api_shared::github::auth::authenticate(state, headers, false)
+            && !codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, false)
                 .await?
                 .is_some_and(|a| a.user.id == review.author_id)
         {
@@ -112,7 +112,7 @@ async fn document_cached(
     value["user"] = codeyard_webhooks::payloads::user(&user);
     value["author_association"] = json!(association(&state.pool, repo, user.id).await?);
     let reactions =
-        codeyard_app::webhooks::documents::review_comment_reactions(&state.pool, &value)
+        codeyard_repos_core::webhooks::documents::review_comment_reactions(&state.pool, &value)
             .await
             .map_err(Error::unavailable)?;
     value["reactions"] = reactions;
@@ -129,7 +129,7 @@ async fn document_cached(
         let diff = repo_store(repo, state.cluster.as_ref())
             .diff_file(&key.0, &key.1, &key.2)
             .await
-            .map_err(codeyard_app::api_shared::github::contents::store_error)?;
+            .map_err(codeyard_repos_core::api_shared::github::contents::store_error)?;
         diffs.insert(key.clone(), diff.files);
     }
     codeyard_webhooks::payloads::review_comment_diff(&mut value, comment, pull, &diffs[&key]);
@@ -222,7 +222,7 @@ pub(super) async fn prepare_with_diff(
                         path,
                     )
                     .await
-                    .map_err(codeyard_app::api_shared::github::contents::store_error)?;
+                    .map_err(codeyard_repos_core::api_shared::github::contents::store_error)?;
                 &loaded
             };
             let row = diff
@@ -279,7 +279,7 @@ async fn create(
 ) -> Result<Response> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input =
@@ -344,7 +344,7 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     let (pull, _) = visible(&state, &headers, &repo, id).await?;
     let input: Body =
@@ -375,7 +375,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     let (pull, _) = visible(&state, &headers, &repo, id).await?;
     codeyard_app::repositories::pull_requests::comments::delete_pull_request_comment(
@@ -501,7 +501,7 @@ async fn list_review(
             .filter(|r| r.pull_request_id == pull.id)
             .ok_or_else(Error::missing)?;
     if review.state == "pending"
-        && !codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false)
+        && !codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false)
             .await?
             .is_some_and(|a| a.user.id == review.author_id)
     {

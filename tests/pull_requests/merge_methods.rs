@@ -15,7 +15,7 @@ use codeyard_app::app::AppState;
 use codeyard_app::repositories::pull_requests::merge::prepare_pull_request_merge;
 use codeyard_app::repositories::pull_requests::merge::publish_prepared_merge;
 use codeyard_app::repositories::pull_requests::merge::MergeRequest;
-use codeyard_app::repositories::pull_requests::OperationError;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
 use codeyard_repos_core::store_types::MergeMethod;
 use codeyard_ci::config::CiConfig;
 use codeyard_storage::ObjectStore;
@@ -39,7 +39,7 @@ async fn setup(f: &mut Database, root: &Path) -> Fixture {
     f.complete_setup().await;
     let owner = f.actor("alice").await;
     let merger_id = f.actor("merger").await;
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),

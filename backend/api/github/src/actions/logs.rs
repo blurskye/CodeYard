@@ -174,7 +174,7 @@ async fn download(
             repo,
             authentication
                 .as_ref()
-                .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+                .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
                 .database_actor(),
         )
     };

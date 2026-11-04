@@ -46,15 +46,15 @@ fn merge_method(
     MergeMethod::parse(&method).ok_or_else(|| Error::new("Invalid merge method"))
 }
 pub(super) fn pull_error(
-    error: codeyard_app::repositories::pull_requests::OperationError,
+    error: codeyard_repos_core::repositories::pull_requests::OperationError,
 ) -> Error {
     let kind = match &error {
-        codeyard_app::repositories::pull_requests::OperationError::Missing { .. } => "NOT_FOUND",
-        codeyard_app::repositories::pull_requests::OperationError::Denied { .. }
-        | codeyard_app::repositories::pull_requests::OperationError::Unauthenticated { .. } => {
+        codeyard_repos_core::repositories::pull_requests::OperationError::Missing { .. } => "NOT_FOUND",
+        codeyard_repos_core::repositories::pull_requests::OperationError::Denied { .. }
+        | codeyard_repos_core::repositories::pull_requests::OperationError::Unauthenticated { .. } => {
             "FORBIDDEN"
         }
-        codeyard_app::repositories::pull_requests::OperationError::Unavailable { .. } => "INTERNAL",
+        codeyard_repos_core::repositories::pull_requests::OperationError::Unavailable { .. } => "INTERNAL",
         _ => "UNPROCESSABLE",
     };
     Error::new(error.to_string()).extend_with(|_, e| e.set("type", kind))
@@ -350,7 +350,7 @@ pub(super) async fn resolve(
                     request.authorize(id, "metadata", false).await?;
                     Some(id)
                 } else if let Some(owner) = head_owner {
-                    let head = codeyard_app::repositories::pull_requests::branches::owner_head_repository(pool, &repo, owner)
+                    let head = codeyard_repos_core::repositories::pull_requests::branches::owner_head_repository(pool, &repo, owner)
                         .await
                         .map_err(unavailable)?
                         .ok_or_else(missing)?;
@@ -533,7 +533,7 @@ pub(super) async fn resolve(
                     )
                     .await
                     .map_err(|error| match error {
-                        codeyard_app::repositories::pull_requests::OperationError::Denied { .. } => {
+                        codeyard_repos_core::repositories::pull_requests::OperationError::Denied { .. } => {
                             crate::forbidden(field, request)
                         }
                         error => pull_error(error),

@@ -31,7 +31,7 @@ pub(super) async fn prepare(
     input: &Value,
     repo: &codeyard_db_core::models::Repository,
     request: &RequestContext,
-) -> Result<codeyard_app::api_shared::github::issues::Metadata> {
+) -> Result<codeyard_repos_core::api_shared::github::issues::Metadata> {
     let mut translated = json!({});
     let changed = ["labelIds", "assigneeIds", "milestoneId"]
         .iter()
@@ -109,7 +109,7 @@ pub(super) async fn prepare(
             )
         };
     }
-    codeyard_app::api_shared::github::issues::metadata(
+    codeyard_repos_core::api_shared::github::issues::metadata(
         &request.state.pool,
         repo,
         &request.auth.user,
@@ -123,7 +123,7 @@ pub(super) async fn apply(
     item: AssignedItem,
     number: i32,
     title: &str,
-    metadata: codeyard_app::api_shared::github::issues::Metadata,
+    metadata: codeyard_repos_core::api_shared::github::issues::Metadata,
     request: &RequestContext,
 ) -> Result<()> {
     let owner = crate::repository::owner(repo, request).await?;

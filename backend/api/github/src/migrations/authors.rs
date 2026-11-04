@@ -12,7 +12,7 @@ use axum::routing::patch;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::queries::source_imports::ImportRefusal;
 use codeyard_db_identity::import_authors::Author;
 use codeyard_model::github_error::Error;
@@ -59,7 +59,7 @@ async fn documents(
                     .clone()
             })
             .collect::<Vec<_>>();
-        let users = codeyard_app::repositories::reads::commit_authors(&state.pool, &emails)
+        let users = codeyard_repos_core::repositories::reads::commit_authors(&state.pool, &emails)
             .await
             .map_err(Error::unavailable)?;
         for row in chunk {
@@ -96,9 +96,9 @@ async fn list(
         .ok_or_else(Error::missing)?;
     let store = repo_store(&repo, state.cluster.as_ref());
     let (refs, _) =
-        codeyard_app::repositories::reads::refs_and_default(&repo, state.cluster.as_ref())
+        codeyard_repos_core::repositories::reads::refs_and_default(&repo, state.cluster.as_ref())
             .await
-            .map_err(codeyard_app::api_shared::github::contents::store_error)?;
+            .map_err(codeyard_repos_core::api_shared::github::contents::store_error)?;
     let mut authors = BTreeSet::new();
     let deadline = Instant::now() + codeyard_git::COMMIT_WALK_TIMEOUT;
     // Walk branch and tag tips; tag-only and older merge-parent authors belong to the import.
@@ -114,7 +114,7 @@ async fn list(
             let commits = store
                 .commits_until(sha, offset, 100, &Default::default(), deadline)
                 .await
-                .map_err(codeyard_app::api_shared::github::contents::store_error)?;
+                .map_err(codeyard_repos_core::api_shared::github::contents::store_error)?;
             let count = commits.len();
             for commit in commits {
                 if seen.insert(commit.sha) {

@@ -1,7 +1,7 @@
 //! Git-derived proof preparation happens outside database transactions. Only the database
 //! decides whether a contribution may commit, using the live policy and the proof's source version.
 use crate::app::AppState;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use anyhow::Result;
 use codeyard_git::CommitFilter;
 use std::time::Instant;

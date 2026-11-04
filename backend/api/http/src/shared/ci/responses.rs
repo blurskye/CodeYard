@@ -56,7 +56,7 @@ pub fn map_run(
 
 /// A workflow as the Actions page lists it: its inputs only matter when it can be dispatched.
 pub fn workflow_view(
-    workflow: codeyard_app::ci::workflows::WorkflowDefinition,
+    workflow: codeyard_repos_core::ci::workflows::WorkflowDefinition,
 ) -> view_actions::Workflow {
     view_actions::Workflow {
         path: workflow.path,

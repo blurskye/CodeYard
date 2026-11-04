@@ -21,7 +21,7 @@ use serde_json::json;
 /// The other linked items keep their place in the project with their content redacted.
 async fn readable_items<'a>(
     state: &AppState,
-    auth: Option<&codeyard_app::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
     items: impl IntoIterator<Item = &'a Item>,
 ) -> Result<std::collections::HashSet<i64>> {
     let linked: Vec<(i64, i64, bool)> = items
@@ -38,14 +38,14 @@ async fn readable_items<'a>(
         ids.dedup();
         ids
     };
-    let issues = codeyard_app::api_shared::github::auth::readable_repositories(
+    let issues = codeyard_repos_core::api_shared::github::auth::readable_repositories(
         state,
         auth,
         &repositories(false),
         "issues",
     )
     .await?;
-    let pulls = codeyard_app::api_shared::github::auth::readable_repositories(
+    let pulls = codeyard_repos_core::api_shared::github::auth::readable_repositories(
         state,
         auth,
         &repositories(true),
@@ -93,11 +93,11 @@ async fn item_document(
                     .ok_or_else(Error::missing)?;
             if let Some(id) = item.issue_id {
                 let auth =
-                    codeyard_app::api_shared::github::auth::authenticate(state, headers, false)
+                    codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, false)
                         .await?;
-                codeyard_app::api_shared::github::issues::document(
+                codeyard_repos_core::api_shared::github::issues::document(
                     &state.pool,
-                    codeyard_app::api_shared::github::issues::Reader::Request(state, auth.as_ref()),
+                    codeyard_repos_core::api_shared::github::issues::Reader::Request(state, auth.as_ref()),
                     &repo,
                     &owner,
                     codeyard_db_repos::assignees::AssignedItem::Issue(id),
@@ -206,7 +206,7 @@ async fn add_item(
     .ok_or_else(Error::missing)?;
     // The content must be readable by the user and inside the credential's bounds.
     let scope = if issue { "issues" } else { "pull-requests" };
-    if !codeyard_app::api_shared::github::auth::readable_repositories(
+    if !codeyard_repos_core::api_shared::github::auth::readable_repositories(
         &state,
         auth.as_ref(),
         &[repo_id],
@@ -224,7 +224,7 @@ async fn add_item(
     };
     let actor = auth
         .as_ref()
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user
         .id;
     let item = projects::add_item(
@@ -232,7 +232,7 @@ async fn add_item(
         actor,
         &auth
             .as_ref()
-            .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+            .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
             .credential(),
         project.id,
         &content,
@@ -269,7 +269,7 @@ async fn draft(
     let (project, name, auth) =
         context(&state, &headers, &params, true, !params.contains_key("org")).await?;
     let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = auth.user.id;
     let item = projects::add_item(
         &state.pool,
@@ -494,7 +494,7 @@ async fn update_item(
     let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
     let actor = auth
         .as_ref()
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user
         .id;
     let id: i64 = params["item_id"].parse().map_err(|_| Error::missing())?;
@@ -503,7 +503,7 @@ async fn update_item(
         actor,
         &auth
             .as_ref()
-            .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+            .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
             .credential(),
         project.id,
         id,
@@ -529,7 +529,7 @@ async fn delete_item(
     Path(params): Path<Params>,
 ) -> Result<StatusCode> {
     let (project, _, auth) = context(&state, &headers, &params, true, false).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = auth.user.id;
     let id: i64 = params["item_id"].parse().map_err(|_| Error::missing())?;
     projects::delete_item(&state.pool, actor, &auth.credential(), project.id, id)
@@ -547,7 +547,7 @@ async fn create_view(
     let (project, name, auth) =
         context(&state, &headers, &params, true, !params.contains_key("org")).await?;
     let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = &auth.user;
     let view = projects::create_view(
         &state.pool,

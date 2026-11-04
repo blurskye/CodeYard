@@ -46,11 +46,11 @@ async fn context(
     write: bool,
 ) -> Result<(
     Organization,
-    codeyard_app::api_shared::github::auth::Authentication,
+    codeyard_repos_core::api_shared::github::auth::Authentication,
 )> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(state, headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     if write {
         actor.require_write()?;
     }

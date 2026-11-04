@@ -46,7 +46,7 @@ async fn lists(pg: bool) {
         ),
     ] {
         repos.push(
-            codeyard_app::repositories::lifecycle::provision(
+            codeyard_repos_core::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 owner,

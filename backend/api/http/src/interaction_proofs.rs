@@ -90,7 +90,7 @@ pub async fn prepare(
                 .is_some_and(|restriction| restriction.limit != "collaborators_only")
                 {
                     let actor = if token_route {
-                        match codeyard_app::api_shared::github::auth::authenticate(
+                        match codeyard_repos_core::api_shared::github::auth::authenticate(
                             &state,
                             &parts.headers,
                             true,

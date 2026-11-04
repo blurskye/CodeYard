@@ -725,7 +725,7 @@ async fn notify(
     let dismissed = alert.dismissed_by;
     let mut people = vec![actor];
     people.extend(dismissed);
-    crate::webhooks::emit(pool, &repo, "code_scanning_alert", people, move |owner, people| {
+    codeyard_repos_core::webhooks::emit(pool, &repo, "code_scanning_alert", people, move |owner, people| {
         let dismissed = dismissed.map(|id|codeyard_webhooks::payloads::person(&people.get(id)));
         let document = codeyard_webhooks::payloads::code_scanning::code_scanning_alert(&alert, std::slice::from_ref(&instance), owner, &snapshot.name, dismissed).expect("stored alert documents are valid JSON");
         let instance = &document["most_recent_instance"];

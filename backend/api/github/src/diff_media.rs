@@ -3,7 +3,7 @@ use axum::http::header;
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::response::Response;
-use codeyard_app::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::CommitInfo;

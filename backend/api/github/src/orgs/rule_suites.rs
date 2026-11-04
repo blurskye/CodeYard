@@ -138,9 +138,9 @@ pub(super) async fn list(
     Query(query): Query<List>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let (pagination, filter) = query.filter()?;
     let rows = outcome(
@@ -175,9 +175,9 @@ pub(super) async fn get_one(
     Path((name, id)): Path<(String, i64)>,
     Query(query): Query<Detail>,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let row = outcome(
         codeyard_db_repos::rulesets::operations::organization_rule_suite(
@@ -209,7 +209,7 @@ pub(super) async fn list_repository(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let (pagination, filter) = query.filter()?;
     let rows = repository_outcome(
         codeyard_db_repos::rulesets::operations::repository_rule_suites(
@@ -239,7 +239,7 @@ pub(super) async fn get_repository(
     Query(query): Query<Detail>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let row = repository_outcome(
         codeyard_db_repos::rulesets::operations::repository_rule_suite(
             &state.pool,

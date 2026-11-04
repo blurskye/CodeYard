@@ -13,8 +13,8 @@ use axum::http::StatusCode;
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::pull_requests::restack;
-use codeyard_app::repositories::pull_requests::OperationError;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::RestackMove;
 use codeyard_ci::config::CiConfig;
 use codeyard_storage::ObjectStore;
@@ -37,7 +37,7 @@ async fn setup(f: &mut Database, root: &Path) -> App {
     f.complete_setup().await;
     let owner = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -1139,14 +1139,14 @@ async fn slow_ci_admission_contract(restack: bool) {
             .await
             .unwrap()
             .unwrap();
-            let ci = codeyard_app::ci::runs::CiRuns::new(
+            let ci = codeyard_repos_core::ci::runs::CiRuns::new(
                 f.pool().clone(),
                 Arc::new(CiConfig::default()),
                 Arc::new(tokio::sync::Notify::new()),
                 None,
                 Arc::new(codeyard_notifications::broadcast::NotificationBroadcaster::new(f.pool())),
             );
-            codeyard_app::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
+            codeyard_repos_core::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
                 f.pool(),
                 &ci,
                 &app.repository,

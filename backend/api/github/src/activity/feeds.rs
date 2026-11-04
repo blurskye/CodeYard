@@ -28,7 +28,7 @@ fn origin() -> String {
 }
 async fn discovery(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Result<Response> {
     let viewer =
-        codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+        codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
     let timeline = format!("{}/api/activity-feeds/public.atom", origin());
     let user = format!("{}/api/activity-feeds/users/{{user}}", origin());
     let mut value = json!({"timeline_url":timeline,"user_url":user,"_links":{"timeline":{"href":timeline,"type":"application/atom+xml"},"user":{"href":user,"type":"application/atom+xml"}}});
@@ -37,7 +37,7 @@ async fn discovery(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Re
             .await
             .map_err(|e| match e {
                 codeyard_identity::tokens::TokenError::Denied => {
-                    codeyard_app::api_shared::github::auth::required()
+                    codeyard_repos_core::api_shared::github::auth::required()
                 }
                 _ => Error::unavailable(()),
             })?;
@@ -238,7 +238,7 @@ async fn feed(
             format!("{}/api/activity-feeds/private/{username}/{path}", origin()),
         )
     } else {
-        let viewer = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false)
+        let viewer = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false)
             .await?
             .map(|v| EventViewer::Token {
                 user: v.user.id,

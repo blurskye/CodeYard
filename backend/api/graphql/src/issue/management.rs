@@ -47,7 +47,7 @@ async fn linked_target(
             .await
             .map_err(unavailable)?
             {
-                let refs = codeyard_app::repositories::store::repo_store(
+                let refs = codeyard_repos_core::repositories::store::repo_store(
                     &repo,
                     request.state.cluster.as_ref(),
                 )

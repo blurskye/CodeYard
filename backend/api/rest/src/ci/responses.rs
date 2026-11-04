@@ -54,7 +54,7 @@ pub fn map_job_info(run: codeyard_db_core::models::CiRun) -> JobInfo {
     }
 }
 pub fn map_workflow_info(
-    workflow: codeyard_app::ci::workflows::WorkflowDefinition,
+    workflow: codeyard_repos_core::ci::workflows::WorkflowDefinition,
 ) -> WorkflowInfo {
     WorkflowInfo {
         path: workflow.path,
@@ -78,7 +78,7 @@ mod tests {
         use codeyard_actions::workflow::dispatch_inputs::DispatchInput;
         use codeyard_actions::workflow::dispatch_inputs::InputKind;
         use codeyard_actions::workflow::events::WorkflowTriggers;
-        use codeyard_app::ci::workflows::WorkflowDefinition;
+        use codeyard_repos_core::ci::workflows::WorkflowDefinition;
         let workflow = workflow_view(WorkflowDefinition {
             path: ".github/workflows/ci.yml".into(),
             name: "quote".repeat(100_000),

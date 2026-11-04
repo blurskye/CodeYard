@@ -205,9 +205,9 @@ async fn scope(
     p: &Params,
     write: bool,
 ) -> Result<(i64, Scope)> {
-    let auth = codeyard_app::api_shared::github::auth::authenticate(state, headers, true)
+    let auth = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     if write {
         auth.require_write()?;
     }
@@ -489,9 +489,9 @@ async fn repositories(
     {
         return Err(Error::missing());
     }
-    let credential = codeyard_app::api_shared::github::auth::authenticate(&s, &headers, true)
+    let credential = codeyard_repos_core::api_shared::github::auth::authenticate(&s, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let repos =
         codeyard_app::api_shared::github::repos::documents(&s, &rows, Some(&credential)).await?;
     // No document loaded after the first group snapshot escapes a later loss of group authority.
@@ -797,7 +797,7 @@ async fn downloads(
     ))
 }
 async fn ticket(state: &AppState) -> Result<JoinTicket> {
-    codeyard_app::ci::runner_credentials::ticket(&state.pool, state.cluster.as_ref())
+    codeyard_repos_core::ci::runner_credentials::ticket(&state.pool, state.cluster.as_ref())
         .await
         .map_err(Error::unavailable)
 }
@@ -838,13 +838,13 @@ async fn remove_token(
     Path(p): Path<Params>,
 ) -> Result<Response> {
     let (actor, scope) = scope(&s, &headers, &p, true).await?;
-    let token = codeyard_app::ci::runner_credentials::new_remove_token();
+    let token = codeyard_repos_core::ci::runner_credentials::new_remove_token();
     let expires = chrono::Utc::now() + chrono::Duration::hours(1);
     native::remove_token(
         &s.pool,
         actor,
         scope,
-        &codeyard_app::ci::runner_credentials::remove_hash(&token),
+        &codeyard_repos_core::ci::runner_credentials::remove_hash(&token),
         expires,
     )
     .await
@@ -879,7 +879,7 @@ async fn jit(
     if input.labels.is_empty() {
         return Err(Error::invalid_simple("Invalid runner labels"));
     }
-    if !codeyard_app::ci::runner_credentials::valid_work_folder(&input.work_folder) {
+    if !codeyard_repos_core::ci::runner_credentials::valid_work_folder(&input.work_folder) {
         return Err(Error::invalid_simple("Invalid runner work_folder"));
     }
     let ticket = ticket(&s).await?;
@@ -899,7 +899,7 @@ async fn jit(
     .await
     .map_err(runner_error)?
     .ok_or_else(|| Error::unavailable(()))?;
-    let config = codeyard_app::ci::runner_credentials::JitConfig {
+    let config = codeyard_repos_core::ci::runner_credentials::JitConfig {
         ticket: ticket.encode(),
         node_name: native::jit_node_name(row.id, &ticket.secret_hash()),
         work_folder: input.work_folder,

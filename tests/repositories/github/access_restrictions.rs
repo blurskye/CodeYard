@@ -3,7 +3,7 @@ use super::protection::call;
 use super::request;
 use super::Router;
 use super::Value;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_identity::tokens;
 
 #[tokio::test]

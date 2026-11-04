@@ -37,7 +37,7 @@ enum Listing {
 pub(super) async fn documents(
     state: &AppState,
     viewer: Option<EventViewer<'_>>,
-    authentication: Option<&codeyard_app::api_shared::github::auth::Authentication>,
+    authentication: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
     scope: EventScope,
     public: bool,
     offset: usize,
@@ -128,7 +128,7 @@ async fn list(
                 .map(String::as_str)
                 .ok_or_else(Error::missing)
         };
-        let identity = codeyard_app::api_shared::github::auth::authenticate(
+        let identity = codeyard_repos_core::api_shared::github::auth::authenticate(
             &state,
             &headers,
             matches!(listing, Listing::UserOrganization),

@@ -4,9 +4,9 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::native_database as native;
 
-use codeyard_app::cluster;
-use codeyard_app::repositories::lifecycle::provision;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::cluster;
+use codeyard_repos_core::repositories::lifecycle::provision;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_git::error::ErrorKind;
 use codeyard_repos::editor::FileWrite;
@@ -99,7 +99,7 @@ async fn code_search_reads_a_repository_stored_on_another_node() {
 
 #[tokio::test]
 async fn remote_file_lists_and_commit_walks_keep_size_limits_and_deadlines() {
-    use codeyard_app::repositories::store::RepoStore;
+    use codeyard_repos_core::repositories::store::RepoStore;
     use codeyard_git::CommitFilter;
     let database = native::PostgresDatabase::new().await;
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)
@@ -124,7 +124,7 @@ async fn remote_file_lists_and_commit_walks_keep_size_limits_and_deadlines() {
     .await
     .unwrap();
     let uuid =
-        codeyard_app::cluster::rpc::repository::repository_uuid(&repository.disk_path).unwrap();
+        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repository.disk_path).unwrap();
     let path = storage.context.repos_path.join(format!("{uuid}.git"));
     let bare = git2::Repository::open_bare(&path).unwrap();
     let blob = bare.blob(b"small").unwrap();

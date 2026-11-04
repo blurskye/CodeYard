@@ -210,7 +210,7 @@ async fn gists_http_ssh_remote_and_promotion() {
     .unwrap()
     .unwrap();
     assert_eq!(repo.storage_node_id, Some(storage.node_id));
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.disk_path).unwrap();
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.disk_path).unwrap();
     let disk = storage_root.join("repos").join(format!("{uuid}.git"));
     assert!(disk.is_dir());
     let http = format!("{}/gists/{id}.git", web.base);
@@ -495,7 +495,7 @@ async fn gists_http_ssh_remote_and_promotion() {
             .storage_node_id,
         Some(storage.node_id)
     );
-    let moved = codeyard_app::cluster::replicas::promote::promote(
+    let moved = codeyard_repos_core::cluster::replicas::promote::promote(
         &database.pool,
         repo.id,
         Some(copy.node_id),

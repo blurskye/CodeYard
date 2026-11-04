@@ -16,7 +16,7 @@ use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_app::issues::COMMENTS_PER_PAGE;
 use codeyard_app::issues::MAX_COMMENT_PAGE;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::allowed_merge_methods;
 use codeyard_repos_core::store_types::MergeMethod;
 use codeyard_db_repos::discussions::comment_revision;
@@ -1558,7 +1558,7 @@ mod tests {
             .unwrap();
         let root = tempfile::tempdir().unwrap();
         for (name, private) in [("proj", false), ("vault", true)] {
-            codeyard_app::repositories::lifecycle::provision(
+            codeyard_repos_core::repositories::lifecycle::provision(
                 (&pool, None),
                 root.path(),
                 codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(

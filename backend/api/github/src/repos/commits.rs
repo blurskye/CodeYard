@@ -13,11 +13,11 @@ use axum::Json;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use codeyard_api_http::shared::github::pagination::Pagination;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
-use codeyard_app::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_git::CommitFilter;
 use codeyard_git::CommitInfo;
 use codeyard_git::DiffFileInfo;
@@ -80,7 +80,7 @@ pub(crate) async fn documents(
         .flat_map(|commit| [&commit.author_email, &commit.committer_email])
         .cloned()
         .collect::<Vec<_>>();
-    let users = codeyard_app::repositories::reads::commit_authors(&state.pool, &emails)
+    let users = codeyard_repos_core::repositories::reads::commit_authors(&state.pool, &emails)
         .await
         .map_err(Error::unavailable)?;
     let people: HashMap<String, Person> = users

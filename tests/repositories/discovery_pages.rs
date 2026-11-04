@@ -11,7 +11,7 @@ use crate::support::http_client as pulls;
 use axum::{http::StatusCode, Router};
 use base64::Engine;
 
-use codeyard_app::repositories::lifecycle;
+use codeyard_repos_core::repositories::lifecycle;
 use codeyard_db_repos::repositories::discovery::NewForkedRepository;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;

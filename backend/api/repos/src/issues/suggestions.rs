@@ -437,7 +437,7 @@ pub async fn agent_propose(
     auth.repository_scope(&state.pool, repo.id, "issues", true)
         .await
         .map_err(|error| {
-            use codeyard_app::api_shared::github::auth::ScopeError;
+            use codeyard_repos_core::api_shared::github::auth::ScopeError;
             let status = match error {
                 ScopeError::Missing => StatusCode::NOT_FOUND,
                 ScopeError::Denied => StatusCode::FORBIDDEN,
@@ -514,7 +514,7 @@ pub async fn agent_propose(
             auth.repository_scope(&state.pool, target.repo_id, "issues", false)
                 .await
                 .map_err(|error| match error {
-                    codeyard_app::api_shared::github::auth::ScopeError::Unavailable => {
+                    codeyard_repos_core::api_shared::github::auth::ScopeError::Unavailable => {
                         unavailable(anyhow::anyhow!("Token policy unavailable"))
                     }
                     _ => missing(),

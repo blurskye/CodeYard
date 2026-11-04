@@ -34,7 +34,7 @@ async fn topics_save_validate_and_filter(pg: bool) {
     let bob_id = database.actor("bob").await;
     let carol_id = database.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
-    codeyard_app::repositories::lifecycle::provision(
+    codeyard_repos_core::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

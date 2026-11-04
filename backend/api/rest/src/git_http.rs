@@ -15,8 +15,8 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::git_sessions::ReceiveCredential;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::GitService;
 use codeyard_repos_core::store_types::GitSession;
 use codeyard_repos_core::store_types::GitStreams;
@@ -92,7 +92,7 @@ async fn authenticate(
             .map_err(|_| unavailable())?
         {
             Some(user) => {
-                codeyard_app::api_shared::github::auth::touch(state, &token, headers).await;
+                codeyard_repos_core::api_shared::github::auth::touch(state, &token, headers).await;
                 return Ok(Some((token, user)));
             }
             None => user_id = Some(token.user_id),
@@ -103,7 +103,7 @@ async fn authenticate(
     // token is its own account key, like an unknown username.
     match codeyard_db_identity::auth_admission::admit_login(
         &state.pool,
-        codeyard_app::api_shared::http::session::client_address(headers),
+        codeyard_repos_core::api_shared::http::session::client_address(headers),
         user_id,
         presented.as_deref().unwrap_or("git-http"),
     )
@@ -181,7 +181,7 @@ async fn authorize_repository(
 }
 
 fn credential_refusal(error: anyhow::Error) -> Response {
-    use codeyard_app::repositories::git_sessions::CredentialRefusal;
+    use codeyard_repos_core::repositories::git_sessions::CredentialRefusal;
     let message = match error.downcast_ref::<CredentialRefusal>() {
         Some(CredentialRefusal::Credential) => return challenge(),
         Some(CredentialRefusal::Missing) => return StatusCode::NOT_FOUND.into_response(),
@@ -380,7 +380,7 @@ async fn rpc(
     } else {
         match actor_id {
             Some(id) => codeyard_db_repos::repositories::traffic::Identity::account(id),
-            None => codeyard_app::api_shared::http::session::client_address(&parts.headers)
+            None => codeyard_repos_core::api_shared::http::session::client_address(&parts.headers)
                 .and_then(|address| {
                     codeyard_db_repos::repositories::traffic::Identity::client(
                         address,

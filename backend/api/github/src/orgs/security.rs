@@ -38,9 +38,9 @@ async fn product(
     Path((name, product, enablement)): Path<(String, String, String)>,
     body: Bytes,
 ) -> Result<StatusCode> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
     let role = outcome(
@@ -105,9 +105,9 @@ async fn teams(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<Vec<Value>>> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     // This legacy operation has no pagination. Refuse an oversized response, never silently truncate it.
     let teams = outcome(
@@ -148,9 +148,9 @@ async fn change(
     team: String,
     assigned: bool,
 ) -> Result<StatusCode> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(state, headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     actor.require_write()?;
     let org = target(state, name).await?;
     outcome(

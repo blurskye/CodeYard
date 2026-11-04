@@ -59,11 +59,11 @@ async fn scope(
     write: bool,
 ) -> Result<(
     HookOwner,
-    codeyard_app::api_shared::github::auth::Authentication,
+    codeyard_repos_core::api_shared::github::auth::Authentication,
 )> {
     let (repo, actor) =
         repository(state, headers, &params["owner"], &params["repo"], write).await?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let owner = HookOwner::Repository(repo.id);
     codeyard_webhooks::settings::authorize(&state.pool, &actor.user, owner)
         .await
@@ -82,7 +82,7 @@ fn id(params: &Params, key: &str) -> Result<i64> {
 async fn snapshot(
     state: &AppState,
     owner: HookOwner,
-    actor: &codeyard_app::api_shared::github::auth::Authentication,
+    actor: &codeyard_repos_core::api_shared::github::auth::Authentication,
     hook: i64,
     delivery: Option<i64>,
     history: DeliveryWindow,
@@ -108,7 +108,7 @@ async fn read_hook(
     state: &AppState,
     params: &Params,
     owner: HookOwner,
-    actor: &codeyard_app::api_shared::github::auth::Authentication,
+    actor: &codeyard_repos_core::api_shared::github::auth::Authentication,
     hook: i64,
 ) -> Result<Value> {
     let (hook, settings) =

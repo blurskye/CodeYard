@@ -48,7 +48,7 @@ async fn list(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let issue = crate::issues::required_issue(&state.pool, repo.id, &p["issue_number"]).await?;
     let (offset, limit) = page.window()?;
     let (mut scanned, mut accepted) = (0_i64, 0_usize);
@@ -84,7 +84,7 @@ async fn list(
                 .into_iter()
                 .collect();
         let repos: Vec<_> = targets.values().copied().collect();
-        let readable = codeyard_app::api_shared::github::auth::readable_repositories(
+        let readable = codeyard_repos_core::api_shared::github::auth::readable_repositories(
             &state,
             Some(&auth),
             &repos,
@@ -127,7 +127,7 @@ async fn resolve(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let authentication = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let authentication = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = &authentication.user;
     let issue = crate::issues::required_issue(&state.pool, repo.id, &p["issue_number"]).await?;
     let id = p["suggestion_id"].parse().map_err(|_| Error::missing())?;

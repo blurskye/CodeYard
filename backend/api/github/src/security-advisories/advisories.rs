@@ -22,8 +22,8 @@ use chrono::DateTime;
 use chrono::Utc;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::lifecycle::LifecycleFailure;
-use codeyard_app::repositories::lifecycle::StorageError;
+use codeyard_repos_core::repositories::lifecycle::LifecycleFailure;
+use codeyard_repos_core::repositories::lifecycle::StorageError;
 use codeyard_db_security::advisories::Listing;
 use codeyard_db_security::advisories::Scope;
 use codeyard_db_security::advisories::Sort;
@@ -120,7 +120,7 @@ async fn person(state: &AppState, id: Option<i64>) -> Result<Value> {
 async fn document(
     state: &AppState,
     row: &Advisory,
-    viewer: Option<&codeyard_app::api_shared::github::auth::Authentication>,
+    viewer: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
 ) -> Result<Value> {
     let data = Data::from_row(row).map_err(Error::unavailable)?;
     let repo =
@@ -150,7 +150,7 @@ async fn document(
                 .map_err(Error::unavailable)?
         {
             // The private fork shows only to a credential that may read it.
-            let allowed = codeyard_app::api_shared::github::auth::readable_repositories(
+            let allowed = codeyard_repos_core::api_shared::github::auth::readable_repositories(
                 state,
                 Some(viewer),
                 &[id],
@@ -219,7 +219,7 @@ async fn list(
 ) -> Result<Response> {
     let (scope, actor) = if let Some(org) = params.get("org") {
         let actor =
-            codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+            codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
         let org = crate::orgs::target(&state, org).await?;
         (Scope::Organization(org.id), actor)
     } else {
@@ -351,7 +351,7 @@ async fn create(
 ) -> Result<Response> {
     let (repo, actor) =
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let report = uri.path().ends_with("/reports");
     let mut row = codeyard_db_security::advisories::create(
         &state.pool,
@@ -437,7 +437,7 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (repo, actor) =
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let row = codeyard_db_security::advisories::update(
         &state.pool,
         actor.database_actor(),
@@ -459,7 +459,7 @@ async fn cve(
     codeyard_db_security::advisories::request_cve(
         &state.pool,
         {
-            let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+            let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
             actor.database_actor()
         },
         repo.id,
@@ -476,7 +476,7 @@ async fn fork(
 ) -> Result<Response> {
     let (repo, actor) =
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let fork = codeyard_app::repositories::advisories::private_fork(
         &state,
         actor.database_actor(),

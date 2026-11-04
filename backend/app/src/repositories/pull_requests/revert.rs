@@ -1,8 +1,8 @@
 //! Revert through the normal branch publication and pull request creation paths.
-use crate::ci::runs::CiRuns;
-use crate::repositories::pull_requests::database_error;
-use crate::repositories::pull_requests::OperationError;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::repositories::pull_requests::database_error;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::RevertRequest as RevertCommit;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 
@@ -20,7 +20,7 @@ pub async fn revert_pull_request(
     (owner, name, number): (String, String, i32),
     request: RevertRequest,
 ) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
-    let user = crate::repositories::pull_requests::actor(pool, actor).await?;
+    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor).await?;
     let repo = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &name)
         .await
         .map_err(database_error)?
@@ -28,7 +28,7 @@ pub async fn revert_pull_request(
             code: "not_found",
             message: "Repository not found".into(),
         })?;
-    crate::repositories::pull_requests::require_write(pool, &user, &repo).await?;
+    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repo).await?;
     let pull = codeyard_db_repos::pull_requests::records::get_pull_request(pool, repo.id, number)
         .await
         .map_err(database_error)?
@@ -102,7 +102,7 @@ pub async fn revert_pull_request(
         .await
         .map_err(crate::repositories::pull_requests::merge::prepare_error)?;
     let branch = format!("revert-{number}-{}", uuid::Uuid::new_v4().simple());
-    crate::repositories::refs::create_branch(
+    codeyard_repos_core::repositories::refs::create_branch(
         pool,
         ci.cluster.as_ref(),
         ci,
@@ -114,15 +114,15 @@ pub async fn revert_pull_request(
     )
     .await
     .map_err(|error| match error {
-        crate::repositories::refs::RefError::Git(error) => {
+        codeyard_repos_core::repositories::refs::RefError::Git(error) => {
             crate::repositories::pull_requests::merge::prepare_error(error)
         }
-        crate::repositories::refs::RefError::Access(_)
-        | crate::repositories::refs::RefError::Protected(_) => OperationError::Denied {
+        codeyard_repos_core::repositories::refs::RefError::Access(_)
+        | codeyard_repos_core::repositories::refs::RefError::Protected(_) => OperationError::Denied {
             code: "write_denied",
             message: "Revert branch creation denied".into(),
         },
-        crate::repositories::refs::RefError::Invalid(message) => OperationError::Invalid {
+        codeyard_repos_core::repositories::refs::RefError::Invalid(message) => OperationError::Invalid {
             code: "validation_error",
             message: message.into(),
         },

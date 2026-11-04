@@ -17,11 +17,11 @@ use axum::routing::post;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::merges::BranchMerge;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_actions::deployments::Deployment;
 use codeyard_db_actions::deployments::Filter;
 use codeyard_db_actions::deployments::NewDeployment;
@@ -141,7 +141,7 @@ async fn create(
     request: Request,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = &auth.user;
     codeyard_identity::repository_access::check_write(&state.pool, repo.id, actor.id)
         .await
@@ -235,7 +235,7 @@ async fn create(
     let deployment = value.clone();
     let snapshot = repo.clone();
     let sender = codeyard_webhooks::payloads::Person::of(actor);
-    codeyard_app::webhooks::emit(&state.pool, &repo, codeyard_model::webhook_events::DEPLOYMENT, vec![actor.id], move |owner, _| json!({"deployment": deployment, "repository": codeyard_webhooks::payloads::repository(&snapshot, owner), "sender": codeyard_webhooks::payloads::person(&sender)})).await;
+    codeyard_repos_core::webhooks::emit(&state.pool, &repo, codeyard_model::webhook_events::DEPLOYMENT, vec![actor.id], move |owner, _| json!({"deployment": deployment, "repository": codeyard_webhooks::payloads::repository(&snapshot, owner), "sender": codeyard_webhooks::payloads::person(&sender)})).await;
     Ok((
         StatusCode::CREATED,
         [(
@@ -258,7 +258,7 @@ async fn deployment(
     if write {
         codeyard_db_actions::deployments::delete(
             &state.pool,
-            auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?
+            auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
                 .database_actor(),
             repo.id,
             id,
@@ -328,7 +328,7 @@ async fn statuses(
         }
         return page.response(&uri, values, has_next);
     }
-    let authentication = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let authentication = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let credential = authentication.database_actor();
     let actor = authentication.user;
     let Json(input) = Json::<NewStatus>::from_request(request, &state)
@@ -352,7 +352,7 @@ async fn statuses(
         let deployment = document(&state, &deployment, owner, name).await?;
         let snapshot = repo.clone();
         let sender = codeyard_webhooks::payloads::Person::of(&actor);
-        codeyard_app::webhooks::emit(&state.pool, &repo, codeyard_model::webhook_events::DEPLOYMENT_STATUS, vec![actor.id], move |owner, _| json!({"deployment_status": value, "deployment": deployment, "repository": codeyard_webhooks::payloads::repository(&snapshot, owner), "sender": codeyard_webhooks::payloads::person(&sender)})).await;
+        codeyard_repos_core::webhooks::emit(&state.pool, &repo, codeyard_model::webhook_events::DEPLOYMENT_STATUS, vec![actor.id], move |owner, _| json!({"deployment_status": value, "deployment": deployment, "repository": codeyard_webhooks::payloads::repository(&snapshot, owner), "sender": codeyard_webhooks::payloads::person(&sender)})).await;
     }
     let value = result.ok_or_else(|| Error::unavailable(()))?;
     Ok((

@@ -1,11 +1,11 @@
 //! Release notes derived from a pinned Git range and the repository's real merged pull requests.
 use super::*;
 use codeyard_repos_core::context::NodeContext;
-use crate::repositories::releases::unavailable;
-use crate::repositories::releases::validate_fields;
-use crate::repositories::releases::validate_tag;
-use crate::repositories::releases::ReleaseError;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::repositories::releases::unavailable;
+use codeyard_repos_core::repositories::releases::validate_fields;
+use codeyard_repos_core::repositories::releases::validate_tag;
+use codeyard_repos_core::repositories::releases::ReleaseError;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::error::ErrorKind;
 use codeyard_model::http_config::link_origin;
 use codeyard_storage::range::ByteRange as BlobRange;
@@ -93,7 +93,7 @@ fn markdown_text(text: &str) -> String {
     escaped
 }
 async fn configuration(
-    store: &crate::repositories::store::RepoStore,
+    store: &codeyard_repos_core::repositories::store::RepoStore,
     sha: &str,
     path: Option<&str>,
 ) -> Result<Config, ReleaseError> {

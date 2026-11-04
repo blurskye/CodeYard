@@ -51,7 +51,7 @@ pub(super) fn page(ctx: &PageContext, title: &str, page: &Page) -> Option<Observ
     let identity = match ctx.user.as_ref() {
         Some(actor) => Identity::account(actor.id),
         None => Identity::client(
-            codeyard_app::api_shared::http::session::client_address(&ctx.headers)?,
+            codeyard_repos_core::api_shared::http::session::client_address(&ctx.headers)?,
             ctx.headers
                 .get(header::USER_AGENT)
                 .and_then(|header| header.to_str().ok())

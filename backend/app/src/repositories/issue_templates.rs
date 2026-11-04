@@ -6,7 +6,7 @@
 //! instead of a Markdown body. `config.yml` in the directory can switch blank issues off. The
 //! pull request template is the first of a few fixed paths that exists.
 
-use crate::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_support::git_limits::MAX_TEMPLATES;

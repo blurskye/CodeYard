@@ -28,7 +28,7 @@ async fn catalog(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let authentication =
-        codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+        codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
     let viewer = authentication.as_ref().map(|a| a.user.id);
     let kind = match uri.path().rsplit('/').next() {
         Some("repositories") => Kind::Repositories,
@@ -41,7 +41,7 @@ async fn catalog(
         .map_err(Error::invalid)?
         .with_classic_policy(authentication.as_ref().map(|auth| auth.token.id));
     if search.needs_viewer() && viewer.is_none() {
-        return Err(codeyard_app::api_shared::github::auth::required());
+        return Err(codeyard_repos_core::api_shared::github::auth::required());
     }
     let ascending = match q.get("order").map_or("desc", String::as_str) {
         "asc" => true,
@@ -121,7 +121,7 @@ async fn catalog(
         .collect();
     ids.sort_unstable();
     ids.dedup();
-    let readable = codeyard_app::api_shared::github::auth::readable_repositories(
+    let readable = codeyard_repos_core::api_shared::github::auth::readable_repositories(
         &state,
         authentication.as_ref(),
         &ids,

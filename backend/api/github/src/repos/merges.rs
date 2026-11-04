@@ -14,7 +14,7 @@ use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::merges::BranchMerge;
-use codeyard_app::repositories::refs::RefError;
+use codeyard_repos_core::repositories::refs::RefError;
 use codeyard_git::error::ErrorKind;
 use codeyard_identity::repository_access::AccessError;
 use codeyard_model::github_error::Error;
@@ -39,7 +39,7 @@ pub(super) fn failure(error: RefError) -> Error {
         RefError::Git(error) => match error.kind {
             ErrorKind::Conflict => Error::new(StatusCode::CONFLICT, "Merge conflict or branch changed"),
             ErrorKind::NotFound | ErrorKind::MissingPath => Error::missing(),
-            _ => codeyard_app::api_shared::github::contents::store_error(error),
+            _ => codeyard_repos_core::api_shared::github::contents::store_error(error),
         },
     }
 }
@@ -51,7 +51,7 @@ async fn merge(
     request: Request,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let Json(input) = Json::<Input>::from_request(request, &state)
         .await
         .map_err(codeyard_model::github_error::json_error)?;

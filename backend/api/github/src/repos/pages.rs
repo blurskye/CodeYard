@@ -17,10 +17,10 @@ use axum::routing::put;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::urls::repo_url;
@@ -60,21 +60,21 @@ async fn visible(
     write: bool,
 ) -> Result<(
     codeyard_db_core::models::Repository,
-    Option<codeyard_app::api_shared::github::auth::Authentication>,
+    Option<codeyard_repos_core::api_shared::github::auth::Authentication>,
 )> {
     repository(state, headers, &params["owner"], &params["repo"], write).await
 }
 fn reader(
-    actor: Option<&codeyard_app::api_shared::github::auth::Authentication>,
+    actor: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
 ) -> codeyard_db_repos::repositories::credentials::Reader<'_> {
     codeyard_db_repos::repositories::credentials::Reader {
         user: actor.map(|actor| actor.user.id),
-        credential: actor.map(codeyard_app::api_shared::github::auth::Authentication::credential),
+        credential: actor.map(codeyard_repos_core::api_shared::github::auth::Authentication::credential),
     }
 }
 async fn require_site(
     state: &AppState,
-    actor: Option<&codeyard_app::api_shared::github::auth::Authentication>,
+    actor: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
     repo: i64,
 ) -> Result<codeyard_db_repos::pages::Site> {
     codeyard_db_repos::pages::site(&state.pool, &reader(actor), repo)
@@ -120,7 +120,7 @@ async fn mutate(
     Json(value): Json<Value>,
 ) -> Result<Response> {
     let (repo, actor) = visible(&state, &headers, &params, true).await?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     if !codeyard_identity::repository_access::can_maintain(&state.pool, &actor.user, &repo)
         .await
         .map_err(Error::unavailable)?
@@ -178,7 +178,7 @@ async fn remove(
     Path(params): Path<Params>,
 ) -> Result<StatusCode> {
     let (repo, actor) = visible(&state, &headers, &params, true).await?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     codeyard_db_repos::pages::delete(
         &state.pool,
         actor.user.id,
@@ -271,7 +271,7 @@ async fn request_build(
     Path(params): Path<Params>,
 ) -> Result<Response> {
     let (repo, actor) = visible(&state, &headers, &params, true).await?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let site = require_site(&state, Some(&actor), repo.id).await?;
     let branch = site
         .branch
@@ -307,7 +307,7 @@ async fn create_deployment(
     Json(input): Json<DeploymentInput>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = visible(&state, &headers, &params, true).await?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let site = require_site(&state, Some(&actor), repo.id).await?;
     let invalid = || Error::validation("PagesDeployment", "configuration", "invalid");
     if input.oidc_token.is_empty()
@@ -395,7 +395,7 @@ async fn cancel(
     let id = params["pages_deployment_id"]
         .parse()
         .map_err(|_| Error::missing())?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     codeyard_db_repos::pages::cancel(&state.pool, actor.user.id, &actor.credential(), repo.id, id)
         .await
         .map_err(failure)?;

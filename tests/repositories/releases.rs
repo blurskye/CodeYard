@@ -38,7 +38,7 @@ async fn setup(pg: bool) -> World {
     let carol_id = database.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
     for name in ["proj", "vault"] {
-        codeyard_app::repositories::lifecycle::provision(
+        codeyard_repos_core::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -117,7 +117,7 @@ async fn upload(
 }
 
 async fn release_creation_uses_the_checked_repository_id(pg: bool) {
-    use codeyard_app::repositories::lifecycle;
+    use codeyard_repos_core::repositories::lifecycle;
     use codeyard_app::repositories::releases;
     use codeyard_app::repositories::releases::ReleaseInput;
     let mut world = setup(pg).await;
@@ -235,7 +235,7 @@ async fn long_release_target(pg: bool) {
     .unwrap()
     .unwrap();
     assert!(
-        !codeyard_app::repositories::store::repo_store(&repository, None)
+        !codeyard_repos_core::repositories::store::repo_store(&repository, None)
             .refs()
             .await
             .unwrap()
@@ -1085,7 +1085,7 @@ async fn release_validation_and_atomic_files(pg: bool) {
             StatusCode::UNPROCESSABLE_ENTITY,
         )
         .await;
-    let store = codeyard_app::repositories::store::repo_store(&repo, None);
+    let store = codeyard_repos_core::repositories::store::repo_store(&repo, None);
     assert!(!store
         .refs()
         .await
@@ -1325,7 +1325,7 @@ async fn repository_deletion_removes_asset_uploads(pg: bool) {
     .await
     .unwrap()
     .unwrap();
-    codeyard_app::repositories::lifecycle::delete(
+    codeyard_repos_core::repositories::lifecycle::delete(
         world.database.pool(),
         None,
         repository.owner_id(),

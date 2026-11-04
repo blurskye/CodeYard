@@ -20,7 +20,7 @@ use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::dependencies::DependencyError;
+use codeyard_repos_core::repositories::dependencies::DependencyError;
 use codeyard_db_repos::repositories::dependencies as records;
 use codeyard_db_repos::repositories::dependencies::AlertState;
 use codeyard_db_repos::repositories::dependencies::Feature;
@@ -160,7 +160,7 @@ async fn model(ctx: &PageContext, loaded: Loaded, error: Option<String>, draft: 
     let pool = &ctx.state.pool;
     let repo = loaded.repository.id;
     let alerts =
-        match codeyard_app::repositories::dependencies::status(pool, actor, repo, Feature::Alerts)
+        match codeyard_repos_core::repositories::dependencies::status(pool, actor, repo, Feature::Alerts)
             .await
         {
             Ok(v) => v,
@@ -170,7 +170,7 @@ async fn model(ctx: &PageContext, loaded: Loaded, error: Option<String>, draft: 
             }
         };
     let updates =
-        match codeyard_app::repositories::dependencies::status(pool, actor, repo, Feature::Updates)
+        match codeyard_repos_core::repositories::dependencies::status(pool, actor, repo, Feature::Updates)
             .await
         {
             Ok(v) => v,
@@ -340,7 +340,7 @@ async fn configure(
             "Private dependency export consent is required".into(),
         ))
     } else {
-        codeyard_app::repositories::dependencies::set_enabled(
+        codeyard_repos_core::repositories::dependencies::set_enabled(
             &ctx.state.pool,
             ctx.state.cluster.as_ref(),
             ctx.user.as_ref().unwrap().id,

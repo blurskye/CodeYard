@@ -478,7 +478,7 @@ impl Object {
         match (ty, field) {
             ("GitActor", "user") => {
                 let email = self.0["_email"].as_str().ok_or_else(missing)?;
-                let authors = codeyard_app::repositories::reads::commit_authors(
+                let authors = codeyard_repos_core::repositories::reads::commit_authors(
                     &request.state.pool,
                     &[email.to_owned()],
                 )

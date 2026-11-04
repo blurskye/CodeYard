@@ -6,8 +6,8 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as requests;
 use crate::support::native_database as native;
 use crate::support::production_ci as production;
-use codeyard_app::ci::runs::CiRunRequest;
-use codeyard_app::ci::runs::CiRuns;
+use codeyard_repos_core::ci::runs::CiRunRequest;
+use codeyard_repos_core::ci::runs::CiRuns;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiPipelineKind;
 
@@ -19,7 +19,7 @@ async fn long_account_names_can_list_and_dispatch_workflows_on_both_engines() {
     use base64::Engine;
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
-    use codeyard_app::repositories::lifecycle;
+    use codeyard_repos_core::repositories::lifecycle;
     use codeyard_storage::ObjectStore;
     use serde_json::{json, Value};
     use std::sync::Arc;
@@ -151,7 +151,7 @@ async fn manual_runs_take_the_inputs_their_workflow_declares_on_both_engines() {
     use base64::Engine;
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
-    use codeyard_app::repositories::lifecycle;
+    use codeyard_repos_core::repositories::lifecycle;
     use codeyard_storage::ObjectStore;
     use serde_json::{json, Value};
     use std::sync::Arc;
@@ -382,7 +382,7 @@ async fn pull_request_base_names_that_look_like_refs_keep_their_branch_kind() {
     use base64::Engine;
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
-    use codeyard_app::repositories::lifecycle;
+    use codeyard_repos_core::repositories::lifecycle;
     use codeyard_storage::ObjectStore;
     use serde_json::json;
     use std::sync::Arc;
@@ -549,7 +549,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
     let dispatched = service
         .dispatch_run(
             f.owner.id,
-            codeyard_app::ci::runs::DispatchRequest {
+            codeyard_repos_core::ci::runs::DispatchRequest {
                 repo_owner: f.owner.username.clone(),
                 repo_name: f.repo.name.clone(),
                 branch: "refs/heads/main".to_owned(),
@@ -572,7 +572,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
     let refused = service
         .dispatch_run(
             f.owner.id,
-            codeyard_app::ci::runs::DispatchRequest {
+            codeyard_repos_core::ci::runs::DispatchRequest {
                 repo_owner: f.owner.username.clone(),
                 repo_name: f.repo.name.clone(),
                 branch: "../private".to_owned(),
@@ -620,7 +620,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
     let rerun = service
         .dispatch_run(
             f.owner.id,
-            codeyard_app::ci::runs::DispatchRequest {
+            codeyard_repos_core::ci::runs::DispatchRequest {
                 repo_owner: f.owner.username.clone(),
                 repo_name: f.repo.name.clone(),
                 branch: "main".to_owned(),

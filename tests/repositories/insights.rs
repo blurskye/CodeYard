@@ -32,7 +32,7 @@ async fn insights_flow(pg: bool) {
     let bob_id = database.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
     for name in ["proj", "vault"] {
-        codeyard_app::repositories::lifecycle::provision(
+        codeyard_repos_core::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

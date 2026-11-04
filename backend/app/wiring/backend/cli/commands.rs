@@ -1,5 +1,5 @@
 use anyhow::Result;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::DbPool;
 
@@ -214,9 +214,9 @@ pub async fn create_repo_cmd(
         .await?
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", owner))?;
 
-    codeyard_app::repositories::lifecycle::validate_description(description.unwrap_or(""))?;
-    let context = codeyard_app::cluster::client_context(pool, state_dir, repos_path).await?;
-    let created = codeyard_app::repositories::lifecycle::provision(
+    codeyard_repos_core::repositories::lifecycle::validate_description(description.unwrap_or(""))?;
+    let context = codeyard_repos_core::cluster::client_context(pool, state_dir, repos_path).await?;
+    let created = codeyard_repos_core::repositories::lifecycle::provision(
         (pool, context.as_ref()),
         repos_path,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(user.id),
@@ -327,7 +327,7 @@ pub async fn repo_info_cmd(
     println!("ID: {}", repo.id);
     println!("Private: {}", if repo.is_private { "yes" } else { "no" });
     println!("Default branch: {}", terminal_text(&repo.default_branch));
-    let context = codeyard_app::cluster::client_context(pool, state_dir, repos_path).await?;
+    let context = codeyard_repos_core::cluster::client_context(pool, state_dir, repos_path).await?;
     let store = repo_store(&repo, context.as_ref());
     println!(
         "Disk path: {}",

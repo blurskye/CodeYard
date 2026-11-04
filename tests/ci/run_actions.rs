@@ -27,7 +27,7 @@ async fn contract(pg: bool) {
     let bob_id = f.actor("bob").await;
     let dave_id = f.actor("dave").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -190,7 +190,7 @@ async fn contract(pg: bool) {
     );
 
     // An unreadable repository and a missing one have the same run-action refusal.
-    let private = codeyard_app::repositories::lifecycle::provision(
+    let private = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -661,7 +661,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
     let carol_id = f.actor("carol").await;
     let dave_id = f.actor("dave").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

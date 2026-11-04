@@ -4,7 +4,7 @@ use crate::support::http_client::Client;
 use crate::support::organizations::applied;
 use axum::http::StatusCode;
 
-use codeyard_app::repositories::lifecycle::provision;
+use codeyard_repos_core::repositories::lifecycle::provision;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 use codeyard_identity::tokens;

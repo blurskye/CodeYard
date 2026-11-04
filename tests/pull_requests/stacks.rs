@@ -14,7 +14,7 @@ use axum::http::StatusCode;
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::pull_requests::merge;
-use codeyard_app::repositories::pull_requests::OperationError;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
 use codeyard_db_repos::pull_requests::records::StackJoin;
 use codeyard_db_repos::pull_requests::records::StackRefusal;
 use codeyard_storage::ObjectStore;
@@ -29,7 +29,7 @@ struct Runs {
     router: axum::Router,
     alice: i64,
     bob: i64,
-    ci: Arc<codeyard_app::ci::runs::CiRuns>,
+    ci: Arc<codeyard_repos_core::ci::runs::CiRuns>,
     broadcaster: Arc<codeyard_notifications::broadcast::NotificationBroadcaster>,
 }
 
@@ -37,7 +37,7 @@ async fn application_with_runs(f: &mut Database, root: &Path) -> Runs {
     f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
-    codeyard_app::repositories::lifecycle::provision(
+    codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

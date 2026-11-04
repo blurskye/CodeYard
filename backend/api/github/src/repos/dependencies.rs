@@ -11,8 +11,8 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::dependencies::DependencyError;
-use codeyard_app::repositories::dependencies::Status;
+use codeyard_repos_core::repositories::dependencies::DependencyError;
+use codeyard_repos_core::repositories::dependencies::Status;
 use codeyard_db_repos::repositories::dependencies::Feature;
 use codeyard_git::error::ErrorKind;
 use codeyard_identity::repository_access::AccessError;
@@ -46,8 +46,8 @@ async fn status(
     feature: Feature,
 ) -> Result<Status> {
     let (repo, actor) = repository(state, headers, owner, name, false).await?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
-    codeyard_app::repositories::dependencies::status(&state.pool, actor.user.id, repo.id, feature)
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    codeyard_repos_core::repositories::dependencies::status(&state.pool, actor.user.id, repo.id, feature)
         .await
         .map_err(failure)
 }
@@ -60,8 +60,8 @@ async fn change(
     enabled: bool,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(state, headers, owner, name, true).await?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
-    codeyard_app::repositories::dependencies::set_enabled(
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    codeyard_repos_core::repositories::dependencies::set_enabled(
         &state.pool,
         state.cluster.as_ref(),
         actor.user.id,

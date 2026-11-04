@@ -102,7 +102,7 @@ pub(crate) async fn enforce(
                 let app = crate::apps::application(&state, request.headers(), parts[1]).await?;
                 key = Some(format!("oauth-app:{}", app.id));
             } else if let Some(value) =
-                codeyard_app::api_shared::github::auth::credential(request.headers())
+                codeyard_repos_core::api_shared::github::auth::credential(request.headers())
             {
                 if let Some(app) = codeyard_identity::github_apps::authenticate(&state.pool, value)
                     .await
@@ -128,7 +128,7 @@ pub(crate) async fn enforce(
             }
             None
         } else {
-            codeyard_app::api_shared::github::auth::authenticate(&state, request.headers(), false)
+            codeyard_repos_core::api_shared::github::auth::authenticate(&state, request.headers(), false)
                 .await?
         };
         if let Some(auth) = authentication {
@@ -136,7 +136,7 @@ pub(crate) async fn enforce(
                 let job = codeyard_db_actions::ci_tokens::get(&state.pool, auth.token.id)
                     .await
                     .map_err(Error::unavailable)?
-                    .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+                    .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
                 format!("job-repository:{}", job.repo_id)
             } else {
                 format!("user:{}", auth.user.id)
@@ -147,7 +147,7 @@ pub(crate) async fn enforce(
             key: key.unwrap_or_else(|| {
                 format!(
                     "ip:{}",
-                    codeyard_app::api_shared::http::session::client_address(request.headers())
+                    codeyard_repos_core::api_shared::http::session::client_address(request.headers())
                         .unwrap_or("unknown")
                 )
             }),

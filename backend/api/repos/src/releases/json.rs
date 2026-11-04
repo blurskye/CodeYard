@@ -14,7 +14,7 @@ use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
 use codeyard_api_http::session::get_optional_user;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::releases::ReleaseError;
+use codeyard_repos_core::repositories::releases::ReleaseError;
 use codeyard_app::repositories::releases::ReleaseInput;
 use codeyard_db_core::models::ReleaseAsset;
 use codeyard_db_core::models::ReleaseRow;

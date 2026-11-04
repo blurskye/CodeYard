@@ -263,7 +263,7 @@ async fn immutable_contract(pg: bool) {
     .await;
     assert_eq!(edited["immutable"], true);
     assert_eq!(edited["body"], Value::Null);
-    let store = codeyard_app::repositories::store::repo_store(&repo, None);
+    let store = codeyard_repos_core::repositories::store::repo_store(&repo, None);
     assert!(store
         .delete_tag_as(f.pool(), repo.id, alice, "v1")
         .await

@@ -36,7 +36,7 @@ async fn metadata_contract(pg: bool) {
     );
     let root = tempfile::tempdir().unwrap();
     // Alice can read Bob's content without having write access to its repository.
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(bob),

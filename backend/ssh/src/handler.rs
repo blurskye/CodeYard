@@ -1,14 +1,14 @@
 use crate::rate_limit::RateLimiter;
 use anyhow::Result;
 use bytes::Bytes;
-use codeyard_app::ci::runs::CiRuns;
-use codeyard_app::repositories::git_sessions::GitTasks;
-use codeyard_app::repositories::git_sessions::ReceiveCredential;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::repositories::git_sessions::GitTasks;
+use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::GitService;
 use codeyard_repos_core::store_types::GitSession;
 use codeyard_repos_core::store_types::GitStreams;
-use codeyard_app::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
@@ -218,7 +218,7 @@ impl GitSshHandler {
         repo: &Repository,
         write: bool,
     ) -> Result<Option<ReceiveCredential>> {
-        use codeyard_app::repositories::git_sessions::CredentialRefusal;
+        use codeyard_repos_core::repositories::git_sessions::CredentialRefusal;
         let credential = if let Some(key) = self.deploy_key {
             ReceiveCredential::DeployKey(key)
         } else if self.user.is_some() {
@@ -674,7 +674,7 @@ impl russh::server::Handler for GitSshHandler {
                         {
                             "Git sessions busy\n"
                         } else if error
-                            .is::<codeyard_app::repositories::git_sessions::PostReceiveFailed>(
+                            .is::<codeyard_repos_core::repositories::git_sessions::PostReceiveFailed>(
                         ) {
                             "ERR Git writes were accepted; post-push bookkeeping or CI dispatch failed.\n"
                         } else if error

@@ -39,7 +39,7 @@ async fn associated_pulls_use_primary_storage_without_changing_refs_or_metadata(
         codeyard_db_identity::users::accounts::create_user(&database.pool, "rpc_owner", None)
             .await
             .unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (&database.pool, Some(&web.context)),
         &web.context.repos_path,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),

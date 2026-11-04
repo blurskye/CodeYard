@@ -218,7 +218,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 )
                 .await
                 .map(|(review, _)| review)
-                .map_err(|e| pull_error(codeyard_app::repositories::pull_requests::write_error(e)))?
+                .map_err(|e| pull_error(codeyard_repos_core::repositories::pull_requests::write_error(e)))?
             }
         }
         "updatePullRequestReview" => codeyard_app::repositories::pull_requests::reviews::edit_review(
@@ -252,7 +252,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             existing.as_ref().ok_or_else(missing)?.id,
         )
         .await
-        .map_err(|e| pull_error(codeyard_app::repositories::pull_requests::write_error(e)))?
+        .map_err(|e| pull_error(codeyard_repos_core::repositories::pull_requests::write_error(e)))?
         .ok_or_else(missing)?,
         _ => return Err(missing()),
     };

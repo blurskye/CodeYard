@@ -8,7 +8,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use codeyard_api_http::error::ApiError;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -27,7 +27,7 @@ pub async fn get_repo_languages(
 ) -> Result<Json<Vec<LanguageStatResponse>>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let default_branch = repository_default_branch(&state, &repository).await?;
-    let languages = codeyard_app::repositories::languages::compute_and_store(
+    let languages = codeyard_repos_core::repositories::languages::compute_and_store(
         &state.pool,
         &repo_store(&repository, state.cluster.as_ref()),
         &repository,

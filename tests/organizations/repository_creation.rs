@@ -384,7 +384,7 @@ async fn provision_contract(mut database: Database) {
     let own = actor(&database, "domain_owner").await;
     let org = organization(&database, own, "domain_org").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         owner(own, RepositoryTarget::Organization(org)),
@@ -405,7 +405,7 @@ async fn provision_contract(mut database: Database) {
     );
     // A duplicate name leaves no directory behind.
     let entries = std::fs::read_dir(root.path()).unwrap().count();
-    let duplicate = codeyard_app::repositories::lifecycle::provision(
+    let duplicate = codeyard_repos_core::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         owner(own, RepositoryTarget::Organization(org)),
@@ -418,7 +418,7 @@ async fn provision_contract(mut database: Database) {
     .unwrap_err();
     assert_eq!(
         duplicate.kind,
-        codeyard_app::repositories::lifecycle::LifecycleFailure::Conflict
+        codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Conflict
     );
     assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), entries);
     database.finish().await;
@@ -428,7 +428,7 @@ async fn initialization_cleanup_contract(mut database: Database) {
     let source_owner = actor(&database, "cleanup_source_owner").await;
     let creator = actor(&database, "cleanup_owner").await;
     let root = tempfile::tempdir().unwrap();
-    let source = codeyard_app::repositories::lifecycle::provision(
+    let source = codeyard_repos_core::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         owner(source_owner, RepositoryTarget::Personal(source_owner)),
@@ -447,7 +447,7 @@ async fn initialization_cleanup_contract(mut database: Database) {
         .into_owned();
     let original_entries = std::fs::read_dir(root.path()).unwrap().count();
 
-    let cleaned = codeyard_app::repositories::lifecycle::provision(
+    let cleaned = codeyard_repos_core::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         owner(creator, RepositoryTarget::Personal(creator)),
@@ -460,7 +460,7 @@ async fn initialization_cleanup_contract(mut database: Database) {
     .unwrap_err();
     assert_eq!(
         cleaned.kind,
-        codeyard_app::repositories::lifecycle::LifecycleFailure::Unavailable
+        codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Unavailable
     );
     assert!(codeyard_db_repos::repositories::records::get_repository(
         database.pool(),
@@ -506,7 +506,7 @@ async fn initialization_cleanup_contract(mut database: Database) {
             .unwrap();
         }
     }
-    let partial = codeyard_app::repositories::lifecycle::provision(
+    let partial = codeyard_repos_core::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         owner(creator, RepositoryTarget::Personal(creator)),
@@ -519,7 +519,7 @@ async fn initialization_cleanup_contract(mut database: Database) {
     .unwrap_err();
     assert_eq!(
         partial.kind,
-        codeyard_app::repositories::lifecycle::LifecycleFailure::InitializationCleanupFailed
+        codeyard_repos_core::repositories::lifecycle::LifecycleFailure::InitializationCleanupFailed
     );
     let remaining = codeyard_db_repos::repositories::records::get_repository(
         database.pool(),
@@ -535,7 +535,7 @@ async fn initialization_cleanup_contract(mut database: Database) {
         original_entries
     );
     let path = remaining.disk_path.clone();
-    let retry = codeyard_app::repositories::lifecycle::provision(
+    let retry = codeyard_repos_core::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         owner(creator, RepositoryTarget::Personal(creator)),
@@ -548,7 +548,7 @@ async fn initialization_cleanup_contract(mut database: Database) {
     .unwrap_err();
     assert_eq!(
         retry.kind,
-        codeyard_app::repositories::lifecycle::LifecycleFailure::Conflict
+        codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Conflict
     );
     let after_retry = codeyard_db_repos::repositories::records::get_repository(
         database.pool(),
@@ -808,8 +808,8 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
     use axum::http::StatusCode;
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
-    use codeyard_app::cluster;
-    use codeyard_app::repositories::store::repo_store;
+    use codeyard_repos_core::cluster;
+    use codeyard_repos_core::repositories::store::repo_store;
     use codeyard_ci::config::CiConfig;
     use codeyard_repos::editor::FileWrite;
     use codeyard_storage::ObjectStore;
@@ -854,7 +854,7 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
     let context = nodes.first().map(|node| &node.context);
     let owner = actor(&database, "snapshot_owner").await;
     let forker = actor(&database, "snapshot_forker").await;
-    let source = codeyard_app::repositories::lifecycle::provision(
+    let source = codeyard_repos_core::repositories::lifecycle::provision(
         (database.pool(), context),
         root.path(),
         RepositoryCreationOwner::personal(owner),

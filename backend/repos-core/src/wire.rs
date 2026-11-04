@@ -1,11 +1,11 @@
-use codeyard_repos_core::store_types::AsyncMergePublication;
-use codeyard_repos_core::store_types::GitService;
-use codeyard_repos_core::store_types::GitSession;
-use codeyard_repos_core::store_types::MergeFailure;
-use codeyard_repos_core::store_types::MergeMethod;
-use codeyard_repos_core::store_types::MergeRequest;
-use codeyard_repos_core::store_types::PullBranchUpdate;
-use codeyard_repos_core::store_types::RestackMove;
+use crate::store_types::AsyncMergePublication;
+use crate::store_types::GitService;
+use crate::store_types::GitSession;
+use crate::store_types::MergeFailure;
+use crate::store_types::MergeMethod;
+use crate::store_types::MergeRequest;
+use crate::store_types::PullBranchUpdate;
+use crate::store_types::RestackMove;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_git::error::ErrorKind;
@@ -503,7 +503,7 @@ pub enum Operation {
         request: MergeRequest,
     },
     PrepareRevert {
-        request: codeyard_repos_core::store_types::RevertRequest,
+        request: crate::store_types::RevertRequest,
     },
     UpdatePullBranch {
         source: Uuid,
@@ -517,7 +517,7 @@ pub enum Operation {
         alias = "PublishBranchMerge"
     )]
     PublishBranchMerge {
-        publication: codeyard_repos_core::store_types::BranchMergePublication,
+        publication: crate::store_types::BranchMergePublication,
     },
     PublishMerge {
         head_branch: String,

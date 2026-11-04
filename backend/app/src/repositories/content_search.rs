@@ -1,7 +1,7 @@
 //! Live default-branch search using the bounded native Git/RPC operations. No independent index.
 use codeyard_repos_core::context::NodeContext;
-use crate::repositories::store::repo_store;
-use crate::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use anyhow::Context;
 use anyhow::Result;
 use chrono::DateTime;
@@ -483,7 +483,7 @@ impl Scan<'_> {
                     .iter()
                     .flat_map(|c| [c.author_email.clone(), c.committer_email.clone()])
                     .collect::<Vec<_>>();
-                crate::repositories::reads::commit_authors(pool, &emails).await?
+                codeyard_repos_core::repositories::reads::commit_authors(pool, &emails).await?
             } else {
                 HashMap::new()
             };

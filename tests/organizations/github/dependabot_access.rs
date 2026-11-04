@@ -54,7 +54,7 @@ async fn contract(pg: bool) {
         (orgs[1].id, "foreign", true),
     ] {
         repositories.push(
-            codeyard_app::repositories::lifecycle::provision(
+            codeyard_repos_core::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 RepositoryCreationOwner {

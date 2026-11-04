@@ -65,7 +65,7 @@ pub async fn resolve(
         .await;
         let (author, sender) = (issue.author_id, actor.id);
         let repository = repo.clone();
-        crate::webhooks::emit(
+        codeyard_repos_core::webhooks::emit(
             pool,
             repo,
             codeyard_model::webhook_events::ISSUES,

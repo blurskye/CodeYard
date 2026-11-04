@@ -137,7 +137,7 @@ pub(crate) async fn native_change(
             Ok(())
         }
         "branch" => {
-            let oid = codeyard_app::repositories::store::repo_store(
+            let oid = codeyard_repos_core::repositories::store::repo_store(
                 &repo.record,
                 ctx.state.cluster.as_ref(),
             )
@@ -237,7 +237,7 @@ pub(crate) async fn load(
         };
         if let std::collections::hash_map::Entry::Vacant(slot) = references.entry(target.id) {
             let refs =
-                codeyard_app::repositories::store::repo_store(target, ctx.state.cluster.as_ref())
+                codeyard_repos_core::repositories::store::repo_store(target, ctx.state.cluster.as_ref())
                     .refs()
                     .await
                     .map_err(|_| unavailable(ctx))?;

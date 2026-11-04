@@ -14,7 +14,7 @@ use axum::{
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::lifecycle;
+use codeyard_repos_core::repositories::lifecycle;
 use codeyard_ci::config::CiConfig;
 use codeyard_storage::ObjectStore;
 use database::Database;
@@ -202,7 +202,7 @@ async fn contract(pg: bool) {
     );
     assert!(reply.contains("private draft"));
     assert!(
-        codeyard_app::repositories::store::repo_store(&replacement, None)
+        codeyard_repos_core::repositories::store::repo_store(&replacement, None)
             .refs()
             .await
             .unwrap()

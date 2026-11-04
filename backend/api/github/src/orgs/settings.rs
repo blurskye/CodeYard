@@ -27,9 +27,9 @@ async fn update(
     Path(name): Path<String>,
     Json(input): Json<Value>,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
     let input=Changes::parse(&input).map_err(|error|Error(StatusCode::UNPROCESSABLE_ENTITY,"Validation Failed".into(),Some(json!([{"resource":"Organization","field":error.field,"code":"invalid","message":error.message}]))))?;

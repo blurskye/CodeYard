@@ -13,10 +13,10 @@ use axum::routing::post;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_actions::checks::Credential;
 use codeyard_db_actions::checks::Filter;
 use codeyard_db_actions::checks::Preference;
@@ -150,7 +150,7 @@ async fn create_suite(
     Json(input): Json<CreateSuite>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let (sha, branch) = head(&state, &repo, &input.head_sha).await?;
     let (suite, created) = codeyard_db_actions::checks::create_suite(
         &state.pool,
@@ -190,7 +190,7 @@ async fn create_run(
     Json(input): Json<CreateRun>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     input.patch.validate(true).map_err(write_error)?;
     let (sha, branch) = head(&state, &repo, &input.head_sha).await?;
     let changed = codeyard_db_actions::checks::create_run(
@@ -226,7 +226,7 @@ async fn update_run(
     Json(input): Json<RunPatch>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let changed = codeyard_db_actions::checks::update_run(
         &state.pool,
         Credential::Token(auth.token.id),
@@ -422,7 +422,7 @@ async fn list(
         .await
         .map_err(Error::unavailable)?;
         let docs =
-            codeyard_app::api_shared::github::checks::documents::suites(state, repo, owner, &rows)
+            codeyard_repos_core::api_shared::github::checks::documents::suites(state, repo, owner, &rows)
                 .await?;
         (count, "check_suites", docs)
     } else {
@@ -511,7 +511,7 @@ async fn rerequest(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let is_run = uri.path().contains("/check-runs/");
     let (suite, run) = if is_run {
         let run = codeyard_db_actions::checks::run(&state.pool, repo.id, id)
@@ -616,7 +616,7 @@ pub async fn request_action(
     tokio::spawn(async move {
         let doc = run_document(&state, &repo, &owner, &run).await?;
         let repository = repo.clone();
-        codeyard_app::webhooks::emit(&state.pool, &repo, "check_run", vec![actor], move |owner, people| json!({"action":"requested_action", "requested_action":{"identifier":identifier}, "check_run":doc, "repository":payloads::repository(&repository, owner), "sender":payloads::person(&people.get(actor))})).await;
+        codeyard_repos_core::webhooks::emit(&state.pool, &repo, "check_run", vec![actor], move |owner, people| json!({"action":"requested_action", "requested_action":{"identifier":identifier}, "check_run":doc, "repository":payloads::repository(&repository, owner), "sender":payloads::person(&people.get(actor))})).await;
         Ok(())
     }).await.map_err(Error::unavailable)?
 }
@@ -633,7 +633,7 @@ async fn preferences(
     Json(input): Json<Preferences>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let saved = codeyard_db_actions::checks::preferences(
         &state.pool,
         Credential::Token(auth.token.id),
@@ -664,18 +664,18 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 
-use codeyard_app::api_shared::github::checks::SuiteDocuments;
+use codeyard_repos_core::api_shared::github::checks::SuiteDocuments;
 
-use codeyard_app::api_shared::github::checks::actions_app;
+use codeyard_repos_core::api_shared::github::checks::actions_app;
 
-use codeyard_app::api_shared::github::checks::app;
+use codeyard_repos_core::api_shared::github::checks::app;
 
-use codeyard_app::api_shared::github::checks::emit;
+use codeyard_repos_core::api_shared::github::checks::emit;
 
-use codeyard_app::api_shared::github::checks::head;
+use codeyard_repos_core::api_shared::github::checks::head;
 
-use codeyard_app::api_shared::github::checks::pulls;
+use codeyard_repos_core::api_shared::github::checks::pulls;
 
-use codeyard_app::api_shared::github::checks::suite_value;
+use codeyard_repos_core::api_shared::github::checks::suite_value;
 
-use codeyard_app::api_shared::github::checks::write_error;
+use codeyard_repos_core::api_shared::github::checks::write_error;

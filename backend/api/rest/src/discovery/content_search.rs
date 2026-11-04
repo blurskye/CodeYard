@@ -6,9 +6,9 @@ use crate::discovery::owner_name;
 use crate::discovery::search::RESULTS_PER_PAGE;
 use crate::discovery::DiscoveryReadError;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::MAX_COMMIT_OFFSET;
-use codeyard_app::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_git::error::RepoError;
 use codeyard_git::CommitFilter;
 use codeyard_identity::repository_access::AccessError;
@@ -505,7 +505,7 @@ mod tests {
         let user = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
-        let candidate = codeyard_app::repositories::lifecycle::provision(
+        let candidate = codeyard_repos_core::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(user.id),

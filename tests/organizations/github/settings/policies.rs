@@ -201,7 +201,7 @@ pub(super) async fn contract(
         200,
     )
     .await;
-    let store = codeyard_app::repositories::store::repo_store(second, None);
+    let store = codeyard_repos_core::repositories::store::repo_store(second, None);
     let head = store.commit("refs/heads/main").await.unwrap();
     let actor = codeyard_db_identity::users::accounts::get_user_by_id(f.pool(), owner)
         .await

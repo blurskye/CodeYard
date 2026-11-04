@@ -20,7 +20,7 @@ use axum::Router;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::urls::repo_url;
@@ -158,7 +158,7 @@ async fn upload(
             | codeyard_git::error::ErrorKind::Invalid => {
                 Error::validation("Sarif", "commit_sha", "invalid")
             }
-            _ => codeyard_app::api_shared::github::contents::store_error(error),
+            _ => codeyard_repos_core::api_shared::github::contents::store_error(error),
         })?;
     let upload = codeyard_db_security::code_scanning::enqueue(
         &state.pool,
@@ -220,9 +220,9 @@ async fn org_alerts(
     Query(query): Query<Filters>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let auth = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let auth = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let org = crate::orgs::target(&state, &name).await?;
     let (offset, limit) = query.pagination().window()?;
     let reference = query.ref_name.as_deref().map(normalize_ref);

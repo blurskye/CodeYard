@@ -150,7 +150,7 @@ async fn contract(pg: bool) {
         Some(csrf.clone())
     );
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_app::repositories::lifecycle::provision(
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
@@ -730,7 +730,7 @@ async fn stale_repository_contract(pg: bool) {
             &[repository.id],
         )
         .await;
-        let replacement = codeyard_app::repositories::lifecycle::provision(
+        let replacement = codeyard_repos_core::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
@@ -792,7 +792,7 @@ async fn postgres_stale_editor_cannot_write_replacement_repository() {
 /// A signed-in client for `owner`'s empty repository `save`, behind a fresh router.
 async fn long_name_client(f: &Database, owner: i64) -> (http::Client, tempfile::TempDir) {
     let root = tempfile::tempdir().unwrap();
-    codeyard_app::repositories::lifecycle::provision(
+    codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),

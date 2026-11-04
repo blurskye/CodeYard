@@ -19,8 +19,8 @@ use codeyard_api_http::shared::repos::chrome::commit;
 use codeyard_api_http::shared::repos::chrome::store_error;
 use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
-use codeyard_app::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_git::TreeEntry;
 use codeyard_webui::components::languages::LanguageShare;
 use codeyard_webui::pages::repos as view;
@@ -294,7 +294,7 @@ async fn about_languages(
     store: &RepoStore,
     branch: &str,
 ) -> Vec<LanguageShare> {
-    let languages = match codeyard_app::repositories::languages::compute_and_store(
+    let languages = match codeyard_repos_core::repositories::languages::compute_and_store(
         &state.pool,
         store,
         &loaded.repository,

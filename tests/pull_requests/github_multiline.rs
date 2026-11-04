@@ -5,7 +5,7 @@ use crate::support::http_client::visible_text;
 use crate::support::http_client::Client;
 use axum::{http::StatusCode, Router};
 
-use codeyard_app::repositories::lifecycle;
+use codeyard_repos_core::repositories::lifecycle;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};

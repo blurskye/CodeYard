@@ -50,9 +50,9 @@ async fn own(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     list(&state, actor.user.id, page, uri).await
 }
 async fn public(
@@ -62,7 +62,7 @@ async fn public(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
     let user = crate::users::target(&state, &username).await?;
     list(&state, user.id, page, uri).await
 }
@@ -89,9 +89,9 @@ async fn get_key(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Json<codeyard_db_identity::users::signing_keys::SigningKey>> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     Ok(Json(
         codeyard_db_identity::users::signing_keys::get_signing_key(&state.pool, actor.user.id, id)
             .await
@@ -121,9 +121,9 @@ async fn create(
     headers: HeaderMap,
     input: std::result::Result<Json<Input>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Response> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     actor.require_write()?;
     let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
     let key = codeyard_identity::keys::enroll_signing(
@@ -154,9 +154,9 @@ async fn remove(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<StatusCode> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     actor.require_write()?;
     codeyard_identity::keys::delete_signing(
         &state.pool,

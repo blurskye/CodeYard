@@ -32,7 +32,7 @@ pub(super) async fn manifest_start(
         }
     }
     // Keyed by client, so one client cannot spend everyone's manifest budget.
-    let client = codeyard_app::api_shared::http::session::client_address(&headers);
+    let client = codeyard_repos_core::api_shared::http::session::client_address(&headers);
     match codeyard_db_identity::auth_admission::admit_operation(
         &state.pool,
         client,

@@ -2,10 +2,10 @@
 //! published releases of a repository they can read; writers also see drafts and make changes.
 //! A tag that does not exist yet is created when the release is published, so a draft never
 //! publishes its tag.
-use crate::ci::runs::CiRuns;
+use codeyard_repos_core::ci::runs::CiRuns;
 use codeyard_repos_core::context::NodeContext;
-use crate::repositories::refs::RefError;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::repositories::refs::RefError;
+use codeyard_repos_core::repositories::store::repo_store;
 use anyhow::Error;
 use codeyard_db_core::models::Release;
 use codeyard_db_core::models::ReleaseAsset;
@@ -32,7 +32,6 @@ use sha2::Digest;
 use sha2::Sha256;
 use std::collections::HashMap;
 use uuid::Uuid;
-pub mod immutable;
 
 pub mod notes;
 
@@ -50,43 +49,6 @@ mod tests {
             Err(ReleaseError::Access(AccessError::Unavailable))
         ));
         assert!(!can_write(&pool, None, 1).await.unwrap());
-    }
-}
-
-#[derive(Debug)]
-pub enum ReleaseError {
-    Access(AccessError),
-    Invalid(&'static str),
-    NotFound,
-    /// The tag is already a release.
-    TagTaken,
-    /// The release already has an asset with this name.
-    AssetNameTaken,
-    Conflict,
-    /// The tag is new and no branch or commit was given to create it on.
-    TargetRequired,
-    Ref(RefError),
-    Git(RepoError),
-    Upload(UploadError),
-    Download(DownloadError),
-    Unavailable,
-}
-
-impl From<AccessError> for ReleaseError {
-    fn from(error: AccessError) -> Self {
-        Self::Access(error)
-    }
-}
-impl From<RefError> for ReleaseError {
-    fn from(error: RefError) -> Self {
-        match error {
-            RefError::Protected(message)
-                if message == crate::repositories::releases::immutable::TAG_PROTECTED =>
-            {
-                Self::Invalid(message)
-            }
-            error => Self::Ref(error),
-        }
     }
 }
 
@@ -171,10 +133,6 @@ async fn can_write(
     }
 }
 
-fn unavailable<E>(_: E) -> ReleaseError {
-    ReleaseError::Unavailable
-}
-
 /// Maps a refusal the database raised inside a write to the error the caller shows.
 fn write_error(error: Error) -> ReleaseError {
     if error.is::<codeyard_support::credentials::AccountRestricted>() {
@@ -217,44 +175,6 @@ fn mutation_error(error: RepoError) -> ReleaseError {
         return ReleaseError::TagTaken;
     }
     ReleaseError::Git(error)
-}
-
-fn validate_fields(fields: &ReleaseFields) -> Result<(), ReleaseError> {
-    if fields
-        .name
-        .as_deref()
-        .is_some_and(|text| text.contains('\0'))
-        || fields
-            .body
-            .as_deref()
-            .is_some_and(|text| text.contains('\0'))
-    {
-        return Err(ReleaseError::Invalid(
-            "Release text cannot contain NUL characters",
-        ));
-    }
-    if fields.name.as_deref().is_some_and(|name| name.len() > 255) {
-        return Err(ReleaseError::Invalid(
-            "Release titles are limited to 255 bytes",
-        ));
-    }
-    if fields
-        .body
-        .as_deref()
-        .is_some_and(|body| body.len() > 65536)
-    {
-        return Err(ReleaseError::Invalid(
-            "Release notes are limited to 65536 bytes",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_tag(tag: &str) -> Result<(), ReleaseError> {
-    if tag.is_empty() || tag.len() > 255 || git::tag_ref(tag).is_none() {
-        return Err(ReleaseError::Invalid("Tag name is not valid"));
-    }
-    Ok(())
 }
 
 /// The release list, newest first. Drafts are listed only for writers.
@@ -462,7 +382,7 @@ pub async fn create(
                     AccessError::WriteDenied,
                 )));
             }
-            crate::repositories::refs::create_tag(
+            codeyard_repos_core::repositories::refs::create_tag(
                 pool,
                 cluster,
                 ci,
@@ -479,7 +399,7 @@ pub async fn create(
             draft_target = Some(commit.sha);
         }
     }
-    let attestation = crate::repositories::releases::immutable::candidate(
+    let attestation = codeyard_repos_core::repositories::releases::immutable::candidate(
         pool,
         cluster,
         &repository,
@@ -493,7 +413,7 @@ pub async fn create(
             pool,
             repository.id,
             actor,
-            crate::repositories::releases::immutable::Mutation::Create {
+            codeyard_repos_core::repositories::releases::immutable::Mutation::Create {
                 tag: input.tag.clone(),
                 fields: input.fields.clone(),
                 draft_target,
@@ -540,7 +460,7 @@ async fn emit_release(
 ) {
     let (release, repository_for_hook) = (release.clone(), repository.clone());
     let author_id = release.author_id;
-    crate::webhooks::emit(
+    codeyard_repos_core::webhooks::emit(
         pool,
         repository,
         codeyard_model::webhook_events::RELEASE,
@@ -644,7 +564,7 @@ pub async fn update(
                         AccessError::WriteDenied,
                     )));
                 }
-                crate::repositories::refs::create_tag(
+                codeyard_repos_core::repositories::refs::create_tag(
                     pool,
                     cluster,
                     ci,
@@ -663,7 +583,7 @@ pub async fn update(
             fields.target = None;
         }
     }
-    let attestation = crate::repositories::releases::immutable::candidate(
+    let attestation = codeyard_repos_core::repositories::releases::immutable::candidate(
         pool,
         cluster,
         &repository,
@@ -677,7 +597,7 @@ pub async fn update(
             pool,
             repository.id,
             actor,
-            crate::repositories::releases::immutable::Mutation::Update {
+            codeyard_repos_core::repositories::releases::immutable::Mutation::Update {
                 id: release_id,
                 changes: fields.clone(),
             },
@@ -721,7 +641,7 @@ pub async fn delete(
         .ok_or(ReleaseError::NotFound)?;
     // The deletion event still lists the assets, which are gone once the release is.
     let assets =
-        crate::webhooks::documents::release_assets(pool, &repository, owner, &deleted.release)
+        codeyard_repos_core::webhooks::documents::release_assets(pool, &repository, owner, &deleted.release)
             .await
             .inspect_err(
                 |error| tracing::warn!(release_id, %error, "release assets could not be read"),
@@ -1063,3 +983,5 @@ async fn notify_published(
     )
     .await;
 }
+
+use codeyard_repos_core::repositories::releases::{ReleaseError, unavailable, validate_fields, validate_tag};

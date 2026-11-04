@@ -6,11 +6,11 @@ use axum::http::StatusCode;
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::queue::RunQueue;
-use codeyard_app::ci::runs::CiRunRequest;
-use codeyard_app::ci::workers::CiWorkers;
+use codeyard_repos_core::ci::queue::RunQueue;
+use codeyard_repos_core::ci::runs::CiRunRequest;
+use codeyard_repos_core::ci::workers::CiWorkers;
 use codeyard_app::repositories;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
 use codeyard_ci::config::CiPipelineKind;

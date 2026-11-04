@@ -2,9 +2,9 @@
 use crate::support::database::Database;
 
 use codeyard_app::app::AppState;
-use codeyard_app::ci::queue::RunQueue;
-use codeyard_app::ci::runs::CiRunRequest;
-use codeyard_app::ci::workers::CiWorkers;
+use codeyard_repos_core::ci::queue::RunQueue;
+use codeyard_repos_core::ci::runs::CiRunRequest;
+use codeyard_repos_core::ci::workers::CiWorkers;
 use codeyard_app::repositories;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;

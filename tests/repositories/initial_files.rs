@@ -4,9 +4,9 @@
 use crate::support::database;
 use chrono::{Datelike, Utc};
 
-use codeyard_app::repositories::lifecycle::provision_with_initial_files;
-use codeyard_app::repositories::lifecycle::InitialFiles;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::lifecycle::provision_with_initial_files;
+use codeyard_repos_core::repositories::lifecycle::InitialFiles;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos::templates;
 use database::Database;
 

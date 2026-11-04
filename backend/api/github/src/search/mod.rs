@@ -30,13 +30,13 @@ async fn search_issues(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let auth =
-        codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+        codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
     let query = Search::parse(q.get("q").map_or("", String::as_str))
         .map_err(Error::invalid)?
         .with_classic_policy(auth.as_ref().map(|auth| auth.token.id));
     if query.needs_viewer() && viewer.is_none() {
-        return Err(codeyard_app::api_shared::github::auth::required());
+        return Err(codeyard_repos_core::api_shared::github::auth::required());
     }
     let sort = Sort::parse(q.get("sort").map(String::as_str)).map_err(Error::invalid)?;
     let ascending = match q.get("order").map_or("desc", String::as_str) {
@@ -52,7 +52,7 @@ async fn search_issues(
     }
     let search_type = q.get("search_type").map_or("lexical", String::as_str);
     if search_type != "lexical" && viewer.is_none() {
-        return Err(codeyard_app::api_shared::github::auth::required());
+        return Err(codeyard_repos_core::api_shared::github::auth::required());
     }
     if !matches!(search_type, "lexical" | "semantic" | "hybrid") {
         return Err(Error::validation("Search", "search_type", "invalid"));
@@ -84,7 +84,7 @@ async fn search_issues(
     repo_ids.sort_unstable();
     repo_ids.dedup();
     // Reauthorize the page after the search snapshot, before assembling any private documents.
-    let readable = codeyard_app::api_shared::github::auth::readable_repositories(
+    let readable = codeyard_repos_core::api_shared::github::auth::readable_repositories(
         &state,
         auth.as_ref(),
         &repo_ids,
@@ -126,7 +126,7 @@ async fn search_issues(
     let mut items = Vec::<Value>::new();
     for (mut value, score) in crate::issues::documents_across(
         &state.pool,
-        codeyard_app::api_shared::github::issues::Reader::Request(&state, auth.as_ref()),
+        codeyard_repos_core::api_shared::github::issues::Reader::Request(&state, auth.as_ref()),
         &selected,
     )
     .await?

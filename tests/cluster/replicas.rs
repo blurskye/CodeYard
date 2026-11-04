@@ -10,22 +10,22 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 
-use codeyard_app::cluster::replicas::promote::Promotion;
-use codeyard_app::cluster::replicas::promote::Silent;
-use codeyard_app::cluster::replicas::Copying;
-use codeyard_app::cluster::replicas::Retry;
+use codeyard_repos_core::cluster::replicas::promote::Promotion;
+use codeyard_repos_core::cluster::replicas::promote::Silent;
+use codeyard_repos_core::cluster::replicas::Copying;
+use codeyard_repos_core::cluster::replicas::Retry;
 
 use codeyard_repos_core::wire::Failure;
 use codeyard_repos_core::wire::Operation;
 use codeyard_repos_core::wire::Request;
 use codeyard_support::node_identity::NodeKey;
 
-use codeyard_app::repositories::store::local::begin_ref_change;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::local::begin_ref_change;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::GitService;
 use codeyard_repos_core::store_types::GitSession;
 use codeyard_repos_core::store_types::GitStreams;
-use codeyard_app::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_db_cluster::cluster::FamilyOutcome;
 use codeyard_db_cluster::cluster::PromoteOutcome;
 use codeyard_db_core::models::NodeReplicaCounts;
@@ -292,7 +292,7 @@ async fn check_replica_rules(pool: &DbPool) {
         .await
         .unwrap()
         .unwrap();
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&row.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path)
         .unwrap()
         .to_string();
     assert_eq!(
@@ -536,7 +536,7 @@ fn settings(name: &str) -> codeyard_cluster::settings::Settings {
 }
 
 /// A storage node with its own state and repositories directory, online and reporting.
-async fn start_storage(pool: &DbPool, root: &Path, name: &str) -> codeyard_app::cluster::Cluster {
+async fn start_storage(pool: &DbPool, root: &Path, name: &str) -> codeyard_repos_core::cluster::Cluster {
     start_node(pool, root, name, "storage").await
 }
 
@@ -545,8 +545,8 @@ async fn start_node(
     root: &Path,
     name: &str,
     roles: &str,
-) -> codeyard_app::cluster::Cluster {
-    let node = codeyard_app::cluster::start(
+) -> codeyard_repos_core::cluster::Cluster {
+    let node = codeyard_repos_core::cluster::start(
         pool,
         &root.join(format!("{name}-state")),
         &root.join(format!("{name}-repos")),
@@ -639,7 +639,7 @@ impl Repo<'_> {
 /// An empty repository on `primary`'s disk, with its row placed on `primary`.
 async fn create_repository<'a>(
     pool: &'a DbPool,
-    primary: &codeyard_app::cluster::Cluster,
+    primary: &codeyard_repos_core::cluster::Cluster,
     name: &str,
 ) -> Repo<'a> {
     let owner =
@@ -677,11 +677,11 @@ async fn create_repository<'a>(
 }
 
 /// Where a primary lives on `node`, and where a copy of it lives.
-fn primary_path(node: &codeyard_app::cluster::Cluster, uuid: Uuid) -> PathBuf {
+fn primary_path(node: &codeyard_repos_core::cluster::Cluster, uuid: Uuid) -> PathBuf {
     node.context.repos_path.join(format!("{uuid}.git"))
 }
 
-fn copy_path(node: &codeyard_app::cluster::Cluster, uuid: Uuid) -> PathBuf {
+fn copy_path(node: &codeyard_repos_core::cluster::Cluster, uuid: Uuid) -> PathBuf {
     node.context
         .repos_path
         .join("mirrors")
@@ -698,7 +698,7 @@ fn quarantines(mirror: &Path) -> PathBuf {
 async fn applied_on(
     pool: &DbPool,
     repository: i64,
-    node: &codeyard_app::cluster::Cluster,
+    node: &codeyard_repos_core::cluster::Cluster,
 ) -> Option<i64> {
     codeyard_db_cluster::cluster::list_replicas(pool, repository)
         .await
@@ -708,8 +708,8 @@ async fn applied_on(
         .map(|(_, applied)| applied)
 }
 
-async fn pass(node: &codeyard_app::cluster::Cluster) {
-    codeyard_app::cluster::replicas::pass(
+async fn pass(node: &codeyard_repos_core::cluster::Cluster) {
+    codeyard_repos_core::cluster::replicas::pass(
         &node.context,
         &mut Retry::default(),
         &mut Silent::default(),
@@ -722,13 +722,13 @@ async fn pass(node: &codeyard_app::cluster::Cluster) {
 /// Both nodes run one pass, the primary's first. Then the copy is current: same refs and
 /// HEAD as the primary, and its applied version is the repository's write version.
 async fn assert_current(
-    primary: &codeyard_app::cluster::Cluster,
-    copy: &codeyard_app::cluster::Cluster,
+    primary: &codeyard_repos_core::cluster::Cluster,
+    copy: &codeyard_repos_core::cluster::Cluster,
     repo: &Repo<'_>,
 ) {
     pass(primary).await;
     pass(copy).await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     let primary_store = RepoStore::from_disk_path(primary_path(primary, uuid).to_str().unwrap());
     let copy_store = RepoStore::from_disk_path(copy_path(copy, uuid).to_str().unwrap());
@@ -769,8 +769,8 @@ async fn two_storage_nodes(
     pool: &DbPool,
     root: &Path,
 ) -> (
-    codeyard_app::cluster::Cluster,
-    codeyard_app::cluster::Cluster,
+    codeyard_repos_core::cluster::Cluster,
+    codeyard_repos_core::cluster::Cluster,
 ) {
     codeyard_db_cluster::node_config::upsert_node_configuration(pool, "public", true)
         .await
@@ -792,7 +792,7 @@ async fn copies_follow_commits_tags_branches_and_force_moves() {
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "copied").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
 
     let first = repo
@@ -897,7 +897,7 @@ async fn replicas_keep_recorded_ci_inputs_after_the_branch_is_deleted() {
     );
     repo.delete_branch("ci-input").await;
     assert_current(&primary, &copy, &repo).await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     let copied = RepoStore::from_disk_path(copy_path(&copy, uuid).to_str().unwrap());
     assert_eq!(
@@ -942,7 +942,7 @@ async fn empty_repositories_and_large_files_copy() {
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "empty").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
 
     // No refs yet: the copy is created empty, with the same HEAD.
@@ -991,7 +991,7 @@ async fn only_nodes_holding_a_copy_may_ask_for_its_packs() {
     let root = tempfile::tempdir().unwrap();
     let (primary, holder) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "guarded").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     repo.save("main", "a.txt", "unborn", b"a").await;
     // Assign the copy while there is only one eligible holder.
@@ -1076,10 +1076,10 @@ async fn the_setting_decides_how_many_copies_exist_and_removes_the_rest() {
     let first = start_storage(pool, root.path(), "store-b").await;
     let second = start_storage(pool, root.path(), "store-c").await;
     let repo = create_repository(pool, &primary, "counted").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     repo.save("main", "a.txt", "unborn", b"a").await;
-    let has_copy = |node: &codeyard_app::cluster::Cluster| copy_path(node, uuid).exists();
+    let has_copy = |node: &codeyard_repos_core::cluster::Cluster| copy_path(node, uuid).exists();
 
     assert!(codeyard_db_cluster::cluster::set_replicas(pool, "all")
         .await
@@ -1149,16 +1149,16 @@ async fn the_loop_copies_on_its_own_and_stops_at_shutdown() {
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "looped").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     repo.save("main", "a.txt", "unborn", b"a").await;
 
     let (stop, stop_signal) = watch::channel(false);
-    let primary_loop = tokio::spawn(codeyard_app::cluster::replicas::run(
+    let primary_loop = tokio::spawn(codeyard_repos_core::cluster::replicas::run(
         primary.context.clone(),
         stop_signal.clone(),
     ));
-    let copy_loop = tokio::spawn(codeyard_app::cluster::replicas::run(
+    let copy_loop = tokio::spawn(codeyard_repos_core::cluster::replicas::run(
         copy.context.clone(),
         stop_signal,
     ));
@@ -1249,7 +1249,7 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
     let (primary, copy) = two_storage_nodes(pool, &root).await;
     let web = web_node(pool, &root).await;
     let repo = create_repository(pool, &primary, "packing").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     let head = repo.save("main", "README.md", "unborn", b"readable").await;
     pass(&primary).await;
@@ -1260,7 +1260,7 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
         std::fs::write(mirror.join(format!("objects/pack/extra-{index}.pack")), b"").unwrap();
     }
     let (stop, signal) = watch::channel(false);
-    let copying = tokio::spawn(codeyard_app::cluster::replicas::run(
+    let copying = tokio::spawn(codeyard_repos_core::cluster::replicas::run(
         copy.context.clone(),
         signal,
     ));
@@ -1352,7 +1352,7 @@ async fn completed_copies_refill_slots_before_the_next_periodic_pass() {
     }
     pass(&primary).await;
     let (stop, signal) = watch::channel(false);
-    let copying = tokio::spawn(codeyard_app::cluster::replicas::run(
+    let copying = tokio::spawn(codeyard_repos_core::cluster::replicas::run(
         copy.context.clone(),
         signal,
     ));
@@ -1410,7 +1410,7 @@ async fn busy_repositories_do_not_starve_later_copies() {
                 .await
                 .unwrap();
         }
-        codeyard_app::cluster::replicas::pass(&copy.context, &mut retry, &mut silent, &mut copying)
+        codeyard_repos_core::cluster::replicas::pass(&copy.context, &mut retry, &mut silent, &mut copying)
             .await
             .unwrap();
     }
@@ -1444,7 +1444,7 @@ async fn a_copy_waits_while_a_ref_change_is_counted() {
     let repo = create_repository(pool, &primary, "waiting").await;
     repo.save("main", "a.txt", "unborn", b"a").await;
     assert_current(&primary, &copy, &repo).await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     let current = codeyard_db_cluster::cluster::get_write_version(pool, repo.id())
         .await
@@ -1616,14 +1616,14 @@ async fn check_promotion(pool: &DbPool) {
     );
 
     assert!(
-        codeyard_app::cluster::replicas::promote::promote(pool, repo, Some(c), false)
+        codeyard_repos_core::cluster::replicas::promote::promote(pool, repo, Some(c), false)
             .await
             .is_err(),
         "a copy that is behind is refused"
     );
     assert_eq!(primary_of(pool, repo).await, a, "a refusal changes nothing");
 
-    let promoted = codeyard_app::cluster::replicas::promote::promote(pool, repo, None, false)
+    let promoted = codeyard_repos_core::cluster::replicas::promote::promote(pool, repo, None, false)
         .await
         .unwrap();
     assert_eq!(
@@ -1639,7 +1639,7 @@ async fn check_promotion(pool: &DbPool) {
     assert_eq!(primary_of(pool, repo).await, b);
 
     assert!(
-        codeyard_app::cluster::replicas::promote::promote(pool, repo, Some(c), true)
+        codeyard_repos_core::cluster::replicas::promote::promote(pool, repo, Some(c), true)
             .await
             .is_err(),
         "a copy that was never made cannot be promoted, even forced"
@@ -1656,7 +1656,7 @@ async fn check_promotion(pool: &DbPool) {
             .unwrap(),
         "a copy taken from the old primary is not recorded after the promotion"
     );
-    let forced = codeyard_app::cluster::replicas::promote::promote(pool, repo, Some(c), true)
+    let forced = codeyard_repos_core::cluster::replicas::promote::promote(pool, repo, Some(c), true)
         .await
         .unwrap();
     assert_eq!(
@@ -1699,7 +1699,7 @@ async fn check_promotion(pool: &DbPool) {
             .await
             .unwrap()
     );
-    let behind = codeyard_app::cluster::replicas::promote::promote(pool, ahead, Some(c), true)
+    let behind = codeyard_repos_core::cluster::replicas::promote::promote(pool, ahead, Some(c), true)
         .await
         .unwrap();
     assert_eq!(
@@ -1876,8 +1876,8 @@ async fn delete_names_the_promoted_primary_on_postgres() {
 
 #[tokio::test]
 async fn database_free_ci_checkout_uses_claimed_replica_targets() {
-    use codeyard_app::ci::queue::ClaimedRun;
-    use codeyard_app::ci::queue::RunQueue;
+    use codeyard_repos_core::ci::queue::ClaimedRun;
+    use codeyard_repos_core::ci::queue::RunQueue;
     use codeyard_ci::config::CiConfig;
     use codeyard_ci::config::CiExecutionMode;
     use codeyard_notifications::broadcast::NotificationBroadcaster;
@@ -1993,13 +1993,13 @@ async fn a_promoted_copy_takes_writes_and_the_old_primary_follows() {
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "moved").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     repo.save("main", "a.txt", "unborn", b"a").await;
     assert_current(&primary, &copy, &repo).await;
 
     let promotion =
-        codeyard_app::cluster::replicas::promote::promote(&database.pool, repo.id(), None, false)
+        codeyard_repos_core::cluster::replicas::promote::promote(&database.pool, repo.id(), None, false)
             .await
             .unwrap();
     assert_eq!(
@@ -2088,7 +2088,7 @@ async fn returning_former_primary_cleanup_on_postgres() {
     // free space, and the promotions below need every copy on `primary`.
     let replacement = start_storage(pool, root.path(), "store-c").await;
     for row in [&repo, &deleted] {
-        codeyard_app::cluster::replicas::promote::promote(
+        codeyard_repos_core::cluster::replicas::promote::promote(
             pool,
             row.id(),
             Some(primary.context.node_id),
@@ -2114,7 +2114,7 @@ async fn returning_former_primary_cleanup_on_postgres() {
     pass(&former).await;
     for row in [&repo, &deleted] {
         let uuid =
-            codeyard_app::cluster::rpc::repository::repository_uuid(&row.repository.disk_path)
+            codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.repository.disk_path)
                 .unwrap();
         assert!(
             !primary_path(&former, uuid).exists(),
@@ -2124,7 +2124,7 @@ async fn returning_former_primary_cleanup_on_postgres() {
     }
     assert!(primary_path(
         &former,
-        codeyard_app::cluster::rpc::repository::repository_uuid(&live.repository.disk_path)
+        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&live.repository.disk_path)
             .unwrap()
     )
     .is_dir());
@@ -2148,11 +2148,11 @@ async fn a_former_primary_with_a_copy_keeps_the_repository_through_cleanup() {
     let root = tempfile::tempdir().unwrap();
     let (former, primary) = two_storage_nodes(pool, root.path()).await;
     let repo = create_repository(pool, &former, "kept").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     repo.save("main", "README.md", "unborn", b"kept\n").await;
     assert_current(&former, &primary, &repo).await;
-    codeyard_app::cluster::replicas::promote::promote(
+    codeyard_repos_core::cluster::replicas::promote::promote(
         pool,
         repo.id(),
         Some(primary.context.node_id),
@@ -2183,11 +2183,11 @@ async fn a_former_primary_without_a_copy_row_drops_its_directory() {
     let root = tempfile::tempdir().unwrap();
     let (former, primary) = two_storage_nodes(pool, root.path()).await;
     let repo = create_repository(pool, &former, "dropped").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     repo.save("main", "README.md", "unborn", b"dropped\n").await;
     assert_current(&former, &primary, &repo).await;
-    codeyard_app::cluster::replicas::promote::promote(
+    codeyard_repos_core::cluster::replicas::promote::promote(
         pool,
         repo.id(),
         Some(primary.context.node_id),
@@ -2313,12 +2313,12 @@ async fn take_over(pool: &DbPool, node: i64, silent: &mut Silent, wait: Duration
     {
         if row.applied_version >= 0 {
             let uuid =
-                codeyard_app::cluster::rpc::repository::repository_uuid(&row.disk_path).unwrap();
+                codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path).unwrap();
             git2::Repository::init_bare(root.path().join("mirrors").join(format!("{uuid}.git")))
                 .unwrap();
         }
     }
-    codeyard_app::cluster::replicas::promote::take_over(pool, node, root.path(), silent, wait)
+    codeyard_repos_core::cluster::replicas::promote::take_over(pool, node, root.path(), silent, wait)
         .await
         .unwrap()
 }
@@ -2493,7 +2493,7 @@ async fn check_missing_copy_blocks_take_over(pool: &DbPool) {
         .iter()
         .map(|row| {
             let uuid =
-                codeyard_app::cluster::rpc::repository::repository_uuid(&row.disk_path).unwrap();
+                codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path).unwrap();
             root.path().join("mirrors").join(format!("{uuid}.git"))
         })
         .collect();
@@ -2502,7 +2502,7 @@ async fn check_missing_copy_blocks_take_over(pool: &DbPool) {
     }
     std::fs::remove_dir_all(&paths[1]).unwrap();
     let mut silent = Silent::default();
-    assert!(codeyard_app::cluster::replicas::promote::take_over(
+    assert!(codeyard_repos_core::cluster::replicas::promote::take_over(
         pool,
         b,
         root.path(),
@@ -2538,7 +2538,7 @@ async fn check_missing_copy_blocks_take_over(pool: &DbPool) {
 
     git2::Repository::init_bare(&paths[1]).unwrap();
     assert!(
-        codeyard_app::cluster::replicas::promote::take_over(
+        codeyard_repos_core::cluster::replicas::promote::take_over(
             pool,
             b,
             root.path(),
@@ -2554,7 +2554,7 @@ async fn check_missing_copy_blocks_take_over(pool: &DbPool) {
         .await
         .unwrap();
     assert_eq!(
-        codeyard_app::cluster::replicas::promote::take_over(
+        codeyard_repos_core::cluster::replicas::promote::take_over(
             pool,
             b,
             root.path(),
@@ -2592,7 +2592,7 @@ async fn lost_current_copies_are_rebuilt_without_a_primary_write() {
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
     let repo = create_repository(pool, &primary, "rebuild").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     let head = repo.save("main", "README.md", "unborn", b"survives").await;
     assert_current(&primary, &copy, &repo).await;
@@ -2643,7 +2643,7 @@ async fn lost_current_copies_are_rebuilt_without_a_primary_write() {
     );
     primary.shutdown().await;
     std::fs::remove_dir_all(&mirror).unwrap();
-    assert!(codeyard_app::cluster::replicas::promote::take_over(
+    assert!(codeyard_repos_core::cluster::replicas::promote::take_over(
         pool,
         copy_id,
         &copy.context.repos_path,
@@ -2713,7 +2713,7 @@ async fn a_copy_git_cannot_open_is_cleared_and_rebuilt() {
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
     let repo = create_repository(pool, &primary, "damaged").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     let head = repo.save("main", "README.md", "unborn", b"survives").await;
     assert_current(&primary, &copy, &repo).await;
@@ -2765,7 +2765,7 @@ async fn a_complete_copy_removes_stale_unusable_directories_only() {
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
     let repo = create_repository(pool, &primary, "stale").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     let head = repo.save("main", "README.md", "unborn", b"kept").await;
     assert_current(&primary, &copy, &repo).await;
@@ -2830,7 +2830,7 @@ async fn an_incremental_copy_clears_stale_unusable_directories_after_it_succeeds
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
     let repo = create_repository(pool, &primary, "incremental").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     let first = repo.save("main", "README.md", "unborn", b"one").await;
     assert_current(&primary, &copy, &repo).await;
@@ -2909,7 +2909,7 @@ async fn manual_promotion_reports_a_fork_inserted_after_its_family_snapshot() {
         .unwrap();
     let promote_pool = pool.clone();
     let task = tokio::spawn(async move {
-        codeyard_app::cluster::replicas::promote::promote(&promote_pool, source, Some(b), false)
+        codeyard_repos_core::cluster::replicas::promote::promote(&promote_pool, source, Some(b), false)
             .await
     });
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -2963,7 +2963,7 @@ async fn retiring_a_replica_removes_quarantined_directories_too() {
     let repo = create_repository(&database.pool, &primary, "quarantined").await;
     repo.save("main", "README.md", "unborn", b"one").await;
     assert_current(&primary, &copy, &repo).await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     let aside = copy_path(&copy, uuid).with_file_name(format!("{uuid}.git.unusable-123"));
     std::fs::create_dir(&aside).unwrap();
@@ -2992,7 +2992,7 @@ async fn check_default_target_is_reporting_in(pool: &DbPool) {
     add_copy(pool, repo, b, a, 0).await;
     add_copy(pool, repo, c, a, 0).await;
     assert_eq!(
-        codeyard_app::cluster::replicas::promote::promote(pool, repo, None, false)
+        codeyard_repos_core::cluster::replicas::promote::promote(pool, repo, None, false)
             .await
             .unwrap(),
         vec![Promotion {
@@ -3013,7 +3013,7 @@ async fn check_default_target_is_reporting_in(pool: &DbPool) {
     add_copy(pool, source, d, a, 0).await;
     add_copy(pool, source, e, a, 0).await;
     add_copy(pool, fork, e, a, 0).await;
-    let promoted = codeyard_app::cluster::replicas::promote::promote(pool, source, None, false)
+    let promoted = codeyard_repos_core::cluster::replicas::promote::promote(pool, source, None, false)
         .await
         .unwrap();
     assert_eq!(promoted.len(), 2);
@@ -3050,14 +3050,14 @@ async fn check_unreadable_copy_does_not_stop_takeover(pool: &DbPool) {
     let uuid = rows
         .iter()
         .find(|row| row.repository_id == unreadable)
-        .map(|row| codeyard_app::cluster::rpc::repository::repository_uuid(&row.disk_path).unwrap())
+        .map(|row| codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path).unwrap())
         .unwrap();
     let root = tempfile::tempdir().unwrap();
     let mirrors = root.path().join("mirrors");
     std::fs::create_dir_all(&mirrors).unwrap();
     // A file where the mirror belongs: Git cannot read it. `missing` has no mirror at all.
     std::fs::write(mirrors.join(format!("{uuid}.git")), b"not a repository").unwrap();
-    let taken = codeyard_app::cluster::replicas::promote::take_over(
+    let taken = codeyard_repos_core::cluster::replicas::promote::take_over(
         pool,
         b,
         root.path(),
@@ -3111,10 +3111,10 @@ async fn an_unreadable_copy_does_not_stop_the_others_from_being_rebuilt() {
     let first = create_repository(pool, &primary, "unreadable").await;
     let second = create_repository(pool, &primary, "rebuilt").await;
     let first_uuid =
-        codeyard_app::cluster::rpc::repository::repository_uuid(&first.repository.disk_path)
+        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&first.repository.disk_path)
             .unwrap();
     let second_uuid =
-        codeyard_app::cluster::rpc::repository::repository_uuid(&second.repository.disk_path)
+        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&second.repository.disk_path)
             .unwrap();
     let first_head = first.save("main", "README.md", "unborn", b"first").await;
     let second_head = second.save("main", "README.md", "unborn", b"second").await;
@@ -3161,7 +3161,7 @@ async fn a_copy_takes_over_when_its_primary_stops() {
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "failover").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     repo.save("main", "a.txt", "unborn", b"a").await;
     assert_current(&primary, &copy, &repo).await;
@@ -3169,7 +3169,7 @@ async fn a_copy_takes_over_when_its_primary_stops() {
     let pool = &database.pool;
     let take = || async {
         let mut silent = Silent::default();
-        codeyard_app::cluster::replicas::promote::take_over(
+        codeyard_repos_core::cluster::replicas::promote::take_over(
             pool,
             copy_id,
             &copy.context.repos_path,
@@ -3231,7 +3231,7 @@ async fn check_fork_family_promotion(pool: &DbPool) {
         lost_writes: 0,
     };
     let promoted =
-        codeyard_app::cluster::replicas::promote::promote(pool, fork, Some(b), false).await;
+        codeyard_repos_core::cluster::replicas::promote::promote(pool, fork, Some(b), false).await;
     assert_eq!(
         promoted.unwrap(),
         vec![moved(source), moved(fork), moved(fork_of_fork)]
@@ -3260,7 +3260,7 @@ async fn check_fork_family_promotion(pool: &DbPool) {
     for repo in [reffork, refforkfork] {
         add_copy(pool, repo, e, d, 0).await;
     }
-    let error = codeyard_app::cluster::replicas::promote::promote(pool, refsource, Some(f), false)
+    let error = codeyard_repos_core::cluster::replicas::promote::promote(pool, refsource, Some(f), false)
         .await
         .unwrap_err();
     assert_eq!(
@@ -3269,7 +3269,7 @@ async fn check_fork_family_promotion(pool: &DbPool) {
     );
     // `--force` accepts a split family: the members that have no copy on the target stay.
     let forced =
-        codeyard_app::cluster::replicas::promote::promote(pool, refsource, Some(f), true).await;
+        codeyard_repos_core::cluster::replicas::promote::promote(pool, refsource, Some(f), true).await;
     assert_eq!(
         forced.unwrap(),
         vec![Promotion {
@@ -3295,7 +3295,7 @@ async fn check_fork_family_promotion(pool: &DbPool) {
             .await
             .unwrap()
     );
-    let error = codeyard_app::cluster::replicas::promote::promote(pool, never_fork, Some(h), true)
+    let error = codeyard_repos_core::cluster::replicas::promote::promote(pool, never_fork, Some(h), true)
         .await
         .unwrap_err();
     assert_eq!(
@@ -3476,8 +3476,8 @@ async fn promote_all_from_moves_a_fork_family_once() {
 }
 
 /// A node that serves only web requests. It asks the storage nodes for repository data.
-async fn web_node(pool: &DbPool, root: &Path) -> codeyard_app::cluster::Cluster {
-    let node = codeyard_app::cluster::start(
+async fn web_node(pool: &DbPool, root: &Path) -> codeyard_repos_core::cluster::Cluster {
+    let node = codeyard_repos_core::cluster::start(
         pool,
         &root.join("web-state"),
         &root.join("web-repos"),
@@ -3515,7 +3515,7 @@ async fn reads_are_served_by_a_copy_while_the_primary_is_down() {
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "failover").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     let head = repo
         .save("main", "README.md", "unborn", b"# failover\n")
@@ -3600,7 +3600,7 @@ async fn git_fetches_use_the_primary_instead_of_a_lagging_copy() {
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "current-clone").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     let base = repo.save("main", "README.md", "unborn", b"base\n").await;
     assert_current(&primary, &copy, &repo).await;
@@ -3689,7 +3689,7 @@ async fn a_pull_request_refresh_does_not_read_heads_from_a_lagging_copy() {
     .unwrap();
     primary.shutdown().await;
 
-    let ci = codeyard_app::ci::runs::CiRuns::new(
+    let ci = codeyard_repos_core::ci::runs::CiRuns::new(
         pool.clone(),
         Arc::new(CiConfig::default()),
         Arc::new(tokio::sync::Notify::new()),
@@ -3697,7 +3697,7 @@ async fn a_pull_request_refresh_does_not_read_heads_from_a_lagging_copy() {
         Arc::new(codeyard_notifications::broadcast::NotificationBroadcaster::new(pool)),
     );
     // The refs must come from the primary, which is down. The refresh fails and writes nothing.
-    let refreshed = codeyard_app::repositories::pull_requests::branches::refresh_open_pull_request(
+    let refreshed = codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_request(
         pool,
         &repo.repository,
         &ci,
@@ -3708,7 +3708,7 @@ async fn a_pull_request_refresh_does_not_read_heads_from_a_lagging_copy() {
     .await;
     assert!(matches!(
         refreshed,
-        Err(codeyard_app::repositories::pull_requests::branches::RefreshError::Storage)
+        Err(codeyard_repos_core::repositories::pull_requests::branches::RefreshError::Storage)
     ));
     let recorded = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull.id)
         .await
@@ -3767,13 +3767,13 @@ async fn a_read_aimed_at_the_old_primary_reaches_the_promoted_copy() {
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "moved-away").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     repo.save("main", "README.md", "unborn", b"# moved\n").await;
     assert_current(&primary, &copy, &repo).await;
     let primary_id = primary.context.node_id;
     primary.shutdown().await;
-    codeyard_app::cluster::replicas::promote::promote(&database.pool, repo.id(), None, false)
+    codeyard_repos_core::cluster::replicas::promote::promote(&database.pool, repo.id(), None, false)
         .await
         .unwrap();
     pass(&copy).await;
@@ -3816,7 +3816,7 @@ async fn a_copy_holder_reads_its_own_copy_while_the_primary_is_down() {
     // and it cannot dial itself.
     let copy = start_node(&database.pool, root.path(), "store-b", "web,storage").await;
     let repo = create_repository(&database.pool, &primary, "own-copy").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     let head = repo.save("main", "README.md", "unborn", b"# own\n").await;
     assert_current(&primary, &copy, &repo).await;
@@ -3894,7 +3894,7 @@ async fn unreadable_fallbacks_are_skipped_but_an_answering_primary_is_not() {
     ));
     let client = http::Client::anonymous(&router);
     let url = "/api/repos/unreadable_owner/unreadable/raw/main/README.md";
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     repo.save("main", "README.md", "unborn", b"healthy").await;
     assert_current(&primary, &first, &repo).await;
@@ -3977,13 +3977,13 @@ async fn a_moved_primary_that_answers_is_final_even_when_a_copy_could_serve() {
         .await
         .unwrap());
     let repo = create_repository(pool, &old, "moved").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     repo.save("main", "README.md", "unborn", b"healthy").await;
     assert_current(&old, &new, &repo).await;
     pass(&copy).await;
     // The new primary takes the repository over and moves its copy into place.
-    codeyard_app::cluster::replicas::promote::promote(
+    codeyard_repos_core::cluster::replicas::promote::promote(
         pool,
         repo.id(),
         Some(new.context.node_id),
@@ -4038,7 +4038,7 @@ async fn a_read_moves_on_when_the_own_copy_cannot_serve() {
     let own = start_node(&database.pool, root.path(), "store-b", "web,storage").await;
     let other = start_storage(&database.pool, root.path(), "store-c").await;
     let repo = create_repository(&database.pool, &primary, "skip-own").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     let head = repo.save("main", "README.md", "unborn", b"# skip\n").await;
     assert_current(&primary, &own, &repo).await;
@@ -4112,7 +4112,7 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
     assert_current(&primary, &copy, &repo).await;
     repo.save("topic", "new.txt", &head, b"new head\n").await;
     primary.shutdown().await;
-    let store = codeyard_app::repositories::store::repo_store(&repo.repository, Some(&web.context));
+    let store = codeyard_repos_core::repositories::store::repo_store(&repo.repository, Some(&web.context));
     assert!(store
         .commit("refs/heads/topic")
         .await
@@ -4143,7 +4143,7 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
     .unwrap_err();
     assert!(matches!(
         error,
-        codeyard_app::repositories::pull_requests::OperationError::Unavailable {
+        codeyard_repos_core::repositories::pull_requests::OperationError::Unavailable {
             code: "git_unavailable",
             ..
         }
@@ -4173,7 +4173,7 @@ async fn writes_are_refused_while_the_primary_is_down() {
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "writes").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     let head = repo
         .save("main", "README.md", "unborn", b"# writes\n")
@@ -4251,7 +4251,7 @@ async fn a_node_without_a_copy_row_refuses_reads() {
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "outside").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     let head = repo.save("main", "a.txt", "unborn", b"a").await;
     // Assign the copy while there is only one eligible holder.
@@ -4314,7 +4314,7 @@ async fn a_read_without_a_copy_that_has_copied_is_unavailable() {
     // The copy row exists, but the copy has never been brought up to date.
     let copying = create_repository(&database.pool, &primary, "copying").await;
     let copying_uuid =
-        codeyard_app::cluster::rpc::repository::repository_uuid(&copying.repository.disk_path)
+        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&copying.repository.disk_path)
             .unwrap();
     copying.save("main", "a.txt", "unborn", b"a").await;
     pass(&primary).await;
@@ -4325,7 +4325,7 @@ async fn a_read_without_a_copy_that_has_copied_is_unavailable() {
     // This repository has no copy row at all.
     let uncopied = create_repository(&database.pool, &primary, "uncopied").await;
     let uncopied_uuid =
-        codeyard_app::cluster::rpc::repository::repository_uuid(&uncopied.repository.disk_path)
+        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&uncopied.repository.disk_path)
             .unwrap();
     let primary_id = primary.context.node_id;
     primary.shutdown().await;
@@ -4353,7 +4353,7 @@ async fn a_not_found_from_the_primary_does_not_fail_over() {
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "answers").await;
-    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
+    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     let head = repo
         .save("main", "README.md", "unborn", b"# answers\n")

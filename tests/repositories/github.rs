@@ -562,7 +562,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repository_row = codeyard_app::repositories::lifecycle::provision(
+    let repository_row = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -2793,7 +2793,7 @@ async fn update_contract(pg: bool) {
     assert_eq!(current["description"], "Updated");
     assert_eq!(current["homepage"], "https://example.test/");
     let repo = f.repository(created["id"].as_i64().unwrap()).await;
-    let refs = codeyard_app::repositories::store::repo_store(&repo, None)
+    let refs = codeyard_repos_core::repositories::store::repo_store(&repo, None)
         .refs()
         .await
         .unwrap();

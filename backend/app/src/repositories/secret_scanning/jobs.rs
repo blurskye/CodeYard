@@ -1,6 +1,6 @@
 //! Durable scan work survives process restarts; Git reads go through the repository store.
 use crate::app::AppState;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
@@ -122,7 +122,7 @@ pub async fn emit_alert(
             .context("Repository owner unavailable")?;
     let document = document(state, alert, &owner, &repo.name, true).await?;
     let repository = codeyard_webhooks::payloads::repository(repo, &owner);
-    crate::webhooks::emit(
+    codeyard_repos_core::webhooks::emit(
         &state.pool,
         repo,
         "secret_scanning_alert",
@@ -134,7 +134,7 @@ pub async fn emit_alert(
 }
 
 async fn commit_target(
-    store: &crate::repositories::store::RepoStore,
+    store: &codeyard_repos_core::repositories::store::RepoStore,
     sha: &str,
 ) -> Result<Option<String>> {
     let mut object = sha.to_owned();
@@ -339,7 +339,7 @@ async fn scan_job(
                         let location = codeyard_webhooks::payloads::secret_scanning_location(
                             &location, &owner, &repo.name,
                         );
-                        crate::webhooks::emit(&state.pool, &repo, "secret_scanning_alert_location", actor.into_iter().collect(), move |_, people| json!({"action":"created","alert":document,"location":location,"repository":repository,"sender":actor.map(|actor| codeyard_webhooks::payloads::person(&people.get(actor))).unwrap_or(Value::Null)})).await;
+                        codeyard_repos_core::webhooks::emit(&state.pool, &repo, "secret_scanning_alert_location", actor.into_iter().collect(), move |_, people| json!({"action":"created","alert":document,"location":location,"repository":repository,"sender":actor.map(|actor| codeyard_webhooks::payloads::person(&people.get(actor))).unwrap_or(Value::Null)})).await;
                     }
                 }
             }

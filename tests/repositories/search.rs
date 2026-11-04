@@ -11,9 +11,9 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 
-use codeyard_app::repositories::lifecycle::provision;
-use codeyard_app::repositories::store::repo_store;
-use codeyard_app::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::lifecycle::provision;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;

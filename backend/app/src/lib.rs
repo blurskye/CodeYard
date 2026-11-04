@@ -6,9 +6,7 @@ pub mod artifact_metadata;
 
 pub mod backups;
 
-pub mod ci;
 
-pub mod cluster;
 
 pub mod code_scanning;
 
@@ -30,6 +28,6 @@ pub mod repositories;
 
 pub mod vulnerabilities;
 
-pub mod webhooks;
 
 pub mod zip_archives;
+pub mod webhook_payloads;

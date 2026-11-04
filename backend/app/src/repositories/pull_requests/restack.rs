@@ -3,18 +3,18 @@
 //! transaction after all layers have replayed, so a conflict or a failed check moves nothing. A
 //! stack that changed while the layers replayed is refused too: see `publish_rebase`.
 
-use crate::ci::push::RefUpdate;
-use crate::ci::runs::CiRuns;
-use crate::repositories::pull_requests::actor;
-use crate::repositories::pull_requests::branches::branches_moved;
-use crate::repositories::pull_requests::database_error;
+use codeyard_repos_core::ci::push::RefUpdate;
+use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::repositories::pull_requests::actor;
+use codeyard_repos_core::repositories::pull_requests::branches::branches_moved;
+use codeyard_repos_core::repositories::pull_requests::database_error;
 use crate::repositories::pull_requests::merge::open_chain;
 use crate::repositories::pull_requests::merge::prepare_error;
-use crate::repositories::pull_requests::require_write;
-use crate::repositories::pull_requests::OperationError;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::repositories::pull_requests::require_write;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::RestackMove;
-use crate::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_repos::pull_requests::records::MAX_STACK_LAYERS;
 use codeyard_git::error::ErrorKind;

@@ -1,6 +1,6 @@
 //! Every repository operation, with whether a worker may read it while claimed.
 use codeyard_repos_core::wire::Operation;
-use codeyard_app::repositories::git_sessions::ReceiveCredential;
+use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
 use codeyard_repos_core::store_types::GitService;
 use codeyard_repos_core::store_types::GitSession;
 use codeyard_repos_core::store_types::MergeMethod;

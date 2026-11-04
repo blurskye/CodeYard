@@ -22,7 +22,7 @@ async fn contract(pg: bool) {
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    codeyard_app::repositories::lifecycle::provision(
+    codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

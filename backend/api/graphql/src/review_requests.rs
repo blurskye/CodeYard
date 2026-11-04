@@ -266,7 +266,7 @@ pub(super) async fn mutation(
     if user_ids.len() + team_ids.len() > 100 {
         return Err(Error::new("At most 100 reviewers are allowed"));
     }
-    codeyard_app::repositories::pull_requests::team_reviewers::set_requests(
+    codeyard_repos_core::repositories::pull_requests::team_reviewers::set_requests(
         pool,
         &request.state.notification_broadcaster,
         actor,

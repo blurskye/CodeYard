@@ -4,7 +4,7 @@ use crate::gists::failure_store;
 use axum::response::IntoResponse;
 use codeyard_app::app::AppState;
 use codeyard_app::gists::LoadedGist;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use serde_json::json;
 use serde_json::Map;
 use serde_json::Value;
@@ -127,7 +127,7 @@ pub(super) async fn history(
         .iter()
         .map(|revision| revision.author_email.clone())
         .collect::<Vec<_>>();
-    let authors = codeyard_app::repositories::reads::commit_authors(&state.pool, &emails)
+    let authors = codeyard_repos_core::repositories::reads::commit_authors(&state.pool, &emails)
         .await
         .map_err(Error::unavailable)?;
     let mut entries = Vec::new();

@@ -108,9 +108,9 @@ fn failure(error: anyhow::Error) -> Error {
     }
 }
 async fn read(state: Arc<AppState>, headers: HeaderMap, scope: ScopeName) -> Result<Response> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let scope = resolve(&state, &actor.user, scope).await?;
     let restriction =
         codeyard_db_identity::interactions::get_restriction(&state.pool, actor.user.id, scope)
@@ -130,9 +130,9 @@ async fn save(
     scope: ScopeName,
     input: Option<std::result::Result<Json<NewRestriction>, JsonRejection>>,
 ) -> Result<Response> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     actor.require_write()?;
     let scope = resolve(&state, &actor.user, scope).await?;
     let removing = input.is_none();

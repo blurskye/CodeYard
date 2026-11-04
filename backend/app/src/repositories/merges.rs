@@ -1,11 +1,11 @@
 //! Direct branch merges use normal ref-admission policy, not pull-request approval authority.
 
-use crate::ci::push::RefUpdate;
-use crate::ci::runs::CiRuns;
+use codeyard_repos_core::ci::push::RefUpdate;
+use codeyard_repos_core::ci::runs::CiRuns;
 use codeyard_repos_core::context::NodeContext;
-use crate::repositories::refs::publication_error;
-use crate::repositories::refs::RefError;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::repositories::refs::publication_error;
+use codeyard_repos_core::repositories::refs::RefError;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::BranchMergePublication;
 use codeyard_repos_core::store_types::MergeMethod;
 use codeyard_repos_core::store_types::MergeRequest;
@@ -156,7 +156,7 @@ pub async fn merge_branch(
             Err(RefError::AppliedFollowupFailed) => true,
             Err(error) => return Err(error),
         };
-        let refreshed = crate::repositories::pull_requests::branches::refresh_open_pull_requests(
+        let refreshed = codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
             &pool,
             &repository,
             Some(&[base_name.as_str()]),

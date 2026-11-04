@@ -22,7 +22,7 @@ pub(super) async fn exercise(
     .await
     .unwrap();
     // Fork provisioning is fixture setup through the same domain operation as the web form.
-    let fork = codeyard_app::repositories::lifecycle::fork(
+    let fork = codeyard_repos_core::repositories::lifecycle::fork(
         &state.pool,
         None,
         &state.repos_path,

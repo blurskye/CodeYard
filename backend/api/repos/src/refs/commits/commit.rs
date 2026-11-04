@@ -17,7 +17,7 @@ use codeyard_api_http::shared::repos::chrome::commit;
 use codeyard_api_http::shared::repos::chrome::store_error;
 use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::DiffInfo;
 use codeyard_identity::repository_access::AccessError;
 use codeyard_webui::pages::repos as view;
@@ -47,7 +47,7 @@ pub async fn get_commit(
         .await
         .map_err(|e| crate::responses::repo_store_error(e, StatusCode::INTERNAL_SERVER_ERROR))?;
 
-    let author = codeyard_app::repositories::reads::commit_authors(
+    let author = codeyard_repos_core::repositories::reads::commit_authors(
         &state.pool,
         std::slice::from_ref(&commit_info.author_email),
     )

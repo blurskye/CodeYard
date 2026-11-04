@@ -15,12 +15,12 @@ pub async fn repository(
     write: bool,
 ) -> Result<(
     codeyard_db_core::models::Repository,
-    Option<crate::api_shared::github::auth::Authentication>,
+    Option<codeyard_repos_core::api_shared::github::auth::Authentication>,
 )> {
-    let auth = crate::api_shared::github::auth::authenticate(state, headers, write).await?;
+    let auth = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, write).await?;
     if write {
         auth.as_ref()
-            .ok_or_else(crate::api_shared::github::auth::required)?
+            .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
             .require_write()?;
     }
     let repo = codeyard_db_repos::repositories::records::get_repository(&state.pool, owner, name)
@@ -55,13 +55,9 @@ pub async fn missing() -> Error {
     Error::missing()
 }
 
-pub mod auth;
 
-pub mod checks;
 
-pub mod comments;
 
-pub mod contents;
 
 pub mod issues;
 

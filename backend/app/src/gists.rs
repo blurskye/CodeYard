@@ -1,7 +1,7 @@
 //! Gists reuse repository placement, Git objects and transport. SQL admission precedes the ref
 //! publication; durable pending writes reconcile lost responses without claiming cross-store rollback.
 use crate::app::AppState;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
@@ -137,7 +137,7 @@ async fn discard(state: &AppState, repo: i64, orphan_only: bool) -> Result<bool>
     if let Some(repository) =
         codeyard_db_repos::gists::discard(&state.pool, repo, orphan_only).await?
     {
-        crate::repositories::lifecycle::remove_deleted_repository(
+        codeyard_repos_core::repositories::lifecycle::remove_deleted_repository(
             state.cluster.as_ref(),
             &repository,
         )
@@ -185,7 +185,7 @@ pub async fn create(
     complete(&state, async move {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let name = format!("gist-{id}");
-        let repo = crate::repositories::lifecycle::provision_gist(
+        let repo = codeyard_repos_core::repositories::lifecycle::provision_gist(
             (&work.pool, work.cluster.as_ref()),
             &work.repos_path,
             RepositoryCreationOwner {
@@ -267,7 +267,7 @@ pub async fn fork(
         ensure!(source.gist.owner_id != actor, GistRefusal::Invalid);
         let id = uuid::Uuid::new_v4().simple().to_string();
         let name = format!("gist-{id}");
-        let repo = crate::repositories::lifecycle::provision_gist(
+        let repo = codeyard_repos_core::repositories::lifecycle::provision_gist(
             (&work.pool, work.cluster.as_ref()),
             &work.repos_path,
             RepositoryCreationOwner {
@@ -316,7 +316,7 @@ pub async fn delete(
             gist.repo_id,
         )
         .await?;
-        crate::repositories::lifecycle::remove_deleted_repository(
+        codeyard_repos_core::repositories::lifecycle::remove_deleted_repository(
             work.cluster.as_ref(),
             &repository,
         )

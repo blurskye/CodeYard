@@ -7,7 +7,7 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
 
-use codeyard_app::repositories::lifecycle;
+use codeyard_repos_core::repositories::lifecycle;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::repos;
 use database::Database;

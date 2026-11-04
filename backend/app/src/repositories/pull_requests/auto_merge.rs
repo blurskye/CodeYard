@@ -2,9 +2,9 @@
 //! background check then merges it through the ordinary merge path, as that writer, so
 //! reviews, checks and branch protection apply exactly as they do to a merge button.
 use crate::app::AppState;
-use crate::repositories::pull_requests::actor;
-use crate::repositories::pull_requests::require_write;
-use crate::repositories::pull_requests::OperationError;
+use codeyard_repos_core::repositories::pull_requests::actor;
+use codeyard_repos_core::repositories::pull_requests::require_write;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
 use codeyard_repos_core::store_types::MergeMethod;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_repos::pull_requests::auto_merge::AutoMerge;
@@ -88,7 +88,7 @@ pub async fn enable(
         request.expected_head.as_deref(),
     )
     .await
-    .map_err(crate::repositories::pull_requests::write_error)
+    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)
 }
 
 /// Turns auto-merge off for `pull`. Turning it off twice is not an error.

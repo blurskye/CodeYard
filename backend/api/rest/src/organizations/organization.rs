@@ -1099,7 +1099,7 @@ async fn delete_with_repositories(
     .await
     .map_err(|error| {
         if let Some(error) =
-            error.downcast_ref::<codeyard_app::repositories::lifecycle::StorageError>()
+            error.downcast_ref::<codeyard_repos_core::repositories::lifecycle::StorageError>()
         {
             ctx.error(StatusCode::CONFLICT, error.message)
         } else {

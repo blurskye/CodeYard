@@ -15,10 +15,10 @@ use axum::routing::patch;
 use axum::routing::put;
 use axum::routing::MethodRouter;
 use axum::Json;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_repos::source_imports::SourceImport;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
@@ -59,10 +59,10 @@ async fn administrator(
     write: bool,
 ) -> Result<(
     codeyard_db_core::models::Repository,
-    codeyard_app::api_shared::github::auth::Authentication,
+    codeyard_repos_core::api_shared::github::auth::Authentication,
 )> {
     let (repo, actor) = repository(state, headers, owner, name, write).await?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     if !codeyard_identity::repository_access::can_admin(&state.pool, &actor.user, &repo)
         .await
         .map_err(Error::unavailable)?
@@ -127,7 +127,7 @@ fn credentials(input: &Input) -> Result<Option<codeyard_repos::imports::Credenti
 async fn begin(
     state: Arc<AppState>,
     repo: codeyard_db_core::models::Repository,
-    actor: codeyard_app::api_shared::github::auth::Authentication,
+    actor: codeyard_repos_core::api_shared::github::auth::Authentication,
     input: Input,
     url: &str,
 ) -> Result<SourceImport> {

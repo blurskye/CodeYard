@@ -82,7 +82,7 @@ impl Core {
         )
         .accept(ALPN_RPC, Echo)
         .spawn();
-        codeyard_app::cluster::wait_for_address(router.endpoint()).await;
+        codeyard_repos_core::cluster::wait_for_address(router.endpoint()).await;
         let address = router.endpoint().addr();
         assert!(
             address.ip_addrs().count() > 0,
@@ -309,7 +309,7 @@ async fn adopting_takes_only_the_repositories_whose_directories_are_here() {
     let elsewhere = make("elsewhere", false).await;
 
     assert_eq!(
-        codeyard_app::cluster::adopt_repositories(&db.pool, node.id, root.path())
+        codeyard_repos_core::cluster::adopt_repositories(&db.pool, node.id, root.path())
             .await
             .unwrap(),
         1
@@ -327,7 +327,7 @@ async fn adopting_takes_only_the_repositories_whose_directories_are_here() {
     assert_eq!(placed(elsewhere.id).await.storage_node_id, None);
     // Nothing is left to take, and a placed repository never moves.
     assert_eq!(
-        codeyard_app::cluster::adopt_repositories(&db.pool, node.id, root.path())
+        codeyard_repos_core::cluster::adopt_repositories(&db.pool, node.id, root.path())
             .await
             .unwrap(),
         0
@@ -803,7 +803,7 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
     let state_b = tempfile::tempdir().unwrap();
 
     // A core node registers itself and publishes where it can be reached.
-    let core = codeyard_app::cluster::start(
+    let core = codeyard_repos_core::cluster::start(
         &db.pool,
         state_a.path(),
         state_a.path(),
@@ -842,7 +842,7 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
     );
 
     // Placement picks the published storage node, and no other.
-    let placed = codeyard_app::cluster::placement::storage_node(Some(&core.context), None)
+    let placed = codeyard_repos_core::cluster::placement::storage_node(Some(&core.context), None)
         .await
         .unwrap();
     assert_eq!(placed, Some(row.id));
@@ -854,7 +854,7 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
         .unwrap();
     assert!(row.last_seen.is_none() && !row.is_online());
     assert!(
-        codeyard_app::cluster::placement::storage_node(Some(&core.context), None)
+        codeyard_repos_core::cluster::placement::storage_node(Some(&core.context), None)
             .await
             .is_err()
     );
@@ -875,7 +875,7 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
     .unwrap();
 
     // A second node starts with the ticket as its join token and pairs itself.
-    let worker = codeyard_app::cluster::start(
+    let worker = codeyard_repos_core::cluster::start(
         &db.pool,
         state_b.path(),
         state_b.path(),
@@ -902,7 +902,7 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
 
     // After a restart the saved key is recognised: no second join, and the used-up
     // one-time token is not needed.
-    let worker = codeyard_app::cluster::start(
+    let worker = codeyard_repos_core::cluster::start(
         &db.pool,
         state_b.path(),
         state_b.path(),
@@ -926,7 +926,7 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
     codeyard_cluster::pairing::revoke(&db.pool, Authority::Operator, "store-b")
         .await
         .unwrap();
-    let error = match codeyard_app::cluster::start(
+    let error = match codeyard_repos_core::cluster::start(
         &db.pool,
         state_b.path(),
         state_b.path(),
@@ -957,7 +957,7 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
     .await
     .unwrap();
     let state_c = tempfile::tempdir().unwrap();
-    let waiting = codeyard_app::cluster::start(
+    let waiting = codeyard_repos_core::cluster::start(
         &db.pool,
         state_c.path(),
         state_c.path(),
@@ -1001,7 +1001,7 @@ async fn advertised_addresses_are_what_peers_are_told_to_dial() {
         codeyard_cluster::transport::bind(&listen, &NodeKey::generate(), database.pool.clone())
             .await
             .unwrap();
-    codeyard_app::cluster::wait_for_address(&endpoint).await;
+    codeyard_repos_core::cluster::wait_for_address(&endpoint).await;
     let told = NodeAddress::of(&endpoint.addr());
     for address in &advertise {
         assert!(
@@ -1053,7 +1053,7 @@ async fn sqlite_installations_refuse_every_cluster_action() {
         );
     }
     // Starting refuses before it creates a key or opens a socket.
-    let result = codeyard_app::cluster::start(
+    let result = codeyard_repos_core::cluster::start(
         &sqlite.pool,
         directory.path(),
         directory.path(),
@@ -1546,7 +1546,7 @@ async fn withdrawing_gives_up_when_the_node_row_is_locked() {
         .await
         .unwrap();
     let state = tempfile::tempdir().unwrap();
-    let core = codeyard_app::cluster::start(
+    let core = codeyard_repos_core::cluster::start(
         &db.pool,
         state.path(),
         state.path(),

@@ -6,7 +6,7 @@ use crate::Result;
 use base64::engine::general_purpose::STANDARD;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_model::node_id;
@@ -210,7 +210,7 @@ pub(super) async fn reference_field(
     }
     let head = crate::arg(args, "headRef")?;
     let (source, head) = if let Some((owner, branch)) = head.split_once(':') {
-        let source = codeyard_app::repositories::pull_requests::branches::owner_head_repository(
+        let source = codeyard_repos_core::repositories::pull_requests::branches::owner_head_repository(
             &request.state.pool,
             &repo,
             owner,
@@ -219,7 +219,7 @@ pub(super) async fn reference_field(
         .map_err(unavailable)?
         .ok_or_else(missing)?;
         let source = crate::repository::by_id(source.id, request).await?;
-        if !codeyard_app::repositories::reads::same_fork_network(
+        if !codeyard_repos_core::repositories::reads::same_fork_network(
             &request.state.pool,
             &repo,
             &source,

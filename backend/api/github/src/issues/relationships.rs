@@ -43,14 +43,14 @@ async fn root(pool: &codeyard_db_core::DbPool, repo: i64, p: &Params) -> Result<
 /// A linked issue may sit in another repository, which the credential must reach as well.
 async fn document(
     state: &AppState,
-    auth: Option<&codeyard_app::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
     id: i64,
 ) -> Result<Value> {
     let issue = codeyard_db_repos::issues::get_issue_by_id(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    if codeyard_app::api_shared::github::auth::readable_repositories(
+    if codeyard_repos_core::api_shared::github::auth::readable_repositories(
         state,
         auth,
         &[issue.repo_id],
@@ -70,9 +70,9 @@ async fn document(
         codeyard_db_repos::repositories::records::repository_owner_names(&state.pool, &[repo.id])
             .await
             .map_err(Error::unavailable)?;
-    codeyard_app::api_shared::github::issues::document(
+    codeyard_repos_core::api_shared::github::issues::document(
         &state.pool,
-        codeyard_app::api_shared::github::issues::Reader::Request(state, auth),
+        codeyard_repos_core::api_shared::github::issues::Reader::Request(state, auth),
         &repo,
         owners.get(&repo.id).ok_or_else(Error::missing)?,
         AssignedItem::Issue(id),
@@ -125,7 +125,7 @@ async fn list(
         let mut ids: Vec<_> = batch.iter().map(|link| link.repo_id).collect();
         ids.sort_unstable();
         ids.dedup();
-        let readable = codeyard_app::api_shared::github::auth::readable_repositories(
+        let readable = codeyard_repos_core::api_shared::github::auth::readable_repositories(
             &state,
             auth.as_ref(),
             &ids,
@@ -180,7 +180,7 @@ async fn apply(
     mutation: Mutation,
 ) -> Result<Value> {
     let (repo, auth) = repository(state, headers, &p["owner"], &p["repo"], true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let root = root(&state.pool, repo.id, p).await?;
     let other = match mutation {
         Mutation::Add { other, .. } | Mutation::Remove { other, .. } => other,

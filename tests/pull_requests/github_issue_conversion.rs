@@ -6,7 +6,7 @@ use crate::support::http_client::Client;
 use axum::{http::StatusCode, Router};
 use base64::Engine;
 
-use codeyard_app::repositories::lifecycle;
+use codeyard_repos_core::repositories::lifecycle;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
@@ -573,7 +573,7 @@ async fn contract(pg: bool) {
         StatusCode::UNPROCESSABLE_ENTITY,
     )
     .await;
-    let repaired = codeyard_app::repositories::store::repo_store(&repo, None)
+    let repaired = codeyard_repos_core::repositories::store::repo_store(&repo, None)
         .commit_from_primary(&reference)
         .await
         .unwrap();
@@ -954,12 +954,12 @@ async fn contract(pg: bool) {
     assert_eq!(frozen.head_publisher_id, Some(carol_id));
     assert_eq!(frozen.author_id, alice_id);
     assert_eq!(frozen.head_sha, next["sha"].as_str().unwrap());
-    let live_source = codeyard_app::repositories::store::repo_store(&fork, None)
+    let live_source = codeyard_repos_core::repositories::store::repo_store(&fork, None)
         .commit_from_primary("refs/heads/separate")
         .await
         .unwrap();
     assert_ne!(live_source.sha, frozen.head_sha);
-    let published = codeyard_app::repositories::store::repo_store(&repo, None)
+    let published = codeyard_repos_core::repositories::store::repo_store(&repo, None)
         .commit_from_primary(&format!("refs/pull/{}/head", source.number))
         .await
         .unwrap();
@@ -985,7 +985,7 @@ async fn contract(pg: bool) {
     .unwrap()
     .unwrap();
     assert_ne!(updated.head_sha, frozen.head_sha);
-    let published = codeyard_app::repositories::store::repo_store(&repo, None)
+    let published = codeyard_repos_core::repositories::store::repo_store(&repo, None)
         .commit_from_primary(&format!("refs/pull/{}/head", source.number))
         .await
         .unwrap();

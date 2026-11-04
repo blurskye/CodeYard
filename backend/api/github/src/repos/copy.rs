@@ -60,7 +60,7 @@ async fn fork(
     OptionalJson(body): OptionalJson<Value>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (source, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = &auth.user;
     let input = body
         .map(serde_json::from_value::<Option<Fork>>)
@@ -73,12 +73,12 @@ async fn fork(
         None => RepositoryCreationOwner::personal(actor.id),
     };
     crate::auth::require_copy_owner(&state, &auth, target.target).await?;
-    let repo = codeyard_app::repositories::lifecycle::fork_into(
+    let repo = codeyard_repos_core::repositories::lifecycle::fork_into(
         &state.pool,
         state.cluster.as_ref(),
         &state.repos_path,
         &state.notification_broadcaster,
-        codeyard_app::repositories::lifecycle::ForkOptions {
+        codeyard_repos_core::repositories::lifecycle::ForkOptions {
             owner: target,
             name: input.name.as_deref(),
             default_branch_only: input.default_branch_only,
@@ -114,15 +114,15 @@ async fn generate(
 ) -> Result<(StatusCode, Json<Value>)> {
     let (source, actor) =
         repository(&state, &headers, &template_owner, &template_name, true).await?;
-    let auth = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let target = owner(&state, &auth.user, input.owner.as_deref()).await?;
     crate::auth::require_copy_owner(&state, &auth, target.target).await?;
-    let repo = codeyard_app::repositories::lifecycle::generate(
+    let repo = codeyard_repos_core::repositories::lifecycle::generate(
         (&state.pool, state.cluster.as_ref()),
         &state.repos_path,
         target,
         source.id,
-        codeyard_app::repositories::lifecycle::TemplateOptions {
+        codeyard_repos_core::repositories::lifecycle::TemplateOptions {
             name: &input.name,
             description: input.description.as_deref(),
             private: input.private,

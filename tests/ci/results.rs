@@ -182,7 +182,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("results_alice").await;
     let bob = f.actor("results_bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -197,7 +197,7 @@ async fn contract(pg: bool) {
     let (main, main_token) = run(&f, repo.id, alice, "main").await;
     let (feature, feature_token) = run(&f, repo.id, alice, "feature").await;
     let (_, other_token) = run(&f, repo.id, alice, "other").await;
-    let other_repo = codeyard_app::repositories::lifecycle::provision(
+    let other_repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -746,7 +746,7 @@ async fn eviction(pg: bool) {
     let mut f = Database::new(pg).await;
     let alice = f.actor("eviction_alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -799,7 +799,7 @@ async fn pending_uploads_share_the_cache_quota(pg: bool) {
     let mut f = Database::new(pg).await;
     let alice = f.actor("pending_quota_alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -946,7 +946,7 @@ async fn shared_s3_across_routers(pg: bool) {
     let actor = f.actor("shared_actions").await;
     let first = tempfile::tempdir().unwrap();
     let second = tempfile::tempdir().unwrap();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         first.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),

@@ -5,7 +5,7 @@ use super::query;
 use super::request;
 use axum::{http::StatusCode, Router};
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::lifecycle;
+use codeyard_repos_core::repositories::lifecycle;
 pub(super) async fn exercise(
     state: &AppState,
     router: &Router,

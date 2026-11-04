@@ -36,7 +36,7 @@ pub(super) async fn checks(
     .map_err(|_| unavailable(ctx))?;
     let mut more = candidates.len() > 100;
     let store =
-        codeyard_app::repositories::store::repo_store(&repo.record, ctx.state.cluster.as_ref());
+        codeyard_repos_core::repositories::store::repo_store(&repo.record, ctx.state.cluster.as_ref());
     let mut merges = Vec::new();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     for candidate in candidates.into_iter().take(100) {

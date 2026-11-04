@@ -486,7 +486,7 @@ pub(super) async fn mutation(
             )
             .await
             .map_err(|error| {
-                use codeyard_app::repositories::pull_requests::OperationError;
+                use codeyard_repos_core::repositories::pull_requests::OperationError;
                 match error {
                     OperationError::Missing { .. } => missing(),
                     OperationError::Unavailable { .. } => unavailable(()),

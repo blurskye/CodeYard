@@ -2,12 +2,12 @@
 //! Gateway tests on throwaway databases and real Git repositories.
 //! GITSERV_TEST_OPENSSH_HELPER must point at the built codeyard binary.
 use base64::Engine;
-use codeyard_app::ci::queue::RunQueue;
-use codeyard_app::ci::runs::CiRuns;
-use codeyard_app::ci::workers::CiWorkers;
-use codeyard_app::repositories::git_sessions::private_files;
-use codeyard_app::repositories::git_sessions::protocol;
-use codeyard_app::repositories::git_sessions::ReceiveCredential;
+use codeyard_repos_core::ci::queue::RunQueue;
+use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::ci::workers::CiWorkers;
+use codeyard_repos_core::repositories::git_sessions::private_files;
+use codeyard_repos_core::repositories::git_sessions::protocol;
+use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_repos::validation;
@@ -2126,23 +2126,23 @@ async fn pushes_move_the_open_pull_requests_that_use_the_branch() {
     broker.stop().await;
 }
 
-use codeyard_app::repositories::git_sessions::broker::MAX_CONTROLS;
+use codeyard_repos_core::repositories::git_sessions::broker::MAX_CONTROLS;
 
-use codeyard_app::repositories::git_sessions::broker::Gateway;
+use codeyard_repos_core::repositories::git_sessions::broker::Gateway;
 
-use codeyard_app::repositories::git_sessions::broker::listen;
+use codeyard_repos_core::repositories::git_sessions::broker::listen;
 
-use codeyard_app::repositories::git_sessions::hook_barrier;
+use codeyard_repos_core::repositories::git_sessions::hook_barrier;
 
-use codeyard_app::repositories::git_sessions::protocol::Request;
+use codeyard_repos_core::repositories::git_sessions::protocol::Request;
 
-use codeyard_app::repositories::git_sessions::protocol::EOF;
+use codeyard_repos_core::repositories::git_sessions::protocol::EOF;
 
-use codeyard_app::repositories::git_sessions::protocol::STDERR;
+use codeyard_repos_core::repositories::git_sessions::protocol::STDERR;
 
-use codeyard_app::repositories::git_sessions::protocol::STDIN;
+use codeyard_repos_core::repositories::git_sessions::protocol::STDIN;
 
-use codeyard_app::repositories::git_sessions::protocol::STDOUT;
+use codeyard_repos_core::repositories::git_sessions::protocol::STDOUT;
 
 use codeyard_repos::validation::RefUpdate;
 

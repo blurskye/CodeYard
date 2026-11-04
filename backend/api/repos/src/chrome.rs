@@ -1,7 +1,7 @@
 use axum::http::StatusCode;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_webui::pages::repos as view;
@@ -79,7 +79,7 @@ pub(crate) fn ref_names_under(loaded: &Loaded, prefix: &str) -> Vec<String> {
 
 pub(crate) fn default_ref(loaded: &Loaded) -> String {
     let stored = &loaded.default_branch;
-    let branch = codeyard_app::repositories::reads::default_branch(&loaded.refs, stored, stored);
+    let branch = codeyard_repos_core::repositories::reads::default_branch(&loaded.refs, stored, stored);
     if branch != *stored
         || loaded.refs.is_empty()
         || loaded.refs.contains_key(&format!("refs/heads/{stored}"))

@@ -1,8 +1,8 @@
 //! Durable asynchronous requests, executed by the server's bounded, shutdown-drained Git tasks.
 use crate::app::AppState;
-use crate::ci::runs::CiRuns;
-use crate::repositories::pull_requests::database_error;
-use crate::repositories::pull_requests::OperationError;
+use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::repositories::pull_requests::database_error;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use serde_json::json;
 use serde_json::Value;
@@ -119,7 +119,7 @@ pub async fn start(state: &AppState, job: Job) -> Result<Value, OperationError> 
                 code: "not_found",
                 message: "Repository not found".into(),
             })?;
-    crate::repositories::pull_requests::require_write(&state.pool, &actor, &repo).await?;
+    codeyard_repos_core::repositories::pull_requests::require_write(&state.pool, &actor, &repo).await?;
     let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
         &state.pool,
         job.pull_request_id,

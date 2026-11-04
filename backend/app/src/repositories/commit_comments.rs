@@ -1,6 +1,6 @@
 //! Discussions anchored to immutable commits, shared by REST and native forms.
 use codeyard_repos_core::context::NodeContext;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::models::CommitComment;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
@@ -212,7 +212,7 @@ async fn emit(
     entry: &CommentDetails,
 ) {
     let (repo_for_hook, entry) = (repo.clone(), entry.clone());
-    crate::webhooks::emit(
+    codeyard_repos_core::webhooks::emit(
         pool,
         repo,
         codeyard_model::webhook_events::COMMIT_COMMENT,
@@ -267,7 +267,7 @@ async fn notify(
     if previous.is_none() {
         let recipient = async {
             let commit = repo_store(repo, cluster).commit(&comment.sha).await.ok()?;
-            let author = crate::repositories::reads::commit_authors(
+            let author = codeyard_repos_core::repositories::reads::commit_authors(
                 pool,
                 std::slice::from_ref(&commit.author_email),
             )

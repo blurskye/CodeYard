@@ -13,7 +13,7 @@ async fn discarded_review_cannot_authorize_comment_publication() {
     let user = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
         .await
         .unwrap();
-    let repo = crate::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (&pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(user.id),

@@ -1,8 +1,8 @@
-use crate::ci::push::RefUpdate;
-use crate::ci::runs::CiRuns;
-use crate::repositories::pull_requests::database_error;
-use crate::repositories::pull_requests::OperationError;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::ci::push::RefUpdate;
+use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::repositories::pull_requests::database_error;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::allowed_merge_methods;
 use codeyard_repos_core::store_types::MergeMethod;
 use codeyard_repos_core::store_types::MergeRequest as StoreMerge;
@@ -239,7 +239,7 @@ pub async fn review_decision(
                 })
                 .map(|d| d.author_id)
                 .collect::<Vec<_>>();
-            if !crate::repositories::pull_requests::code_owners::missing_owner_approvals(
+            if !codeyard_repos_core::repositories::pull_requests::code_owners::missing_owner_approvals(
                 pool, ci, repository, &target.1, pull, &approvers,
             )
             .await?
@@ -466,7 +466,7 @@ async fn merge_blockers(
                 })
                 .map(|decision| decision.author_id)
                 .collect();
-            let missing = crate::repositories::pull_requests::code_owners::missing_owner_approvals(
+            let missing = codeyard_repos_core::repositories::pull_requests::code_owners::missing_owner_approvals(
                 pool,
                 ci,
                 repository,
@@ -836,7 +836,7 @@ async fn refresh_chain(
             layers.push(layer);
             continue;
         }
-        crate::repositories::pull_requests::branches::refresh_open_pull_request(
+        codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_request(
             pool,
             repository,
             ci,
@@ -1094,9 +1094,9 @@ async fn prepare_pull_request_merge_checked(
     if expected.is_some_and(|(id, _)| repository.id != id) {
         return Err(stale_revision());
     }
-    let user = crate::repositories::pull_requests::actor(pool, actor_id).await?;
-    crate::repositories::pull_requests::require_write(pool, &user, &repository).await?;
-    crate::repositories::access::check_publication_actor(pool, &authority, &repository)
+    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repository).await?;
+    codeyard_repos_core::repositories::access::check_publication_actor(pool, &authority, &repository)
         .await
         .map_err(|error| publish_failure(error.into(), request.merge_method))?;
 
@@ -1113,7 +1113,7 @@ async fn prepare_pull_request_merge_checked(
     }
     // A merge uses this pull request's branches as they are now. An unrelated
     // broken fork must not deny a healthy pull request.
-    crate::repositories::pull_requests::branches::refresh_open_pull_request(
+    codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_request(
         pool,
         &repository,
         ci,
@@ -1418,8 +1418,8 @@ async fn publish_prepared_merge_owned(
     if !allowed_merge_methods(&repository).contains(&merge.method) {
         return Err(method_not_allowed(merge.method));
     }
-    let user = crate::repositories::pull_requests::actor(pool, actor_id).await?;
-    crate::repositories::pull_requests::require_write(pool, &user, &repository).await?;
+    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repository).await?;
     let current =
         codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
             .await
@@ -1544,7 +1544,7 @@ async fn publish_prepared_merge_owned(
     }
     // A moved layer may have workflows that run on its new base. They are queued after the
     // retarget's own transaction, as a head move is.
-    crate::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
+    codeyard_repos_core::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
         pool,
         ci,
         &repository,
@@ -1552,7 +1552,7 @@ async fn publish_prepared_merge_owned(
         user.id,
     )
     .await;
-    if let Err(error) = crate::repositories::pull_requests::branches::refresh_open_pull_requests(
+    if let Err(error) = codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
         pool,
         &repository,
         Some(&[&merge.base_branch]),
@@ -1588,13 +1588,13 @@ async fn publish_prepared_merge_owned(
             let (merged_for_hook, repository_for_hook) = (merged.clone(), repository.clone());
             let (author_id, sender_id) = (merged.author_id, user.id);
             let hook_store = repo_store(&repository, ci.cluster.as_ref());
-            let payload = crate::webhooks::emit(
+            let payload = codeyard_repos_core::webhooks::emit(
                 pool,
                 &repository,
                 codeyard_model::webhook_events::PULL_REQUEST,
                 vec![author_id, sender_id],
                 move |owner, people| {
-                    crate::repositories::pull_requests::webhook_payload(
+                    codeyard_repos_core::repositories::pull_requests::webhook_payload(
                         "closed",
                         &merged_for_hook,
                         &people.get(author_id),
@@ -1615,7 +1615,7 @@ async fn publish_prepared_merge_owned(
                 base_sha: merge.base.clone(),
                 ..merged
             };
-            crate::repositories::pull_requests::workflows::queue_pull_request_event_ci(
+            codeyard_repos_core::repositories::pull_requests::workflows::queue_pull_request_event_ci(
                 pool,
                 ci,
                 &repository,

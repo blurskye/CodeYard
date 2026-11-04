@@ -9,7 +9,7 @@ use axum::response::Response;
 use axum::Form;
 use axum::Json;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::runs::DispatchRequest;
+use codeyard_repos_core::ci::runs::DispatchRequest;
 use codeyard_webui::pages::ci as view;
 use codeyard_webui::pages::repos::actions as view_actions;
 use std::collections::BTreeMap;
@@ -101,12 +101,12 @@ pub async fn refusal_workflows(
     branch: &str,
 ) -> anyhow::Result<Vec<view_actions::Workflow>> {
     anyhow::ensure!(
-        codeyard_app::ci::admission::is_safe_ref(branch),
+        codeyard_repos_core::ci::admission::is_safe_ref(branch),
         "unsafe ref"
     );
     let store =
-        codeyard_app::repositories::store::repo_store(repository, ctx.state.cluster.as_ref());
-    let definitions = codeyard_app::ci::workflows::list_workflows_for_ref(&store, branch).await?;
+        codeyard_repos_core::repositories::store::repo_store(repository, ctx.state.cluster.as_ref());
+    let definitions = codeyard_repos_core::ci::workflows::list_workflows_for_ref(&store, branch).await?;
     let user = ctx
         .user
         .as_ref()

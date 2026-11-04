@@ -9,7 +9,7 @@ use axum::{
 
 use codeyard_app::issues::comments;
 use codeyard_app::issues::comments::CreateCommentRequest;
-use codeyard_app::repositories::lifecycle;
+use codeyard_repos_core::repositories::lifecycle;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use codeyard_notifications::broadcast::NotificationBroadcaster;

@@ -17,7 +17,7 @@ use codeyard_api_http::session::get_current_user;
 use codeyard_api_http::shared::repos::access::access_error;
 use codeyard_api_http::shared::repos::responses::repository_fork_counts;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::lifecycle::InitialFiles;
+use codeyard_repos_core::repositories::lifecycle::InitialFiles;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::OrganizationPage;
 use codeyard_db_repos::repositories::records::RepositoryFilter;
@@ -123,7 +123,7 @@ pub async fn create_repo(
             }
         },
     };
-    codeyard_app::repositories::lifecycle::validate_description(
+    codeyard_repos_core::repositories::lifecycle::validate_description(
         req.description.as_deref().unwrap_or(""),
     )
     .map_err(crate::responses::lifecycle_error)?;
@@ -138,10 +138,10 @@ pub async fn create_repo(
             }
         })
         .collect::<Vec<_>>();
-    let repo = codeyard_app::repositories::lifecycle::provision_with_properties(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision_with_properties(
         (&pool, state.cluster.as_ref()),
         &state.repos_path,
-        codeyard_app::repositories::lifecycle::CreationInput {
+        codeyard_repos_core::repositories::lifecycle::CreationInput {
             owner: creation_owner,
             properties: &properties,
             admission: codeyard_db_repos::repositories::creation::CreationAdmission {
@@ -295,9 +295,9 @@ fn decode_creation(
         if name.is_empty() {
             return Err((Some("name"), "Repository name is required"));
         }
-        codeyard_app::repositories::lifecycle::validate_name(name)
+        codeyard_repos_core::repositories::lifecycle::validate_name(name)
             .map_err(|error| (Some("name"), error.message))?;
-        codeyard_app::repositories::lifecycle::validate_description(
+        codeyard_repos_core::repositories::lifecycle::validate_description(
             form.get("description").map(String::as_str).unwrap_or(""),
         )
         .map_err(|error| (None, error.message))?;
@@ -614,10 +614,10 @@ pub(crate) async fn create_repository(
         )
         .await
     } else {
-        codeyard_app::repositories::lifecycle::provision_with_initial_properties(
+        codeyard_repos_core::repositories::lifecycle::provision_with_initial_properties(
             (&ctx.state.pool, ctx.state.cluster.as_ref()),
             &ctx.state.repos_path,
-            codeyard_app::repositories::lifecycle::CreationInput {
+            codeyard_repos_core::repositories::lifecycle::CreationInput {
                 owner: creation_owner,
                 properties: &property_values,
                 admission: codeyard_db_repos::repositories::creation::CreationAdmission {
@@ -669,12 +669,12 @@ async fn create_selection(
     files: InitialFiles,
     properties: &[codeyard_db_core::queries::organizations::properties::ValueInput],
     authority: &codeyard_db_core::queries::credentials::Actor,
-) -> Result<codeyard_db_core::models::Repository, codeyard_app::repositories::lifecycle::StorageError>
+) -> Result<codeyard_db_core::models::Repository, codeyard_repos_core::repositories::lifecycle::StorageError>
 {
     let description = Some(values.description.as_str()).filter(|value| !value.is_empty());
     let source = source_name(&values.source).map_err(|(_, message)| {
-        codeyard_app::repositories::lifecycle::StorageError {
-            kind: codeyard_app::repositories::lifecycle::LifecycleFailure::Invalid,
+        codeyard_repos_core::repositories::lifecycle::StorageError {
+            kind: codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Invalid,
             message,
         }
     })?;
@@ -685,21 +685,21 @@ async fn create_selection(
             source_name,
         )
         .await
-        .map_err(|_| codeyard_app::repositories::lifecycle::StorageError {
-            kind: codeyard_app::repositories::lifecycle::LifecycleFailure::Unavailable,
+        .map_err(|_| codeyard_repos_core::repositories::lifecycle::StorageError {
+            kind: codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Unavailable,
             message: "Source repository is unavailable.",
         })?
-        .ok_or(codeyard_app::repositories::lifecycle::StorageError {
-            kind: codeyard_app::repositories::lifecycle::LifecycleFailure::Denied,
+        .ok_or(codeyard_repos_core::repositories::lifecycle::StorageError {
+            kind: codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Denied,
             message: "Source repository is unavailable.",
         })?;
         if values.fork_source {
-            codeyard_app::repositories::lifecycle::fork_into(
+            codeyard_repos_core::repositories::lifecycle::fork_into(
                 &ctx.state.pool,
                 ctx.state.cluster.as_ref(),
                 &ctx.state.repos_path,
                 &ctx.state.notification_broadcaster,
-                codeyard_app::repositories::lifecycle::ForkOptions {
+                codeyard_repos_core::repositories::lifecycle::ForkOptions {
                     owner,
                     name: Some(&values.name),
                     default_branch_only: !values.all_branches,
@@ -711,12 +711,12 @@ async fn create_selection(
             )
             .await
         } else {
-            codeyard_app::repositories::lifecycle::generate(
+            codeyard_repos_core::repositories::lifecycle::generate(
                 (&ctx.state.pool, ctx.state.cluster.as_ref()),
                 &ctx.state.repos_path,
                 owner,
                 source.id,
-                codeyard_app::repositories::lifecycle::TemplateOptions {
+                codeyard_repos_core::repositories::lifecycle::TemplateOptions {
                     name: &values.name,
                     description,
                     private: values.is_private,
@@ -728,10 +728,10 @@ async fn create_selection(
             .await
         }
     } else {
-        codeyard_app::repositories::lifecycle::provision_with_initial_properties(
+        codeyard_repos_core::repositories::lifecycle::provision_with_initial_properties(
             (&ctx.state.pool, ctx.state.cluster.as_ref()),
             &ctx.state.repos_path,
-            codeyard_app::repositories::lifecycle::CreationInput {
+            codeyard_repos_core::repositories::lifecycle::CreationInput {
                 owner,
                 properties,
                 admission: codeyard_db_repos::repositories::creation::CreationAdmission {
@@ -774,12 +774,12 @@ mod creation_tests {
             "x#y",
         ] {
             assert!(
-                codeyard_app::repositories::lifecycle::validate_name(invalid).is_err(),
+                codeyard_repos_core::repositories::lifecycle::validate_name(invalid).is_err(),
                 "{invalid:?}"
             );
         }
         for valid in ["alice", "my-repo", "a.b_c-1", "répo"] {
-            assert!(codeyard_app::repositories::lifecycle::validate_name(valid).is_ok());
+            assert!(codeyard_repos_core::repositories::lifecycle::validate_name(valid).is_ok());
         }
     }
     #[test]

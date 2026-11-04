@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::queue::RunQueue;
+use codeyard_repos_core::ci::queue::RunQueue;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
 use codeyard_ci::config::RunLimits;
@@ -34,7 +34,7 @@ async fn contract(pg: bool) {
     )
     .await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -300,7 +300,7 @@ async fn rest_settings(pg: bool) {
     )
     .await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner {
@@ -955,7 +955,7 @@ async fn rest_reviews(pg: bool) {
     let bob = f.actor("bob").await;
     let carol = f.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner::personal(alice),
@@ -966,7 +966,7 @@ async fn rest_reviews(pg: bool) {
     )
     .await
     .unwrap();
-    let fork = codeyard_app::repositories::lifecycle::provision(
+    let fork = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner::personal(bob),

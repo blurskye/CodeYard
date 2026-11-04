@@ -90,7 +90,7 @@ async fn list(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = auth
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     let affiliation = query.affiliation.as_deref().unwrap_or("all");
     if !matches!(affiliation, "all" | "direct" | "outside") {
@@ -142,7 +142,7 @@ async fn check(
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = auth
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     let rows = codeyard_repos::collaborators::list(
         &state.pool,
@@ -170,7 +170,7 @@ async fn permission(
     Path((owner, name, username)): Path<(String, String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let user = codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, &username)
         .await
         .map_err(Error::unavailable)?
@@ -204,7 +204,7 @@ async fn add(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = auth
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     let input = input.unwrap_or_default();
     let level =
@@ -231,7 +231,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = auth
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     codeyard_repos::collaborators::remove(&state.pool, actor.id, repo.id, &username)
         .await
@@ -252,15 +252,15 @@ async fn invitations(
                 repository(&state, &headers, &params["owner"], &params["repo"], false).await?;
             (
                 Some(repo.id),
-                auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?
+                auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
                     .user,
             )
         } else {
             (
                 None,
-                codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+                codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
                     .await?
-                    .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+                    .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
                     .user,
             )
         };
@@ -288,9 +288,9 @@ async fn respond(
     Path(id): Path<i64>,
     method: Method,
 ) -> Result<StatusCode> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     actor.require_write()?;
     codeyard_repos::collaborators::respond(
         &state.pool,
@@ -315,7 +315,7 @@ async fn update_invitation(
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = auth
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     let level = codeyard_repos::collaborators::permission(&input.permissions)
         .ok_or_else(|| Error::invalid("Invalid permission"))?;
@@ -337,7 +337,7 @@ async fn delete_invitation(
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = auth
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     codeyard_repos::collaborators::update_invitation(&state.pool, actor.id, repo.id, id, None)
         .await

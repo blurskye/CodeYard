@@ -190,7 +190,7 @@ async fn contract(pg: bool) {
     .await;
     assert!(svg.starts_with("<svg"));
     assert!(svg.contains('🚀'));
-    codeyard_app::repositories::lifecycle::provision(
+    codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),

@@ -333,7 +333,7 @@ pub(super) async fn resolve(
         }
         "ref" | "refs" | "object" => crate::git_objects::resolve(field, ctx, &repo, request).await,
         "defaultBranchRef" => {
-            let (refs, default) = codeyard_app::repositories::reads::refs_and_default(
+            let (refs, default) = codeyard_repos_core::repositories::reads::refs_and_default(
                 &repo,
                 request.state.cluster.as_ref(),
             )

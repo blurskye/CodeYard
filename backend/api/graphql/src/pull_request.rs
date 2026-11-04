@@ -4,7 +4,7 @@ use crate::missing;
 use crate::unavailable;
 use crate::RequestContext;
 use crate::Result;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use serde_json::json;
 use serde_json::Value;
 pub(super) async fn review_request(

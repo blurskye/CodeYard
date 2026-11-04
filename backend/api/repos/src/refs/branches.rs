@@ -14,7 +14,7 @@ use codeyard_api_http::shared::repos::chrome::date;
 use codeyard_api_http::shared::repos::chrome::store_error;
 use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::MAX_BRANCH_STATUSES;
 use codeyard_webui::pages::repos as view;
 use serde::Deserialize;
@@ -55,7 +55,7 @@ pub async fn list_branches(
         .collect();
     branches.sort();
 
-    let default_branch = codeyard_app::repositories::reads::default_branch(
+    let default_branch = codeyard_repos_core::repositories::reads::default_branch(
         &refs,
         &repository_default_branch(&state, &repository).await?,
         &repository.default_branch,
@@ -84,7 +84,7 @@ pub async fn create_branch(
     Json(req): Json<CreateBranchRequest>,
 ) -> Result<Json<CreateBranchResponse>, (StatusCode, Json<ApiError>)> {
     let actor = codeyard_api_http::session::get_current_user(&state.pool, &headers).await?;
-    let sha = codeyard_app::repositories::refs::create_branch(
+    let sha = codeyard_repos_core::repositories::refs::create_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -111,7 +111,7 @@ pub async fn delete_branch(
     Path((owner, repo, branch)): Path<(String, String, String)>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let actor = codeyard_api_http::session::get_current_user(&state.pool, &headers).await?;
-    codeyard_app::repositories::refs::delete_branch(
+    codeyard_repos_core::repositories::refs::delete_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,

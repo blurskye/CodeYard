@@ -2,10 +2,10 @@
 //! schema for the database parts. A missing database is a failure, not a skip.
 use crate::support::native_database as native;
 
-use codeyard_app::repositories::lifecycle;
+use codeyard_repos_core::repositories::lifecycle;
 use codeyard_repos_core::store_types::MergeMethod;
 use codeyard_repos_core::store_types::MergeRequest;
-use codeyard_app::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_db_repos::repositories;
 use git2::{Oid, Repository, Signature};
 use std::{path::Path, sync::Arc};

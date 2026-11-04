@@ -73,10 +73,10 @@ async fn private_fork_owned(
         );
         return Ok(fork);
     }
-    let fork = crate::repositories::lifecycle::provision_with_properties(
+    let fork = codeyard_repos_core::repositories::lifecycle::provision_with_properties(
         (pool, context),
         path,
-        crate::repositories::lifecycle::CreationInput {
+        codeyard_repos_core::repositories::lifecycle::CreationInput {
             owner: RepositoryCreationOwner::personal(actor),
             properties: &[],
             admission: CreationAdmission {
@@ -100,7 +100,7 @@ async fn private_fork_owned(
         {
             Ok(Some(deleted)) => {
                 if let Err(cleanup) =
-                    crate::repositories::lifecycle::remove_deleted_repository(context, &deleted)
+                    codeyard_repos_core::repositories::lifecycle::remove_deleted_repository(context, &deleted)
                         .await
                 {
                     tracing::warn!(repo_id=fork.id,%cleanup,"Unattached private advisory fork requires cleanup");

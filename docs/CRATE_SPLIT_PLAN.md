@@ -20,7 +20,7 @@ backend/
   db/
     core/                      DbPool, connection, migrations, models, native_operation!
     identity/ orgs/ repos/ actions/ security/ cluster/     queries by domain
-  repos-core/                  store records, wire protocol and node context
+  repos-core/                  repository store, CI engine and repository RPC runtime
   repos/                       repository policy, imports, traffic, templates, Git editor
   ci/                          configuration, credentials, logs, environment values
     runner/                    the Actions runner
@@ -38,7 +38,7 @@ backend/
   webhooks/                    payloads, subscriptions, delivery
   storage/                     object storage and file operations
   ssh/                         SSH serving and the OpenSSH gateway
-  app/                         app state, store, CI engine, inbound cluster handlers
+  app/                         app state and domain composition
     wiring/                    the `codeyard` binary, cli and node startup
 backend/test-support/          dev-only shared fixtures
 tests/                         same tests; imports use the crates' public items
@@ -117,14 +117,10 @@ and results stay the same. A stage can be the last one.
    subscriptions and delivery live in `backend/webhooks/`. `identity`, `notifications`
    and `ssh` are extracted. Repository authority, identity mail links and delivery
    helpers have one lower owner.
-   `RepoStore` is a concrete enum-backed type, not the trait assumed above; its local
-   and remote implementations call cluster RPC and CI, which call the concrete store
-   back. The store, CI engine and inbound cluster handlers remain in the app. Their
-   boundary includes CI admission, workflow discovery, push dispatch, buffered RPC,
-   streamed Git sessions and replica publication. This exceeds the approved five
-   small traits. The simpler cuts above move independent operations first. Next,
-   wire records, store records and node context now live in `backend/repos-core/`.
-   The remaining runtime moves follow before checking the workspace.
+   `backend/repos-core/` now owns the concrete store, Git sessions, CI engine,
+   repository RPC, publication checks and pull-request refresh. The store, CI and
+   local RPC fallback still call each other and stay in one crate. Document readers
+   use a resource-access trait implemented by `AppState`.
 7. **API.** Source extraction complete: HTTP plumbing, GitHub REST (one crate,
    with folders named for its operation categories), repository HTTP, GraphQL and
    the remaining routes are separate crates. Shared helpers have one direct lower

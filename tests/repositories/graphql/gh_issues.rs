@@ -139,7 +139,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("gh-issues-alice").await;
     let bob = f.actor("gh-issues-bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -1114,7 +1114,7 @@ async fn contract(pg: bool) {
             "{body}"
         );
     }
-    let target = codeyard_app::repositories::lifecycle::provision(
+    let target = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),

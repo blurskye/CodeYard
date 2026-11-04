@@ -1,6 +1,6 @@
 //! Git source imports retain no source credentials and publish only into empty repositories.
 use crate::app::AppState;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::models::Repository;
 use codeyard_db_repos::source_imports::SourceImport;
 use std::sync::Arc;

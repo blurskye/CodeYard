@@ -47,9 +47,9 @@ async fn read_value(
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let watch =
@@ -84,7 +84,7 @@ async fn set_value(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = viewer.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let input: Subscription = crate::optional_json::decode(&body)
         .map_err(|_| Error::invalid("Invalid subscription"))?
         .unwrap_or_default();
@@ -121,7 +121,7 @@ async fn remove(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<StatusCode> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = viewer.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     codeyard_app::repositories::engagement::set_level(
         &state.pool,
         actor.database_actor(),
@@ -166,7 +166,7 @@ async fn collection(
     uri: Uri,
 ) -> Result<Response> {
     let viewer =
-        codeyard_app::api_shared::github::auth::authenticate(&state, &headers, username.is_none())
+        codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, username.is_none())
             .await?;
     let user = match username {
         Some(name) => {
@@ -177,7 +177,7 @@ async fn collection(
         }
         None => viewer
             .as_ref()
-            .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+            .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
             .user
             .clone(),
     };
@@ -193,7 +193,7 @@ async fn collection(
     .map_err(Error::unavailable)?;
     let mut items = Vec::new();
     let has_next = rows.len() > limit;
-    let readable = codeyard_app::api_shared::github::auth::readable_repositories(
+    let readable = codeyard_repos_core::api_shared::github::auth::readable_repositories(
         &state,
         viewer.as_ref(),
         &rows.iter().map(|repo| repo.id).collect::<Vec<_>>(),

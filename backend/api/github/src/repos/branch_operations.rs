@@ -8,10 +8,10 @@ use axum::http::StatusCode;
 use axum::routing::post;
 use axum::routing::MethodRouter;
 use axum::Json;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use serde::Deserialize;
@@ -31,14 +31,14 @@ async fn rename(
     Json(input): Json<Rename>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = auth.user.id;
     let authority = auth.database_actor();
     repo_store(&repo, state.cluster.as_ref())
         .rename_branch_as(&state.pool, repo.id, authority, &branch, &input.new_name)
         .await
         .map_err(store_error)?;
-    codeyard_app::repositories::pull_requests::branches::refresh_open_pull_requests(
+    codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
         &state.pool,
         &repo,
         Some(&[&branch, &input.new_name]),
@@ -73,7 +73,7 @@ async fn upstream(
     request: Request,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = &auth.user;
     let Json(input) = Json::<Upstream>::from_request(request, &state)
         .await
@@ -129,7 +129,7 @@ async fn complete_upstream(
     input: Upstream,
     owner: String,
     base_branch: String,
-    auth: codeyard_app::api_shared::github::auth::Authentication,
+    auth: codeyard_repos_core::api_shared::github::auth::Authentication,
 ) -> Result<Json<Value>> {
     let actor = &auth.user;
     let source = repo_store(&parent, state.cluster.as_ref());
@@ -152,7 +152,7 @@ async fn complete_upstream(
                 &repo,
                 &owner,
                 actor.id,
-                codeyard_app::ci::push::RefUpdate {
+                codeyard_repos_core::ci::push::RefUpdate {
                     reference: format!("refs/heads/{}", input.branch),
                     old: Some(merged.old.clone()),
                     new: merged.sha.clone(),
@@ -161,7 +161,7 @@ async fn complete_upstream(
             )
             .await;
     }
-    codeyard_app::repositories::pull_requests::branches::refresh_open_pull_requests(
+    codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
         &state.pool,
         &repo,
         Some(&[&input.branch]),

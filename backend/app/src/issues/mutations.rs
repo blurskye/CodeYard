@@ -55,7 +55,7 @@ async fn emit_issue_event(
     }
     let issue = issue.clone();
     let document = repository.clone();
-    crate::webhooks::emit(
+    codeyard_repos_core::webhooks::emit(
         pool,
         repository,
         codeyard_model::webhook_events::ISSUES,

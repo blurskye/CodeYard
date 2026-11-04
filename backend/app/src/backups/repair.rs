@@ -326,8 +326,8 @@ pub async fn rebuild(pool: &codeyard_db_core::DbPool) -> Result<()> {
         // The language rows are derived from Git. Forget the cache marker first, or the scan
         // returns the rows that were lost.
         codeyard_db_repos::repository_stats::forget_languages(pool, repository.id).await?;
-        let store = crate::repositories::store::repo_store(&repository, None);
-        crate::repositories::languages::compute_and_store(
+        let store = codeyard_repos_core::repositories::store::repo_store(&repository, None);
+        codeyard_repos_core::repositories::languages::compute_and_store(
             pool,
             &store,
             &repository,

@@ -5,8 +5,8 @@ use crate::support::http_client as pulls;
 use crate::support::native_database as native;
 use crate::support::rpc_operations;
 
-use codeyard_app::ci::queue::RunQueue;
-use codeyard_app::ci::workers::CiWorkers;
+use codeyard_repos_core::ci::queue::RunQueue;
+use codeyard_repos_core::ci::workers::CiWorkers;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
 
@@ -15,7 +15,7 @@ use codeyard_support::secrets::SecretEncryptor;
 
 use codeyard_repos_core::store_types::GitService;
 use codeyard_repos_core::store_types::GitSession;
-use codeyard_app::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_git::error::ErrorKind;
 use codeyard_model::ci::LogLine;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
@@ -523,14 +523,14 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     )
     .accept(
         codeyard_cluster::transport::ALPN_RPC,
-        codeyard_app::cluster::rpc::RpcHandler::new(context.clone()),
+        codeyard_repos_core::cluster::rpc::RpcHandler::new(context.clone()),
     )
     .accept(
         codeyard_cluster::transport::ALPN_EVENTS,
-        codeyard_app::cluster::ci::CiHandler::new(context.clone(), queue),
+        codeyard_repos_core::cluster::ci::CiHandler::new(context.clone(), queue),
     )
     .spawn();
-    codeyard_app::cluster::wait_for_address(&endpoint).await;
+    codeyard_repos_core::cluster::wait_for_address(&endpoint).await;
     codeyard_db_cluster::cluster::record_node_heartbeat(
         pool,
         &core_key.public_hex(),
@@ -628,7 +628,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     .unwrap()
     .unwrap();
     let state_dir = root.path().join("worker-state");
-    let (first_worker, _) = codeyard_app::cluster::worker::worker_context(&state_dir, settings)
+    let (first_worker, _) = codeyard_repos_core::cluster::worker::worker_context(&state_dir, settings)
         .await
         .unwrap();
     first_worker.iroh.close().await;
@@ -640,7 +640,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     })
     .unwrap()
     .unwrap();
-    let (worker, peers) = codeyard_app::cluster::worker::worker_context(&state_dir, settings)
+    let (worker, peers) = codeyard_repos_core::cluster::worker::worker_context(&state_dir, settings)
         .await
         .unwrap();
     let other_key = codeyard_support::node_identity::NodeKey::generate();
@@ -1876,7 +1876,7 @@ async fn http_ci(
         panic!("fresh CI installation");
     };
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
@@ -2009,7 +2009,7 @@ async fn full_pipeline_tests_gate_deployment_and_report_the_workers_mode() {
             );
         }
         let deduplicated = ci
-            .trigger_run(codeyard_app::ci::runs::CiRunRequest {
+            .trigger_run(codeyard_repos_core::ci::runs::CiRunRequest {
                 repo_id: repo.id,
                 repo_owner: owner.username.clone(),
                 repo_name: repo.name.clone(),
@@ -2094,7 +2094,7 @@ async fn automatic_deployments_use_yaml_environments_and_explicit_targets_still_
         )
         .await
         .unwrap();
-        codeyard_app::repositories::pull_requests::workflows::queue_pull_request_ci(
+        codeyard_repos_core::repositories::pull_requests::workflows::queue_pull_request_ci(
             pool,
             &ci,
             &repo,
@@ -2466,7 +2466,7 @@ async fn actions_history_survives_a_stalled_git_preflight() {
             StalledWorkflowReads(reads),
         )
         .spawn();
-    codeyard_app::cluster::wait_for_address(&endpoint).await;
+    codeyard_repos_core::cluster::wait_for_address(&endpoint).await;
     let node = codeyard_db_cluster::cluster::register_own_node(
         fixture.pool(),
         &endpoint.id().to_string(),
@@ -2539,7 +2539,7 @@ async fn actions_history_survives_a_stalled_git_preflight() {
 
 #[tokio::test]
 async fn stalled_repository_reads_do_not_occupy_workflow_parsing_slots() {
-    use codeyard_app::ci::workflows::list_workflows_for_ref;
+    use codeyard_repos_core::ci::workflows::list_workflows_for_ref;
     let fixture = ci_fixture().await;
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(iroh::RelayMode::Disabled)
@@ -2554,7 +2554,7 @@ async fn stalled_repository_reads_do_not_occupy_workflow_parsing_slots() {
             StalledWorkflowReads(reads),
         )
         .spawn();
-    codeyard_app::cluster::wait_for_address(&endpoint).await;
+    codeyard_repos_core::cluster::wait_for_address(&endpoint).await;
     let context = fixture.worker.clone();
     context.remember_peer(
         100_000,
@@ -3466,7 +3466,7 @@ async fn discovery_allows_stalled_tcp_to_fall_back_to_iroh() {
     });
     let workflows = tokio::time::timeout(
         Duration::from_secs(25),
-        codeyard_app::ci::workflows::list_workflows_for_ref(&store, "main"),
+        codeyard_repos_core::ci::workflows::list_workflows_for_ref(&store, "main"),
     )
     .await
     .unwrap()
@@ -3916,7 +3916,7 @@ async fn fork_claims_receive_variables_but_no_repository_or_organization_secrets
             .await
             .unwrap(),
         );
-        let repo = codeyard_app::repositories::lifecycle::transfer(
+        let repo = codeyard_repos_core::repositories::lifecycle::transfer(
             pool,
             None,
             owner.id,
@@ -4307,7 +4307,7 @@ impl tracing_subscriber::Layer<tracing_subscriber::Registry> for CiAuthorization
 /// Counts the connections that reach the CI queue. A worker opens one for each request.
 #[derive(Debug)]
 struct CountingCi {
-    inner: codeyard_app::cluster::ci::CiHandler,
+    inner: codeyard_repos_core::cluster::ci::CiHandler,
     requests: Arc<AtomicUsize>,
     dispatch: tracing::Dispatch,
 }
@@ -4435,18 +4435,18 @@ async fn ci_fixture() -> CiFixture {
     )
     .accept(
         codeyard_cluster::transport::ALPN_RPC,
-        codeyard_app::cluster::rpc::RpcHandler::new(context.clone()),
+        codeyard_repos_core::cluster::rpc::RpcHandler::new(context.clone()),
     )
     .accept(
         codeyard_cluster::transport::ALPN_EVENTS,
         CountingCi {
-            inner: codeyard_app::cluster::ci::CiHandler::new(context.clone(), queue),
+            inner: codeyard_repos_core::cluster::ci::CiHandler::new(context.clone(), queue),
             requests: requests.clone(),
             dispatch,
         },
     )
     .spawn();
-    codeyard_app::cluster::wait_for_address(&endpoint).await;
+    codeyard_repos_core::cluster::wait_for_address(&endpoint).await;
     codeyard_db_cluster::cluster::record_node_heartbeat(
         &pool,
         &core_key.public_hex(),
@@ -4874,7 +4874,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         .unwrap()
         .unwrap();
     act_engine(pool, repo.id).await;
-    let store = codeyard_app::repositories::store::repo_store(&repo, None);
+    let store = codeyard_repos_core::repositories::store::repo_store(&repo, None);
     {
         let git = git2::Repository::open_bare(&repo.disk_path).unwrap();
         git.reference(
@@ -4908,7 +4908,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
     )
     .await
     .unwrap();
-    let ci = codeyard_app::ci::runs::CiRuns::new(
+    let ci = codeyard_repos_core::ci::runs::CiRuns::new(
         pool.clone(),
         Arc::new(CiConfig {
             trusted_actor_ids: BTreeSet::from([fixture.owner]),
@@ -4918,7 +4918,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         None,
         Arc::new(NotificationBroadcaster::new(pool)),
     );
-    codeyard_app::repositories::pull_requests::workflows::queue_pull_request_ci(
+    codeyard_repos_core::repositories::pull_requests::workflows::queue_pull_request_ci(
         pool,
         &ci,
         &repo,
@@ -4969,7 +4969,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         )
         .await
         .unwrap();
-    codeyard_app::repositories::pull_requests::branches::branches_moved(
+    codeyard_repos_core::repositories::pull_requests::branches::branches_moved(
         pool,
         &repo,
         &ci,
@@ -5194,7 +5194,7 @@ async fn shutdown_cancels_a_run_while_its_heartbeat_is_stalled() {
             },
         )
         .spawn();
-    codeyard_app::cluster::wait_for_address(&endpoint).await;
+    codeyard_repos_core::cluster::wait_for_address(&endpoint).await;
     let runner = fixture.root.path().join("runner");
     std::fs::write(&runner, "#!/bin/sh\nsleep 60\n").unwrap();
     std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -5275,7 +5275,7 @@ async fn a_lost_log_reply_replays_without_duplicating_a_committed_batch_on_the_n
             },
         )
         .spawn();
-    codeyard_app::cluster::wait_for_address(&endpoint).await;
+    codeyard_repos_core::cluster::wait_for_address(&endpoint).await;
     let queue = RunQueue::Remote {
         preferred: Default::default(),
         context: fixture.worker.clone(),
@@ -5428,7 +5428,7 @@ async fn stalled_remote_logs_fail_success_and_do_not_delay_timeout_or_cancellati
             },
         )
         .spawn();
-    codeyard_app::cluster::wait_for_address(&endpoint).await;
+    codeyard_repos_core::cluster::wait_for_address(&endpoint).await;
     let runner = fixture.root.path().join("runner");
     let config = Arc::new(CiConfig {
         mode: CiExecutionMode::Local,

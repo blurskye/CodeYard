@@ -205,7 +205,7 @@ pub async fn rename_repo(
     Json(req): Json<RenameRepoRequest>,
 ) -> Result<Json<RepoResponse>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    codeyard_app::repositories::lifecycle::validate_name(&req.new_name).map_err(lifecycle_error)?;
+    codeyard_repos_core::repositories::lifecycle::validate_name(&req.new_name).map_err(lifecycle_error)?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
 
@@ -240,7 +240,7 @@ pub async fn transfer_repo(
     let user = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
-    let updated = codeyard_app::repositories::lifecycle::transfer(
+    let updated = codeyard_repos_core::repositories::lifecycle::transfer(
         &state.pool,
         state.cluster.as_ref(),
         codeyard_db_core::queries::credentials::Actor::from((
@@ -275,7 +275,7 @@ pub async fn about_repo(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_write_access(&state.pool, &repository, &user).await?;
     let description = req.description.unwrap_or_default();
-    codeyard_app::repositories::lifecycle::validate_description(&description)
+    codeyard_repos_core::repositories::lifecycle::validate_description(&description)
         .map_err(lifecycle_error)?;
     let website = codeyard_db_repos::repositories::topics::parse_website(
         req.website.as_deref().unwrap_or_default(),
@@ -318,11 +318,11 @@ pub async fn update_repo(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
     if let Some(Some(description)) = &req.description {
-        codeyard_app::repositories::lifecycle::validate_description(description)
+        codeyard_repos_core::repositories::lifecycle::validate_description(description)
             .map_err(lifecycle_error)?;
     }
     if req.is_private == Some(false)
-        && codeyard_app::repositories::lifecycle::visibility_locked(&state.pool, &repository)
+        && codeyard_repos_core::repositories::lifecycle::visibility_locked(&state.pool, &repository)
             .await
             .map_err(|error| {
                 (
@@ -373,7 +373,7 @@ pub async fn delete_repo(
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
-    codeyard_app::repositories::lifecycle::delete(
+    codeyard_repos_core::repositories::lifecycle::delete(
         &state.pool,
         state.cluster.as_ref(),
         codeyard_db_core::queries::credentials::Actor::from((
@@ -1642,7 +1642,7 @@ async fn mutate(
             Ok(base)
         }
         "fork" => {
-            let fork = codeyard_app::repositories::lifecycle::fork(
+            let fork = codeyard_repos_core::repositories::lifecycle::fork(
                 pool,
                 cluster,
                 &ctx.state.repos_path,
@@ -1656,7 +1656,7 @@ async fn mutate(
             Ok(codeyard_webui::repository_path(&actor.username, &fork.name))
         }
         "create-branch" => {
-            codeyard_app::repositories::refs::create_branch(
+            codeyard_repos_core::repositories::refs::create_branch(
                 pool,
                 cluster,
                 ci,
@@ -1674,7 +1674,7 @@ async fn mutate(
             codeyard_identity::repository_access::check_admin(pool, repository.id, actor.id)
                 .await
                 .map_err(access_error)?;
-            codeyard_app::repositories::refs::set_default_branch(
+            codeyard_repos_core::repositories::refs::set_default_branch(
                 pool,
                 cluster,
                 authority(),
@@ -1686,7 +1686,7 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "delete-branch" => {
-            codeyard_app::repositories::refs::delete_branch(
+            codeyard_repos_core::repositories::refs::delete_branch(
                 pool,
                 cluster,
                 ci,
@@ -1700,7 +1700,7 @@ async fn mutate(
         }
         "create-tag" => {
             let message = field(form, "message");
-            codeyard_app::repositories::refs::create_tag(
+            codeyard_repos_core::repositories::refs::create_tag(
                 pool,
                 cluster,
                 ci,
@@ -1716,7 +1716,7 @@ async fn mutate(
             Ok(format!("{base}/tags"))
         }
         "delete-tag" => {
-            codeyard_app::repositories::refs::delete_tag(
+            codeyard_repos_core::repositories::refs::delete_tag(
                 pool,
                 cluster,
                 authority(),
@@ -1731,14 +1731,14 @@ async fn mutate(
             codeyard_identity::repository_access::check_admin(pool, repository.id, actor.id)
                 .await
                 .map_err(access_error)?;
-            codeyard_app::repositories::lifecycle::validate_description(&field(
+            codeyard_repos_core::repositories::lifecycle::validate_description(&field(
                 form,
                 "description",
             ))
             .map_err(lifecycle_error)?;
             let private = field(form, "visibility") == "private";
             if !private
-                && codeyard_app::repositories::lifecycle::visibility_locked(pool, repository)
+                && codeyard_repos_core::repositories::lifecycle::visibility_locked(pool, repository)
                     .await
                     .map_err(lifecycle_error)?
             {
@@ -1989,7 +1989,7 @@ async fn mutate(
         }
         "about" => {
             let description = field(form, "description");
-            codeyard_app::repositories::lifecycle::validate_description(&description)
+            codeyard_repos_core::repositories::lifecycle::validate_description(&description)
                 .map_err(lifecycle_error)?;
             let website =
                 codeyard_db_repos::repositories::topics::parse_website(&field(form, "website"))
@@ -2028,7 +2028,7 @@ async fn mutate(
             Ok(codeyard_webui::repository_path(owner, &updated.name))
         }
         "transfer" => {
-            let updated = codeyard_app::repositories::lifecycle::transfer(
+            let updated = codeyard_repos_core::repositories::lifecycle::transfer(
                 pool,
                 ctx.state.cluster.as_ref(),
                 authority(),
@@ -2056,7 +2056,7 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "delete" => {
-            codeyard_app::repositories::lifecycle::delete(
+            codeyard_repos_core::repositories::lifecycle::delete(
                 pool,
                 cluster,
                 ctx.database_actor(actor.id),
@@ -2077,7 +2077,7 @@ async fn mutate(
                 },
             )
             .await
-            .map_err(codeyard_app::repositories::lifecycle::storage_error)
+            .map_err(codeyard_repos_core::repositories::lifecycle::storage_error)
             .map_err(lifecycle_error)?;
             Ok(settings_section_url(&base, action))
         }
@@ -2100,7 +2100,7 @@ async fn mutate(
                     message,
                 )
             })?;
-            codeyard_app::repositories::releases::immutable::set_enabled(
+            codeyard_repos_core::repositories::releases::immutable::set_enabled(
                 pool,
                 actor.id,
                 repository.id,

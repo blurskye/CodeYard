@@ -14,10 +14,10 @@ use axum::routing::post;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::urls::repo_url;
@@ -72,7 +72,7 @@ async fn submit(
     body: std::result::Result<Json<codeyard_model::dependency_graph::Snapshot>, JsonRejection>,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let Json(mut snapshot) =
         body.map_err(|_| Error::validation("Snapshot", "snapshot", "invalid"))?;
     snapshot.validate().map_err(error)?;

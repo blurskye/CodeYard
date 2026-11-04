@@ -2,12 +2,12 @@
 use anyhow::Context;
 use sha2::Digest;
 
-use crate::ci::runs::CiRuns;
+use codeyard_repos_core::ci::runs::CiRuns;
 use crate::repositories::dependencies::registry::Client;
 use crate::repositories::dependencies::worker::Pinned;
 use crate::repositories::pull_requests::mutations::create_pull_request;
 use crate::repositories::pull_requests::mutations::CreatePullRequestRequest;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_repos::repositories::dependencies as records;
@@ -98,7 +98,7 @@ async fn open(
         .await
         {
             Ok(pull) => pull,
-            Err(crate::repositories::pull_requests::OperationError::Opened { number }) => {
+            Err(codeyard_repos_core::repositories::pull_requests::OperationError::Opened { number }) => {
                 codeyard_db_repos::pull_requests::records::get_pull_request(
                     pool,
                     pinned.repository.id,

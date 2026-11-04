@@ -24,7 +24,7 @@ type Params = HashMap<String, String>;
 
 async fn event_document(
     state: &AppState,
-    auth: Option<&codeyard_app::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
     repo: &codeyard_db_core::models::Repository,
     owner: &str,
     id: i64,
@@ -75,9 +75,9 @@ async fn event_document(
         if !issues.contains_key(&key) {
             issues.insert(
                 key.clone(),
-                codeyard_app::api_shared::github::issues::document(
+                codeyard_repos_core::api_shared::github::issues::document(
                     &state.pool,
-                    codeyard_app::api_shared::github::issues::Reader::Request(state, auth),
+                    codeyard_repos_core::api_shared::github::issues::Reader::Request(state, auth),
                     repo,
                     owner,
                     item,
@@ -195,13 +195,13 @@ async fn list(
             }
             "review" => review_document(&state, &repo, &p["owner"], id).await?,
             "issue_comment" | "pr_comment" => {
-                let comment = codeyard_app::api_shared::github::comments::find(
+                let comment = codeyard_repos_core::api_shared::github::comments::find(
                     &state.pool,
                     repo.id,
                     codeyard_model::webhook_ids::conversation_comment_id(id, kind == "pr_comment"),
                 )
                 .await?;
-                let mut value = codeyard_app::api_shared::github::comments::document(
+                let mut value = codeyard_repos_core::api_shared::github::comments::document(
                     &state.pool,
                     &repo,
                     &p["owner"],

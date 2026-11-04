@@ -21,12 +21,12 @@ use serde_json::Value;
 use std::sync::Arc;
 
 pub(crate) fn operation_error(
-    error: codeyard_app::repositories::pull_requests::OperationError,
+    error: codeyard_repos_core::repositories::pull_requests::OperationError,
 ) -> Error {
-    use codeyard_app::repositories::pull_requests::OperationError::*;
+    use codeyard_repos_core::repositories::pull_requests::OperationError::*;
     match error {
         Missing { .. } => Error::missing(),
-        Unauthenticated { .. } => codeyard_app::api_shared::github::auth::required(),
+        Unauthenticated { .. } => codeyard_repos_core::api_shared::github::auth::required(),
         Denied { message, .. } => Error::new(StatusCode::FORBIDDEN, message),
         // GitHub answers a pull request write it refuses with 422 (an open duplicate, a stale
         // revision, a refused stack); merges map their own 405 and 409 first.
@@ -67,7 +67,7 @@ async fn create_value(
     body: Bytes,
 ) -> Result<Response> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let viewer = viewer.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let viewer = viewer.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = viewer.user.clone();
     let input: Create =
         serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?;
@@ -96,7 +96,7 @@ async fn create_value(
         codeyard_db_repos::repositories::records::get_repository(&state.pool, head_owner, head_name)
             .await
     } else {
-        codeyard_app::repositories::pull_requests::branches::owner_head_repository(
+        codeyard_repos_core::repositories::pull_requests::branches::owner_head_repository(
             &state.pool,
             &repo,
             head_owner,
@@ -185,7 +185,7 @@ async fn update_value(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let viewer = viewer.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let viewer = viewer.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = &viewer.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     if pull.head_repo_id.is_some()

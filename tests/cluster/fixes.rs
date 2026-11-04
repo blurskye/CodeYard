@@ -63,7 +63,7 @@ async fn service_startup_refuses_roles_outside_existing_enrollment() {
     })
     .unwrap()
     .unwrap();
-    let error = codeyard_app::cluster::start(
+    let error = codeyard_repos_core::cluster::start(
         &db.pool,
         root.path(),
         root.path(),
@@ -216,7 +216,7 @@ async fn adoption_refreshes_forks_committed_while_it_waits_for_the_source() {
     let pool = db.pool.clone();
     let directory = root.path().to_owned();
     let adopting = tokio::spawn(async move {
-        codeyard_app::cluster::adopt_repositories(&pool, node.id, &directory).await
+        codeyard_repos_core::cluster::adopt_repositories(&pool, node.id, &directory).await
     });
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(!adopting.is_finished());

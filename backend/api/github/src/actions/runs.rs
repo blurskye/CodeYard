@@ -15,7 +15,7 @@ use chrono::NaiveDate;
 use chrono::Utc;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_actions::action_runs::RunQuery;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
@@ -133,7 +133,7 @@ impl Documents {
 
 async fn referenced_document(
     state: &AppState,
-    auth: Option<&codeyard_app::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
     id: i64,
 ) -> Result<Value> {
     let Some(head) = crate::auth::referenced_repository(state, auth, id).await? else {
@@ -150,7 +150,7 @@ async fn referenced_document(
 
 async fn document(
     state: &Arc<AppState>,
-    auth: Option<&codeyard_app::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
     repo: &codeyard_db_core::models::Repository,
     owner: &str,
     run: &codeyard_db_core::models::CiRun,
@@ -218,7 +218,7 @@ async fn document(
                             | codeyard_git::error::ErrorKind::Unavailable
                     ) => {}
                 Err(error) => {
-                    return Err(codeyard_app::api_shared::github::contents::store_error(
+                    return Err(codeyard_repos_core::api_shared::github::contents::store_error(
                         error,
                     ))
                 }
@@ -260,12 +260,12 @@ async fn document(
         pull_requests,
     );
     let mut workflow_name =
-        codeyard_app::ci::workflows::workflow_name_from_path(&run.workflow_path);
+        codeyard_repos_core::ci::workflows::workflow_name_from_path(&run.workflow_path);
     if let Some(sha) = &run.head_sha {
         if !documents.workflows.contains_key(sha) {
             // Discovery owns bounded background parsing and its immutable cross-request cache.
             // Git enrichment is optional; durable execution history remains readable offline.
-            let definitions = codeyard_app::ci::workflows::list_workflows_for_ref(
+            let definitions = codeyard_repos_core::ci::workflows::list_workflows_for_ref(
                 &repo_store(repo, state.cluster.as_ref()),
                 sha,
             )

@@ -73,10 +73,10 @@ async fn scope(
     headers: &HeaderMap,
     org: &str,
     write: bool,
-) -> Result<(codeyard_app::api_shared::github::auth::Authentication, i64)> {
-    let auth = codeyard_app::api_shared::github::auth::authenticate(state, headers, true)
+) -> Result<(codeyard_repos_core::api_shared::github::auth::Authentication, i64)> {
+    let auth = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     if write {
         auth.require_write()?;
     }
@@ -322,7 +322,7 @@ async fn repository_configuration(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     if !codeyard_identity::repository_access::can_admin(&state.pool, &auth.user, &repo)
         .await
         .map_err(Error::unavailable)?

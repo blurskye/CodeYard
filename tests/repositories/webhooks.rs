@@ -145,7 +145,7 @@ async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
     let alice_id = database.actor("alice").await;
     let bob_id = database.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    codeyard_app::repositories::lifecycle::provision(
+    codeyard_repos_core::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -782,7 +782,7 @@ async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
         .await;
     let built = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let seen = built.clone();
-    codeyard_app::webhooks::emit(pool, &repo, "push", vec![], move |_, _| {
+    codeyard_repos_core::webhooks::emit(pool, &repo, "push", vec![], move |_, _| {
         seen.store(true, std::sync::atomic::Ordering::SeqCst);
         json!({"private": "new owner's issue body"})
     })
@@ -832,7 +832,7 @@ async fn pull_request_head_synchronize_hook(pg: bool, url: &str) {
 }
 
 async fn server_ref_events(pg: bool, url: &str) {
-    use codeyard_app::repositories::store::repo_store;
+    use codeyard_repos_core::repositories::store::repo_store;
     use codeyard_repos_core::store_types::MergeMethod;
     use codeyard_repos_core::store_types::MergeRequest;
     use codeyard_repos::editor::FileWrite;
@@ -969,8 +969,8 @@ async fn server_ref_events(pg: bool, url: &str) {
 }
 
 async fn repository_creation_is_not_a_ref_event(pg: bool, url: &str) {
-    use codeyard_app::repositories::lifecycle;
-    use codeyard_app::repositories::store::repo_store;
+    use codeyard_repos_core::repositories::lifecycle;
+    use codeyard_repos_core::repositories::store::repo_store;
     use codeyard_repos::editor::FileWrite;
     let mut database = Database::new(pg).await;
     database.complete_setup().await;
@@ -1096,7 +1096,7 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
     let outsider = database.actor("hook_outsider").await;
     let pool = database.pool();
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_app::repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),

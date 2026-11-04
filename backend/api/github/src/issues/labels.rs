@@ -79,7 +79,7 @@ async fn create(
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
     let actor = auth
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .database_actor();
     codeyard_model::issue_input::validate_label(&input.name, input.description.as_deref())
         .map_err(Error::invalid)?;
@@ -168,7 +168,7 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
     let actor = auth
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .database_actor();
     let existing = find(&state.pool, repo.id, &p["name"]).await?;
     codeyard_model::issue_input::validate_label(
@@ -202,7 +202,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
     let actor = auth
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .database_actor();
     let label = find(&state.pool, repo.id, &p["name"]).await?;
     codeyard_db_repos::labels::delete_label(&state.pool, actor, repo.id, label.id)
@@ -274,7 +274,7 @@ async fn change(
 ) -> Result<Json<Vec<Value>>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
     let actor = auth
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .database_actor();
     let item = item(&state.pool, repo.id, &p["issue_number"]).await?;
     if names.len() > codeyard_db_repos::labels::MAX_ISSUE_LABELS {
@@ -369,7 +369,7 @@ async fn remove_from_issue(
 ) -> Result<Json<Vec<Value>>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
     let actor = auth
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .database_actor();
     let item = item(&state.pool, repo.id, &p["issue_number"]).await?;
     let label = find(&state.pool, repo.id, &p["name"]).await?;

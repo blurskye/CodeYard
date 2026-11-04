@@ -14,7 +14,7 @@ use codeyard_api_http::render::redirect_response;
 use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_storage::range::ByteRange as BlobRange;
 use codeyard_webui::app::Page;
 use codeyard_webui::excerpt;

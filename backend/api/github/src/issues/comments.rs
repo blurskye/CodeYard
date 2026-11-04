@@ -89,7 +89,7 @@ async fn represent(
     let text = matches!(profile, Representation::Text | Representation::Full);
     let references = if html {
         let authentication =
-            codeyard_app::api_shared::github::auth::authenticate(state, headers, false).await?;
+            codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, false).await?;
         let texts: Vec<_> = values
             .iter()
             .filter_map(|value| value["body"].as_str())
@@ -190,7 +190,7 @@ async fn create(
     Json(input): Json<Body>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let (actor, credential) = (&auth.user, auth.credential());
     let item =
         codeyard_app::api_shared::github::labels::item(&state.pool, repo.id, &p["issue_number"])
@@ -265,7 +265,7 @@ async fn update(
     Json(input): Json<Body>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let (actor, credential) = (&auth.user, auth.credential());
     let api_id = p["comment_id"].parse().map_err(|_| Error::missing())?;
     let comment = find(&state.pool, repo.id, api_id).await?;
@@ -318,7 +318,7 @@ async fn remove(
     Path(p): Path<Params>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let (actor, credential) = (&auth.user, auth.credential());
     let comment = find(
         &state.pool,
@@ -425,10 +425,10 @@ pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 
-use codeyard_app::api_shared::github::comments::Comment;
+use codeyard_repos_core::api_shared::github::comments::Comment;
 
-use codeyard_app::api_shared::github::comments::document;
+use codeyard_repos_core::api_shared::github::comments::document;
 
-use codeyard_app::api_shared::github::comments::documents;
+use codeyard_repos_core::api_shared::github::comments::documents;
 
-use codeyard_app::api_shared::github::comments::find;
+use codeyard_repos_core::api_shared::github::comments::find;

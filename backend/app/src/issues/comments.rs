@@ -220,7 +220,7 @@ async fn emit_comment_webhook(
     let (issue, comment, repository_for_hook) =
         (issue.clone(), comment.clone(), repository.clone());
     let (issue_author_id, comment_author_id) = (issue.author_id, comment.author_id);
-    crate::webhooks::emit(
+    codeyard_repos_core::webhooks::emit(
         pool,
         repository,
         codeyard_model::webhook_events::ISSUE_COMMENT,

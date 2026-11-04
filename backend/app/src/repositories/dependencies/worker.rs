@@ -1,10 +1,10 @@
 //! Leased proposals consume the inventory and alerts maintained by the vulnerability worker.
 use anyhow::Context;
 
-use crate::ci::runs::CiRuns;
+use codeyard_repos_core::ci::runs::CiRuns;
 use crate::repositories::dependencies::registry::Client;
-use crate::repositories::store::repo_store;
-use crate::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
@@ -70,7 +70,7 @@ async fn process(
     }
     let stored = store.info().await?.default_branch;
     let branch =
-        crate::repositories::reads::default_branch(&refs, &stored, &repository.default_branch);
+        codeyard_repos_core::repositories::reads::default_branch(&refs, &stored, &repository.default_branch);
     let sha = refs
         .get(&format!("refs/heads/{branch}"))
         .context("The default branch is missing")?

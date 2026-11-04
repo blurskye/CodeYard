@@ -1138,7 +1138,7 @@ async fn contract(pg: bool) {
 
     let mut repositories = Vec::new();
     for owner in [alice, bob] {
-        let repo = codeyard_app::repositories::lifecycle::provision(
+        let repo = codeyard_repos_core::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),

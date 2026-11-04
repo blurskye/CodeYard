@@ -7,7 +7,7 @@ use axum::{
     Router,
 };
 
-use codeyard_app::repositories::lifecycle;
+use codeyard_repos_core::repositories::lifecycle;
 use codeyard_app::repositories::pull_requests::async_merge;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;

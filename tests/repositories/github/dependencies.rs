@@ -1,5 +1,5 @@
 use super::*;
-use codeyard_app::ci::runs::CiRuns;
+use codeyard_repos_core::ci::runs::CiRuns;
 use codeyard_app::repositories::dependencies::registry;
 use codeyard_app::repositories::dependencies::worker;
 use codeyard_notifications::broadcast::NotificationBroadcaster;

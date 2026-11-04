@@ -30,7 +30,7 @@ async fn pending(
     let run = crate::actions::run(&state, repo.id, id).await?;
     if write {
         let actor = auth
-            .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+            .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
             .database_actor();
         let Json(input) =
             Json::<codeyard_db_actions::deployment_reviews::Input>::from_request(request, &state)

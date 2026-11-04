@@ -1,7 +1,7 @@
 use axum::http::HeaderMap;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::releases::ReleaseDetail;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_repos::assignees::AssignedItem;
 use codeyard_db_repos::repository_exports as exports;
 use codeyard_db_repos::repository_exports::RepositoryExport;
@@ -25,7 +25,7 @@ pub(super) fn spawn(state: Arc<AppState>, headers: HeaderMap, row: RepositoryExp
             exports::finish(&state.pool, row.id, "exporting").await.map_err(Error::unavailable)?;
             let bytes = build(&state, &headers, &row).await?;
             // Tokens, scope and selected repository ownership are rechecked before publication.
-            let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true).await?.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+            let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true).await?.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
             actor.require_write()?;
             if Some(actor.user.id) != row.actor_id || exports::by_guid(&state.pool, actor.user.id, &row.guid).await.map_err(Error::unavailable)?.is_none() { return Err(Error::missing()); }
             let key = row.object_key();
@@ -50,9 +50,9 @@ async fn person(state: &AppState, id: i64) -> Result<Value> {
 }
 
 async fn build(state: &AppState, headers: &HeaderMap, row: &RepositoryExport) -> Result<Vec<u8>> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(state, headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     actor.require_write()?;
     if exports::by_guid(&state.pool, actor.user.id, &row.guid)
         .await
@@ -223,9 +223,9 @@ async fn metadata(
         let next = rows.last().copied();
         let mut values = Vec::new();
         for id in rows {
-            let mut value = codeyard_app::api_shared::github::issues::document(
+            let mut value = codeyard_repos_core::api_shared::github::issues::document(
                 &state.pool,
-                codeyard_app::api_shared::github::issues::Reader::Repository,
+                codeyard_repos_core::api_shared::github::issues::Reader::Repository,
                 repo,
                 owner,
                 AssignedItem::Issue(id),
@@ -344,14 +344,14 @@ async fn issue_comments(
         let count = rows.len();
         let mut values = Vec::new();
         for row in rows {
-            let comment = codeyard_app::api_shared::github::comments::find(
+            let comment = codeyard_repos_core::api_shared::github::comments::find(
                 &state.pool,
                 repo.id,
                 codeyard_model::webhook_ids::conversation_comment_id(row.comment.id, false),
             )
             .await?;
             values.push(
-                codeyard_app::api_shared::github::comments::document(
+                codeyard_repos_core::api_shared::github::comments::document(
                     &state.pool,
                     repo,
                     owner,
@@ -410,14 +410,14 @@ async fn pull_comments(
                 value["user"] = codeyard_webhooks::payloads::user(&author);
                 inline.push(value);
             } else {
-                let comment = codeyard_app::api_shared::github::comments::find(
+                let comment = codeyard_repos_core::api_shared::github::comments::find(
                     &state.pool,
                     repo.id,
                     codeyard_model::webhook_ids::conversation_comment_id(row.comment.id, true),
                 )
                 .await?;
                 conversation.push(
-                    codeyard_app::api_shared::github::comments::document(
+                    codeyard_repos_core::api_shared::github::comments::document(
                         &state.pool,
                         repo,
                         owner,

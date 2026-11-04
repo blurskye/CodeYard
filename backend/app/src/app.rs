@@ -1,5 +1,5 @@
 //! Shared application state: database, storage, CI and notification services.
-use crate::ci::runs::CiRuns;
+use codeyard_repos_core::ci::runs::CiRuns;
 use codeyard_ci::config::CiConfig;
 use codeyard_db_core::DbPool;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
@@ -24,7 +24,7 @@ pub struct AppState {
     pub notification_broadcaster: Arc<NotificationBroadcaster>,
     pub ci_runs: Arc<CiRuns>,
     pub oidc_keys: Arc<codeyard_ci::oidc::SigningKeys>,
-    pub git_tasks: Arc<crate::repositories::git_sessions::GitTasks>,
+    pub git_tasks: Arc<codeyard_repos_core::repositories::git_sessions::GitTasks>,
     pub form_reads: Arc<tokio::sync::Semaphore>,
     pub anonymous_form_reads: Arc<tokio::sync::Semaphore>,
     /// Upload forms held in memory until their commit lands. Only a few run at once.
@@ -51,7 +51,7 @@ impl AppState {
         cluster: Option<codeyard_repos_core::context::NodeContext>,
     ) -> Self {
         if cluster.is_none() {
-            crate::repositories::releases::immutable::register_local_identity(
+            codeyard_repos_core::repositories::releases::immutable::register_local_identity(
                 storage.state_directory(),
                 &repos_path,
             );
@@ -102,4 +102,9 @@ impl AppState {
                 ),
         }
     }
+}
+
+impl codeyard_repos_core::request_context::RequestContext for AppState {
+    fn pool(&self) -> &DbPool { &self.pool }
+    fn cluster(&self) -> Option<&codeyard_repos_core::context::NodeContext> { self.cluster.as_ref() }
 }

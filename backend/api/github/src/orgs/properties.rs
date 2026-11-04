@@ -109,9 +109,9 @@ async fn list(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let definitions = outcome(
         codeyard_db_orgs::organizations::properties::catalog(&state.pool, actor.user.id, org.id)
@@ -132,9 +132,9 @@ async fn get_definition(
     headers: HeaderMap,
     Path((name, property)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let definitions = outcome(
         codeyard_db_orgs::organizations::properties::catalog(&state.pool, actor.user.id, org.id)
@@ -160,9 +160,9 @@ async fn define_one(
     Path((name, property)): Path<(String, String)>,
     input: std::result::Result<Json<Value>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
     let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
@@ -192,9 +192,9 @@ async fn define_many(
     Path(name): Path<String>,
     input: std::result::Result<Json<Definitions>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
     let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
@@ -227,9 +227,9 @@ async fn remove(
     headers: HeaderMap,
     Path((name, property)): Path<(String, String)>,
 ) -> Result<StatusCode> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
     outcome(
@@ -253,9 +253,9 @@ async fn values(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let query = RepositoryQuery::parse(query.get("repository_query").map_or("", String::as_str))
         .map_err(error)?;
@@ -292,9 +292,9 @@ async fn set_values(
     Path(name): Path<String>,
     input: std::result::Result<Json<Values>, axum::extract::rejection::JsonRejection>,
 ) -> Result<StatusCode> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
     let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;

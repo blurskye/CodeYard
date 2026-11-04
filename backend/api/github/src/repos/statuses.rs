@@ -12,10 +12,10 @@ use axum::routing::post;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::models::CommitStatus;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
@@ -80,7 +80,7 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let actor = auth.user.id;
     if !codeyard_git::is_full_commit_id(&sha) {
         return Err(Error::invalid("sha must be a full commit ID"));
@@ -121,7 +121,7 @@ async fn create(
         Some(_) => Error::invalid("Invalid commit status"),
         None => Error::unavailable(()),
     })?;
-    codeyard_app::webhooks::statuses::emit_status(
+    codeyard_repos_core::webhooks::statuses::emit_status(
         &state.pool,
         &store,
         &repo,
@@ -174,7 +174,7 @@ async fn read(
             .map_err(Error::unavailable)?
             .is_none_or(|user| user.id != auth.user.id)
         {
-            return Err(codeyard_app::api_shared::github::auth::required());
+            return Err(codeyard_repos_core::api_shared::github::auth::required());
         }
         auth.repository_scope(&state.pool, repo.id, "statuses", false)
             .await

@@ -163,7 +163,7 @@ pub(super) async fn application(
     }
     match codeyard_db_identity::auth_admission::admit_login(
         &state.pool,
-        codeyard_app::api_shared::http::session::client_address(headers),
+        codeyard_repos_core::api_shared::http::session::client_address(headers),
         None,
         &format!("oauth-client:{id}"),
     )

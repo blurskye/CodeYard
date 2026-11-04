@@ -74,10 +74,10 @@ pub(super) async fn organization(
     headers: &HeaderMap,
     name: &str,
     write: bool,
-) -> Result<(i64, codeyard_app::api_shared::github::auth::Authentication)> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(state, headers, write)
+) -> Result<(i64, codeyard_repos_core::api_shared::github::auth::Authentication)> {
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, write)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     if write {
         actor.require_write()?;
     }

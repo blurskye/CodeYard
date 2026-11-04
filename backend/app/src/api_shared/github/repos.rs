@@ -10,8 +10,8 @@ use codeyard_model::github_error::Result;
 use serde_json::json;
 use serde_json::Value;
 use std::sync::Arc;
-pub fn lifecycle_error(error: crate::repositories::lifecycle::StorageError) -> Error {
-    use crate::repositories::lifecycle::LifecycleFailure::*;
+pub fn lifecycle_error(error: codeyard_repos_core::repositories::lifecycle::StorageError) -> Error {
+    use codeyard_repos_core::repositories::lifecycle::LifecycleFailure::*;
     let status = match error.kind {
         Invalid | OwnRepositoryFork | Conflict => StatusCode::UNPROCESSABLE_ENTITY,
         Denied => StatusCode::FORBIDDEN,
@@ -38,7 +38,7 @@ pub async fn public_fork_count(state: &AppState, repo: i64) -> Result<i32> {
 pub async fn document(
     state: &AppState,
     repo: &Repository,
-    viewer: Option<&crate::api_shared::github::auth::Authentication>,
+    viewer: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
 ) -> Result<Value> {
     documents(state, std::slice::from_ref(repo), viewer)
         .await?
@@ -49,7 +49,7 @@ pub async fn document(
 pub async fn documents(
     state: &AppState,
     repos: &[Repository],
-    viewer: Option<&crate::api_shared::github::auth::Authentication>,
+    viewer: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
 ) -> Result<Vec<Value>> {
     let ids: Vec<_> = repos.iter().map(|repo| repo.id).collect();
     let owners =
@@ -92,7 +92,7 @@ pub async fn documents(
         );
     }
     if let Some(viewer) = viewer {
-        let readable = crate::api_shared::github::auth::readable_repositories(
+        let readable = codeyard_repos_core::api_shared::github::auth::readable_repositories(
             state,
             Some(viewer),
             &ids,
@@ -111,7 +111,7 @@ pub async fn documents(
 async fn document_with(
     state: &AppState,
     repo: &Repository,
-    viewer: Option<&crate::api_shared::github::auth::Authentication>,
+    viewer: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
     owner: &str,
     facts: &codeyard_db_repos::repository_stats::RepositoryDocumentMetadata,
     topics: &[String],
@@ -140,7 +140,7 @@ async fn document_with(
                     .await
                     .map_err(Error::unavailable)?
                     .ok_or_else(Error::missing)?;
-            if !crate::api_shared::github::auth::readable_repositories(
+            if !codeyard_repos_core::api_shared::github::auth::readable_repositories(
                 state,
                 viewer,
                 &[id],
@@ -211,8 +211,8 @@ pub async fn remove(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(crate::api_shared::github::auth::required)?;
-    crate::repositories::lifecycle::delete(
+    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    codeyard_repos_core::repositories::lifecycle::delete(
         &state.pool,
         state.cluster.as_ref(),
         actor.database_actor(),

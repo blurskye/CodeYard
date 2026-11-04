@@ -65,7 +65,7 @@ fn token() -> String {
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_git::error::RepoError;
 use codeyard_storage::ObjectStore;
 use tower::ServiceExt;
@@ -1131,7 +1131,7 @@ async fn valid_ref_without_workflow_directory_has_empty_actions_not_outage() {
         )
         .unwrap();
     let store = RepoStore::from_disk_path(directory.path().to_str().unwrap());
-    let workflows = codeyard_app::ci::workflows::list_workflows_for_ref(&store, "main").await;
+    let workflows = codeyard_repos_core::ci::workflows::list_workflows_for_ref(&store, "main").await;
     let kind = workflows
         .as_ref()
         .err()
@@ -1145,14 +1145,14 @@ async fn valid_ref_without_workflow_directory_has_empty_actions_not_outage() {
     // A nonexistent ref or missing repository must remain an error, not be
     // mistaken for an existing commit without workflow definitions.
     assert!(
-        codeyard_app::ci::workflows::list_workflows_for_ref(&store, "missing-ref")
+        codeyard_repos_core::ci::workflows::list_workflows_for_ref(&store, "missing-ref")
             .await
             .is_err()
     );
     let missing = directory.path().join("missing-repository");
     let missing = RepoStore::from_disk_path(missing.to_str().unwrap());
     assert!(
-        codeyard_app::ci::workflows::list_workflows_for_ref(&missing, "main")
+        codeyard_repos_core::ci::workflows::list_workflows_for_ref(&missing, "main")
             .await
             .is_err()
     );

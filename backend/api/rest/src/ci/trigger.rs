@@ -8,7 +8,7 @@ use axum::Json;
 use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
 use codeyard_app::app::AppState;
-use codeyard_app::ci::runs::DispatchRequest;
+use codeyard_repos_core::ci::runs::DispatchRequest;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -72,7 +72,7 @@ mod tests {
     fn dispatch_form_offers_only_events_the_server_accepts() {
         for event in view_actions::TRIGGER_EVENTS {
             assert!(
-                codeyard_app::ci::admission::is_supported_event(event),
+                codeyard_repos_core::ci::admission::is_supported_event(event),
                 "{event}"
             );
         }
@@ -99,7 +99,7 @@ mod tests {
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
-        let original = codeyard_app::repositories::lifecycle::provision(
+        let original = codeyard_repos_core::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
@@ -110,7 +110,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let private = codeyard_app::repositories::lifecycle::provision(
+        let private = codeyard_repos_core::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),

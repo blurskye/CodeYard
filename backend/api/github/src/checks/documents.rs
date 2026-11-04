@@ -39,6 +39,6 @@ pub(super) async fn runs(
         .collect()
 }
 
-use codeyard_app::api_shared::github::checks::documents::Related;
+use codeyard_repos_core::api_shared::github::checks::documents::Related;
 
-use codeyard_app::api_shared::github::checks::documents::keys;
+use codeyard_repos_core::api_shared::github::checks::documents::keys;

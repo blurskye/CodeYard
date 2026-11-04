@@ -11,7 +11,7 @@ use base64::{
     Engine,
 };
 
-use codeyard_app::repositories::lifecycle;
+use codeyard_repos_core::repositories::lifecycle;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 

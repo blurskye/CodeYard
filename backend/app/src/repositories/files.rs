@@ -1,10 +1,10 @@
 //! Web editor and API file writes: check who may write where, then have the store
 //! commit the file and move the branch, failing if it changed since the editor loaded.
-use crate::ci::push::RefUpdate;
-use crate::ci::runs::CiRuns;
+use codeyard_repos_core::ci::push::RefUpdate;
+use codeyard_repos_core::ci::runs::CiRuns;
 use codeyard_repos_core::context::NodeContext;
-use crate::repositories::store::repo_store;
-use crate::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::CommitInfo;
@@ -693,7 +693,7 @@ async fn publish_commit(
     // The branch moved: pull requests that use it follow, and push workflows run.
     let current = codeyard_identity::repository_access::current_repository_with_owner(pool, repository.id).await;
     let followup_repository = current.as_ref().map(|(repo, _)| repo).unwrap_or(repository);
-    let refreshed = crate::repositories::pull_requests::branches::refresh_open_pull_requests(
+    let refreshed = codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
         pool,
         followup_repository,
         Some(&[branch][..]),

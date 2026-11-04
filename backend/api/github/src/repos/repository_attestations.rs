@@ -70,7 +70,7 @@ async fn create(
     let (repo, auth) =
         codeyard_app::api_shared::github::repository(&state, &headers, &owner, &name, false)
             .await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     auth.require_write()?;
     let Json(body) = body.map_err(codeyard_model::github_error::json_error)?;
     let bundle = PreparedBundle::new(&body.bundle).map_err(error)?;
@@ -134,7 +134,7 @@ async fn list(
     let (repo, auth) =
         codeyard_app::api_shared::github::repository(&state, &headers, &owner, &name, false)
             .await?;
-    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let Query(query) = query.map_err(|_| Error::invalid("Invalid attestation pagination"))?;
     let after = decode_cursor(query.after.as_deref(), "after")?;
     let before = decode_cursor(query.before.as_deref(), "before")?;

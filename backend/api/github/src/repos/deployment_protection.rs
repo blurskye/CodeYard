@@ -76,7 +76,7 @@ async fn rules(
     if !read {
         let actor = &authentication
             .as_ref()
-            .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+            .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
             .user;
         if !codeyard_identity::repository_access::can_admin(&state.pool, actor, &repo)
             .await
@@ -109,7 +109,7 @@ async fn rules(
         return Ok((page.headers(&uri, rules.len() > offset + limit)?, Json(json!({"total_count":rules.len(),"custom_deployment_protection_rules":rules.iter().skip(offset).take(limit).map(document).collect::<Vec<_>>()}))).into_response());
     }
     let actor = authentication
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .database_actor();
     if request.method() == Method::DELETE {
         protection::disable(
@@ -144,7 +144,7 @@ async fn integrations(
     let (repo, authentication) =
         repository(&state, &headers, &params["owner"], &params["repo"], false).await?;
     let actor = authentication
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     if !codeyard_identity::repository_access::can_admin(&state.pool, &actor, &repo)
         .await
@@ -181,7 +181,7 @@ async fn review_gate(
     let (repo, authentication) =
         repository(&state, &headers, &params["owner"], &params["repo"], false).await?;
     let token = authentication
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .token
         .id;
     let run = params["run_id"]

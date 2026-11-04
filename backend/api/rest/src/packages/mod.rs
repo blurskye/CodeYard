@@ -6,7 +6,7 @@ use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::Json;
 use axum::Router;
-use codeyard_app::api_shared::github::auth::Authentication;
+use codeyard_repos_core::api_shared::github::auth::Authentication;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::packages::Owner;
 use codeyard_db_repos::packages::Package;
@@ -150,7 +150,7 @@ async fn authenticate(
             );
         }
     }
-    codeyard_app::api_shared::github::auth::authenticate(state, &normalized, required)
+    codeyard_repos_core::api_shared::github::auth::authenticate(state, &normalized, required)
         .await
         .map_err(|error| {
             let status = error.into_response().status();

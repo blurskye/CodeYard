@@ -4,8 +4,8 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use codeyard_app::repositories::lifecycle;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::lifecycle;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_identity::tokens;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 

@@ -3,9 +3,9 @@ use crate::issues::comments::CommentTarget;
 use crate::issues::discussion_link;
 use crate::issues::discussion_page;
 use crate::issues::COMMENTS_PER_PAGE;
-use crate::repositories::pull_requests::database_error;
-use crate::repositories::pull_requests::OperationError;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::repositories::pull_requests::database_error;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
 use codeyard_notifications::create::NotificationRequest;
@@ -253,7 +253,7 @@ pub(super) async fn emit_comment_webhook(
     let (comment_for_hook, pull_for_hook, repository_for_hook) =
         (comment.clone(), pull_request.clone(), repository.clone());
     let (pull_author_id, comment_author_id) = (pull_request.author_id, comment.author_id);
-    crate::webhooks::emit(
+    codeyard_repos_core::webhooks::emit(
         pool,
         repository,
         event,
@@ -440,7 +440,7 @@ pub async fn create_pull_request_comment(
     number: i32,
     req: CreatePullRequestCommentRequest,
 ) -> Result<codeyard_db_core::models::PullRequestComment, OperationError> {
-    let user = crate::repositories::pull_requests::actor(pool, actor_id).await?;
+    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
 
     let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -458,7 +458,7 @@ pub async fn create_pull_request_comment(
                     .into(),
         });
     }
-    crate::repositories::pull_requests::require_read(pool, &user, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository).await?;
 
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
@@ -729,7 +729,7 @@ async fn save_comment(
         req.review_id,
     )
     .await
-    .map_err(crate::repositories::pull_requests::write_error)?;
+    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?;
     // Submission owns publication for every comment that was pending when inserted.
     if deferred {
         return Ok(comment);
@@ -808,7 +808,7 @@ pub async fn set_comment_resolved(
     comment_id: i64,
     resolved: bool,
 ) -> Result<codeyard_db_core::models::PullRequestComment, OperationError> {
-    let user = crate::repositories::pull_requests::actor(pool, actor_id).await?;
+    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
     let repository = codeyard_db_repos::repositories::records::get_repository(pool, owner, repo)
         .await
         .map_err(database_error)?
@@ -816,7 +816,7 @@ pub async fn set_comment_resolved(
             code: "not_found",
             message: "Repository not found".to_owned(),
         })?;
-    crate::repositories::pull_requests::require_read(pool, &user, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository).await?;
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
@@ -868,7 +868,7 @@ pub async fn set_comment_resolved(
         user.id,
     )
     .await
-    .map_err(crate::repositories::pull_requests::write_error)?
+    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?
     .ok_or_else(|| OperationError::Missing {
         code: "not_found",
         message: "Comment not found".to_owned(),
@@ -899,7 +899,7 @@ async fn conversation_comment_on_pull(
             code: "not_found",
             message: "Repository not found".to_owned(),
         })?;
-    crate::repositories::pull_requests::require_read(pool, user, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_read(pool, user, &repository).await?;
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
@@ -941,7 +941,7 @@ pub async fn edit_pull_request_comment(
         number,
         comment_id,
     } = target;
-    let user = crate::repositories::pull_requests::actor(pool, actor_id).await?;
+    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
     let (repository, pull_request, previous) =
         conversation_comment_on_pull(pool, &user, &owner, &repo, number, comment_id).await?;
     if repository.is_archived {
@@ -979,7 +979,7 @@ pub async fn edit_pull_request_comment(
         &previous.body,
     )
     .await
-    .map_err(crate::repositories::pull_requests::write_error)?
+    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?
     .ok_or_else(|| match expected_body {
         Some(_) => OperationError::Conflict {
             code: "conflict",
@@ -1043,7 +1043,7 @@ pub async fn delete_pull_request_comment(
         number,
         comment_id,
     } = target;
-    let user = crate::repositories::pull_requests::actor(pool, actor_id).await?;
+    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
     let (repository, pull_request, previous) =
         conversation_comment_on_pull(pool, &user, &owner, &repo, number, comment_id).await?;
     if repository.is_archived {
@@ -1057,7 +1057,7 @@ pub async fn delete_pull_request_comment(
         comment_id,
     )
     .await
-    .map_err(crate::repositories::pull_requests::write_error)?;
+    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?;
     if removed {
         emit_comment_webhook(
             pool,

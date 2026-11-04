@@ -184,7 +184,7 @@ pub(super) async fn run(
         .unwrap()
         .unwrap();
     assert_eq!(
-        codeyard_app::repositories::store::repo_store(&repo, None)
+        codeyard_repos_core::repositories::store::repo_store(&repo, None)
             .info()
             .await
             .unwrap()

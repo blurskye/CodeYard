@@ -1,9 +1,9 @@
 //! Bring a pull head up to date without merging or closing the pull request.
-use crate::ci::push::RefUpdate;
-use crate::ci::runs::CiRuns;
-use crate::repositories::pull_requests::database_error;
-use crate::repositories::pull_requests::OperationError;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::ci::push::RefUpdate;
+use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::repositories::pull_requests::database_error;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::PullBranchUpdate;
 use codeyard_db_core::DbPool;
 use codeyard_git::error::ErrorKind;
@@ -42,7 +42,7 @@ pub async fn update_branch(
     rebase: bool,
     token: Option<i64>,
 ) -> Result<String, OperationError> {
-    let actor = crate::repositories::pull_requests::actor(pool, actor_id).await?;
+    let actor = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
     let base = codeyard_db_repos::repositories::records::get_repository(pool, locator.0, locator.1)
         .await
         .map_err(database_error)?
@@ -50,7 +50,7 @@ pub async fn update_branch(
             code: "not_found",
             message: "Repository not found".into(),
         })?;
-    crate::repositories::pull_requests::require_read(pool, &actor, &base).await?;
+    codeyard_repos_core::repositories::pull_requests::require_read(pool, &actor, &base).await?;
     if base.is_archived {
         return Err(OperationError::Denied {
             code: "write_denied",
@@ -70,7 +70,7 @@ pub async fn update_branch(
             "Only open pull requests can update their head branch",
         ));
     }
-    let head = crate::repositories::pull_requests::branches::head_repository(
+    let head = codeyard_repos_core::repositories::pull_requests::branches::head_repository(
         pool,
         &base,
         pull.head_repo_id
@@ -78,7 +78,7 @@ pub async fn update_branch(
     )
     .await
     .map_err(|error| match error {
-        crate::repositories::pull_requests::branches::HeadError::Unavailable => database_error(()),
+        codeyard_repos_core::repositories::pull_requests::branches::HeadError::Unavailable => database_error(()),
         _ => invalid("Head branch is unavailable"),
     })?;
     if !codeyard_repos::maintainer_edit::can_update_head(pool, &actor, &base, &head, &pull)
@@ -140,16 +140,16 @@ pub async fn update_branch(
         Err(error) => return Err(storage(error)),
     };
     // A head writer's own update is published with their authority; the wider refresh follows.
-    if let Err(error) = crate::repositories::pull_requests::branches::refresh_updated_head(
+    if let Err(error) = codeyard_repos_core::repositories::pull_requests::branches::refresh_updated_head(
         pool, &base, &head, ci, actor.id, pull.id,
     )
     .await
     {
         tracing::warn!(pull_request_id = pull.id, %error, "could not refresh the updated pull request");
     }
-    crate::repositories::pull_requests::branches::branches_moved(pool, &base, ci, actor.id).await;
+    codeyard_repos_core::repositories::pull_requests::branches::branches_moved(pool, &base, ci, actor.id).await;
     if head.id != base.id {
-        crate::repositories::pull_requests::branches::branches_moved(pool, &head, ci, actor.id)
+        codeyard_repos_core::repositories::pull_requests::branches::branches_moved(pool, &head, ci, actor.id)
             .await;
     }
     let finish = |sha: String| {

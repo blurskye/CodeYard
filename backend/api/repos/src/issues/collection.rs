@@ -48,7 +48,7 @@ use codeyard_app::repositories::issue_templates::FormElement;
 use codeyard_app::repositories::issue_templates::FormKind;
 use codeyard_app::repositories::issue_templates::IssueTemplate;
 use codeyard_app::repositories::issue_templates::IssueTemplates;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_repos::discussions::ListFilter;
 use codeyard_db_repos::discussions::ListSort;
 use codeyard_db_repos::discussions::Pick;

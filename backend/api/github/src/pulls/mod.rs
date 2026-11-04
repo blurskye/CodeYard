@@ -11,10 +11,10 @@ use axum::routing::get;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
-use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use serde::Deserialize;
@@ -70,7 +70,7 @@ pub(super) async fn association(
 
 pub(super) async fn readable_head(
     state: &AppState,
-    auth: Option<&codeyard_app::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
     pull: &codeyard_db_core::models::PullRequest,
 ) -> Result<Option<codeyard_db_core::models::Repository>> {
     match pull.head_repo_id {
@@ -120,7 +120,7 @@ pub(super) async fn document(
     detail: bool,
 ) -> Result<Value> {
     let viewer =
-        codeyard_app::api_shared::github::auth::authenticate(state, headers, false).await?;
+        codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, false).await?;
     let author = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, pull.author_id)
         .await
         .map_err(Error::unavailable)?
@@ -207,7 +207,7 @@ pub(super) async fn document(
         requested.push(person(state, user.id).await?);
     }
     value["requested_reviewers"] = json!(requested);
-    value["auto_merge"] = codeyard_app::webhooks::documents::auto_merge(&state.pool, pull.id)
+    value["auto_merge"] = codeyard_repos_core::webhooks::documents::auto_merge(&state.pool, pull.id)
         .await
         .map_err(Error::unavailable)?;
     value["requested_teams"] = json!(

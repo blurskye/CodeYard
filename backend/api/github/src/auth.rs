@@ -7,7 +7,7 @@ use codeyard_app::app::AppState;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 
-use codeyard_app::api_shared::github::auth::REQUEST_CONTEXT;
+use codeyard_repos_core::api_shared::github::auth::REQUEST_CONTEXT;
 
 /// Header-based adapters share one verified identity without letting a public-only audience
 /// borrow account authority. The scope is request-local and is not inherited by spawned tasks.
@@ -503,7 +503,7 @@ async fn pull_conversation(pool: &codeyard_db_core::DbPool, repo: i64, path: &st
         },
         ["repos", _, _, "issues", "comments", id, ..] => match id.parse() {
             Ok(id) => Ok(matches!(
-                codeyard_app::api_shared::github::comments::find(pool, repo, id)
+                codeyard_repos_core::api_shared::github::comments::find(pool, repo, id)
                     .await?
                     .item,
                 codeyard_db_repos::assignees::AssignedItem::PullRequest(_)
@@ -781,12 +781,12 @@ pub(super) async fn refuse_classic(state: &AppState, token: i64, org: i64) -> Re
     Ok(())
 }
 
-use codeyard_app::api_shared::github::auth::Authentication;
+use codeyard_repos_core::api_shared::github::auth::Authentication;
 
-use codeyard_app::api_shared::github::auth::RequestContext;
+use codeyard_repos_core::api_shared::github::auth::RequestContext;
 
-use codeyard_app::api_shared::github::auth::ScopeError;
+use codeyard_repos_core::api_shared::github::auth::ScopeError;
 
-use codeyard_app::api_shared::github::auth::authenticate;
+use codeyard_repos_core::api_shared::github::auth::authenticate;
 
-use codeyard_app::api_shared::github::auth::context;
+use codeyard_repos_core::api_shared::github::auth::context;

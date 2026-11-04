@@ -31,7 +31,7 @@ impl Hosted {
         let owner = codeyard_db_identity::users::accounts::create_user(pool, "http_owner", None)
             .await
             .unwrap();
-        let repository = codeyard_app::repositories::lifecycle::provision(
+        let repository = codeyard_repos_core::repositories::lifecycle::provision(
             (pool, None),
             &root.path().join("repos"),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),

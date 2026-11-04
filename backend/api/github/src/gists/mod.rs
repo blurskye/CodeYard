@@ -20,8 +20,8 @@ use axum::Router;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
 use codeyard_app::gists as domain;
-use codeyard_app::repositories::lifecycle::LifecycleFailure;
-use codeyard_app::repositories::lifecycle::StorageError;
+use codeyard_repos_core::repositories::lifecycle::LifecycleFailure;
+use codeyard_repos_core::repositories::lifecycle::StorageError;
 use codeyard_db_repos::gists::GistList;
 use codeyard_db_repos::gists::GistRefusal;
 use codeyard_db_repos::gists::ListScope;
@@ -177,7 +177,7 @@ async fn collection(
     uri: axum::http::Uri,
     scope: ListingScope,
 ) -> Result<Response> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(
         &state,
         &headers,
         matches!(scope, ListingScope::Starred),
@@ -192,7 +192,7 @@ async fn collection(
         ListingScope::Starred => ListScope::Starred(
             actor
                 .as_ref()
-                .ok_or_else(codeyard_app::api_shared::github::auth::required)?
+                .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
                 .user
                 .id,
         ),
@@ -340,7 +340,7 @@ async fn read(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response> {
-    codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
     let loaded = codeyard_app::gists::load(&state, &id, None)
         .await
         .map_err(failure)?;
@@ -354,7 +354,7 @@ async fn revision(
     headers: HeaderMap,
     Path((id, sha)): Path<(String, String)>,
 ) -> Result<Response> {
-    codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
     let loaded = codeyard_app::gists::load(&state, &id, Some(&sha))
         .await
         .map_err(failure)?;
@@ -525,7 +525,7 @@ async fn commits(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
     let loaded = codeyard_app::gists::load(&state, &id, None)
         .await
         .map_err(failure)?;
@@ -543,7 +543,7 @@ async fn forks(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
     let loaded = codeyard_app::gists::load(&state, &id, None)
         .await
         .map_err(failure)?;
@@ -576,9 +576,9 @@ async fn check(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response> {
-    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
     let gist = codeyard_app::gists::metadata(&state.pool, &id)
         .await
         .map_err(failure)?;

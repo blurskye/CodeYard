@@ -14,7 +14,7 @@ pub async fn contributor_accounts(
         .collect();
     let mut users = HashMap::new();
     for chunk in emails.chunks(512) {
-        users.extend(codeyard_app::repositories::reads::commit_authors(pool, chunk).await?);
+        users.extend(codeyard_repos_core::repositories::reads::commit_authors(pool, chunk).await?);
     }
     Ok(users)
 }

@@ -16,10 +16,10 @@ async fn remote_git_streams_large_packs_and_ends_on_storage_disconnect() {
 
 use chrono::{Duration as ChronoDuration, Utc};
 
-use codeyard_app::cluster;
+use codeyard_repos_core::cluster;
 use codeyard_repos_core::wire::Operation;
 use codeyard_repos_core::wire::Request;
-use codeyard_app::repositories::git_sessions::ReceiveCredential;
+use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
 use codeyard_repos_core::store_types::GitService;
 use codeyard_repos_core::store_types::GitSession;
 use codeyard_repos_core::store_types::GitStreams;
@@ -183,7 +183,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
     assert_eq!(repository.storage_node_id, Some(storage.node_id));
     assert!(!Path::new(&repository.disk_path).exists());
     let uuid =
-        codeyard_app::cluster::rpc::repository::repository_uuid(&repository.disk_path).unwrap();
+        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repository.disk_path).unwrap();
     let storage_path = root
         .path()
         .join("storage/repos")
@@ -587,7 +587,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
     let error = refused_receive(
         &caller.context,
         storage.node_id,
-        codeyard_app::cluster::rpc::repository::repository_uuid(&elsewhere.disk_path).unwrap(),
+        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&elsewhere.disk_path).unwrap(),
         ReceiveCredential::Token(*write_id),
         &owner.username,
     )
