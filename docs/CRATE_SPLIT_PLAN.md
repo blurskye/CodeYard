@@ -157,7 +157,3 @@ change that is not a move, a path rewrite or a visibility change is a defect in 
 About 12 builder checks in all, plus the final gate. If a stage needs a third round of
 fixes for new circles, stop and report which two parts depend on each other and a simpler
 cut.
-
-The first workspace validation could not upload: the builder refused rsync access
-to its assigned source directory on both submissions. Cargo never started. Workspace,
-Clippy and WASM validation and their corrective batches remain pending.
