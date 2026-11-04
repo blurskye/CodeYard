@@ -1,5 +1,3 @@
-use codeyard_webui::pages::ci as view;
-use codeyard_webui::pages::repos::actions as view_actions;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -70,6 +68,10 @@ pub fn map_workflow_info(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codeyard_api_http::shared::ci::responses::bound_log_projection;
+    use codeyard_api_http::shared::ci::responses::workflow_view;
+    use codeyard_webui::pages::ci as view;
+    use codeyard_webui::pages::repos::actions as view_actions;
     use std::collections::BTreeMap;
 
     #[test]
@@ -139,7 +141,3 @@ mod tests {
             .any(|workflow| !workflow.dispatchable && workflow.inputs.is_empty()));
     }
 }
-
-use codeyard_api_http::shared::ci::responses::bound_log_projection;
-
-use codeyard_api_http::shared::ci::responses::workflow_view;

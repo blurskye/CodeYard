@@ -16,6 +16,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::compression::predicate::DefaultPredicate;
 use tower_http::compression::predicate::NotForContentType;
+use tower_http::compression::predicate::Predicate;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::AllowOrigin;
 use tower_http::cors::CorsLayer;

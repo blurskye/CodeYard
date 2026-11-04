@@ -34,6 +34,7 @@ flate2.workspace = true
 futures-util.workspace = true
 git2.workspace = true
 hex.workspace = true
+md-5.workspace = true
 quick-xml.workspace = true
 reqwest.workspace = true
 semver.workspace = true
@@ -55,6 +56,9 @@ uuid = { workspace = true, features = ["v4"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tower.workspace = true
 
 [dev-dependencies.tokio]
 workspace = true

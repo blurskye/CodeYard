@@ -15,6 +15,7 @@ use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::broadcast::SocketSlot;
 use codeyard_notifications::current_event;
 use codeyard_notifications::NotificationEvent;
+use futures_util::SinkExt;
 use futures_util::StreamExt;
 use std::sync::Arc;
 use std::time::Duration;

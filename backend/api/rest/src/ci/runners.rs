@@ -156,7 +156,7 @@ async fn render(
         &ctx.state.pool,
         actor,
         scope,
-        &native::RunnerQuery {
+        &codeyard_db_core::queries::runners::RunnerQuery {
             page: runner_window,
             ..Default::default()
         },
@@ -298,7 +298,11 @@ async fn render(
         }),
     )
 }
-fn page_window(ctx: &PageContext, key: &str, limit: i64) -> Result<native::Window, Response> {
+fn page_window(
+    ctx: &PageContext,
+    key: &str,
+    limit: i64,
+) -> Result<codeyard_db_core::queries::runners::Window, Response> {
     let page = ctx
         .query
         .get(key)
@@ -308,9 +312,13 @@ fn page_window(ctx: &PageContext, key: &str, limit: i64) -> Result<native::Windo
         .and_then(|page| (page - 1).checked_mul(limit))
         .filter(|offset| *offset <= 1_000_000)
         .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid runner settings page."))?;
-    Ok(native::Window { offset, limit })
+    Ok(codeyard_db_core::queries::runners::Window { offset, limit })
 }
-fn page_destination(scope: Scope, groups: native::Window, runners: native::Window) -> String {
+fn page_destination(
+    scope: Scope,
+    groups: codeyard_db_core::queries::runners::Window,
+    runners: codeyard_db_core::queries::runners::Window,
+) -> String {
     format!(
         "{}&group_page={}&runner_page={}",
         destination(scope),
@@ -320,8 +328,8 @@ fn page_destination(scope: Scope, groups: native::Window, runners: native::Windo
 }
 fn navigation(
     scope: Scope,
-    groups: native::Window,
-    runners: native::Window,
+    groups: codeyard_db_core::queries::runners::Window,
+    runners: codeyard_db_core::queries::runners::Window,
     total: i64,
     group: bool,
 ) -> Vec<(String, String)> {
@@ -338,7 +346,7 @@ fn navigation(
         ),
     ] {
         if let Some(offset) = offset {
-            let page = native::Window { offset, ..current };
+            let page = codeyard_db_core::queries::runners::Window { offset, ..current };
             links.push((
                 label.into(),
                 if group {

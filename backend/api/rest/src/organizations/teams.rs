@@ -1,4 +1,13 @@
 //! Team ingress and authorized detail projections; DAO policy remains authoritative.
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_orgs::organizations::access::OrganizationRepository;
+use codeyard_db_orgs::organizations::teams::InvalidTeamParent;
+use codeyard_db_orgs::organizations::teams::NewTeam;
+use codeyard_db_orgs::organizations::teams::PublicTeam;
+use codeyard_db_orgs::organizations::teams::TeamPrivacy;
+use codeyard_db_orgs::organizations::teams::TeamProfile;
+use codeyard_db_orgs::organizations::teams::TeamRepositoryPermission;
+use codeyard_db_orgs::organizations::teams::TeamRole;
 
 use crate::organizations::organization::invalid;
 use crate::organizations::organization::not_found;

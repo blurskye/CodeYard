@@ -16,6 +16,7 @@ pub(crate) async fn global_actions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codeyard_api_http::shared::ci::actions_page::run_matches_repository;
     #[test]
     fn selected_run_cannot_cross_repository_scope() {
         assert!(run_matches_repository(9, Some(9)));
@@ -25,5 +26,3 @@ mod tests {
 }
 
 use codeyard_api_http::shared::ci::actions_page::actions;
-
-use codeyard_api_http::shared::ci::actions_page::run_matches_repository;

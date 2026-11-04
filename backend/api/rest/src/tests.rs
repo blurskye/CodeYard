@@ -7,8 +7,9 @@ use crate::run_web_listener;
 use axum::body::to_bytes;
 use axum::body::Body;
 use axum::http::StatusCode;
+use codeyard_api_http::middleware;
 use codeyard_app::app::AppState;
-use std::path::PathBuf;
+use tower::ServiceExt;
 
 #[tokio::test(start_paused = true)]
 async fn shutdown_cancels_unfinished_http_handlers_after_the_drain_grace() {

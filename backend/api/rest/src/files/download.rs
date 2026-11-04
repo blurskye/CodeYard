@@ -1,10 +1,7 @@
 use axum::extract::Path;
 use axum::extract::State;
-use axum::http::header;
 use axum::http::HeaderMap;
-use axum::http::Method;
 use axum::http::StatusCode;
-use axum::response::Redirect;
 use axum::response::Response;
 use axum::Json;
 use codeyard_api_http::error::ApiError;
@@ -12,15 +9,11 @@ use codeyard_api_http::error::ApiFailure;
 use codeyard_api_http::session::extract_session_id;
 use codeyard_api_http::session::get_current_user;
 use codeyard_app::app::AppState;
-use codeyard_app::files::downloads::AssetDownload;
 use codeyard_app::files::downloads::DownloadCapability;
 use codeyard_app::files::downloads::DownloadError;
-use codeyard_app::files::downloads::DownloadTransport;
 use codeyard_app::files::downloads::SignedDownload;
-use codeyard_app::storage::attachment_disposition;
 use serde::Serialize;
 use std::sync::Arc;
-use std::time::Duration;
 use uuid::Uuid;
 
 #[derive(Serialize)]
@@ -106,6 +99,15 @@ pub(super) fn download_failure(error: DownloadError) -> ApiFailure {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::header;
+    use axum::http::Method;
+    use axum::response::Redirect;
+    use codeyard_api_http::shared::files::download::asset_response;
+    use codeyard_api_http::shared::files::download::download_read;
+    use codeyard_app::files::downloads::AssetDownload;
+    use codeyard_app::files::downloads::DownloadTransport;
+    use codeyard_app::storage::attachment_disposition;
+    use std::time::Duration;
 
     #[cfg(target_os = "linux")]
     #[tokio::test]
@@ -237,9 +239,5 @@ mod tests {
         }
     }
 }
-
-use codeyard_api_http::shared::files::download::asset_response;
-
-use codeyard_api_http::shared::files::download::download_read;
 
 use codeyard_api_http::shared::files::download::private_response;

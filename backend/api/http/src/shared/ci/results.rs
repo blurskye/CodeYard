@@ -14,7 +14,7 @@ use serde_json::json;
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
-pub struct Error(StatusCode, &'static str, &'static str);
+pub struct Error(pub StatusCode, pub &'static str, pub &'static str);
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {

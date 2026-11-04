@@ -1,12 +1,9 @@
 //! JSON and browser CI resources retain their distinct authentication and response layers.
-use axum::http::StatusCode;
 use axum::middleware::from_fn;
 use axum::routing::get;
 use axum::routing::post;
-use axum::Json;
 use axum::Router;
 use codeyard_app::app::AppState;
-use codeyard_db_core::ci_admission::AdmissionError;
 use std::sync::Arc;
 pub mod actions_page;
 pub mod jobs;
@@ -45,6 +42,10 @@ pub fn router() -> Router<Arc<AppState>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::StatusCode;
+    use axum::Json;
+    use codeyard_api_http::shared::ci::admission_error;
+    use codeyard_db_core::ci_admission::AdmissionError;
     #[test]
     fn typed_refusals_keep_http_categories() {
         assert_eq!(
@@ -111,7 +112,5 @@ mod tests {
         assert!(!json.contains("private/repo"));
     }
 }
-
-use codeyard_api_http::shared::ci::admission_error;
 
 use codeyard_api_http::shared::ci::repository_router;

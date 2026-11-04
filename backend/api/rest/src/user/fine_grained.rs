@@ -219,7 +219,7 @@ async fn organizations_of(
     ctx: &PageContext,
     user: &User,
     after: i64,
-) -> anyhow::Result<Vec<super::OrganizationMetadata>> {
+) -> anyhow::Result<Vec<codeyard_db_orgs::organizations::profiles::OrganizationMetadata>> {
     let page = OrganizationPage::new(after, 100).map_err(|_| anyhow::anyhow!("page"))?;
     Ok(
         match codeyard_db_orgs::organizations::profiles::list_actor_organizations(

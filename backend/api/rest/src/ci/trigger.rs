@@ -5,12 +5,10 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use axum::Form;
 use axum::Json;
-use codeyard_api_http::context::PageContext;
 use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::runs::DispatchRequest;
-use codeyard_webui::pages::repos::actions as view_actions;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -64,6 +62,10 @@ pub(super) async fn global_dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codeyard_api_http::context::PageContext;
+    use codeyard_api_http::shared::ci::trigger::draft;
+    use codeyard_api_http::shared::ci::trigger::refusal_workflows;
+    use codeyard_webui::pages::repos::actions as view_actions;
     #[test]
     fn dispatch_form_offers_only_events_the_server_accepts() {
         for event in view_actions::TRIGGER_EVENTS {
@@ -211,7 +213,3 @@ mod tests {
 }
 
 use codeyard_api_http::shared::ci::trigger::dispatch;
-
-use codeyard_api_http::shared::ci::trigger::draft;
-
-use codeyard_api_http::shared::ci::trigger::refusal_workflows;

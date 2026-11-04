@@ -64,7 +64,7 @@ impl GitTasks {
         true
     }
 
-    pub(crate) async fn drain(&self) {
+    pub async fn drain(&self) {
         // Taking the set stops admission. Dropping this drain at the server's
         // deadline aborts unfinished tasks rather than detaching them again.
         let tasks = self
