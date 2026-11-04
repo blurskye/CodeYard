@@ -1,8 +1,8 @@
 //! App subscriptions use the native payload builder, sender, URL safety and delivery queue.
 
-use crate::webhooks::delivery::Outgoing;
-use crate::webhooks::enqueue;
-use crate::webhooks::outgoing;
+use crate::delivery::Outgoing;
+use crate::enqueue;
+use crate::outgoing;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::DbPool;
@@ -111,7 +111,7 @@ pub async fn current(
     {
         return Ok(false);
     }
-    let Some(payload) = crate::webhooks::delivery::json_payload(outgoing) else {
+    let Some(payload) = crate::delivery::json_payload(outgoing) else {
         return Ok(false);
     };
     if targets_app(&outgoing.event, payload["action"].as_str())

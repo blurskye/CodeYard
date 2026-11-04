@@ -168,7 +168,7 @@ pub async fn change(
             vec![actor],
             move |owner, people| {
                 let starrer = people.get(actor);
-                crate::webhooks::payloads::star(action, &starrer, &repository_for_hook, owner)
+                codeyard_webhooks::payloads::star(action, &starrer, &repository_for_hook, owner)
             },
         )
         .await;

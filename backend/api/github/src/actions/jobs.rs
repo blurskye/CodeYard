@@ -35,7 +35,7 @@ async fn document(
     let steps = codeyard_db_actions::action_jobs::steps(&state.pool, repo.id, job.id)
         .await
         .map_err(Error::unavailable)?;
-    Ok(codeyard_app::webhooks::payloads::action_job(
+    Ok(codeyard_webhooks::payloads::action_job(
         job, &steps, &run, owner, &repo.name,
     ))
 }

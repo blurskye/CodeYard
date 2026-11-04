@@ -129,7 +129,7 @@ impl CiRuns {
             .into_iter()
             .next()
             .ok_or(AdmissionError::Unavailable)?;
-        let repository = crate::webhooks::payloads::repository(&repo, &owner);
+        let repository = codeyard_webhooks::payloads::repository(&repo, &owner);
         let head_repository = if !run.is_fork {
             repository.clone()
         } else {
@@ -150,7 +150,7 @@ impl CiRuns {
                                 .ok()
                                 .flatten()
                             {
-                                Some(owner) => crate::webhooks::payloads::repository(&head, &owner),
+                                Some(owner) => codeyard_webhooks::payloads::repository(&head, &owner),
                                 None => Value::Null,
                             }
                         }
@@ -162,8 +162,8 @@ impl CiRuns {
         };
         let head_commit = match run.head_sha.as_deref() {
             Some(sha) => store.commit(sha).await.map_or(Value::Null, |mut commit| {
-                commit.message = crate::webhooks::payloads::bounded_text(&commit.message, 4096);
-                crate::webhooks::payloads::simple_commit(&commit)
+                commit.message = codeyard_webhooks::payloads::bounded_text(&commit.message, 4096);
+                codeyard_webhooks::payloads::simple_commit(&commit)
             }),
             None => Value::Null,
         };
@@ -174,7 +174,7 @@ impl CiRuns {
         )
         .await?
         .map_or(Value::Null, |workflow| {
-            crate::webhooks::payloads::action_workflow(&workflow, &owner, &repo.name)
+            codeyard_webhooks::payloads::action_workflow(&workflow, &owner, &repo.name)
         });
         let pull = match run.pull_request_id {
             Some(id) => {
@@ -184,14 +184,14 @@ impl CiRuns {
             }
             None => None,
         };
-        let pull_requests = crate::webhooks::payloads::action_run_pull_requests(
+        let pull_requests = codeyard_webhooks::payloads::action_run_pull_requests(
             run,
             pull.as_ref(),
             &repository,
             &head_repository,
             false,
         );
-        let mut document = crate::webhooks::payloads::action_run(
+        let mut document = codeyard_webhooks::payloads::action_run(
             run,
             &owner,
             repository,
@@ -224,8 +224,8 @@ impl CiRuns {
             }
             None => None,
         };
-        document["actor"] = crate::webhooks::payloads::user(first.as_ref().unwrap_or(&sender));
-        document["triggering_actor"] = crate::webhooks::payloads::user(&sender);
+        document["actor"] = codeyard_webhooks::payloads::user(first.as_ref().unwrap_or(&sender));
+        document["triggering_actor"] = codeyard_webhooks::payloads::user(&sender);
         let snapshot = repo.clone();
         let action = action.to_owned();
         let payload = crate::webhooks::emit(
@@ -234,11 +234,11 @@ impl CiRuns {
             "workflow_run",
             vec![actor],
             move |owner, people| {
-                crate::webhooks::payloads::workflow_run(
+                codeyard_webhooks::payloads::workflow_run(
                     &action,
                     document,
                     workflow_document,
-                    crate::webhooks::payloads::Scope {
+                    codeyard_webhooks::payloads::Scope {
                         repo: &snapshot,
                         owner,
                         sender: &people.get(actor),
@@ -297,16 +297,16 @@ impl CiRuns {
             "workflow_job",
             vec![actor],
             move |owner, people| {
-                crate::webhooks::payloads::workflow_job(
+                codeyard_webhooks::payloads::workflow_job(
                     action,
-                    crate::webhooks::payloads::action_job(
+                    codeyard_webhooks::payloads::action_job(
                         &job,
                         &steps,
                         &run,
                         owner,
                         &snapshot.name,
                     ),
-                    crate::webhooks::payloads::Scope {
+                    codeyard_webhooks::payloads::Scope {
                         repo: &snapshot,
                         owner,
                         sender: &people.get(actor),

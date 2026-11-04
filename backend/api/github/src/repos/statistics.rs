@@ -237,7 +237,7 @@ async fn statistics(
                     if stats.commits >= 10_000 { a = 0; d = 0; }
                     json!({"w":date, "a":a, "d":d, "c":c})
                 }).collect::<Vec<_>>();
-                json!({"author":user.map(|user| codeyard_app::webhooks::payloads::simple_person(&codeyard_app::webhooks::payloads::Person::of(user))), "total":total, "weeks":weeks})
+                json!({"author":user.map(|user| codeyard_webhooks::payloads::simple_person(&codeyard_webhooks::payloads::Person::of(user))), "total":total, "weeks":weeks})
             }).collect())
         }
         _ => return Err(Error::missing()),
@@ -281,8 +281,8 @@ async fn contributors(
                     value["contributions"].as_u64().unwrap_or_default() + u64::from(author.commits)
                 );
             } else {
-                let mut value = codeyard_app::webhooks::payloads::simple_person(
-                    &codeyard_app::webhooks::payloads::Person::of(user),
+                let mut value = codeyard_webhooks::payloads::simple_person(
+                    &codeyard_webhooks::payloads::Person::of(user),
                 );
                 value["contributions"] = json!(author.commits);
                 values.push(value);

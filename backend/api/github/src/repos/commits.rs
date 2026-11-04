@@ -18,8 +18,8 @@ use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_app::repositories::store::RepoStore;
-use codeyard_app::webhooks::payloads::git_commit as commit_json;
-use codeyard_app::webhooks::payloads::Person;
+use codeyard_webhooks::payloads::git_commit as commit_json;
+use codeyard_webhooks::payloads::Person;
 use codeyard_git::CommitFilter;
 use codeyard_git::CommitInfo;
 use codeyard_git::DiffFileInfo;
@@ -90,7 +90,7 @@ pub(crate) async fn documents(
     let mut values = Vec::with_capacity(commits.len());
     let mut signers = codeyard_identity::signatures::Signers::default();
     for commit in commits {
-        values.push(codeyard_app::webhooks::payloads::commit(
+        values.push(codeyard_webhooks::payloads::commit(
             commit,
             git_document(state, &mut signers, commit, owner, name, repo).await?,
             owner,

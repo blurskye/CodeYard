@@ -423,7 +423,7 @@ async fn repositories(
     .map_err(error)?;
     let items: Vec<_> = rows
         .iter()
-        .map(codeyard_app::webhooks::payloads::repository_snapshot)
+        .map(codeyard_webhooks::payloads::repository_snapshot)
         .collect();
     Ok((
         pagination.headers(&uri, (offset.saturating_add(limit) as i64) < total)?,

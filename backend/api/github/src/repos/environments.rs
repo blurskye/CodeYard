@@ -63,7 +63,7 @@ pub(crate) async fn document(
             codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, reviewer.id)
                 .await
                 .map_err(Error::unavailable)?
-                .map(|user| codeyard_app::webhooks::payloads::user(&user))
+                .map(|user| codeyard_webhooks::payloads::user(&user))
         } else {
             let team = codeyard_db_repos::repositories::push_teams::by_ids(
                 &state.pool,
@@ -76,7 +76,7 @@ pub(crate) async fn document(
             .next();
             match team {
                 Some(team) if team.team.privacy == "visible" => {
-                    Some(codeyard_app::webhooks::payloads::team(&team))
+                    Some(codeyard_webhooks::payloads::team(&team))
                 }
                 Some(team) => {
                     let can_see = match viewer {
@@ -90,7 +90,7 @@ pub(crate) async fn document(
                         .is_some(),
                         None => false,
                     };
-                    can_see.then(|| codeyard_app::webhooks::payloads::team(&team))
+                    can_see.then(|| codeyard_webhooks::payloads::team(&team))
                 }
                 None => None,
             }
@@ -99,7 +99,7 @@ pub(crate) async fn document(
             reviewers.push(json!({"type": reviewer.kind, "reviewer": value}));
         }
     }
-    Ok(codeyard_app::webhooks::payloads::environment(
+    Ok(codeyard_webhooks::payloads::environment(
         env, owner, repo, reviewers,
     ))
 }

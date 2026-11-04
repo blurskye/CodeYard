@@ -132,7 +132,7 @@ async fn teams(
         teams
             .into_iter()
             .map(|team| {
-                codeyard_app::webhooks::payloads::team(&TeamAccess {
+                codeyard_webhooks::payloads::team(&TeamAccess {
                     team,
                     org_slug: org.name.clone(),
                     permission: 1,

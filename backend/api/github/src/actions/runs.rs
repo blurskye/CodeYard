@@ -120,7 +120,7 @@ impl Documents {
             .await
             .map_err(Error::unavailable)?
             .into_iter()
-            .map(|user| (user.id, codeyard_app::webhooks::payloads::user(&user)))
+            .map(|user| (user.id, codeyard_webhooks::payloads::user(&user)))
             .collect();
         Ok(Self {
             metadata: metadata.into_iter().map(|row| (row.run_id, row)).collect(),
@@ -144,7 +144,7 @@ async fn referenced_document(
             .await
             .map_err(Error::unavailable)?;
     Ok(owner
-        .map(|owner| codeyard_app::webhooks::payloads::repository(&head, &owner))
+        .map(|owner| codeyard_webhooks::payloads::repository(&head, &owner))
         .unwrap_or(Value::Null))
 }
 
@@ -167,7 +167,7 @@ async fn document(
             "Workflow run number is unavailable",
         ));
     }
-    let repository = codeyard_app::webhooks::payloads::repository(repo, owner);
+    let repository = codeyard_webhooks::payloads::repository(repo, owner);
     let pr = if let Some(id) = run.pull_request_id {
         codeyard_db_repos::pull_requests::records::get_pull_request_by_id(&state.pool, id)
             .await
@@ -195,7 +195,7 @@ async fn document(
         } else {
             match repo_store(repo, state.cluster.as_ref()).commit(sha).await {
                 Ok(commit) => {
-                    let git = codeyard_app::webhooks::payloads::git_commit(
+                    let git = codeyard_webhooks::payloads::git_commit(
                         &commit, owner, &repo.name, repo.id,
                     );
                     let signature = |name: &str| {
@@ -243,14 +243,14 @@ async fn document(
         }
         _ => head_repository.clone(),
     };
-    let pull_requests = codeyard_app::webhooks::payloads::action_run_pull_requests(
+    let pull_requests = codeyard_webhooks::payloads::action_run_pull_requests(
         run,
         pr.as_ref(),
         &repository,
         &pr_head_repository,
         exclude,
     );
-    let mut result = codeyard_app::webhooks::payloads::action_run(
+    let mut result = codeyard_webhooks::payloads::action_run(
         run,
         owner,
         repository,

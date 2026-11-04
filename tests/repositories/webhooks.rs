@@ -541,7 +541,7 @@ async fn pull_request_comment_hooks(pg: bool, url: &str) {
 
 async fn stale_hooks_and_binary_responses(pg: bool) {
     use codeyard_app::webhooks;
-    use codeyard_app::webhooks::delivery;
+    use codeyard_webhooks::delivery;
     let (mut database, _root, _alice, _bob) = setup(pg).await;
     let pool = database.pool();
     let repo = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")

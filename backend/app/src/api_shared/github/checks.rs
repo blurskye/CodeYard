@@ -2,7 +2,7 @@
 use crate::api_shared::github::contents::store_error;
 use crate::app::AppState;
 use crate::repositories::store::repo_store;
-use crate::webhooks::payloads;
+use codeyard_webhooks::payloads;
 use axum::http::StatusCode;
 use codeyard_db_actions::checks::Suite;
 use codeyard_db_actions::checks::ACTIONS_APP_ID;
@@ -37,7 +37,7 @@ pub async fn app(pool: &codeyard_db_core::DbPool, id: Option<i64>) -> Result<Val
 }
 
 fn app_value(app: &codeyard_db_actions::checks::Publisher) -> Value {
-    let owner = crate::webhooks::payloads::Person {
+    let owner = codeyard_webhooks::payloads::Person {
         id: app.owner_id,
         login: app.owner_login.clone(),
         site_admin: app.owner_is_admin,
@@ -122,7 +122,7 @@ pub(crate) async fn requested_after_push(
     actor: i64,
     sha: &str,
     branch: &str,
-    head: &crate::webhooks::payloads::PushedCommit,
+    head: &codeyard_webhooks::payloads::PushedCommit,
 ) {
     if let Err(error) = request_after_push(pool, repo, actor, sha, branch, head).await {
         tracing::warn!(
@@ -139,14 +139,14 @@ async fn request_after_push(
     actor: i64,
     sha: &str,
     branch: &str,
-    head: &crate::webhooks::payloads::PushedCommit,
+    head: &codeyard_webhooks::payloads::PushedCommit,
 ) -> Result<()> {
     if !head.id.eq_ignore_ascii_case(sha) {
         return Err(Error::unavailable(
             "Accepted push did not retain the expected head",
         ));
     }
-    let head_commit = crate::webhooks::payloads::pushed_head(head);
+    let head_commit = codeyard_webhooks::payloads::pushed_head(head);
     let mut after = 0;
     let mut owner = None;
     loop {

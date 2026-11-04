@@ -1,7 +1,7 @@
 //! Managing webhooks: who may, what a form may save, and the ping, test and redelivery
 //! actions. Every action checks the actor before it reads or changes a hook.
-use crate::webhooks::enqueue;
-use crate::webhooks::outgoing;
+use crate::enqueue;
+use crate::outgoing;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
@@ -409,7 +409,7 @@ pub async fn redeliver(
     .ok_or(HookError::Denied)?;
     let hook = snapshot.hook.ok_or(HookError::NotFound)?;
     let recorded = snapshot.delivery.ok_or(HookError::NotFound)?;
-    let mut outgoing = crate::webhooks::delivery::redelivery(&recorded);
+    let mut outgoing = crate::delivery::redelivery(&recorded);
     outgoing.manual_actor = Some(actor.id);
     if enqueue(pool, hook, outgoing) {
         Ok(())
@@ -455,7 +455,7 @@ pub async fn test_push(
         credential,
         repo,
         id,
-        crate::webhooks::MAX_PAYLOAD_BYTES as i64,
+        crate::MAX_PAYLOAD_BYTES as i64,
     )
     .await
     .map_err(|error| {
@@ -489,7 +489,7 @@ async fn ping_payload(
     hook: &Webhook,
 ) -> Result<Value, HookError> {
     let mut payload = json!({"zen": ZEN, "hook_id": hook.id,
-        "sender": crate::webhooks::payloads::person(&crate::webhooks::payloads::Person::of(actor))});
+        "sender": crate::payloads::person(&crate::payloads::Person::of(actor))});
     let url = match owner {
         HookOwner::Repository(id) => {
             let repo: Repository =
@@ -503,8 +503,8 @@ async fn ping_payload(
                     .map_err(unavailable)?
                     .remove(&id)
                     .unwrap_or_default();
-            payload["repository"] = crate::webhooks::payloads::repository(&repo, &owner_name);
-            crate::webhooks::set_open_issues(pool, id, &mut payload).await;
+            payload["repository"] = crate::payloads::repository(&repo, &owner_name);
+            crate::set_open_issues(pool, id, &mut payload).await;
             format!(
                 "{}/hooks/{}",
                 codeyard_model::urls::repo_url(&owner_name, &repo.name),
@@ -517,7 +517,7 @@ async fn ping_payload(
                     .await
                     .map_err(unavailable)?
                     .ok_or(HookError::NotFound)?;
-            payload["organization"] = crate::webhooks::payloads::organization(&org);
+            payload["organization"] = crate::payloads::organization(&org);
             codeyard_model::urls::api_url(&format!(
                 "/orgs/{}/hooks/{}",
                 codeyard_webui::encode_component(&org.name),
@@ -525,6 +525,6 @@ async fn ping_payload(
             ))
         }
     };
-    payload["hook"] = crate::webhooks::payloads::webhook(hook, &url);
+    payload["hook"] = crate::payloads::webhook(hook, &url);
     Ok(payload)
 }

@@ -57,7 +57,7 @@ async fn creator(state: &AppState, id: Option<i64>) -> Result<Option<Value>> {
             codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
                 .await
                 .map_err(Error::unavailable)?
-                .map(|user| codeyard_app::webhooks::payloads::user(&user)),
+                .map(|user| codeyard_webhooks::payloads::user(&user)),
         ),
         None => Ok(None),
     }
@@ -69,7 +69,7 @@ pub(crate) async fn document(
     owner: &str,
     repo: &str,
 ) -> Result<Value> {
-    Ok(codeyard_app::webhooks::payloads::deployment(
+    Ok(codeyard_webhooks::payloads::deployment(
         deployment,
         creator(state, deployment.creator_id).await?,
         serde_json::from_str(&deployment.payload).map_err(Error::unavailable)?,
@@ -84,7 +84,7 @@ async fn status_document(
     owner: &str,
     repo: &str,
 ) -> Result<Value> {
-    Ok(codeyard_app::webhooks::payloads::deployment_status(
+    Ok(codeyard_webhooks::payloads::deployment_status(
         status,
         creator(state, status.creator_id).await?,
         owner,
@@ -234,8 +234,8 @@ async fn create(
     let value = document(&state, &saved, &owner, &name).await?;
     let deployment = value.clone();
     let snapshot = repo.clone();
-    let sender = codeyard_app::webhooks::payloads::Person::of(actor);
-    codeyard_app::webhooks::emit(&state.pool, &repo, codeyard_model::webhook_events::DEPLOYMENT, vec![actor.id], move |owner, _| json!({"deployment": deployment, "repository": codeyard_app::webhooks::payloads::repository(&snapshot, owner), "sender": codeyard_app::webhooks::payloads::person(&sender)})).await;
+    let sender = codeyard_webhooks::payloads::Person::of(actor);
+    codeyard_app::webhooks::emit(&state.pool, &repo, codeyard_model::webhook_events::DEPLOYMENT, vec![actor.id], move |owner, _| json!({"deployment": deployment, "repository": codeyard_webhooks::payloads::repository(&snapshot, owner), "sender": codeyard_webhooks::payloads::person(&sender)})).await;
     Ok((
         StatusCode::CREATED,
         [(
@@ -351,8 +351,8 @@ async fn statuses(
         }
         let deployment = document(&state, &deployment, owner, name).await?;
         let snapshot = repo.clone();
-        let sender = codeyard_app::webhooks::payloads::Person::of(&actor);
-        codeyard_app::webhooks::emit(&state.pool, &repo, codeyard_model::webhook_events::DEPLOYMENT_STATUS, vec![actor.id], move |owner, _| json!({"deployment_status": value, "deployment": deployment, "repository": codeyard_app::webhooks::payloads::repository(&snapshot, owner), "sender": codeyard_app::webhooks::payloads::person(&sender)})).await;
+        let sender = codeyard_webhooks::payloads::Person::of(&actor);
+        codeyard_app::webhooks::emit(&state.pool, &repo, codeyard_model::webhook_events::DEPLOYMENT_STATUS, vec![actor.id], move |owner, _| json!({"deployment_status": value, "deployment": deployment, "repository": codeyard_webhooks::payloads::repository(&snapshot, owner), "sender": codeyard_webhooks::payloads::person(&sender)})).await;
     }
     let value = result.ok_or_else(|| Error::unavailable(()))?;
     Ok((

@@ -48,7 +48,7 @@ async fn list(
     Ok(Json(Value::Array(
         types
             .iter()
-            .map(codeyard_app::webhooks::payloads::issue_type)
+            .map(codeyard_webhooks::payloads::issue_type)
             .collect(),
     )))
 }
@@ -95,7 +95,7 @@ async fn save(
     )
     .await
     .map_err(|error| crate::issues::issue_attributes::error(error).simple())?;
-    Ok(Json(codeyard_app::webhooks::payloads::issue_type(&value)))
+    Ok(Json(codeyard_webhooks::payloads::issue_type(&value)))
 }
 async fn remove(
     State(state): State<Arc<AppState>>,

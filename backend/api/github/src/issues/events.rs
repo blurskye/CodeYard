@@ -47,7 +47,7 @@ async fn event_document(
         None => None,
     };
     let mut value =
-        codeyard_app::webhooks::payloads::issue_event(&event, actor.as_ref(), repo, owner);
+        codeyard_webhooks::payloads::issue_event(&event, actor.as_ref(), repo, owner);
     match event.kind.as_str() {
         "renamed" => value["rename"] = json!({"from":event.previous,"to":event.detail}),
         "labeled" | "unlabeled" => {
@@ -66,7 +66,7 @@ async fn event_document(
             .map_err(Error::unavailable)?;
             value["assignee"] = user
                 .as_ref()
-                .map_or(Value::Null, codeyard_app::webhooks::payloads::user);
+                .map_or(Value::Null, codeyard_webhooks::payloads::user);
             value["assigner"] = value["actor"].clone();
         }
         _ => {}
@@ -136,14 +136,14 @@ async fn review_document(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let mut value = codeyard_app::webhooks::payloads::pull_request_review_json(
+    let mut value = codeyard_webhooks::payloads::pull_request_review_json(
         &review,
-        &codeyard_app::webhooks::payloads::Person::of(&user),
+        &codeyard_webhooks::payloads::Person::of(&user),
         &pull,
         repo,
         owner,
     );
-    value["user"] = codeyard_app::webhooks::payloads::user(&user);
+    value["user"] = codeyard_webhooks::payloads::user(&user);
     value["event"] = json!("reviewed");
     value["author_association"] =
         json!(crate::pulls::association(&state.pool, repo, user.id).await?);

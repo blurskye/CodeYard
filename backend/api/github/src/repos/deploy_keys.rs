@@ -47,7 +47,7 @@ async fn document(
             .map(|user| user.username),
         None => None,
     };
-    Ok(codeyard_app::webhooks::payloads::deploy_key(
+    Ok(codeyard_webhooks::payloads::deploy_key(
         key,
         owner,
         name,

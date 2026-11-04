@@ -46,7 +46,7 @@ async fn person(state: &AppState, id: i64) -> Result<Value> {
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    Ok(codeyard_app::webhooks::payloads::user(&user))
+    Ok(codeyard_webhooks::payloads::user(&user))
 }
 
 async fn build(state: &AppState, headers: &HeaderMap, row: &RepositoryExport) -> Result<Vec<u8>> {
@@ -141,7 +141,7 @@ async fn metadata(
     owner: &str,
     archive: &mut MigrationArchive,
 ) -> Result<()> {
-    let repository = codeyard_app::webhooks::payloads::repository(repo, owner)["html_url"].clone();
+    let repository = codeyard_webhooks::payloads::repository(repo, owner)["html_url"].clone();
     for (kind, record) in [("type", "issue_type"), ("field", "issue_field")] {
         let definitions =
             codeyard_db_repos::issue_attributes::catalog(&state.pool, repo.id, Some(actor), kind)
@@ -173,7 +173,7 @@ async fn metadata(
         let values = labels
             .iter()
             .map(|label| {
-                let mut value = codeyard_app::webhooks::payloads::label(label, owner, &repo.name);
+                let mut value = codeyard_webhooks::payloads::label(label, owner, &repo.name);
                 value["repository"] = repository.clone();
                 value
             })
@@ -292,17 +292,17 @@ async fn metadata(
                     .await
                     .map_err(Error::unavailable)?
                     .ok_or_else(Error::missing)?;
-                    let mut value = codeyard_app::webhooks::payloads::pull_request_review_json(
+                    let mut value = codeyard_webhooks::payloads::pull_request_review_json(
                         &row.review,
-                        &codeyard_app::webhooks::payloads::Person::of(&author),
+                        &codeyard_webhooks::payloads::Person::of(&author),
                         &pull,
                         repo,
                         owner,
                     );
-                    value["user"] = codeyard_app::webhooks::payloads::user(&author);
+                    value["user"] = codeyard_webhooks::payloads::user(&author);
                     value["pull_request"] = json!(format!(
                         "{}/pull/{}",
-                        codeyard_app::webhooks::payloads::repository(repo, owner)["html_url"]
+                        codeyard_webhooks::payloads::repository(repo, owner)["html_url"]
                             .as_str()
                             .unwrap_or_default(),
                         pull.number
@@ -400,14 +400,14 @@ async fn pull_comments(
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-                let mut value = codeyard_app::webhooks::payloads::pull_request_review_comment_json(
+                let mut value = codeyard_webhooks::payloads::pull_request_review_comment_json(
                     &row.comment,
                     pull,
-                    &codeyard_app::webhooks::payloads::Person::of(&author),
+                    &codeyard_webhooks::payloads::Person::of(&author),
                     repo,
                     owner,
                 );
-                value["user"] = codeyard_app::webhooks::payloads::user(&author);
+                value["user"] = codeyard_webhooks::payloads::user(&author);
                 inline.push(value);
             } else {
                 let comment = codeyard_app::api_shared::github::comments::find(
@@ -470,7 +470,7 @@ async fn release_records(
             let mut value =
                 crate::repos::releases::document(state, owner, &repo.name, &detail).await?;
             value["repository"] =
-                codeyard_app::webhooks::payloads::repository(repo, owner)["html_url"].clone();
+                codeyard_webhooks::payloads::repository(repo, owner)["html_url"].clone();
             let mut asset_values = Vec::new();
             if attachments {
                 for asset in &detail.assets {
@@ -611,7 +611,7 @@ async fn teams(
         let mut values = Vec::new();
         for row in rows {
             after = row.team.id;
-            let mut value = codeyard_app::webhooks::payloads::team(
+            let mut value = codeyard_webhooks::payloads::team(
                 &codeyard_db_repos::repositories::push_teams::TeamAccess {
                     team: row.team.clone(),
                     permission: 0,

@@ -5,8 +5,8 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 use codeyard_app::app::AppState;
-use codeyard_app::webhooks::settings::HookError;
-use codeyard_app::webhooks::settings::HookForm;
+use codeyard_webhooks::settings::HookError;
+use codeyard_webhooks::settings::HookForm;
 use codeyard_db_identity::github_apps::App;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
@@ -45,14 +45,14 @@ pub(super) async fn convert(
             clear_password: false,
             clear_secret: false,
             payload_url: url.clone(),
-            content_type: codeyard_app::webhooks::settings::JSON_CONTENT_TYPE.into(),
+            content_type: codeyard_webhooks::settings::JSON_CONTENT_TYPE.into(),
             events: vec!["*".into()],
             active: manifest.hook_active,
             ssl_verify: true,
             secret: webhook_secret.clone().unwrap_or_default(),
         };
         let mut fields =
-            codeyard_app::webhooks::settings::validated(&form).map_err(|error| match error {
+            codeyard_webhooks::settings::validated(&form).map_err(|error| match error {
                 HookError::Invalid(message) => Error::invalid_simple(message),
                 _ => Error::unavailable(()),
             })?;
@@ -61,7 +61,7 @@ pub(super) async fn convert(
     } else {
         None
     };
-    let sealed = codeyard_app::webhooks::settings::seal(
+    let sealed = codeyard_webhooks::settings::seal(
         state.secret_encryptor.as_deref(),
         webhook_secret.as_deref().unwrap_or(""),
     )

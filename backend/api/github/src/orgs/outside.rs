@@ -68,7 +68,7 @@ async fn list(
     page.response(
         &uri,
         rows.iter()
-            .map(codeyard_app::webhooks::payloads::user)
+            .map(codeyard_webhooks::payloads::user)
             .collect(),
         next,
     )

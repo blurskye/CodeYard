@@ -63,9 +63,9 @@ pub async fn queue_pull_request_ci(
         .await?
         .ok_or(AdmissionError::Unavailable)?;
 
-    use crate::webhooks::payloads::Person;
-    use crate::webhooks::payloads::Scope;
-    let mut payload = crate::webhooks::payloads::pull_request(
+    use codeyard_webhooks::payloads::Person;
+    use codeyard_webhooks::payloads::Scope;
+    let mut payload = codeyard_webhooks::payloads::pull_request(
         "synchronize",
         pull,
         &Person::of(&author),
@@ -75,7 +75,7 @@ pub async fn queue_pull_request_ci(
             sender: &Person::of(&sender),
         },
     );
-    crate::webhooks::set_open_issues(pool, repository.id, &mut payload).await;
+    codeyard_webhooks::set_open_issues(pool, repository.id, &mut payload).await;
     queue_pull_request_workflow_event(
         pool,
         ci,

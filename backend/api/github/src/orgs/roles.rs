@@ -72,7 +72,7 @@ async fn list(
             .map_err(Error::unavailable)?,
     )?;
     Ok(Json(
-        json!({"total_count":roles.len(),"roles":roles.iter().map(codeyard_app::webhooks::payloads::organization_role).collect::<Vec<_>>()}),
+        json!({"total_count":roles.len(),"roles":roles.iter().map(codeyard_webhooks::payloads::organization_role).collect::<Vec<_>>()}),
     ))
 }
 async fn get_role(
@@ -85,7 +85,7 @@ async fn get_role(
         .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let role = required_role(&state, actor.user.id, org.id, id).await?;
-    Ok(Json(codeyard_app::webhooks::payloads::organization_role(
+    Ok(Json(codeyard_webhooks::payloads::organization_role(
         &role,
     )))
 }
@@ -121,7 +121,7 @@ async fn users(
         users
             .iter()
             .map(|user| {
-                codeyard_app::webhooks::payloads::organization_role_user(
+                codeyard_webhooks::payloads::organization_role_user(
                     user,
                     &org.name,
                     role.base_level,
@@ -163,7 +163,7 @@ async fn teams(
         teams
             .into_iter()
             .map(|team| {
-                let mut value = codeyard_app::webhooks::payloads::team(&TeamAccess {
+                let mut value = codeyard_webhooks::payloads::team(&TeamAccess {
                     team,
                     org_slug: org.name.clone(),
                     permission: role.base_level,

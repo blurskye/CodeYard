@@ -55,7 +55,7 @@ pub(crate) async fn document(
             .map_err(Error::unavailable)?,
         None => None,
     };
-    Ok(codeyard_app::webhooks::payloads::milestone(
+    Ok(codeyard_webhooks::payloads::milestone(
         summary,
         creator.as_ref(),
         owner,
@@ -284,7 +284,7 @@ async fn list(
     let items = rows
         .iter()
         .map(|row| {
-            codeyard_app::webhooks::payloads::milestone(
+            codeyard_webhooks::payloads::milestone(
                 row,
                 row.milestone.creator_id.and_then(|id| creators.get(&id)),
                 &p["owner"],
@@ -337,7 +337,7 @@ async fn labels(
         &uri,
         labels
             .iter()
-            .map(|label| codeyard_app::webhooks::payloads::label(label, &p["owner"], &repo.name))
+            .map(|label| codeyard_webhooks::payloads::label(label, &p["owner"], &repo.name))
             .collect(),
         next,
     )

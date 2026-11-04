@@ -140,7 +140,7 @@ async fn card(
         owner: owner.name.clone(),
         kind: package.package_type.clone(),
         visibility: package.visibility.clone(),
-        href: codeyard_app::webhooks::payloads::package_url(owner, package),
+        href: codeyard_webhooks::payloads::package_url(owner, package),
         versions,
         updated,
     })

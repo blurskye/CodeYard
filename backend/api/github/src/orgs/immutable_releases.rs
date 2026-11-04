@@ -164,7 +164,7 @@ async fn repositories(
     )?;
     let repositories: Vec<_> = rows
         .iter()
-        .map(codeyard_app::webhooks::payloads::repository_snapshot)
+        .map(codeyard_webhooks::payloads::repository_snapshot)
         .collect();
     Ok((
         page.headers(&uri, count > (offset + limit) as i64)?,

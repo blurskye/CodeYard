@@ -44,11 +44,11 @@ async fn document(
             .await
             .map_err(Error::unavailable)?
             .as_ref()
-            .map(codeyard_app::webhooks::payloads::user),
+            .map(codeyard_webhooks::payloads::user),
         None => None,
     }
     .unwrap_or_else(|| {
-        codeyard_app::webhooks::payloads::person(&codeyard_app::webhooks::payloads::Person {
+        codeyard_webhooks::payloads::person(&codeyard_webhooks::payloads::Person {
             login: "ghost".into(),
             id: 0,
             site_admin: false,

@@ -8,7 +8,7 @@ use axum::response::IntoResponse;
 use axum::routing::delete;
 use axum::routing::patch;
 use codeyard_app::app::AppState;
-use codeyard_app::webhooks::payloads;
+use codeyard_webhooks::payloads;
 use codeyard_db_repos::projects::Content;
 use codeyard_db_repos::projects::Field;
 use codeyard_db_repos::projects::FieldUpdate;

@@ -1,6 +1,6 @@
 //! Invitations and effective collaborator permissions, including organization and team grants.
 use axum::response::IntoResponse;
-use codeyard_app::webhooks::payloads;
+use codeyard_webhooks::payloads;
 
 use crate::optional_json::OptionalJson;
 use axum::extract::OriginalUri;
@@ -67,11 +67,11 @@ async fn invitation_document(
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-    Ok(codeyard_app::webhooks::payloads::repository_invitation(
+    Ok(codeyard_webhooks::payloads::repository_invitation(
         invitation,
-        codeyard_app::webhooks::payloads::repository(&repo, &owner),
-        &codeyard_app::webhooks::payloads::Person::of(&inviter),
-        &codeyard_app::webhooks::payloads::Person::of(&invitee),
+        codeyard_webhooks::payloads::repository(&repo, &owner),
+        &codeyard_webhooks::payloads::Person::of(&inviter),
+        &codeyard_webhooks::payloads::Person::of(&invitee),
     ))
 }
 
@@ -125,7 +125,7 @@ async fn list(
         rows.into_iter()
             .take(limit)
             .map(|row| {
-                codeyard_app::webhooks::payloads::collaborator(
+                codeyard_webhooks::payloads::collaborator(
                     &row.user,
                     AccessLevel::from(row.permission),
                 )

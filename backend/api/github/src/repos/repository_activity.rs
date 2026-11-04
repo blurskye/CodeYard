@@ -65,7 +65,7 @@ async fn list(
         Json(
             page.rows
                 .iter()
-                .map(codeyard_app::webhooks::payloads::repository_activity)
+                .map(codeyard_webhooks::payloads::repository_activity)
                 .collect::<Vec<_>>(),
         ),
     )

@@ -60,7 +60,7 @@ async fn types(
         attributes
             .iter()
             .filter(|a| a.is_enabled)
-            .map(codeyard_app::webhooks::payloads::issue_type)
+            .map(codeyard_webhooks::payloads::issue_type)
             .collect(),
     )))
 }
@@ -89,7 +89,7 @@ async fn list(
             .iter()
             .skip(offset)
             .take(limit)
-            .map(codeyard_app::webhooks::payloads::issue_field_value)
+            .map(codeyard_webhooks::payloads::issue_field_value)
             .collect(),
         next,
     )
@@ -131,7 +131,7 @@ async fn save(
     Ok(Json(Value::Array(
         values
             .iter()
-            .map(codeyard_app::webhooks::payloads::issue_field_value)
+            .map(codeyard_webhooks::payloads::issue_field_value)
             .collect(),
     )))
 }

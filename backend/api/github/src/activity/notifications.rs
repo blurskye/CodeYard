@@ -121,7 +121,7 @@ async fn collection(
         .threads
         .iter()
         .take(limit)
-        .map(codeyard_app::webhooks::payloads::notification_thread_json)
+        .map(codeyard_webhooks::payloads::notification_thread_json)
         .collect();
     Ok(polling(page.response(&uri, values, more)?))
 }
@@ -204,7 +204,7 @@ async fn get_thread(
             let mut inbox = act(&state, &headers, ThreadAction::Get(thread_id(&id)?)).await?;
             let view = inbox.threads.pop().ok_or_else(Error::missing)?;
             Ok(polling(
-                Json(codeyard_app::webhooks::payloads::notification_thread_json(
+                Json(codeyard_webhooks::payloads::notification_thread_json(
                     &view,
                 ))
                 .into_response(),
@@ -262,7 +262,7 @@ fn subscription(inbox: ThreadInbox) -> Result<Response> {
     let thread = inbox.thread.ok_or_else(Error::missing)?;
     let subscription = inbox.subscription.ok_or_else(Error::missing)?;
     Ok(Json(
-        codeyard_app::webhooks::payloads::notification_subscription_json(&thread, &subscription),
+        codeyard_webhooks::payloads::notification_subscription_json(&thread, &subscription),
     )
     .into_response())
 }

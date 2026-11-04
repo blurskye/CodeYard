@@ -43,7 +43,7 @@ pub struct Outgoing {
 }
 
 pub fn json_payload(outgoing: &Outgoing) -> Option<serde_json::Value> {
-    if outgoing.content_type == crate::webhooks::settings::FORM_CONTENT_TYPE {
+    if outgoing.content_type == crate::settings::FORM_CONTENT_TYPE {
         let json = url::form_urlencoded::parse(outgoing.body.as_bytes())
             .find(|(key, _)| key == "payload")?
             .1
@@ -134,7 +134,7 @@ async fn current_hook(
     if let Some(app) = hook.app_id {
         let mut retries = RETRY_DELAYS.iter();
         loop {
-            match crate::webhooks::github_apps::current(pool, app, hook, outgoing).await {
+            match crate::github_apps::current(pool, app, hook, outgoing).await {
                 Ok(current) => return Ok(current),
                 Err(error) => {
                     tracing::warn!(webhook_id = hook.id, %error, "could not recheck a queued App webhook");
@@ -263,7 +263,7 @@ async fn transmit(
     }
     let mut retries = RETRY_DELAYS.iter();
     let attempt = loop {
-        let slot = crate::webhooks::SLOTS
+        let slot = crate::SLOTS
             .acquire()
             .await
             .map_err(|_| "Webhook sends are stopped")?;

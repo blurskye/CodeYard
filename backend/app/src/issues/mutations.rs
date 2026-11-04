@@ -1,6 +1,6 @@
 use crate::issues::database_error;
 use crate::issues::OperationError;
-use crate::webhooks::payloads::Scope;
+use codeyard_webhooks::payloads::Scope;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
 use codeyard_notifications::create::notify_subscribers;
@@ -62,7 +62,7 @@ async fn emit_issue_event(
         vec![author_id, sender_id],
         move |owner, people| {
             let (author, sender) = (people.get(author_id), people.get(sender_id));
-            let mut payload = crate::webhooks::payloads::issues(
+            let mut payload = codeyard_webhooks::payloads::issues(
                 action,
                 &issue,
                 &author,

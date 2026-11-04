@@ -1,5 +1,5 @@
 //! Open scanners submit SARIF; queued uploads survive restarts and commit atomically.
-use crate::webhooks::payloads;
+use codeyard_webhooks::payloads;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
@@ -726,8 +726,8 @@ async fn notify(
     let mut people = vec![actor];
     people.extend(dismissed);
     crate::webhooks::emit(pool, &repo, "code_scanning_alert", people, move |owner, people| {
-        let dismissed = dismissed.map(|id|crate::webhooks::payloads::person(&people.get(id)));
-        let document = crate::webhooks::payloads::code_scanning::code_scanning_alert(&alert, std::slice::from_ref(&instance), owner, &snapshot.name, dismissed).expect("stored alert documents are valid JSON");
+        let dismissed = dismissed.map(|id|codeyard_webhooks::payloads::person(&people.get(id)));
+        let document = codeyard_webhooks::payloads::code_scanning::code_scanning_alert(&alert, std::slice::from_ref(&instance), owner, &snapshot.name, dismissed).expect("stored alert documents are valid JSON");
         let instance = &document["most_recent_instance"];
         let (reference,commit)=match &revision {Some((reference,commit))=>(json!(reference),json!(commit)),None=>(instance["ref"].clone(),instance["commit_sha"].clone())};
         json!({"action":action,"alert":document,"ref":reference,"commit_oid":commit,"repository":payloads::repository(&snapshot,owner),"sender":payloads::person(&people.get(actor))})

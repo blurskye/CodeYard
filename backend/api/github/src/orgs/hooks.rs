@@ -19,9 +19,9 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_app::webhooks::settings::HookError;
-use codeyard_app::webhooks::settings::HookForm;
-use codeyard_app::webhooks::settings::HookPatch;
+use codeyard_webhooks::settings::HookError;
+use codeyard_webhooks::settings::HookForm;
+use codeyard_webhooks::settings::HookPatch;
 use codeyard_db_core::models::Organization;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_repos::webhooks::DeliveryWindow;
@@ -112,7 +112,7 @@ fn url(org: &str, id: i64) -> String {
     ))
 }
 fn document(org: &str, hook: &Webhook) -> Value {
-    codeyard_app::webhooks::payloads::webhook(hook, &url(org, hook.id))
+    codeyard_webhooks::payloads::webhook(hook, &url(org, hook.id))
 }
 async fn list(
     State(state): State<Arc<AppState>>,
@@ -157,7 +157,7 @@ async fn get_config(
 ) -> Result<Json<Value>> {
     let (org, actor) = actor(&state, &headers, &params["org"], false).await?;
     let snapshot = snapshot(&state, org.id, &actor, id(&params, "hook_id")?, None, None).await?;
-    Ok(Json(codeyard_app::webhooks::payloads::webhook_config(
+    Ok(Json(codeyard_webhooks::payloads::webhook_config(
         snapshot.hook.as_ref().unwrap(),
     )))
 }
@@ -190,8 +190,8 @@ fn config(value: Option<&Value>) -> Result<HookPatch> {
     let config = object(value)?;
     let content_type = text(config, "content_type")?
         .map(|kind| match kind.as_str() {
-            "json" => Ok(codeyard_app::webhooks::settings::JSON_CONTENT_TYPE.to_owned()),
-            "form" => Ok(codeyard_app::webhooks::settings::FORM_CONTENT_TYPE.to_owned()),
+            "json" => Ok(codeyard_webhooks::settings::JSON_CONTENT_TYPE.to_owned()),
+            "form" => Ok(codeyard_webhooks::settings::FORM_CONTENT_TYPE.to_owned()),
             _ => Err(Error::validation("Hook", "content_type", "invalid")),
         })
         .transpose()?;
@@ -257,14 +257,14 @@ async fn create(
             .ok_or_else(|| Error::validation("Hook", "url", "missing_field"))?,
         content_type: patch
             .content_type
-            .unwrap_or_else(|| codeyard_app::webhooks::settings::FORM_CONTENT_TYPE.into()),
+            .unwrap_or_else(|| codeyard_webhooks::settings::FORM_CONTENT_TYPE.into()),
         events: patch.events.unwrap_or_else(|| vec!["push".into()]),
         active: patch.active.unwrap_or(true),
         ssl_verify: patch.ssl_verify.unwrap_or(true),
         secret: patch.secret.unwrap_or_default(),
         clear_secret: false,
     };
-    let id = codeyard_app::webhooks::settings::save(
+    let id = codeyard_webhooks::settings::save(
         &state.pool,
         state.secret_encryptor.as_deref(),
         HookOwner::Organization(org.id),
@@ -296,7 +296,7 @@ async fn update(
     let Json(value) = body.map_err(codeyard_model::github_error::json_error)?;
     let patch = parse_patch(&value)?;
     let id = id(&params, "hook_id")?;
-    codeyard_app::webhooks::settings::update(
+    codeyard_webhooks::settings::update(
         &state.pool,
         state.secret_encryptor.as_deref(),
         HookOwner::Organization(org.id),
@@ -325,7 +325,7 @@ async fn update_config(
     let Json(value) = body.map_err(codeyard_model::github_error::json_error)?;
     let patch = config(Some(&value))?;
     let id = id(&params, "hook_id")?;
-    codeyard_app::webhooks::settings::update(
+    codeyard_webhooks::settings::update(
         &state.pool,
         state.secret_encryptor.as_deref(),
         HookOwner::Organization(org.id),
@@ -336,7 +336,7 @@ async fn update_config(
     )
     .await
     .map_err(error)?;
-    Ok(Json(codeyard_app::webhooks::payloads::webhook_config(
+    Ok(Json(codeyard_webhooks::payloads::webhook_config(
         &snapshot(&state, org.id, &actor, id, None, None)
             .await?
             .hook
@@ -349,7 +349,7 @@ async fn remove(
     Path(params): Path<Params>,
 ) -> Result<StatusCode> {
     let (org, actor) = actor(&state, &headers, &params["org"], true).await?;
-    codeyard_app::webhooks::settings::delete(
+    codeyard_webhooks::settings::delete(
         &state.pool,
         HookOwner::Organization(org.id),
         &actor.user,
@@ -366,7 +366,7 @@ async fn ping(
     Path(params): Path<Params>,
 ) -> Result<StatusCode> {
     let (org, actor) = actor(&state, &headers, &params["org"], true).await?;
-    codeyard_app::webhooks::settings::ping(
+    codeyard_webhooks::settings::ping(
         &state.pool,
         HookOwner::Organization(org.id),
         &actor.user,
@@ -383,7 +383,7 @@ async fn redeliver(
     Path(params): Path<Params>,
 ) -> Result<StatusCode> {
     let (org, actor) = actor(&state, &headers, &params["org"], true).await?;
-    codeyard_app::webhooks::settings::redeliver(
+    codeyard_webhooks::settings::redeliver(
         &state.pool,
         HookOwner::Organization(org.id),
         &actor.user,
@@ -410,7 +410,7 @@ async fn delivery(
         None,
     )
     .await?;
-    Ok(Json(codeyard_app::webhooks::payloads::webhook_delivery(
+    Ok(Json(codeyard_webhooks::payloads::webhook_delivery(
         &snapshot.delivery.ok_or_else(Error::missing)?,
         true,
     )))
@@ -438,7 +438,7 @@ async fn deliveries(
         headers,
         Json(
             rows.iter()
-                .map(|row| codeyard_app::webhooks::payloads::webhook_delivery(row, false))
+                .map(|row| codeyard_webhooks::payloads::webhook_delivery(row, false))
                 .collect::<Vec<_>>(),
         ),
     )

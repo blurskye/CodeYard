@@ -66,7 +66,7 @@ async fn create(
     .map_err(failure)?;
     Ok((
         StatusCode::CREATED,
-        Json(codeyard_app::webhooks::payloads::autolink(&row)),
+        Json(codeyard_webhooks::payloads::autolink(&row)),
     )
         .into_response())
 }
@@ -95,7 +95,7 @@ async fn list(
     page.response(
         &uri,
         rows.iter()
-            .map(codeyard_app::webhooks::payloads::autolink)
+            .map(codeyard_webhooks::payloads::autolink)
             .collect(),
         more,
     )
@@ -109,7 +109,7 @@ async fn get_one(
     let actor = actor
         .ok_or_else(codeyard_app::api_shared::github::auth::required)?
         .user;
-    Ok(Json(codeyard_app::webhooks::payloads::autolink(
+    Ok(Json(codeyard_webhooks::payloads::autolink(
         &codeyard_db_repos::repositories::autolinks::get(&state.pool, actor.id, repo.id, id)
             .await
             .map_err(failure)?,

@@ -11,7 +11,7 @@ use axum::routing::put;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::app::AppState;
-use codeyard_app::webhooks::payloads;
+use codeyard_webhooks::payloads;
 use codeyard_db_core::models::PersonalAccessToken;
 use codeyard_db_identity::oauth_apps::Application;
 use codeyard_model::github_error::Error;

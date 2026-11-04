@@ -10,7 +10,7 @@ use codeyard_storage::files::uploads::UploadError;
 use crate::repositories::refs::RefError;
 use crate::repositories::store::repo_store;
 use codeyard_storage::ObjectStore;
-use crate::webhooks::payloads::Scope;
+use codeyard_webhooks::payloads::Scope;
 use anyhow::Error;
 use codeyard_db_core::models::Release;
 use codeyard_db_core::models::ReleaseAsset;
@@ -547,7 +547,7 @@ async fn emit_release(
         vec![author_id, actor],
         move |owner, people| {
             let (author, sender) = (people.get(author_id), people.get(actor));
-            let mut payload = crate::webhooks::payloads::release(
+            let mut payload = codeyard_webhooks::payloads::release(
                 action,
                 &release,
                 &author,
@@ -699,7 +699,7 @@ pub async fn update(
     };
     // Only an edit carries the earlier values, as on GitHub.
     let changes = (action == "edited")
-        .then(|| crate::webhooks::payloads::release_changes(&current, &release));
+        .then(|| codeyard_webhooks::payloads::release_changes(&current, &release));
     emit_release(pool, &repository, &release, actor, action, None, changes).await;
 
     Ok(release)

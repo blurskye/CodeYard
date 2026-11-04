@@ -39,7 +39,7 @@ async fn list(
     let items = users
         .iter()
         .take(limit)
-        .map(codeyard_app::webhooks::payloads::user)
+        .map(codeyard_webhooks::payloads::user)
         .collect();
     page.response(&uri, items, next)
 }

@@ -1,7 +1,7 @@
 //! Gate requests are private to the App whose decision the run is waiting for.
-use crate::webhooks::enqueue;
-use crate::webhooks::outgoing;
-use crate::webhooks::payloads;
+use crate::enqueue;
+use crate::outgoing;
+use crate::payloads;
 use codeyard_db_core::models::CiRun;
 use codeyard_db_core::DbPool;
 use codeyard_model::urls::repo_url;
@@ -31,7 +31,7 @@ pub async fn requested(pool: &DbPool, run: &CiRun) -> anyhow::Result<()> {
     let sender = if let Some(actor) = run.triggered_by_id {
         codeyard_db_identity::users::accounts::get_user_by_id(pool, actor)
             .await?
-            .map(|user| crate::webhooks::payloads::user(&user))
+            .map(|user| crate::payloads::user(&user))
             .unwrap_or(Value::Null)
     } else {
         Value::Null
@@ -48,13 +48,13 @@ pub async fn requested(pool: &DbPool, run: &CiRun) -> anyhow::Result<()> {
             let author =
                 codeyard_db_identity::users::accounts::get_user_by_id(pool, pull.author_id)
                     .await?
-                    .map(|user| crate::webhooks::payloads::Person::of(&user))
-                    .unwrap_or(crate::webhooks::payloads::Person {
+                    .map(|user| crate::payloads::Person::of(&user))
+                    .unwrap_or(crate::payloads::Person {
                         login: String::new(),
                         id: pull.author_id,
                         site_admin: false,
                     });
-            pull_requests.push(crate::webhooks::payloads::pull_request_json(
+            pull_requests.push(crate::payloads::pull_request_json(
                 &pull, &author, &repo, &owner,
             ));
         }

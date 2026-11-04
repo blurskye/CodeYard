@@ -96,7 +96,7 @@ async fn create(
     .map_err(write_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(codeyard_app::webhooks::payloads::label(
+        Json(codeyard_webhooks::payloads::label(
             &label,
             &p["owner"],
             &repo.name,
@@ -128,7 +128,7 @@ async fn list(
         &uri,
         labels
             .iter()
-            .map(|label| codeyard_app::webhooks::payloads::label(label, &p["owner"], &repo.name))
+            .map(|label| codeyard_webhooks::payloads::label(label, &p["owner"], &repo.name))
             .collect(),
         next,
     )
@@ -141,7 +141,7 @@ async fn get_label(
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let label = find(&state.pool, repo.id, &p["name"]).await?;
-    Ok(Json(codeyard_app::webhooks::payloads::label(
+    Ok(Json(codeyard_webhooks::payloads::label(
         &label,
         &p["owner"],
         &repo.name,
@@ -188,7 +188,7 @@ async fn update(
     )
     .await
     .map_err(write_error)?;
-    Ok(Json(codeyard_app::webhooks::payloads::label(
+    Ok(Json(codeyard_webhooks::payloads::label(
         &label,
         &p["owner"],
         &repo.name,
@@ -245,7 +245,7 @@ async fn list_on_issue(
             .iter()
             .skip(offset)
             .take(limit)
-            .map(|label| codeyard_app::webhooks::payloads::label(label, &p["owner"], &repo.name))
+            .map(|label| codeyard_webhooks::payloads::label(label, &p["owner"], &repo.name))
             .collect(),
         next,
     )
@@ -298,7 +298,7 @@ async fn change(
     Ok(Json(
         labels
             .iter()
-            .map(|label| codeyard_app::webhooks::payloads::label(label, &p["owner"], &repo.name))
+            .map(|label| codeyard_webhooks::payloads::label(label, &p["owner"], &repo.name))
             .collect(),
     ))
 }
@@ -397,7 +397,7 @@ async fn remove_from_issue(
         assigned(&state.pool, repo.id, item)
             .await?
             .iter()
-            .map(|label| codeyard_app::webhooks::payloads::label(label, &p["owner"], &repo.name))
+            .map(|label| codeyard_webhooks::payloads::label(label, &p["owner"], &repo.name))
             .collect(),
     ))
 }

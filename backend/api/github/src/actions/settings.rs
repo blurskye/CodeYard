@@ -261,7 +261,7 @@ async fn organization_repositories(
     }
     let values: Vec<_> = rows
         .iter()
-        .map(|repo| codeyard_app::webhooks::payloads::repository(repo, &params["org"]))
+        .map(|repo| codeyard_webhooks::payloads::repository(repo, &params["org"]))
         .collect();
     Ok((
         page.headers(&uri, (offset.saturating_add(limit) as i64) < total)?,

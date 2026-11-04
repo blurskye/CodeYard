@@ -13,7 +13,7 @@ use axum::response::Response;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_app::webhooks::payloads;
+use codeyard_webhooks::payloads;
 use codeyard_db_core::models::PersonalAccessToken;
 use codeyard_db_identity::github_apps::App;
 use codeyard_db_identity::github_apps::Installation;
@@ -38,7 +38,7 @@ pub(super) async fn jwt(state: &AppState, headers: &HeaderMap) -> Result<App> {
 }
 async fn account(state: &AppState, installation: &Installation) -> Result<Value> {
     if let Some(user) = installation.user_id {
-        return Ok(codeyard_app::webhooks::payloads::user(
+        return Ok(codeyard_webhooks::payloads::user(
             &codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, user)
                 .await
                 .map_err(Error::unavailable)?
@@ -89,7 +89,7 @@ pub(crate) async fn document(state: &AppState, installation: &Installation) -> R
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     Ok(
-        json!({"id":installation.id,"account":account(state,installation).await?,"repository_selection":if installation.all_repos{"all"}else{"selected"},"access_tokens_url":api_url(&format!("/app/installations/{}/access_tokens",installation.id)),"repositories_url":api_url("/installation/repositories"),"html_url":format!("{}/settings/apps/installations",codeyard_model::http_config::link_origin()),"app_id":app.id,"app_slug":app.slug,"target_id":installation.user_id.or(installation.org_id),"target_type":if installation.org_id.is_some(){"Organization"}else{"User"},"permissions":serde_json::from_str::<Value>(&app.permissions).map_err(Error::unavailable)?,"events":app.events.split(',').filter(|s|!s.is_empty()).collect::<Vec<_>>(),"created_at":installation.created_at,"updated_at":installation.updated_at,"single_file_name":null,"has_multiple_single_files":false,"single_file_paths":[],"suspended_at":installation.suspended_at,"suspended_by":if let Some(id)=installation.suspended_by{codeyard_db_identity::users::accounts::get_user_by_id(&state.pool,id).await.map_err(Error::unavailable)?.map(|user|codeyard_app::webhooks::payloads::user(&user))}else{None}}),
+        json!({"id":installation.id,"account":account(state,installation).await?,"repository_selection":if installation.all_repos{"all"}else{"selected"},"access_tokens_url":api_url(&format!("/app/installations/{}/access_tokens",installation.id)),"repositories_url":api_url("/installation/repositories"),"html_url":format!("{}/settings/apps/installations",codeyard_model::http_config::link_origin()),"app_id":app.id,"app_slug":app.slug,"target_id":installation.user_id.or(installation.org_id),"target_type":if installation.org_id.is_some(){"Organization"}else{"User"},"permissions":serde_json::from_str::<Value>(&app.permissions).map_err(Error::unavailable)?,"events":app.events.split(',').filter(|s|!s.is_empty()).collect::<Vec<_>>(),"created_at":installation.created_at,"updated_at":installation.updated_at,"single_file_name":null,"has_multiple_single_files":false,"single_file_paths":[],"suspended_at":installation.suspended_at,"suspended_by":if let Some(id)=installation.suspended_by{codeyard_db_identity::users::accounts::get_user_by_id(&state.pool,id).await.map_err(Error::unavailable)?.map(|user|codeyard_webhooks::payloads::user(&user))}else{None}}),
     )
 }
 async fn owned(state: &AppState, app: i64, id: i64) -> Result<Installation> {

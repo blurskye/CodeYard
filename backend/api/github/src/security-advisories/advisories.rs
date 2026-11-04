@@ -110,7 +110,7 @@ async fn person(state: &AppState, id: Option<i64>) -> Result<Value> {
                 .await
                 .map_err(Error::unavailable)?
                 .as_ref()
-                .map(codeyard_app::webhooks::payloads::user)
+                .map(codeyard_webhooks::payloads::user)
                 .unwrap_or(Value::Null),
         )
     } else {

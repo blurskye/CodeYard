@@ -17,7 +17,7 @@ use codeyard_app::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_app::webhooks::payloads;
+use codeyard_webhooks::payloads;
 use codeyard_db_actions::checks::Credential;
 use codeyard_db_actions::checks::Filter;
 use codeyard_db_actions::checks::Preference;
@@ -75,7 +75,7 @@ async fn suite_document(
         repo,
         owner,
         suite,
-        &codeyard_app::webhooks::payloads::simple_commit(&commit),
+        &codeyard_webhooks::payloads::simple_commit(&commit),
     )
     .await
 }
@@ -286,7 +286,7 @@ async fn get_run(
             .await
             .map_err(Error::unavailable)?;
     let job_document =
-        codeyard_app::webhooks::payloads::action_job(&job, &[], &run, &owner, &repo.name);
+        codeyard_webhooks::payloads::action_job(&job, &[], &run, &owner, &repo.name);
     let url = format!("{}/check-runs/{id}", repo_url(&owner, &repo.name));
     Ok(Json(
         json!({"id":id,"node_id":codeyard_model::node_id::encode("CR",id),"head_sha":run.head_sha,"name":job.name,"url":url,

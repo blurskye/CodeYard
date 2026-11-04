@@ -50,7 +50,7 @@ async fn documents(state: &AppState, user: &User, keys: &[GpgKey]) -> Result<Vec
     .map_err(Error::unavailable)?;
     Ok(keys
         .iter()
-        .map(|key| codeyard_app::webhooks::payloads::gpg_key(key, &subkeys, &verified))
+        .map(|key| codeyard_webhooks::payloads::gpg_key(key, &subkeys, &verified))
         .collect())
 }
 async fn page(

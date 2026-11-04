@@ -256,7 +256,7 @@ async fn stargazers(
         .is_empty();
     let mut items = Vec::new();
     for user in rows {
-        let value = codeyard_app::webhooks::payloads::user(&user);
+        let value = codeyard_webhooks::payloads::user(&user);
         items.push(if timestamps(&headers) {
             let Some(at) = codeyard_db_repos::repositories::engagement::starred_at(
                 &state.pool,

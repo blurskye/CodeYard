@@ -193,7 +193,7 @@ async fn contract(pg: bool) {
     )
     .await
     .is_err());
-    assert_eq!(codeyard_app::webhooks::payloads::user(&bot)["type"], "Bot");
+    assert_eq!(codeyard_webhooks::payloads::user(&bot)["type"], "Bot");
     // The shared GraphQL implementation must not borrow this bot's grants from other runs.
     codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),

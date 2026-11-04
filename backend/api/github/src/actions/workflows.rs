@@ -104,7 +104,7 @@ async fn list(
         .into_iter()
         .skip(offset)
         .take(limit)
-        .map(|workflow| codeyard_app::webhooks::payloads::action_workflow(&workflow, &owner, &name))
+        .map(|workflow| codeyard_webhooks::payloads::action_workflow(&workflow, &owner, &name))
         .collect();
     Ok((
         page.headers(&uri, offset + limit < total)?,
@@ -119,7 +119,7 @@ async fn get_one(
     Path((owner, name, key)): Path<(String, String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    Ok(Json(codeyard_app::webhooks::payloads::action_workflow(
+    Ok(Json(codeyard_webhooks::payloads::action_workflow(
         &lookup_read(&state, &repo, &key).await?,
         &owner,
         &name,

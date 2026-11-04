@@ -115,7 +115,7 @@ async fn list(
     let values = rows
         .iter()
         .take(limit)
-        .map(codeyard_app::webhooks::payloads::issue_suggestion)
+        .map(codeyard_webhooks::payloads::issue_suggestion)
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(Error::unavailable)?;
     page.response(&uri, values, next)
@@ -143,7 +143,7 @@ async fn resolve(
     .await
     .map_err(error)?;
     Ok(Json(
-        codeyard_app::webhooks::payloads::issue_suggestion(&row).map_err(Error::unavailable)?,
+        codeyard_webhooks::payloads::issue_suggestion(&row).map_err(Error::unavailable)?,
     ))
 }
 pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

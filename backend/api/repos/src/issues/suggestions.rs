@@ -556,7 +556,7 @@ pub async fn agent_propose(
         let (status, message) = failure(&error);
         (status, Json(ApiError::new("suggestion_refused", &message))).into_response()
     })?;
-    let value = codeyard_app::webhooks::payloads::issue_suggestion(&row).map_err(|_| {
+    let value = codeyard_webhooks::payloads::issue_suggestion(&row).map_err(|_| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(ApiError::new("unavailable", "Suggestion unavailable")),

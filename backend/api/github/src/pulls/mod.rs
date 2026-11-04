@@ -55,7 +55,7 @@ async fn person(state: &AppState, id: i64) -> Result<Value> {
         .map_err(Error::unavailable)?;
     Ok(user
         .as_ref()
-        .map_or(Value::Null, codeyard_app::webhooks::payloads::user))
+        .map_or(Value::Null, codeyard_webhooks::payloads::user))
 }
 
 pub(super) async fn association(
@@ -98,7 +98,7 @@ pub(super) async fn hidden_head(
                 .map_err(Error::unavailable)?
                 .map(|name| {
                     (
-                        codeyard_app::webhooks::payloads::repository_owner(head, &name),
+                        codeyard_webhooks::payloads::repository_owner(head, &name),
                         format!("{name}:{}", pull.head_branch),
                     )
                 })
@@ -125,16 +125,16 @@ pub(super) async fn document(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let mut value = codeyard_app::webhooks::payloads::pull_request_json(
+    let mut value = codeyard_webhooks::payloads::pull_request_json(
         pull,
-        &codeyard_app::webhooks::payloads::Person::of(&author),
+        &codeyard_webhooks::payloads::Person::of(&author),
         repo,
         owner,
     );
-    value["user"] = codeyard_app::webhooks::payloads::user(&author);
+    value["user"] = codeyard_webhooks::payloads::user(&author);
     value["author_association"] = json!(association(&state.pool, repo, author.id).await?);
-    let mut base_repo = codeyard_app::webhooks::payloads::repository(repo, owner);
-    codeyard_app::webhooks::payloads::set_fork_counts(
+    let mut base_repo = codeyard_webhooks::payloads::repository(repo, owner);
+    codeyard_webhooks::payloads::set_fork_counts(
         &mut base_repo,
         codeyard_app::api_shared::github::repos::public_fork_count(state, repo.id).await?,
     );
@@ -149,8 +149,8 @@ pub(super) async fn document(
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-        let mut head_value = codeyard_app::webhooks::payloads::repository(&head, &head_owner);
-        codeyard_app::webhooks::payloads::set_fork_counts(
+        let mut head_value = codeyard_webhooks::payloads::repository(&head, &head_owner);
+        codeyard_webhooks::payloads::set_fork_counts(
             &mut head_value,
             codeyard_app::api_shared::github::repos::public_fork_count(state, head.id).await?,
         );
@@ -164,7 +164,7 @@ pub(super) async fn document(
             .map_err(Error::unavailable)?;
     value["labels"] = json!(labels
         .iter()
-        .map(|label| codeyard_app::webhooks::payloads::label(label, owner, &repo.name))
+        .map(|label| codeyard_webhooks::payloads::label(label, owner, &repo.name))
         .collect::<Vec<_>>());
     if let Some(id) = pull.milestone_id {
         let summary = codeyard_db_repos::milestones::get_milestone_by_id(&state.pool, repo.id, id)

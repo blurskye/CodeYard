@@ -489,8 +489,8 @@ impl CiRuns {
             Some(serde_json::json!({
                 "ref": request.branch,
                 "inputs": request.inputs,
-                "repository": crate::webhooks::payloads::repository(&repository, &request.repo_owner),
-                "sender": crate::webhooks::payloads::user(&sender),
+                "repository": codeyard_webhooks::payloads::repository(&repository, &request.repo_owner),
+                "sender": codeyard_webhooks::payloads::user(&sender),
             }))
         } else {
             event_payload
@@ -583,7 +583,7 @@ impl CiRuns {
             return Ok(run);
         }
         if let Err(error) =
-            crate::webhooks::deployment_protection::requested(&self.pool, &run).await
+            codeyard_webhooks::deployment_protection::requested(&self.pool, &run).await
         {
             tracing::warn!(run_id=run.id,%error,"Could not queue deployment protection requests");
         }

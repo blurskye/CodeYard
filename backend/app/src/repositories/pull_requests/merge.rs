@@ -11,7 +11,7 @@ use crate::repositories::store::repo_store;
 use crate::repositories::store::types::allowed_merge_methods;
 use crate::repositories::store::types::MergeMethod;
 use crate::repositories::store::types::MergeRequest as StoreMerge;
-use crate::webhooks::payloads::Scope;
+use codeyard_webhooks::payloads::Scope;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::validate_merge_revision;

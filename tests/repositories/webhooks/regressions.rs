@@ -1,6 +1,6 @@
 use super::*;
 use codeyard_app::webhooks;
-use codeyard_app::webhooks::delivery;
+use codeyard_webhooks::delivery;
 
 async fn insert_hook(database: &Database, url: &str) -> codeyard_db_core::models::Webhook {
     let (owner, id) = try_insert_hook(database, url).await;

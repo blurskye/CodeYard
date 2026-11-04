@@ -282,7 +282,7 @@ async fn list(
         headers,
         Json(
             orgs.iter()
-                .map(codeyard_app::webhooks::payloads::organization)
+                .map(codeyard_webhooks::payloads::organization)
                 .collect::<Vec<_>>(),
         ),
     )
@@ -311,7 +311,7 @@ async fn organization_list(
     page.response(
         &uri,
         rows.iter()
-            .map(codeyard_app::webhooks::payloads::organization)
+            .map(codeyard_webhooks::payloads::organization)
             .collect(),
         has_next,
     )
@@ -386,7 +386,7 @@ async fn member_list(
     page.response(
         &uri,
         rows.iter()
-            .map(codeyard_app::webhooks::payloads::user)
+            .map(codeyard_webhooks::payloads::user)
             .collect(),
         has_next,
     )
@@ -543,9 +543,9 @@ async fn conceal(
 }
 
 fn membership_document(org: &Organization, user: &User, role: &str, state: &str) -> Value {
-    let organization = codeyard_app::webhooks::payloads::organization(org);
+    let organization = codeyard_webhooks::payloads::organization(org);
     json!({"url": api_url(&format!("/orgs/{}/memberships/{}", codeyard_webui::encode_component(&org.name), codeyard_webui::encode_component(&user.username))),
-        "organization_url": organization["url"], "organization": organization, "user": codeyard_app::webhooks::payloads::user(user),
+        "organization_url": organization["url"], "organization": organization, "user": codeyard_webhooks::payloads::user(user),
         "role": if role == "owner" { "admin" } else { "member" }, "state": state, "direct_membership": true})
 }
 async fn membership_value(

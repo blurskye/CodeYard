@@ -170,7 +170,7 @@ async fn bypass(
     Ok(Json(
         users
             .iter()
-            .map(codeyard_app::webhooks::payloads::user)
+            .map(codeyard_webhooks::payloads::user)
             .collect(),
     ))
 }

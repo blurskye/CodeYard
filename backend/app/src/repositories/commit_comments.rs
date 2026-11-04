@@ -1,8 +1,8 @@
 //! Discussions anchored to immutable commits, shared by REST and native forms.
 use crate::cluster::context::NodeContext;
 use crate::repositories::store::repo_store;
-use crate::webhooks::payloads::Person;
-use crate::webhooks::payloads::Scope;
+use codeyard_webhooks::payloads::Person;
+use codeyard_webhooks::payloads::Scope;
 use codeyard_db_core::models::CommitComment;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
@@ -219,7 +219,7 @@ async fn emit(
         vec![actor],
         move |owner, people| {
             let sender = people.get(actor);
-            let comment = crate::webhooks::payloads::commit_comment(
+            let comment = codeyard_webhooks::payloads::commit_comment(
                 &entry.comment,
                 entry.author.as_ref(),
                 &entry.association,
@@ -227,7 +227,7 @@ async fn emit(
                 owner,
                 &[], // At creation the new comment has no reactions.
             );
-            crate::webhooks::payloads::commit_comment_event(
+            codeyard_webhooks::payloads::commit_comment_event(
                 action,
                 comment,
                 Scope {

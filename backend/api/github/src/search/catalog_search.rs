@@ -176,7 +176,7 @@ async fn catalog(
                     .await
                     .map_err(Error::unavailable)?
                     .ok_or_else(|| Error::unavailable(()))?;
-                    codeyard_app::webhooks::payloads::label(&label, &owner, &repo.name)
+                    codeyard_webhooks::payloads::label(&label, &owner, &repo.name)
                 }
             }
             Kind::Users => {
@@ -195,7 +195,7 @@ async fn catalog(
                         incomplete = true;
                         continue;
                     };
-                    let mut value = codeyard_app::webhooks::payloads::user(&user);
+                    let mut value = codeyard_webhooks::payloads::user(&user);
                     value["name"] = json!(user.display_name);
                     value["bio"] = json!(user.bio);
                     value["location"] = json!(user.location);
@@ -214,7 +214,7 @@ async fn catalog(
                         incomplete = true;
                         continue;
                     };
-                    codeyard_app::webhooks::payloads::organization_person(org.id, &org.name)
+                    codeyard_webhooks::payloads::organization_person(org.id, &org.name)
                 }
             }
             Kind::Topics => {
@@ -230,7 +230,7 @@ async fn catalog(
                     incomplete = true;
                     continue;
                 };
-                codeyard_app::webhooks::payloads::topic(&topic)
+                codeyard_webhooks::payloads::topic(&topic)
             }
         };
         let mut value = value;

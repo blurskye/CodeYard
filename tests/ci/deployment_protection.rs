@@ -347,7 +347,7 @@ async fn contract(pg: bool) {
     .is_none());
 
     // The normal sender records its SSRF refusal; the payload still proves targeting and callback identity.
-    codeyard_app::webhooks::deployment_protection::requested(f.pool(), &run)
+    codeyard_webhooks::deployment_protection::requested(f.pool(), &run)
         .await
         .unwrap();
     let delivery_id = tokio::time::timeout(Duration::from_secs(15), async {

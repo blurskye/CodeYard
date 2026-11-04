@@ -2,8 +2,8 @@
 
 use crate::repositories::store::RepoStore;
 use crate::webhooks::emit;
-use crate::webhooks::payloads::Person;
-use crate::webhooks::payloads::Scope;
+use codeyard_webhooks::payloads::Person;
+use codeyard_webhooks::payloads::Scope;
 use codeyard_db_core::models::CommitStatus;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
@@ -66,13 +66,13 @@ pub async fn emit_status(
         vec![actor],
         move |owner, people| {
             let sender = people.get(actor);
-            let detail = crate::webhooks::payloads::git_commit(
+            let detail = codeyard_webhooks::payloads::git_commit(
                 &commit,
                 owner,
                 &repo_for_hook.name,
                 repo_for_hook.id,
             );
-            let commit = crate::webhooks::payloads::commit(
+            let commit = codeyard_webhooks::payloads::commit(
                 &commit,
                 detail,
                 owner,
@@ -82,7 +82,7 @@ pub async fn emit_status(
                 author.as_ref(),
                 committer.as_ref(),
             );
-            crate::webhooks::payloads::status(
+            codeyard_webhooks::payloads::status(
                 &status,
                 commit,
                 &branches,

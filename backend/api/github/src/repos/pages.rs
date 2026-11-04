@@ -203,7 +203,7 @@ async fn build_document(
             .await
             .map_err(Error::unavailable)?
             .as_ref()
-            .map(codeyard_app::webhooks::payloads::user)
+            .map(codeyard_webhooks::payloads::user)
     } else {
         None
     };

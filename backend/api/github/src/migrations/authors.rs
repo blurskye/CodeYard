@@ -73,7 +73,7 @@ async fn documents(
             let base = format!("{}/import", repo_url(owner, name));
             values.push(json!({"id":row.id,"remote_id":row.author_email,"remote_name":row.author_name,
                 "email":email,"name":display_name,"url":format!("{base}/authors/{}",row.id),"import_url":base,
-                "user":user.map(codeyard_app::webhooks::payloads::user)}));
+                "user":user.map(codeyard_webhooks::payloads::user)}));
         }
     }
     Ok(values)

@@ -48,7 +48,7 @@ async fn list(
         &uri,
         users
             .iter()
-            .map(codeyard_app::webhooks::payloads::user)
+            .map(codeyard_webhooks::payloads::user)
             .collect(),
         more,
     )

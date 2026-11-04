@@ -163,7 +163,7 @@ async fn restriction_document(
     let teams = crate::repos::push_teams::documents(state, rule, actor).await?;
     Ok(json!({"url": format!("{url}/restrictions"),
         "users_url": format!("{url}/restrictions/users"), "teams_url": format!("{url}/restrictions/teams"), "apps_url": format!("{url}/restrictions/apps"),
-        "users": users.iter().map(|user| codeyard_app::webhooks::payloads::person(&codeyard_app::webhooks::payloads::Person::of(user))).collect::<Vec<_>>(), "teams": teams, "apps": crate::repos::protection_operations::app_documents(state, &rule.github_settings.push_apps).await?}))
+        "users": users.iter().map(|user| codeyard_webhooks::payloads::person(&codeyard_webhooks::payloads::Person::of(user))).collect::<Vec<_>>(), "teams": teams, "apps": crate::repos::protection_operations::app_documents(state, &rule.github_settings.push_apps).await?}))
 }
 
 pub(super) async fn document(

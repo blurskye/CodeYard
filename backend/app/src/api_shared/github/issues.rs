@@ -271,10 +271,10 @@ pub async fn documents_page(
             pins.insert((pull, row.item_id), row.pin);
         }
     }
-    let person = |id: i64| -> Result<crate::webhooks::payloads::Person> {
+    let person = |id: i64| -> Result<codeyard_webhooks::payloads::Person> {
         users
             .get(&id)
-            .map(crate::webhooks::payloads::Person::of)
+            .map(codeyard_webhooks::payloads::Person::of)
             .ok_or_else(|| Error::unavailable(()))
     };
     let mut values = Vec::with_capacity(items.len());
@@ -290,7 +290,7 @@ pub async fn documents_page(
         let (mut value, author, milestone, closed_by, labels, comments, reactions) = if pull {
             let pull = &pulls[&id];
             (
-                crate::webhooks::payloads::pull_request_issue(
+                codeyard_webhooks::payloads::pull_request_issue(
                     pull,
                     &person(pull.author_id)?,
                     repo,
@@ -306,7 +306,7 @@ pub async fn documents_page(
         } else {
             let issue = &issues[&id];
             (
-                crate::webhooks::payloads::issue_json(
+                codeyard_webhooks::payloads::issue_json(
                     issue,
                     &person(issue.author_id)?,
                     repo,
@@ -320,16 +320,16 @@ pub async fn documents_page(
                 &issue_reactions,
             )
         };
-        value["user"] = crate::webhooks::payloads::user(&users[&author]);
+        value["user"] = codeyard_webhooks::payloads::user(&users[&author]);
         value["author_association"] =
             json!(associations.get(&author).map_or("NONE", String::as_str));
         value["closed_by"] = closed_by
             .and_then(|id| users.get(&id))
-            .map_or(Value::Null, crate::webhooks::payloads::user);
+            .map_or(Value::Null, codeyard_webhooks::payloads::user);
         value["labels"] = json!(labels
             .into_iter()
             .flatten()
-            .map(|label| crate::webhooks::payloads::label(label, owner, &repo.name))
+            .map(|label| codeyard_webhooks::payloads::label(label, owner, &repo.name))
             .collect::<Vec<_>>());
         value["comments"] = json!(comments.copied().unwrap_or(0));
         value["milestone"] =
@@ -337,14 +337,14 @@ pub async fn documents_page(
                 .and_then(|id| milestones.get(&id))
                 .map_or(Value::Null, |summary| {
                     let creator = summary.milestone.creator_id.and_then(|id| users.get(&id));
-                    crate::webhooks::payloads::milestone(summary, creator, owner, &repo.name)
+                    codeyard_webhooks::payloads::milestone(summary, creator, owner, &repo.name)
                 });
         let item_assignees: Vec<Value> = assigned
             .get(&(pull, id))
             .into_iter()
             .flatten()
             .filter_map(|name| assignees.get(name))
-            .map(crate::webhooks::payloads::user)
+            .map(codeyard_webhooks::payloads::user)
             .collect();
         value["assignee"] = item_assignees.first().cloned().unwrap_or(Value::Null);
         value["assignees"] = json!(item_assignees);
@@ -358,11 +358,11 @@ pub async fn documents_page(
             .cloned()
             .collect();
         value["reactions"] =
-            crate::webhooks::payloads::reaction_rollup(&format!("{url}/reactions"), &counts);
+            codeyard_webhooks::payloads::reaction_rollup(&format!("{url}/reactions"), &counts);
         if !pull {
             value["type"] = types
                 .get(&id)
-                .map_or(Value::Null, crate::webhooks::payloads::issue_type);
+                .map_or(Value::Null, codeyard_webhooks::payloads::issue_type);
             let summary = summaries.get(&id).copied().unwrap_or_default();
             value["sub_issues_summary"] = json!({
                 "total": summary.total,

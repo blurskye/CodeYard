@@ -141,10 +141,10 @@ fn team_error(error: anyhow::Error) -> Error {
 }
 
 fn team_value(team: &Team, org: &str, permission: i16, parent: Option<&Team>) -> Value {
-    let mut value = codeyard_app::webhooks::payloads::team_document(team, org, permission);
+    let mut value = codeyard_webhooks::payloads::team_document(team, org, permission);
     if let Some(parent) = parent {
         value["parent"] =
-            codeyard_app::webhooks::payloads::team_document(parent, org, parent.default_permission);
+            codeyard_webhooks::payloads::team_document(parent, org, parent.default_permission);
     }
     value
 }
@@ -225,7 +225,7 @@ async fn document(
             .await
             .map_err(Error::unavailable)?
             .is_none_or(|settings| settings.has_organization_projects);
-    value["organization"] = codeyard_app::webhooks::payloads::team_organization(
+    value["organization"] = codeyard_webhooks::payloads::team_organization(
         org,
         public_repos,
         has_organization_projects,
@@ -718,7 +718,7 @@ async fn members(
     let items = rows
         .iter()
         .filter_map(|row| accounts.get(&row.user_id))
-        .map(codeyard_app::webhooks::payloads::user)
+        .map(codeyard_webhooks::payloads::user)
         .collect();
     page.response(&uri, items, more)
 }
@@ -936,7 +936,7 @@ async fn invitations(
     let items = rows
         .iter()
         .map(|row| {
-            codeyard_app::webhooks::payloads::organization_invitation(
+            codeyard_webhooks::payloads::organization_invitation(
                 &row.invitation,
                 &org,
                 account(row.invitation.user_id),

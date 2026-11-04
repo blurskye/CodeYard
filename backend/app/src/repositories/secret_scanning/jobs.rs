@@ -90,7 +90,7 @@ impl Documents {
             .bypasses
             .get(&(alert.repo_id, alert.secret_hash.clone()));
         let bypassed_by = bypass.and_then(|bypass| self.users.get(&bypass.actor_id));
-        let mut document = crate::webhooks::payloads::secret_scanning_alert(
+        let mut document = codeyard_webhooks::payloads::secret_scanning_alert(
             alert,
             &secret,
             owner,
@@ -102,7 +102,7 @@ impl Documents {
         document["assigned_to"] = alert
             .assigned_to
             .and_then(|id| self.users.get(&id))
-            .map(crate::webhooks::payloads::user)
+            .map(codeyard_webhooks::payloads::user)
             .unwrap_or(Value::Null);
         Ok(document)
     }
@@ -121,13 +121,13 @@ pub async fn emit_alert(
             .await?
             .context("Repository owner unavailable")?;
     let document = document(state, alert, &owner, &repo.name, true).await?;
-    let repository = crate::webhooks::payloads::repository(repo, &owner);
+    let repository = codeyard_webhooks::payloads::repository(repo, &owner);
     crate::webhooks::emit(
         &state.pool,
         repo,
         "secret_scanning_alert",
         actor.into_iter().collect(),
-        move |_, people| json!({"action": action,"alert": document,"repository": repository,"sender":actor.map(|actor| crate::webhooks::payloads::person(&people.get(actor))).unwrap_or(Value::Null)}),
+        move |_, people| json!({"action": action,"alert": document,"repository": repository,"sender":actor.map(|actor| codeyard_webhooks::payloads::person(&people.get(actor))).unwrap_or(Value::Null)}),
     )
     .await;
     Ok(())
@@ -335,11 +335,11 @@ async fn scan_job(
                             .await?
                             .context("Repository owner unavailable")?;
                         let document = document(state, &alert, &owner, &repo.name, true).await?;
-                        let repository = crate::webhooks::payloads::repository(&repo, &owner);
-                        let location = crate::webhooks::payloads::secret_scanning_location(
+                        let repository = codeyard_webhooks::payloads::repository(&repo, &owner);
+                        let location = codeyard_webhooks::payloads::secret_scanning_location(
                             &location, &owner, &repo.name,
                         );
-                        crate::webhooks::emit(&state.pool, &repo, "secret_scanning_alert_location", actor.into_iter().collect(), move |_, people| json!({"action":"created","alert":document,"location":location,"repository":repository,"sender":actor.map(|actor| crate::webhooks::payloads::person(&people.get(actor))).unwrap_or(Value::Null)})).await;
+                        crate::webhooks::emit(&state.pool, &repo, "secret_scanning_alert_location", actor.into_iter().collect(), move |_, people| json!({"action":"created","alert":document,"location":location,"repository":repository,"sender":actor.map(|actor| codeyard_webhooks::payloads::person(&people.get(actor))).unwrap_or(Value::Null)})).await;
                     }
                 }
             }

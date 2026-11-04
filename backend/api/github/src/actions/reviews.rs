@@ -90,12 +90,12 @@ async fn history(
             codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, actor)
                 .await
                 .map_err(Error::unavailable)?
-                .map(|user| codeyard_app::webhooks::payloads::user(&user))
+                .map(|user| codeyard_webhooks::payloads::user(&user))
         } else {
             None
         }
         .unwrap_or_else(|| {
-            codeyard_app::webhooks::payloads::person(&codeyard_app::webhooks::payloads::Person {
+            codeyard_webhooks::payloads::person(&codeyard_webhooks::payloads::Person {
                 login: "ghost".into(),
                 id: 0,
                 site_admin: false,

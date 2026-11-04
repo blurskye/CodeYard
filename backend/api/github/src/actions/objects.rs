@@ -90,7 +90,7 @@ async fn artifact_document(
         ),
         None => None,
     };
-    Ok(codeyard_app::webhooks::payloads::action_artifact(
+    Ok(codeyard_webhooks::payloads::action_artifact(
         object,
         run.as_ref(),
         owner,

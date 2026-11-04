@@ -34,7 +34,7 @@ async fn fill(
                 .await?
                 .remove(&repo.id)
                 .unwrap_or_default();
-        crate::webhooks::payloads::set_fork_counts(repository, forks);
+        codeyard_webhooks::payloads::set_fork_counts(repository, forks);
         repository["topics"] = json!(topics(pool, repo.id).await?);
     }
     if let Some(item) = issue_item(&payload["issue"]) {
@@ -174,7 +174,7 @@ async fn comment(
     let counts =
         codeyard_db_repos::reactions::reaction_counts(pool, subject.name(), &[id / 2], 0).await?;
     comment["reactions"] =
-        crate::webhooks::payloads::reaction_rollup(&format!("{url}/reactions"), &counts);
+        codeyard_webhooks::payloads::reaction_rollup(&format!("{url}/reactions"), &counts);
     Ok(())
 }
 
@@ -190,7 +190,7 @@ pub async fn review_comment_reactions(pool: &DbPool, comment: &Value) -> anyhow:
         0,
     )
     .await?;
-    Ok(crate::webhooks::payloads::reaction_rollup(
+    Ok(codeyard_webhooks::payloads::reaction_rollup(
         &format!("{url}/reactions"),
         &counts,
     ))
@@ -225,13 +225,13 @@ pub async fn review_comment(
     .filter(|pull| pull.repo_id == repo.id) else {
         return Ok(());
     };
-    let (base, head) = crate::webhooks::payloads::review_comment_revisions(&comment, &pull);
+    let (base, head) = codeyard_webhooks::payloads::review_comment_revisions(&comment, &pull);
     match crate::repositories::store::repo_store(repo, None)
         .diff_file(base, head, path)
         .await
     {
         Ok(diff) => {
-            crate::webhooks::payloads::review_comment_diff(document, &comment, &pull, &diff.files)
+            codeyard_webhooks::payloads::review_comment_diff(document, &comment, &pull, &diff.files)
         }
         Err(error) => {
             tracing::warn!(repo_id = repo.id, comment_id = id, %error, "review comment diff could not be read for a webhook")
@@ -287,7 +287,7 @@ async fn pull_request(
     };
     match head {
         Some((head, head_owner)) => {
-            let mut value = crate::webhooks::payloads::repository(&head, &head_owner);
+            let mut value = codeyard_webhooks::payloads::repository(&head, &head_owner);
             document["head"]["label"] = json!(format!("{head_owner}:{head_branch}"));
             document["head"]["user"] = value["owner"].clone();
             // A private fork is described only to its own readers. The base repository's
@@ -307,7 +307,7 @@ async fn pull_request(
                 if public {
                     if fork {
                         let mut payload = json!({"repository":value});
-                        crate::webhooks::set_open_issues(pool, head.id, &mut payload).await;
+                        codeyard_webhooks::set_open_issues(pool, head.id, &mut payload).await;
                         value = payload["repository"].take();
                     }
                     value
@@ -331,7 +331,7 @@ async fn pull_request(
         codeyard_db_repos::labels::get_pull_request_labels(pool, pull.repo_id, pull.id).await?;
     document["labels"] = json!(labels
         .iter()
-        .map(|label| crate::webhooks::payloads::label(label, owner, &repo.name))
+        .map(|label| codeyard_webhooks::payloads::label(label, owner, &repo.name))
         .collect::<Vec<_>>());
     if let Some(milestone) = pull.milestone_id {
         if let Some(summary) =
@@ -342,7 +342,7 @@ async fn pull_request(
                 None => None,
             };
             document["milestone"] =
-                crate::webhooks::payloads::milestone(&summary, creator.as_ref(), owner, &repo.name);
+                codeyard_webhooks::payloads::milestone(&summary, creator.as_ref(), owner, &repo.name);
         }
     }
     let mut assignees = Vec::new();
@@ -353,7 +353,7 @@ async fn pull_request(
         if let Some(user) =
             codeyard_db_identity::users::accounts::get_user_by_username(pool, &name).await?
         {
-            assignees.push(crate::webhooks::payloads::user(&user));
+            assignees.push(codeyard_webhooks::payloads::user(&user));
         }
     }
     document["assignee"] = assignees.first().cloned().unwrap_or(Value::Null);
@@ -363,14 +363,14 @@ async fn pull_request(
             .await?;
     document["requested_reviewers"] = json!(reviewers
         .iter()
-        .map(crate::webhooks::payloads::user)
+        .map(codeyard_webhooks::payloads::user)
         .collect::<Vec<_>>());
     let teams =
         codeyard_db_repos::pull_requests::team_reviewers::list(pool, repo.id, Some(pull.id), None)
             .await?;
     document["requested_teams"] = json!(teams
         .iter()
-        .map(|row| crate::webhooks::payloads::team_document(
+        .map(|row| codeyard_webhooks::payloads::team_document(
             &row.team,
             &row.org_slug,
             row.permission
@@ -386,7 +386,7 @@ async fn pull_request(
         Some(id) => codeyard_db_identity::users::accounts::get_user_by_id(pool, id)
             .await?
             .as_ref()
-            .map_or(Value::Null, crate::webhooks::payloads::user),
+            .map_or(Value::Null, codeyard_webhooks::payloads::user),
         None => Value::Null,
     };
     Ok(())
@@ -402,7 +402,7 @@ pub async fn auto_merge(pool: &DbPool, pull_request_id: i64) -> anyhow::Result<V
     let enabled_by =
         codeyard_db_identity::users::accounts::get_user_by_id(pool, entry.request.enabled_by)
             .await?;
-    Ok(crate::webhooks::payloads::auto_merge(
+    Ok(codeyard_webhooks::payloads::auto_merge(
         &entry.request,
         enabled_by.as_ref(),
     ))
@@ -421,13 +421,13 @@ pub(crate) async fn release_assets(
             .into_iter()
             .map(|row| {
                 let uploader = row.uploader_id.zip(row.uploader_name).map(|(id, login)| {
-                    crate::webhooks::payloads::simple_person(&crate::webhooks::payloads::Person {
+                    codeyard_webhooks::payloads::simple_person(&codeyard_webhooks::payloads::Person {
                         id,
                         login,
                         site_admin: row.uploader_is_admin.unwrap_or(false),
                     })
                 });
-                crate::webhooks::payloads::release_asset(
+                codeyard_webhooks::payloads::release_asset(
                     &row.asset,
                     release,
                     owner,
@@ -455,13 +455,13 @@ pub async fn release_asset(
         Some(id) => codeyard_db_identity::users::accounts::get_user_by_id(pool, id)
             .await?
             .map(|user| {
-                crate::webhooks::payloads::simple_person(&crate::webhooks::payloads::Person::of(
+                codeyard_webhooks::payloads::simple_person(&codeyard_webhooks::payloads::Person::of(
                     &user,
                 ))
             }),
         None => None,
     };
-    Ok(Some(crate::webhooks::payloads::release_asset(
+    Ok(Some(codeyard_webhooks::payloads::release_asset(
         asset,
         release,
         owner,

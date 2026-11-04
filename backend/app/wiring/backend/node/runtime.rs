@@ -665,7 +665,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         // Keep the pool and event sinks alive until their effects have finished.
         member.drain_sessions().await;
     }
-    codeyard_app::webhooks::shutdown(tokio::time::Instant::now() + SHUTDOWN_GRACE).await;
+    codeyard_webhooks::shutdown(tokio::time::Instant::now() + SHUTDOWN_GRACE).await;
     notifications.shutdown().await;
     pool.close().await;
     result.and(stopped)

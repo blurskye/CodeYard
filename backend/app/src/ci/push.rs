@@ -34,13 +34,13 @@ pub(crate) async fn push_document(
     let sender = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor_id)
         .await?
         .context("push sender is unavailable")?;
-    let sender = crate::webhooks::payloads::Person::of(&sender);
+    let sender = codeyard_webhooks::payloads::Person::of(&sender);
     if is_zero_oid(&update.new) {
-        return Ok(crate::webhooks::payloads::push(
+        return Ok(codeyard_webhooks::payloads::push(
             &update.reference,
             update.old.as_deref().unwrap_or(ZERO_OID),
             ZERO_OID,
-            &crate::webhooks::payloads::PushedCommits {
+            &codeyard_webhooks::payloads::PushedCommits {
                 commits: Vec::new(),
                 head: None,
                 forced: false,
@@ -71,30 +71,30 @@ pub(crate) async fn push_document(
         ),
     };
     // Bounded as in the push webhook, so a huge message cannot outgrow the run's claim.
-    let pushed = |commit: &CommitInfo| crate::webhooks::payloads::PushedCommit {
+    let pushed = |commit: &CommitInfo| codeyard_webhooks::payloads::PushedCommit {
         id: commit.sha.clone(),
         tree_id: commit.tree_sha.clone(),
-        message: crate::webhooks::payloads::bounded_text(&commit.message, 4096),
+        message: codeyard_webhooks::payloads::bounded_text(&commit.message, 4096),
         time: commit.timestamp,
-        author_name: crate::webhooks::payloads::bounded_text(&commit.author_name, 256),
-        author_email: crate::webhooks::payloads::bounded_text(&commit.author_email, 256),
-        committer_name: crate::webhooks::payloads::bounded_text(&commit.committer_name, 256),
-        committer_email: crate::webhooks::payloads::bounded_text(&commit.committer_email, 256),
+        author_name: codeyard_webhooks::payloads::bounded_text(&commit.author_name, 256),
+        author_email: codeyard_webhooks::payloads::bounded_text(&commit.author_email, 256),
+        committer_name: codeyard_webhooks::payloads::bounded_text(&commit.committer_name, 256),
+        committer_email: codeyard_webhooks::payloads::bounded_text(&commit.committer_email, 256),
         committer_time: commit.committer_timestamp,
         distinct: true,
         files: None,
     };
-    let head_commit = crate::webhooks::payloads::PushedCommit {
+    let head_commit = codeyard_webhooks::payloads::PushedCommit {
         distinct: commits.iter().any(|commit| commit.sha == head.sha),
         ..pushed(&head)
     };
-    let commits = crate::webhooks::payloads::PushedCommits {
+    let commits = codeyard_webhooks::payloads::PushedCommits {
         commits: commits.iter().map(pushed).collect(),
         head: Some(head_commit),
         forced,
     };
     let old = update.old.clone().unwrap_or_else(|| ZERO_OID.to_owned());
-    Ok(crate::webhooks::payloads::push(
+    Ok(codeyard_webhooks::payloads::push(
         &update.reference,
         &old,
         &update.new,

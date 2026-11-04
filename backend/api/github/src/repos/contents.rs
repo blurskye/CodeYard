@@ -19,7 +19,7 @@ use codeyard_app::app::AppState;
 use codeyard_repos::editor::FileWrite;
 use codeyard_repos::editor::MAX_EDITOR_BYTES;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_app::webhooks::payloads::git_commit as commit_json;
+use codeyard_webhooks::payloads::git_commit as commit_json;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoErrorReason;
 use codeyard_model::github_error::Error;

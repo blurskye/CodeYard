@@ -8,7 +8,7 @@ use crate::api_shared::github::checks::SuiteDocuments;
 use crate::api_shared::github::contents::store_error;
 use crate::app::AppState;
 use crate::repositories::store::repo_store;
-use crate::webhooks::payloads;
+use codeyard_webhooks::payloads;
 use codeyard_db_actions::checks;
 use codeyard_db_actions::checks::Suite;
 use codeyard_db_core::models::Repository;

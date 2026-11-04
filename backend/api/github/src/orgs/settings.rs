@@ -53,7 +53,7 @@ pub(super) async fn document(
     settings: &Settings,
     owner: bool,
 ) -> Result<Value> {
-    let mut value = codeyard_app::webhooks::payloads::organization(org);
+    let mut value = codeyard_webhooks::payloads::organization(org);
     value["name"] = json!(org.display_name.as_deref().unwrap_or(&org.name));
     value["html_url"] = json!(format!(
         "{}{}",

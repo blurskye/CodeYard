@@ -928,7 +928,7 @@ async fn contract(pg: bool) {
         json!({
             "id":reported["id"], "node_id":reported["node_id"], "avatar_url":reported["avatar_url"], "url":reported_url,"state":"success","context":"default",
             "description":"All checks passed","target_url":null,
-            "creator":codeyard_app::webhooks::payloads::person(&codeyard_app::webhooks::payloads::Person { id:alice, login:"alice".into(), site_admin:false }),
+            "creator":codeyard_webhooks::payloads::person(&codeyard_webhooks::payloads::Person { id:alice, login:"alice".into(), site_admin:false }),
             "created_at":reported["created_at"],"updated_at":reported["updated_at"],
         })
     );

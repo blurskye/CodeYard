@@ -18,11 +18,11 @@ pub mod workflows;
 pub(crate) fn webhook_payload(
     action: &str,
     pull: &codeyard_db_core::models::PullRequest,
-    author: &crate::webhooks::payloads::Person,
-    scope: crate::webhooks::payloads::Scope,
+    author: &codeyard_webhooks::payloads::Person,
+    scope: codeyard_webhooks::payloads::Scope,
     store: &crate::repositories::store::RepoStore,
 ) -> serde_json::Value {
-    let mut payload = crate::webhooks::payloads::pull_request(action, pull, author, scope);
+    let mut payload = codeyard_webhooks::payloads::pull_request(action, pull, author, scope);
     let base = pull.diff_base();
     let (diff, commits) = tokio::runtime::Handle::current().block_on(async {
         tokio::join!(
@@ -76,7 +76,7 @@ pub(crate) async fn emit_pull_request_event(
                 action,
                 &pull_for_hook,
                 &people.get(author_id),
-                crate::webhooks::payloads::Scope {
+                codeyard_webhooks::payloads::Scope {
                     repo: &repository_for_hook,
                     owner,
                     sender: &people.get(sender_id),

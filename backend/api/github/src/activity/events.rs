@@ -65,7 +65,7 @@ pub(super) async fn documents(
                     .await
                     .map_err(Error::unavailable)?
                     .as_ref()
-                    .map(codeyard_app::webhooks::payloads::user)
+                    .map(codeyard_webhooks::payloads::user)
                     .unwrap_or_else(|| entry.event.payload["sender"].clone());
                 actors.insert(id, value.clone());
                 value
@@ -76,7 +76,7 @@ pub(super) async fn documents(
         if !actor.is_object() {
             return Err(Error::unavailable(()));
         }
-        let mut value = codeyard_app::webhooks::payloads::event_json(
+        let mut value = codeyard_webhooks::payloads::event_json(
             &entry.event,
             &entry.repository,
             &entry.owner,

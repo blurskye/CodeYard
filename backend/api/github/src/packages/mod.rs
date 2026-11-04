@@ -151,13 +151,13 @@ async fn documents(
         }
         repositories.insert(
             snapshot.repository.id,
-            codeyard_app::webhooks::payloads::repository_snapshot(&snapshot),
+            codeyard_webhooks::payloads::repository_snapshot(&snapshot),
         );
     }
     Ok(packages
         .iter()
         .map(|package| {
-            codeyard_app::webhooks::payloads::package(
+            codeyard_webhooks::payloads::package(
                 owner,
                 package,
                 counts.get(&package.id).copied().unwrap_or(0),
@@ -217,7 +217,7 @@ async fn list(
             tags.entry(id).or_default().push(tag);
         }
         for version in versions {
-            items.push(codeyard_app::webhooks::payloads::package_version(
+            items.push(codeyard_webhooks::payloads::package_version(
                 &owner,
                 &package,
                 &version,
@@ -285,7 +285,7 @@ async fn get_one(
         let tags = codeyard_db_repos::packages::tags(&state.pool, package.id, token, version.id)
             .await
             .map_err(error)?;
-        codeyard_app::webhooks::payloads::package_version(&owner, &package, &version, &tags)
+        codeyard_webhooks::payloads::package_version(&owner, &package, &version, &tags)
     } else {
         documents(
             &state,

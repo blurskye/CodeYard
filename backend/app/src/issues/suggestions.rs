@@ -1,6 +1,6 @@
 //! Shared post-commit effects for REST and native suggestion review.
 
-use crate::webhooks::payloads::Scope;
+use codeyard_webhooks::payloads::Scope;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
@@ -71,7 +71,7 @@ pub async fn resolve(
             codeyard_model::webhook_events::ISSUES,
             vec![author, sender],
             move |owner, people| {
-                crate::webhooks::payloads::issues(
+                codeyard_webhooks::payloads::issues(
                     "closed",
                     &issue,
                     &people.get(author),

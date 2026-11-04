@@ -144,7 +144,7 @@ async fn document(pool: &codeyard_db_core::DbPool, reaction: &Reaction) -> Resul
     let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, reaction.user_id)
         .await
         .map_err(Error::unavailable)?;
-    Ok(codeyard_app::webhooks::payloads::reaction(
+    Ok(codeyard_webhooks::payloads::reaction(
         reaction,
         user.as_ref(),
     ))
@@ -250,7 +250,7 @@ async fn list(
             .collect();
     let items = rows
         .iter()
-        .map(|row| codeyard_app::webhooks::payloads::reaction(row, users.get(&row.user_id)))
+        .map(|row| codeyard_webhooks::payloads::reaction(row, users.get(&row.user_id)))
         .collect();
     page.response(&uri, items, next)
 }

@@ -1,6 +1,6 @@
 use crate::issues::database_error;
 use crate::issues::OperationError;
-use crate::webhooks::payloads::Scope;
+use codeyard_webhooks::payloads::Scope;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
@@ -231,7 +231,7 @@ async fn emit_comment_webhook(
                 people.get(comment_author_id),
                 people.get(sender_id),
             );
-            crate::webhooks::payloads::issue_comment(
+            codeyard_webhooks::payloads::issue_comment(
                 action,
                 previous_body.as_deref(),
                 &comment,

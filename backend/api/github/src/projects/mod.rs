@@ -88,7 +88,7 @@ pub(super) async fn document(state: &AppState, project: &Project, name: &str) ->
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
     let mut owner =
-        codeyard_app::webhooks::payloads::person(&codeyard_app::webhooks::payloads::Person {
+        codeyard_webhooks::payloads::person(&codeyard_webhooks::payloads::Person {
             login: name.into(),
             id: project.owner_id,
             site_admin: false,
@@ -107,10 +107,10 @@ pub(super) async fn document(state: &AppState, project: &Project, name: &str) ->
         owner["node_id"] =
             serde_json::json!(codeyard_model::node_id::encode("O", project.owner_id));
     }
-    Ok(codeyard_app::webhooks::payloads::project(
+    Ok(codeyard_webhooks::payloads::project(
         project,
         owner,
-        codeyard_app::webhooks::payloads::user(&creator),
+        codeyard_webhooks::payloads::user(&creator),
     ))
 }
 
@@ -233,7 +233,7 @@ async fn fields(
     let documents = fields
         .iter()
         .map(|f| {
-            codeyard_app::webhooks::payloads::project_field(f, &project_url(&project, &name))
+            codeyard_webhooks::payloads::project_field(f, &project_url(&project, &name))
                 .map_err(Error::unavailable)
         })
         .collect::<Result<Vec<_>>>()?;
@@ -258,7 +258,7 @@ async fn get_field(
     .find(|f| f.id == id)
     .ok_or_else(Error::missing)?;
     Ok(Json(
-        codeyard_app::webhooks::payloads::project_field(&field, &project_url(&project, &name))
+        codeyard_webhooks::payloads::project_field(&field, &project_url(&project, &name))
             .map_err(Error::unavailable)?,
     ))
 }
@@ -287,7 +287,7 @@ async fn add_field(
     Ok((
         StatusCode::CREATED,
         Json(
-            codeyard_app::webhooks::payloads::project_field(&field, &project_url(&project, &name))
+            codeyard_webhooks::payloads::project_field(&field, &project_url(&project, &name))
                 .map_err(Error::unavailable)?,
         ),
     )

@@ -242,17 +242,17 @@ async fn org_alerts(
     let mut values = Vec::new();
     for row in rows.iter().take(limit) {
         let repo = &row.repository;
-        let mut alert = codeyard_app::webhooks::payloads::code_scanning::code_scanning_alert(
+        let mut alert = codeyard_webhooks::payloads::code_scanning::code_scanning_alert(
             &row.alert,
             std::slice::from_ref(&row.instance),
             &name,
             &repo.name,
             row.dismissed_by
                 .as_ref()
-                .map(codeyard_app::webhooks::payloads::user),
+                .map(codeyard_webhooks::payloads::user),
         )
         .map_err(Error::unavailable)?;
-        alert["repository"] = codeyard_app::webhooks::payloads::repository(repo, &name);
+        alert["repository"] = codeyard_webhooks::payloads::repository(repo, &name);
         values.push(alert);
     }
     query.pagination().response(&uri, values, next)
@@ -318,7 +318,7 @@ async fn instances(
         .iter()
         .take(limit)
         .map(|instance| {
-            codeyard_app::webhooks::payloads::code_scanning::code_scanning_instance(
+            codeyard_webhooks::payloads::code_scanning::code_scanning_instance(
                 instance, &owner, &name, number,
             )
             .map_err(Error::unavailable)

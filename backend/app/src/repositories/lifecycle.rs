@@ -670,8 +670,8 @@ async fn provision_stored_owned(
             move |owner, people| {
                 serde_json::json!({
                     "action": "created",
-                    "repository": crate::webhooks::payloads::repository(&created, owner),
-                    "sender": crate::webhooks::payloads::person(&people.get(actor)),
+                    "repository": codeyard_webhooks::payloads::repository(&created, owner),
+                    "sender": codeyard_webhooks::payloads::person(&people.get(actor)),
                 })
             },
         )
@@ -1218,7 +1218,7 @@ pub async fn fork_into(
         vec![actor],
         move |source_owner, people| {
             let forker = people.get(actor);
-            crate::webhooks::payloads::fork(
+            codeyard_webhooks::payloads::fork(
                 &fork_for_hook,
                 &forker,
                 &source_for_hook,

@@ -176,7 +176,7 @@ async fn run(
             item,
         )
         .await?;
-        value["repository"] = codeyard_app::webhooks::payloads::repository(repo, owner);
+        value["repository"] = codeyard_webhooks::payloads::repository(repo, owner);
         items.push(value);
     }
     page.response(&uri, items, offset + limit < result.total as usize)

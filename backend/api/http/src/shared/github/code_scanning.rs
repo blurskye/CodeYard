@@ -345,10 +345,10 @@ pub async fn alert_document(
             .await
             .map_err(Error::unavailable)?
             .as_ref()
-            .map(codeyard_app::webhooks::payloads::user),
+            .map(codeyard_webhooks::payloads::user),
         None => None,
     };
-    codeyard_app::webhooks::payloads::code_scanning::code_scanning_alert(
+    codeyard_webhooks::payloads::code_scanning::code_scanning_alert(
         row,
         std::slice::from_ref(&instance),
         owner,

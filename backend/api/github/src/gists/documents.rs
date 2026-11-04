@@ -52,7 +52,7 @@ pub(super) async fn base(state: &AppState, loaded: &LoadedGist, contents: bool) 
         });
         files.insert(
             entry.path.clone(),
-            codeyard_app::webhooks::payloads::gists::gist_file(
+            codeyard_webhooks::payloads::gists::gist_file(
                 &loaded.gist.id,
                 &loaded.snapshot.sha,
                 entry,
@@ -61,7 +61,7 @@ pub(super) async fn base(state: &AppState, loaded: &LoadedGist, contents: bool) 
         );
     }
     // The entire file list is present; content truncation belongs to each file.
-    Ok(codeyard_app::webhooks::payloads::gists::gist(
+    Ok(codeyard_webhooks::payloads::gists::gist(
         &loaded.gist,
         &owner,
         Value::Object(files),
@@ -133,7 +133,7 @@ pub(super) async fn history(
     let mut entries = Vec::new();
     for revision in revisions {
         entries.push(
-            codeyard_app::webhooks::payloads::gists::gist_revision(
+            codeyard_webhooks::payloads::gists::gist_revision(
                 &loaded.gist.id,
                 &revision,
                 authors.get(&revision.author_email),
@@ -154,7 +154,7 @@ pub(super) async fn comment(
             .map_err(Error::unavailable)?,
         None => None,
     };
-    Ok(codeyard_app::webhooks::payloads::gists::gist_comment(
+    Ok(codeyard_webhooks::payloads::gists::gist_comment(
         &gist.id,
         gist.owner_id,
         comment,

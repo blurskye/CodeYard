@@ -71,7 +71,7 @@ pub(crate) async fn document(
     detail: &codeyard_app::repositories::releases::ReleaseDetail,
 ) -> Result<Value> {
     let release = &detail.release.release;
-    let author = codeyard_app::webhooks::payloads::Person {
+    let author = codeyard_webhooks::payloads::Person {
         id: release.author_id,
         login: detail.release.author.clone(),
         site_admin: false,
@@ -81,7 +81,7 @@ pub(crate) async fn document(
         assets.push(asset_document(state, owner, name, release, asset).await?);
     }
     let mut value =
-        codeyard_app::webhooks::payloads::release_json(release, &author, owner, name, Some(assets));
+        codeyard_webhooks::payloads::release_json(release, &author, owner, name, Some(assets));
     if let Some(number) = codeyard_db_repos::releases::release_discussion(&state.pool, release.id)
         .await
         .map_err(Error::unavailable)?
@@ -98,7 +98,7 @@ pub(crate) async fn document(
         codeyard_db_repos::reactions::reaction_counts(&state.pool, "release", &[release.id], 0)
             .await
             .map_err(Error::unavailable)?;
-    value["reactions"] = codeyard_app::webhooks::payloads::reaction_rollup(
+    value["reactions"] = codeyard_webhooks::payloads::reaction_rollup(
         &format!(
             "{}/releases/{}/reactions",
             codeyard_model::urls::repo_url(owner, name),
@@ -220,7 +220,7 @@ async fn generate_notes(
     )
     .await
     .map_err(release_error)?;
-    Ok(Json(codeyard_app::webhooks::payloads::release_notes(
+    Ok(Json(codeyard_app::webhooks::release_payloads::release_notes(
         &notes,
     )))
 }

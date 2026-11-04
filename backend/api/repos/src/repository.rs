@@ -40,7 +40,7 @@ use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_api_http::shared::repos::responses::repository_fork_counts;
 use codeyard_app::app::AppState;
-use codeyard_app::webhooks::settings::HookError;
+use codeyard_webhooks::settings::HookError;
 use codeyard_identity::repository_access::AccessError;
 use codeyard_webui::pages::repos as view;
 use serde::Deserialize;
@@ -761,14 +761,14 @@ pub(super) async fn settings_model(
     if tab == "webhooks" {
         let base = format!("{}/settings?tab=webhooks", loaded.chrome.base());
         let action_base = format!("{}/_forms", loaded.chrome.base());
-        let place = codeyard_app::webhooks::panel::Place {
+        let place = codeyard_webhooks::panel::Place {
             owner: codeyard_db_repos::webhooks::HookOwner::Repository(loaded.repository.id),
             base: &base,
             action_base: &action_base,
             csrf_token: &loaded.chrome.csrf_token,
             repository_id: Some(loaded.repository.id),
         };
-        let built = codeyard_app::webhooks::panel::build(
+        let built = codeyard_webhooks::panel::build(
             &ctx.state.pool,
             viewer,
             &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
@@ -791,7 +791,7 @@ pub(super) async fn settings_model(
 }
 
 fn webhook_page_error(ctx: &PageContext, loaded: &Loaded, error: HookError) -> Response {
-    let (status, message) = codeyard_app::webhooks::panel::refusal(&error);
+    let (status, message) = codeyard_webhooks::panel::refusal(&error);
     ctx.repo_error(&loaded.chrome, status, message)
 }
 
@@ -1077,7 +1077,7 @@ async fn webhook_form(
     let pool = &ctx.state.pool;
     let owner = codeyard_db_repos::webhooks::HookOwner::Repository(loaded.repository.id);
     let base = format!("{}/settings?tab=webhooks", loaded.chrome.base());
-    let outcome = codeyard_app::webhooks::panel::apply(
+    let outcome = codeyard_webhooks::panel::apply(
         pool,
         ctx.state.secret_encryptor.as_deref(),
         actor,
@@ -1093,7 +1093,7 @@ async fn webhook_form(
     match outcome {
         Ok(notice) => ctx.redirect(&format!("{base}&notice={notice}")),
         Err((error, draft)) => {
-            let (status, message) = codeyard_app::webhooks::panel::refusal(&error);
+            let (status, message) = codeyard_webhooks::panel::refusal(&error);
             let mut settings = match settings_model(ctx, loaded, "webhooks").await {
                 Ok(settings) => settings,
                 Err(response) => return response,

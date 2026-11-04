@@ -34,7 +34,7 @@ pub(super) async fn post(
         return crate::organizations::organization::not_found(&ctx);
     }
     let base = format!("{}/{org}?tab=webhooks", crate::organizations::INDEX);
-    let outcome = codeyard_app::webhooks::panel::apply(
+    let outcome = codeyard_webhooks::panel::apply(
         &ctx.state.pool,
         ctx.state.secret_encryptor.as_deref(),
         actor,
@@ -51,7 +51,7 @@ pub(super) async fn post(
         Ok(notice) => ctx.redirect(&format!("{base}&notice={notice}")),
         Err((error, draft)) => {
             // The organization page shows the refusal in its webhooks section.
-            let (status, message) = codeyard_app::webhooks::panel::refusal(&error);
+            let (status, message) = codeyard_webhooks::panel::refusal(&error);
             crate::organizations::organization::respond_with_hook_draft(
                 &ctx,
                 Some(org),

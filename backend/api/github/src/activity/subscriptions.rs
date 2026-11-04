@@ -154,7 +154,7 @@ async fn watchers(
     let values = users
         .iter()
         .take(limit)
-        .map(codeyard_app::webhooks::payloads::user)
+        .map(codeyard_webhooks::payloads::user)
         .collect();
     page.response(&uri, values, has_next)
 }

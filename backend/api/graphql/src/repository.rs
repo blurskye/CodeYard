@@ -14,7 +14,7 @@ pub(super) fn object(repo: &codeyard_db_core::models::Repository) -> Value {
     json!({"__typename":"Repository","id":node_id::encode("R",repo.id),"databaseId":repo.id,
         "name":repo.name,"description":repo.description,"isPrivate":repo.is_private,"isFork":repo.is_fork,
         "isArchived":repo.is_archived,
-        "visibility":codeyard_app::webhooks::payloads::visibility(repo).to_ascii_uppercase(),
+        "visibility":codeyard_webhooks::payloads::visibility(repo).to_ascii_uppercase(),
         "createdAt":repo.created_at,"updatedAt":repo.updated_at,
         "stargazerCount":repo.stars_count,
         "homepageUrl":repo.website,"isInOrganization":repo.owner_kind=="org",

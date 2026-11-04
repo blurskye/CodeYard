@@ -42,8 +42,8 @@ async fn documents(
         .map(|user| {
             (
                 user.id,
-                codeyard_app::webhooks::payloads::person(
-                    &codeyard_app::webhooks::payloads::Person::of(&user),
+                codeyard_webhooks::payloads::person(
+                    &codeyard_webhooks::payloads::Person::of(&user),
                 ),
             )
         })
@@ -208,7 +208,7 @@ async fn read(
         page.headers(&uri, has_next)?,
         Json(json!({
             "state": combined, "sha": sha, "total_count": total, "statuses": items,
-            "repository": codeyard_app::webhooks::payloads::repository(&repo, &owner),
+            "repository": codeyard_webhooks::payloads::repository(&repo, &owner),
             "commit_url": format!("{}/commits/{sha}", repo_url(&owner, &name)),
             "url": format!("{}/commits/{reference}/status", repo_url(&owner, &name)),
         })),

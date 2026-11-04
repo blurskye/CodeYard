@@ -19,9 +19,9 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::webhooks::settings::HookError;
-use codeyard_app::webhooks::settings::HookForm;
-use codeyard_app::webhooks::settings::HookPatch;
+use codeyard_webhooks::settings::HookError;
+use codeyard_webhooks::settings::HookForm;
+use codeyard_webhooks::settings::HookPatch;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::models::WebhookDelivery;
 use codeyard_db_repos::webhooks::DeliveryOutcome;
@@ -65,7 +65,7 @@ async fn scope(
         repository(state, headers, &params["owner"], &params["repo"], write).await?;
     let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let owner = HookOwner::Repository(repo.id);
-    codeyard_app::webhooks::settings::authorize(&state.pool, &actor.user, owner)
+    codeyard_webhooks::settings::authorize(&state.pool, &actor.user, owner)
         .await
         .map_err(hook_error)?;
     Ok((owner, actor))
@@ -122,7 +122,7 @@ fn document(params: &Params, hook: &Webhook, last: Option<&WebhookDelivery>) -> 
         repo_url(&params["owner"], &params["repo"]),
         hook.id
     );
-    let mut value = codeyard_app::webhooks::payloads::webhook(hook, &url);
+    let mut value = codeyard_webhooks::payloads::webhook(hook, &url);
     if hook.encrypted_secret.is_none() {
         value["config"]
             .as_object_mut()
@@ -228,8 +228,8 @@ async fn save(
     let replaces_config = !config_only && input.config.is_some();
     let config = input.config.unwrap_or_default();
     let content_type = match config.content_type.as_deref() {
-        Some("json") => Some(codeyard_app::webhooks::settings::JSON_CONTENT_TYPE.to_owned()),
-        Some("form") => Some(codeyard_app::webhooks::settings::FORM_CONTENT_TYPE.to_owned()),
+        Some("json") => Some(codeyard_webhooks::settings::JSON_CONTENT_TYPE.to_owned()),
+        Some("form") => Some(codeyard_webhooks::settings::FORM_CONTENT_TYPE.to_owned()),
         None => None,
         _ => return Err(Error::invalid("content_type must be json or form")),
     };
@@ -257,14 +257,14 @@ async fn save(
                     .url
                     .ok_or_else(|| Error::invalid("config.url is required"))?,
                 content_type: content_type.unwrap_or_else(|| {
-                    codeyard_app::webhooks::settings::FORM_CONTENT_TYPE.to_owned()
+                    codeyard_webhooks::settings::FORM_CONTENT_TYPE.to_owned()
                 }),
                 events,
                 active: input.active.unwrap_or(true),
                 ssl_verify: ssl_verify.unwrap_or(true),
                 secret: config.secret.unwrap_or_default(),
             };
-            codeyard_app::webhooks::settings::save(
+            codeyard_webhooks::settings::save(
                 &state.pool,
                 state.secret_encryptor.as_deref(),
                 owner,
@@ -292,7 +292,7 @@ async fn save(
                 },
                 ..Default::default()
             };
-            codeyard_app::webhooks::settings::update(
+            codeyard_webhooks::settings::update(
                 &state.pool,
                 state.secret_encryptor.as_deref(),
                 owner,
@@ -360,7 +360,7 @@ async fn remove(
     Path(params): Path<Params>,
 ) -> Result<StatusCode> {
     let (owner, actor) = scope(&state, &headers, &params, true).await?;
-    codeyard_app::webhooks::settings::delete(
+    codeyard_webhooks::settings::delete(
         &state.pool,
         owner,
         &actor.user,
@@ -446,7 +446,7 @@ pub(crate) fn delivery_page(
 }
 
 fn delivery_document(hook: &Webhook, row: &WebhookDelivery, detail: bool) -> Value {
-    let mut value = codeyard_app::webhooks::payloads::webhook_delivery(row, detail);
+    let mut value = codeyard_webhooks::payloads::webhook_delivery(row, detail);
     value["repository_id"] = json!(hook.repo_id);
     value
 }
@@ -498,7 +498,7 @@ async fn trigger(
     let (owner, actor) = scope(&state, &headers, &params, true).await?;
     let hook = id(&params, "hook_id")?;
     if params.contains_key("delivery_id") {
-        codeyard_app::webhooks::settings::redeliver(
+        codeyard_webhooks::settings::redeliver(
             &state.pool,
             owner,
             &actor.user,
@@ -511,7 +511,7 @@ async fn trigger(
         return Ok((StatusCode::ACCEPTED, Json(json!({}))).into_response());
     }
     if uri.path().ends_with("/tests") {
-        codeyard_app::webhooks::settings::test_push(
+        codeyard_webhooks::settings::test_push(
             &state.pool,
             owner,
             &actor.user,
@@ -521,7 +521,7 @@ async fn trigger(
         .await
         .map_err(hook_error)?;
     } else {
-        codeyard_app::webhooks::settings::ping(
+        codeyard_webhooks::settings::ping(
             &state.pool,
             owner,
             &actor.user,

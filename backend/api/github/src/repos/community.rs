@@ -25,7 +25,7 @@ async fn get_profile(
     )
     .await
     .map_err(store_error)?;
-    Ok(Json(codeyard_app::webhooks::payloads::community_profile(
+    Ok(Json(codeyard_app::webhooks::repository_payloads::community_profile(
         &profile,
     )))
 }

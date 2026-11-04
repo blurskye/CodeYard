@@ -1,7 +1,7 @@
 //! Webhook events for published branch and tag changes: `create`, `delete` and `push`.
 
 use crate::webhooks::emit;
-use crate::webhooks::payloads::Scope;
+use codeyard_webhooks::payloads::Scope;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
 use std::path::Path;
@@ -50,7 +50,7 @@ fn previous_tips(path: &Path, moves: &[RefMove]) -> Option<Vec<String>> {
 #[derive(Default)]
 struct History {
     bytes: usize,
-    listed: std::collections::HashMap<(String, String), crate::webhooks::payloads::PushedCommits>,
+    listed: std::collections::HashMap<(String, String), codeyard_webhooks::payloads::PushedCommits>,
     /// Read once, on the first listing; the outer `None` means not read yet.
     previous: Option<Option<Vec<String>>>,
 }
@@ -111,7 +111,7 @@ pub async fn emit_ref_moves(
                 let mut history = history.lock().unwrap_or_else(|error| error.into_inner());
                 let history = &mut *history;
                 let commits = if is_zero(&new) {
-                    crate::webhooks::payloads::PushedCommits::default()
+                    codeyard_webhooks::payloads::PushedCommits::default()
                 } else if let Some(commits) = history.listed.get(&key) {
                     commits.clone()
                 } else {
@@ -119,7 +119,7 @@ pub async fn emit_ref_moves(
                         .previous
                         .get_or_insert_with(|| previous_tips(&push_path, &all_moves))
                         .as_deref();
-                    let commits = match crate::webhooks::payloads::pushed_commits(
+                    let commits = match codeyard_webhooks::payloads::pushed_commits(
                         &push_path, before, &new, previous,
                     ) {
                         Ok(commits) => commits,
@@ -133,7 +133,7 @@ pub async fn emit_ref_moves(
                         .iter()
                         .chain(commits.head.iter())
                         .map(|commit| {
-                            std::mem::size_of::<crate::webhooks::payloads::PushedCommit>()
+                            std::mem::size_of::<codeyard_webhooks::payloads::PushedCommit>()
                                 + commit.id.len()
                                 + commit.tree_id.len()
                                 + commit.message.len()
@@ -144,7 +144,7 @@ pub async fn emit_ref_moves(
                                 + commit
                                     .files
                                     .as_ref()
-                                    .map_or(0, crate::webhooks::payloads::ChangedFiles::bytes)
+                                    .map_or(0, codeyard_webhooks::payloads::ChangedFiles::bytes)
                         })
                         .sum();
                     if history.bytes.saturating_add(bytes) <= 16 * 1024 * 1024 {
@@ -154,7 +154,7 @@ pub async fn emit_ref_moves(
                     commits
                 };
                 let _ = head_sender.send(commits.head.clone());
-                crate::webhooks::payloads::push(
+                codeyard_webhooks::payloads::push(
                     &reference,
                     &old,
                     &new,
@@ -194,7 +194,7 @@ async fn emit_ref_change(
     let repo_for_hook = repo.clone();
     emit(pool, repo, event, vec![pusher_id], move |owner, people| {
         let sender = people.get(pusher_id);
-        crate::webhooks::payloads::ref_change(
+        codeyard_webhooks::payloads::ref_change(
             ref_type,
             &name,
             Scope {

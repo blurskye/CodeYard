@@ -117,15 +117,15 @@ async fn document_with(
     topics: &[String],
     forks: i32,
 ) -> Result<Value> {
-    let mut value = crate::webhooks::payloads::repository(repo, owner);
-    crate::webhooks::payloads::set_fork_counts(&mut value, forks);
+    let mut value = codeyard_webhooks::payloads::repository(repo, owner);
+    codeyard_webhooks::payloads::set_fork_counts(&mut value, forks);
     value["language"] = json!(facts.facts.language);
     value["open_issues_count"] = json!(facts.facts.open_items);
     value["open_issues"] = json!(facts.facts.open_items);
     value["pushed_at"] = json!(facts.last_pushed_at);
     value["topics"] = json!(topics);
     if let Some(document) = value.as_object_mut() {
-        crate::webhooks::payloads::set_features(document, &facts.features);
+        codeyard_webhooks::payloads::set_features(document, &facts.features);
     }
     value["has_discussions"] = json!(facts.discussions);
     if repo.is_fork {
@@ -156,8 +156,8 @@ async fn document_with(
                     .await
                     .map_err(Error::unavailable)?
                     .ok_or_else(Error::missing)?;
-            let mut document = crate::webhooks::payloads::repository(&ancestor, &owner);
-            crate::webhooks::payloads::set_fork_counts(
+            let mut document = codeyard_webhooks::payloads::repository(&ancestor, &owner);
+            codeyard_webhooks::payloads::set_fork_counts(
                 &mut document,
                 public_fork_count(state, id).await?,
             );

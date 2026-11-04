@@ -1,9 +1,9 @@
 //! The webhook section of a settings page: the view model it renders, built after the viewer
 //! has been checked, and the form fields it posts back as a hook draft.
 
-use crate::webhooks::settings::HookError;
-use crate::webhooks::settings::HookForm;
-use crate::webhooks::settings::JSON_CONTENT_TYPE;
+use crate::settings::HookError;
+use crate::settings::HookForm;
+use crate::settings::JSON_CONTENT_TYPE;
 use codeyard_db_core::models::User;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::models::WebhookDelivery;
@@ -336,7 +336,7 @@ pub async fn apply(
                     Some(draft),
                 ));
             }
-            match crate::webhooks::settings::save_with_revision(
+            match crate::settings::save_with_revision(
                 pool, encryptor, owner, actor, credential, draft.id, &submitted, revision,
             )
             .await
@@ -355,14 +355,14 @@ pub async fn apply(
                 )));
             }
             let id = hook_id.ok_or(HookError::NotFound).map_err(refused)?;
-            crate::webhooks::settings::delete(pool, owner, actor, credential, id)
+            crate::settings::delete(pool, owner, actor, credential, id)
                 .await
                 .map(|_| "deleted")
                 .map_err(refused)
         }
         "webhook-ping" => {
             let id = hook_id.ok_or(HookError::NotFound).map_err(refused)?;
-            crate::webhooks::settings::ping(pool, owner, actor, credential, id)
+            crate::settings::ping(pool, owner, actor, credential, id)
                 .await
                 .map(|_| "pinged")
                 .map_err(refused)
@@ -374,7 +374,7 @@ pub async fn apply(
             let (Some(hook), Some(delivery)) = (hook_id, delivery) else {
                 return Err(refused(HookError::NotFound));
             };
-            crate::webhooks::settings::redeliver(pool, owner, actor, credential, hook, delivery)
+            crate::settings::redeliver(pool, owner, actor, credential, hook, delivery)
                 .await
                 .map(|_| "redelivered")
                 .map_err(refused)

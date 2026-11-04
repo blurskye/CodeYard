@@ -103,7 +103,7 @@ pub(super) async fn asset(
             .map_err(unavailable)?
             .ok_or_else(missing)?;
     crate::node_objects::release(&release.release, request).await?;
-    let doc = codeyard_app::webhooks::payloads::release_asset(
+    let doc = codeyard_webhooks::payloads::release_asset(
         row,
         &release.release,
         &crate::repository::owner(&repo, request).await?,

@@ -53,7 +53,7 @@ fn document(
         .filter(|count| count.subject_id == entry.comment.id)
         .cloned()
         .collect::<Vec<_>>();
-    codeyard_app::webhooks::payloads::commit_comment(
+    codeyard_webhooks::payloads::commit_comment(
         &entry.comment,
         entry.author.as_ref(),
         &entry.association,

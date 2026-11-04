@@ -6,7 +6,7 @@ use crate::issues::COMMENTS_PER_PAGE;
 use crate::repositories::pull_requests::database_error;
 use crate::repositories::pull_requests::OperationError;
 use crate::repositories::store::repo_store;
-use crate::webhooks::payloads::Scope;
+use codeyard_webhooks::payloads::Scope;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
 use codeyard_notifications::create::NotificationRequest;
@@ -270,7 +270,7 @@ pub(super) async fn emit_comment_webhook(
                 sender: &sender,
             };
             if on_file {
-                crate::webhooks::payloads::pull_request_review_comment(
+                codeyard_webhooks::payloads::pull_request_review_comment(
                     action,
                     &comment_for_hook,
                     &pull_for_hook,
@@ -279,7 +279,7 @@ pub(super) async fn emit_comment_webhook(
                     scope,
                 )
             } else {
-                crate::webhooks::payloads::pull_request_conversation_comment(
+                codeyard_webhooks::payloads::pull_request_conversation_comment(
                     action,
                     &comment_for_hook,
                     &pull_for_hook,

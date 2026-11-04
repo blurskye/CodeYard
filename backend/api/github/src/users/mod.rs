@@ -104,7 +104,7 @@ pub(super) async fn document(state: &AppState, user: &User, token: Option<i64>) 
             .await
             .map_err(Error::unavailable)?,
     };
-    Ok(codeyard_app::webhooks::payloads::public_user(
+    Ok(codeyard_webhooks::payloads::public_user(
         user,
         &profile,
         repos,
@@ -296,8 +296,8 @@ async fn list(
             users
                 .iter()
                 .map(|user| {
-                    codeyard_app::webhooks::payloads::person(
-                        &codeyard_app::webhooks::payloads::Person::of(user),
+                    codeyard_webhooks::payloads::person(
+                        &codeyard_webhooks::payloads::Person::of(user),
                     )
                 })
                 .collect::<Vec<_>>(),
@@ -329,8 +329,8 @@ async fn connections(
         users
             .iter()
             .map(|user| {
-                codeyard_app::webhooks::payloads::person(
-                    &codeyard_app::webhooks::payloads::Person::of(user),
+                codeyard_webhooks::payloads::person(
+                    &codeyard_webhooks::payloads::Person::of(user),
                 )
             })
             .collect(),

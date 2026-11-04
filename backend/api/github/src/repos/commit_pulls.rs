@@ -38,8 +38,8 @@ fn operation_error(error: AssociationError) -> Error {
 }
 
 fn user(user: &User) -> Value {
-    let mut value = codeyard_app::webhooks::payloads::person(
-        &codeyard_app::webhooks::payloads::Person::of(user),
+    let mut value = codeyard_webhooks::payloads::person(
+        &codeyard_webhooks::payloads::Person::of(user),
     );
     value["site_admin"] = json!(user.is_admin);
     value
@@ -58,8 +58,8 @@ async fn repository_document(
         codeyard_db_repos::repository_stats::repository_document_facts(&state.pool, repo.id)
             .await
             .map_err(Error::unavailable)?;
-    let mut value = codeyard_app::webhooks::payloads::repository(repo, owner);
-    codeyard_app::webhooks::payloads::set_fork_counts(
+    let mut value = codeyard_webhooks::payloads::repository(repo, owner);
+    codeyard_webhooks::payloads::set_fork_counts(
         &mut value,
         codeyard_app::api_shared::github::repos::public_fork_count(state, repo.id).await?,
     );
@@ -94,7 +94,7 @@ async fn milestone(state: &AppState, repo: &Repository, owner: &str, id: i64) ->
             .map_err(Error::unavailable)?,
         None => None,
     };
-    Ok(codeyard_app::webhooks::payloads::milestone(
+    Ok(codeyard_webhooks::payloads::milestone(
         &summary,
         creator.as_ref(),
         owner,
@@ -115,9 +115,9 @@ async fn document(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let mut value = codeyard_app::webhooks::payloads::pull_request_json(
+    let mut value = codeyard_webhooks::payloads::pull_request_json(
         pull,
-        &codeyard_app::webhooks::payloads::Person::of(&author),
+        &codeyard_webhooks::payloads::Person::of(&author),
         repo,
         owner,
     );
@@ -142,7 +142,7 @@ async fn document(
         .map_err(Error::unavailable)?;
     value["labels"] = json!(labels
         .iter()
-        .map(|label| codeyard_app::webhooks::payloads::label(label, owner, &repo.name))
+        .map(|label| codeyard_webhooks::payloads::label(label, owner, &repo.name))
         .collect::<Vec<_>>());
     value["milestone"] = match pull.milestone_id {
         Some(id) => milestone(state, repo, owner, id).await?,

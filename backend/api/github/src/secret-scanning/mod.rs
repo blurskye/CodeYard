@@ -235,7 +235,7 @@ async fn list_org(
         let mut document = documents
             .document(&state, alert, &org.name, &repo.name, query.hide_secret)
             .map_err(Error::unavailable)?;
-        document["repository"] = codeyard_app::webhooks::payloads::repository(repo, &org.name);
+        document["repository"] = codeyard_webhooks::payloads::repository(repo, &org.name);
         items.push(document);
     }
     pagination.response(&uri, items, has_next)
@@ -423,7 +423,7 @@ async fn locations(
         locations
             .into_iter()
             .map(|location| {
-                codeyard_app::webhooks::payloads::secret_scanning_location(&location, owner, name)
+                codeyard_webhooks::payloads::secret_scanning_location(&location, owner, name)
             })
             .collect(),
         has_next,

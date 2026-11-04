@@ -13,8 +13,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use codeyard_app::app::AppState;
 use codeyard_app::webhooks;
-use codeyard_app::webhooks::settings::HookError;
-use codeyard_app::webhooks::settings::HookForm;
+use codeyard_webhooks::settings::HookError;
+use codeyard_webhooks::settings::HookForm;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::queries::webhooks::WebhookPatch;
 use codeyard_db_identity::github_app_hooks::Delivery;
@@ -38,7 +38,7 @@ fn hook_error(error: HookError) -> Error {
 fn configuration(hook: Option<&Webhook>) -> Value {
     match hook {
         Some(hook) => {
-            json!({"url":hook.payload_url,"content_type":if hook.content_type==codeyard_app::webhooks::settings::JSON_CONTENT_TYPE{"json"}else{"form"},"insecure_ssl":if hook.ssl_verify{"0"}else{"1"}})
+            json!({"url":hook.payload_url,"content_type":if hook.content_type==codeyard_webhooks::settings::JSON_CONTENT_TYPE{"json"}else{"form"},"insecure_ssl":if hook.ssl_verify{"0"}else{"1"}})
         }
         None => json!({"content_type":"form","insecure_ssl":"0"}),
     }
@@ -72,8 +72,8 @@ pub(super) async fn update_config(
     };
     let url = string("url")?;
     let content = match string("content_type")? {
-        Some("json") => Some(codeyard_app::webhooks::settings::JSON_CONTENT_TYPE),
-        Some("form") => Some(codeyard_app::webhooks::settings::FORM_CONTENT_TYPE),
+        Some("json") => Some(codeyard_webhooks::settings::JSON_CONTENT_TYPE),
+        Some("form") => Some(codeyard_webhooks::settings::FORM_CONTENT_TYPE),
         Some(_) => return Err(Error::invalid("Choose json or form")),
         None => None,
     };
@@ -103,14 +103,14 @@ pub(super) async fn update_config(
             .into(),
         content_type: content
             .or_else(|| old.as_ref().map(|h| h.content_type.as_str()))
-            .unwrap_or(codeyard_app::webhooks::settings::FORM_CONTENT_TYPE)
+            .unwrap_or(codeyard_webhooks::settings::FORM_CONTENT_TYPE)
             .into(),
         events: vec!["*".into()],
         active: true,
         ssl_verify: ssl.unwrap_or(true),
         secret: secret.unwrap_or("").into(),
     };
-    let fields = codeyard_app::webhooks::settings::validated(&form).map_err(hook_error)?;
+    let fields = codeyard_webhooks::settings::validated(&form).map_err(hook_error)?;
     let patch = WebhookPatch {
         payload_url: (creating || url.is_some()).then_some(fields.payload_url),
         content_type: (creating || content.is_some()).then_some(fields.content_type),
@@ -120,7 +120,7 @@ pub(super) async fn update_config(
         ..WebhookPatch::default()
     };
     let sealed =
-        codeyard_app::webhooks::settings::seal(state.secret_encryptor.as_deref(), &form.secret)
+        codeyard_webhooks::settings::seal(state.secret_encryptor.as_deref(), &form.secret)
             .map_err(hook_error)?;
     if !codeyard_db_identity::github_app_hooks::save(
         &state.pool,
@@ -153,7 +153,7 @@ fn document(delivery: &Delivery, detail: bool) -> Value {
     let code = record.status_code.unwrap_or(0);
     let mut value = json!({"id":record.id,"guid":record.guid,"delivered_at":record.delivered_at,"redelivery":delivery.redelivery,"duration":f64::from(record.duration_ms)/1000.0,"status":record.error.clone().unwrap_or_else(||StatusCode::from_u16(code.try_into().unwrap_or(0)).ok().and_then(|status|status.canonical_reason().map(str::to_owned)).unwrap_or_else(||"Unknown response".into())),"status_code":code,"event":record.event,"action":record.action,"installation_id":delivery.installation_id,"repository_id":delivery.repository_id});
     if detail {
-        let outgoing = codeyard_app::webhooks::delivery::redelivery(record);
+        let outgoing = codeyard_webhooks::delivery::redelivery(record);
         value["url"] = json!(delivery.url);
         value["request"] = json!({"headers":headers(&record.request_headers),"payload":webhooks::delivery::json_payload(&outgoing).filter(Value::is_object)});
         value["response"] = json!({"headers":record.response_headers.as_deref().map(headers),"payload":record.response_body});
@@ -301,9 +301,9 @@ pub(super) async fn redeliver(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let mut outgoing = codeyard_app::webhooks::delivery::redelivery(&record.recorded);
+    let mut outgoing = codeyard_webhooks::delivery::redelivery(&record.recorded);
     outgoing.guid = record.recorded.guid;
-    if !codeyard_app::webhooks::enqueue(&state.pool, hook, outgoing) {
+    if !codeyard_webhooks::enqueue(&state.pool, hook, outgoing) {
         return Err(Error::unavailable(()));
     }
     Ok((StatusCode::ACCEPTED, Json(json!({}))))

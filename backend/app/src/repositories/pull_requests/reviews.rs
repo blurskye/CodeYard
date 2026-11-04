@@ -2,7 +2,7 @@ use crate::cluster::context::NodeContext;
 use crate::repositories::pull_requests::database_error;
 use crate::repositories::pull_requests::OperationError;
 use crate::repositories::store::repo_store;
-use crate::webhooks::payloads::Scope;
+use codeyard_webhooks::payloads::Scope;
 use codeyard_git::error::ErrorKind;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
@@ -146,7 +146,7 @@ async fn emit_review_webhook(
         codeyard_model::webhook_events::PULL_REQUEST_REVIEW,
         vec![pull_author_id, reviewer_id, sender_id],
         move |owner, people| {
-            crate::webhooks::payloads::pull_request_review(
+            codeyard_webhooks::payloads::pull_request_review(
                 action,
                 &review_for_hook,
                 &pull_for_hook,
@@ -837,7 +837,7 @@ pub(super) async fn emit_reviewer_event(
     let mut extra = serde_json::Map::new();
     extra.insert(
         "requested_reviewer".into(),
-        crate::webhooks::payloads::user(target),
+        codeyard_webhooks::payloads::user(target),
     );
     crate::repositories::pull_requests::emit_pull_request_event(
         pool,

@@ -188,7 +188,7 @@ async fn document(
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
         let mut owner =
-            codeyard_app::webhooks::payloads::person(&codeyard_app::webhooks::payloads::Person {
+            codeyard_webhooks::payloads::person(&codeyard_webhooks::payloads::Person {
                 id,
                 login: org.name,
                 site_admin: false,
@@ -197,7 +197,7 @@ async fn document(
         owner["node_id"] = json!(codeyard_model::node_id::encode("O", id));
         owner
     } else {
-        codeyard_app::webhooks::payloads::user(&actor.user)
+        codeyard_webhooks::payloads::user(&actor.user)
     };
     let mut value = json!({
         "id": row.id, "node_id": codeyard_model::node_id::encode("MIG", row.id), "owner": owner, "guid": row.guid, "state": if expired { "failed" } else { &row.state },

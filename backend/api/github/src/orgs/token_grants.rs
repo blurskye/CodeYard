@@ -260,7 +260,7 @@ fn document(token: &Token, user: &User, org: &Organization, request: bool) -> Va
     };
     let mut value = json!({
         "id": token.token_id,
-        "owner": codeyard_app::webhooks::payloads::user(user),
+        "owner": codeyard_webhooks::payloads::user(user),
         "repository_selection": Access::parse(&token.repository_access).unwrap_or(Access::Public).selection(),
         "repositories_url": api_url(&format!("/orgs/{}/{collection}/{}/repositories", org.name, token.token_id)),
         "permissions": groups,
@@ -394,7 +394,7 @@ async fn repositories(
     owner(state, actor.user.id, org.id).await?;
     let items = repositories
         .iter()
-        .map(|repo| codeyard_app::webhooks::payloads::repository(repo, &org.name))
+        .map(|repo| codeyard_webhooks::payloads::repository(repo, &org.name))
         .collect();
     page.response(uri, items, more)
 }

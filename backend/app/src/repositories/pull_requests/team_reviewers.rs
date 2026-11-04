@@ -115,7 +115,7 @@ pub(super) async fn emit_events(
         let mut extra = serde_json::Map::new();
         extra.insert(
             "requested_team".into(),
-            crate::webhooks::payloads::team_document(team, &org, permission),
+            codeyard_webhooks::payloads::team_document(team, &org, permission),
         );
         crate::repositories::pull_requests::emit_pull_request_event(
             pool, cluster, repo, pull, action, sender_id, extra,

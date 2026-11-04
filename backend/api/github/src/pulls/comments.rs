@@ -102,21 +102,21 @@ async fn document_cached(
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-    let mut value = codeyard_app::webhooks::payloads::pull_request_review_comment_json(
+    let mut value = codeyard_webhooks::payloads::pull_request_review_comment_json(
         comment,
         pull,
-        &codeyard_app::webhooks::payloads::Person::of(&user),
+        &codeyard_webhooks::payloads::Person::of(&user),
         repo,
         owner,
     );
-    value["user"] = codeyard_app::webhooks::payloads::user(&user);
+    value["user"] = codeyard_webhooks::payloads::user(&user);
     value["author_association"] = json!(association(&state.pool, repo, user.id).await?);
     let reactions =
         codeyard_app::webhooks::documents::review_comment_reactions(&state.pool, &value)
             .await
             .map_err(Error::unavailable)?;
     value["reactions"] = reactions;
-    let (base, head) = codeyard_app::webhooks::payloads::review_comment_revisions(comment, pull);
+    let (base, head) = codeyard_webhooks::payloads::review_comment_revisions(comment, pull);
     let key = (
         base.to_owned(),
         head.to_owned(),
@@ -132,7 +132,7 @@ async fn document_cached(
             .map_err(codeyard_app::api_shared::github::contents::store_error)?;
         diffs.insert(key.clone(), diff.files);
     }
-    codeyard_app::webhooks::payloads::review_comment_diff(&mut value, comment, pull, &diffs[&key]);
+    codeyard_webhooks::payloads::review_comment_diff(&mut value, comment, pull, &diffs[&key]);
     Ok(value)
 }
 
@@ -230,7 +230,7 @@ pub(super) async fn prepare_with_diff(
                 .iter()
                 .find(|f| f.filename == path)
                 .and_then(|f| {
-                    codeyard_app::webhooks::payloads::diff_positions(&f.patch)
+                    codeyard_webhooks::payloads::diff_positions(&f.patch)
                         .into_iter()
                         .find(|r| r.0 == position)
                 })

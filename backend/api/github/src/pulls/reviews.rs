@@ -34,14 +34,14 @@ async fn document(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let mut value = codeyard_app::webhooks::payloads::pull_request_review_json(
+    let mut value = codeyard_webhooks::payloads::pull_request_review_json(
         review,
-        &codeyard_app::webhooks::payloads::Person::of(&user),
+        &codeyard_webhooks::payloads::Person::of(&user),
         pull,
         repo,
         owner,
     );
-    value["user"] = codeyard_app::webhooks::payloads::user(&user);
+    value["user"] = codeyard_webhooks::payloads::user(&user);
     value["author_association"] = json!(association(&state.pool, repo, user.id).await?);
     Ok(value)
 }
@@ -186,7 +186,7 @@ async fn requested(
         .iter()
         .skip(offset)
         .take(limit)
-        .map(codeyard_app::webhooks::payloads::user)
+        .map(codeyard_webhooks::payloads::user)
         .collect();
     let teams: Vec<_> = teams.into_iter().skip(offset).take(limit).collect();
     Ok((

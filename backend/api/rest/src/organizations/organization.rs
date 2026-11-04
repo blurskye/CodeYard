@@ -760,7 +760,7 @@ pub(super) async fn respond_with_hook_draft(
         if model.tab == "webhooks" {
             let base = format!("{INDEX}/{org}?tab=webhooks");
             let action_base = format!("{INDEX}/{org}/webhooks?tab=webhooks");
-            let place = codeyard_app::webhooks::panel::Place {
+            let place = codeyard_webhooks::panel::Place {
                 owner: codeyard_db_repos::webhooks::HookOwner::Organization(org),
                 base: &base,
                 action_base: &action_base,
@@ -770,7 +770,7 @@ pub(super) async fn respond_with_hook_draft(
             let viewer = ctx.require_user().ok();
             let built = match viewer {
                 Some(viewer) => {
-                    codeyard_app::webhooks::panel::build(
+                    codeyard_webhooks::panel::build(
                         &ctx.state.pool,
                         viewer,
                         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
@@ -782,7 +782,7 @@ pub(super) async fn respond_with_hook_draft(
                     )
                     .await
                 }
-                None => Err(codeyard_app::webhooks::settings::HookError::Denied),
+                None => Err(codeyard_webhooks::settings::HookError::Denied),
             };
             match built {
                 Ok(mut panel) => {
@@ -795,8 +795,8 @@ pub(super) async fn respond_with_hook_draft(
                     model.webhooks = Some(Box::new(panel));
                 }
                 Err(
-                    codeyard_app::webhooks::settings::HookError::Denied
-                    | codeyard_app::webhooks::settings::HookError::NotFound,
+                    codeyard_webhooks::settings::HookError::Denied
+                    | codeyard_webhooks::settings::HookError::NotFound,
                 ) => return not_found(ctx),
                 Err(_) => return unavailable(ctx),
             }

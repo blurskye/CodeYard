@@ -1,5 +1,5 @@
-use crate::webhooks::payloads::time;
-use crate::webhooks::payloads::user;
+use crate::payloads::time;
+use crate::payloads::user;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use codeyard_db_core::models::User;

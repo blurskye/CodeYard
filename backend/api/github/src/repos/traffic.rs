@@ -44,7 +44,7 @@ async fn views(
     )
     .await
     .map_err(failure)?;
-    Ok(Json(codeyard_app::webhooks::payloads::repository_traffic(
+    Ok(Json(codeyard_webhooks::payloads::repository_traffic(
         Kind::Views,
         &data,
     )))
@@ -65,7 +65,7 @@ async fn clones(
     )
     .await
     .map_err(failure)?;
-    Ok(Json(codeyard_app::webhooks::payloads::repository_traffic(
+    Ok(Json(codeyard_webhooks::payloads::repository_traffic(
         Kind::Clones,
         &data,
     )))
@@ -85,7 +85,7 @@ async fn paths(
     .map_err(failure)?;
     Ok(Json(Value::Array(
         data.iter()
-            .map(codeyard_app::webhooks::payloads::content_traffic)
+            .map(codeyard_webhooks::payloads::content_traffic)
             .collect(),
     )))
 }
@@ -104,7 +104,7 @@ async fn referrers(
     .map_err(failure)?;
     Ok(Json(Value::Array(
         data.iter()
-            .map(codeyard_app::webhooks::payloads::referrer_traffic)
+            .map(codeyard_webhooks::payloads::referrer_traffic)
             .collect(),
     )))
 }

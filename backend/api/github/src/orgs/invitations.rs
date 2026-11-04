@@ -83,7 +83,7 @@ async fn documents(
     Ok(invitations
         .iter()
         .map(|invite| {
-            codeyard_app::webhooks::payloads::organization_invitation(
+            codeyard_webhooks::payloads::organization_invitation(
                 invite,
                 org,
                 invite.user_id.and_then(|id| users.get(&id)),
@@ -302,7 +302,7 @@ async fn teams(
     let rows = teams
         .into_iter()
         .map(|team| {
-            codeyard_app::webhooks::payloads::team(
+            codeyard_webhooks::payloads::team(
                 &codeyard_db_repos::repositories::push_teams::TeamAccess {
                     team,
                     org_slug: org.name.clone(),

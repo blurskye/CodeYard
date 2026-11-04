@@ -187,7 +187,7 @@ async fn actor_document(state: &AppState, repo: i64, actors: Actors) -> Result<V
     }
     let apps = app_documents(state, &app_ids(state, repo, &actors.apps).await?).await?;
     Ok(
-        json!({"users": users.iter().map(codeyard_app::webhooks::payloads::user).collect::<Vec<_>>(), "teams": teams, "apps": apps}),
+        json!({"users": users.iter().map(codeyard_webhooks::payloads::user).collect::<Vec<_>>(), "teams": teams, "apps": apps}),
     )
 }
 

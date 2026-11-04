@@ -122,7 +122,7 @@ async fn list(
         definitions
             .iter()
             .map(|definition| {
-                codeyard_app::webhooks::payloads::repository_property(definition, &org.name)
+                codeyard_webhooks::payloads::repository_property(definition, &org.name)
             })
             .collect(),
     )))
@@ -150,7 +150,7 @@ async fn get_definition(
                 .eq_ignore_ascii_case(&property)
         })
         .ok_or_else(Error::missing)?;
-    Ok(Json(codeyard_app::webhooks::payloads::repository_property(
+    Ok(Json(codeyard_webhooks::payloads::repository_property(
         definition, &org.name,
     )))
 }
@@ -178,7 +178,7 @@ async fn define_one(
         .map_err(error)?,
     )?;
     let definition = definitions.first().ok_or_else(|| Error::unavailable(()))?;
-    Ok(Json(codeyard_app::webhooks::payloads::repository_property(
+    Ok(Json(codeyard_webhooks::payloads::repository_property(
         definition, &org.name,
     )))
 }
@@ -217,7 +217,7 @@ async fn define_many(
         definitions
             .iter()
             .map(|definition| {
-                codeyard_app::webhooks::payloads::repository_property(definition, &org.name)
+                codeyard_webhooks::payloads::repository_property(definition, &org.name)
             })
             .collect(),
     )))
@@ -276,7 +276,7 @@ async fn values(
     page.response(
         &uri,
         rows.iter()
-            .map(|row| codeyard_app::webhooks::payloads::repository_property_values(row, &org.name))
+            .map(|row| codeyard_webhooks::payloads::repository_property_values(row, &org.name))
             .collect::<Vec<_>>(),
         more,
     )

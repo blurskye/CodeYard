@@ -2,7 +2,7 @@
 use crate::ci::runs::CiRunRequest;
 use crate::ci::runs::CiRuns;
 use crate::repositories::store::repo_store;
-use crate::webhooks::payloads;
+use codeyard_webhooks::payloads;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
@@ -181,7 +181,7 @@ impl CiRuns {
                 {
                     continue;
                 }
-                let payload = json!({"schedule": expression, "scheduled_minute": now.timestamp().div_euclid(60), "repository": crate::webhooks::payloads::repository(&repo, &owner), "sender":payloads::user(&sender)});
+                let payload = json!({"schedule": expression, "scheduled_minute": now.timestamp().div_euclid(60), "repository": codeyard_webhooks::payloads::repository(&repo, &owner), "sender":payloads::user(&sender)});
                 match self
                     .trigger_event_run(
                         CiRunRequest {

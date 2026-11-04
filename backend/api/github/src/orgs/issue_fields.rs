@@ -108,7 +108,7 @@ async fn list(
     Ok(Json(Value::Array(
         fields
             .iter()
-            .map(codeyard_app::webhooks::payloads::issue_field)
+            .map(codeyard_webhooks::payloads::issue_field)
             .collect(),
     )))
 }
@@ -156,7 +156,7 @@ async fn create(
     )
     .await
     .map_err(field_error)?;
-    Ok(Json(codeyard_app::webhooks::payloads::issue_field(&field)))
+    Ok(Json(codeyard_webhooks::payloads::issue_field(&field)))
 }
 async fn update(
     State(state): State<Arc<AppState>>,
@@ -190,7 +190,7 @@ async fn update(
     )
     .await
     .map_err(field_error)?;
-    Ok(Json(codeyard_app::webhooks::payloads::issue_field(&field)))
+    Ok(Json(codeyard_webhooks::payloads::issue_field(&field)))
 }
 async fn remove(
     State(state): State<Arc<AppState>>,
