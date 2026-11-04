@@ -1551,6 +1551,7 @@ mod fixture {
             Arc::new(tokio::sync::Notify::new()),
             Some(crate::context::NodeContext {
                 pool: Some(fixture.pool.clone()),
+        rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
                 iroh: codeyard_cluster_core::transport::IrohDialer::with_endpoint(
                     codeyard_cluster_core::transport::Relay::Off,
                     key.clone(),

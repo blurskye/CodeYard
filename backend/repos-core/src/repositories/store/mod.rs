@@ -76,7 +76,7 @@ pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore
         )),
         Some(id) if context.is_some_and(|context| context.node_id == id) => {
             let context = context.expect("this node owns the repository");
-            match crate::cluster::rpc::repository::repository_uuid(&repo.disk_path) {
+            match crate::wire::repository_uuid(&repo.disk_path) {
                 Ok(uuid) => RepoStore(Backend::Local(
                     crate::repositories::store::local::LocalStore::new(
                         &primary_path(&context.repos_path, uuid).to_string_lossy(),
@@ -495,7 +495,7 @@ impl RepoStore {
                     .await
             }
             (Backend::Remote(remote), Backend::Remote(from)) if remote.node_id == from.node_id => {
-                let source = crate::cluster::rpc::repository::repository_uuid(&from.disk_path)?;
+                let source = crate::wire::repository_uuid(&from.disk_path)?;
                 let operation = Operation::InitializeCopy {
                     source,
                     default_branch: crate::wire::PublicationText::retain(
@@ -1307,7 +1307,7 @@ impl RepoStore {
             (Backend::Remote(base), Backend::Remote(from)) if base.node_id == from.node_id => {
                 base.call(
                     Operation::DiffFrom {
-                        source: crate::cluster::rpc::repository::repository_uuid(&from.disk_path)?,
+                        source: crate::wire::repository_uuid(&from.disk_path)?,
                         base_ref: base_ref.into(),
                         head_ref: head_ref.into(),
                     },
@@ -1341,7 +1341,7 @@ impl RepoStore {
             (Backend::Remote(base), Backend::Remote(from)) if base.node_id == from.node_id => {
                 base.call(
                     Operation::ComparisonFrom {
-                        source: crate::cluster::rpc::repository::repository_uuid(&from.disk_path)?,
+                        source: crate::wire::repository_uuid(&from.disk_path)?,
                         base_ref: base_ref.into(),
                         head_ref: head_ref.into(),
                         offset,
@@ -1662,7 +1662,7 @@ impl RepoStore {
                     actor.user,
                     Operation::FetchPullHead {
                         token: actor.token,
-                        source: crate::cluster::rpc::repository::repository_uuid(&from.disk_path)?,
+                        source: crate::wire::repository_uuid(&from.disk_path)?,
                         number,
                         head: head.into(),
                         expected_head: expected_head.map(str::to_owned),
@@ -1729,7 +1729,7 @@ impl RepoStore {
                     .call_as(
                         actor,
                         Operation::MergeUpstream {
-                            source: crate::cluster::rpc::repository::repository_uuid(
+                            source: crate::wire::repository_uuid(
                                 &from.disk_path,
                             )?,
                             branch: branch.into(),
@@ -2259,7 +2259,7 @@ impl RepoStore {
                     .call_as(
                         actor,
                         Operation::UpdatePullBranch {
-                            source: crate::cluster::rpc::repository::repository_uuid(
+                            source: crate::wire::repository_uuid(
                                 &from.disk_path,
                             )?,
                             request: request.clone(),

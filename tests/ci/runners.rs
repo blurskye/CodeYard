@@ -172,6 +172,7 @@ async fn contract(pg: bool) {
     .unwrap();
     let context = NodeContext {
         pool: Some(f.pool().clone()),
+        rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
         iroh: codeyard_cluster_core::transport::IrohDialer::new(Relay::Off, key.clone()),
         key,
         node_id: node.id,

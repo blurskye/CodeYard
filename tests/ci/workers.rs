@@ -249,6 +249,7 @@ fn line(text: &str) -> LogLine {
 async fn client(key: &codeyard_support::node_identity::NodeKey) -> NodeContext {
     NodeContext {
         pool: None,
+        rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
         iroh: codeyard_cluster_core::transport::IrohDialer::with_endpoint(
             codeyard_cluster_core::transport::Relay::Off,
             key.clone(),
@@ -470,6 +471,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     .unwrap();
     let context = NodeContext {
         pool: Some(pool.clone()),
+        rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
         iroh: codeyard_cluster_core::transport::IrohDialer::with_endpoint(
             codeyard_cluster_core::transport::Relay::Off,
             core_key.clone(),
@@ -519,7 +521,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     )
     .accept(
         codeyard_cluster_core::transport::ALPN_RPC,
-        codeyard_repos_core::cluster::rpc::RpcHandler::new(context.clone()),
+        codeyard_repos_rpc::RpcHandler::new(context.clone()),
     )
     .accept(
         codeyard_cluster_core::transport::ALPN_EVENTS,
@@ -4396,6 +4398,7 @@ async fn ci_fixture() -> CiFixture {
     .unwrap();
     let context = NodeContext {
         pool: Some(pool.clone()),
+        rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
         iroh: codeyard_cluster_core::transport::IrohDialer::with_endpoint(
             codeyard_cluster_core::transport::Relay::Off,
             core_key.clone(),
@@ -4431,7 +4434,7 @@ async fn ci_fixture() -> CiFixture {
     )
     .accept(
         codeyard_cluster_core::transport::ALPN_RPC,
-        codeyard_repos_core::cluster::rpc::RpcHandler::new(context.clone()),
+        codeyard_repos_rpc::RpcHandler::new(context.clone()),
     )
     .accept(
         codeyard_cluster_core::transport::ALPN_EVENTS,

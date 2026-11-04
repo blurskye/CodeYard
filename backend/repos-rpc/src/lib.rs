@@ -1,14 +1,14 @@
 //! Repository protocol composition; wire format and policy have explicit owners.
-use crate::context::NodeContext;
-use crate::wire::invalid;
-use crate::wire::read_frame;
-use crate::wire::unavailable;
-use crate::wire::write_frame;
-use crate::wire::Operation;
-use crate::wire::Reply;
-use crate::wire::Request;
-use crate::wire::MAX_BYTES;
-use crate::wire::TIMEOUT;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::wire::invalid;
+use codeyard_repos_core::wire::read_frame;
+use codeyard_repos_core::wire::unavailable;
+use codeyard_repos_core::wire::write_frame;
+use codeyard_repos_core::wire::Operation;
+use codeyard_repos_core::wire::Reply;
+use codeyard_repos_core::wire::Request;
+use codeyard_repos_core::wire::MAX_BYTES;
+use codeyard_repos_core::wire::TIMEOUT;
 use anyhow::Result;
 use codeyard_cluster_core::link::Link;
 use codeyard_db_core::limits::MAX_JSON;
@@ -22,7 +22,6 @@ use std::sync::Mutex;
 use tokio::sync::Semaphore;
 use tokio_util::task::task_tracker::TrackedFuture;
 use tokio_util::task::TaskTracker;
-mod client;
 mod git_session;
 pub mod repository;
 
@@ -177,7 +176,7 @@ impl RpcHandler {
             return session.await;
         }
         drop(header_slot);
-        let body_limit = crate::wire::operation_body_limit(&request.operation);
+        let body_limit = codeyard_repos_core::wire::operation_body_limit(&request.operation);
         tokio::time::timeout_at(deadline, async {
             if body_limit > 0 {
                 if let Err(error) = self.authorize_body_request(&request, peer).await {
@@ -247,7 +246,7 @@ mod regression_tests;
 
 #[cfg(test)]
 mod tests {
-    use crate::cluster::rpc::SessionGate;
+    use crate::SessionGate;
     use std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -302,4 +301,14 @@ mod tests {
             .await
             .expect("dropping the session releases the wait");
     }
+}
+
+#[derive(Debug)]
+pub struct RpcFactory;
+impl codeyard_repos_core::local_rpc::RpcFactory for RpcFactory {
+    fn create(&self, context: NodeContext) -> Box<dyn codeyard_repos_core::local_rpc::LocalRpc> { Box::new(RpcHandler::new(context)) }
+}
+impl codeyard_repos_core::local_rpc::LocalRpc for RpcHandler {
+    fn execute(&self, request: Request, body: Vec<u8>, caller: iroh::PublicKey) -> futures_util::future::BoxFuture<'_, Result<(serde_json::Value, Vec<u8>), codeyard_repos_core::wire::Failure>> { Box::pin(self.execute(request, body, caller)) }
+    fn own_copy<'a>(&'a self, request: &'a Request) -> futures_util::future::BoxFuture<'a, Result<(codeyard_repos_core::repositories::store::RepoStore, bool, tokio::sync::OwnedRwLockReadGuard<()>), codeyard_git::error::RepoError>> { Box::pin(self.own_copy(request)) }
 }

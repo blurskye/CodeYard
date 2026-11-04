@@ -1,4 +1,3 @@
-use crate::cluster::rpc::RpcHandler;
 use crate::context::NodeContext;
 use crate::wire::invalid;
 use crate::wire::operation_body_limit;
@@ -36,7 +35,7 @@ impl NodeContext {
     {
         use codeyard_db_cluster::cluster::writes as journal;
         let pool = self.database()?;
-        let limits = crate::cluster::rpc::git_session::WriteLimits::load(pool).await?;
+        let limits = crate::git_transport::WriteLimits::load(pool).await?;
         let id = Uuid::new_v4().to_string();
         let write =
             codeyard_cluster_core::writes::begin(pool, repo, self.node_id, term, &id, changes)
@@ -68,7 +67,7 @@ impl NodeContext {
             anyhow::bail!("write quorum unavailable");
         }
         // After the SQL decision every failure is an unknown outcome, never a rollback.
-        if crate::cluster::rpc::git_session::apply_refs(path, &decided, limits.timeout)
+        if crate::git_transport::apply_refs(path, &decided, limits.timeout)
             .await
             .is_err()
             || self
@@ -87,7 +86,7 @@ impl NodeContext {
         path: &std::path::Path,
         write: &codeyard_db_core::models::WriteRecord,
     ) -> anyhow::Result<()> {
-        let limits = crate::cluster::rpc::git_session::WriteLimits::load(self.database()?).await?;
+        let limits = crate::git_transport::WriteLimits::load(self.database()?).await?;
         tokio::time::timeout(limits.timeout, async {
             let follower = self.write_follower(write).await?;
             self.prepare_local_write(path, write, limits).await?;
@@ -117,7 +116,7 @@ impl NodeContext {
         path: &std::path::Path,
         write: &codeyard_db_core::models::WriteRecord,
     ) -> anyhow::Result<()> {
-        let limits = crate::cluster::rpc::git_session::WriteLimits::load(self.database()?).await?;
+        let limits = crate::git_transport::WriteLimits::load(self.database()?).await?;
         tokio::time::timeout(limits.timeout, async {
             let follower = self.write_follower(write).await?;
             self.publish_local_write(path, write).await?;
@@ -149,7 +148,7 @@ impl NodeContext {
         path: &std::path::Path,
         write: &codeyard_db_core::models::WriteRecord,
     ) -> anyhow::Result<()> {
-        let limits = crate::cluster::rpc::git_session::WriteLimits::load(self.database()?).await?;
+        let limits = crate::git_transport::WriteLimits::load(self.database()?).await?;
         tokio::time::timeout(
             limits.timeout.min(std::time::Duration::from_secs(1)),
             async {
@@ -336,7 +335,7 @@ impl NodeContext {
     ) -> futures_util::future::BoxFuture<'a, Result<(Reply, Vec<u8>), RepoError>> {
         Box::pin(async move {
             let request: Request = serde_json::from_slice(header).map_err(|_| unavailable())?;
-            let handler = RpcHandler::new(self.clone());
+            let handler = self.rpc.create(self.clone());
             let (result, body) = match handler
                 .execute(request, body.to_vec(), self.key.public_key())
                 .await
@@ -420,7 +419,7 @@ impl NodeContext {
 }
 
 /// Reserves time for another candidate even when a connected peer never responds.
-pub(super) fn attempt_deadline(deadline: tokio::time::Instant) -> tokio::time::Instant {
+pub fn attempt_deadline(deadline: tokio::time::Instant) -> tokio::time::Instant {
     let now = tokio::time::Instant::now();
     now + deadline.saturating_duration_since(now) / 2
 }
@@ -429,7 +428,7 @@ pub(super) fn attempt_deadline(deadline: tokio::time::Instant) -> tokio::time::I
 /// that says so. A replica that reports any unavailable error gives the read to the next
 /// copy. The primary that moved answers for its repository, so for it only a reply saying
 /// the node is not serving does; its other errors are the answer to the read.
-pub(super) fn cannot_serve(reply: Option<&Reply>, moved_primary: bool) -> bool {
+pub fn cannot_serve(reply: Option<&Reply>, moved_primary: bool) -> bool {
     match reply {
         None => true,
         Some(reply) => match &reply.result {
@@ -443,7 +442,7 @@ pub(super) fn cannot_serve(reply: Option<&Reply>, moved_primary: bool) -> bool {
 }
 
 /// One warning for each read that a copy answered because the primary did not reply.
-pub(super) fn log_failover(repository: Uuid, primary: i64, copy: i64) {
+pub fn log_failover(repository: Uuid, primary: i64, copy: i64) {
     tracing::warn!(
         repository = %repository,
         primary,

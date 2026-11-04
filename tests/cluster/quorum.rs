@@ -85,7 +85,7 @@ impl Stores {
                 .unwrap()
                 .unwrap();
         let uuid =
-            codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repository.disk_path)
+            codeyard_repos_core::wire::repository_uuid(&repository.disk_path)
                 .unwrap();
         let mut roots = Vec::new();
         let mut paths = Vec::new();
@@ -102,6 +102,7 @@ impl Stores {
             let key = replace_node_key(pool, *node).await;
             let context = NodeContext {
                 pool: Some(pool.clone()),
+        rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
                 iroh: IrohDialer::new(Relay::Off, key.clone()),
                 key,
                 node_id: *node,
@@ -123,7 +124,7 @@ impl Stores {
                 codeyard_cluster::tcp::Services {
                     pool: pool.clone(),
                     pairing: PairingHandler::new(pool.clone()),
-                    rpc: Some(codeyard_repos_core::cluster::rpc::RpcHandler::new(
+                    rpc: Some(codeyard_repos_rpc::RpcHandler::new(
                         context.clone(),
                     )),
                     events: codeyard_cluster::ci::CiHandler::new(context.clone(), queue),
@@ -267,7 +268,7 @@ impl Stores {
             .call(
                 self.fixture.primary,
                 codeyard_repos_core::wire::Request {
-                    repository: codeyard_repos_core::cluster::rpc::repository::repository_uuid(
+                    repository: codeyard_repos_core::wire::repository_uuid(
                         &repository.disk_path,
                     )
                     .unwrap(),
@@ -583,7 +584,7 @@ async fn stale_writer_is_refused(pool: &DbPool) {
         .await
         .unwrap();
     let uuid =
-        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path).unwrap();
+        codeyard_repos_core::wire::repository_uuid(&row.disk_path).unwrap();
     for context in &stores.contexts {
         let repo = git2::Repository::open_bare(term_path(&context.repos_path, uuid, 2)).unwrap();
         assert!(repo.find_reference("refs/heads/stale").is_err());

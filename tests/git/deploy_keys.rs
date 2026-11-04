@@ -389,7 +389,7 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     .unwrap();
     let physical = root.path().join("storage/repos").join(format!(
         "{}.git",
-        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&project.disk_path).unwrap()
+        codeyard_repos_core::wire::repository_uuid(&project.disk_path).unwrap()
     ));
     let provenance = codeyard_repos_core::repositories::store::RepoStore::from_disk_path(
         &physical.to_string_lossy(),

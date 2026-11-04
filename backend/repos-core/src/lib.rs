@@ -11,3 +11,6 @@ pub mod store_types;
 pub mod webhooks;
 pub mod wire;
 pub mod ref_errors;
+pub mod local_rpc;
+pub mod rpc_client;
+pub mod git_transport;

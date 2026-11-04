@@ -1,21 +1,21 @@
 use super::*;
-use crate::cluster::rpc::repository::repository_uuid;
-use crate::context::NodeContext;
+use codeyard_repos_core::wire::repository_uuid;
+use codeyard_repos_core::context::NodeContext;
 use codeyard_ci::config::CiConfig;
 use codeyard_cluster_core::link::Link;
 use codeyard_cluster_core::transport;
 
-use crate::cluster::rpc::RpcHandler;
-use crate::repositories::git_sessions::ReceiveCredential;
-use crate::repositories::store::RepoStore;
-use crate::store_types::GitService;
-use crate::store_types::GitSession;
-use crate::wire::read_frame;
-use crate::wire::write_frame;
-use crate::wire::Operation;
-use crate::wire::Request;
-use crate::wire::MAX_BYTES;
-use crate::wire::TIMEOUT;
+use crate::RpcHandler;
+use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
+use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_repos_core::store_types::GitService;
+use codeyard_repos_core::store_types::GitSession;
+use codeyard_repos_core::wire::read_frame;
+use codeyard_repos_core::wire::write_frame;
+use codeyard_repos_core::wire::Operation;
+use codeyard_repos_core::wire::Request;
+use codeyard_repos_core::wire::MAX_BYTES;
+use codeyard_repos_core::wire::TIMEOUT;
 use codeyard_cluster_core::transport::IrohDialer;
 use codeyard_cluster_core::transport::Relay;
 use codeyard_db_core::DbPool;
@@ -45,6 +45,7 @@ async fn context(path: &Path) -> NodeContext {
     .unwrap();
     NodeContext {
         pool: Some(pool),
+        rpc: std::sync::Arc::new(crate::RpcFactory),
         iroh: IrohDialer::new(Relay::Off, key.clone()),
         key,
         node_id: node.id,
@@ -111,7 +112,7 @@ async fn rpc_and_git_admission_deadlines_include_database_waits() {
         .git_session(
             context.node_id + 1,
             request,
-            crate::store_types::GitStreams {
+            codeyard_repos_core::store_types::GitStreams {
                 input: &mut tokio::io::empty(),
                 output: &mut tokio::io::sink(),
                 errors: &mut tokio::io::sink(),
@@ -497,7 +498,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
         .await
         .unwrap();
     let uuid = uuid::Uuid::new_v4();
-    let path = crate::cluster::replicas::copy_path(directory.path(), uuid);
+    let path = codeyard_repos_core::cluster::replicas::copy_path(directory.path(), uuid);
     let repo = codeyard_db_repos::repositories::records::create_repository(
         pool,
         owner.id,
@@ -559,7 +560,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
                     .git_session(
                         primary.id,
                         request,
-                        crate::store_types::GitStreams {
+                        codeyard_repos_core::store_types::GitStreams {
                             input: &mut std::io::Cursor::new(b"0000"),
                             output: &mut tokio::io::sink(),
                             errors: &mut tokio::io::sink(),

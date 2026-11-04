@@ -123,7 +123,7 @@ async fn remote_file_lists_and_commit_walks_keep_size_limits_and_deadlines() {
     .await
     .unwrap();
     let uuid =
-        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repository.disk_path)
+        codeyard_repos_core::wire::repository_uuid(&repository.disk_path)
             .unwrap();
     let path = storage.context.repos_path.join(format!("{uuid}.git"));
     let bare = git2::Repository::open_bare(&path).unwrap();

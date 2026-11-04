@@ -1,6 +1,6 @@
 //! The store against real bare repositories in temporary directories.
 use super::*;
-use crate::cluster::rpc::repository as rpc;
+use crate::wire as rpc;
 use crate::repositories::store::local::begin_ref_change;
 use crate::repositories::store::local::ensure_ref_room;
 use crate::repositories::store::repo_store;

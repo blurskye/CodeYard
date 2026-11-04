@@ -160,6 +160,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
     );
     let context = NodeContext {
         pool: Some(pool.clone()),
+        rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
         iroh: IrohDialer::new(Relay::Off, key.clone()),
         key,
         node_id: primary,

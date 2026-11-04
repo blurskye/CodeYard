@@ -1412,6 +1412,7 @@ async fn term_directory_admission(pool: &DbPool) {
     let key = replace_node_key(pool, f.primary).await;
     let mut context = codeyard_repos_core::context::NodeContext {
         pool: Some(pool.clone()),
+        rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
         iroh: codeyard_cluster_core::transport::IrohDialer::new(
             codeyard_cluster_core::transport::Relay::Off,
             key.clone(),
@@ -1428,7 +1429,7 @@ async fn term_directory_admission(pool: &DbPool) {
         .unwrap()
         .unwrap();
     let uuid =
-        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repository.disk_path)
+        codeyard_repos_core::wire::repository_uuid(&repository.disk_path)
             .unwrap();
     assert!(context
         .repository_path(f.repo, uuid, true, None)
@@ -1599,7 +1600,7 @@ async fn quorum_directory_recovery(pool: &DbPool) {
         .unwrap()
         .unwrap();
     let uuid =
-        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path).unwrap();
+        codeyard_repos_core::wire::repository_uuid(&row.disk_path).unwrap();
     let roots = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
     for root in &roots {
         let path = term_path(root.path(), uuid, 1);

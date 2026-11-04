@@ -50,7 +50,7 @@ pub struct Cluster {
     /// The TCP addresses this node reports to peers.
     tcp_advertised: Vec<SocketAddr>,
     /// Admits the repository sessions this node serves. `None` on a node without storage.
-    sessions: Option<codeyard_repos_core::cluster::rpc::SessionGate>,
+    sessions: Option<codeyard_repos_rpc::SessionGate>,
     events: crate::ci::CiHandler,
     pub context: NodeContext,
     /// Held until [`Cluster::shutdown`], so a node with the same identity can start after it.
@@ -281,6 +281,7 @@ pub async fn start(
     };
     let context = NodeContext {
         pool: Some(pool.clone()),
+        rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
         iroh,
         key: key.clone(),
         node_id: node.id,
@@ -292,10 +293,10 @@ pub async fn start(
     let storage_path = roles.contains(NodeRole::Storage).then_some(repos_path);
     let rpc = storage_path
         .is_some()
-        .then(|| codeyard_repos_core::cluster::rpc::RpcHandler::new(context.clone()));
+        .then(|| codeyard_repos_rpc::RpcHandler::new(context.clone()));
     let sessions = rpc
         .as_ref()
-        .map(codeyard_repos_core::cluster::rpc::RpcHandler::sessions);
+        .map(codeyard_repos_rpc::RpcHandler::sessions);
     let ci_config = std::sync::Arc::new(codeyard_ci::config::CiConfig::from_env()?);
     let queue = codeyard_ci_engine::queue::RunQueue::Database {
         pool: pool.clone(),
@@ -388,6 +389,7 @@ pub async fn client_context(
     );
     Ok(Some(NodeContext {
         pool: Some(pool.clone()),
+        rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
         iroh: IrohDialer::new(settings.relay.clone(), key.clone())
             .with_identity_lock(identity_lock),
         key,
@@ -544,7 +546,7 @@ pub async fn adopt_repositories(pool: &DbPool, node_id: i64, repos_path: &Path) 
             .await?
             .into_iter()
             .filter(|(_, disk_path)| {
-                codeyard_repos_core::cluster::rpc::repository::repository_uuid(disk_path).is_ok_and(
+                codeyard_repos_core::wire::repository_uuid(disk_path).is_ok_and(
                     |uuid| {
                         codeyard_repos_core::repositories::store::primary_path(repos_path, uuid)
                             .exists()

@@ -80,7 +80,7 @@ impl RemoteStore {
             .call_with_response_limit(
                 self.node_id,
                 Request {
-                    repository: crate::cluster::rpc::repository::repository_uuid(&self.disk_path)?,
+                    repository: crate::wire::repository_uuid(&self.disk_path)?,
                     operation,
                     actor,
                     ci_run: self.ci_run.clone(),
@@ -330,7 +330,7 @@ impl RemoteStore {
                         ))
                     }
                 }
-                Some(crate::cluster::rpc::repository::repository_uuid(
+                Some(crate::wire::repository_uuid(
                     store.location(),
                 )?)
             }
@@ -356,7 +356,7 @@ impl RemoteStore {
             .git_session(
                 self.node_id,
                 Request {
-                    repository: crate::cluster::rpc::repository::repository_uuid(&self.disk_path)?,
+                    repository: crate::wire::repository_uuid(&self.disk_path)?,
                     operation: Operation::GitSession(session),
                     actor: None,
                     ci_run: self.ci_run.clone(),

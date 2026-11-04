@@ -154,7 +154,7 @@ fn repository_matches_path(
     if repository.storage_node_id.is_none() {
         Path::new(&repository.disk_path) == path
     } else {
-        crate::cluster::rpc::repository::repository_uuid(&repository.disk_path)
+        crate::wire::repository_uuid(&repository.disk_path)
             .ok()
             .zip(path.file_name().and_then(|name| name.to_str()))
             .is_some_and(|(uuid, filename)| filename == format!("{uuid}.git"))
@@ -657,7 +657,7 @@ pub(super) async fn recover_term(
     let row = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository)
         .await?
         .context("repository was deleted during recovery")?;
-    let uuid = crate::cluster::rpc::repository::repository_uuid(&row.disk_path)?;
+    let uuid = crate::wire::repository_uuid(&row.disk_path)?;
     let target = term_path(root, uuid, view.term);
     ensure!(
         view.refs.iter().any(|value| value.name == "HEAD"),
@@ -860,7 +860,7 @@ impl LocalStore {
         let Some((context, repository)) = &self.context else {
             return Ok(self.path().to_owned());
         };
-        let uuid = crate::cluster::rpc::repository::repository_uuid(&self.disk_path)?;
+        let uuid = crate::wire::repository_uuid(&self.disk_path)?;
         let (path, term) = context
             .repository_path(
                 *repository,
@@ -4632,7 +4632,7 @@ impl LocalStore {
         if session.service == GitService::ReceivePack {
             let (pool, ci) =
                 receive.ok_or_else(|| anyhow::anyhow!("receive resources required"))?;
-            let uuid = crate::cluster::rpc::repository::repository_uuid(&self.disk_path)?;
+            let uuid = crate::wire::repository_uuid(&self.disk_path)?;
             let repo =
                 codeyard_db_cluster::cluster::get_repository_by_uuid(&pool, &uuid.to_string())
                     .await?

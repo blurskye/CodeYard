@@ -217,7 +217,7 @@ impl Gateway {
                 ensure!(actor.id == operation.actor_id, "identity changed");
                 let cluster = self.ci.cluster().context("cluster unavailable")?;
                 let primary = cluster.node_id;
-                let repository = crate::cluster::rpc::repository::repository_uuid(&repo.disk_path)?;
+                let repository = crate::wire::repository_uuid(&repo.disk_path)?;
                 let view = journal::recovery_view(&self.pool, repo.id).await?;
                 let id = uuid::Uuid::new_v4().to_string();
                 let write = match codeyard_cluster_core::writes::begin(
@@ -334,7 +334,7 @@ impl Gateway {
                     );
                     let (repo, _) = self.operation_repository(operation).await?;
                     let repository =
-                        crate::cluster::rpc::repository::repository_uuid(&repo.disk_path)?;
+                        crate::wire::repository_uuid(&repo.disk_path)?;
                     let cluster = self.ci.cluster().context("cluster unavailable")?;
                     let lease = operation
                         .publication_lease
@@ -358,7 +358,7 @@ impl Gateway {
                     );
                     let (repo, _) = self.operation_repository(operation).await?;
                     let repository =
-                        crate::cluster::rpc::repository::repository_uuid(&repo.disk_path)?;
+                        crate::wire::repository_uuid(&repo.disk_path)?;
                     let cluster = self.ci.cluster().context("cluster unavailable")?;
                     let lease = operation
                         .publication_lease
@@ -455,7 +455,7 @@ impl Gateway {
                     && node.roles.iter().any(|role| role == "storage"),
                 "storage node unavailable"
             );
-            let uuid = crate::cluster::rpc::repository::repository_uuid(&repo.disk_path)?;
+            let uuid = crate::wire::repository_uuid(&repo.disk_path)?;
             let path = crate::context::term_path(&cluster.repos_path, uuid, term);
             crate::context::literal_directory(&cluster.repos_path, &path).await?;
             path
@@ -699,7 +699,7 @@ impl Gateway {
         .await??;
         if !publications.is_empty() {
             let cluster = self.ci.cluster().context("cluster unavailable")?;
-            let uuid = crate::cluster::rpc::repository::repository_uuid(&repo.disk_path)?;
+            let uuid = crate::wire::repository_uuid(&repo.disk_path)?;
             let term = codeyard_db_cluster::cluster::writes::recovery_view(&self.pool, repo.id)
                 .await?
                 .term;
@@ -1282,7 +1282,7 @@ impl Gateway {
                 let cluster = self.ci.cluster().context("cluster unavailable")?;
                 let view = codeyard_db_cluster::cluster::writes::recovery_view(&self.pool, repo.id)
                     .await?;
-                let uuid = crate::cluster::rpc::repository::repository_uuid(&repo.disk_path)?;
+                let uuid = crate::wire::repository_uuid(&repo.disk_path)?;
                 publication
                     .as_ref()
                     .context("publication lease missing")?

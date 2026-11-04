@@ -10,7 +10,7 @@ use codeyard_cluster_core::transport::active_member;
 use codeyard_cluster_core::transport::ALPN_PAIR;
 use codeyard_cluster_core::transport::ALPN_RPC;
 use codeyard_db_core::DbPool;
-use codeyard_repos_core::cluster::rpc::RpcHandler;
+use codeyard_repos_rpc::RpcHandler;
 use codeyard_support::node_identity::NodeKey;
 use iroh::PublicKey;
 use std::net::SocketAddr;

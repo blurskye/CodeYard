@@ -76,7 +76,7 @@ pub(crate) async fn check_term_directory(
             return Err(unavailable());
         }
         let root = path.ancestors().nth(4).ok_or_else(unavailable)?;
-        let uuid = crate::cluster::rpc::repository::repository_uuid(&repository.disk_path)?;
+        let uuid = crate::wire::repository_uuid(&repository.disk_path)?;
         if term_path(root, uuid, view.term) != path {
             return Err(unavailable());
         }
@@ -95,7 +95,7 @@ pub fn term_path(root: &Path, uuid: uuid::Uuid, term: i64) -> PathBuf {
         .join(format!("{uuid}.git"))
 }
 
-pub(crate) async fn literal_directory(root: &Path, path: &Path) -> Result<(), RepoError> {
+pub async fn literal_directory(root: &Path, path: &Path) -> Result<(), RepoError> {
     let relative = path.strip_prefix(root).map_err(|_| unavailable())?;
     let mut current = root.to_owned();
     for component in relative.components() {
@@ -148,6 +148,7 @@ mod tests {
 #[derive(Clone)]
 pub struct NodeContext {
     pub pool: Option<DbPool>,
+    pub rpc: Arc<dyn crate::local_rpc::RpcFactory>,
     /// Dials iroh peers. Its endpoint opens on first use.
     pub iroh: IrohDialer,
     /// This node's key: its identity in `nodes`, and its TLS identity over TCP.
@@ -229,7 +230,7 @@ impl NodeContext {
         repository: &codeyard_db_core::models::Repository,
         read_only: bool,
     ) -> Result<crate::repositories::store::RepoStore, RepoError> {
-        let uuid = crate::cluster::rpc::repository::repository_uuid(&repository.disk_path)?;
+        let uuid = crate::wire::repository_uuid(&repository.disk_path)?;
         let (path, _) = self
             .repository_path(repository.id, uuid, read_only, None)
             .await?;

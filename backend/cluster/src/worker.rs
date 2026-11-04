@@ -127,6 +127,7 @@ pub async fn worker_context(
     Ok((
         NodeContext {
             pool: None,
+        rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
             iroh: codeyard_cluster_core::transport::IrohDialer::new(
                 settings.relay.clone(),
                 key.clone(),

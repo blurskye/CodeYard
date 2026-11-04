@@ -20,7 +20,8 @@ backend/
   db/
     core/                      DbPool, connection, migrations, models, native_operation!
     identity/ orgs/ repos/ actions/ security/ cluster/     queries by domain
-  repos-core/                  repository store, Git sessions and repository RPC runtime
+  repos-core/                  repository store, Git sessions and workflow readers
+  repos-rpc/                   repository RPC handlers
   ci-engine/                   CI admission, queue, workers and pull-request refresh
   repos-pulls/                 pull mutations, repository operations and security workers
   repos/                       repository policy, imports, traffic, templates, Git editor
@@ -120,9 +121,9 @@ and results stay the same. A stage can be the last one.
    subscriptions and delivery live in `backend/webhooks/`. `identity`, `notifications`
    and `ssh` are extracted. Repository authority, identity mail links and delivery
    helpers have one lower owner.
-   `backend/repos-core/` owns the concrete store, Git sessions, repository RPC,
-   publication checks and workflow readers. `backend/ci-engine/` owns admission,
-   queues, workers and pull-request refresh. Receive hooks use a lower resource trait. Cluster startup,
+   `backend/repos-core/` owns the concrete store, Git sessions, publication checks
+   and workflow readers. `backend/repos-rpc/` owns repository RPC handlers. `backend/ci-engine/` owns admission,
+   queues, workers and pull-request refresh. Receive hooks use a lower resource trait. Local RPC fallback uses an injected factory. Cluster startup,
    replica maintenance and CI request handling live in `backend/cluster/`; transport
    and quorum primitives live in `backend/cluster/core/`. Document readers
    use resource-access traits implemented by `AppState`. Token authentication lives

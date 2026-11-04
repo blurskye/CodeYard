@@ -184,7 +184,7 @@ async fn remote_first_reader_persists_languages() {
     .await
     .unwrap();
     let uuid =
-        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repository.disk_path)
+        codeyard_repos_core::wire::repository_uuid(&repository.disk_path)
             .unwrap();
     let path = storage.context.repos_path.join(format!("{uuid}.git"));
     {
@@ -1394,7 +1394,7 @@ fn repository_rpc_operation_role_table() {
             } else {
                 allowed
             };
-            let result = codeyard_repos_core::cluster::rpc::repository::authorize_operation(
+            let result = codeyard_repos_rpc::repository::authorize_operation(
                 &roles, &operation,
             );
             assert_eq!(result.is_ok(), allowed, "{roles:?}: {operation:?}");
@@ -1562,7 +1562,7 @@ async fn remote_web_contract() {
         Some(storage.context.node_id)
     );
     let uuid =
-        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repository.disk_path)
+        codeyard_repos_core::wire::repository_uuid(&repository.disk_path)
             .unwrap();
     let storage_path = storage_disk.path().join(format!("{uuid}.git"));
     assert!(!Path::new(&repository.disk_path).exists());
@@ -3067,7 +3067,7 @@ async fn remote_web_contract() {
         .is_err());
     // The node answers as for a repository it cannot serve, so a reader tries the next copy.
     let request = Request {
-        repository: codeyard_repos_core::cluster::rpc::repository::repository_uuid(
+        repository: codeyard_repos_core::wire::repository_uuid(
             &elsewhere.disk_path,
         )
         .unwrap(),
@@ -3081,11 +3081,11 @@ async fn remote_web_contract() {
     for (repository, source) in [
         (
             uuid,
-            codeyard_repos_core::cluster::rpc::repository::repository_uuid(&elsewhere.disk_path)
+            codeyard_repos_core::wire::repository_uuid(&elsewhere.disk_path)
                 .unwrap(),
         ),
         (
-            codeyard_repos_core::cluster::rpc::repository::repository_uuid(&elsewhere.disk_path)
+            codeyard_repos_core::wire::repository_uuid(&elsewhere.disk_path)
                 .unwrap(),
             uuid,
         ),
@@ -3274,7 +3274,7 @@ async fn remote_web_contract() {
             .split_whitespace()
             .next()
             .unwrap();
-        codeyard_repos_core::cluster::rpc::repository::repository_uuid(path)
+        codeyard_repos_core::wire::repository_uuid(path)
             .expect("the logged path preserves the repository UUID");
         if message == "deleted repository storage remains" {
             assert_eq!(path, outage.disk_path);

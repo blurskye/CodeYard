@@ -1,18 +1,18 @@
-use crate::cluster::replicas::copy_path;
-use crate::cluster::replicas::moving;
-use crate::cluster::replicas::MOVE_WAIT;
-use crate::cluster::rpc::RpcHandler;
-use crate::repositories::store::RepoStore;
-use crate::store_types::BlobMetadata;
-use crate::store_types::GitService;
-use crate::store_types::WorkflowPayloadEntry;
-use crate::store_types::MAX_WORKFLOW_PAYLOAD_BYTES;
-use crate::wire::invalid;
-use crate::wire::unavailable;
-use crate::wire::Failure;
-use crate::wire::Operation;
-use crate::wire::Request;
-use crate::wire::MAX_BYTES;
+use codeyard_repos_core::cluster::replicas::copy_path;
+use codeyard_repos_core::cluster::replicas::moving;
+use codeyard_repos_core::cluster::replicas::MOVE_WAIT;
+use crate::RpcHandler;
+use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_repos_core::store_types::BlobMetadata;
+use codeyard_repos_core::store_types::GitService;
+use codeyard_repos_core::store_types::WorkflowPayloadEntry;
+use codeyard_repos_core::store_types::MAX_WORKFLOW_PAYLOAD_BYTES;
+use codeyard_repos_core::wire::invalid;
+use codeyard_repos_core::wire::unavailable;
+use codeyard_repos_core::wire::Failure;
+use codeyard_repos_core::wire::Operation;
+use codeyard_repos_core::wire::Request;
+use codeyard_repos_core::wire::MAX_BYTES;
 use anyhow::Result;
 use codeyard_git::error::RepoError;
 use codeyard_git::MAX_CI_WORKFLOW_BYTES;
@@ -216,7 +216,7 @@ pub(super) struct ReadAdmission {
 }
 
 /// Blob bytes go in the raw reply body; the JSON value carries only their metadata.
-fn blob_reply(blob: crate::store_types::BlobBytes, output: &mut Vec<u8>) -> Result<Value, Failure> {
+fn blob_reply(blob: codeyard_repos_core::store_types::BlobBytes, output: &mut Vec<u8>) -> Result<Value, Failure> {
     *output = blob.bytes;
     serde_json::to_value(BlobMetadata {
         id: blob.id,
@@ -276,7 +276,7 @@ impl RpcHandler {
         repo_id: Option<i64>,
         actor: Option<codeyard_db_core::queries::credentials::Actor>,
         source: Uuid,
-        options: &crate::repositories::store::CopyOptions,
+        options: &codeyard_repos_core::repositories::store::CopyOptions,
     ) -> Result<(), RepoError> {
         let (source_repo_id, path) = self.check_repository(source, false, false).await?;
         let source = self.admitted_store(source_repo_id, &path, false).await?;
@@ -306,7 +306,7 @@ impl RpcHandler {
             codeyard_db_cluster::cluster::get_repository_by_uuid(pool, &uuid.to_string())
                 .await
                 .map_err(|_| unavailable())?;
-        let primary = crate::repositories::store::primary_path(&self.context.repos_path, uuid);
+        let primary = codeyard_repos_core::repositories::store::primary_path(&self.context.repos_path, uuid);
         let Some(repo) = repository else {
             // Deletion removes the row before its directory.
             if removing {
@@ -514,7 +514,7 @@ impl RpcHandler {
                     .authorize(
                         pool,
                         &repo,
-                        session.service == crate::store_types::GitService::ReceivePack,
+                        session.service == codeyard_repos_core::store_types::GitService::ReceivePack,
                     )
                     .await
                     .map_err(|_| {
@@ -609,8 +609,8 @@ impl RpcHandler {
             return Err(unavailable());
         }
         let path =
-            crate::context::term_path(&self.context.repos_path, request.repository, write.term);
-        crate::context::literal_directory(&self.context.repos_path, &path).await?;
+            codeyard_repos_core::context::term_path(&self.context.repos_path, request.repository, write.term);
+        codeyard_repos_core::context::literal_directory(&self.context.repos_path, &path).await?;
         Ok((store_at(&path, self.context.node_id)?, Some(repo.id)))
     }
 
@@ -734,7 +734,7 @@ impl RpcHandler {
                     repo_id,
                     actor.map(Into::into),
                     source,
-                    &crate::repositories::store::CopyOptions {
+                    &codeyard_repos_core::repositories::store::CopyOptions {
                         default_branch,
                         template: false,
                         default_branch_only: false
@@ -756,7 +756,7 @@ impl RpcHandler {
                     repo_id,
                     Some(authority),
                     source,
-                    &crate::repositories::store::CopyOptions {
+                    &codeyard_repos_core::repositories::store::CopyOptions {
                         default_branch,
                         template,
                         default_branch_only,
@@ -810,7 +810,7 @@ impl RpcHandler {
                     pool,
                     repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                     source_repo_id,
-                    crate::store_types::PullHeadActor {
+                    codeyard_repos_core::store_types::PullHeadActor {
                         user: actor
                             .ok_or_else(|| invalid("repository mutation requires an actor"))?,
                         token,
@@ -1150,7 +1150,7 @@ impl RpcHandler {
                         || git_ref == default_branch
                         || git_ref == format!("refs/heads/{default_branch}"))
                 {
-                    json!(crate::repositories::languages::compute_and_store(
+                    json!(codeyard_repos_core::repositories::languages::compute_and_store(
                         pool,
                         &store,
                         &repository,
@@ -1397,7 +1397,7 @@ impl RpcHandler {
                 let result = store
                     .prepare_merge(&request)
                     .await
-                    .map_err(|_| Failure::Merge(crate::store_types::MergeFailure::CannotMerge))?;
+                    .map_err(|_| Failure::Merge(codeyard_repos_core::store_types::MergeFailure::CannotMerge))?;
                 let repo_id = repo_id.ok_or_else(|| invalid("repository unavailable"))?;
                 let repository =
                     codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo_id)
@@ -1439,7 +1439,7 @@ impl RpcHandler {
                     }
                     Err(_) => {
                         return Err(Failure::Merge(
-                            crate::store_types::MergeFailure::BranchMoved,
+                            codeyard_repos_core::store_types::MergeFailure::BranchMoved,
                         ));
                     }
                 }
@@ -1546,7 +1546,7 @@ impl RpcHandler {
                 return Err(invalid("Git session requires streaming").into())
             }
             Operation::PrepareWrite { id } => {
-                let limits = crate::cluster::rpc::git_session::WriteLimits::load(pool)
+                let limits = codeyard_repos_core::git_transport::WriteLimits::load(pool)
                     .await
                     .map_err(RepoError::from)?;
                 tokio::time::timeout(limits.timeout, self.prepare_write(&store, &id, limits))
@@ -1556,7 +1556,7 @@ impl RpcHandler {
                 Value::Null
             }
             Operation::ApplyWrite { id } => {
-                let limits = crate::cluster::rpc::git_session::WriteLimits::load(pool)
+                let limits = codeyard_repos_core::git_transport::WriteLimits::load(pool)
                     .await
                     .map_err(RepoError::from)?;
                 tokio::time::timeout(limits.timeout, self.apply_write(&store, &id, limits))
@@ -1577,17 +1577,6 @@ impl RpcHandler {
         }
         Ok((value, output))
     }
-}
-
-pub fn repository_uuid(path: &str) -> Result<Uuid, RepoError> {
-    let filename = Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| invalid("invalid repository UUID"))?;
-    let uuid = filename
-        .strip_suffix(".git")
-        .ok_or_else(|| invalid("invalid repository UUID"))?;
-    Uuid::parse_str(uuid).map_err(|_| invalid("invalid repository UUID"))
 }
 
 #[cfg(test)]

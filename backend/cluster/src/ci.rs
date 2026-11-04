@@ -76,6 +76,7 @@ mod tests {
         .unwrap();
         let context = NodeContext {
             pool: Some(pool.clone()),
+        rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
             iroh: IrohDialer::new(Relay::Off, key.clone()),
             key,
             node_id: node.id,
@@ -304,7 +305,7 @@ pub struct CiHandler {
     slots: Arc<Semaphore>,
     accepting_claims: Arc<AtomicBool>,
     headers: Arc<std::sync::Mutex<std::collections::HashMap<iroh::PublicKey, Arc<Semaphore>>>>,
-    sessions: codeyard_repos_core::cluster::rpc::SessionGate,
+    sessions: codeyard_repos_rpc::SessionGate,
 }
 
 impl std::fmt::Debug for CiHandler {
@@ -321,7 +322,7 @@ impl CiHandler {
             slots: Arc::new(Semaphore::new(16)),
             accepting_claims: Arc::new(AtomicBool::new(true)),
             headers: Default::default(),
-            sessions: codeyard_repos_core::cluster::rpc::SessionGate::default(),
+            sessions: codeyard_repos_rpc::SessionGate::default(),
         }
     }
 
