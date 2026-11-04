@@ -3,7 +3,8 @@ use crate::ci::config::CiConfig;
 use crate::cluster::context::NodeContext;
 use crate::cluster::link::Link;
 use crate::cluster::rpc::repository::repository_uuid;
-use crate::cluster::rpc::wire::invalid;
+use crate::cluster::transport;
+
 use crate::cluster::rpc::wire::read_frame;
 use crate::cluster::rpc::wire::write_frame;
 use crate::cluster::rpc::wire::Operation;

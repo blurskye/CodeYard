@@ -1,6 +1,7 @@
 //! `codeyard serve`: starts the HTTP server, the selected SSH transport and the
 //! CI service, then waits for a shutdown signal.
 use crate::backend::node::config::ServeConfig;
+use anyhow::Context;
 use anyhow::Result;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;

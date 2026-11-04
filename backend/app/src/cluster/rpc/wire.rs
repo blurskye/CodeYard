@@ -783,6 +783,7 @@ pub async fn write_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codeyard_db_core::limits::MAX_JSON;
 
     #[test]
     fn unavailable_keeps_its_typed_reason_on_the_wire() {

@@ -4,17 +4,10 @@ use crate::backend::cli::arguments::DbAction;
 use crate::backend::cli::arguments::KeyAction;
 use crate::backend::cli::arguments::RepoAction;
 use crate::backend::cli::arguments::UserAction;
-use crate::backend::cli::commands::add_key_cmd;
-use crate::backend::cli::commands::add_key_from_file_cmd;
-use crate::backend::cli::commands::bootstrap_user_cmd;
-use crate::backend::cli::commands::copy_database_cmd;
-use crate::backend::cli::commands::create_repo_cmd;
-use crate::backend::cli::commands::create_user_cmd;
+use clap::Parser;
+
 use crate::backend::cli::commands::grant_access_cmd;
-use crate::backend::cli::commands::list_keys_cmd;
-use crate::backend::cli::commands::list_repos_cmd;
-use crate::backend::cli::commands::list_users_cmd;
-use crate::backend::cli::commands::repo_info_cmd;
+
 use anyhow::bail;
 use anyhow::Result;
 use codeyard_support::fs::private_dir as prepare_state_directory;

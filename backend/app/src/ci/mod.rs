@@ -24,7 +24,7 @@ pub mod workflows;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+
     use codeyard_db_core::ci_messages::visible_run_error;
 
     #[test]

@@ -1,8 +1,7 @@
 use super::*;
 use crate::npm::dependency_name;
 use crate::repositories::dependencies::npm::formatted;
-use crate::repositories::dependencies::npm::json;
-use crate::repositories::dependencies::npm::package;
+
 use crate::repositories::dependencies::npm::registry_url;
 use crate::repositories::dependencies::npm::Archive;
 use crate::repositories::dependencies::npm::Lockfile;

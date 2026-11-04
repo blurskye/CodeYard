@@ -119,7 +119,10 @@ and results stay the same. A stage can be the last one.
 8. **`app`.** Source layout complete. `backend/app/src` is the app library;
    `backend/app/wiring` contains the existing binary package's entry points, CLI
    and node startup. SSH, backups and storage live in the app library. The source
-   stages are committed before workspace, Clippy and WASM checks begin.
+   stages are committed before workspace, Clippy and WASM checks begin. Broker unit
+   tests still need private test hooks and the REST listener; the app test target and
+   REST dependency use distinct `AppState` types. This needs a shared test seam or
+   keeping these tests with the composed server, beyond pure moves.
 
 ## Move only: no behaviour change
 

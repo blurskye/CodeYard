@@ -1,6 +1,6 @@
 use super::*;
 use crate::code_scanning::parse;
-use crate::code_scanning::text;
+
 use crate::code_scanning::MAX_COMPRESSED;
 use std::io::Write;
 

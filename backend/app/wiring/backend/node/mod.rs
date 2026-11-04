@@ -3,4 +3,4 @@
 
 pub mod config;
 
-mod runtime;
+pub(crate) mod runtime;

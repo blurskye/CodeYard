@@ -4,6 +4,7 @@ use crate::cluster::context::NodeContext;
 use crate::cluster::transport::IrohDialer;
 use crate::cluster::transport::NodeAddress;
 use crate::cluster::transport::Relay;
+use crate::repositories::git_sessions::private_files;
 use crate::repositories::git_sessions::protocol::TransactionPhase;
 use crate::repositories::git_sessions::ReceiveCredential;
 use base64::Engine;

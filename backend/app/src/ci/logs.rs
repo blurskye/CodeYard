@@ -8,7 +8,7 @@ pub fn normalize_stage_name(stage: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+
     use codeyard_db_core::ci_logs::admit_log_lines;
     use codeyard_db_core::ci_logs::TRUNCATED_LINE;
     use codeyard_db_core::ci_logs::TRUNCATION_RESERVE;

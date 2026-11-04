@@ -95,8 +95,8 @@ async fn real_fixture(act: Option<PathBuf>) {
         let wrapper = act_home.path().join("act-owned");
         std::fs::write(&wrapper, format!("#!/bin/sh\nexport HOME='{home}'\nexport XDG_CONFIG_HOME=\"$HOME/config\" XDG_CACHE_HOME=\"$HOME/cache\"\nunset DOCKER_HOST DOCKER_CONTEXT SSH_AUTH_SOCK GITHUB_TOKEN GH_TOKEN\nexec '{binary}' --no-cache-server --action-cache-path \"$HOME/actions\" \"$@\"\n")).unwrap();
         std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
-        codeyard_app::ci::config::CiConfig {
-            mode: codeyard_app::ci::config::CiExecutionMode::Local,
+        crate::ci::config::CiConfig {
+            mode: crate::ci::config::CiExecutionMode::Local,
             trusted_actor_ids: [actor.id].into(),
             act_binary: wrapper.to_str().unwrap().to_owned(),
             act_platform_map: [("gitserv-owned-fixture".to_owned(), "-self-hosted".to_owned())].into(),
