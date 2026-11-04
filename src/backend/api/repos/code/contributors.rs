@@ -11,6 +11,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use codeyard_db_core::models::User;
 use codeyard_db_core::DbPool;
+use codeyard_git::error::RepoError;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;

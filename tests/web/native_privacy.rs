@@ -1,6 +1,5 @@
 #![cfg(all(not(target_arch = "wasm32"), unix))]
 
-use codeyard::backend::db;
 use std::os::unix::{fs::PermissionsExt, process::CommandExt};
 use std::path::Path;
 use std::process::{Command, Output};

@@ -1,7 +1,8 @@
 //! OpenPGP enrollment verifies self-certifications and signing-subkey back signatures.
 use crate::backend::db;
 use crate::backend::db::users::accounts::AccountCredential;
-use crate::backend::db::users::accounts::AccountRestricted;
+use codeyard_support::credentials::AccountRestricted;
+
 use crate::backend::db::users::gpg_keys::GpgKey;
 use crate::backend::db::users::gpg_keys::GpgKeyRefusal;
 use crate::backend::db::users::gpg_keys::GpgMaterial;

@@ -2,7 +2,8 @@ use crate::backend::db::assignees::AssignmentRefusal;
 use crate::backend::db::credentials::Actor;
 use crate::backend::db::issues::management::LinkedBranch;
 use crate::backend::db::issues::management::Refusal;
-use crate::backend::db::users::accounts::AccountRestricted;
+use codeyard_support::credentials::AccountRestricted;
+
 use anyhow::{ensure, Result};
 use codeyard_db_core::models::Issue;
 use sqlx::{Sqlite, SqlitePool, Transaction};

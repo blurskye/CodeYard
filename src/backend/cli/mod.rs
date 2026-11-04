@@ -7,7 +7,6 @@ pub mod cluster;
 use arguments::{Cli, Commands, DbAction, KeyAction, RepoAction, UserAction};
 
 use crate::backend::cluster as cluster_runtime;
-use crate::backend::db;
 use crate::backend::fs::private_dir as prepare_state_directory;
 use crate::backend::node;
 use crate::backend::ssh;

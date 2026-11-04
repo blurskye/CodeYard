@@ -8,6 +8,7 @@ use crate::backend::db;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::Repository;
 use codeyard_git as git;
+use codeyard_git::error::{ErrorKind, RepoError};
 use std::{collections::HashMap, time::Duration};
 
 #[derive(Debug)]

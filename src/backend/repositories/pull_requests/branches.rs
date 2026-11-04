@@ -3,10 +3,11 @@
 
 use crate::backend::ci::CiRuns;
 use crate::backend::db;
-use crate::backend::repositories::store::{repo_store, ErrorKind, RepoError, RepoStore};
+use crate::backend::repositories::store::{repo_store, RepoStore};
 use crate::backend::webhooks::{self, events, payloads::Scope};
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
+use codeyard_git::error::{ErrorKind, RepoError};
 use std::collections::HashMap;
 use std::time::Duration;
 

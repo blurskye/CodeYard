@@ -8,6 +8,7 @@ use crate::backend::cluster::NodeContext;
 use crate::backend::db;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::models::Repository;
+use codeyard_git::error::{ErrorKind, RepoError};
 use codeyard_git::TreeEntry;
 
 #[derive(Clone)]

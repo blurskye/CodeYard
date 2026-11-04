@@ -1,8 +1,8 @@
 //! Stored default-branch languages, including successfully computed empty results.
 use crate::backend::db;
 use crate::backend::db::repository_stats::LanguageSource;
-use crate::backend::repositories::store::ErrorKind;
-use crate::backend::repositories::store::RepoError;
+use codeyard_git::error::{ErrorKind, RepoError};
+
 use crate::backend::repositories::store::RepoStore;
 use anyhow::Result;
 use codeyard_db_core::DbPool;

@@ -10,9 +10,9 @@ use codeyard::backend::db::interactions::InteractionRefusal;
 use codeyard::backend::db::interactions::InteractionScope;
 use codeyard::backend::db::interactions::NewRestriction;
 use codeyard::backend::db::users::accounts::AccountCredential;
-use codeyard::backend::db::users::accounts::AccountRestricted;
 use codeyard::backend::identity::tokens::{self, TokenInput};
 use codeyard_db_core::models::AccessLevel;
+use codeyard_support::credentials::AccountRestricted;
 use serde_json::json;
 
 async fn contract(pg: bool) {

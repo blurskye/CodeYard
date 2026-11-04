@@ -9,11 +9,9 @@ use crate::backend::db::repositories::creation::RepositoryTarget;
 use crate::backend::repositories::lifecycle;
 use crate::backend::repositories::store::repo_store;
 use crate::backend::repositories::store::GistCredential;
-use crate::backend::repositories::store::GistEdit;
-use crate::backend::repositories::store::GistFileChange;
-use crate::backend::repositories::store::GistSnapshot;
-use crate::backend::repositories::store::RepoError;
-use crate::backend::repositories::store::MAX_GIST_FILES;
+use codeyard_git::error::RepoError;
+use codeyard_git::gist_types::{GistEdit, GistFileChange, GistSnapshot, MAX_GIST_FILES};
+
 use anyhow::{ensure, Result};
 use codeyard_db_core::models::Repository;
 use std::{collections::BTreeMap, future::Future, sync::Arc};

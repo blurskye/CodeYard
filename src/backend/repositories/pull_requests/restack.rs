@@ -8,10 +8,9 @@ use super::{actor, branches_moved, database_error, require_write, OperationError
 use crate::backend::ci::{CiRuns, RefUpdate};
 use crate::backend::db;
 use crate::backend::db::pull_requests::records::MAX_STACK_LAYERS;
-use crate::backend::repositories::store::{
-    repo_store, ErrorKind, RepoError, RepoStore, RestackMove,
-};
+use crate::backend::repositories::store::{repo_store, RepoStore, RestackMove};
 use codeyard_db_core::models::PullRequest;
+use codeyard_git::error::{ErrorKind, RepoError};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::time::Duration;

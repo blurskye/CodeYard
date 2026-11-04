@@ -1,5 +1,6 @@
 use super::arg;
 use super::connection;
+use super::db;
 use super::missing;
 use super::node_id;
 use super::repository;

@@ -9,7 +9,8 @@ use crate::backend::db::repositories::dependencies::Refusal;
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::store::repo_store;
 use crate::backend::repositories::store::BlobRange;
-use crate::backend::repositories::store::ErrorKind;
+use codeyard_git::error::ErrorKind;
+
 use crate::backend::repositories::store::RepoStore;
 use anyhow::{ensure, Context, Result};
 use codeyard_db_core::models::Repository;

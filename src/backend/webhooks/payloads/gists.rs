@@ -5,8 +5,9 @@ use crate::backend::api::http::config::http_clone_base;
 use crate::backend::api::http::config::link_origin;
 use crate::backend::db::gists::Comment;
 use crate::backend::db::gists::Gist;
-use crate::backend::repositories::store::GistRevision;
-use crate::backend::repositories::store::RepoError;
+use codeyard_git::error::RepoError;
+use codeyard_git::gist_types::GistRevision;
+
 use base64::{engine::general_purpose::STANDARD, Engine};
 use codeyard_db_core::models::User;
 use codeyard_git::objects::TreeObjectEntry;

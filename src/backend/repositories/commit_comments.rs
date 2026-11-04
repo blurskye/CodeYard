@@ -13,8 +13,8 @@ use crate::backend::notifications::mentions::MentionSource;
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::access;
 use crate::backend::repositories::store::repo_store;
-use crate::backend::repositories::store::ErrorKind;
-use crate::backend::repositories::store::RepoError;
+use codeyard_git::error::{ErrorKind, RepoError};
+
 use crate::backend::webhooks;
 use crate::backend::webhooks::events;
 use crate::backend::webhooks::payloads;

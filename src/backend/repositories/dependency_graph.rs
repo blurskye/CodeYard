@@ -1,12 +1,10 @@
 //! Dependency inventories pin Git before reading either file and never execute package managers.
-use super::{
-    dependencies::npm::Lockfile,
-    store::{repo_store, ErrorKind, RepoError},
-};
+use super::{dependencies::npm::Lockfile, store::repo_store};
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::dependency_graph::Reader;
 use codeyard_db_core::models::Repository;
+use codeyard_git::error::{ErrorKind, RepoError};
 use codeyard_model::repositories::Package;
 use std::collections::{BTreeMap, HashSet};
 

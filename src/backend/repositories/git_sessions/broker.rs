@@ -3,13 +3,12 @@ use super::validation::{self, RefUpdate};
 use super::{private_files, ReceiveCredential};
 use crate::backend::ci::CiRuns;
 use crate::backend::db;
-use crate::backend::repositories::store::{
-    repo_store, ErrorKind, GitService, GitSession, GitStreams, RepoError,
-};
+use crate::backend::repositories::store::{repo_store, GitService, GitSession, GitStreams};
 use crate::backend::repositories::traffic;
 use anyhow::{ensure, Context, Result};
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
+use codeyard_git::error::{ErrorKind, RepoError};
 use codeyard_git::repository::process as git_process;
 use std::collections::HashMap;
 use std::fs::OpenOptions;

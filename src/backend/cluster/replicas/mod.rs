@@ -6,6 +6,7 @@
 mod promote;
 mod transfer;
 
+use codeyard_git::error::RepoError;
 pub use promote::{
     promote, recover_family, repository_name, take_over, Promotion, RecoveryPending, Silent,
     TAKE_OVER_AFTER,
@@ -13,7 +14,7 @@ pub use promote::{
 
 use super::{rpc, NodeContext};
 use crate::backend::db;
-use crate::backend::repositories::store::RepoError;
+
 use crate::backend::storage::local::{remove_stale_temporaries, STALE_AFTER};
 use anyhow::{Context, Result};
 use codeyard_db_core::models::HeldReplica;

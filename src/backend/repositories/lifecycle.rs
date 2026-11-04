@@ -4,8 +4,8 @@ use crate::backend::cluster::NodeContext;
 use crate::backend::db;
 use crate::backend::db::repositories::creation as repo_lifecycle;
 use crate::backend::repositories::store::repo_store;
-use crate::backend::repositories::store::ErrorKind;
-use crate::backend::repositories::store::RepoError;
+use codeyard_git::error::{ErrorKind, RepoError};
+
 use crate::backend::repositories::store::UploadFile;
 use crate::backend::repositories::store::UploadWrite;
 use crate::backend::repositories::templates;

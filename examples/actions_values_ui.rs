@@ -21,10 +21,11 @@ async fn main() {
     let python =
         std::env::var("CODEYARD_BROWSER_PYTHON").expect("the pinned browser Python is required");
     let root = tempfile::tempdir().unwrap();
-    let pool = db::init_db(&format!("sqlite://{}", root.path().join("ui.db").display()))
-        .await
-        .unwrap();
-    db::run_migrations(&pool).await.unwrap();
+    let pool =
+        codeyard_db_core::init_db(&format!("sqlite://{}", root.path().join("ui.db").display()))
+            .await
+            .unwrap();
+    codeyard_db_core::run_migrations(&pool).await.unwrap();
     db::node_config::upsert_node_configuration(&pool, "public", true)
         .await
         .unwrap();

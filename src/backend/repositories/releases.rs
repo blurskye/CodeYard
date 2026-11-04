@@ -21,7 +21,8 @@ use crate::backend::repositories::access::AccessError;
 use crate::backend::repositories::refs;
 use crate::backend::repositories::refs::RefError;
 use crate::backend::repositories::store::repo_store;
-use crate::backend::repositories::store::RepoError;
+use codeyard_git::error::RepoError;
+
 use crate::backend::storage::ObjectStore;
 use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
 use anyhow::Error;

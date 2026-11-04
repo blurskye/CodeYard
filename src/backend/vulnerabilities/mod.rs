@@ -1,11 +1,12 @@
 //! OSV mirrors and repository alerts share the pinned dependency inventory.
+use codeyard_git::error::ErrorKind;
 use codeyard_model::vulnerabilities::ECOSYSTEMS;
 use codeyard_model::vulnerabilities::MAX_AFFECTED_PACKAGES;
 pub(crate) mod versions;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::repositories::dependency_graph;
-use crate::backend::repositories::store::ErrorKind;
+
 use anyhow::{ensure, Result};
 use codeyard_model::repositories::Package;
 use serde::{Deserialize, Serialize};

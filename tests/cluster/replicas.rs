@@ -24,18 +24,18 @@ use codeyard::backend::db::cluster::FamilyOutcome;
 use codeyard::backend::db::cluster::PromoteOutcome;
 use codeyard::backend::repositories::store::begin_ref_change;
 use codeyard::backend::repositories::store::repo_store;
-use codeyard::backend::repositories::store::ErrorKind;
 use codeyard::backend::repositories::store::FileWrite;
 use codeyard::backend::repositories::store::GitService;
 use codeyard::backend::repositories::store::GitSession;
 use codeyard::backend::repositories::store::GitStreams;
-use codeyard::backend::repositories::store::RepoError;
 use codeyard::backend::repositories::store::RepoStore;
 use codeyard::backend::storage::ObjectStore;
 use codeyard_db_core::models::NodeReplicaCounts;
 use codeyard_db_core::models::ReplicaSetting;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
+use codeyard_git::error::ErrorKind;
+use codeyard_git::error::RepoError;
 use rand::RngCore;
 use std::{
     collections::HashMap,

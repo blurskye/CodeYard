@@ -1,7 +1,8 @@
 //! Secondary addresses require their own confirmation and never authorize a password reset.
 use crate::backend::db;
 use crate::backend::db::users::accounts::AccountCredential;
-use crate::backend::db::users::accounts::AccountRestricted;
+use codeyard_support::credentials::AccountRestricted;
+
 use crate::backend::db::users::emails::EmailRefusal;
 use crate::backend::email::links;
 use codeyard_db_core::DbPool;

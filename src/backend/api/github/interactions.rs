@@ -5,7 +5,6 @@ use crate::backend::db::interactions::InteractionRefusal;
 use crate::backend::db::interactions::InteractionScope;
 use crate::backend::db::interactions::NewRestriction;
 use crate::backend::db::users::accounts::AccountCredential;
-use crate::backend::db::users::accounts::AccountRestricted;
 use crate::backend::repositories::access;
 use axum::{
     extract::{rejection::JsonRejection, Path, State},
@@ -15,6 +14,7 @@ use axum::{
     Json,
 };
 use codeyard_db_core::models::User;
+use codeyard_support::credentials::AccountRestricted;
 use serde_json::json;
 use std::sync::Arc;
 

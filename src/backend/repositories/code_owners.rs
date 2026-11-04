@@ -1,11 +1,12 @@
 //! CODEOWNERS: which owners a path has at a commit, and which of them may review it.
 //! Parsing and matching are pure. Resolving owners reads users and teams.
+use codeyard_git::error::{ErrorKind, RepoError};
 use codeyard_model::repositories::MAX_REVIEWERS;
 
 use crate::backend::ci::workflows::{code_owner_glob_matches_bounded, WorkflowMatchBudget};
 use crate::backend::cluster::NodeContext;
 use crate::backend::db;
-use crate::backend::repositories::store::{repo_store, BlobRange, ErrorKind, RepoError};
+use crate::backend::repositories::store::{repo_store, BlobRange};
 use codeyard_db_core::models::Repository;
 use std::collections::{HashMap, HashSet};
 

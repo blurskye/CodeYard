@@ -1,6 +1,7 @@
 use crate::backend::db;
 use crate::backend::db::users::accounts::AccountCredential;
-use crate::backend::db::users::accounts::AccountRestricted;
+use codeyard_support::credentials::AccountRestricted;
+
 use crate::backend::db::users::blocks::BlockTargetMissing;
 use crate::backend::db::users::blocks::InvalidBlock;
 use codeyard_db_core::DbPool;

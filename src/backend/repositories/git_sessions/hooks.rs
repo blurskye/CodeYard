@@ -17,8 +17,8 @@ use crate::backend::repositories::pull_requests;
 use crate::backend::repositories::reads;
 use crate::backend::repositories::store::ensure_ref_room;
 use crate::backend::repositories::store::repo_store;
-use crate::backend::repositories::store::ErrorKind;
-use crate::backend::repositories::store::RepoError;
+use codeyard_git::error::{ErrorKind, RepoError};
+
 use crate::backend::webhooks::ref_changes::{self, RefMove};
 use anyhow::{ensure, Context, Result};
 use codeyard_db_core::models::AccessLevel;

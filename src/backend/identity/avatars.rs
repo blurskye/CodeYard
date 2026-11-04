@@ -11,7 +11,8 @@ use crate::backend::db;
 use crate::backend::db::organizations;
 use crate::backend::db::organizations::OrganizationOutcome;
 use crate::backend::db::users::accounts::AccountCredential;
-use crate::backend::db::users::accounts::AccountRestricted;
+use codeyard_support::credentials::AccountRestricted;
+
 use crate::backend::db::users::accounts::UserAvatarOutcome;
 use crate::backend::files;
 use crate::backend::files::UploadDeclaration;

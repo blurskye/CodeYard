@@ -1,6 +1,7 @@
 use super::{identity::NodeKey, rpc::unavailable, CorePeer, IrohDialer};
 use crate::backend::db;
-use crate::backend::repositories::store::RepoError;
+use codeyard_git::error::RepoError;
+
 use codeyard_db_core::DbPool;
 use std::{
     collections::HashMap,

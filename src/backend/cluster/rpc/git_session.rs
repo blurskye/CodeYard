@@ -12,6 +12,8 @@ use crate::backend::{
 };
 use anyhow::{ensure, Context, Result};
 use codeyard_db_core::models::WriteRecord;
+use codeyard_git::error::RepoError;
+use codeyard_git::repository::process as git_process;
 use serde_json::Value;
 use std::sync::Arc;
 use std::{

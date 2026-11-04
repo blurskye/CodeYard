@@ -13,6 +13,7 @@ use codeyard_db_core::models::BranchProtectionRule;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
 use codeyard_git as git;
+use codeyard_git::error::MERGE_COMMIT_BLOCKED;
 use std::path::Path;
 
 pub const PULL_REQUEST_REQUIRED: &str =

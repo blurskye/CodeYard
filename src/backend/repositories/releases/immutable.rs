@@ -12,8 +12,8 @@ use crate::backend::repositories::access;
 use crate::backend::repositories::git_sessions::validation::RefUpdate;
 use crate::backend::repositories::git_sessions::validation::ZERO_SHA;
 use crate::backend::repositories::store::repo_store;
-use crate::backend::repositories::store::ErrorKind;
-use crate::backend::repositories::store::RepoError;
+use codeyard_git::error::{ErrorKind, RepoError};
+
 use anyhow::{ensure, Result};
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
