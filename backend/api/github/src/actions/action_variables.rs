@@ -52,12 +52,12 @@ async fn repository(
     owner: &str,
     name: &str,
     write: bool,
-) -> Result<(i64, codeyard_repos_core::api_shared::github::auth::Authentication)> {
+) -> Result<(i64, codeyard_identity::github_auth::Authentication)> {
     let (repo, auth) =
         codeyard_app::api_shared::github::repository(state, headers, owner, name, write).await?;
     Ok((
         repo.id,
-        auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?,
+        auth.ok_or_else(codeyard_identity::github_auth::required)?,
     ))
 }
 

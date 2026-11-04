@@ -577,7 +577,7 @@ async fn dispatch(
 async fn versions(
     state: &AppState,
     package: &Package,
-    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_identity::github_auth::Authentication>,
 ) -> Result<Vec<Version>> {
     let mut versions = crate::packages::all_versions(state, package.id, auth).await?;
     versions.sort_by(|a, b| compare(&a.name, &b.name));

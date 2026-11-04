@@ -124,7 +124,8 @@ and results stay the same. A stage can be the last one.
    local RPC fallback still call each other and stay in one crate. Cluster startup,
    replica maintenance and CI request handling live in `backend/cluster/`; transport
    and quorum primitives live in `backend/cluster/core/`. Document readers
-   use a resource-access trait implemented by `AppState`.
+   use resource-access traits implemented by `AppState`. Token authentication lives
+   in `identity`; issue and comment documents live in `webhooks`.
 7. **API.** Source extraction complete: HTTP plumbing, GitHub REST (one crate,
    with folders named for its operation categories), repository HTTP, GraphQL and
    the remaining routes are separate crates. Shared helpers have one direct lower

@@ -69,11 +69,11 @@ async fn actor(
     write: bool,
 ) -> Result<(
     Organization,
-    codeyard_repos_core::api_shared::github::auth::Authentication,
+    codeyard_identity::github_auth::Authentication,
 )> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     if write {
         actor.require_write()?;
     }
@@ -82,7 +82,7 @@ async fn actor(
 async fn snapshot(
     state: &AppState,
     org: i64,
-    actor: &codeyard_repos_core::api_shared::github::auth::Authentication,
+    actor: &codeyard_identity::github_auth::Authentication,
     hook: i64,
     delivery: Option<i64>,
     history: Option<DeliveryWindow>,

@@ -25,7 +25,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Sets the header that `codeyard_repos_core::api_shared::http::session::client_address` reads, and drops any value the client sent.
+/// Sets the header that `codeyard_identity::client_address::client_address` reads, and drops any value the client sent.
 /// The address is the connection's, or, when the connection comes from a trusted proxy, the
 /// client that proxy forwarded for. IPv6 clients are told apart by their /64 network.
 pub async fn stamp_client_address(
@@ -35,12 +35,12 @@ pub async fn stamp_client_address(
 ) -> Response {
     request
         .headers_mut()
-        .remove(codeyard_repos_core::api_shared::http::session::CLIENT_HEADER);
+        .remove(codeyard_identity::client_address::CLIENT_HEADER);
     if let Some(Ok(value)) = client_key(&request, &config.trusted_proxies)
         .map(|client| client.parse::<header::HeaderValue>())
     {
         request.headers_mut().insert(
-            codeyard_repos_core::api_shared::http::session::CLIENT_HEADER,
+            codeyard_identity::client_address::CLIENT_HEADER,
             value,
         );
     }
@@ -179,7 +179,7 @@ async fn bounded_mutation_body(state: Arc<AppState>, request: Request, next: Nex
             && (request.uri().path().starts_with("/api/v3/")
                 || request.uri().path() == "/api/graphql")
         {
-            authenticated = match codeyard_repos_core::api_shared::github::auth::authenticate(
+            authenticated = match codeyard_identity::github_auth::authenticate(
                 &state,
                 request.headers(),
                 false,

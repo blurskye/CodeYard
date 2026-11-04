@@ -34,15 +34,15 @@ async fn content(
         KindOfSearch::Commits
     };
     let authentication =
-        codeyard_repos_core::api_shared::github::auth::identity(&state, &headers, false).await?;
+        codeyard_identity::github_auth::identity(&state, &headers, false).await?;
     let viewer = authentication.as_ref().map(|a| a.user.id);
     if kind == KindOfSearch::Code && viewer.is_none() {
-        return Err(codeyard_repos_core::api_shared::github::auth::required());
+        return Err(codeyard_identity::github_auth::required());
     }
     let query =
         SearchQuery::parse(kind, q.get("q").map_or("", String::as_str)).map_err(Error::invalid)?;
     if query.needs_viewer() && viewer.is_none() {
-        return Err(codeyard_repos_core::api_shared::github::auth::required());
+        return Err(codeyard_identity::github_auth::required());
     }
     let sort = Sort::parse(kind, q.get("sort").map(String::as_str)).map_err(Error::invalid)?;
     let ascending = match q.get("order").map_or("desc", String::as_str) {
@@ -82,7 +82,7 @@ async fn content(
         .collect::<Vec<_>>();
     ids.sort_unstable();
     ids.dedup();
-    let readable = codeyard_repos_core::api_shared::github::auth::readable_repositories(
+    let readable = codeyard_identity::github_auth::readable_repositories(
         &state,
         authentication.as_ref(),
         &ids,

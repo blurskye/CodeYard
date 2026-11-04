@@ -122,12 +122,12 @@ async fn context(
 ) -> Result<(
     Project,
     String,
-    Option<codeyard_repos_core::api_shared::github::auth::Authentication>,
+    Option<codeyard_identity::github_auth::Authentication>,
 )> {
-    let auth = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, write).await?;
+    let auth = codeyard_identity::github_auth::authenticate(state, headers, write).await?;
     if write {
         auth.as_ref()
-            .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+            .ok_or_else(codeyard_identity::github_auth::required)?
             .require_write()?;
     }
     let (owner, name) = owner(state, params, numeric).await?;
@@ -160,7 +160,7 @@ async fn list(
     Query(query): Query<ListQuery>,
 ) -> Result<Response> {
     let auth =
-        codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+        codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let (owner, name) = owner(&state, &params, false).await?;
     let (after, before, limit) = page.window()?;
     let query = query.q.as_deref().unwrap_or("");
@@ -273,7 +273,7 @@ async fn add_field(
 ) -> Result<Response> {
     let (project, name, auth) = context(&state, &headers, &params, true, false).await?;
     let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let field = codeyard_db_repos::projects::add_field(
         &state.pool,
         auth.user.id,

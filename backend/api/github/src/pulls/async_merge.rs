@@ -43,7 +43,7 @@ async fn start(
     body: Bytes,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     // The merge moves the base branch, so the credential needs contents write as well as the
     // pull request grant the route asked for.
     auth.repository_scope(&state.pool, repo.id, "contents", true)

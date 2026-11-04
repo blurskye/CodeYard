@@ -369,7 +369,7 @@ async fn save(
 ) -> Result<Response> {
     let (owner, name, path) = (&params["owner"], &params["repo"], &params["path"]);
     let (repo, auth) = repository(&state, &headers, owner, name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let authority = auth.database_actor();
     let branch = input.branch.as_deref().unwrap_or(&repo.default_branch);
     let store = repo_store(&repo, state.cluster.as_ref());

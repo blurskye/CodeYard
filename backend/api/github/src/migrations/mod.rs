@@ -59,10 +59,10 @@ async fn administrator(
     write: bool,
 ) -> Result<(
     codeyard_db_core::models::Repository,
-    codeyard_repos_core::api_shared::github::auth::Authentication,
+    codeyard_identity::github_auth::Authentication,
 )> {
     let (repo, actor) = repository(state, headers, owner, name, write).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     if !codeyard_identity::repository_access::can_admin(&state.pool, &actor.user, &repo)
         .await
         .map_err(Error::unavailable)?
@@ -127,7 +127,7 @@ fn credentials(input: &Input) -> Result<Option<codeyard_repos::imports::Credenti
 async fn begin(
     state: Arc<AppState>,
     repo: codeyard_db_core::models::Repository,
-    actor: codeyard_repos_core::api_shared::github::auth::Authentication,
+    actor: codeyard_identity::github_auth::Authentication,
     input: Input,
     url: &str,
 ) -> Result<SourceImport> {

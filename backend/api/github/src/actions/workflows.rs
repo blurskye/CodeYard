@@ -156,7 +156,7 @@ async fn enabled(
 ) -> Result<StatusCode> {
     let (repo, authentication) = repository(state, headers, owner, name, true).await?;
     let authentication =
-        authentication.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        authentication.ok_or_else(codeyard_identity::github_auth::required)?;
     let workflow = lookup(state, &repo, key).await?;
     workflows::set_workflow_enabled(
         &state.pool,
@@ -212,7 +212,7 @@ async fn dispatch(
 ) -> Result<Response> {
     let (repo, authentication) = repository(&state, &headers, &owner, &name, true).await?;
     let authentication =
-        authentication.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        authentication.ok_or_else(codeyard_identity::github_auth::required)?;
     let credential = authentication.ci_credential(&headers, "actions")?;
     let actor = authentication.workflow_actor(&state, repo.id).await?;
     let Json(input) = input.map_err(|_| Error::invalid("Invalid workflow dispatch"))?;

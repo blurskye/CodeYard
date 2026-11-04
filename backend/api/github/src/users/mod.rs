@@ -119,9 +119,9 @@ async fn authenticated(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     Ok(Json(
         document(&state, &actor.user, Some(actor.token.id)).await?,
     ))
@@ -134,9 +134,9 @@ async fn update(
 ) -> Result<Json<Value>> {
     use codeyard_db_core::queries::users::accounts::AccountCredential;
     use codeyard_db_identity::users::profiles::ProfilePatch;
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
     let object = input
@@ -193,7 +193,7 @@ async fn by_username(
     headers: HeaderMap,
     Path(username): Path<String>,
 ) -> Result<Json<Value>> {
-    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     if let Some(user) =
         codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, &username)
             .await
@@ -247,7 +247,7 @@ async fn by_id(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let user = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
@@ -266,7 +266,7 @@ async fn list(
     headers: HeaderMap,
     Query(query): Query<UserList>,
 ) -> Result<Response> {
-    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let limit = codeyard_api_http::shared::github::pagination::page_size(query.per_page);
     let mut users = codeyard_db_identity::users::accounts::list_users_since(
         &state.pool,
@@ -343,7 +343,7 @@ async fn followers(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     connections(&state, target(&state, &username).await?.id, true, page, uri).await
 }
 
@@ -354,7 +354,7 @@ async fn following(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     connections(
         &state,
         target(&state, &username).await?.id,
@@ -371,9 +371,9 @@ async fn own_followers(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     connections(&state, actor.user.id, true, page, uri).await
 }
 
@@ -383,9 +383,9 @@ async fn own_following(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     connections(&state, actor.user.id, false, page, uri).await
 }
 
@@ -412,7 +412,7 @@ async fn check_following(
     headers: HeaderMap,
     Path((username, target_user)): Path<(String, String)>,
 ) -> Result<StatusCode> {
-    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let Some(user) =
         codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, &username)
             .await
@@ -428,9 +428,9 @@ async fn check_own_following(
     headers: HeaderMap,
     Path(username): Path<String>,
 ) -> Result<StatusCode> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     check(&state, actor.user.id, &username).await
 }
 
@@ -440,9 +440,9 @@ async fn change_follow(
     username: &str,
     follow: bool,
 ) -> Result<StatusCode> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     if !follow && actor.user.username == username {
         return Ok(StatusCode::NO_CONTENT);
@@ -496,9 +496,9 @@ async fn hovercard(
     Path(username): Path<String>,
     Query(query): Query<Context>,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     let user = target(&state, &username).await?;
     let subject = match (query.subject_type.as_deref(), query.subject_id.as_deref()) {
         (None, None) => None,
@@ -532,14 +532,14 @@ async fn hovercard(
         .map_err(Error::unavailable)?
         .is_none_or(|user| user.id != actor.user.id)
     {
-        return Err(codeyard_repos_core::api_shared::github::auth::required());
+        return Err(codeyard_identity::github_auth::required());
     }
     Ok(Json(json!({"contexts":contexts})))
 }
 
 async fn hovercard_subject(
     state: &AppState,
-    auth: &codeyard_repos_core::api_shared::github::auth::Authentication,
+    auth: &codeyard_identity::github_auth::Authentication,
     user: i64,
     kind: &str,
     id: i64,
@@ -552,7 +552,7 @@ async fn hovercard_subject(
                 .map_err(Error::unavailable)?
                 .filter(|repo| !repo.is_gist)
                 .ok_or_else(Error::missing)?;
-            if !codeyard_repos_core::api_shared::github::auth::readable_repositories(
+            if !codeyard_identity::github_auth::readable_repositories(
                 state,
                 Some(auth),
                 &[id],
@@ -603,7 +603,7 @@ async fn hovercard_subject(
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-            if !codeyard_repos_core::api_shared::github::auth::readable_repositories(
+            if !codeyard_identity::github_auth::readable_repositories(
                 state,
                 Some(auth),
                 &[repo],
@@ -628,7 +628,7 @@ async fn hovercard_subject(
                         .ok_or_else(Error::missing)?;
                 (row.repo_id, row.author_id)
             };
-            if !codeyard_repos_core::api_shared::github::auth::readable_repositories(
+            if !codeyard_identity::github_auth::readable_repositories(
                 state,
                 Some(auth),
                 &[repo],
@@ -678,7 +678,7 @@ async fn public_keys(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let user = target(&state, &username).await?;
     key_list(&state, user.id, page, uri, false).await
 }
@@ -688,9 +688,9 @@ async fn own_keys(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     key_list(&state, actor.user.id, page, uri, true).await
 }
 async fn key_list(
@@ -719,9 +719,9 @@ async fn key(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     let key = codeyard_db_identity::users::ssh_keys::get_user_key(&state.pool, actor.user.id, id)
         .await
         .map_err(Error::unavailable)?
@@ -738,9 +738,9 @@ async fn create_key(
     headers: HeaderMap,
     input: std::result::Result<Json<KeyInput>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Response> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
     let title = input
@@ -783,9 +783,9 @@ async fn delete_key(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<StatusCode> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let deleted = codeyard_db_identity::users::ssh_keys::delete_user_ssh_key_for_token(
         &state.pool,

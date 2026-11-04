@@ -32,7 +32,7 @@ pub(super) async fn root(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>> {
-    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let mut value = json!({});
     for (key, path) in [
         ("current_user_url", "/user"),
@@ -109,7 +109,7 @@ pub(super) async fn root(
 }
 
 async fn meta(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Result<Json<Value>> {
-    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     Ok(Json(
         json!({"verifiable_password_authentication":false,"installed_version":env!("CARGO_PKG_VERSION")}),
     ))
@@ -359,7 +359,7 @@ async fn markdown(
 }
 pub(super) async fn resolve_references(
     state: &AppState,
-    authentication: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
+    authentication: Option<&codeyard_identity::github_auth::Authentication>,
     repo: &codeyard_db_core::models::Repository,
     owner: &str,
     name: &str,
@@ -376,7 +376,7 @@ pub(super) async fn resolve_references(
         document,
         |records| async move {
             let ids: Vec<_> = records.iter().map(|repo| repo.id).collect();
-            codeyard_repos_core::api_shared::github::auth::readable_repositories(
+            codeyard_identity::github_auth::readable_repositories(
                 state,
                 authentication,
                 &ids,

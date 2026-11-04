@@ -145,11 +145,11 @@ async fn owner_actor(
     name: &str,
 ) -> Result<(
     Organization,
-    codeyard_repos_core::api_shared::github::auth::Authentication,
+    codeyard_identity::github_auth::Authentication,
 )> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     let org = target(state, name).await?;
     let role = outcome(
         codeyard_db_orgs::organizations::membership::get_organization_role(
@@ -175,7 +175,7 @@ async fn get_org(
     Path(name): Path<String>,
 ) -> Result<Json<Value>> {
     let actor =
-        codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+        codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let org = target(&state, &name).await?;
     if let Some(actor) = actor {
         if let OrganizationOutcome::Applied(owned) =
@@ -215,9 +215,9 @@ async fn delete_org(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<StatusCode> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
     let result = codeyard_app::organizations::delete(&state, actor.database_actor(), org.id)
@@ -251,7 +251,7 @@ async fn list(
     headers: HeaderMap,
     Query(query): Query<Since>,
 ) -> Result<Response> {
-    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let limit = codeyard_api_http::shared::github::pagination::page_size(query.per_page);
     let mut orgs = codeyard_db_orgs::organizations::discovery::list_organizations(
         &state.pool,
@@ -322,9 +322,9 @@ async fn own_orgs(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     organization_list(&state, actor.user.id, true, page, uri).await
 }
 async fn user_orgs(
@@ -334,7 +334,7 @@ async fn user_orgs(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let user = crate::users::target(&state, &username).await?;
     // This endpoint only lists public memberships, including when the caller is the target.
     organization_list(&state, user.id, false, page, uri).await
@@ -355,7 +355,7 @@ async fn member_list(
     uri: Uri,
     public: bool,
 ) -> Result<Response> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, false).await?;
+    let actor = codeyard_identity::github_auth::authenticate(state, headers, false).await?;
     let org = target(state, name).await?;
     let role = query.role.as_deref().unwrap_or("all");
     let filter = query.filter.as_deref().unwrap_or("all");
@@ -415,7 +415,7 @@ async fn check(
     username: &str,
     public: bool,
 ) -> Result<Response> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, false).await?;
+    let actor = codeyard_identity::github_auth::authenticate(state, headers, false).await?;
     let org = target(state, name).await?;
     let user = crate::users::target(state, username).await?;
     let visible = codeyard_db_orgs::organizations::discovery::list_organizations(
@@ -502,9 +502,9 @@ async fn visibility(
     username: &str,
     public: bool,
 ) -> Result<StatusCode> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     if actor.user.username != username {
         return Err(Error::new(
@@ -577,9 +577,9 @@ async fn membership(
     headers: HeaderMap,
     Path((name, username)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     let org = target(&state, &name).await?;
     // Unlike /user/memberships, this read requires membership even for an invitee.
     if !matches!(
@@ -604,9 +604,9 @@ async fn own_membership(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     let org = target(&state, &name).await?;
     Ok(Json(
         membership_value(&state, actor.user.id, &org, &actor.user).await?,
@@ -624,9 +624,9 @@ async fn own_memberships(
     Query(query): Query<Memberships>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     if query
         .state
         .as_deref()
@@ -678,9 +678,9 @@ async fn accept(
     Path(name): Path<String>,
     input: std::result::Result<Json<Accept>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
     if input.state != "active" {

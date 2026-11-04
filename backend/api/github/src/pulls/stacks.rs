@@ -122,7 +122,7 @@ async fn change(
     let (owner, name) = namespace;
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
     if !codeyard_identity::repository_access::can_write(&state.pool, &actor, &repo)
         .await
@@ -206,7 +206,7 @@ async fn unstack(
 ) -> Result<Response> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
     let meta = metadata(&state, repo.id, number).await?;
     let count = codeyard_repos_pulls::repositories::pull_requests::mutations::unstack_named_stack(

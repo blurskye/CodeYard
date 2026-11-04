@@ -29,7 +29,7 @@ use std::sync::Arc;
 fn error(error: anyhow::Error) -> Error {
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Missing) => Error::missing(),
-        Some(Refusal::Unauthorized) => codeyard_repos_core::api_shared::github::auth::required(),
+        Some(Refusal::Unauthorized) => codeyard_identity::github_auth::required(),
         Some(Refusal::Forbidden) => {
             Error::new(StatusCode::FORBIDDEN, "Resource not accessible by token")
         }
@@ -46,9 +46,9 @@ async fn namespace(
     write: bool,
 ) -> Result<(
     Owner,
-    Option<codeyard_repos_core::api_shared::github::auth::Authentication>,
+    Option<codeyard_identity::github_auth::Authentication>,
 )> {
-    let auth = codeyard_repos_core::api_shared::github::auth::authenticate(
+    let auth = codeyard_identity::github_auth::authenticate(
         state,
         headers,
         write || (!params.contains_key("org") && !params.contains_key("user_id")),
@@ -56,7 +56,7 @@ async fn namespace(
     .await?;
     if write {
         auth.as_ref()
-            .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+            .ok_or_else(codeyard_identity::github_auth::required)?
             .require_write()?;
     }
     let (name, kind) = if let Some(org) = params.get("org") {
@@ -66,7 +66,7 @@ async fn namespace(
     } else {
         (
             auth.as_ref()
-                .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+                .ok_or_else(codeyard_identity::github_auth::required)?
                 .user
                 .username
                 .as_str(),
@@ -91,7 +91,7 @@ async fn package(
     state: &AppState,
     owner: &Owner,
     params: &HashMap<String, String>,
-    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_identity::github_auth::Authentication>,
     deleted: bool,
 ) -> Result<Package> {
     let kind = kind(params.get("package_type").map(String::as_str))?;
@@ -113,7 +113,7 @@ async fn documents(
     state: &AppState,
     owner: &Owner,
     packages: &[Package],
-    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_identity::github_auth::Authentication>,
 ) -> Result<Vec<Value>> {
     let ids: Vec<_> = packages.iter().map(|package| package.id).collect();
     let counts: HashMap<_, _> = codeyard_db_repos::packages::version_counts(&state.pool, &ids)
@@ -142,8 +142,8 @@ async fn documents(
                 {
                     Ok(()) => {}
                     Err(
-                        codeyard_repos_core::api_shared::github::auth::ScopeError::Missing
-                        | codeyard_repos_core::api_shared::github::auth::ScopeError::Denied,
+                        codeyard_identity::github_auth::ScopeError::Missing
+                        | codeyard_identity::github_auth::ScopeError::Denied,
                     ) => continue,
                     Err(error) => return Err(crate::auth::scope_error(error)),
                 }
@@ -259,9 +259,9 @@ async fn docker_conflicts(
     headers: HeaderMap,
     Path(params): Path<HashMap<String, String>>,
 ) -> Result<Json<Vec<Value>>> {
-    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     namespace(&state, &headers, &params, false).await?;
     // Codeyard publishes directly into the container registry. It has no legacy Docker
     // registry or migration queue, so no package can have a Docker migration conflict.
@@ -308,7 +308,7 @@ async fn change(
 ) -> Result<Response> {
     let restore = uri.path().ends_with("/restore");
     let (owner, auth) = namespace(&state, &headers, &params, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let package = package(&state, &owner, &params, Some(&auth), restore).await?;
     let version = params
         .get("package_version_id")

@@ -70,7 +70,7 @@ pub(super) async fn association(
 
 pub(super) async fn readable_head(
     state: &AppState,
-    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_identity::github_auth::Authentication>,
     pull: &codeyard_db_core::models::PullRequest,
 ) -> Result<Option<codeyard_db_core::models::Repository>> {
     match pull.head_repo_id {
@@ -120,7 +120,7 @@ pub(super) async fn document(
     detail: bool,
 ) -> Result<Value> {
     let viewer =
-        codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, false).await?;
+        codeyard_identity::github_auth::authenticate(state, headers, false).await?;
     let author = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, pull.author_id)
         .await
         .map_err(Error::unavailable)?

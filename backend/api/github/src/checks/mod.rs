@@ -150,7 +150,7 @@ async fn create_suite(
     Json(input): Json<CreateSuite>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let (sha, branch) = head(&state, &repo, &input.head_sha).await?;
     let (suite, created) = codeyard_db_actions::checks::create_suite(
         &state.pool,
@@ -190,7 +190,7 @@ async fn create_run(
     Json(input): Json<CreateRun>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     input.patch.validate(true).map_err(write_error)?;
     let (sha, branch) = head(&state, &repo, &input.head_sha).await?;
     let changed = codeyard_db_actions::checks::create_run(
@@ -226,7 +226,7 @@ async fn update_run(
     Json(input): Json<RunPatch>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let changed = codeyard_db_actions::checks::update_run(
         &state.pool,
         Credential::Token(auth.token.id),
@@ -511,7 +511,7 @@ async fn rerequest(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let is_run = uri.path().contains("/check-runs/");
     let (suite, run) = if is_run {
         let run = codeyard_db_actions::checks::run(&state.pool, repo.id, id)
@@ -633,7 +633,7 @@ async fn preferences(
     Json(input): Json<Preferences>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let saved = codeyard_db_actions::checks::preferences(
         &state.pool,
         Credential::Token(auth.token.id),

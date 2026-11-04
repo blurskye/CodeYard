@@ -55,9 +55,9 @@ async fn actor(
     params: &Params,
     write: bool,
 ) -> Result<(Actor, i64)> {
-    let auth = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+    let auth = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     if write {
         auth.require_write()?;
     }
@@ -66,7 +66,7 @@ async fn actor(
         let job = codeyard_db_actions::ci_tokens::get(&state.pool, auth.token.id)
             .await
             .map_err(Error::unavailable)?
-            .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+            .ok_or_else(codeyard_identity::github_auth::required)?;
         let permissions: codeyard_model::permissions::Permissions =
             serde_json::from_str(&job.permissions).map_err(Error::unavailable)?;
         if !permissions.allows("artifact-metadata", write) {

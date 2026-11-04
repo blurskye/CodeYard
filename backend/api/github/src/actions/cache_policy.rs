@@ -28,7 +28,7 @@ async fn get_policy(
 ) -> Result<Json<Value>> {
     let (repo, authentication) = repository(state, headers, owner, name, false).await?;
     let actor = authentication
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
     if !codeyard_identity::repository_access::can_admin(&state.pool, &actor, &repo)
         .await
@@ -79,7 +79,7 @@ async fn set_policy(
 ) -> Result<StatusCode> {
     let (repo, authentication) = repository(state, headers, owner, name, true).await?;
     let actor = authentication
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user
         .id;
     let value = input.value(kind)?;

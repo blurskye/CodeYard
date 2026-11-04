@@ -60,7 +60,7 @@ async fn fork(
     OptionalJson(body): OptionalJson<Value>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (source, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = &auth.user;
     let input = body
         .map(serde_json::from_value::<Option<Fork>>)
@@ -114,7 +114,7 @@ async fn generate(
 ) -> Result<(StatusCode, Json<Value>)> {
     let (source, actor) =
         repository(&state, &headers, &template_owner, &template_name, true).await?;
-    let auth = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     let target = owner(&state, &auth.user, input.owner.as_deref()).await?;
     crate::auth::require_copy_owner(&state, &auth, target.target).await?;
     let repo = codeyard_repos_core::repositories::lifecycle::generate(

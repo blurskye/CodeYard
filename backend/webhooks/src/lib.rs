@@ -391,3 +391,6 @@ mod tests {
         assert_eq!(queue.bytes, QUEUE_BYTES);
     }
 }
+
+pub mod issue_documents;
+pub mod comment_documents;

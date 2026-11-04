@@ -68,7 +68,7 @@ async fn readable(
     name: &str,
 ) -> Result<(i64, codeyard_db_core::queries::credentials::Actor)> {
     let (repo, auth) = repository(state, headers, owner, name, false).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     Ok((repo.id, auth.database_actor()))
 }
 

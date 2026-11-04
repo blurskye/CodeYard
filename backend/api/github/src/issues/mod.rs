@@ -121,7 +121,7 @@ async fn list(
         .map(|name| {
             let name = if name == "@me" {
                 auth.as_ref()
-                    .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+                    .ok_or_else(codeyard_identity::github_auth::required)?
                     .user
                     .username
                     .clone()
@@ -246,7 +246,7 @@ pub(super) fn operation_error(error: codeyard_repos_pulls::issues::OperationErro
         OperationError::Missing { .. } => Error::missing(),
         OperationError::Denied { message, .. } => Error::new(StatusCode::FORBIDDEN, message),
         OperationError::Unauthenticated { .. } => {
-            codeyard_repos_core::api_shared::github::auth::required()
+            codeyard_identity::github_auth::required()
         }
         OperationError::Conflict { message, .. } => Error::new(StatusCode::CONFLICT, message),
         OperationError::Unavailable { .. } => Error::unavailable(()),
@@ -291,7 +291,7 @@ pub fn assignment_error(error: anyhow::Error) -> Error {
 
 pub async fn apply_metadata(
     state: &AppState,
-    authentication: &codeyard_repos_core::api_shared::github::auth::Authentication,
+    authentication: &codeyard_identity::github_auth::Authentication,
     repo: &codeyard_db_core::models::Repository,
     item: AssignedItem,
     detail: (&str, i32, &str),
@@ -392,7 +392,7 @@ async fn create(
     Json(input): Json<Value>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let authentication = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let authentication = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = &authentication.user;
     let title = title(input.get("title"))?.ok_or_else(|| Error::invalid("Title is required"))?;
     let parent_issue_id = input
@@ -459,7 +459,7 @@ async fn update(
     Json(input): Json<Value>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let authentication = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let authentication = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = &authentication.user;
     let item =
         codeyard_app::api_shared::github::labels::item(&state.pool, repo.id, &p["issue_number"])
@@ -564,7 +564,7 @@ async fn change_assignees(
     remove: bool,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let authentication = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let authentication = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = &authentication.user;
     let item =
         codeyard_app::api_shared::github::labels::item(&state.pool, repo.id, &p["issue_number"])
@@ -659,23 +659,23 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 
-use codeyard_repos_core::api_shared::github::issues::Metadata;
+use codeyard_webhooks::issue_documents::Metadata;
 
-use codeyard_repos_core::api_shared::github::issues::Reader;
+use codeyard_webhooks::issue_documents::Reader;
 
-use codeyard_repos_core::api_shared::github::issues::assignee_names;
+use codeyard_webhooks::issue_documents::assignee_names;
 
-use codeyard_repos_core::api_shared::github::issues::document;
+use codeyard_webhooks::issue_documents::document;
 
-use codeyard_repos_core::api_shared::github::issues::documents;
+use codeyard_webhooks::issue_documents::documents;
 
-use codeyard_repos_core::api_shared::github::issues::documents_page;
+use codeyard_webhooks::issue_documents::documents_page;
 
-use codeyard_repos_core::api_shared::github::issues::metadata;
+use codeyard_webhooks::issue_documents::metadata;
 
 use codeyard_app::api_shared::github::issues::read;
 
-use codeyard_repos_core::api_shared::github::issues::resolve_assignees;
+use codeyard_webhooks::issue_documents::resolve_assignees;
 
 pub mod relationships;
 

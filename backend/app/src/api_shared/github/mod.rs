@@ -15,12 +15,12 @@ pub async fn repository(
     write: bool,
 ) -> Result<(
     codeyard_db_core::models::Repository,
-    Option<codeyard_repos_core::api_shared::github::auth::Authentication>,
+    Option<codeyard_identity::github_auth::Authentication>,
 )> {
-    let auth = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, write).await?;
+    let auth = codeyard_identity::github_auth::authenticate(state, headers, write).await?;
     if write {
         auth.as_ref()
-            .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+            .ok_or_else(codeyard_identity::github_auth::required)?
             .require_write()?;
     }
     let repo = codeyard_db_repos::repositories::records::get_repository(&state.pool, owner, name)

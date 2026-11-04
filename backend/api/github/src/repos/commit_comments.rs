@@ -87,7 +87,7 @@ async fn writer(
 ) -> Result<(Repository, codeyard_db_core::queries::credentials::Actor)> {
     // Comment participation needs read access, not permission to push to the repository.
     let (repo, auth) = repository(state, headers, owner, name, false).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     auth.require_write()?;
     Ok((repo, auth.database_actor()))
 }
@@ -155,7 +155,7 @@ async fn item(
     let actor = if reading {
         None
     } else {
-        let auth = authentication.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        let auth = authentication.ok_or_else(codeyard_identity::github_auth::required)?;
         auth.require_write()?;
         Some(auth.database_actor())
     };
@@ -177,7 +177,7 @@ async fn item(
         .ok_or_else(|| Error::unavailable(()))?;
         return Ok(Json(document_one(&state.pool, &entry, &repo, &owner).await?).into_response());
     }
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     if method == Method::DELETE {
         codeyard_repos_pulls::repositories::commit_comments::delete(&state.pool, actor, repo.id, id, None)
             .await

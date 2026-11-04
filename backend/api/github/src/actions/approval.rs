@@ -25,7 +25,7 @@ async fn approve(
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, authentication) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = authentication
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user
         .id;
     let run = run(&state, repo.id, id).await?;

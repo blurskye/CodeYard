@@ -4,7 +4,7 @@ use axum::{extract::{Path,State},http::HeaderMap,Json};
 use codeyard_model::github_error::Result;
 use serde_json::Value;
 use std::{collections::HashMap,sync::Arc};
-use codeyard_repos_core::api_shared::github::issues::{document, Reader};
+use codeyard_webhooks::issue_documents::{document, Reader};
 pub async fn read(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

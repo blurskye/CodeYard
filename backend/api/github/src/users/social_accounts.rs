@@ -42,7 +42,7 @@ async fn public(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let user = crate::users::target(&state, &username).await?;
     list(&state, user.id, page, uri).await
 }
@@ -52,9 +52,9 @@ async fn own(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     list(&state, actor.user.id, page, uri).await
 }
 async fn list(
@@ -100,9 +100,9 @@ async fn change(
     input: std::result::Result<Json<Input>, axum::extract::rejection::JsonRejection>,
     add: bool,
 ) -> Result<Vec<codeyard_db_identity::users::social_accounts::SocialAccount>> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
     if input.account_urls.is_empty() || input.account_urls.len() > 4 {

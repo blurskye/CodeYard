@@ -48,10 +48,10 @@ pub async fn buffered_write(
 pub async fn writer(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<codeyard_repos_core::api_shared::github::auth::Authentication> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+) -> Result<codeyard_identity::github_auth::Authentication> {
+    let actor = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     Ok(actor)
 }

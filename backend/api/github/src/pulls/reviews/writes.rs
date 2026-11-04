@@ -56,7 +56,7 @@ async fn create(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = viewer.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = viewer.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = &auth.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Create = if body.is_empty() {
@@ -164,7 +164,7 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Body = serde_json::from_slice(&body).map_err(json_parse_error)?;
@@ -188,7 +188,7 @@ async fn remove(
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let review =
@@ -225,7 +225,7 @@ async fn submit(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = viewer.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = viewer.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = &auth.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Submit = serde_json::from_slice(&body).map_err(json_parse_error)?;
@@ -274,7 +274,7 @@ async fn change_reviewers(
     let (owner, name, number) = namespace;
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     if !codeyard_identity::repository_access::can_write(&state.pool, &actor, &repo)

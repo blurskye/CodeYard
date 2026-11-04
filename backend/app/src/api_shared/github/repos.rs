@@ -38,7 +38,7 @@ pub async fn public_fork_count(state: &AppState, repo: i64) -> Result<i32> {
 pub async fn document(
     state: &AppState,
     repo: &Repository,
-    viewer: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
+    viewer: Option<&codeyard_identity::github_auth::Authentication>,
 ) -> Result<Value> {
     documents(state, std::slice::from_ref(repo), viewer)
         .await?
@@ -49,7 +49,7 @@ pub async fn document(
 pub async fn documents(
     state: &AppState,
     repos: &[Repository],
-    viewer: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
+    viewer: Option<&codeyard_identity::github_auth::Authentication>,
 ) -> Result<Vec<Value>> {
     let ids: Vec<_> = repos.iter().map(|repo| repo.id).collect();
     let owners =
@@ -92,7 +92,7 @@ pub async fn documents(
         );
     }
     if let Some(viewer) = viewer {
-        let readable = codeyard_repos_core::api_shared::github::auth::readable_repositories(
+        let readable = codeyard_identity::github_auth::readable_repositories(
             state,
             Some(viewer),
             &ids,
@@ -111,7 +111,7 @@ pub async fn documents(
 async fn document_with(
     state: &AppState,
     repo: &Repository,
-    viewer: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
+    viewer: Option<&codeyard_identity::github_auth::Authentication>,
     owner: &str,
     facts: &codeyard_db_repos::repository_stats::RepositoryDocumentMetadata,
     topics: &[String],
@@ -140,7 +140,7 @@ async fn document_with(
                     .await
                     .map_err(Error::unavailable)?
                     .ok_or_else(Error::missing)?;
-            if !codeyard_repos_core::api_shared::github::auth::readable_repositories(
+            if !codeyard_identity::github_auth::readable_repositories(
                 state,
                 viewer,
                 &[id],
@@ -211,7 +211,7 @@ pub async fn remove(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     codeyard_repos_core::repositories::lifecycle::delete(
         &state.pool,
         state.cluster.as_ref(),

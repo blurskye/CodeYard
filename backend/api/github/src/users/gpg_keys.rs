@@ -78,9 +78,9 @@ async fn list(
     Query(pagination): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     page(&state, &actor.user, pagination, uri).await
 }
 async fn public(
@@ -90,7 +90,7 @@ async fn public(
     Query(pagination): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     page(
         &state,
         &crate::users::target(&state, &username).await?,
@@ -125,9 +125,9 @@ async fn create(
     headers: HeaderMap,
     input: std::result::Result<Json<CreateKey>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>)> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let Json(input) =
         input.map_err(|_| Error::validation("GpgKey", "armored_public_key", "invalid"))?;
@@ -150,9 +150,9 @@ async fn detail(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     let key = codeyard_db_identity::users::gpg_keys::get_gpg_key(&state.pool, actor.user.id, id)
         .await
         .map_err(Error::unavailable)?
@@ -166,9 +166,9 @@ async fn remove(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<StatusCode> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     codeyard_identity::gpg::delete(
         &state.pool,

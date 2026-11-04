@@ -205,9 +205,9 @@ async fn scope(
     p: &Params,
     write: bool,
 ) -> Result<(i64, Scope)> {
-    let auth = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+    let auth = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     if write {
         auth.require_write()?;
     }
@@ -489,9 +489,9 @@ async fn repositories(
     {
         return Err(Error::missing());
     }
-    let credential = codeyard_repos_core::api_shared::github::auth::authenticate(&s, &headers, true)
+    let credential = codeyard_identity::github_auth::authenticate(&s, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     let repos =
         codeyard_app::api_shared::github::repos::documents(&s, &rows, Some(&credential)).await?;
     // No document loaded after the first group snapshot escapes a later loss of group authority.

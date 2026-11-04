@@ -47,9 +47,9 @@ async fn starred(
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<StatusCode> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     if codeyard_db_repos::repositories::engagement::is_repo_starred(&state.pool, actor.id, repo.id)
@@ -70,7 +70,7 @@ async fn change_star(
     enabled: bool,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     codeyard_repos_pulls::repositories::engagement::change(
         &state.pool,
         &state.notification_broadcaster,
@@ -132,7 +132,7 @@ async fn list_stars(
     uri: &Uri,
 ) -> Result<Response> {
     let auth =
-        codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, username.is_none())
+        codeyard_identity::github_auth::authenticate(state, headers, username.is_none())
             .await?;
     let user = match username {
         Some(username) => {
@@ -143,7 +143,7 @@ async fn list_stars(
         }
         None => auth
             .as_ref()
-            .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+            .ok_or_else(codeyard_identity::github_auth::required)?
             .user
             .clone(),
     };
@@ -174,7 +174,7 @@ async fn list_stars(
     .await
     .map_err(Error::unavailable)?;
     let has_next = rows.len() > limit;
-    let readable = codeyard_repos_core::api_shared::github::auth::readable_repositories(
+    let readable = codeyard_identity::github_auth::readable_repositories(
         state,
         auth.as_ref(),
         &rows.iter().map(|repo| repo.id).collect::<Vec<_>>(),

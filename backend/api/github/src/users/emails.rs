@@ -92,9 +92,9 @@ async fn read(
     uri: axum::http::Uri,
     public: bool,
 ) -> Result<Response> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     let values = documents(state, &actor.user, public).await?;
     let (offset, limit) = page.window()?;
     let more = values.len() > offset + limit;
@@ -136,9 +136,9 @@ async fn add(
     headers: HeaderMap,
     input: std::result::Result<Json<Addresses>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(StatusCode, Json<Vec<Value>>)> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let Json(input) = input.map_err(|_| Error::validation("Email", "emails", "invalid"))?;
     let added = codeyard_identity::emails::change(
@@ -170,9 +170,9 @@ async fn remove(
     headers: HeaderMap,
     input: std::result::Result<Json<Addresses>, axum::extract::rejection::JsonRejection>,
 ) -> Result<StatusCode> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let Json(input) = input.map_err(|_| Error::validation("Email", "emails", "invalid"))?;
     codeyard_identity::emails::change(
@@ -196,9 +196,9 @@ async fn visibility(
     headers: HeaderMap,
     input: std::result::Result<Json<Visibility>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Vec<Value>>> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let Json(input) = input.map_err(|_| Error::validation("Email", "visibility", "invalid"))?;
     if !matches!(input.visibility.as_str(), "public" | "private") {

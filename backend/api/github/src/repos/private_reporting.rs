@@ -51,7 +51,7 @@ async fn set(
     enabled: bool,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(state, headers, owner, name, true).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     codeyard_db_repos::repositories::security::set_enabled(
         &state.pool,
         actor.database_actor(),

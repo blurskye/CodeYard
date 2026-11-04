@@ -33,9 +33,9 @@ async fn list(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     let org = target(&state, &name).await?;
     let types = codeyard_db_repos::issue_attributes::organization_catalog(
         &state.pool,
@@ -65,9 +65,9 @@ async fn save(
     Path(params): Path<Params>,
     input: std::result::Result<Json<Input>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let org = target(&state, &params["org"]).await?;
     let Json(input) =
@@ -102,9 +102,9 @@ async fn remove(
     headers: HeaderMap,
     Path((name, id)): Path<(String, i64)>,
 ) -> Result<StatusCode> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
     codeyard_db_repos::issue_attributes::delete_organization_definition(

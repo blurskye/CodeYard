@@ -129,10 +129,10 @@ async fn organization(
     headers: &HeaderMap,
     name: &str,
     write: bool,
-) -> Result<(i64, codeyard_repos_core::api_shared::github::auth::Authentication)> {
-    let auth = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+) -> Result<(i64, codeyard_identity::github_auth::Authentication)> {
+    let auth = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     if write {
         auth.require_write()?;
     }
@@ -512,7 +512,7 @@ async fn inherited(
     let (repo, auth) =
         codeyard_app::api_shared::github::repository(&state, &headers, &owner, &name, false)
             .await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let kind = kind(&route);
     let rows = values::inherited(&state.pool, auth.user.id, repo.id, kind)
         .await

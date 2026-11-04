@@ -80,7 +80,7 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = auth.user.id;
     if !codeyard_git::is_full_commit_id(&sha) {
         return Err(Error::invalid("sha must be a full commit ID"));
@@ -174,7 +174,7 @@ async fn read(
             .map_err(Error::unavailable)?
             .is_none_or(|user| user.id != auth.user.id)
         {
-            return Err(codeyard_repos_core::api_shared::github::auth::required());
+            return Err(codeyard_identity::github_auth::required());
         }
         auth.repository_scope(&state.pool, repo.id, "statuses", false)
             .await

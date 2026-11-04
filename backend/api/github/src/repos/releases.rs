@@ -204,7 +204,7 @@ async fn generate_notes(
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = auth
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
     let notes = codeyard_repos_pulls::repositories::releases::notes::generate_notes(
         &state.pool,
@@ -230,7 +230,7 @@ async fn generate_notes(
 /// own events start no workflows, so a job token may create them.
 async fn may_create_tag(
     state: &AppState,
-    auth: &codeyard_repos_core::api_shared::github::auth::Authentication,
+    auth: &codeyard_identity::github_auth::Authentication,
 ) -> Result<bool> {
     Ok(auth.is_job()
         || codeyard_identity::oauth_apps::allows_workflows(&state.pool, auth.token.id)
@@ -271,7 +271,7 @@ async fn discussion_category(
 /// Records the requested category and, once the release is published, starts its discussion.
 async fn start_discussion(
     state: &AppState,
-    auth: &codeyard_repos_core::api_shared::github::auth::Authentication,
+    auth: &codeyard_identity::github_auth::Authentication,
     release: &codeyard_db_core::models::Release,
     category: Option<i64>,
 ) -> Result<()> {
@@ -332,7 +332,7 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     // The release code refuses a new tag where the tag is made.
     let new_tag_denied = !may_create_tag(&state, &auth).await?;
     let category =
@@ -429,7 +429,7 @@ async fn update(
     Json(value): Json<Value>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let input: Update = serde_json::from_value(value.clone())
         .map_err(|_| Error::invalid("Invalid release fields"))?;
     // Publishing a draft creates its tag when the tag is missing.
@@ -491,7 +491,7 @@ async fn upload(
     request: Request,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, request.headers(), &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     codeyard_identity::repository_access::check_write(&state.pool, repo.id, auth.user.id)
         .await
         .map_err(|error| release_error(ReleaseError::Access(error)))?;
@@ -568,7 +568,7 @@ async fn update_asset(
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = auth
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
     let input: AssetUpdate = serde_json::from_value(value.clone())
         .map_err(|_| Error::invalid("Invalid asset fields"))?;
@@ -603,7 +603,7 @@ async fn remove(
     codeyard_repos_pulls::repositories::releases::delete(
         &state.pool,
         &state.storage,
-        auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        auth.ok_or_else(codeyard_identity::github_auth::required)?
             .user
             .id,
         &owner,
@@ -697,7 +697,7 @@ async fn remove_asset(
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = auth
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user
         .id;
     let asset = codeyard_db_repos::releases::get_repository_release_asset(&state.pool, repo.id, id)

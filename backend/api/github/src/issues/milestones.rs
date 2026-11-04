@@ -123,7 +123,7 @@ async fn save(
     creating: bool,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let input: Input = serde_json::from_value(value.clone())
         .map_err(|_| Error::invalid("Invalid milestone fields"))?;
     let number = if creating {
@@ -206,7 +206,7 @@ async fn remove(
     Path(p): Path<Params>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let summary = find(&state.pool, repo.id, &p["milestone_number"]).await?;
     codeyard_db_repos::milestones::delete_milestone(
         &state.pool,

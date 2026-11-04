@@ -60,7 +60,7 @@ fn denied() -> Error {
 }
 
 fn writer(
-    auth: &codeyard_repos_core::api_shared::github::auth::Authentication,
+    auth: &codeyard_identity::github_auth::Authentication,
 ) -> codeyard_db_core::queries::credentials::Actor {
     auth.database_actor()
 }
@@ -69,10 +69,10 @@ async fn actor(
     state: &AppState,
     headers: &HeaderMap,
     method: &Method,
-) -> Result<codeyard_repos_core::api_shared::github::auth::Authentication> {
-    let auth = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+) -> Result<codeyard_identity::github_auth::Authentication> {
+    let auth = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     if !crate::auth::read_method(method) {
         auth.require_write()?;
     }
@@ -88,7 +88,7 @@ async fn organization(state: &AppState, name: &str) -> Result<Organization> {
 
 async fn selected(
     state: &AppState,
-    auth: &codeyard_repos_core::api_shared::github::auth::Authentication,
+    auth: &codeyard_identity::github_auth::Authentication,
     params: &Params,
 ) -> Result<(
     Organization,
@@ -956,7 +956,7 @@ fn permissions(level: i16) -> Value {
 /// organization after the grant was read.
 async fn repository_document(
     state: &AppState,
-    auth: &codeyard_repos_core::api_shared::github::auth::Authentication,
+    auth: &codeyard_identity::github_auth::Authentication,
     org: i64,
     grant: &codeyard_db_orgs::organizations::teams::TeamRepositoryGrant,
 ) -> Result<Option<Value>> {
@@ -1008,7 +1008,7 @@ async fn repositories(
             // The credential's repository bounds and the reader's current access apply before
             // the page is cut.
             let ids: Vec<i64> = rows.iter().map(|row| row.repo_id).collect();
-            let readable = codeyard_repos_core::api_shared::github::auth::readable_repositories(
+            let readable = codeyard_identity::github_auth::readable_repositories(
                 state,
                 Some(credential),
                 &ids,

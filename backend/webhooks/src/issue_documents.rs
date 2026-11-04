@@ -1,4 +1,4 @@
-use crate::request_context::RequestContext;
+use codeyard_identity::database_context::DatabaseContext;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -17,8 +17,8 @@ use std::sync::Arc;
 pub enum Reader<'a> {
     /// An API request, within its credential's bounds.
     Request(
-        &'a dyn RequestContext,
-        Option<&'a crate::api_shared::github::auth::Authentication>,
+        &'a dyn DatabaseContext,
+        Option<&'a codeyard_identity::github_auth::Authentication>,
     ),
     /// A webhook delivery or an export, which goes wherever the repository's administrators send
     /// it: other repositories count only when they are public.
@@ -270,10 +270,10 @@ pub async fn documents_page(
             pins.insert((pull, row.item_id), row.pin);
         }
     }
-    let person = |id: i64| -> Result<codeyard_webhooks::payloads::Person> {
+    let person = |id: i64| -> Result<crate::payloads::Person> {
         users
             .get(&id)
-            .map(codeyard_webhooks::payloads::Person::of)
+            .map(crate::payloads::Person::of)
             .ok_or_else(|| Error::unavailable(()))
     };
     let mut values = Vec::with_capacity(items.len());
@@ -289,7 +289,7 @@ pub async fn documents_page(
         let (mut value, author, milestone, closed_by, labels, comments, reactions) = if pull {
             let pull = &pulls[&id];
             (
-                codeyard_webhooks::payloads::pull_request_issue(
+                crate::payloads::pull_request_issue(
                     pull,
                     &person(pull.author_id)?,
                     repo,
@@ -305,7 +305,7 @@ pub async fn documents_page(
         } else {
             let issue = &issues[&id];
             (
-                codeyard_webhooks::payloads::issue_json(
+                crate::payloads::issue_json(
                     issue,
                     &person(issue.author_id)?,
                     repo,
@@ -319,16 +319,16 @@ pub async fn documents_page(
                 &issue_reactions,
             )
         };
-        value["user"] = codeyard_webhooks::payloads::user(&users[&author]);
+        value["user"] = crate::payloads::user(&users[&author]);
         value["author_association"] =
             json!(associations.get(&author).map_or("NONE", String::as_str));
         value["closed_by"] = closed_by
             .and_then(|id| users.get(&id))
-            .map_or(Value::Null, codeyard_webhooks::payloads::user);
+            .map_or(Value::Null, crate::payloads::user);
         value["labels"] = json!(labels
             .into_iter()
             .flatten()
-            .map(|label| codeyard_webhooks::payloads::label(label, owner, &repo.name))
+            .map(|label| crate::payloads::label(label, owner, &repo.name))
             .collect::<Vec<_>>());
         value["comments"] = json!(comments.copied().unwrap_or(0));
         value["milestone"] =
@@ -336,14 +336,14 @@ pub async fn documents_page(
                 .and_then(|id| milestones.get(&id))
                 .map_or(Value::Null, |summary| {
                     let creator = summary.milestone.creator_id.and_then(|id| users.get(&id));
-                    codeyard_webhooks::payloads::milestone(summary, creator, owner, &repo.name)
+                    crate::payloads::milestone(summary, creator, owner, &repo.name)
                 });
         let item_assignees: Vec<Value> = assigned
             .get(&(pull, id))
             .into_iter()
             .flatten()
             .filter_map(|name| assignees.get(name))
-            .map(codeyard_webhooks::payloads::user)
+            .map(crate::payloads::user)
             .collect();
         value["assignee"] = item_assignees.first().cloned().unwrap_or(Value::Null);
         value["assignees"] = json!(item_assignees);
@@ -357,11 +357,11 @@ pub async fn documents_page(
             .cloned()
             .collect();
         value["reactions"] =
-            codeyard_webhooks::payloads::reaction_rollup(&format!("{url}/reactions"), &counts);
+            crate::payloads::reaction_rollup(&format!("{url}/reactions"), &counts);
         if !pull {
             value["type"] = types
                 .get(&id)
-                .map_or(Value::Null, codeyard_webhooks::payloads::issue_type);
+                .map_or(Value::Null, crate::payloads::issue_type);
             let summary = summaries.get(&id).copied().unwrap_or_default();
             value["sub_issues_summary"] = json!({
                 "total": summary.total,
@@ -380,8 +380,8 @@ pub async fn documents_page(
                 let comment_id =
                     codeyard_model::webhook_ids::conversation_comment_id(pin.comment_id, pull);
                 let comment =
-                    crate::api_shared::github::comments::find(pool, repo.id, comment_id).await?;
-                crate::api_shared::github::comments::document(pool, repo, owner, &comment).await?
+                    crate::comment_documents::find(pool, repo.id, comment_id).await?;
+                crate::comment_documents::document(pool, repo, owner, &comment).await?
             }
             None => Value::Null,
         };
@@ -394,7 +394,7 @@ pub async fn documents_page(
             (true, &pull_ids, "pull-requests"),
         ] {
             if !ids.is_empty()
-                && !crate::api_shared::github::auth::readable_repositories(
+                && !codeyard_identity::github_auth::readable_repositories(
                     state,
                     credential,
                     &[repo.id],
@@ -450,7 +450,7 @@ async fn relationship_summaries(
     others.dedup();
     let readable: std::collections::HashSet<i64> = match reader {
         Reader::Request(state, credential) => {
-            crate::api_shared::github::auth::readable_repositories(
+            codeyard_identity::github_auth::readable_repositories(
                 state, credential, &others, "issues",
             )
             .await?

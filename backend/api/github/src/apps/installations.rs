@@ -29,12 +29,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub(super) async fn jwt(state: &AppState, headers: &HeaderMap) -> Result<App> {
-    let value = codeyard_repos_core::api_shared::github::auth::credential(headers)
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let value = codeyard_identity::github_auth::credential(headers)
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     codeyard_identity::github_apps::authenticate(&state.pool, value)
         .await
         .map_err(Error::unavailable)?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)
+        .ok_or_else(codeyard_identity::github_auth::required)
 }
 async fn account(state: &AppState, installation: &Installation) -> Result<Value> {
     if let Some(user) = installation.user_id {
@@ -146,7 +146,7 @@ pub(super) async fn get_by_slug(
     headers: HeaderMap,
     Path(slug): Path<String>,
 ) -> Result<Json<Value>> {
-    let is_jwt = codeyard_repos_core::api_shared::github::auth::credential(&headers)
+    let is_jwt = codeyard_identity::github_auth::credential(&headers)
         .is_some_and(|value| value.split('.').count() == 3);
     let jwt_app = if is_jwt {
         Some(jwt(&state, &headers).await?)
@@ -156,7 +156,7 @@ pub(super) async fn get_by_slug(
     let authenticated = if is_jwt {
         None
     } else {
-        codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?
+        codeyard_identity::github_auth::authenticate(&state, &headers, false).await?
     };
     let app = codeyard_db_identity::github_apps::app(&state.pool, &slug)
         .await
@@ -467,17 +467,17 @@ pub(super) async fn installation_token(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<(
-    codeyard_repos_core::api_shared::github::auth::Authentication,
+    codeyard_identity::github_auth::Authentication,
     codeyard_db_core::queries::github_apps::Token,
 )> {
-    let auth = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+    let auth = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     let token = codeyard_db_identity::github_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?
         .filter(|token| !token.user_token)
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     Ok((auth, token))
 }
 pub(super) async fn list_repositories(
@@ -509,7 +509,7 @@ async fn repository_list(
     state: &AppState,
     installation: &Installation,
     selected: &[i64],
-    auth: &codeyard_repos_core::api_shared::github::auth::Authentication,
+    auth: &codeyard_identity::github_auth::Authentication,
     viewer: Option<i64>,
     uri: &axum::http::Uri,
     page: &Pagination,
@@ -548,7 +548,7 @@ pub(super) async fn revoke_token(
 /// The app a credential is bound to: an App token's, or a GitHub App's user token's.
 async fn user_app(
     state: &AppState,
-    auth: &codeyard_repos_core::api_shared::github::auth::Authentication,
+    auth: &codeyard_identity::github_auth::Authentication,
 ) -> Result<Option<i64>> {
     if let Some(token) = codeyard_db_identity::github_apps::token(&state.pool, auth.token.id)
         .await
@@ -581,9 +581,9 @@ pub(super) async fn user_installations(
     OriginalUri(uri): OriginalUri,
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
-    let auth = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let auth = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     let token = codeyard_db_identity::github_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?;
@@ -612,9 +612,9 @@ pub(super) async fn user_repositories(
     OriginalUri(uri): OriginalUri,
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
-    let auth = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let auth = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     let token = codeyard_db_identity::github_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?;
@@ -663,9 +663,9 @@ async fn change_repository(
     repo: i64,
     add: bool,
 ) -> Result<StatusCode> {
-    let auth = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+    let auth = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     auth.require_write()?;
     // A narrowed app token may not widen its own repository grant.
     if codeyard_db_identity::github_apps::token(&state.pool, auth.token.id)

@@ -53,7 +53,7 @@ pub fn settings_error(error: anyhow::Error) -> Error {
 pub(super) async fn search_document(
     state: &AppState,
     repo: &Repository,
-    viewer: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
+    viewer: Option<&codeyard_identity::github_auth::Authentication>,
     deadline: tokio::time::Instant,
     cached_license: Option<Option<&str>>,
 ) -> Result<Value> {
@@ -114,9 +114,9 @@ async fn create(
     params: Option<Path<HashMap<String, String>>>,
     Json(input): Json<Create>,
 ) -> Result<Response> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let merge_methods = codeyard_db_repos::repositories::records::MergeMethodUpdate {
         merge: input.allow_merge_commit,
@@ -279,7 +279,7 @@ async fn update(
     Json(value): Json<Value>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let input: Update = serde_json::from_value(value.clone())
         .map_err(|_| Error::invalid("Invalid repository fields"))?;
     for (field, enabled) in [
@@ -389,7 +389,7 @@ async fn transfer(
     Json(input): Json<Transfer>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let repo = codeyard_repos_core::repositories::lifecycle::transfer(
         &state.pool,
         state.cluster.as_ref(),
@@ -445,7 +445,7 @@ async fn set_topics(
     codeyard_db_repos::repositories::topics::replace_topics(
         &state.pool,
         actor
-            .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+            .ok_or_else(codeyard_identity::github_auth::required)?
             .user
             .id,
         repo.id,
@@ -541,7 +541,7 @@ async fn list(
     use codeyard_db_repos::repositories::github::RepositoryListQuery;
     let authenticated = uri.path() == "/api/v3/user/repos";
     let auth =
-        codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, authenticated)
+        codeyard_identity::github_auth::authenticate(&state, &headers, authenticated)
             .await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
     let params = params.map(|Path(params)| params).unwrap_or_default();
@@ -671,7 +671,7 @@ async fn list(
         scanned += rows.len() as i64;
         let done = rows.len() < 100;
         let ids: Vec<_> = rows.iter().map(|repo| repo.id).collect();
-        let readable = codeyard_repos_core::api_shared::github::auth::readable_repositories(
+        let readable = codeyard_identity::github_auth::readable_repositories(
             &state,
             auth.as_ref(),
             &ids,
@@ -702,7 +702,7 @@ async fn list(
             .iter()
             .filter_map(|value| value["id"].as_i64())
             .collect();
-        let readable = codeyard_repos_core::api_shared::github::auth::readable_repositories(
+        let readable = codeyard_identity::github_auth::readable_repositories(
             &state, None, &ids, "metadata",
         )
         .await?;
@@ -751,7 +751,7 @@ async fn dispatch(
     input: std::result::Result<Json<Dispatch>, axum::extract::rejection::JsonRejection>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = auth.workflow_actor(&state, repo.id).await?;
     let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
     if !codeyard_repos_core::ci::events::valid_dispatch(&input.event_type, &input.client_payload) {
@@ -843,7 +843,7 @@ async fn set_property_values(
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     codeyard_db_orgs::organizations::properties::set_repository_values(
         &state.pool,
         auth.database_actor(),

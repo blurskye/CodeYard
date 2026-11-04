@@ -25,7 +25,7 @@ async fn list(
 ) -> Result<Response> {
     let (repository, actor) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = actor
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
     let (offset, limit) = page.window()?;
     let teams = codeyard_db_repos::repositories::github::repository_teams(

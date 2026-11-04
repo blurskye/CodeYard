@@ -106,7 +106,7 @@ async fn document(
     repo: &Repository,
     owner: &str,
     pull: &PullRequest,
-    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_identity::github_auth::Authentication>,
     documents: &mut HashMap<i64, Value>,
     associations: &HashMap<i64, String>,
 ) -> Result<Value> {

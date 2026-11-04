@@ -112,7 +112,7 @@ async fn target(
             subject_id: id,
         });
     }
-    let comment = codeyard_repos_core::api_shared::github::comments::find(pool, repo_id, id).await?;
+    let comment = codeyard_webhooks::comment_documents::find(pool, repo_id, id).await?;
     let (item_id, subject) = match comment.item {
         codeyard_db_repos::assignees::AssignedItem::Issue(id) => (id, Subject::IssueComment),
         codeyard_db_repos::assignees::AssignedItem::PullRequest(id) => {
@@ -171,7 +171,7 @@ async fn create(
     Json(input): Json<Content>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let target = target(
         &state.pool,
         repo.id,
@@ -262,7 +262,7 @@ async fn remove(
     route: MatchedPath,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let target = target(
         &state.pool,
         repo.id,

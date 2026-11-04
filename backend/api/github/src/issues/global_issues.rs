@@ -35,9 +35,9 @@ async fn run(
     uri: Uri,
     organization: Option<String>,
 ) -> Result<Response> {
-    let auth = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let auth = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     let viewer = auth.user.id;
     if let Some(name) = &organization {
         codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, name)
@@ -136,7 +136,7 @@ async fn run(
         .collect::<Vec<_>>();
     ids.sort_unstable();
     ids.dedup();
-    let readable = codeyard_repos_core::api_shared::github::auth::readable_repositories(
+    let readable = codeyard_identity::github_auth::readable_repositories(
         &state,
         Some(&auth),
         &ids,
@@ -168,9 +168,9 @@ async fn run(
         } else {
             AssignedItem::Issue(id)
         };
-        let mut value = codeyard_repos_core::api_shared::github::issues::document(
+        let mut value = codeyard_webhooks::issue_documents::document(
             &state.pool,
-            codeyard_repos_core::api_shared::github::issues::Reader::Request(&state, Some(&auth)),
+            codeyard_webhooks::issue_documents::Reader::Request(&state, Some(&auth)),
             repo,
             owner,
             item,

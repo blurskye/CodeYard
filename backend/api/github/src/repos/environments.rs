@@ -152,10 +152,10 @@ async fn administer(
     write: bool,
 ) -> Result<(
     codeyard_db_core::models::Repository,
-    codeyard_repos_core::api_shared::github::auth::Authentication,
+    codeyard_identity::github_auth::Authentication,
 )> {
     let (repo, auth) = repository(state, headers, &params["owner"], &params["repo"], write).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     if !codeyard_identity::repository_access::can_admin(&state.pool, &auth.user, &repo)
         .await
         .map_err(Error::unavailable)?
@@ -281,7 +281,7 @@ async fn policies(
             .map_err(Error::unavailable)?;
         return Ok((page.headers(&uri, rows.len() > limit)?, Json(json!({"total_count": total, "branch_policies": rows.iter().take(limit).map(branch_document).collect::<Vec<_>>()}))).into_response());
     }
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     if method == Method::DELETE {
         codeyard_db_actions::environments::delete_branch(
             &state.pool,

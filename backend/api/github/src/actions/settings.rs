@@ -54,12 +54,12 @@ async fn scope(
     write: bool,
 ) -> Result<(
     Scope,
-    codeyard_repos_core::api_shared::github::auth::Authentication,
+    codeyard_identity::github_auth::Authentication,
 )> {
     if let Some(org) = params.get("org") {
-        let auth = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, write)
+        let auth = codeyard_identity::github_auth::authenticate(state, headers, write)
             .await?
-            .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+            .ok_or_else(codeyard_identity::github_auth::required)?;
         if write {
             auth.require_write()?;
         }
@@ -69,7 +69,7 @@ async fn scope(
             repository(state, headers, &params["owner"], &params["repo"], write).await?;
         Ok((
             Scope::Repository(repo.id),
-            auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?,
+            auth.ok_or_else(codeyard_identity::github_auth::required)?,
         ))
     }
 }

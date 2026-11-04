@@ -55,10 +55,10 @@ async fn scope(
     headers: &HeaderMap,
     name: &str,
     write: bool,
-) -> Result<(codeyard_repos_core::api_shared::github::auth::Authentication, i64)> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+) -> Result<(codeyard_identity::github_auth::Authentication, i64)> {
+    let actor = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     if write {
         actor.require_write()?;
     }

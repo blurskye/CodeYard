@@ -49,7 +49,7 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     let input = NewAutolink::new(
         &input.key_prefix,
         &input.url_template,
@@ -79,7 +79,7 @@ async fn list(
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = actor
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
     let (offset, limit) = page.window()?;
     let rows = codeyard_db_repos::repositories::autolinks::list(
@@ -107,7 +107,7 @@ async fn get_one(
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = actor
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
     Ok(Json(codeyard_webhooks::payloads::autolink(
         &codeyard_db_repos::repositories::autolinks::get(&state.pool, actor.id, repo.id, id)
@@ -121,7 +121,7 @@ async fn remove(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     codeyard_db_repos::repositories::autolinks::remove(
         &state.pool,
         actor.database_actor(),

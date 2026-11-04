@@ -155,13 +155,13 @@ pub async fn documents(
         let user = users
             .get(&comment.author_id)
             .ok_or_else(|| Error::unavailable(()))?;
-        let author = codeyard_webhooks::payloads::Person::of(user);
-        let mut value = codeyard_webhooks::payloads::conversation_comment(
+        let author = crate::payloads::Person::of(user);
+        let mut value = crate::payloads::conversation_comment(
             comment.id,
             &comment.body,
             &author,
             (comment.created_at, comment.updated_at),
-            codeyard_webhooks::payloads::Scope {
+            crate::payloads::Scope {
                 repo,
                 owner,
                 sender: &author,
@@ -169,14 +169,14 @@ pub async fn documents(
             comment.number,
             matches!(comment.item, AssignedItem::PullRequest(_)),
         );
-        value["user"] = codeyard_webhooks::payloads::user(user);
+        value["user"] = crate::payloads::user(user);
         value["author_association"] =
             serde_json::json!(associations.get(&user.id).map_or("NONE", String::as_str));
         value["pin"] = pins
             .get(&item_key(comment.item))
             .filter(|pin| pin.comment_id == comment.id)
             .map_or(Value::Null, |pin| {
-                codeyard_webhooks::payloads::comment_pin(
+                crate::payloads::comment_pin(
                     pin,
                     pin.pinned_by.and_then(|id| users.get(&id)),
                 )

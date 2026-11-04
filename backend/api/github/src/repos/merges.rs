@@ -51,7 +51,7 @@ async fn merge(
     request: Request,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let Json(input) = Json::<Input>::from_request(request, &state)
         .await
         .map_err(codeyard_model::github_error::json_error)?;

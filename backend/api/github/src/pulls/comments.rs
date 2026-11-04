@@ -65,7 +65,7 @@ pub(super) async fn visible(
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
         if review.state == "pending"
-            && !codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, false)
+            && !codeyard_identity::github_auth::authenticate(state, headers, false)
                 .await?
                 .is_some_and(|a| a.user.id == review.author_id)
         {
@@ -279,7 +279,7 @@ async fn create(
 ) -> Result<Response> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input =
@@ -344,7 +344,7 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
     let (pull, _) = visible(&state, &headers, &repo, id).await?;
     let input: Body =
@@ -375,7 +375,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
     let (pull, _) = visible(&state, &headers, &repo, id).await?;
     codeyard_repos_pulls::repositories::pull_requests::comments::delete_pull_request_comment(
@@ -501,7 +501,7 @@ async fn list_review(
             .filter(|r| r.pull_request_id == pull.id)
             .ok_or_else(Error::missing)?;
     if review.state == "pending"
-        && !codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false)
+        && !codeyard_identity::github_auth::authenticate(&state, &headers, false)
             .await?
             .is_some_and(|a| a.user.id == review.author_id)
     {

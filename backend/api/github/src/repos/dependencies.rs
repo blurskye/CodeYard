@@ -46,7 +46,7 @@ async fn status(
     feature: Feature,
 ) -> Result<Status> {
     let (repo, actor) = repository(state, headers, owner, name, false).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     codeyard_repos_core::repositories::dependencies::status(&state.pool, actor.user.id, repo.id, feature)
         .await
         .map_err(failure)
@@ -60,7 +60,7 @@ async fn change(
     enabled: bool,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(state, headers, owner, name, true).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     codeyard_repos_core::repositories::dependencies::set_enabled(
         &state.pool,
         state.cluster.as_ref(),

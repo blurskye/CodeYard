@@ -133,7 +133,7 @@ impl Documents {
 
 async fn referenced_document(
     state: &AppState,
-    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_identity::github_auth::Authentication>,
     id: i64,
 ) -> Result<Value> {
     let Some(head) = crate::auth::referenced_repository(state, auth, id).await? else {
@@ -150,7 +150,7 @@ async fn referenced_document(
 
 async fn document(
     state: &Arc<AppState>,
-    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_identity::github_auth::Authentication>,
     repo: &codeyard_db_core::models::Repository,
     owner: &str,
     run: &codeyard_db_core::models::CiRun,

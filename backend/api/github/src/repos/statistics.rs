@@ -68,7 +68,7 @@ fn history_weeks(stats: &CommitStatistics) -> Result<Vec<i64>> {
 
 async fn live_read(
     state: &AppState,
-    auth: Option<&codeyard_repos_core::api_shared::github::auth::Authentication>,
+    auth: Option<&codeyard_identity::github_auth::Authentication>,
     repo: i64,
 ) -> Result<()> {
     if let Some(auth) = auth {
@@ -77,7 +77,7 @@ async fn live_read(
             .map_err(Error::unavailable)?
             .is_none()
         {
-            return Err(codeyard_repos_core::api_shared::github::auth::required());
+            return Err(codeyard_identity::github_auth::required());
         }
         auth.repository_scope(&state.pool, repo, "metadata", false)
             .await

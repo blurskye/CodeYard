@@ -34,7 +34,7 @@ async fn check(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     if !codeyard_repos_core::repositories::releases::immutable::enabled(
         &state.pool,
         Some(&actor.user),
@@ -61,7 +61,7 @@ async fn change(
     enabled: bool,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(state, headers, owner, name, true).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     codeyard_repos_core::repositories::releases::immutable::set_enabled(
         &state.pool,
         actor.database_actor(),

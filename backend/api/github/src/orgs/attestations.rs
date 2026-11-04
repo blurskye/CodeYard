@@ -125,22 +125,22 @@ async fn scope(
     params: &Params,
 ) -> Result<(Option<i64>, Option<Owner>, Option<i64>)> {
     if let Some(org) = params.get("org") {
-        let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+        let actor = codeyard_identity::github_auth::authenticate(state, headers, true)
             .await?
-            .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+            .ok_or_else(codeyard_identity::github_auth::required)?;
         let org = crate::orgs::target(state, org).await?;
         Ok((Some(actor.user.id), Some(Owner::Organization(org.id)), None))
     } else if let Some(username) = params.get("user_id") {
-        let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+        let actor = codeyard_identity::github_auth::authenticate(state, headers, true)
             .await?
-            .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+            .ok_or_else(codeyard_identity::github_auth::required)?;
         let user = crate::users::target(state, username).await?;
         Ok((Some(actor.user.id), Some(Owner::User(user.id)), None))
     } else {
         let (repo, actor) =
             repository(state, headers, &params["owner"], &params["repo"], false).await?;
         // These endpoints require a credential, even for a public repository.
-        let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
         Ok((Some(actor.user.id), None, Some(repo.id)))
     }
 }
@@ -314,9 +314,9 @@ async fn remove(
     Path(params): Path<Params>,
     request: Request,
 ) -> Result<Response> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let owner = if let Some(org) = params.get("org") {
         Owner::Organization(crate::orgs::target(&state, org).await?.id)

@@ -30,9 +30,9 @@ async fn list(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     let (offset, limit) = page.window()?;
     let mut users = codeyard_db_identity::users::blocks::list_blocks(
         &state.pool,
@@ -58,9 +58,9 @@ async fn check(
     headers: HeaderMap,
     Path(username): Path<String>,
 ) -> Result<StatusCode> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     let target = crate::users::target(&state, &username).await?;
     if target.is_banned
         || !codeyard_db_identity::users::blocks::is_blocked(&state.pool, actor.user.id, target.id)
@@ -91,9 +91,9 @@ async fn change(
     username: &str,
     blocked: bool,
 ) -> Result<StatusCode> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(state, headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     codeyard_identity::blocks::change(
         &state.pool,

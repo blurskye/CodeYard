@@ -31,7 +31,7 @@ async fn rename(
     Json(input): Json<Rename>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = auth.user.id;
     let authority = auth.database_actor();
     repo_store(&repo, state.cluster.as_ref())
@@ -73,7 +73,7 @@ async fn upstream(
     request: Request,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = &auth.user;
     let Json(input) = Json::<Upstream>::from_request(request, &state)
         .await
@@ -129,7 +129,7 @@ async fn complete_upstream(
     input: Upstream,
     owner: String,
     base_branch: String,
-    auth: codeyard_repos_core::api_shared::github::auth::Authentication,
+    auth: codeyard_identity::github_auth::Authentication,
 ) -> Result<Json<Value>> {
     let actor = &auth.user;
     let source = repo_store(&parent, state.cluster.as_ref());

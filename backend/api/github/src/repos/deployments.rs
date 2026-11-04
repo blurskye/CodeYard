@@ -141,7 +141,7 @@ async fn create(
     request: Request,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = &auth.user;
     codeyard_identity::repository_access::check_write(&state.pool, repo.id, actor.id)
         .await
@@ -258,7 +258,7 @@ async fn deployment(
     if write {
         codeyard_db_actions::deployments::delete(
             &state.pool,
-            auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+            auth.ok_or_else(codeyard_identity::github_auth::required)?
                 .database_actor(),
             repo.id,
             id,
@@ -328,7 +328,7 @@ async fn statuses(
         }
         return page.response(&uri, values, has_next);
     }
-    let authentication = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let authentication = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let credential = authentication.database_actor();
     let actor = authentication.user;
     let Json(input) = Json::<NewStatus>::from_request(request, &state)

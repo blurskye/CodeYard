@@ -49,9 +49,9 @@ pub(crate) async fn import(
     headers: HeaderMap,
     Json(value): Json<Value>,
 ) -> Result<Response> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let value = store::import(&state.pool, actor.database_actor(), &value)
         .await
@@ -64,7 +64,7 @@ async fn global(
     Query(query): Query<Params>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     validate(&query, true)?;
     let sort = query.get("sort").map_or("published", String::as_str);
     let ascending = query.get("direction").is_some_and(|v| v == "asc");
@@ -133,7 +133,7 @@ async fn global_detail(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>> {
-    codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false).await?;
+    codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let value = store::global_one(&state.pool, &id)
         .await
         .map_err(failure)?
@@ -435,9 +435,9 @@ async fn list(
     validate(&query, false)?;
     let org = params.get("org");
     let (ids, actor) = if let Some(org) = org {
-        let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, false)
+        let actor = codeyard_identity::github_auth::authenticate(&state, &headers, false)
             .await?
-            .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+            .ok_or_else(codeyard_identity::github_auth::required)?;
         let org = crate::orgs::target(&state, org).await?;
         let ids = store::organization_repositories(&state.pool, actor.user.id, org.id)
             .await
@@ -448,7 +448,7 @@ async fn list(
             repository(&state, &headers, &params["owner"], &params["repo"], false).await?;
         (
             vec![repo.id],
-            actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?,
+            actor.ok_or_else(codeyard_identity::github_auth::required)?,
         )
     };
     let database_actor = actor.database_actor();
@@ -507,7 +507,7 @@ async fn detail(
     Path((owner, name, number)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     let row = store::alerts(&state.pool, actor.database_actor(), repo.id)
         .await
         .map_err(failure)?
@@ -523,7 +523,7 @@ async fn update(
     Json(input): Json<Update>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     let row = store::update(&state.pool, actor.database_actor(), repo.id, number, &input)
         .await
         .map_err(failure)?;

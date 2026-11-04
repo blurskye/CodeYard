@@ -106,7 +106,7 @@ async fn save(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let issue = crate::issues::required_issue(&state.pool, repo.id, &p["issue_number"]).await?;
     let input: Input = serde_json::from_slice(&body)
         .map_err(|_| Error::validation("IssueFieldValue", "issue_field_values", "invalid"))?;
@@ -141,7 +141,7 @@ async fn remove(
     Path(p): Path<Params>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let issue = crate::issues::required_issue(&state.pool, repo.id, &p["issue_number"]).await?;
     let field = p["issue_field_id"].parse().map_err(|_| Error::missing())?;
     codeyard_db_repos::issue_attributes::delete_value(

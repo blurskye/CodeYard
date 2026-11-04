@@ -39,7 +39,7 @@ async fn perform(
 ) -> Result<Response> {
     let (repo, authentication) = repository(&state, &headers, &owner, &name, true).await?;
     let authentication =
-        authentication.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        authentication.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = authentication.workflow_actor(&state, repo.id).await?;
     let credential = Some(authentication.ci_credential(&headers, "actions")?);
     let args: Parameters = if body.is_empty() {

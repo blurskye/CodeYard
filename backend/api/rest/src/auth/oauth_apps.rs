@@ -117,11 +117,11 @@ async fn admit(state: &AppState, headers: &HeaderMap, key: &str) -> Result<(), R
     }
     codeyard_db_identity::auth_admission::admit_operation(
         &state.pool,
-        codeyard_repos_core::api_shared::http::session::client_address(headers),
+        codeyard_identity::client_address::client_address(headers),
         "device",
         &format!(
             "{key}:{}",
-            codeyard_repos_core::api_shared::http::session::client_address(headers).unwrap_or("local")
+            codeyard_identity::client_address::client_address(headers).unwrap_or("local")
         ),
     )
     .await

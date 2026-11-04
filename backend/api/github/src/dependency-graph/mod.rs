@@ -72,7 +72,7 @@ async fn submit(
     body: std::result::Result<Json<codeyard_model::dependency_graph::Snapshot>, JsonRejection>,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     let Json(mut snapshot) =
         body.map_err(|_| Error::validation("Snapshot", "snapshot", "invalid"))?;
     snapshot.validate().map_err(error)?;

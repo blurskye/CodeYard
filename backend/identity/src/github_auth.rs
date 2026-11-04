@@ -1,5 +1,5 @@
 //! Token-only authentication, separate from browser sessions and CSRF.
-use crate::request_context::RequestContext;
+use crate::database_context::DatabaseContext;
 use axum::http::header;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
@@ -79,7 +79,7 @@ impl Authentication {
         // An App or fine-grained credential reaches only its selected repositories with its
         // granted permissions, also when a request reads a second repository, such as a
         // compared fork. Job scopes are spelled with hyphens; App permissions with underscores.
-        if let Some(bounds) = codeyard_identity::github_apps::authority(pool, self.token.id)
+        if let Some(bounds) = crate::github_apps::authority(pool, self.token.id)
             .await
             .map_err(|_| ScopeError::Unavailable)?
         {
@@ -123,7 +123,7 @@ impl Authentication {
     }
 
     /// Dispatches may use a live job token, but host execution retains its original actor's authority.
-    pub async fn workflow_actor(&self, state: &dyn RequestContext, repo: i64) -> Result<i64> {
+    pub async fn workflow_actor(&self, state: &dyn DatabaseContext, repo: i64) -> Result<i64> {
         if self.user.username != codeyard_db_core::queries::ci_tokens::BOT {
             return Ok(self.user.id);
         }
@@ -169,7 +169,7 @@ impl Authentication {
 /// selection, a job's repository, an organization that refuses classic tokens). Cross-
 /// repository lists and searches call this so they reach no more than direct requests do.
 pub async fn readable_repositories(
-    state: &dyn RequestContext,
+    state: &dyn DatabaseContext,
     auth: Option<&Authentication>,
     ids: &[i64],
     scope: &str,
@@ -251,7 +251,7 @@ pub fn credential(headers: &HeaderMap) -> Option<&str> {
 }
 
 pub async fn authenticate(
-    state: &dyn RequestContext,
+    state: &dyn DatabaseContext,
     headers: &HeaderMap,
     required_auth: bool,
 ) -> Result<Option<Authentication>> {
@@ -269,7 +269,7 @@ pub async fn authenticate(
 /// For operations that explicitly apply repository-permission filtering themselves, keep
 /// verified identity independent of the default public-data audience.
 pub async fn identity(
-    state: &dyn RequestContext,
+    state: &dyn DatabaseContext,
     headers: &HeaderMap,
     required_auth: bool,
 ) -> Result<Option<Authentication>> {
@@ -289,7 +289,7 @@ pub async fn identity(
 }
 
 async fn authenticate_uncached(
-    state: &dyn RequestContext,
+    state: &dyn DatabaseContext,
     headers: &HeaderMap,
 ) -> Result<Option<Authentication>> {
     let config = codeyard_db_cluster::node_config::get_node_configuration(&state.pool())
@@ -327,7 +327,7 @@ async fn authenticate_uncached(
     }
     match codeyard_db_identity::auth_admission::admit_login(
         &state.pool(),
-        crate::api_shared::http::session::client_address(headers),
+        crate::client_address::client_address(headers),
         user_id,
         presented.unwrap_or("github-rest"),
     )
@@ -345,14 +345,14 @@ async fn authenticate_uncached(
 }
 
 /// Records a token's last use at most once a minute, so most requests only read.
-pub async fn touch(state: &dyn RequestContext, token: &PersonalAccessToken, headers: &HeaderMap) {
+pub async fn touch(state: &dyn DatabaseContext, token: &PersonalAccessToken, headers: &HeaderMap) {
     if token
         .last_used_at
         .is_some_and(|at| chrono::Utc::now() - at < chrono::Duration::minutes(1))
     {
         return;
     }
-    let address = crate::api_shared::http::session::client_address(headers)
+    let address = crate::client_address::client_address(headers)
         .filter(|address| address.len() <= 64);
     if let Err(error) =
         codeyard_db_identity::users::tokens::touch_token(&state.pool(), token.id, address).await

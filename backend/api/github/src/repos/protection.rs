@@ -54,7 +54,7 @@ pub(super) async fn protected(
     String,
 )> {
     let (repo, auth) = repository(state, headers, owner, name, write).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = &auth.user;
     if !codeyard_identity::repository_access::can_admin(&state.pool, actor, &repo)
         .await

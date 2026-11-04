@@ -50,7 +50,7 @@ async fn create_bypass(
     Json(input): Json<CreateBypass>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     let bypass = codeyard_db_security::secret_scanning::bypass(
         &state.pool,
         actor.user.id,
@@ -196,9 +196,9 @@ async fn list_org(
     Query(query): Query<Filters>,
     Query(pagination): Query<crate::pagination::CursorPagination>,
 ) -> Result<Response> {
-    let actor = codeyard_repos_core::api_shared::github::auth::authenticate(&state, &headers, true)
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+        .ok_or_else(codeyard_identity::github_auth::required)?;
     let org = crate::orgs::target(&state, &org).await?;
     query.validate()?;
     let (offset, limit) = pagination.window()?;
@@ -258,7 +258,7 @@ async fn list(
     Query(pagination): Query<crate::pagination::CursorPagination>,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     query.validate()?;
     let (offset, limit) = pagination.window()?;
     let alerts = codeyard_db_security::secret_scanning::alerts(
@@ -294,7 +294,7 @@ async fn get_alert(
 ) -> Result<Json<Value>> {
     let (owner, name) = (&params["owner"], &params["repo"]);
     let (repo, actor) = repository(&state, &headers, owner, name, false).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     let alert = codeyard_db_security::secret_scanning::alerts(
         &state.pool,
         actor.user.id,
@@ -351,7 +351,7 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (owner, name) = (&params["owner"], &params["repo"]);
     let (repo, actor) = repository(&state, &headers, owner, name, true).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     let alert = codeyard_db_security::secret_scanning::update_alert(
         &state.pool,
         actor.user.id,
@@ -405,7 +405,7 @@ async fn locations(
 ) -> Result<Response> {
     let (owner, name) = (&params["owner"], &params["repo"]);
     let (repo, actor) = repository(&state, &headers, owner, name, false).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     let (offset, limit) = page.window()?;
     let locations = codeyard_db_security::secret_scanning::locations(
         &state.pool,
@@ -436,7 +436,7 @@ async fn history(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let actor = actor.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     let history =
         codeyard_db_security::secret_scanning::history(&state.pool, actor.user.id, repo.id)
             .await

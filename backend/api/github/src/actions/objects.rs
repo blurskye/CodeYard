@@ -206,7 +206,7 @@ async fn artifact(
     write: bool,
 ) -> Result<(
     ActionObject,
-    Option<codeyard_repos_core::api_shared::github::auth::Authentication>,
+    Option<codeyard_identity::github_auth::Authentication>,
 )> {
     let (repo, auth) = repository(state, headers, owner, name, write).await?;
     let object = objects::object_by_id(&state.pool, repo.id, id, "artifact")
@@ -233,7 +233,7 @@ async fn delete_artifact(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (object, auth) = artifact(&state, &headers, &owner, &name, id, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = auth.workflow_actor(&state, object.repo_id).await?;
     let credential = auth.ci_credential(&headers, "actions")?;
     if !objects::delete_artifact(
@@ -261,7 +261,7 @@ async fn download_artifact(
 ) -> Result<Response> {
     let (object, auth) = artifact(&state, &headers, &owner, &name, id, false).await?;
     let actor = auth
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .database_actor();
     if format != "zip" {
         return Err(Error::invalid("archive_format must be zip"));
@@ -320,7 +320,7 @@ async fn delete_cache(
     let (repo, auth) =
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     let actor = auth
-        .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
+        .ok_or_else(codeyard_identity::github_auth::required)?
         .user
         .id;
     let cache_id = params

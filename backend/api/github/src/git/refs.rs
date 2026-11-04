@@ -137,7 +137,7 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = auth.database_actor();
     if !codeyard_git::is_full_commit_id(&input.sha) {
         return Err(Error::invalid("sha must be a full object ID"));
@@ -199,7 +199,7 @@ async fn remove(
     Path((owner, name, reference)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = auth.database_actor();
     let store = repo_store(&repo, state.cluster.as_ref());
     if !store
@@ -251,7 +251,7 @@ async fn update(
     Json(input): Json<Update>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
+    let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = auth.database_actor();
     let full = format!("refs/{reference}");
     let sha = codeyard_repos_core::repositories::refs::update_reference(

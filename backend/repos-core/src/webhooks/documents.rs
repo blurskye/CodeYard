@@ -42,7 +42,7 @@ async fn fill(
         // the milestone, while the event keeps the fields as its own change left them, even if
         // a later change has since been saved.
         if let Some(mut stored) =
-            crate::api_shared::github::issues::webhook_document(pool, repo, owner, item).await
+            codeyard_webhooks::issue_documents::webhook_document(pool, repo, owner, item).await
         {
             if let (Some(event), Some(fields)) =
                 (payload["issue"].as_object(), stored.as_object_mut())

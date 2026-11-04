@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::Json;
-use codeyard_repos_core::api_shared::github::auth::Authentication;
+use codeyard_identity::github_auth::Authentication;
 use codeyard_app::app::AppState;
 use codeyard_support::token_hash::token_hash;
 use serde_json::json;
