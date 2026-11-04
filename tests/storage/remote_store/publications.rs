@@ -59,7 +59,7 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
         owner.id,
         repository.id,
         &writer.username,
-        Some(db::models::AccessLevel::Write),
+        Some(codeyard_db_core::models::AccessLevel::Write),
     )
     .await
     .unwrap();

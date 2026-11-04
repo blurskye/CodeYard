@@ -12,9 +12,11 @@ pub mod ref_changes;
 pub mod settings;
 pub mod statuses;
 
-use crate::backend::db::models::{Repository, Webhook};
+use crate::backend::db;
 use crate::backend::db::webhooks::HookOwner;
-use crate::backend::db::{self, DbPool};
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::Webhook;
+use codeyard_db_core::DbPool;
 use delivery::Outgoing;
 use payloads::Person;
 use serde_json::Value;

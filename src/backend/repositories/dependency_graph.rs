@@ -1,22 +1,14 @@
 //! Dependency inventories pin Git before reading either file and never execute package managers.
-use super::{dependencies::npm::Lockfile, store::repo_store};
-use crate::backend::{
-    app::AppState,
-    db::{self, dependency_graph::Reader, models::Repository},
+use super::{
+    dependencies::npm::Lockfile,
+    store::{repo_store, ErrorKind, RepoError},
 };
-use codeyard_git::error::{ErrorKind, RepoError};
-use serde::{Deserialize, Serialize};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::dependency_graph::Reader;
+use codeyard_db_core::models::Repository;
+use codeyard_model::repositories::Package;
 use std::collections::{BTreeMap, HashSet};
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Package {
-    pub manifest: String,
-    pub ecosystem: String,
-    pub name: String,
-    pub version: String,
-    pub package_url: String,
-    pub scope: String,
-}
 
 fn unavailable(_: anyhow::Error) -> RepoError {
     RepoError::new(

@@ -80,7 +80,7 @@ async fn stale_admin_native_mutations(pg: bool) {
         database.pool(),
         bob.id,
         repo,
-        db::models::AccessLevel::Admin,
+        codeyard_db_core::models::AccessLevel::Admin,
     )
     .await
     .unwrap();
@@ -100,7 +100,7 @@ async fn stale_admin_native_mutations(pg: bool) {
         database.pool(),
         bob.id,
         repo,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -269,8 +269,8 @@ async fn keys_api_and_forms(pg: bool) {
         .await
         .unwrap_err();
     assert_eq!(
-        refused.downcast_ref::<ssh_keys::SshKeyWriteRefusal>(),
-        Some(&ssh_keys::SshKeyWriteRefusal::AlreadyUsed)
+        refused.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>(),
+        Some(&codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed)
     );
 
     // The settings form adds and deletes the same way, and redirects with a notice.
@@ -344,7 +344,8 @@ async fn keys_api_and_forms(pg: bool) {
 }
 
 async fn live_authority(pg: bool) {
-    use codeyard::backend::{db::models::AccessLevel, repositories::deploy_keys as keys};
+    use codeyard::backend::repositories::deploy_keys as keys;
+
     let (mut database, _root, alice, bob) = setup(pg).await;
     let pool = database.pool();
     let repository = db::repositories::records::get_repository(pool, "alice", "proj")
@@ -389,7 +390,7 @@ async fn live_authority(pg: bool) {
         let (_, access) = keys::authorize(pool, key.id, &repository, write)
             .await
             .unwrap();
-        assert_eq!(access, AccessLevel::Write);
+        assert_eq!(access, codeyard_db_core::models::AccessLevel::Write);
     }
     db::users::sessions::delete_session(pool, &alice.session)
         .await
@@ -405,7 +406,7 @@ async fn live_authority(pg: bool) {
             false
         )
         .await,
-        Err(keys::DeployKeyError::Denied)
+        Err(codeyard_model::repositories::DeployKeyError::Denied)
     ));
     assert!(db::deploy_keys::delete_deploy_key(
         pool,

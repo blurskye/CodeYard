@@ -156,7 +156,7 @@ async fn postgres_github_branch_operations() {
 
 async fn extended(
     router: &Router,
-    scope: (&db::DbPool, i64, i64),
+    scope: (&codeyard_db_core::DbPool, i64, i64),
     base: &str,
     tokens: (&str, &str, &str),
     sha: &str,
@@ -614,7 +614,7 @@ async fn extended(
 
 pub(super) async fn run(
     router: &Router,
-    resource: (&db::DbPool, i64, i64),
+    resource: (&codeyard_db_core::DbPool, i64, i64),
     base: &str,
     tokens: (&str, &str, &str),
     sha: &str,

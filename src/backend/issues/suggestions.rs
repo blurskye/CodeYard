@@ -1,21 +1,17 @@
 //! Shared post-commit effects for REST and native suggestion review.
-use crate::backend::{
-    db::{
-        self,
-        models::{Repository, User},
-    },
-    notifications::{
-        assignments::{self, Assignment},
-        NotificationBroadcaster,
-    },
-    webhooks::{
-        self, events,
-        payloads::{self, Scope},
-    },
-};
+use crate::backend::db;
+use crate::backend::notifications::assignments;
+use crate::backend::notifications::assignments::Assignment;
+use crate::backend::notifications::NotificationBroadcaster;
+use crate::backend::webhooks;
+use crate::backend::webhooks::events;
+use crate::backend::webhooks::payloads;
+use crate::backend::webhooks::payloads::Scope;
 use anyhow::Result;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
 pub async fn resolve(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: &User,
     credential: &db::users::accounts::AccountCredential<'_>,

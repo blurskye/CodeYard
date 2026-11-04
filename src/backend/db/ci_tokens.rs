@@ -1,6 +1,7 @@
 //! Repository-scoped credentials issued only to an active CI claim.
-use super::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 pub const BOT: &str = "github-actions[bot]";
 

@@ -1,9 +1,11 @@
 //! CI runs as a job queue: triggers enqueue, worker nodes claim, heartbeat and
 //! finish runs.
-use super::models::{CiDeployment, CiLogLine, CiRun};
 use crate::backend::db::action_settings::{organization_allows, Setting};
 use crate::backend::db::ci::{CiAdmissionRefusal, NewCiRun, ACCESS_LOST_MESSAGE};
 use anyhow::{bail, ensure, Result};
+use codeyard_db_core::models::CiDeployment;
+use codeyard_db_core::models::CiLogLine;
+use codeyard_db_core::models::CiRun;
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
@@ -1076,11 +1078,12 @@ async fn request_cancellation(
 ) -> Result<crate::backend::db::ci::Cancellation> {
     let mut tx = pool.begin().await?;
     super::users::transitions::lock_accounts_shared(&mut tx, &[actor_id]).await?;
-    let user = sqlx::query_as::<_, super::models::User>("SELECT * FROM users WHERE id = $1")
-        .bind(actor_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or(CiAdmissionRefusal::Missing("CI actor unavailable"))?;
+    let user =
+        sqlx::query_as::<_, codeyard_db_core::models::User>("SELECT * FROM users WHERE id = $1")
+            .bind(actor_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(CiAdmissionRefusal::Missing("CI actor unavailable"))?;
     ensure!(
         !user.is_banned && !user.must_change_password,
         CiAdmissionRefusal::Denied("CI actor is restricted")
@@ -1463,7 +1466,7 @@ pub async fn append_ci_logs(
     run_id: i64,
     worker: &str,
     sequence: i64,
-    lines: &[crate::backend::ci::queue::LogLine],
+    lines: &[codeyard_model::ci::LogLine],
 ) -> Result<bool> {
     ensure!(
         (0..100_000).contains(&sequence),
@@ -1519,9 +1522,9 @@ pub async fn append_ci_logs(
             previous == hash,
             "CI upload sequence has different contents"
         );
-        return Ok(stored_lines < crate::backend::ci::logs::MAX_RUN_LOG_LINES);
+        return Ok(stored_lines < codeyard_model::ci::MAX_RUN_LOG_LINES);
     }
-    if stored_lines >= crate::backend::ci::logs::MAX_RUN_LOG_LINES {
+    if stored_lines >= codeyard_model::ci::MAX_RUN_LOG_LINES {
         return Ok(false);
     }
     let next: i64 =
@@ -1547,7 +1550,7 @@ pub async fn append_ci_logs(
             .await?;
     }
     tx.commit().await?;
-    Ok(lines_total < crate::backend::ci::logs::MAX_RUN_LOG_LINES)
+    Ok(lines_total < codeyard_model::ci::MAX_RUN_LOG_LINES)
 }
 
 pub async fn list_ci_logs(pool: &PgPool, run_id: i64, limit: i64) -> Result<Vec<CiLogLine>> {

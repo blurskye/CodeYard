@@ -1,5 +1,6 @@
 use super::*;
-use crate::backend::{cluster::writes::OutcomeUnknown, db::models::RefChange as WriteRef};
+use crate::backend::cluster::writes::OutcomeUnknown;
+use codeyard_db_core::models::RefChange as WriteRef;
 
 pub(super) fn oid_change(name: &str, old: Option<&str>, new: Option<&str>) -> WriteRef {
     WriteRef {
@@ -13,7 +14,7 @@ pub(super) fn oid_change(name: &str, old: Option<&str>, new: Option<&str>) -> Wr
 impl LocalStore {
     pub(super) async fn quorum_context(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
     ) -> Result<Option<(&crate::backend::cluster::NodeContext, i64)>, RepoError> {
         let repository = db::repositories::records::get_repository_by_id(pool, repo)
@@ -47,7 +48,7 @@ impl LocalStore {
 
     pub(super) async fn begin_publisher_change(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
     ) -> Result<RefChange, RepoError> {
         self.admitted_path(false).await?;
@@ -57,7 +58,7 @@ impl LocalStore {
     /// False leaves the legacy publication unchanged. The caller holds and scopes the lease.
     pub(super) async fn publish_quorum_refs<F>(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
         changes: &[WriteRef],
         authorize: F,
@@ -99,7 +100,7 @@ impl LocalStore {
     )]
     pub(super) async fn prepare_publications<F>(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
         actor: git::PublicationActor,
         login: &str,
@@ -146,7 +147,7 @@ impl LocalStore {
 
     pub(super) async fn check_ref_publication(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
         authority: &db::credentials::Actor,
         reference: &str,
@@ -231,7 +232,7 @@ impl LocalStore {
     /// Staged publishers import objects only, never refs, before asking stores to vote.
     pub(super) async fn import_prepared_objects(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
         source: &Path,
         targets: &[String],

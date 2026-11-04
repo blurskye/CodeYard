@@ -179,7 +179,7 @@ async fn postgres_privileged_node_and_crawler_writes_retain_their_session() {
                     )
                     .await
                     .unwrap(),
-                    db::models::NodeStatusChange::Changed { .. }
+                    codeyard_db_core::models::NodeStatusChange::Changed { .. }
                 ));
             }
         });

@@ -1,14 +1,13 @@
 use super::{db, json, protection::call, request, Client, Router, Value};
 use crate::support::organizations::applied;
 use axum::http::StatusCode;
-use codeyard::backend::db::{
-    models::{AccessLevel, OrgRole},
-    organizations as orgs,
-};
+use codeyard::backend::db::organizations as orgs;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
 
 pub(super) async fn run(
     router: &Router,
-    scope: (&db::DbPool, i64, i64),
+    scope: (&codeyard_db_core::DbPool, i64, i64),
     tokens: (&str, &str, &str),
     session: &Client,
 ) {

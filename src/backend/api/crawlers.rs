@@ -59,7 +59,7 @@ pub(crate) fn setting_value(raw: &str) -> Option<&'static str> {
 
 /// Whether AI training crawlers are blocked. No setting row means block; an unreadable
 /// setting is an error, not allow.
-pub(crate) async fn ai_crawlers_blocked(pool: &db::DbPool) -> anyhow::Result<bool> {
+pub(crate) async fn ai_crawlers_blocked(pool: &codeyard_db_core::DbPool) -> anyhow::Result<bool> {
     Ok(db::node_config::get_node_configuration(pool)
         .await?
         .is_none_or(|config| config.ai_crawlers != ALLOW))

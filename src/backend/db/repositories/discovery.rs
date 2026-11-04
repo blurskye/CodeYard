@@ -1,8 +1,12 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::models::{Issue, PullRequest, Repository, User};
 use crate::backend::db::repositories::records::RepositorySort;
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::Issue;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 pub struct NewForkedRepository<'a> {
     pub owner_id: i64,

@@ -2,15 +2,12 @@
 //! background check then merges it through the ordinary merge path, as that writer, so
 //! reviews, checks and branch protection apply exactly as they do to a merge button.
 use super::{actor, merge, require_write, OperationError};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        models::PullRequest,
-        pull_requests::auto_merge::{AutoMerge, AutoMergeRequest},
-    },
-    repositories::store::MergeMethod,
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::pull_requests::auto_merge::AutoMerge;
+use crate::backend::db::pull_requests::auto_merge::AutoMergeRequest;
+use crate::backend::repositories::store::MergeMethod;
+use codeyard_db_core::models::PullRequest;
 use std::{sync::Arc, time::Duration};
 
 /// How often the background check retries pull requests waiting to merge.
@@ -36,7 +33,7 @@ pub struct EnableRequest {
 }
 
 async fn writable(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor_id: i64,
     pull: &PullRequest,
 ) -> Result<(), OperationError> {
@@ -60,7 +57,7 @@ async fn writable(
 
 /// Turns auto-merge on for `pull`, replacing an earlier request.
 pub async fn enable(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor_id: i64,
     pull: &PullRequest,
     request: EnableRequest,
@@ -93,7 +90,7 @@ pub async fn enable(
 
 /// Turns auto-merge off for `pull`. Turning it off twice is not an error.
 pub async fn disable(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor_id: i64,
     pull: &PullRequest,
 ) -> Result<(), OperationError> {

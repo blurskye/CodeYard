@@ -1,12 +1,11 @@
 //! Follow edges and their best-effort notices, shared by JSON and native forms.
 
-use crate::backend::{
-    db::{following, users::accounts, DbPool},
-    notifications::{
-        create::{create_and_broadcast_notification, NotificationRequest},
-        NotificationBroadcaster,
-    },
-};
+use crate::backend::db::following;
+use crate::backend::db::users::accounts;
+use crate::backend::notifications::create::create_and_broadcast_notification;
+use crate::backend::notifications::create::NotificationRequest;
+use crate::backend::notifications::NotificationBroadcaster;
+use codeyard_db_core::DbPool;
 use serde_json::json;
 
 pub struct FollowStatus {

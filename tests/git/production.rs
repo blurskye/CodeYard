@@ -357,7 +357,7 @@ async fn up_to_date_merge_makes_a_merge_commit_and_conflicts_are_honest() {
 async fn database() -> native::PostgresDatabase {
     native::PostgresDatabase::new().await
 }
-async fn user(pool: &db::DbPool, label: &str) -> db::models::User {
+async fn user(pool: &codeyard_db_core::DbPool, label: &str) -> codeyard_db_core::models::User {
     db::users::accounts::create_user(pool, &format!("{label}_{}", Uuid::new_v4().simple()), None)
         .await
         .unwrap()
@@ -384,7 +384,7 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
         pool,
         reader.id,
         source.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -410,7 +410,7 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
         db::repositories::access::get_user_repo_access(pool, other.id, fork.id)
             .await
             .unwrap(),
-        db::models::AccessLevel::None
+        codeyard_db_core::models::AccessLevel::None
     );
     assert!(db::repositories::records::update_repository(
         pool,
@@ -500,7 +500,7 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
         db::repositories::access::get_user_repo_access(pool, other.id, child.id)
             .await
             .unwrap(),
-        db::models::AccessLevel::None
+        codeyard_db_core::models::AccessLevel::None
     );
     let public = db::repositories::records::create_repository(
         pool,

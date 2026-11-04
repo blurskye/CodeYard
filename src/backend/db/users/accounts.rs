@@ -1,7 +1,11 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::models::{AdminAccountSummary, AdminActivityPoint, AdminUser, User};
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::AdminAccountSummary;
+use codeyard_db_core::models::AdminActivityPoint;
+use codeyard_db_core::models::AdminUser;
+use codeyard_db_core::models::User;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// A settings operation retains its originating credential alongside account data.
 pub enum AccountCredential<'a> {

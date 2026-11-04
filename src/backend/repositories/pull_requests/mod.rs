@@ -26,7 +26,7 @@ pub use workflows::queue_pull_request_ci;
 /// does not keep. It runs in a webhook builder, which is a blocking task.
 pub(crate) fn webhook_payload(
     action: &str,
-    pull: &db::models::PullRequest,
+    pull: &codeyard_db_core::models::PullRequest,
     author: &crate::backend::webhooks::payloads::Person,
     scope: crate::backend::webhooks::payloads::Scope,
     store: &crate::backend::repositories::store::RepoStore,
@@ -64,10 +64,10 @@ pub(crate) fn webhook_payload(
 /// `requested_reviewer`. Without the cluster context a storage node's repository is sent
 /// without its diff counts.
 pub(crate) async fn emit_pull_request_event(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&crate::backend::cluster::NodeContext>,
-    repository: &db::models::Repository,
-    pull: &db::models::PullRequest,
+    repository: &codeyard_db_core::models::Repository,
+    pull: &codeyard_db_core::models::PullRequest,
     action: &'static str,
     sender_id: i64,
     extra: serde_json::Map<String, serde_json::Value>,
@@ -135,9 +135,9 @@ fn database_error<E>(_: E) -> OperationError {
 
 /// The repository a caller already resolved, read again by ID with its owner's name.
 pub(super) async fn repository(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     id: i64,
-) -> Result<(db::models::Repository, String), OperationError> {
+) -> Result<(codeyard_db_core::models::Repository, String), OperationError> {
     use crate::backend::repositories::access::{current_repository_with_owner, AccessError};
     current_repository_with_owner(pool, id)
         .await
@@ -150,7 +150,10 @@ pub(super) async fn repository(
         })
 }
 
-pub(super) async fn actor(pool: &db::DbPool, id: i64) -> Result<db::models::User, OperationError> {
+pub(super) async fn actor(
+    pool: &codeyard_db_core::DbPool,
+    id: i64,
+) -> Result<codeyard_db_core::models::User, OperationError> {
     db::users::accounts::get_user_by_id(pool, id)
         .await
         .map_err(write_error)?
@@ -162,9 +165,9 @@ pub(super) async fn actor(pool: &db::DbPool, id: i64) -> Result<db::models::User
 }
 
 async fn can_read(
-    pool: &db::DbPool,
-    user: &db::models::User,
-    repo: &db::models::Repository,
+    pool: &codeyard_db_core::DbPool,
+    user: &codeyard_db_core::models::User,
+    repo: &codeyard_db_core::models::Repository,
 ) -> Result<bool, OperationError> {
     access::can_read(pool, Some(user), repo)
         .await
@@ -175,9 +178,9 @@ async fn can_read(
 }
 
 pub(super) async fn require_read(
-    pool: &db::DbPool,
-    user: &db::models::User,
-    repo: &db::models::Repository,
+    pool: &codeyard_db_core::DbPool,
+    user: &codeyard_db_core::models::User,
+    repo: &codeyard_db_core::models::Repository,
 ) -> Result<(), OperationError> {
     if can_read(pool, user, repo).await? {
         Ok(())
@@ -190,9 +193,9 @@ pub(super) async fn require_read(
 }
 
 pub(super) async fn require_write(
-    pool: &db::DbPool,
-    user: &db::models::User,
-    repo: &db::models::Repository,
+    pool: &codeyard_db_core::DbPool,
+    user: &codeyard_db_core::models::User,
+    repo: &codeyard_db_core::models::Repository,
 ) -> Result<(), OperationError> {
     if access::can_write(pool, user, repo)
         .await
@@ -218,9 +221,9 @@ pub(super) async fn require_write(
 }
 
 pub(super) async fn require_admin(
-    pool: &db::DbPool,
-    user: &db::models::User,
-    repo: &db::models::Repository,
+    pool: &codeyard_db_core::DbPool,
+    user: &codeyard_db_core::models::User,
+    repo: &codeyard_db_core::models::Repository,
 ) -> Result<(), OperationError> {
     if access::can_admin(pool, user, repo)
         .await

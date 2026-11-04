@@ -1,11 +1,12 @@
-use crate::backend::db::{
-    models::CommitComment,
-    repositories::commit_comments::{
-        validate_body, validate_create, CommentAuthor, CommentCreate, CommentEdit, CommentEdited,
-        CommentRefusal,
-    },
-};
+use crate::backend::db::repositories::commit_comments::validate_body;
+use crate::backend::db::repositories::commit_comments::validate_create;
+use crate::backend::db::repositories::commit_comments::CommentAuthor;
+use crate::backend::db::repositories::commit_comments::CommentCreate;
+use crate::backend::db::repositories::commit_comments::CommentEdit;
+use crate::backend::db::repositories::commit_comments::CommentEdited;
+use crate::backend::db::repositories::commit_comments::CommentRefusal;
 use anyhow::Result;
+use codeyard_db_core::models::CommitComment;
 use sqlx::PgPool;
 
 pub async fn create_comment(pool: &PgPool, input: CommentCreate<'_>) -> Result<CommitComment> {

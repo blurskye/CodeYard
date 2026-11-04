@@ -206,7 +206,7 @@ async fn hook_request(
     let token = std::env::var("GITSERV_OPENSSH_OPERATION")
         .map_err(|_| anyhow::anyhow!("receive hooks must belong to an active broker operation"))?;
     ensure!(
-        crate::backend::crypto::is_hex_token(&token, 32),
+        codeyard_support::crypto::is_hex_token(&token, 32),
         "invalid operation token"
     );
     let mut bytes = Vec::new();

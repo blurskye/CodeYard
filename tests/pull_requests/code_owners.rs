@@ -49,9 +49,9 @@ impl World {
         .await
         .unwrap();
         for (user, level) in [
-            (bob_id, db::models::AccessLevel::Write),
-            (carol_id, db::models::AccessLevel::Write),
-            (dave_id, db::models::AccessLevel::Read),
+            (bob_id, codeyard_db_core::models::AccessLevel::Write),
+            (carol_id, codeyard_db_core::models::AccessLevel::Write),
+            (dave_id, codeyard_db_core::models::AccessLevel::Read),
         ] {
             db::repositories::access::grant_repo_access(
                 database.pool(),
@@ -428,7 +428,7 @@ async fn private_teams_and_unverified_email_do_not_resolve(pg: bool) {
         pool,
         carol.id,
         org_repo.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();

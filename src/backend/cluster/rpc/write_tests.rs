@@ -1,5 +1,5 @@
 use super::*;
-use crate::backend::db::models::RefChange;
+use codeyard_db_core::models::RefChange;
 use tokio::io::AsyncWriteExt;
 
 fn commit(repo: &git2::Repository, message: &str) -> String {

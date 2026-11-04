@@ -20,7 +20,7 @@ pub(super) async fn closed_state() -> AppState {
             .unwrap(),
     );
     AppState::new(
-        db::DbPool::from(pool),
+        codeyard_db_core::DbPool::from(pool),
         PathBuf::from("/unused-ssr-fixture"),
         storage,
         None,
@@ -259,8 +259,8 @@ async fn incomplete_native_forms_are_bounded_and_expire_before_extraction() {
 
 #[tokio::test]
 async fn anonymous_slow_posts_cannot_block_authenticated_mutations() {
-    let pool = db::init_db("sqlite::memory:").await.unwrap();
-    db::run_migrations(&pool).await.unwrap();
+    let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
+    codeyard_db_core::run_migrations(&pool).await.unwrap();
     db::node_config::upsert_node_configuration(&pool, "public", true)
         .await
         .unwrap();

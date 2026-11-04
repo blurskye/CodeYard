@@ -3,23 +3,25 @@
 use super::request;
 use crate::support::{database::Database, http_client::Client, organizations::applied};
 use chrono::{Duration, Utc};
-use codeyard::backend::{
-    db::{
-        self,
-        models::{AccessLevel, OrgRole},
-        organizations::{self, NewOrganization, OrganizationProfile},
-        repositories::creation::{RepositoryCreationOwner, RepositoryTarget},
-    },
-    identity::{
-        fine_grained::{self, Access, Owner, TokenError},
-        tokens::{self, TokenInput},
-    },
-    repositories::lifecycle,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
+use codeyard::backend::db::repositories::creation::RepositoryTarget;
+use codeyard::backend::identity::fine_grained;
+use codeyard::backend::identity::fine_grained::Access;
+use codeyard::backend::identity::fine_grained::Owner;
+use codeyard::backend::identity::fine_grained::TokenError;
+use codeyard::backend::identity::tokens;
+use codeyard::backend::identity::tokens::TokenInput;
+use codeyard::backend::repositories::lifecycle;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
 use codeyard_webui::app::Page;
 use serde_json::{json, Value};
 
-async fn classic(pool: &db::DbPool, user: i64, session: &str) -> String {
+async fn classic(pool: &codeyard_db_core::DbPool, user: i64, session: &str) -> String {
     let token = tokens::create(
         pool,
         user,
@@ -36,7 +38,7 @@ async fn classic(pool: &db::DbPool, user: i64, session: &str) -> String {
 }
 
 async fn fine(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     user: i64,
     session: &str,
     org: i64,

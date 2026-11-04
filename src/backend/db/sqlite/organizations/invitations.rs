@@ -1,10 +1,12 @@
 use super::authority::*;
 use crate::backend::db::organizations::invitations::InvitationOffer;
-use crate::backend::db::{
-    models::{OrgInvitation, OrgMembership, OrgRole, ReceivedInvitation, Team},
-    organizations::*,
-};
+use crate::backend::db::organizations::*;
 use anyhow::Result;
+use codeyard_db_core::models::OrgInvitation;
+use codeyard_db_core::models::OrgMembership;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::ReceivedInvitation;
+use codeyard_db_core::models::Team;
 use sqlx::{SqliteConnection, SqlitePool};
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing, Suspended};
 

@@ -33,7 +33,7 @@ fn decode_reference(value: &str) -> Option<(i64, String)> {
 }
 
 pub(super) async fn load(
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     oid: &str,
     request: &RequestContext,
 ) -> Result<Value> {
@@ -129,7 +129,7 @@ pub(super) async fn blob_text(parent: &Value, request: &RequestContext) -> Resul
 
 // Callers authorize before I/O; recheck after it and charge the map plus cloned names.
 async fn loaded_refs(
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     request: &RequestContext,
 ) -> Result<std::collections::HashMap<String, String>> {
     let refs = repo_store(repo, request.state.cluster.as_ref())
@@ -146,7 +146,7 @@ async fn loaded_refs(
 }
 
 pub(super) async fn reference(
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     name: &str,
     request: &RequestContext,
 ) -> Result<Value> {
@@ -159,7 +159,7 @@ pub(super) async fn reference(
 }
 
 pub(super) async fn reference_at(
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     name: &str,
     oid: &str,
     _request: &RequestContext,
@@ -344,7 +344,7 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
 pub(super) async fn resolve(
     field: &str,
     args: &super::Arguments,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     request: &RequestContext,
 ) -> Result<Value> {
     request.authorize(repo.id, "contents", false).await?;
@@ -468,7 +468,7 @@ pub(super) async fn resolve(
     }
 }
 async fn checked(
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     kind: &str,
     oid: &str,
     request: &RequestContext,

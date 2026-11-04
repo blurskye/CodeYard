@@ -13,3 +13,6 @@ pub mod file_names;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod locks;
 pub mod tokens;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod crypto;

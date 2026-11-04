@@ -1,7 +1,8 @@
 //! Actual accepted Git ref changes, independently of optional profile statistics or webhooks.
-use crate::backend::db::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

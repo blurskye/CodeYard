@@ -1,8 +1,8 @@
 //! PostgreSQL side of a database copy.
 
-use super::super::postgres::migrations::validate_history;
 use super::{quote, Catalog, Column, Sequence, Table};
 use anyhow::{bail, Result};
+use codeyard_db_core::postgres::migrations::validate_history;
 use sqlx::{Postgres, Transaction};
 
 pub(super) async fn catalog(tx: &mut Transaction<'static, Postgres>) -> Result<Catalog> {

@@ -143,7 +143,9 @@ impl CiRuns {
             return Ok(());
         }
         let (actor, access_cap) = match proof.publication.actor {
-            codeyard_git::PublicationActor::User(actor) => (actor, db::models::AccessLevel::Owner),
+            codeyard_git::PublicationActor::User(actor) => {
+                (actor, codeyard_db_core::models::AccessLevel::Owner)
+            }
             codeyard_git::PublicationActor::DeployKey(key) => {
                 let (actor, cap) = crate::backend::repositories::deploy_keys::authorize(
                     &self.pool, key, &repo, true,

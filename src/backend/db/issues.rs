@@ -1,9 +1,11 @@
 //! Shared named operation surface; native transactions stay inside db.
+use codeyard_db_core::native_operation;
 pub mod management;
 use crate::backend::db::discussions::{ListFilter, StateCounts};
-use crate::backend::db::models::{Issue, IssueComment};
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::Issue;
+use codeyard_db_core::models::IssueComment;
+use codeyard_db_core::DbPool;
 
 native_operation!(crate::backend::db::postgres::issues::issue_repositories,
     crate::backend::db::sqlite::issues::issue_repositories,
@@ -303,5 +305,5 @@ pub struct ViewerIssueEntry {
     pub repo_name: String,
     pub comments: i64,
     #[sqlx(skip)]
-    pub labels: Vec<crate::backend::db::models::Label>,
+    pub labels: Vec<codeyard_db_core::models::Label>,
 }

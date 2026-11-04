@@ -1,6 +1,8 @@
 use super::*;
-use crate::backend::db::{models::OrgMembership, DbPool};
 use anyhow::Result;
+use codeyard_db_core::models::OrgMembership;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 // Audited exceptional promotion of an existing active member only when no usable
 // owner remains. Original restrictions persist; this is not implicit tenant access.

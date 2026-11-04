@@ -1,17 +1,15 @@
 //! Temporary remediation forks reuse repository storage placement and checked fork initialization.
 use super::{access, lifecycle};
-use crate::backend::{
-    app::AppState,
-    cluster::NodeContext,
-    db::{
-        self,
-        advisories::{self, Refusal},
-        credentials::Actor,
-        models::Repository,
-        repositories::creation::{CreationAdmission, RepositoryCreationOwner},
-    },
-};
+use crate::backend::app::AppState;
+use crate::backend::cluster::NodeContext;
+use crate::backend::db;
+use crate::backend::db::advisories;
+use crate::backend::db::advisories::Refusal;
+use crate::backend::db::credentials::Actor;
+use crate::backend::db::repositories::creation::CreationAdmission;
+use crate::backend::db::repositories::creation::RepositoryCreationOwner;
 use anyhow::Result;
+use codeyard_db_core::models::Repository;
 use std::path::Path;
 
 pub async fn private_fork(
@@ -41,7 +39,7 @@ pub async fn private_fork(
 }
 
 async fn private_fork_owned(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     context: Option<&NodeContext>,
     path: &Path,
     authority: Actor,

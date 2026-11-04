@@ -52,15 +52,15 @@ mod tests {
         cluster::{IrohDialer, NodeKey, Relay},
     };
 
-    async fn test_context() -> (tempfile::TempDir, db::DbPool, NodeContext) {
+    async fn test_context() -> (tempfile::TempDir, codeyard_db_core::DbPool, NodeContext) {
         let root = tempfile::tempdir().unwrap();
-        let pool = db::init_db(&format!(
+        let pool = codeyard_db_core::init_db(&format!(
             "sqlite://{}",
             root.path().join("test.db").display()
         ))
         .await
         .unwrap();
-        db::run_migrations(&pool).await.unwrap();
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let key = NodeKey::generate();
         let node = db::cluster::register_own_node(
             &pool,

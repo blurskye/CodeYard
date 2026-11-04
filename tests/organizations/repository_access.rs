@@ -6,11 +6,10 @@
 use crate::support::database::Database;
 use crate::support::organizations::applied;
 
-use codeyard::backend::db::{
-    self,
-    models::{AccessLevel, OrgRole},
-    organizations,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
 
 impl Database {
     async fn org(&self, owner: i64, name: &str) -> i64 {
@@ -119,8 +118,12 @@ impl Database {
 }
 
 async fn canonical_access_contract(database: &Database) {
+    use codeyard_db_core::models::AccessLevel::Admin;
+    use codeyard_db_core::models::AccessLevel::None as NoAccess;
+    use codeyard_db_core::models::AccessLevel::Owner;
+    use codeyard_db_core::models::AccessLevel::Read;
+    use codeyard_db_core::models::AccessLevel::Write;
     use organizations::TeamPrivacy::{Secret, Visible};
-    use AccessLevel::{Admin, None as NoAccess, Owner, Read, Write};
     let pool = database.pool();
     let owner = database.actor("access_owner").await;
     let admin = database.actor("access_admin").await;

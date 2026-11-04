@@ -73,7 +73,7 @@ pub async fn remove_requested_reviewer(
 #[serde(untagged)]
 pub enum RequestedReviewer {
     User(RequestedReviewerResponse),
-    Team(db::models::Team),
+    Team(codeyard_db_core::models::Team),
 }
 
 #[derive(Serialize)]
@@ -84,7 +84,7 @@ pub struct RequestedReviewerResponse {
 }
 
 impl RequestedReviewerResponse {
-    fn new(user: db::models::User) -> Self {
+    fn new(user: codeyard_db_core::models::User) -> Self {
         Self {
             user_id: user.id,
             username: user.username,

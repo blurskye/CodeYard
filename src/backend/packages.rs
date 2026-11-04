@@ -74,7 +74,7 @@ pub fn valid_package_name(kind: &str, name: &str) -> bool {
 }
 
 pub async fn store(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     storage: &ObjectStore,
     package: i64,
     token: i64,
@@ -128,7 +128,7 @@ pub async fn read(storage: &ObjectStore, blob: &Blob) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-pub async fn collect(pool: &db::DbPool, storage: &ObjectStore) -> Result<()> {
+pub async fn collect(pool: &codeyard_db_core::DbPool, storage: &ObjectStore) -> Result<()> {
     let Some(_collecting) = db::packages::collector_lock(pool).await? else {
         return Ok(());
     };

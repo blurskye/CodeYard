@@ -1,6 +1,7 @@
 //! Repository autolink configuration; validation is shared by native forms and REST.
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Autolink {

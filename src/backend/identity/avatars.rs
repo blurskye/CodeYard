@@ -7,18 +7,21 @@
 //! quotas as one uploaded through the files API, then activated when set. The picture
 //! an account stops using is removed in the same database transaction as the change.
 
-use crate::backend::{
-    db::{
-        self,
-        models::{FileReason, FileVisibility, User},
-        organizations::{self, OrganizationOutcome},
-        users::accounts::{AccountCredential, UserAvatarOutcome},
-        DbPool,
-    },
-    files::{self, UploadDeclaration, UploadError},
-    storage::{media_signature_matches, ObjectStore},
-};
-use codeyard_support::credentials::AccountRestricted;
+use crate::backend::db;
+use crate::backend::db::organizations;
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::users::accounts::AccountCredential;
+use crate::backend::db::users::accounts::AccountRestricted;
+use crate::backend::db::users::accounts::UserAvatarOutcome;
+use crate::backend::files;
+use crate::backend::files::UploadDeclaration;
+use crate::backend::files::UploadError;
+use crate::backend::storage::media_signature_matches;
+use crate::backend::storage::ObjectStore;
+use codeyard_db_core::models::FileReason;
+use codeyard_db_core::models::FileVisibility;
+use codeyard_db_core::models::User;
+use codeyard_db_core::DbPool;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 

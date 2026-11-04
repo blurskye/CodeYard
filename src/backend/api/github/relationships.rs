@@ -27,7 +27,7 @@ pub(super) fn error(error: anyhow::Error) -> Error {
         None => Error::unavailable(error),
     }
 }
-async fn root(pool: &db::DbPool, repo: i64, p: &Params) -> Result<i64> {
+async fn root(pool: &codeyard_db_core::DbPool, repo: i64, p: &Params) -> Result<i64> {
     issues::required_issue(pool, repo, &p["issue_number"]).await
 }
 /// A linked issue may sit in another repository, which the credential must reach as well.

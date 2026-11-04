@@ -62,7 +62,7 @@ pub(super) async fn run(
     root: &std::path::Path,
     actors: (i64, i64),
     credentials: (&str, &str, &str),
-    personal: &db::models::Repository,
+    personal: &codeyard_db_core::models::Repository,
 ) {
     let (alice, bob) = actors;
     let (writer, reader, outsider) = credentials;
@@ -137,9 +137,15 @@ pub(super) async fn run(
     )
     .id;
     applied(
-        orgs::add_organization_member(f.pool(), alice, org, bob, db::models::OrgRole::Member)
-            .await
-            .unwrap(),
+        orgs::add_organization_member(
+            f.pool(),
+            alice,
+            org,
+            bob,
+            codeyard_db_core::models::OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let organization = lifecycle::provision(
         (f.pool(), None),

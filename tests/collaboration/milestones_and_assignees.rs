@@ -3,16 +3,16 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 
-use codeyard::backend::{
-    db::{
-        self,
-        assignees::{AssignedItem, AssignmentRefusal},
-        discussions::{DiscussionEdit, ListFilter, ListSort, Pick},
-        milestones::MilestoneWriteRefusal,
-        models::AccessLevel,
-    },
-    repositories::lifecycle,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::assignees::AssignedItem;
+use codeyard::backend::db::assignees::AssignmentRefusal;
+use codeyard::backend::db::discussions::DiscussionEdit;
+use codeyard::backend::db::discussions::ListFilter;
+use codeyard::backend::db::discussions::ListSort;
+use codeyard::backend::db::discussions::Pick;
+use codeyard::backend::db::milestones::MilestoneWriteRefusal;
+use codeyard::backend::repositories::lifecycle;
+use codeyard_db_core::models::AccessLevel;
 use database::Database;
 
 fn assignment_refusal(error: anyhow::Error) -> AssignmentRefusal {
@@ -28,7 +28,11 @@ fn milestone_refusal(error: anyhow::Error) -> MilestoneWriteRefusal {
 }
 
 /// The numbers a filter lists, in the order the list gives them.
-async fn issue_numbers(pool: &db::DbPool, repo: i64, filter: ListFilter<'_>) -> Vec<i32> {
+async fn issue_numbers(
+    pool: &codeyard_db_core::DbPool,
+    repo: i64,
+    filter: ListFilter<'_>,
+) -> Vec<i32> {
     db::issues::list_repo_issues(pool, repo, &filter, 100)
         .await
         .unwrap()
@@ -38,7 +42,7 @@ async fn issue_numbers(pool: &db::DbPool, repo: i64, filter: ListFilter<'_>) -> 
 }
 
 /// The numbers a filter lists, sorted, for a set comparison.
-async fn issue_set(pool: &db::DbPool, repo: i64, filter: ListFilter<'_>) -> Vec<i32> {
+async fn issue_set(pool: &codeyard_db_core::DbPool, repo: i64, filter: ListFilter<'_>) -> Vec<i32> {
     let mut numbers = issue_numbers(pool, repo, filter).await;
     numbers.sort_unstable();
     numbers

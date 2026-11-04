@@ -55,7 +55,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob_id,
         proj.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -496,7 +496,7 @@ async fn new_issue_picks(pg: bool) {
         f.pool(),
         bob_id,
         proj.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -504,7 +504,7 @@ async fn new_issue_picks(pg: bool) {
         f.pool(),
         carol_id,
         proj.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();

@@ -1,7 +1,6 @@
-use crate::backend::{
-    db::{files as files_db, DbPool},
-    storage::ObjectStore,
-};
+use crate::backend::db::files as files_db;
+use crate::backend::storage::ObjectStore;
+use codeyard_db_core::DbPool;
 use uuid::Uuid;
 
 /// A key whose bytes could not be removed is tried again after this long.

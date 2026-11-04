@@ -1,10 +1,9 @@
 //! OIDC identities come from admitted workflows and live job credentials, never request claims.
-use crate::backend::{
-    db::{self, DbPool},
-    identity::github_apps,
-};
+use crate::backend::db;
+use crate::backend::identity::github_apps;
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use codeyard_db_core::DbPool;
 use rsa::{
     pkcs8::DecodePrivateKey,
     signature::{SignatureEncoding, Signer},

@@ -3,11 +3,10 @@
 
 use crate::backend::ci::CiRuns;
 use crate::backend::db;
-use crate::backend::db::models::Repository;
-use crate::backend::db::DbPool;
-use crate::backend::repositories::store::{repo_store, RepoStore};
+use crate::backend::repositories::store::{repo_store, ErrorKind, RepoError, RepoStore};
 use crate::backend::webhooks::{self, events, payloads::Scope};
-use codeyard_git::error::{ErrorKind, RepoError};
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::DbPool;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -102,7 +101,7 @@ async fn branch_commit(
 }
 
 fn revisions(
-    pull: db::models::PullRequest,
+    pull: codeyard_db_core::models::PullRequest,
 ) -> Option<db::pull_requests::records::PullRequestRevisions> {
     (pull.state == "open").then_some(db::pull_requests::records::PullRequestRevisions {
         id: pull.id,
@@ -135,7 +134,7 @@ async fn move_head(
     head_repo: Option<i64>,
     head_branch: &str,
     actor_id: i64,
-    ci_access: Option<db::models::AccessLevel>,
+    ci_access: Option<codeyard_db_core::models::AccessLevel>,
 ) -> Result<bool, RefreshError> {
     // GitHub keeps auto-merge only when the recorded pusher of this head may write the base.
     let pusher = match head_repo {
@@ -232,7 +231,7 @@ async fn refresh_one(
     actor_id: i64,
     listed: &mut ListedRefs,
     mut pull: db::pull_requests::records::PullRequestRevisions,
-    ci_access: Option<db::models::AccessLevel>,
+    ci_access: Option<codeyard_db_core::models::AccessLevel>,
     head_writer: Option<i64>,
 ) -> Result<bool, RefreshError> {
     let context = ci.cluster.as_ref();
@@ -503,7 +502,7 @@ pub async fn refresh_open_pull_request(
     ci: &CiRuns,
     actor_id: i64,
     pull_request_id: i64,
-    ci_access: Option<db::models::AccessLevel>,
+    ci_access: Option<codeyard_db_core::models::AccessLevel>,
 ) -> Result<bool, RefreshError> {
     let Some(pull) = db::pull_requests::records::get_pull_request_by_id(pool, pull_request_id)
         .await
@@ -568,7 +567,7 @@ pub async fn refresh_updated_head(
         actor_id,
         &mut listed,
         pull,
-        Some(db::models::AccessLevel::Owner),
+        Some(codeyard_db_core::models::AccessLevel::Owner),
         head_writer,
     )
     .await
@@ -585,7 +584,7 @@ pub async fn refresh_open_pull_requests(
     branches: Option<&[&str]>,
     ci: &CiRuns,
     actor_id: i64,
-    ci_access: db::models::AccessLevel,
+    ci_access: codeyard_db_core::models::AccessLevel,
 ) -> Result<usize, RefreshError> {
     if let Err(error) = db::vulnerabilities::enqueue(pool, repo.id).await {
         tracing::warn!(repo_id=repo.id,%error,"could not queue dependency vulnerability scan");
@@ -612,7 +611,7 @@ pub async fn refresh_open_pull_requests(
             actor_id,
             &mut listed,
             pull,
-            (ci_access != db::models::AccessLevel::None).then_some(ci_access),
+            (ci_access != codeyard_db_core::models::AccessLevel::None).then_some(ci_access),
             None,
         )
         .await
@@ -642,7 +641,7 @@ pub async fn branches_moved(pool: &DbPool, repo: &Repository, ci: &CiRuns, actor
         None,
         ci,
         actor_id,
-        crate::backend::db::models::AccessLevel::Owner,
+        codeyard_db_core::models::AccessLevel::Owner,
     )
     .await
     {

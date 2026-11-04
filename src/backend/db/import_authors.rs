@@ -1,6 +1,7 @@
 //! Stable imported author identities and explicit display mappings do not rewrite Git history.
-use super::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(sqlx::FromRow)]
 pub struct Author {

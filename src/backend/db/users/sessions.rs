@@ -1,8 +1,12 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::models::{BrowserSession, OAuthState, Session, User};
-use crate::backend::db::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::BrowserSession;
+use codeyard_db_core::models::OAuthState;
+use codeyard_db_core::models::Session;
+use codeyard_db_core::models::User;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 native_operation!(crate::backend::db::postgres::users::sessions::create_session,
     crate::backend::db::sqlite::users::sessions::create_session,

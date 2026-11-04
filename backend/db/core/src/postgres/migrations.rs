@@ -8,7 +8,7 @@ use tracing::info;
 const MIGRATIONS: &[(i64, &str, &str)] = &[(
     1,
     "schema",
-    include_str!("../../../../schema/postgres/0001.schema.sql"),
+    include_str!("../../../../../schema/postgres/0001.schema.sql"),
 )];
 
 static MIGRATION_TURNS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -57,7 +57,7 @@ pub async fn run_migrations(pool: &PgPool) -> Result<()> {
     Ok(())
 }
 
-pub(in crate::backend::db) fn validate_history(applied: &[(i64, String)]) -> Result<()> {
+pub fn validate_history(applied: &[(i64, String)]) -> Result<()> {
     for (index, (version, checksum)) in applied.iter().enumerate() {
         let Some((expected_version, _, sql)) = MIGRATIONS.get(index) else {
             bail!("database has migrations newer than this application; downgrade refused");

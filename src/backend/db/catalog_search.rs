@@ -1,10 +1,11 @@
 //! Bounded lexical catalog searches. Repository visibility is part of every SQL predicate,
 //! count and ordering operation, never a filter on an already paginated collection.
-use super::{
-    discussion_search::{self, Expr, Statement},
-    DbPool,
-};
+use super::discussion_search;
+use super::discussion_search::Expr;
+use super::discussion_search::Statement;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Repositories,

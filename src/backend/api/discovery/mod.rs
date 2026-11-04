@@ -53,7 +53,7 @@ fn page_number(query: &HashMap<String, String>) -> Result<usize, &'static str> {
 }
 
 fn owner_name(
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owners: &BTreeMap<i64, String>,
 ) -> Result<String, DiscoveryReadError> {
     // Numeric user/org IDs are separate namespaces, even in malformed records.
@@ -75,7 +75,7 @@ fn owner_name(
 const CARD_TOPICS: usize = 5;
 
 fn repository_card(
-    repo: db::models::Repository,
+    repo: codeyard_db_core::models::Repository,
     owner: String,
     topics: Vec<String>,
     primary_language: Option<LanguageShare>,
@@ -103,7 +103,7 @@ fn repository_card(
 pub(crate) async fn repository_cards(
     state: &AppState,
     viewer: Option<i64>,
-    repos: Vec<db::models::Repository>,
+    repos: Vec<codeyard_db_core::models::Repository>,
 ) -> Result<Vec<RepositoryCard>, DiscoveryReadError> {
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
     let owners = db::repositories::records::repository_owner_names(&state.pool, &ids)
@@ -146,7 +146,7 @@ pub(crate) async fn repository_cards(
 /// read.
 pub(crate) async fn dashboard_cards(
     state: &AppState,
-    repos: Vec<db::models::Repository>,
+    repos: Vec<codeyard_db_core::models::Repository>,
 ) -> Result<Vec<RepositoryCard>, DiscoveryReadError> {
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
     let owners = db::repositories::records::repository_owner_names(&state.pool, &ids)
@@ -159,7 +159,7 @@ pub(crate) async fn dashboard_cards(
 }
 
 fn card_list(
-    repos: Vec<db::models::Repository>,
+    repos: Vec<codeyard_db_core::models::Repository>,
     owners: &BTreeMap<i64, String>,
     mut topics: BTreeMap<i64, Vec<String>>,
     mut languages: HashMap<i64, LanguageShare>,
@@ -190,9 +190,9 @@ mod tests {
         kind: &str,
         user_id: Option<i64>,
         org_id: Option<i64>,
-    ) -> db::models::Repository {
+    ) -> codeyard_db_core::models::Repository {
         let now = chrono::Utc::now();
-        db::models::Repository {
+        codeyard_db_core::models::Repository {
             actions_engine: None,
             id,
             owner_kind: kind.into(),

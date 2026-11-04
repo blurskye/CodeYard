@@ -1,13 +1,15 @@
 use super::{call, Client};
 use crate::support::organizations::applied;
 use axum::{http::StatusCode, Router};
-use codeyard::backend::db::{self, models::AccessLevel, organizations as orgs};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations as orgs;
+use codeyard_db_core::models::AccessLevel;
 use serde_json::{json, Value};
 
 pub(super) async fn run(
     router: &Router,
     session: &Client,
-    scope: (&db::DbPool, i64, i64, i64, i64),
+    scope: (&codeyard_db_core::DbPool, i64, i64, i64, i64),
     tokens: (&str, &str, &str),
 ) {
     let (pool, org, alice, charlie, repo) = scope;

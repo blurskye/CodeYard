@@ -1,11 +1,10 @@
 use super::authority::*;
 use super::invitations::{LIVE, RECIPIENT};
 use crate::backend::db::organizations::invitations::InvitationOffer;
-use crate::backend::db::{
-    models::{OrgInvitation, OrgRole},
-    organizations::*,
-};
+use crate::backend::db::organizations::*;
 use anyhow::Result;
+use codeyard_db_core::models::OrgInvitation;
+use codeyard_db_core::models::OrgRole;
 use sqlx::PgPool;
 use OrganizationOutcome::{Applied, Denied, Missing};
 

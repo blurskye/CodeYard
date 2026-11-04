@@ -9,7 +9,7 @@ use crate::backend::{
 };
 use serde_json::json;
 pub(super) async fn object(
-    row: &db::models::CommitComment,
+    row: &codeyard_db_core::models::CommitComment,
     request: &RequestContext,
 ) -> Result<Value> {
     let repo = repository::by_id(row.repo_id, request).await?;

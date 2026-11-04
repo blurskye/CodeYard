@@ -1,6 +1,6 @@
 // The caller's revision is never replaced by a freshly loaded revision.
-use crate::backend::db::models::AccessLevel;
 use anyhow::Result;
+use codeyard_db_core::models::AccessLevel;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
 pub async fn last_discussion_numbers(

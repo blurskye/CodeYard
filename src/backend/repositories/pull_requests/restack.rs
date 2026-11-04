@@ -7,10 +7,11 @@ use super::merge::{open_chain, prepare_error};
 use super::{actor, branches_moved, database_error, require_write, OperationError};
 use crate::backend::ci::{CiRuns, RefUpdate};
 use crate::backend::db;
-use crate::backend::db::models::PullRequest;
 use crate::backend::db::pull_requests::records::MAX_STACK_LAYERS;
-use crate::backend::repositories::store::{repo_store, RepoStore, RestackMove};
-use codeyard_git::error::{ErrorKind, RepoError};
+use crate::backend::repositories::store::{
+    repo_store, ErrorKind, RepoError, RepoStore, RestackMove,
+};
+use codeyard_db_core::models::PullRequest;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -29,7 +30,7 @@ pub struct RestackResponse {
 /// it, so any layer of the stack can ask for it. Layers below that layer do not move. When nothing
 /// needs to move, nothing is written and the answer is zero.
 pub async fn rebase_stack(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     actor_id: impl Into<db::credentials::Actor>,
     target: (String, String, i32),
@@ -44,7 +45,7 @@ pub async fn rebase_stack(
 pub struct PreparedRestack {
     authority: db::credentials::Actor,
     owner: String,
-    repository: db::models::Repository,
+    repository: codeyard_db_core::models::Repository,
     stack_id: i64,
     /// The stack's versions from before its layers were read.
     versions: Vec<(i64, i64)>,
@@ -56,7 +57,7 @@ pub struct PreparedRestack {
 /// Replays the layers a rebase moves, without moving any branch. `None` when nothing needs to move.
 /// This can take minutes, so it holds no database transaction.
 pub async fn prepare_rebase(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     authority: impl Into<db::credentials::Actor>,
     (owner, repo, number): (String, String, i32),
@@ -178,7 +179,7 @@ pub async fn prepare_rebase(
 /// still be at the version it was read at, or nothing moves. The branches move only if each is still
 /// at the commit that was replayed, so a push to a layer fails the rebase as well.
 pub async fn publish_rebase(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     prepared: PreparedRestack,
 ) -> Result<RestackResponse, OperationError> {
@@ -466,7 +467,7 @@ async fn recorded_boundary(
 /// that already contains the current tip of its base sits on trunk, and merging it only adds its own
 /// changes, so it is not behind. The tips are read from `refs`, as `layers_to_move` reads them.
 pub(super) async fn squashed_below(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     store: &RepoStore,
     refs: &HashMap<String, String>,
     bottom: &PullRequest,
@@ -498,7 +499,7 @@ pub(super) async fn squashed_below(
 /// page still renders. Publication checks the same things on the primary.
 pub async fn restack_pending(
     ci: &CiRuns,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     pull: &PullRequest,
     members: &[PullRequest],
 ) -> bool {
@@ -517,7 +518,7 @@ pub async fn restack_pending(
 
 async fn pending(
     ci: &CiRuns,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     pull: &PullRequest,
     members: &[PullRequest],
 ) -> Result<bool, OperationError> {

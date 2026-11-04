@@ -133,7 +133,7 @@ pub(crate) fn submitted_detail(form: &HashMap<String, String>, action: &str) -> 
     }
 }
 pub(crate) struct RepositoryData {
-    pub(crate) record: db::models::Repository,
+    pub(crate) record: codeyard_db_core::models::Repository,
     pub(crate) view: view::Repository,
 }
 pub(crate) async fn repository(
@@ -149,7 +149,7 @@ pub(crate) async fn repository(
                 .await
                 .map_err(|_| unavailable(ctx))?
         }
-        None => db::models::AccessLevel::None,
+        None => codeyard_db_core::models::AccessLevel::None,
     };
     let mutable = ctx.user.is_some()
         && !record.is_archived
@@ -191,7 +191,7 @@ pub(crate) async fn author(ctx: &PageContext, id: i64) -> ResultPage<String> {
         .map(|user| user.username)
         .unwrap_or_else(|| "Deleted user".into()))
 }
-pub(crate) fn label(value: db::models::Label) -> view::Label {
+pub(crate) fn label(value: codeyard_db_core::models::Label) -> view::Label {
     view::Label {
         id: value.id,
         name: value.name,
@@ -235,9 +235,9 @@ fn can_edit_entry(ctx: &PageContext, repo: &RepositoryData, author_id: i64) -> b
 }
 
 pub(crate) fn issue_item(
-    issue: db::models::Issue,
+    issue: codeyard_db_core::models::Issue,
     author: String,
-    labels: Vec<db::models::Label>,
+    labels: Vec<codeyard_db_core::models::Label>,
 ) -> view::Item {
     view::Item {
         id: issue.id,
@@ -278,7 +278,10 @@ pub(crate) enum HeadRepository {
     Deleted,
 }
 
-async fn can_view_head(ctx: &PageContext, head: &db::models::Repository) -> ResultPage<bool> {
+async fn can_view_head(
+    ctx: &PageContext,
+    head: &codeyard_db_core::models::Repository,
+) -> ResultPage<bool> {
     crate::backend::repositories::access::can_read(&ctx.state.pool, ctx.user.as_ref(), head)
         .await
         .map_err(|_| unavailable(ctx))
@@ -287,7 +290,7 @@ async fn can_view_head(ctx: &PageContext, head: &db::models::Repository) -> Resu
 /// The head repository of a pull request opened from a fork, for the detail page.
 async fn head_for_viewer(
     ctx: &PageContext,
-    head: Option<db::models::Repository>,
+    head: Option<codeyard_db_core::models::Repository>,
 ) -> ResultPage<HeadRepository> {
     let Some(head) = head else {
         return Ok(HeadRepository::Deleted);
@@ -361,7 +364,7 @@ pub(crate) async fn listed_assignees(
 pub(crate) fn pull_item(
     ctx: &PageContext,
     repo: &RepositoryData,
-    pull: db::models::PullRequest,
+    pull: codeyard_db_core::models::PullRequest,
     author: String,
     head_repository: HeadRepository,
 ) -> Result<view::Item, Box<Response>> {
@@ -1342,7 +1345,7 @@ async fn fill_merge_blockers(
 /// The branch names of a repository, sorted, and all its refs.
 pub(crate) async fn branches(
     ctx: &PageContext,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
 ) -> ResultPage<(Vec<String>, HashMap<String, String>)> {
     let refs = repo_store(repository, ctx.state.cluster.as_ref())
         .refs()
@@ -1370,7 +1373,7 @@ pub(crate) async fn head_choices(
     draft: &mut NewDraft,
 ) -> ResultPage<(
     view::BranchChoices,
-    db::models::Repository,
+    codeyard_db_core::models::Repository,
     HashMap<String, String>,
 )> {
     let mut candidates = vec![base.record.clone()];
@@ -1490,9 +1493,9 @@ mod tests {
 
     #[tokio::test]
     async fn listed_heads_reuse_the_base_and_each_distinct_visibility_check() {
-        let pool = db::init_db("sqlite::memory:").await.unwrap();
-        db::run_migrations(&pool).await.unwrap();
-        let db::DbPool::Sqlite(sqlite) = &pool else {
+        let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
+        let codeyard_db_core::DbPool::Sqlite(sqlite) = &pool else {
             unreachable!()
         };
         sqlx::query("INSERT INTO node_configuration(id, setup_completed) VALUES(1, TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(sqlite).await.unwrap();

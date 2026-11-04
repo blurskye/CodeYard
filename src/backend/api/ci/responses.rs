@@ -1,4 +1,3 @@
-use crate::backend::db;
 use codeyard_webui::pages::ci as view;
 use codeyard_webui::pages::repos::actions as view_actions;
 use serde::{Deserialize, Serialize};
@@ -30,7 +29,7 @@ pub struct WorkflowInfo {
     pub supports_workflow_dispatch: bool,
 }
 
-pub fn map_job_info(run: db::models::CiRun) -> JobInfo {
+pub fn map_job_info(run: codeyard_db_core::models::CiRun) -> JobInfo {
     JobInfo {
         id: run.run_id.to_string(),
         repo_id: run.repo_id,
@@ -64,8 +63,8 @@ pub fn map_workflow_info(workflow: crate::backend::ci::WorkflowDefinition) -> Wo
 }
 
 pub(crate) fn map_run(
-    run: db::models::CiRun,
-    repository: &db::models::Repository,
+    run: codeyard_db_core::models::CiRun,
+    repository: &codeyard_db_core::models::Repository,
 ) -> view_actions::Run {
     // A pull request run is stored on its base branch, which admission uses. The page shows the head
     // branch of the pull request, which the run kept in its event.

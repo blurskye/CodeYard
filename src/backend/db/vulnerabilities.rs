@@ -1,7 +1,8 @@
 //! Durable OSV data and leases for lockfile snapshot scans.
-use super::DbPool;
 use crate::backend::{dependency_graph::Snapshot, vulnerabilities::PreparedAdvisory};
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
@@ -31,7 +32,7 @@ impl Settings {
             serde_json::from_str(&self.ecosystems).map_err(|_| Refusal::Invalid)?;
         let mut unique = Vec::new();
         for ecosystem in ecosystems {
-            if !crate::backend::vulnerabilities::ECOSYSTEMS.contains(&ecosystem.as_str()) {
+            if !codeyard_model::vulnerabilities::ECOSYSTEMS.contains(&ecosystem.as_str()) {
                 return Err(Refusal::Invalid);
             }
             if !unique.contains(&ecosystem) {

@@ -4,14 +4,10 @@ use super::{
     protection::{protected, write_error},
     Error, Result,
 };
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        models::BranchProtectionRule,
-        repositories::protection::{ActorListUpdate, ProtectionUpdate},
-    },
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::repositories::protection::ActorListUpdate;
+use crate::backend::db::repositories::protection::ProtectionUpdate;
 use axum::{
     extract::{FromRequest, Path, Request, State},
     http::{HeaderMap, Method},
@@ -19,6 +15,7 @@ use axum::{
     routing::{delete, get, post, put, MethodRouter},
     Json,
 };
+use codeyard_db_core::models::BranchProtectionRule;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;

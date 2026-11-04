@@ -6,7 +6,7 @@ impl LocalStore {
     /// type, a cycle the compiler rejects.
     pub(in crate::backend::repositories::store) fn rename_branch(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
         authority: db::credentials::Actor,
         old: &str,
@@ -28,7 +28,7 @@ impl LocalStore {
 
     async fn rename_branch_owned(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
         authority: db::credentials::Actor,
         old: &str,
@@ -129,12 +129,12 @@ impl LocalStore {
 
     async fn rename_authority(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
         authority: &db::credentials::Actor,
         old: &str,
         new: &str,
-    ) -> Result<db::models::User, RepoError> {
+    ) -> Result<codeyard_db_core::models::User, RepoError> {
         let actor = authority.user_id;
         let (repository, user) = access::check_write(pool, repo, actor)
             .await
@@ -198,7 +198,7 @@ impl LocalStore {
 
     pub(in crate::backend::repositories::store) async fn merge_upstream(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
         actor: i64,
         source: (i64, &LocalStore),
@@ -369,7 +369,7 @@ impl LocalStore {
 
     async fn upstream_authority(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
         actor: i64,
         source: (i64, &LocalStore),

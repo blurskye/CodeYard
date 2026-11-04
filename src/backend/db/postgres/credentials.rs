@@ -120,7 +120,7 @@ pub(crate) async fn repository(
     if let Some((client, scopes)) = oauth {
         let active: Option<i64> = sqlx::query_scalar("SELECT a.id FROM oauth_applications a JOIN users u ON u.id=a.owner_id WHERE a.client_id=$1 AND NOT u.is_banned AND NOT u.must_change_password")
             .bind(&client).fetch_optional(&mut **tx).await?;
-        if active.is_none() && client != crate::backend::identity::oauth_apps::CLI_CLIENT {
+        if active.is_none() && client != codeyard_model::identity::CLI_CLIENT {
             return Ok(false);
         }
         let app: Option<(i64, String)> =
@@ -249,13 +249,14 @@ pub(crate) async fn organization(
     if let Some((client, scopes)) = oauth {
         let active: Option<i64> = sqlx::query_scalar("SELECT a.id FROM oauth_applications a JOIN users u ON u.id=a.owner_id WHERE a.client_id=$1 AND NOT u.is_banned AND NOT u.must_change_password")
             .bind(&client).fetch_optional(&mut **tx).await?;
-        return Ok((active.is_some()
-            || client == crate::backend::identity::oauth_apps::CLI_CLIENT)
-            && crate::backend::identity::oauth_apps::allows(
-                &scopes,
-                &crate::backend::db::credentials::oauth_organization_path(permission),
-                write,
-            ));
+        return Ok(
+            (active.is_some() || client == codeyard_model::identity::CLI_CLIENT)
+                && crate::backend::identity::oauth_apps::allows(
+                    &scopes,
+                    &crate::backend::db::credentials::oauth_organization_path(permission),
+                    write,
+                ),
+        );
     }
     Ok(!sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM organization_token_policies WHERE org_id=$1 AND NOT classic_allowed)")
         .bind(org).fetch_one(&mut **tx).await?)

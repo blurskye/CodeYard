@@ -1,11 +1,10 @@
 use super::fixture::{applied, Actor, Fixture, Reply};
 use axum::http::StatusCode;
 use codeyard::backend::cluster::NodeKey;
-use codeyard::backend::db::{
-    self,
-    models::{AccessLevel, OrgRole},
-    organizations as orgs,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations as orgs;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
 use codeyard_webui::{
     app::{Page, PageEnvelope},
     bootstrap::{Bootstrap, BOOTSTRAP_ID},

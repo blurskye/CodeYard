@@ -12,14 +12,13 @@ pub use promote::{
 };
 
 use super::{rpc, NodeContext};
-use crate::backend::db::{
-    self,
-    models::{HeldReplica, ReplicaSetting},
-    DbPool,
-};
+use crate::backend::db;
+use crate::backend::repositories::store::RepoError;
 use crate::backend::storage::local::{remove_stale_temporaries, STALE_AFTER};
 use anyhow::{Context, Result};
-use codeyard_git::error::RepoError;
+use codeyard_db_core::models::HeldReplica;
+use codeyard_db_core::models::ReplicaSetting;
+use codeyard_db_core::DbPool;
 use codeyard_git::{locks, maintenance, mirror};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -97,13 +96,13 @@ mod tests {
     #[tokio::test]
     async fn pending_replica_assignments_reserve_disk_space_across_repositories() {
         let root = tempfile::tempdir().unwrap();
-        let pool = db::init_db(&format!(
+        let pool = codeyard_db_core::init_db(&format!(
             "sqlite://{}",
             root.path().join("test.db").display()
         ))
         .await
         .unwrap();
-        db::run_migrations(&pool).await.unwrap();
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let mut nodes = Vec::new();
         const GIB: i64 = 1024 * 1024 * 1024;
         for (name, free) in [("a", 100 * GIB), ("b", 12 * GIB), ("c", 11 * GIB)] {

@@ -1,7 +1,8 @@
 //! Private security reporting. Reports are never ordinary issues or searchable public activity.
-use crate::backend::db::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {

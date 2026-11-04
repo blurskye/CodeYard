@@ -13,7 +13,7 @@ use codeyard_webui::pages::repos::chrome::RepoChrome;
 use codeyard_webui::pages::repos::ref_path::{resolve_repo_ref_path, split_path};
 use std::collections::HashMap;
 pub(crate) struct Loaded {
-    pub(crate) repository: db::models::Repository,
+    pub(crate) repository: codeyard_db_core::models::Repository,
     pub(crate) chrome: RepoChrome,
     /// Empty when `git_unavailable` is set.
     pub(crate) refs: HashMap<String, String>,
@@ -497,7 +497,7 @@ pub(crate) type ApiResult<T> = Result<
 
 pub(crate) async fn load_refs_from_repo(
     state: &crate::backend::app::AppState,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
 ) -> ApiResult<HashMap<String, String>> {
     repo_store(repository, state.cluster.as_ref())
         .refs()
@@ -513,7 +513,7 @@ pub(crate) async fn load_refs_from_repo(
 /// Metadata may use the stored branch when optional Git enrichment is unavailable.
 pub(crate) async fn repository_default_branch_or_db(
     state: &crate::backend::app::AppState,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
 ) -> String {
     match repo_store(repository, state.cluster.as_ref()).info().await {
         Ok(info) => info.default_branch,
@@ -523,7 +523,7 @@ pub(crate) async fn repository_default_branch_or_db(
 
 pub(crate) async fn repository_default_branch(
     state: &crate::backend::app::AppState,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
 ) -> ApiResult<String> {
     repo_store(repository, state.cluster.as_ref())
         .info()

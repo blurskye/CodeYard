@@ -7,11 +7,12 @@
 //! mistakes.
 use crate::backend::ci::workflows::WorkflowMatchBudget;
 use crate::backend::db;
-use crate::backend::db::models::{BranchProtectionRule, Repository, User};
 use crate::backend::repositories::access;
 use anyhow::Result;
+use codeyard_db_core::models::BranchProtectionRule;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
 use codeyard_git as git;
-use codeyard_git::error::MERGE_COMMIT_BLOCKED;
 use std::path::Path;
 
 pub const PULL_REQUEST_REQUIRED: &str =
@@ -73,7 +74,7 @@ impl History<'_> {
     /// The editor's own commits are unsigned.
     async fn has_unverified_commits(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         old: Option<&str>,
         new: &str,
     ) -> Result<bool> {
@@ -154,7 +155,7 @@ pub enum Refusal {
 /// The branch protection rules of `repository`. A push reads them once and judges each of its
 /// branches against that one read.
 pub async fn load_rules(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
 ) -> Result<Vec<BranchProtectionRule>> {
     db::repositories::protection::list_branch_protection_rules(pool, repository.id).await
@@ -162,7 +163,7 @@ pub async fn load_rules(
 
 /// The rules of `repository` that match `branch`.
 pub async fn matching_rules(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
     branch: &str,
 ) -> Result<Vec<BranchProtectionRule>> {
@@ -204,7 +205,7 @@ pub fn branch_is_protected(
 /// the rules the actor is still held to, so the merge policy can apply its own gates to
 /// exactly those.
 pub async fn check_branch_write(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
     actor: &User,
     write: &BranchWrite<'_>,
@@ -220,7 +221,7 @@ pub async fn check_branch_write(
 /// `check_branch_write` against rules that the caller read once for several writes. Writes
 /// that share one `budget` share its matching work.
 pub async fn check_branch_write_with(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     rules: &[BranchProtectionRule],
     repository: &Repository,
     actor: &User,
@@ -336,7 +337,12 @@ pub async fn check_branch_write_with(
     Ok(enforced)
 }
 
-async fn app_allows_actor(pool: &db::DbPool, repo: i64, actor: i64, ids: &[i64]) -> Result<bool> {
+async fn app_allows_actor(
+    pool: &codeyard_db_core::DbPool,
+    repo: i64,
+    actor: i64,
+    ids: &[i64],
+) -> Result<bool> {
     for id in ids {
         let Some(app) = db::github_apps::app(pool, &id.to_string()).await? else {
             continue;
@@ -376,7 +382,7 @@ fn needs_pull_request(rule: &BranchProtectionRule) -> bool {
 /// each user, team and app as an object with its `id`. A team or app counts only while the actor
 /// still belongs to it.
 async fn bypass_allows(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: i64,
     actor: i64,
     document: Option<&serde_json::Value>,

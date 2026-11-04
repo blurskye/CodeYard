@@ -38,7 +38,7 @@ pub(super) async fn convert(
     let webhook_secret = manifest
         .hook_url
         .as_ref()
-        .map(|_| crate::backend::crypto::random_hex());
+        .map(|_| codeyard_support::crypto::random_hex());
     let fields = if let Some(url) = &manifest.hook_url {
         let form = HookForm {
             username: None,
@@ -74,13 +74,13 @@ pub(super) async fn convert(
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
     let (private, public) = apps::generate_key().await.map_err(Error::unavailable)?;
-    let client_secret = crate::backend::crypto::random_hex();
+    let client_secret = codeyard_support::crypto::random_hex();
     let app = App {
         id: 0,
         owner_id: draft.user_id.ok_or_else(Error::missing)?,
         bot_id: 0,
         is_public: manifest.is_public,
-        client_id: format!("Iv1.{}", &crate::backend::crypto::random_hex()[..16]),
+        client_id: format!("Iv1.{}", &codeyard_support::crypto::random_hex()[..16]),
         slug: manifest.slug,
         name: manifest.name,
         description: manifest.description,

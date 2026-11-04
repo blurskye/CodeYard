@@ -5,7 +5,7 @@ use super::{
 use async_graphql::Error;
 use serde_json::json;
 
-pub(super) fn object(repo: &db::models::Repository) -> Value {
+pub(super) fn object(repo: &codeyard_db_core::models::Repository) -> Value {
     json!({"__typename":"Repository","id":node_id::encode("R",repo.id),"databaseId":repo.id,
         "name":repo.name,"description":repo.description,"isPrivate":repo.is_private,"isFork":repo.is_fork,
         "isArchived":repo.is_archived,
@@ -46,7 +46,10 @@ pub(super) async fn shared_read_scope(
     Err(missing())
 }
 
-pub(super) async fn by_id(id: i64, request: &RequestContext) -> Result<db::models::Repository> {
+pub(super) async fn by_id(
+    id: i64,
+    request: &RequestContext,
+) -> Result<codeyard_db_core::models::Repository> {
     let repo = db::repositories::records::get_repository_by_id(&request.state.pool, id)
         .await
         .map_err(unavailable)?
@@ -55,9 +58,9 @@ pub(super) async fn by_id(id: i64, request: &RequestContext) -> Result<db::model
 }
 
 async fn check(
-    repo: db::models::Repository,
+    repo: codeyard_db_core::models::Repository,
     request: &RequestContext,
-) -> Result<db::models::Repository> {
+) -> Result<codeyard_db_core::models::Repository> {
     request.authorize(repo.id, "metadata", false).await?;
     if !crate::backend::repositories::access::can_read(
         &request.state.pool,
@@ -73,7 +76,7 @@ async fn check(
 }
 
 pub(super) async fn owner(
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     request: &RequestContext,
 ) -> Result<String> {
     db::repositories::records::repository_owner_name(&request.state.pool, repo.id)
@@ -102,13 +105,13 @@ pub(super) async fn query(ctx: &Arguments, request: &RequestContext) -> Result<V
     }
 }
 
-pub(super) fn label(label: &db::models::Label) -> Value {
+pub(super) fn label(label: &codeyard_db_core::models::Label) -> Value {
     json!({"__typename":"Label","_repo":label.repo_id,"id":node_id::encode("L",label.id),"name":label.name,"color":label.color.trim_start_matches('#'),"description":label.description,"createdAt":label.created_at,"updatedAt":label.updated_at.unwrap_or(label.created_at),"isDefault":false})
 }
 
 pub(super) fn label_connection(
     ctx: &Arguments,
-    mut labels: Vec<db::models::Label>,
+    mut labels: Vec<codeyard_db_core::models::Label>,
     scope: &str,
 ) -> Result<Value> {
     let order = ctx
@@ -271,10 +274,11 @@ pub(super) async fn resolve(
                 json!(level.can_admin())
             } else {
                 json!(match level {
-                    db::models::AccessLevel::Owner | db::models::AccessLevel::Admin => "ADMIN",
-                    db::models::AccessLevel::Maintain => "MAINTAIN",
-                    db::models::AccessLevel::Write => "WRITE",
-                    db::models::AccessLevel::Triage => "TRIAGE",
+                    codeyard_db_core::models::AccessLevel::Owner
+                    | codeyard_db_core::models::AccessLevel::Admin => "ADMIN",
+                    codeyard_db_core::models::AccessLevel::Maintain => "MAINTAIN",
+                    codeyard_db_core::models::AccessLevel::Write => "WRITE",
+                    codeyard_db_core::models::AccessLevel::Triage => "TRIAGE",
                     _ => "READ",
                 })
             })

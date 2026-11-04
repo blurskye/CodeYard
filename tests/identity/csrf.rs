@@ -37,7 +37,7 @@ use crate::support::PASSWORD_WORK as SERIAL;
 const SSH_KEY: &str =
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
 
-async fn session_with_csrf(pool: &db::DbPool, user: Option<i64>) -> (String, String) {
+async fn session_with_csrf(pool: &codeyard_db_core::DbPool, user: Option<i64>) -> (String, String) {
     let session = native::token();
     let expires_at = chrono::Utc::now() + chrono::Duration::hours(1);
     if let Some(user) = user {

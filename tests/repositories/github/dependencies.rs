@@ -14,7 +14,7 @@ struct World {
     ci: Arc<CiRuns>,
     broadcaster: Arc<NotificationBroadcaster>,
     owner: i64,
-    repo: db::models::Repository,
+    repo: codeyard_db_core::models::Repository,
     writer: String,
     client: Client,
 }
@@ -102,7 +102,7 @@ async fn controls(pg: bool) {
         w.f.pool(),
         bob,
         w.repo.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();

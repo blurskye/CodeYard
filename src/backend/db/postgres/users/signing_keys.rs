@@ -1,9 +1,9 @@
-use crate::backend::db::users::{
-    accounts::AccountCredential,
-    signing_keys::{SigningKey, SigningKeyOwner},
-    ssh_keys::{parse_public_key, SshKeyWriteRefusal},
-};
+use crate::backend::db::users::accounts::AccountCredential;
+use crate::backend::db::users::signing_keys::SigningKey;
+use crate::backend::db::users::signing_keys::SigningKeyOwner;
+use crate::backend::db::users::ssh_keys::parse_public_key;
 use anyhow::Result;
+use codeyard_model::identity::SshKeyWriteRefusal;
 use sqlx::PgPool;
 
 pub async fn list_signing_key_summaries(

@@ -95,8 +95,16 @@ and results stay the same. A stage can be the last one.
 2. **`webui`.** Check also `--target wasm32-unknown-unknown` with the `web` feature.
 3. **`support` and `git`.** Moved to `backend/support/` and `backend/git/`; server
    dependencies cut. Integration build and tests are pending.
-4. **`model` and `db/core`.** Lift the identity, ci and vulnerability types that `db`
-   imports. `native_operation!` moves to `db/core` and uses `$crate` paths.
+4. **`model` and `db/core` (partial).** `codeyard-db-core` now owns the pool,
+   connections, both engines' migrations, record types and `native_operation!` with
+   `$crate` paths. `codeyard-model` owns independent shared types and limits; all
+   per-domain queries remain in the server crate. The remaining cuts are not just
+   data: CI `Permissions` calls workflow parsing, vulnerability `Advisory` methods
+   call database advisory validation, and custom secret patterns own scanner state.
+   Database domains also still call identity permission/validation helpers, CI
+   concurrency/log/workflow helpers, email, issue, webhook and package helpers.
+   Repository-secret encryption remains in the server; generic random-token/HMAC
+   helpers moved to support. These dependencies must be cut before stage 5.
 5. **`db` domains**, lowest first: identity, orgs, repos (with pull requests and issues),
    then actions, security, cluster. Each domain crate keeps its own PostgreSQL and SQLite
    code.

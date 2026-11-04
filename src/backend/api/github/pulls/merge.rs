@@ -79,7 +79,7 @@ async fn merge_pull(
             &state.ci_runs,
             actor.id,
             pull.id,
-            Some(db::models::AccessLevel::Owner),
+            Some(codeyard_db_core::models::AccessLevel::Owner),
         )
         .await
         .map_err(Error::unavailable)?;

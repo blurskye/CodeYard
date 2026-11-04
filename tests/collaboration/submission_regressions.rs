@@ -188,7 +188,7 @@ async fn stale_issue_forms(pg: bool) {
         pool,
         reader.id,
         repo.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();

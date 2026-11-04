@@ -1,12 +1,9 @@
-use crate::backend::db::{
-    self,
-    users::{
-        accounts::AccountCredential,
-        blocks::{BlockTargetMissing, InvalidBlock},
-    },
-    DbPool,
-};
-use codeyard_support::credentials::AccountRestricted;
+use crate::backend::db;
+use crate::backend::db::users::accounts::AccountCredential;
+use crate::backend::db::users::accounts::AccountRestricted;
+use crate::backend::db::users::blocks::BlockTargetMissing;
+use crate::backend::db::users::blocks::InvalidBlock;
+use codeyard_db_core::DbPool;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum BlockError {

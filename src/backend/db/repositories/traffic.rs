@@ -1,7 +1,8 @@
 //! Retained, pseudonymous observations. Raw client addresses/account IDs never enter SQL.
-use crate::backend::db::DbPool;
 use anyhow::{ensure, Result};
 use chrono::{NaiveDate, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use sha2::{Digest, Sha256};
 use std::net::IpAddr;
 #[cfg(test)]
@@ -37,7 +38,7 @@ impl Identity {
     pub fn fingerprint(&self, salt: &str) -> Result<String> {
         let key = hex::decode(salt)?;
         ensure!(key.len() == 32, "Invalid traffic privacy key");
-        Ok(hex::encode(crate::backend::crypto::hmac_sha256(
+        Ok(hex::encode(codeyard_support::crypto::hmac_sha256(
             &key,
             self.0.as_bytes(),
         )))
@@ -134,7 +135,7 @@ pub(crate) fn fingerprints(keys: &[DayKey], identity: &Identity) -> Result<Vec<F
 }
 
 pub(crate) fn new_salt() -> String {
-    crate::backend::crypto::random_hex()
+    codeyard_support::crypto::random_hex()
 }
 #[derive(Clone, Debug)]
 pub struct Summary {

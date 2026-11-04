@@ -30,22 +30,28 @@ use axum::{
     Router,
 };
 use base64::Engine;
-use codeyard::backend::{
-    db::{
-        self,
-        files::{self, AdmissionError, ReserveUpload},
-        models::{File, FileReason, FileVisibility},
-    },
-    files::{
-        self as file_operations, ConfirmationError, DeleteError, DownloadCapability, DownloadError,
-        DownloadTransport, LocalUploadError, UploadCapability, UploadDeclaration, UploadError,
-    },
-    identity::avatars::{self, AvatarError},
-    storage::{
-        s3::{self, S3Config},
-        ObjectStore,
-    },
-};
+use codeyard::backend::db;
+use codeyard::backend::db::files;
+use codeyard::backend::db::files::AdmissionError;
+use codeyard::backend::db::files::ReserveUpload;
+use codeyard::backend::files as file_operations;
+use codeyard::backend::files::ConfirmationError;
+use codeyard::backend::files::DeleteError;
+use codeyard::backend::files::DownloadCapability;
+use codeyard::backend::files::DownloadError;
+use codeyard::backend::files::DownloadTransport;
+use codeyard::backend::files::LocalUploadError;
+use codeyard::backend::files::UploadCapability;
+use codeyard::backend::files::UploadDeclaration;
+use codeyard::backend::files::UploadError;
+use codeyard::backend::identity::avatars;
+use codeyard::backend::identity::avatars::AvatarError;
+use codeyard::backend::storage::s3;
+use codeyard::backend::storage::s3::S3Config;
+use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::File;
+use codeyard_db_core::models::FileReason;
+use codeyard_db_core::models::FileVisibility;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -61,7 +67,7 @@ mod shared_web;
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 struct Database {
-    pool: db::DbPool,
+    pool: codeyard_db_core::DbPool,
     raw: sqlx::PgPool,
     user: i64,
     _schema: native::PostgresDatabase,

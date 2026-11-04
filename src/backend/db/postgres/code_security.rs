@@ -1,9 +1,8 @@
-use crate::backend::db::{
-    code_security::*,
-    models::{OrgRole, Repository},
-    organizations::OrganizationOutcome,
-};
+use crate::backend::db::code_security::*;
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::{ensure, Result};
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Repository;
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 
 async fn write<'a>(

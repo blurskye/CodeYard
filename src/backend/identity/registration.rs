@@ -7,10 +7,9 @@ use super::{
     sessions::{self, SessionContext, SessionIssueError},
     AuthenticatedAccount,
 };
-use crate::backend::db::{
-    users::transitions::{self, AccountAdmission},
-    DbPool,
-};
+use crate::backend::db::users::transitions;
+use crate::backend::db::users::transitions::AccountAdmission;
+use codeyard_db_core::DbPool;
 
 pub enum RegistrationOutcome {
     Registered(Box<AuthenticatedAccount>),

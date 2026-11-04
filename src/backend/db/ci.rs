@@ -1,7 +1,10 @@
 //! CI runs, logs, deployments and the job queue that worker nodes poll.
-use super::models::{CiDeployment, CiLogLine, CiRun};
-use super::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::CiDeployment;
+use codeyard_db_core::models::CiLogLine;
+use codeyard_db_core::models::CiRun;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use uuid::Uuid;
 
 pub mod claims;
@@ -47,7 +50,7 @@ pub(crate) fn may_cancel_run(
     actor_id: i64,
     triggered_by_id: Option<i64>,
     personal_admin: bool,
-    access: super::models::AccessLevel,
+    access: codeyard_db_core::models::AccessLevel,
 ) -> bool {
     triggered_by_id == Some(actor_id) || personal_admin || access.can_write()
 }
@@ -378,7 +381,7 @@ native_operation!(crate::backend::db::postgres::ci::append_ci_logs,
     run_id: i64,
     worker: &str,
     sequence: i64,
-    lines: &[crate::backend::ci::queue::LogLine],
+    lines: &[codeyard_model::ci::LogLine],
 ) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::ci::list_ci_logs,

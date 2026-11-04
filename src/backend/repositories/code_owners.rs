@@ -1,12 +1,12 @@
 //! CODEOWNERS: which owners a path has at a commit, and which of them may review it.
 //! Parsing and matching are pure. Resolving owners reads users and teams.
+use codeyard_model::repositories::MAX_REVIEWERS;
 
 use crate::backend::ci::workflows::{code_owner_glob_matches_bounded, WorkflowMatchBudget};
 use crate::backend::cluster::NodeContext;
 use crate::backend::db;
-use crate::backend::db::models::Repository;
-use crate::backend::repositories::store::{repo_store, BlobRange};
-use codeyard_git::error::{ErrorKind, RepoError};
+use crate::backend::repositories::store::{repo_store, BlobRange, ErrorKind, RepoError};
+use codeyard_db_core::models::Repository;
 use std::collections::{HashMap, HashSet};
 
 mod diagnostics;
@@ -25,8 +25,6 @@ const MAX_PATTERN_BYTES: usize = 1024;
 const MAX_OWNERS: usize = 1000;
 const MAX_OWNER_BYTES: usize = 1 + 1024 + 1 + 1024;
 const MAX_OWNER_EXPANSIONS: usize = 10_000;
-pub(crate) const MAX_REVIEWERS: usize = 5000;
-
 /// One line of the file: a compiled path pattern and the owners it names.
 struct Entry {
     /// Path segments; `**` crosses directories. A pattern without a slash is `**/name`.
@@ -299,7 +297,7 @@ pub async fn load_rules(
 /// `@org/team` names the team's members, `@user` one user, and an email the user it belongs to.
 /// An owner who names nobody, or nobody who can write, maps to an empty list.
 pub async fn resolve_owners<'a>(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
     owners: impl IntoIterator<Item = &'a str>,
 ) -> anyhow::Result<HashMap<String, Vec<i64>>> {

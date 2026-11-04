@@ -39,7 +39,7 @@ async fn parents(pg: bool) {
             f.pool(),
             bob,
             repo.id,
-            db::models::AccessLevel::Triage,
+            codeyard_db_core::models::AccessLevel::Triage,
         )
         .await
         .unwrap();
@@ -154,7 +154,7 @@ async fn parents(pg: bool) {
         f.pool(),
         bob,
         repos[1].id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -193,7 +193,7 @@ async fn parents(pg: bool) {
             f.pool(),
             bot,
             repo.id,
-            db::models::AccessLevel::Write,
+            codeyard_db_core::models::AccessLevel::Write,
         )
         .await
         .unwrap();
@@ -414,13 +414,13 @@ async fn github_parent_creation_postgres() {
 
 /// A new issue under `parent`, created the way the API creates one.
 async fn create_child(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     repo: i64,
     parent: i64,
     title: &str,
     body: &str,
-) -> anyhow::Result<db::models::Issue> {
+) -> anyhow::Result<codeyard_db_core::models::Issue> {
     db::issues::create_issue_with_metadata(
         pool,
         repo,

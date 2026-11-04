@@ -1,7 +1,8 @@
 //! Auto-merge requests: pull requests that merge once their requirements pass.
-use crate::backend::db::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct AutoMergeRequest {

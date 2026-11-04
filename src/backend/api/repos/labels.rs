@@ -28,8 +28,8 @@ pub struct LabelResponse {
     pub description: Option<String>,
 }
 
-impl From<db::models::Label> for LabelResponse {
-    fn from(label: db::models::Label) -> Self {
+impl From<codeyard_db_core::models::Label> for LabelResponse {
+    fn from(label: codeyard_db_core::models::Label) -> Self {
         Self {
             id: label.id,
             name: label.name,

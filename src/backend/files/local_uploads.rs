@@ -1,8 +1,8 @@
 use super::uploads::upload;
-use crate::backend::{
-    db::{files as files_db, DbPool},
-    storage::{ObjectStore, StorageError},
-};
+use crate::backend::db::files as files_db;
+use crate::backend::storage::ObjectStore;
+use crate::backend::storage::StorageError;
+use codeyard_db_core::DbPool;
 use tokio::io::AsyncRead;
 use uuid::Uuid;
 

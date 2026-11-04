@@ -147,7 +147,7 @@ fn input_lines(text: &str) -> Result<BTreeMap<String, serde_json::Value>, &'stat
 /// once the repository chrome has loaded, which checked that the viewer may read the repository.
 async fn refusal_workflows(
     ctx: &PageContext,
-    repository: &crate::backend::db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     branch: &str,
 ) -> anyhow::Result<Vec<view_actions::Workflow>> {
     anyhow::ensure!(
@@ -415,8 +415,8 @@ mod tests {
             )
             .await
             .unwrap();
-        let pool = db::DbPool::from(native.clone());
-        db::run_migrations(&pool).await.unwrap();
+        let pool = codeyard_db_core::DbPool::from(native.clone());
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         db::node_config::upsert_node_configuration(&pool, "public", true)
             .await
             .unwrap();

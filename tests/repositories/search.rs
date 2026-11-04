@@ -7,28 +7,28 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as http;
 
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db::{
-        self,
-        models::{AccessLevel, Repository},
-        organizations::{NewOrganization, OrganizationOutcome, OrganizationProfile},
-        repositories::creation::{RepositoryCreationOwner, RepositoryTarget},
-    },
-    repositories::{
-        lifecycle::provision,
-        store::{repo_store, FileWrite, RepoStore},
-    },
-    storage::ObjectStore,
-};
+use codeyard::backend::api::create_router;
+use codeyard::backend::app::AppState;
+use codeyard::backend::ci::CiConfig;
+use codeyard::backend::db;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::OrganizationOutcome;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
+use codeyard::backend::db::repositories::creation::RepositoryTarget;
+use codeyard::backend::repositories::lifecycle::provision;
+use codeyard::backend::repositories::store::repo_store;
+use codeyard::backend::repositories::store::FileWrite;
+use codeyard::backend::repositories::store::RepoStore;
+use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::Repository;
 use database::Database;
 use std::{path::Path, sync::Arc};
 
 /// Commits `bytes` as a new file at `path` on `main`, after `tip`, and returns the new tip.
 async fn save(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     actor: i64,
     store: &RepoStore,

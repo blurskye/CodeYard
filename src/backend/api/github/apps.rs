@@ -3,19 +3,21 @@ pub(super) mod installations;
 mod manifests;
 mod webhooks;
 use super::{api_url, Error, Result};
-use crate::backend::{
-    api::http::session,
-    app::AppState,
-    db::{self, models::PersonalAccessToken, oauth_apps::Application},
-    identity::{admission, oauth_apps as oauth, tokens::token_hash},
-    webhooks::payloads,
-};
+use crate::backend::api::http::session;
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::oauth_apps::Application;
+use crate::backend::identity::admission;
+use crate::backend::identity::oauth_apps as oauth;
+use crate::backend::identity::tokens::token_hash;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     routing::{delete, get, patch, post, put, MethodRouter},
     Json,
 };
+use codeyard_db_core::models::PersonalAccessToken;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -174,7 +176,7 @@ async fn owned_token(state: &AppState, client: &str, hash: &str) -> Result<Perso
 /// rotates the token, so the response after the rotation needs no further reads.
 struct Authorization {
     scopes: String,
-    user: db::models::User,
+    user: codeyard_db_core::models::User,
     /// A scoped user token's installation, with the token's own permissions and selection.
     installation: Option<Value>,
 }
@@ -268,9 +270,9 @@ async fn reset_token(
         .map_err(Error::unavailable)?
         .is_some()
     {
-        format!("ghu_{}", crate::backend::crypto::random_hex())
+        format!("ghu_{}", codeyard_support::crypto::random_hex())
     } else {
-        crate::backend::crypto::random_hex()
+        codeyard_support::crypto::random_hex()
     };
     let token =
         db::oauth_apps::reset_token(&state.pool, &id, &token_hash(old), &token_hash(&value))

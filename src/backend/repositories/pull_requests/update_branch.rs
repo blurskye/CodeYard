@@ -1,11 +1,13 @@
 //! Bring a pull head up to date without merging or closing the pull request.
 use super::{database_error, OperationError};
-use crate::backend::{
-    ci::{CiRuns, RefUpdate},
-    db::{self, DbPool},
-    repositories::store::{repo_store, PullBranchUpdate},
-};
-use codeyard_git::error::{ErrorKind, RepoError};
+use crate::backend::ci::CiRuns;
+use crate::backend::ci::RefUpdate;
+use crate::backend::db;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::ErrorKind;
+use crate::backend::repositories::store::PullBranchUpdate;
+use crate::backend::repositories::store::RepoError;
+use codeyard_db_core::DbPool;
 
 fn invalid(message: &str) -> OperationError {
     OperationError::Invalid {

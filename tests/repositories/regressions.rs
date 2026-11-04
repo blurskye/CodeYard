@@ -69,7 +69,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob,
         repository.id,
-        db::models::AccessLevel::Admin,
+        codeyard_db_core::models::AccessLevel::Admin,
     )
     .await
     .unwrap();
@@ -128,7 +128,7 @@ async fn contract(pg: bool) {
         f.pool(),
         upper,
         repository.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();

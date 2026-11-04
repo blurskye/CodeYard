@@ -1,9 +1,10 @@
 //! Future-publication policy and permanent immutable-tag reservations.
-use crate::backend::{
-    db::{self, DbPool},
-    repositories::releases::integrity::{Artifact, Attestation, Statement},
-};
+use crate::backend::db;
+use crate::backend::repositories::releases::integrity::Artifact;
+use crate::backend::repositories::releases::integrity::Attestation;
+use crate::backend::repositories::releases::integrity::Statement;
 use anyhow::{ensure, Result};
+use codeyard_db_core::DbPool;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {

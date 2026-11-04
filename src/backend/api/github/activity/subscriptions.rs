@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-fn document(owner: &str, name: &str, watch: &db::models::Watch) -> Value {
+fn document(owner: &str, name: &str, watch: &codeyard_db_core::models::Watch) -> Value {
     let url = super::super::repo_url(owner, name);
     json!({"subscribed":matches!(watch.level.as_str(),"watching"|"custom"),"ignored":watch.level=="ignoring","reason":null,"created_at":watch.created_at,"url":format!("{url}/subscription"),"repository_url":url})
 }

@@ -1,10 +1,13 @@
 //! Shared manual team requests and notification delivery for native and GitHub adapters.
 use super::OperationError;
 use crate::backend::{db, notifications::NotificationBroadcaster};
-use db::models::{PullRequest, Repository, Team, User};
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::Team;
+use codeyard_db_core::models::User;
 
 pub async fn set_requests(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: &User,
     repo: &Repository,
@@ -30,7 +33,7 @@ pub async fn set_requests(
 }
 
 pub async fn change(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: &User,
     repo: &Repository,
@@ -71,7 +74,7 @@ pub async fn change(
 
 /// Sends one `pull_request` event for each team whose review request was added or removed.
 pub(super) async fn emit_events(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&crate::backend::cluster::NodeContext>,
     repo: &Repository,
     pull: &PullRequest,
@@ -119,7 +122,7 @@ pub(super) fn error(error: anyhow::Error) -> OperationError {
 }
 
 pub(super) async fn notify(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: &User,
     repo: &Repository,

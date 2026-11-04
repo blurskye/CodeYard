@@ -5,21 +5,18 @@ use super::{
     repos::{document, lifecycle_error},
     repository, Error, Result,
 };
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        models::User,
-        repositories::creation::{RepositoryCreationOwner, RepositoryTarget},
-    },
-    repositories::lifecycle,
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::repositories::creation::RepositoryCreationOwner;
+use crate::backend::db::repositories::creation::RepositoryTarget;
+use crate::backend::repositories::lifecycle;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     routing::{post, MethodRouter},
     Json,
 };
+use codeyard_db_core::models::User;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;

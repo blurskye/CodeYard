@@ -1,5 +1,7 @@
-use crate::backend::db::{self, models::User, users::sessions as stored, DbPool};
+use crate::backend::db::users::sessions as stored;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::User;
+use codeyard_db_core::DbPool;
 
 /// The adapter distinguishes absent from invalid/ambiguous supplied identifiers.
 /// No cookie/header parsing or transport-specific error lives here.
@@ -97,7 +99,7 @@ pub(crate) async fn administrator(
 pub struct SessionStorageUnavailable;
 
 pub async fn end_session(
-    pool: &db::DbPool,
+    pool: &DbPool,
     session_id: Option<&str>,
 ) -> Result<(), SessionStorageUnavailable> {
     if let Some(id) = session_id {

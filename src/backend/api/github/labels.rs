@@ -30,7 +30,11 @@ pub(in crate::backend::api) fn write_error(error: anyhow::Error) -> Error {
     }
 }
 
-async fn find(pool: &db::DbPool, repo_id: i64, name: &str) -> Result<db::models::Label> {
+async fn find(
+    pool: &codeyard_db_core::DbPool,
+    repo_id: i64,
+    name: &str,
+) -> Result<codeyard_db_core::models::Label> {
     db::labels::list_repo_labels(pool, repo_id)
         .await
         .map_err(Error::unavailable)?
@@ -178,7 +182,7 @@ async fn remove(
 }
 
 pub(super) async fn item(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     number: &str,
 ) -> Result<db::assignees::AssignedItem> {
@@ -197,10 +201,10 @@ pub(super) async fn item(
 }
 
 async fn assigned(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     item: db::assignees::AssignedItem,
-) -> Result<Vec<db::models::Label>> {
+) -> Result<Vec<codeyard_db_core::models::Label>> {
     match item {
         db::assignees::AssignedItem::Issue(id) => {
             db::labels::get_issue_labels(pool, repo_id, id).await
@@ -287,13 +291,13 @@ async fn change(
 }
 
 pub(in crate::backend::api) async fn save_labels(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
     item: db::assignees::AssignedItem,
     ids: &[i64],
     replace: bool,
-) -> Result<Vec<db::models::Label>> {
+) -> Result<Vec<codeyard_db_core::models::Label>> {
     match (item, replace) {
         (db::assignees::AssignedItem::Issue(id), true) => {
             db::labels::set_issue_labels(pool, actor, repo_id, id, ids).await

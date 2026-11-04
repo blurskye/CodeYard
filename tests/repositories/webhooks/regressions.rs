@@ -1,7 +1,7 @@
 use super::*;
 use codeyard::backend::webhooks::{self, delivery};
 
-async fn insert_hook(database: &Database, url: &str) -> db::models::Webhook {
+async fn insert_hook(database: &Database, url: &str) -> codeyard_db_core::models::Webhook {
     let (owner, id) = try_insert_hook(database, url).await;
     db::webhooks::get_webhook(database.pool(), owner, id.unwrap().unwrap())
         .await

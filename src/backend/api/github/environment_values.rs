@@ -83,7 +83,7 @@ async fn target(
     headers: &HeaderMap,
     params: &HashMap<String, String>,
     write: bool,
-) -> Result<(db::models::Repository, auth::Authentication)> {
+) -> Result<(codeyard_db_core::models::Repository, auth::Authentication)> {
     let (owner, name) = if let Some(id) = params.get("repository_id") {
         let id = id.parse::<i64>().map_err(|_| Error::missing())?;
         let repo = db::repositories::records::get_repository_by_id(&state.pool, id)

@@ -37,7 +37,7 @@ async fn patch_atomicity(pg: bool) {
     )
     .await;
     checked(&router,"repos/update","PATCH","/api/v3/repos/alice/patch",Some(&writer),json!({"name":"taken","description":"Must roll back","homepage":null,"private":false,"default_branch":"dev","allow_merge_commit":false}),StatusCode::UNPROCESSABLE_ENTITY).await;
-    let unchanged = |row: &db::models::Repository| {
+    let unchanged = |row: &codeyard_db_core::models::Repository| {
         assert_eq!(row.name, "patch");
         assert_eq!(row.description.as_deref(), Some("Restored"));
         assert_eq!(row.website.as_deref(), Some("https://original.test/"));

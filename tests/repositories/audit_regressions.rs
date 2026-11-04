@@ -66,7 +66,7 @@ async fn contract(pg: bool) {
             db::repositories::access::get_user_repo_access(f.pool(), bob, repository.id)
                 .await
                 .unwrap(),
-            db::models::AccessLevel::Write
+            codeyard_db_core::models::AccessLevel::Write
         );
     }
 

@@ -1,11 +1,12 @@
 mod exports;
 use super::super::repositories::access::USER_REPO_ACCESS_SQL;
 use super::invitations::RECIPIENT;
-use crate::backend::db::{
-    models::{OrgRole, Team, TeamMembership, TeamRepoAccess},
-    organizations::*,
-};
+use crate::backend::db::organizations::*;
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Team;
+use codeyard_db_core::models::TeamMembership;
+use codeyard_db_core::models::TeamRepoAccess;
 pub use exports::{
     list_direct_organization_team_members, list_direct_organization_team_repositories,
 };
@@ -817,7 +818,7 @@ pub async fn team_identity(
     use crate::backend::{db::organizations::teams::TeamIdentity, identity::oauth_apps};
     let mut tx = begin_read(pool).await?;
     let scopes: Option<Option<String>> = sqlx::query_scalar("SELECT oa.scopes FROM personal_access_tokens t JOIN users u ON u.id=t.user_id LEFT JOIN oauth_app_tokens oa ON oa.token_id=t.id WHERE t.id=?1 AND t.user_id=?2 AND NOT u.is_banned AND NOT u.must_change_password AND (t.expires_at IS NULL OR julianday(t.expires_at)>julianday('now')) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens f WHERE f.token_id=t.id) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens j WHERE j.token_id=t.id) AND NOT EXISTS(SELECT 1 FROM github_app_tokens a WHERE a.token_id=t.id) AND NOT EXISTS(SELECT 1 FROM github_apps a WHERE a.client_id=oa.client_id) AND (oa.client_id IS NULL OR oa.client_id=?3 OR EXISTS(SELECT 1 FROM oauth_applications a WHERE a.client_id=oa.client_id))")
-        .bind(token).bind(actor).bind(oauth_apps::CLI_CLIENT).fetch_optional(&mut *tx).await?;
+        .bind(token).bind(actor).bind(codeyard_model::identity::CLI_CLIENT).fetch_optional(&mut *tx).await?;
     let Some(scopes) = scopes else {
         return Ok(None);
     };

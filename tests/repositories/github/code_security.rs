@@ -29,7 +29,7 @@ async fn accepted(router: &Router, path: &str, writer: &str, input: Value) {
 }
 pub(super) async fn contract(
     router: &Router,
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: i64,
     actor: i64,
     writer: &str,

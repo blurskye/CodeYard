@@ -274,7 +274,7 @@ async fn add_row_milestones(
 async fn list_filters(
     ctx: &PageContext,
     repo: &RepositoryData,
-    milestones: Vec<db::models::Milestone>,
+    milestones: Vec<codeyard_db_core::models::Milestone>,
     selected_labels: Vec<String>,
     selected_author: Option<i64>,
 ) -> ResultPage<view::ListFilters> {

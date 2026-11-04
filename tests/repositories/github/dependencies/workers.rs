@@ -313,7 +313,7 @@ async fn revoked(pg: bool) {
         w.f.pool(),
         bob,
         w.repo.id,
-        db::models::AccessLevel::Admin,
+        codeyard_db_core::models::AccessLevel::Admin,
     )
     .await
     .unwrap();

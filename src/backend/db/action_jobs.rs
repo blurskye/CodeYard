@@ -1,8 +1,9 @@
 //! Actual runner executions and steps. Private scheduler plans are not exposed as executions.
-use super::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use codeyard_actions::progress::{Annotation, Event, State};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use sqlx::{types::Json, FromRow};
 
 #[derive(FromRow)]

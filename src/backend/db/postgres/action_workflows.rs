@@ -1,7 +1,7 @@
-use crate::backend::db::{
-    action_workflows::Workflow, models::CiRun, repositories::records::RepositorySettingsRefusal,
-};
+use crate::backend::db::action_workflows::Workflow;
+use crate::backend::db::repositories::records::RepositorySettingsRefusal;
 use anyhow::Result;
+use codeyard_db_core::models::CiRun;
 use sqlx::PgPool;
 
 pub async fn register_workflows(

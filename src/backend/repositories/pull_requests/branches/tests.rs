@@ -5,18 +5,19 @@
 use super::{refresh_one, revisions, ListedRefs};
 use crate::backend::ci::{CiConfig, CiRuns};
 use crate::backend::db;
-use crate::backend::db::models::{PullRequest, Repository};
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::lifecycle;
 use crate::backend::repositories::pull_requests::mutations;
 use crate::backend::repositories::store::repo_store;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::Repository;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
 /// A base repository owned by `alice` with `main` on it, and a fork of it owned by `bob`.
 struct Forks {
     _root: tempfile::TempDir,
-    pool: db::DbPool,
+    pool: codeyard_db_core::DbPool,
     ci: CiRuns,
     broadcaster: Arc<NotificationBroadcaster>,
     alice: i64,
@@ -55,10 +56,10 @@ fn commit(
 async fn forks() -> Forks {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("application.sqlite");
-    let pool = db::init_db(&format!("sqlite://{}", path.display()))
+    let pool = codeyard_db_core::init_db(&format!("sqlite://{}", path.display()))
         .await
         .unwrap();
-    db::run_migrations(&pool).await.unwrap();
+    codeyard_db_core::run_migrations(&pool).await.unwrap();
     let alice = db::users::accounts::create_user(&pool, "alice", None)
         .await
         .unwrap();
@@ -190,7 +191,7 @@ async fn refresh_leaves_a_closed_pull_request_alone_and_still_follows_an_open_on
         forks.bob,
         &mut ListedRefs::new(),
         captured,
-        Some(crate::backend::db::models::AccessLevel::Owner),
+        Some(codeyard_db_core::models::AccessLevel::Owner),
         None,
     )
     .await
@@ -215,7 +216,7 @@ async fn refresh_leaves_a_closed_pull_request_alone_and_still_follows_an_open_on
         forks.bob,
         &mut ListedRefs::new(),
         captured,
-        Some(crate::backend::db::models::AccessLevel::Owner),
+        Some(codeyard_db_core::models::AccessLevel::Owner),
         None,
     )
     .await
@@ -248,7 +249,7 @@ async fn refresh_recovers_a_published_head_after_the_fork_is_deleted() {
         )
         .await
         .unwrap();
-    let db::DbPool::Sqlite(pool) = &forks.pool else {
+    let codeyard_db_core::DbPool::Sqlite(pool) = &forks.pool else {
         unreachable!()
     };
     sqlx::query("DELETE FROM repositories WHERE id = ?1")
@@ -265,7 +266,7 @@ async fn refresh_recovers_a_published_head_after_the_fork_is_deleted() {
         forks.alice,
         &mut ListedRefs::new(),
         captured,
-        Some(crate::backend::db::models::AccessLevel::Owner),
+        Some(codeyard_db_core::models::AccessLevel::Owner),
         None
     )
     .await
@@ -311,7 +312,7 @@ async fn existing_owner_requests_do_not_take_a_write_lock() {
         &forks.pool,
         forks.bob,
         forks.base.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -367,7 +368,7 @@ async fn existing_owner_requests_do_not_take_a_write_lock() {
             .len(),
         1
     );
-    let db::DbPool::Sqlite(pool) = &forks.pool else {
+    let codeyard_db_core::DbPool::Sqlite(pool) = &forks.pool else {
         unreachable!()
     };
     let lock = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
@@ -420,7 +421,7 @@ async fn refresh_records_a_published_head_before_publishing_a_newer_one() {
         forks.bob,
         &mut ListedRefs::new(),
         captured,
-        Some(crate::backend::db::models::AccessLevel::Owner),
+        Some(codeyard_db_core::models::AccessLevel::Owner),
         None,
     )
     .await

@@ -8,8 +8,10 @@
 mod postgres;
 mod sqlite;
 
-use super::{connection, init_db, run_migrations, DbPool};
 use anyhow::{bail, Result};
+use codeyard_db_core::init_db;
+use codeyard_db_core::run_migrations;
+use codeyard_db_core::DbPool;
 use futures_util::{Stream, TryStreamExt};
 use sqlx::{Postgres, Sqlite, Transaction};
 
@@ -90,7 +92,7 @@ pub async fn copy_database(from: &str, to: &str) -> Result<Vec<TableCount>> {
     if engine_of(from)? == engine_of(to)? {
         bail!("source and destination must use different engines: SQLite to PostgreSQL, or PostgreSQL to SQLite");
     }
-    let source_pool = connection::open_source(from).await?;
+    let source_pool = codeyard_db_core::connection::open_source(from).await?;
     let mut source = snapshot(&source_pool).await?;
     let source_catalog = catalog(&mut source).await?;
     match &mut source {

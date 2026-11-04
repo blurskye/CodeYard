@@ -1,8 +1,7 @@
-use crate::backend::db::{
-    models::{OrgMembership, OrgRole},
-    organizations::*,
-};
+use crate::backend::db::organizations::*;
 use anyhow::Result;
+use codeyard_db_core::models::OrgMembership;
+use codeyard_db_core::models::OrgRole;
 use sqlx::SqlitePool;
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing};
 

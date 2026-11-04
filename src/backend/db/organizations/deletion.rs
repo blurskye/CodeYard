@@ -1,6 +1,7 @@
 use super::OrganizationOutcome;
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 // Only an active owner deletes an organization, and only after its repositories are gone.
 // The result is Conflict while repositories remain. The API deletes them one by one through
@@ -12,4 +13,4 @@ native_operation!(crate::backend::db::postgres::organizations::deletion::count_o
 native_operation!(crate::backend::db::postgres::organizations::deletion::list_organization_deletion_repositories, crate::backend::db::sqlite::organizations::deletion::list_organization_deletion_repositories,
     fn list_organization_deletion_repositories(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64) -> Result<OrganizationOutcome<Vec<i64>>>);
 native_operation!(crate::backend::db::postgres::organizations::deletion::delete_organization_repository, crate::backend::db::sqlite::organizations::deletion::delete_organization_repository,
-    fn delete_organization_repository(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, repo: i64) -> Result<OrganizationOutcome<crate::backend::db::models::Repository>>);
+    fn delete_organization_repository(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, repo: i64) -> Result<OrganizationOutcome<codeyard_db_core::models::Repository>>);

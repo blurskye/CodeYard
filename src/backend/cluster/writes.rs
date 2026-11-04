@@ -1,12 +1,12 @@
 //! Two fixed voters, both required. Git preparation and publication belong to the stores;
 //! only their durable votes and applied versions can complete a write here.
-use crate::backend::db::{
-    self,
-    cluster::writes as journal,
-    models::{RecoveryView, RefChange, WriteRecord},
-    DbPool,
-};
+use crate::backend::db;
+use crate::backend::db::cluster::writes as journal;
 use anyhow::{ensure, Context, Result};
+use codeyard_db_core::models::RecoveryView;
+use codeyard_db_core::models::RefChange;
+use codeyard_db_core::models::WriteRecord;
+use codeyard_db_core::DbPool;
 use std::time::Duration;
 use tokio::time::{sleep, timeout, timeout_at, Instant};
 

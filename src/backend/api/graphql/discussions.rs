@@ -1,7 +1,15 @@
-use super::{
-    arg, connection, db, missing, node_id, repository, unavailable, url, user, Arguments,
-    RequestContext, Result, Value,
-};
+use super::arg;
+use super::connection;
+use super::missing;
+use super::node_id;
+use super::repository;
+use super::unavailable;
+use super::url;
+use super::user;
+use super::Arguments;
+use super::RequestContext;
+use super::Result;
+use super::Value;
 use async_graphql::{Error, ErrorExtensions};
 use db::repository_discussions::{self as store, Filter, Order, Write};
 use serde_json::json;

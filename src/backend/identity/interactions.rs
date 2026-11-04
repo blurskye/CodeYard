@@ -1,13 +1,10 @@
 //! Git-derived proof preparation happens outside database transactions. Only the database
 //! decides whether a contribution may commit, using the live policy and the proof's source version.
-use crate::backend::{
-    app::AppState,
-    db::{self, interactions},
-    repositories::{
-        access,
-        store::{repo_store, CommitFilter},
-    },
-};
+use crate::backend::app::AppState;
+use crate::backend::db::interactions;
+use crate::backend::repositories::access;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::CommitFilter;
 use anyhow::Result;
 use std::time::Instant;
 
@@ -15,8 +12,8 @@ static PROOF_WORK: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4)
 
 pub async fn prepare(
     state: &AppState,
-    actor: &db::models::User,
-    repository: &db::models::Repository,
+    actor: &codeyard_db_core::models::User,
+    repository: &codeyard_db_core::models::Repository,
 ) -> Result<()> {
     if !interactions::proof_required(&state.pool, actor.id, repository.id).await? {
         return Ok(());

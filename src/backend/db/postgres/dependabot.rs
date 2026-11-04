@@ -1,13 +1,13 @@
-use crate::backend::{
-    crypto::SecretEncryptor,
-    db::{
-        credentials::Actor,
-        dependabot::{OrganizationSecret, OrganizationSecretInput, RepositorySelection},
-        models::{OrgRole, Repository},
-        organizations::OrganizationOutcome,
-        secrets::{self, SecretsError},
-    },
-};
+use crate::backend::crypto::SecretEncryptor;
+use crate::backend::db::credentials::Actor;
+use crate::backend::db::dependabot::OrganizationSecret;
+use crate::backend::db::dependabot::OrganizationSecretInput;
+use crate::backend::db::dependabot::RepositorySelection;
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::secrets;
+use crate::backend::db::secrets::SecretsError;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Repository;
 use sqlx::{PgPool, Postgres, Transaction};
 
 pub(super) async fn authorized(

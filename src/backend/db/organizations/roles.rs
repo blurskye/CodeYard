@@ -1,11 +1,11 @@
 //! Predefined organization roles grant repository or security authority, never organization ownership.
 use super::OrganizationOutcome;
-use crate::backend::db::{
-    models::{Team, User},
-    DbPool,
-};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::Team;
+use codeyard_db_core::models::User;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// Shared by the legacy security-team API and the organization-role API.
 pub const SECURITY_MANAGER_ROLE_ID: i64 = 6;

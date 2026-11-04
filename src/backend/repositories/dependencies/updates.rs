@@ -21,7 +21,7 @@ use anyhow::{ensure, Context, Result};
 use sha2::{Digest, Sha256};
 
 /// The owner name of a repository, as push events and pull requests name it.
-async fn owner_name(pool: &db::DbPool, repository: i64) -> Result<String> {
+async fn owner_name(pool: &codeyard_db_core::DbPool, repository: i64) -> Result<String> {
     db::repositories::records::repository_owner_names(pool, &[repository])
         .await?
         .get(&repository)
@@ -30,7 +30,7 @@ async fn owner_name(pool: &db::DbPool, repository: i64) -> Result<String> {
 }
 
 async fn open(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     job: &Job,
@@ -136,7 +136,7 @@ async fn open(
 }
 
 pub(crate) async fn propose(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     client: &Client,
@@ -260,7 +260,7 @@ pub(crate) async fn propose(
             {
                 continue;
             }
-            let candidate_package = super::super::dependency_graph::Package {
+            let candidate_package = codeyard_model::repositories::Package {
                 manifest: "package-lock.json".into(),
                 ecosystem: "npm".into(),
                 name: package.name.clone(),

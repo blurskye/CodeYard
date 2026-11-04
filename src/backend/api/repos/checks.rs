@@ -1,16 +1,12 @@
 use super::chrome;
-use crate::backend::{
-    api::{
-        github,
-        http::{context::PageContext, session},
-    },
-    app::AppState,
-    db::{
-        checks::{self, Credential, ANNOTATIONS_PER_PAGE},
-        models::Repository,
-    },
-    repositories::access,
-};
+use crate::backend::api::github;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::session;
+use crate::backend::app::AppState;
+use crate::backend::db::checks;
+use crate::backend::db::checks::Credential;
+use crate::backend::db::checks::ANNOTATIONS_PER_PAGE;
+use crate::backend::repositories::access;
 use axum::{
     extract::{Form, OriginalUri, Path, State},
     http::{HeaderMap, StatusCode},
@@ -18,6 +14,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use codeyard_db_core::models::Repository;
 use codeyard_webui::{
     app::Page,
     pages::repos::{checks as view, page::Page as RepoPage},

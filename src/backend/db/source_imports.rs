@@ -1,6 +1,7 @@
 //! Durable source-import attempts. A generation prevents an old worker from publishing a retry.
-use super::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Clone, sqlx::FromRow)]
 pub struct SourceImport {

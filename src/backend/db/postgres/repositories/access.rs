@@ -1,7 +1,10 @@
-use crate::backend::db::models::{AccessLevel, RepoAccess, Repository, User};
 use crate::backend::db::postgres::users::transitions::lock_accounts_shared;
 use crate::backend::db::repositories::access::CollaboratorChange;
 use anyhow::Result;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::RepoAccess;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 
 pub async fn git_access(

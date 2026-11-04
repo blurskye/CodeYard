@@ -33,7 +33,7 @@ struct Fixture {
     state: Arc<AppState>,
     alice: Client,
     merger: Client,
-    repository: db::models::Repository,
+    repository: codeyard_db_core::models::Repository,
     merger_id: i64,
     owner: i64,
 }
@@ -58,7 +58,7 @@ async fn setup(f: &mut Database, root: &Path) -> Fixture {
         f.pool(),
         merger_id,
         repository.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();

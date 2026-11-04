@@ -1,7 +1,8 @@
 //! Which copies a repository should have. The primary is not a copy: with `Copies(n)`
 //! the repository has n-1 copies, fewer when fewer storage nodes exist, and with `All`
 //! it has one on every other storage node.
-use crate::backend::db::models::{ClusterNode, ReplicaSetting};
+use codeyard_db_core::models::ClusterNode;
+use codeyard_db_core::models::ReplicaSetting;
 
 /// A holder's readiness and allocation history. Negative versions cannot serve reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,11 +1,14 @@
-use crate::backend::db::{
-    credentials::Actor,
-    fine_grained_tokens::{Bounds, NewToken, OwnerTokens, Policy, Token, TokenFilter},
-    models::OrgRole,
-    organizations::OrganizationOutcome,
-};
+use crate::backend::db::credentials::Actor;
+use crate::backend::db::fine_grained_tokens::Bounds;
+use crate::backend::db::fine_grained_tokens::NewToken;
+use crate::backend::db::fine_grained_tokens::OwnerTokens;
+use crate::backend::db::fine_grained_tokens::Policy;
+use crate::backend::db::fine_grained_tokens::Token;
+use crate::backend::db::fine_grained_tokens::TokenFilter;
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::OrgRole;
 use sqlx::{PgConnection, PgPool};
 
 /// A token's bounds with its live membership and policy; package transactions read it too.
@@ -178,7 +181,7 @@ pub async fn repositories(
                  AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND {issuer}))
         AND {readable} ORDER BY r.name,r.id LIMIT 100"))
         .bind(token).bind(actor).bind(session).bind(presented.map(|(id, _)| id)).bind(presented.map(|(_, hash)| hash))
-        .bind(crate::backend::identity::oauth_apps::CLI_CLIENT)
+        .bind(codeyard_model::identity::CLI_CLIENT)
         .fetch_all(pool).await?)
 }
 

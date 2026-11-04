@@ -274,10 +274,10 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
         pool.close().await;
         return Ok(());
     }
-    let pool = db::init_db(&database_url)
+    let pool = codeyard_db_core::init_db(&database_url)
         .await
         .map_err(|_| anyhow::anyhow!("could not open the configured application database"))?;
-    db::run_migrations(&pool).await?;
+    codeyard_db_core::run_migrations(&pool).await?;
     let command = async {
         match cli.command {
             Commands::Init => {

@@ -1,7 +1,8 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// A comment form's content revision, shared by display and transactional mutation.
 pub fn comment_revision(body: &str) -> String {

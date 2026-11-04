@@ -3,13 +3,14 @@
 //! can do is always the intersection of those grants with the user's own live rights: every
 //! request still runs as the user, and this module only narrows it.
 use super::tokens::token_hash;
-use crate::backend::db::{
-    self,
-    fine_grained_tokens::{within, Bounds, NewToken, Policy},
-    models::Repository,
-    DbPool,
-};
+use crate::backend::db;
+use crate::backend::db::fine_grained_tokens::within;
+use crate::backend::db::fine_grained_tokens::Bounds;
+use crate::backend::db::fine_grained_tokens::NewToken;
+use crate::backend::db::fine_grained_tokens::Policy;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::DbPool;
 use serde_json::{Map, Value};
 
 pub const PREFIX: &str = codeyard_support::tokens::FGPAT_PREFIX;
@@ -378,7 +379,7 @@ pub async fn create(
             ));
         }
     }
-    let value = format!("{PREFIX}{}", crate::backend::crypto::random_hex());
+    let value = format!("{PREFIX}{}", codeyard_support::crypto::random_hex());
     let write = permissions.values().any(|level| level != "read");
     let permissions = Value::Object(permissions).to_string();
     let (id, status) = db::fine_grained_tokens::create(
@@ -440,7 +441,7 @@ pub async fn regenerate(
             "Choose a future expiry within the owner's maximum lifetime.",
         ));
     }
-    let value = format!("{PREFIX}{}", crate::backend::crypto::random_hex());
+    let value = format!("{PREFIX}{}", codeyard_support::crypto::random_hex());
     if db::fine_grained_tokens::regenerate(pool, user, session, id, &token_hash(&value), expires_at)
         .await
         .map_err(unavailable)?

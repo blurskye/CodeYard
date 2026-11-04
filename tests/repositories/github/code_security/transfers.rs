@@ -2,7 +2,7 @@ use super::{call, db, json, Router, Value};
 
 pub(super) async fn contract(
     router: &Router,
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: i64,
     config: i64,
     writer: &str,

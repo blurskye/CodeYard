@@ -27,10 +27,16 @@ pub enum RefError {
 }
 
 async fn writable(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: &db::credentials::Actor,
     repo_id: i64,
-) -> Result<(db::models::Repository, db::models::User), RefError> {
+) -> Result<
+    (
+        codeyard_db_core::models::Repository,
+        codeyard_db_core::models::User,
+    ),
+    RefError,
+> {
     let (repository, user) = access::check_write(pool, repo_id, actor.user_id)
         .await
         .map_err(RefError::Access)?;
@@ -66,9 +72,9 @@ fn invalid_ref(kind: &str) -> RefError {
 /// Refuses a branch delete that a protection rule forbids. A delete adds no commits, so the
 /// history check is never needed here.
 async fn allowed(
-    pool: &db::DbPool,
-    repository: &db::models::Repository,
-    actor: &db::models::User,
+    pool: &codeyard_db_core::DbPool,
+    repository: &codeyard_db_core::models::Repository,
+    actor: &codeyard_db_core::models::User,
     write: BranchWrite<'_>,
 ) -> Result<(), RefError> {
     match check_branch_write(pool, repository, actor, &write, &History::SingleCommit).await {
@@ -83,7 +89,7 @@ async fn allowed(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn create_branch(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
     actor: impl Into<db::credentials::Actor>,
@@ -116,7 +122,7 @@ pub async fn create_branch(
         Some(&[branch][..]),
         ci,
         actor,
-        crate::backend::db::models::AccessLevel::Owner,
+        codeyard_db_core::models::AccessLevel::Owner,
     )
     .await
     .is_ok();
@@ -143,7 +149,7 @@ pub async fn create_branch(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn update_reference(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
     actor: impl Into<db::credentials::Actor>,
@@ -170,7 +176,7 @@ pub async fn update_reference(
             Some(&[branch][..]),
             ci,
             actor,
-            db::models::AccessLevel::Owner,
+            codeyard_db_core::models::AccessLevel::Owner,
         )
         .await
         .is_ok()
@@ -198,10 +204,10 @@ pub async fn update_reference(
 /// Makes an existing branch the repository's default. The caller checks that the actor administers
 /// the repository. Clones made afterwards get this branch.
 pub async fn set_default_branch(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     actor: impl Into<db::credentials::Actor>,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     branch: &str,
 ) -> Result<(), RefError> {
     if git::branch_ref(branch).is_none() {
@@ -214,7 +220,7 @@ pub async fn set_default_branch(
 }
 
 pub async fn delete_branch(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
     actor: impl Into<db::credentials::Actor>,
@@ -255,7 +261,7 @@ pub async fn delete_branch(
         Some(&[branch][..]),
         ci,
         actor,
-        crate::backend::db::models::AccessLevel::Owner,
+        codeyard_db_core::models::AccessLevel::Owner,
     )
     .await
     .map_err(|_| RefError::AppliedFollowupFailed)?;
@@ -267,7 +273,7 @@ pub async fn delete_branch(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn create_tag(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
     actor: impl Into<db::credentials::Actor>,
@@ -318,7 +324,7 @@ pub async fn create_tag(
 }
 
 pub async fn delete_tag(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     actor: impl Into<db::credentials::Actor>,
     repo_id: i64,

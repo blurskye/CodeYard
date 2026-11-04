@@ -3,13 +3,12 @@
 use crate::support::database;
 use crate::support::organizations::applied;
 
-use codeyard::backend::{
-    db::{self, models::AccessLevel, organizations as orgs},
-    repositories::{
-        lifecycle::provision,
-        store::{repo_store, FileWrite},
-    },
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations as orgs;
+use codeyard::backend::repositories::lifecycle::provision;
+use codeyard::backend::repositories::store::repo_store;
+use codeyard::backend::repositories::store::FileWrite;
+use codeyard_db_core::models::AccessLevel;
 use database::Database;
 
 fn write(branch: &str, path: &str, expected: &str) -> FileWrite {
@@ -281,7 +280,7 @@ async fn contract(pg: bool) {
             owner,
             org.id,
             writer,
-            db::models::OrgRole::Member,
+            codeyard_db_core::models::OrgRole::Member,
         )
         .await
         .unwrap(),

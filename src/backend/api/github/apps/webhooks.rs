@@ -3,14 +3,14 @@ use super::{
     super::{api_url, Error, Result},
     installations::jwt,
 };
-use crate::backend::{
-    app::AppState,
-    db::{self, github_app_hooks::Delivery, models::Webhook, webhooks::WebhookPatch},
-    webhooks::{
-        self,
-        settings::{self, HookError, HookForm},
-    },
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::github_app_hooks::Delivery;
+use crate::backend::db::webhooks::WebhookPatch;
+use crate::backend::webhooks;
+use crate::backend::webhooks::settings;
+use crate::backend::webhooks::settings::HookError;
+use crate::backend::webhooks::settings::HookForm;
 use axum::{
     extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -18,6 +18,7 @@ use axum::{
     Json,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use codeyard_db_core::models::Webhook;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;

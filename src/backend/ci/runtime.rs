@@ -1,8 +1,9 @@
 //! Credentials shared by today's act worker and future runners.
-use crate::backend::db::{self, DbPool};
+use crate::backend::db;
 pub use crate::backend::identity::tokens::token_hash;
 use anyhow::Result;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use codeyard_db_core::DbPool;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
@@ -36,7 +37,7 @@ pub fn results_url(settings: &db::actions::ActionsSettings) -> String {
 
 pub async fn issue(
     pool: &DbPool,
-    run: &db::models::CiRun,
+    run: &codeyard_db_core::models::CiRun,
     settings: &db::actions::ActionsSettings,
 ) -> Result<RuntimeCredentials> {
     let backend = run.run_id.to_string();

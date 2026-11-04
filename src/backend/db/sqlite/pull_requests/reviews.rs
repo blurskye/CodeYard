@@ -1,4 +1,3 @@
-use crate::backend::db::models::{PullRequest, PullRequestComment, PullRequestReview, User};
 use crate::backend::db::pull_requests::reviews::DiscussionItem;
 use crate::backend::db::pull_requests::reviews::DiscussionRef;
 use crate::backend::db::pull_requests::reviews::NewPullRequestComment;
@@ -9,6 +8,10 @@ use crate::backend::db::pull_requests::reviews::PullRequestReviewEntry;
 use crate::backend::db::pull_requests::reviews::MAX_REVIEW_COMMENTS;
 use crate::backend::db::sqlite::discussions::{self, AUTHORITY_DENIED};
 use anyhow::Result;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::PullRequestComment;
+use codeyard_db_core::models::PullRequestReview;
+use codeyard_db_core::models::User;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 
@@ -1236,7 +1239,7 @@ pub async fn request_code_owner_reviews(
         return Ok(Vec::new());
     };
     anyhow::ensure!(
-        owners.len() <= crate::backend::repositories::code_owners::MAX_REVIEWERS,
+        owners.len() <= codeyard_model::repositories::MAX_REVIEWERS,
         "Too many code owners"
     );
     let access = crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;

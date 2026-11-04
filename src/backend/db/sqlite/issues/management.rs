@@ -1,11 +1,10 @@
 use crate::backend::db::assignees::AssignmentRefusal;
-use crate::backend::db::{
-    credentials::Actor,
-    issues::management::{LinkedBranch, Refusal},
-    models::Issue,
-};
+use crate::backend::db::credentials::Actor;
+use crate::backend::db::issues::management::LinkedBranch;
+use crate::backend::db::issues::management::Refusal;
+use crate::backend::db::users::accounts::AccountRestricted;
 use anyhow::{ensure, Result};
-use codeyard_support::credentials::AccountRestricted;
+use codeyard_db_core::models::Issue;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
 /// Pull requests the viewer can read whose body may close issue `number` of `repo`: same-repository
@@ -19,7 +18,7 @@ pub async fn closing_candidates(
     scope: &str,
     number: i32,
     before: i64,
-) -> Result<Vec<crate::backend::db::models::PullRequest>> {
+) -> Result<Vec<codeyard_db_core::models::PullRequest>> {
     Ok(sqlx::query_as(&format!(
         "SELECT p.* FROM pull_requests p JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$1
          WHERE (p.body LIKE $2 OR p.body LIKE $5) AND (p.repo_id=$3 OR p.body LIKE $4) AND p.base_branch=r.default_branch AND ($6<=0 OR p.id<$6) AND {}

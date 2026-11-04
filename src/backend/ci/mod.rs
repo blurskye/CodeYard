@@ -35,7 +35,7 @@ pub use workflows::{
 };
 
 use crate::backend::db::ci::ACCESS_LOST_MESSAGE;
-use crate::backend::db::models::CiRun;
+use codeyard_db_core::models::CiRun;
 
 /// Messages the server writes itself when a run ends. A run's stored message can also come
 /// from its runner, which may hold credentials or paths, so only these reach users as written.

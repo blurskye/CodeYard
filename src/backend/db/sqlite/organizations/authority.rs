@@ -1,8 +1,9 @@
-use crate::backend::db::{
-    models::{AccessLevel, OrgRole, Repository, Team},
-    organizations::*,
-};
+use crate::backend::db::organizations::*;
 use anyhow::Result;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::Team;
 use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
 use OrganizationOutcome::{Applied, Denied, Missing, Suspended};
 

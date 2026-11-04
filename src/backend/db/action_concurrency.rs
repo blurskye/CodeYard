@@ -1,7 +1,9 @@
 //! Workflow-level leases persist with run configuration after the queue is empty.
-use super::{models::CiRun, DbPool};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::CiRun;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Clone, Debug)]
 pub struct Configuration {

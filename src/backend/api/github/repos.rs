@@ -2,16 +2,15 @@
 use super::{
     auth, contents::store_error, pagination::Pagination, repo_url, repository, Error, Result,
 };
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        models::Repository,
-        repositories::{creation, records, topics},
-    },
-    repositories::{lifecycle, store::repo_store, templates},
-    webhooks::payloads,
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::repositories::creation;
+use crate::backend::db::repositories::records;
+use crate::backend::db::repositories::topics;
+use crate::backend::repositories::lifecycle;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::templates;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -19,6 +18,7 @@ use axum::{
     routing::{delete, get, patch, post, put, MethodRouter},
     Json,
 };
+use codeyard_db_core::models::Repository;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -241,7 +241,7 @@ async fn document_with(
         }
         value["permissions"] = json!({
             "admin": level.can_admin(), "maintain": level.can_maintain(),
-            "push": level.can_write(), "triage": level >= db::models::AccessLevel::Triage,
+            "push": level.can_write(), "triage": level >= codeyard_db_core::models::AccessLevel::Triage,
             "pull": !repo.is_private || level.can_read(),
         });
     }

@@ -575,7 +575,9 @@ async fn sqlite_source_checksum_mismatch_is_refused() {
         .execute(&source.raw)
         .await
         .unwrap();
-    let startup_error = db::run_migrations(&source.pool).await.unwrap_err();
+    let startup_error = codeyard_db_core::run_migrations(&source.pool)
+        .await
+        .unwrap_err();
     let target = PostgresDatabase::new().await;
 
     let error = db::copy::copy_database(&source.url, &target.connection_url())
@@ -609,7 +611,9 @@ async fn postgres_source_checksum_mismatch_is_refused() {
         .execute(&source.raw)
         .await
         .unwrap();
-    let startup_error = db::run_migrations(&source.pool).await.unwrap_err();
+    let startup_error = codeyard_db_core::run_migrations(&source.pool)
+        .await
+        .unwrap_err();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("copy.sqlite");
     let url = format!("sqlite://{}", path.display());
@@ -677,7 +681,7 @@ async fn postgres_cluster_placement_is_refused_before_sqlite_is_opened() {
     db::copy::copy_database(&source.connection_url(), &url)
         .await
         .expect("unplaced repositories may be copied even with membership rows");
-    let restored = db::init_db(&url).await.unwrap();
+    let restored = codeyard_db_core::init_db(&url).await.unwrap();
     let stored = db::repositories::records::get_repository_by_id(&restored, repo.id)
         .await
         .unwrap()
@@ -802,7 +806,11 @@ async fn cli_reads_urls_from_environment_and_refuses_passwords_in_arguments() {
     }
 }
 
-async fn create_repository(pool: &db::DbPool, owner: i64, name: &str) -> db::models::Repository {
+async fn create_repository(
+    pool: &codeyard_db_core::DbPool,
+    owner: i64,
+    name: &str,
+) -> codeyard_db_core::models::Repository {
     db::repositories::records::create_repository(
         pool,
         owner,

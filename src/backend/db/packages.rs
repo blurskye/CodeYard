@@ -1,6 +1,7 @@
 //! Package records shared by the registries and GitHub REST.
-use super::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, sqlx::FromRow)]
@@ -248,7 +249,7 @@ native_operation!(crate::backend::db::postgres::packages::registry_token,
     fn registry_token(pool: &DbPool, hash: &str) -> Result<Option<RegistryToken>>);
 native_operation!(crate::backend::db::postgres::packages::registry_source,
     crate::backend::db::sqlite::packages::registry_source,
-    fn registry_source(pool: &DbPool, id: i64) -> Result<Option<super::models::PersonalAccessToken>>);
+    fn registry_source(pool: &DbPool, id: i64) -> Result<Option<codeyard_db_core::models::PersonalAccessToken>>);
 
 pub fn now() -> i64 {
     chrono::Utc::now().timestamp()

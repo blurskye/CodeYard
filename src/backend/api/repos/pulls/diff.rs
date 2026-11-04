@@ -135,7 +135,7 @@ async fn viewed_marks(
     ctx: &PageContext,
     repo: &RepositoryData,
     pull_id: i64,
-    pull: &db::models::PullRequest,
+    pull: &codeyard_db_core::models::PullRequest,
     user_id: i64,
     files: &[DiffFileInfo],
 ) -> ResultPage<pulls::Viewed> {

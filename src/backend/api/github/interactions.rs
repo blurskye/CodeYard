@@ -1,14 +1,12 @@
 use super::{auth, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        interactions::{InteractionRefusal, InteractionScope, NewRestriction},
-        models::User,
-        users::accounts::AccountCredential,
-    },
-    repositories::access,
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::interactions::InteractionRefusal;
+use crate::backend::db::interactions::InteractionScope;
+use crate::backend::db::interactions::NewRestriction;
+use crate::backend::db::users::accounts::AccountCredential;
+use crate::backend::db::users::accounts::AccountRestricted;
+use crate::backend::repositories::access;
 use axum::{
     extract::{rejection::JsonRejection, Path, State},
     http::{HeaderMap, StatusCode},
@@ -16,7 +14,7 @@ use axum::{
     routing::{delete, get, put, MethodRouter},
     Json,
 };
-use codeyard_support::credentials::AccountRestricted;
+use codeyard_db_core::models::User;
 use serde_json::json;
 use std::sync::Arc;
 

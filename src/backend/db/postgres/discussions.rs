@@ -1,7 +1,7 @@
 // The caller's revision is never replaced by a freshly loaded revision.
 use super::repositories::access::RepositoryRowLock as RepositoryLock;
-use crate::backend::db::models::AccessLevel;
 use anyhow::Result;
+use codeyard_db_core::models::AccessLevel;
 use sqlx::{PgPool, Postgres, Transaction};
 
 /// The label names a list narrows to, as the text array that `= ANY` reads. None when the list

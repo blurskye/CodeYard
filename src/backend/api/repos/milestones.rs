@@ -14,12 +14,12 @@ use crate::backend::db;
 use crate::backend::db::assignees::AssignedItem;
 use crate::backend::db::discussions::{ListFilter, Pick};
 use crate::backend::db::milestones::MilestoneWriteRefusal;
-use crate::backend::db::models::MilestoneSummary;
 use crate::backend::issues::{parse_due_date, validate_milestone};
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
+use codeyard_db_core::models::MilestoneSummary;
 use codeyard_webui::pages::repos::issues::{self as view, ListCounts, MilestoneDraft};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -38,7 +38,9 @@ pub(crate) fn milestone_view(summary: MilestoneSummary) -> view::Milestone {
 }
 
 /// Picker choices do not show progress counts.
-pub(crate) fn milestone_choice_view(milestone: db::models::Milestone) -> view::Milestone {
+pub(crate) fn milestone_choice_view(
+    milestone: codeyard_db_core::models::Milestone,
+) -> view::Milestone {
     milestone_view(MilestoneSummary {
         milestone,
         open_items: 0,

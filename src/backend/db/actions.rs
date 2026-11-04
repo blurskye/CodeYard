@@ -1,7 +1,8 @@
 //! Shared named operation surface; native transactions stay inside db.
 //! Actions settings: the site's, from the admin page, and each repository's own.
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// The site's Actions settings. A missing limit means none; a missing timeout or image leaves
 /// the server's own (`CI_RUN_TIMEOUT_SECONDS`, `CI_ACT_RUNNER_IMAGE`).

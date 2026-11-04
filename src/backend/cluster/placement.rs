@@ -1,11 +1,10 @@
 //! In cluster mode new repositories use the online storage node with the most free space.
 //! A single-node installation, with or without runners on other machines, records no node.
 use super::NodeContext;
-use crate::backend::db::{
-    self,
-    models::{ClusterNode, Repository},
-};
-use codeyard_git::error::RepoError;
+use crate::backend::db;
+use crate::backend::repositories::store::RepoError;
+use codeyard_db_core::models::ClusterNode;
+use codeyard_db_core::models::Repository;
 
 pub async fn storage_node(
     context: Option<&NodeContext>,

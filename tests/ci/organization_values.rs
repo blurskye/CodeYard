@@ -3,20 +3,19 @@ use crate::support::{
     database::Database, fake_webui_bundle, http_client::Client, organizations::applied,
 };
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    crypto::SecretEncryptor,
-    db::{
-        self,
-        models::OrgRole,
-        organizations::{self as orgs, NewOrganization, OrganizationProfile},
-        repositories::creation::{RepositoryCreationOwner, RepositoryTarget},
-    },
-    repositories::lifecycle,
-    storage::ObjectStore,
-};
+use codeyard::backend::api::create_router;
+use codeyard::backend::app::AppState;
+use codeyard::backend::ci::CiConfig;
+use codeyard::backend::crypto::SecretEncryptor;
+use codeyard::backend::db;
+use codeyard::backend::db::organizations as orgs;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
+use codeyard::backend::db::repositories::creation::RepositoryTarget;
+use codeyard::backend::repositories::lifecycle;
+use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
 use std::sync::Arc;
 

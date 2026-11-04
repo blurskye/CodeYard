@@ -125,7 +125,7 @@ pub async fn get_repo(
 async fn repository_response(
     state: &AppState,
     headers: &HeaderMap,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
 ) -> Result<RepoResponse, (StatusCode, Json<ApiError>)> {
     let owner = repository_owner(&state.pool, repository).await?;
     let default_branch = repository_default_branch_or_db(state, repository).await;
@@ -654,7 +654,7 @@ pub(super) async fn settings_model(
                 .ok_or_else(|| unavailable(ctx))?;
             settings.collaborators.push(view::settings::Collaborator {
                 username: user.username,
-                access: db::models::AccessLevel::from(access.access_level)
+                access: codeyard_db_core::models::AccessLevel::from(access.access_level)
                     .as_str()
                     .into(),
             });
@@ -691,7 +691,7 @@ pub(super) async fn settings_model(
                 .push(view::settings::PendingInvitation {
                     id: invitation.id,
                     username: user.username.clone(),
-                    access: db::models::AccessLevel::from(invitation.permission)
+                    access: codeyard_db_core::models::AccessLevel::from(invitation.permission)
                         .as_str()
                         .to_owned(),
                 });
@@ -1541,7 +1541,7 @@ fn label_id(form: &HashMap<String, String>) -> ApiResult<i64> {
 
 async fn mutate(
     ctx: &PageContext,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     owner: &str,
     name: &str,
     action: &str,
@@ -2116,7 +2116,9 @@ async fn mutate(
             let permission = if action == "remove-collaborator" {
                 None
             } else {
-                let level = db::models::AccessLevel::parse_collaborator(&field(form, "access"));
+                let level = codeyard_db_core::models::AccessLevel::parse_collaborator(&field(
+                    form, "access",
+                ));
                 Some(level.ok_or_else(|| {
                     (
                         StatusCode::BAD_REQUEST,

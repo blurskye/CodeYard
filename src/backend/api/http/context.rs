@@ -2,15 +2,14 @@
 use super::origin::same_origin_submission;
 use super::render::{public_error, public_error_returning_to, redirect_response};
 use super::session;
-use crate::backend::{
-    app::AppState,
-    crypto::is_hex_token,
-    db::{self, models::User},
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
 use axum::{
     http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     response::Response,
 };
+use codeyard_db_core::models::User;
+use codeyard_support::crypto::is_hex_token;
 use codeyard_webui::document::{Chrome, Theme};
 use std::{collections::HashMap, sync::Arc};
 use subtle::ConstantTimeEq;
@@ -36,7 +35,7 @@ pub(crate) enum ExistingCsrfError {
 
 async fn csrf_token_for_session(
     state: &AppState,
-    browser_session: &db::models::BrowserSession,
+    browser_session: &codeyard_db_core::models::BrowserSession,
 ) -> anyhow::Result<Option<String>> {
     let candidate = session::generate_session_id();
     let ttl = CSRF_TTL_SECONDS

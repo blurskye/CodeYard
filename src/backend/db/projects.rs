@@ -1,7 +1,9 @@
 //! Owner-scoped projects. Native transactions keep authority and project changes together.
-use super::{users::accounts::AccountCredential, DbPool};
+use super::users::accounts::AccountCredential;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 

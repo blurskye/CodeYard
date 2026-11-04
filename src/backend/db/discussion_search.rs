@@ -1,7 +1,8 @@
 //! A bounded search expression shared by native database implementations. Values are always bound;
 //! only the closed vocabulary below can become SQL. Search sees published discussion content only.
-use super::DbPool;
 use chrono::{DateTime, NaiveDate, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Debug, Clone)]
 pub(crate) enum Expr {

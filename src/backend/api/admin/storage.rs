@@ -1,7 +1,7 @@
 //! Admin storage overview page.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::user::responses::require_account;
-use crate::backend::{app::AppState, db};
+use crate::backend::app::AppState;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode, Uri},
@@ -17,10 +17,10 @@ pub fn router() -> Router<Arc<AppState>> {
 }
 
 /// The name of the database engine in use.
-fn database_name(pool: &db::DbPool) -> &'static str {
+fn database_name(pool: &codeyard_db_core::DbPool) -> &'static str {
     match pool {
-        db::DbPool::Postgres(_) => "PostgreSQL",
-        db::DbPool::Sqlite(_) => "SQLite",
+        codeyard_db_core::DbPool::Postgres(_) => "PostgreSQL",
+        codeyard_db_core::DbPool::Sqlite(_) => "SQLite",
     }
 }
 

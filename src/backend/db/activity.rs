@@ -1,7 +1,8 @@
 //! Profile activity: branch pushes, and what a user opened, merged or commented on.
-use crate::backend::db::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 pub(crate) const SCAN_ROWS: i64 = 100;
 

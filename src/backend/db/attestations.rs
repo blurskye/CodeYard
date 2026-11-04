@@ -1,6 +1,7 @@
 //! Sigstore bundles are stored once; repository associations and subject indexes carry authority.
-use super::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use std::collections::BTreeSet;
 
 pub const MAX_BUNDLE_BYTES: usize = 1024 * 1024;

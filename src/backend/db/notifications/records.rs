@@ -1,6 +1,7 @@
-use crate::backend::db::models::Notification;
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::Notification;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde_json::Value;
 
 pub struct NewNotification<'a> {

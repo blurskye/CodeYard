@@ -1,6 +1,7 @@
 //! Emoji reactions on issues, pull requests, their comments and their reviews.
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// The reactions a user can pick, in display order.
 pub const CONTENTS: [&str; 8] = [

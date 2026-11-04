@@ -1,6 +1,8 @@
 //! GitHub repository lists apply visibility and filters before their page limit.
-use crate::backend::db::{models::Repository, DbPool};
 use anyhow::Result;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// Teams that reach the repository, each with the permission it holds including what it inherits
 /// from parents. A public repository lists only teams with an explicit grant, as GitHub does;
@@ -10,10 +12,10 @@ pub(crate) const REPOSITORY_TEAMS_SQL:&str="SELECT t.*,e.permission FROM effecti
 #[derive(sqlx::FromRow)]
 pub struct RepositoryTeam {
     #[sqlx(flatten)]
-    pub team: crate::backend::db::models::Team,
+    pub team: codeyard_db_core::models::Team,
     pub permission: i16,
     #[sqlx(skip)]
-    pub parent: Option<crate::backend::db::models::Team>,
+    pub parent: Option<codeyard_db_core::models::Team>,
 }
 
 native_operation!(crate::backend::db::postgres::repositories::github::repository_teams,

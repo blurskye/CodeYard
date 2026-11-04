@@ -22,7 +22,7 @@ fn host_key(seed: u8) -> String {
         .to_string()
 }
 
-fn ci_service(pool: &db::DbPool) -> Arc<CiRuns> {
+fn ci_service(pool: &codeyard_db_core::DbPool) -> Arc<CiRuns> {
     Arc::new(CiRuns::new(
         pool.clone(),
         Arc::new(CiConfig::default()),
@@ -32,7 +32,10 @@ fn ci_service(pool: &db::DbPool) -> Arc<CiRuns> {
     ))
 }
 
-async fn concurrent_inserts_keep_one_key(pool: &db::DbPool, other: &db::DbPool) {
+async fn concurrent_inserts_keep_one_key(
+    pool: &codeyard_db_core::DbPool,
+    other: &codeyard_db_core::DbPool,
+) {
     assert!(db::node_config::get_cluster_ssh_host_key(pool)
         .await
         .unwrap()
@@ -79,7 +82,7 @@ async fn concurrent_inserts_keep_one_key(pool: &db::DbPool, other: &db::DbPool) 
     );
 }
 
-async fn invalid_bootstrap_does_not_poison_database(pool: &db::DbPool) {
+async fn invalid_bootstrap_does_not_poison_database(pool: &codeyard_db_core::DbPool) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("host_key");
     for invalid in ["not a private key", ENCRYPTED_HOST_KEY] {
@@ -108,7 +111,10 @@ async fn invalid_bootstrap_does_not_poison_database(pool: &db::DbPool) {
     drop(server);
 }
 
-async fn simultaneous_startups_share_the_saved_key(pool: &db::DbPool, other: &db::DbPool) {
+async fn simultaneous_startups_share_the_saved_key(
+    pool: &codeyard_db_core::DbPool,
+    other: &codeyard_db_core::DbPool,
+) {
     let directory = tempfile::tempdir().unwrap();
     let first_path = directory.path().join("first_host_key");
     let second_path = directory.path().join("second_host_key");

@@ -5,10 +5,10 @@ use super::{
     workflows::{should_skip_run_from_message, WorkflowMatchBudget},
     CiRunRequest, CiRuns, WorkflowDefinition,
 };
-use crate::backend::db::models::Repository;
 use crate::backend::repositories::store::{repo_store, RepoStore, MAX_COMMIT_PAGE_SIZE};
 use crate::backend::webhooks::payloads;
 use anyhow::{Context, Result};
+use codeyard_db_core::models::Repository;
 use codeyard_git::CommitInfo;
 
 const ZERO_OID: &str = "0000000000000000000000000000000000000000";
@@ -20,7 +20,7 @@ fn is_zero_oid(id: &str) -> bool {
 /// The push document a run's `github.event` reads: the document the push webhook sends, built
 /// through the repository store so a repository on another node works too.
 pub(crate) async fn push_document(
-    pool: &crate::backend::db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     store: &RepoStore,
     repo: &Repository,
     owner: &str,
@@ -207,7 +207,7 @@ impl CiRuns {
                         triggered_by_id: actor_id,
                         manual: false,
                     },
-                    crate::backend::db::models::AccessLevel::Owner,
+                    codeyard_db_core::models::AccessLevel::Owner,
                     event.clone(),
                     None,
                 )

@@ -1,8 +1,6 @@
 use crate::backend::ci::CiRuns;
-use crate::backend::db::models::{AccessLevel, Repository, User};
 use crate::backend::db::repositories::records::get_git_repository;
 use crate::backend::db::users::ssh_keys::get_user_by_key_fingerprint;
-use crate::backend::db::DbPool;
 use crate::backend::repositories::deploy_keys;
 use crate::backend::repositories::git_sessions::{validation, GitTasks, ReceiveCredential};
 use crate::backend::repositories::store::{
@@ -12,6 +10,10 @@ use crate::backend::repositories::traffic;
 use crate::backend::ssh::rate_limit::RateLimiter;
 use anyhow::Result;
 use bytes::Bytes;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
+use codeyard_db_core::DbPool;
 use codeyard_git::repository::process as git_process;
 use russh::keys::PublicKey;
 use russh::server::{Auth, ChannelOpenHandle, Msg, Session};
@@ -794,7 +796,7 @@ mod tests {
             .await
             .unwrap();
         let pool = DbPool::from(native.clone());
-        crate::backend::db::run_migrations(&pool).await.unwrap();
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let owner = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
@@ -875,7 +877,7 @@ mod tests {
             .await
             .unwrap();
         let pool = DbPool::from(native);
-        crate::backend::db::run_migrations(&pool).await.unwrap();
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let owner = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();

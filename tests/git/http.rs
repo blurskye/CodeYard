@@ -5,14 +5,16 @@ use crate::support::git_server;
 use crate::support::native_database as native;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use chrono::{Duration, Utc};
-use codeyard::backend::{
-    db::{self, repositories, users::tokens, DbPool},
-    repositories::lifecycle,
-};
-use codeyard_git::{
-    MAX_MIRROR_REFS, MAX_PULL_HEAD_REFS, MAX_PULL_HEAD_REF_BYTES, MAX_REPOSITORY_REFS,
-    MAX_REPOSITORY_REF_BYTES,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::repositories;
+use codeyard::backend::db::users::tokens;
+use codeyard::backend::repositories::lifecycle;
+use codeyard_db_core::DbPool;
+use codeyard_git::MAX_MIRROR_REFS;
+use codeyard_git::MAX_PULL_HEAD_REFS;
+use codeyard_git::MAX_PULL_HEAD_REF_BYTES;
+use codeyard_git::MAX_REPOSITORY_REFS;
+use codeyard_git::MAX_REPOSITORY_REF_BYTES;
 use git_server::{git, success, Server};
 use rand::RngCore;
 use reqwest::{Client, StatusCode};
@@ -417,7 +419,7 @@ async fn buffered_fetch_revalidates(pool: &DbPool, server: &Server, root: &Path)
             pool,
             reader.id,
             repo.id,
-            db::models::AccessLevel::Read,
+            codeyard_db_core::models::AccessLevel::Read,
         )
         .await
         .unwrap();

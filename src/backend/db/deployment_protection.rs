@@ -1,6 +1,8 @@
 //! Custom deployment rules and per-attempt App decisions shared with Actions.
-use super::{github_apps::App, DbPool};
+use super::github_apps::App;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {

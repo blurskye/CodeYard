@@ -9,10 +9,14 @@ license = "LGPL-3.0-or-later"
 thiserror.workspace = true
 url.workspace = true
 
-[lints]
-workspace = true
-
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 anyhow.workspace = true
+hex.workspace = true
+hmac.workspace = true
 libc.workspace = true
+rand.workspace = true
+sha2.workspace = true
 tokio.workspace = true
+
+[lints]
+workspace = true

@@ -1,13 +1,10 @@
 //! Bind environment values to admitted job IDs before either engine receives them.
-use crate::backend::{
-    crypto::SecretEncryptor,
-    db::{
-        environment_values::{self as values, WorkflowValues},
-        models::CiRun,
-        DbPool,
-    },
-};
+use crate::backend::crypto::SecretEncryptor;
+use crate::backend::db::environment_values as values;
+use crate::backend::db::environment_values::WorkflowValues;
 use anyhow::{ensure, Context, Result};
+use codeyard_db_core::models::CiRun;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -92,7 +89,7 @@ fn qualify(
         // Nested calls multiply, so the walk shares the same job budget as credential expansion.
         *visited += 1;
         ensure!(
-            *visited <= super::tokens::MAX_EXPANDED_JOBS,
+            *visited <= codeyard_model::ci::MAX_EXPANDED_JOBS,
             "workflow run expands to too many jobs"
         );
         let job = job.as_str().context("Invalid admitted job ID")?;

@@ -1,11 +1,14 @@
-use crate::backend::db::{
-    assignees::AssignedItem,
-    issue_attributes::ValueInput,
-    labels::LabelTarget,
-    models::Issue,
-    suggestions::{Action, ListFilter, Proposal, Refusal, Resolution, Suggestion},
-};
+use crate::backend::db::assignees::AssignedItem;
+use crate::backend::db::issue_attributes::ValueInput;
+use crate::backend::db::labels::LabelTarget;
+use crate::backend::db::suggestions::Action;
+use crate::backend::db::suggestions::ListFilter;
+use crate::backend::db::suggestions::Proposal;
+use crate::backend::db::suggestions::Refusal;
+use crate::backend::db::suggestions::Resolution;
+use crate::backend::db::suggestions::Suggestion;
 use anyhow::Result;
+use codeyard_db_core::models::Issue;
 use serde_json::Value;
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 async fn permission(c: &mut PgConnection, repo: i64, actor: i64, triage: bool) -> Result<bool> {

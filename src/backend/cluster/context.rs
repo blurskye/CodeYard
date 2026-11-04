@@ -1,6 +1,7 @@
 use super::{identity::NodeKey, rpc::unavailable, CorePeer, IrohDialer};
-use crate::backend::db::{self, DbPool};
-use codeyard_git::error::RepoError;
+use crate::backend::db;
+use crate::backend::repositories::store::RepoError;
+use codeyard_db_core::DbPool;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -28,7 +29,7 @@ async fn active_storage(pool: &DbPool, node: i64, key: Option<&str>) -> Result<(
 }
 
 fn current_copy(
-    view: &db::models::RecoveryView,
+    view: &codeyard_db_core::models::RecoveryView,
     node: i64,
     read_only: bool,
     expected_term: Option<i64>,
@@ -46,7 +47,7 @@ fn current_copy(
 /// Checks the literal directory handed to a receive child, including stores made by RPC.
 pub(crate) async fn check_term_directory(
     pool: &DbPool,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     node: Option<i64>,
     path: &Path,
 ) -> Result<(), RepoError> {
@@ -221,7 +222,7 @@ impl NodeContext {
 
     pub async fn repository_store(
         &self,
-        repository: &db::models::Repository,
+        repository: &codeyard_db_core::models::Repository,
         read_only: bool,
     ) -> Result<crate::backend::repositories::store::RepoStore, RepoError> {
         let uuid = super::rpc::repository_uuid(&repository.disk_path)?;

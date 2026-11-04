@@ -16,21 +16,21 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db::{self, models::repositories::AccessLevel, organizations},
-    notifications::NotificationEvent,
-    storage::ObjectStore,
-};
+use codeyard::backend::api::create_router;
+use codeyard::backend::app::AppState;
+use codeyard::backend::ci::CiConfig;
+use codeyard::backend::db;
+use codeyard::backend::db::organizations;
+use codeyard::backend::notifications::NotificationEvent;
+use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::repositories::AccessLevel;
 use fixture::Fixture;
 use pulls::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
 
-fn ids(rows: &[db::models::Notification]) -> Vec<i64> {
+fn ids(rows: &[codeyard_db_core::models::Notification]) -> Vec<i64> {
     rows.iter().map(|n| n.id).collect()
 }
 
@@ -640,7 +640,7 @@ async fn corrupt_row_privacy(pg: bool) {
 }
 
 async fn assert_created_event(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     hint: NotificationEvent,
     user_id: i64,
     kind: &str,
@@ -673,7 +673,7 @@ fn assert_no_event(events: &mut tokio::sync::broadcast::Receiver<NotificationEve
     );
 }
 
-async fn notice_count(pool: &db::DbPool, user_id: i64, kind: &str) -> usize {
+async fn notice_count(pool: &codeyard_db_core::DbPool, user_id: i64, kind: &str) -> usize {
     db::notifications::records::list_notifications_for_user(pool, user_id, 100, false)
         .await
         .unwrap()

@@ -1,6 +1,7 @@
 //! Instance signing identity and OIDC claims bound to live job credentials.
-use super::DbPool;
 use anyhow::{ensure, Result};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 

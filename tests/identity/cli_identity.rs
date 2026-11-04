@@ -104,7 +104,7 @@ async fn user_create_requires_setup_without_blocking_web_bootstrap() {
         "sqlite://{}",
         installation.path().join("data/gitserv.db").display()
     );
-    let pool = db::init_db(&url).await.unwrap();
+    let pool = codeyard_db_core::init_db(&url).await.unwrap();
     assert!(db::users::accounts::list_users(&pool)
         .await
         .unwrap()
@@ -158,7 +158,7 @@ fn provision(
     child.wait_with_output().unwrap()
 }
 
-async fn cli_account_contract(pool: &db::DbPool, url: &str) {
+async fn cli_account_contract(pool: &codeyard_db_core::DbPool, url: &str) {
     use db::users::{accounts, transitions};
     let installation = tempfile::tempdir().unwrap();
     let refused = provision(

@@ -3,22 +3,22 @@ use super::super::{
     api_url, auth, optional_json::OptionalJson, pagination::Pagination, repos, Error, Result,
 };
 use super::{access_token, application};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        github_apps::{App, Installation, InstallationFilter, RepositoryChange},
-        models::PersonalAccessToken,
-    },
-    identity::{github_apps as apps, tokens::token_hash},
-    webhooks::payloads,
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::github_apps::App;
+use crate::backend::db::github_apps::Installation;
+use crate::backend::db::github_apps::InstallationFilter;
+use crate::backend::db::github_apps::RepositoryChange;
+use crate::backend::identity::github_apps as apps;
+use crate::backend::identity::tokens::token_hash;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
+use codeyard_db_core::models::PersonalAccessToken;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 
@@ -69,7 +69,7 @@ pub(in crate::backend::api::github) async fn app_document(
 /// An app's document from rows already loaded, for responses that cannot read the database.
 pub(in crate::backend::api::github) fn app_value(
     app: &App,
-    owner: &db::models::User,
+    owner: &codeyard_db_core::models::User,
     installations: i64,
 ) -> Result<Value> {
     Ok(
@@ -362,7 +362,7 @@ async fn issue(
         return Err(Error::invalid("Select at least one repository"));
     }
     let value = if actor.is_some() {
-        format!("ghu_{}", crate::backend::crypto::random_hex())
+        format!("ghu_{}", codeyard_support::crypto::random_hex())
     } else {
         crate::backend::identity::tokens::installation_token()
     };

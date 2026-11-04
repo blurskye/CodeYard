@@ -1,8 +1,11 @@
 use crate::support::native_database::{NativeDatabase, PostgresDatabase};
-use codeyard::backend::{
-    cluster::{self, InviteOptions, NodeAddress, NodeKey, Settings},
-    db::{self, DbPool},
-};
+use codeyard::backend::cluster;
+use codeyard::backend::cluster::InviteOptions;
+use codeyard::backend::cluster::NodeAddress;
+use codeyard::backend::cluster::NodeKey;
+use codeyard::backend::cluster::Settings;
+use codeyard::backend::db;
+use codeyard_db_core::DbPool;
 use std::time::Duration;
 
 #[tokio::test]

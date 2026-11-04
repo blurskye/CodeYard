@@ -1,5 +1,4 @@
 use crate::backend::db::discussions::{ListFilter, StateCounts, SHOWN_PR_COMMENT};
-use crate::backend::db::models::PullRequest;
 use crate::backend::db::pull_requests::records::PullRequestListEntry;
 use crate::backend::db::pull_requests::records::{
     can_grant_maintainer_edit, decide_join, DuplicateOpenPullRequest, JoinCheck, NewPullRequest,
@@ -7,6 +6,7 @@ use crate::backend::db::pull_requests::records::{
 };
 use crate::backend::db::pull_requests::records::{PullRequestRelation, ViewerPullRequestEntry};
 use anyhow::Result;
+use codeyard_db_core::models::PullRequest;
 use sqlx::SqlitePool;
 
 pub async fn commit_association_candidates(
@@ -355,7 +355,7 @@ pub async fn create_pull_request(
         None => None,
     };
     let head_id = input.head_repo_id.unwrap_or(input.repo_id);
-    let head = sqlx::query_as::<_, crate::backend::db::models::Repository>(
+    let head = sqlx::query_as::<_, codeyard_db_core::models::Repository>(
         "SELECT * FROM repositories WHERE id = ?1",
     )
     .bind(head_id)
@@ -725,7 +725,7 @@ pub async fn update_pull_request(
         crate::backend::db::sqlite::discussions::lock_write_authority(&mut tx, edit.actor_id, repo)
             .await?;
     let head = if maintainer_can_modify.is_some() {
-        sqlx::query_as::<_, crate::backend::db::models::Repository>(
+        sqlx::query_as::<_, codeyard_db_core::models::Repository>(
             "SELECT * FROM repositories WHERE id=?1",
         )
         .bind(head_id)

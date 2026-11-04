@@ -27,7 +27,7 @@ struct Related {
 
 impl Related {
     async fn load(
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: &Repository,
         owner: &str,
         apps: &[i64],
@@ -118,7 +118,7 @@ pub(super) async fn suites(
 }
 
 pub(super) async fn suites_at(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: &Repository,
     owner: &str,
     rows: &[Suite],
@@ -129,7 +129,7 @@ pub(super) async fn suites_at(
 
 async fn suite_page(
     state: Option<&AppState>,
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: &Repository,
     owner: &str,
     rows: &[Suite],

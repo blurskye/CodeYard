@@ -7,10 +7,12 @@ use crate::support::database::Database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client::Client;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, db::models::AccessLevel,
-    storage::ObjectStore,
-};
+use codeyard::backend::api::create_router;
+use codeyard::backend::app::AppState;
+use codeyard::backend::ci::CiConfig;
+use codeyard::backend::db;
+use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::AccessLevel;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -113,7 +115,7 @@ async fn contract(pg: bool) {
         0,
         &output
             .iter()
-            .map(|line| codeyard::backend::ci::queue::LogLine {
+            .map(|line| codeyard_model::ci::LogLine {
                 stage: "ci.yml".into(),
                 line: (*line).into(),
                 level: "info".into(),
@@ -387,7 +389,7 @@ async fn browser_logs(
     router: &axum::Router,
     alice: &Client,
     dave: &Client,
-    run: &db::models::CiRun,
+    run: &codeyard_db_core::models::CiRun,
 ) {
     use axum::{body::Body, http::Request};
     use codeyard::backend::identity::tokens::{self, TokenInput};

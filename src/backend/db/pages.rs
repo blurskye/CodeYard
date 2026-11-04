@@ -1,7 +1,8 @@
 //! Pages configuration and failed publication attempts. This server has no Pages publisher.
-use super::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

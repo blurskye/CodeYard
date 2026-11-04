@@ -1,9 +1,10 @@
 use super::authority::*;
-use crate::backend::db::{
-    models::{OrgRole, Organization, User},
-    organizations::{discovery::MembershipState, *},
-};
+use crate::backend::db::organizations::discovery::MembershipState;
+use crate::backend::db::organizations::*;
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Organization;
+use codeyard_db_core::models::User;
 use sqlx::PgPool;
 use OrganizationOutcome::{Applied, Denied};
 

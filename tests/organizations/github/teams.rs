@@ -8,14 +8,15 @@ use axum::{
     http::{Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db::{self, models::OrgRole, organizations as orgs},
-    identity::tokens::{self, TokenInput},
-    storage::ObjectStore,
-};
+use codeyard::backend::api::create_router;
+use codeyard::backend::app::AppState;
+use codeyard::backend::ci::CiConfig;
+use codeyard::backend::db;
+use codeyard::backend::db::organizations as orgs;
+use codeyard::backend::identity::tokens;
+use codeyard::backend::identity::tokens::TokenInput;
+use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -616,7 +617,7 @@ async fn contract(pg: bool) {
             orgs::get_organization_repo_access(f.pool(), bob, &row)
                 .await
                 .unwrap(),
-            db::models::AccessLevel::from(level)
+            codeyard_db_core::models::AccessLevel::from(level)
         );
     }
     // A fine-grained token selected for another repository cannot change team access to

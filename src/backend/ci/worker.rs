@@ -1,11 +1,15 @@
 //! A CI worker: claims queued runs and executes their workflows with `act`.
 use super::config::{podman_socket_path, CiExecutionMode};
 use super::process::{self, Stopped};
-use super::queue::{ClaimedRun, CoreRefusal, LogLine, RunQueue};
+use super::queue::ClaimedRun;
+use super::queue::CoreRefusal;
+use super::queue::RunQueue;
 use super::runner_labels::labels_from_value;
 use super::workers::CiWorkers;
-use crate::backend::db::{self, models::CiRun};
+use crate::backend::db;
 use anyhow::{bail, ensure, Context, Result};
+use codeyard_db_core::models::CiRun;
+use codeyard_model::ci::LogLine;
 use serde::{Deserialize, Serialize};
 use serde_yaml::{Mapping, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -2287,7 +2291,9 @@ fn file_name(workflow: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::{ci::CiConfig, db::DbPool, repositories::store::RepoStore};
+    use crate::backend::ci::CiConfig;
+    use crate::backend::repositories::store::RepoStore;
+
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
@@ -2332,10 +2338,11 @@ mod tests {
     }
 
     async fn queued_fixture(root: &Path) -> (CiWorkers, CiRun) {
-        let pool = db::init_db(&format!("sqlite://{}", root.join("test.db").display()))
-            .await
-            .unwrap();
-        db::run_migrations(&pool).await.unwrap();
+        let pool =
+            codeyard_db_core::init_db(&format!("sqlite://{}", root.join("test.db").display()))
+                .await
+                .unwrap();
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let owner = db::users::accounts::create_user(&pool, "worker_owner", None)
             .await
             .unwrap();
@@ -2448,11 +2455,11 @@ mod tests {
         let RunQueue::Database { pool, .. } = &service.queue else {
             unreachable!()
         };
-        let DbPool::Sqlite(raw) = pool else {
+        let codeyard_db_core::DbPool::Sqlite(raw) = pool else {
             unreachable!()
         };
         sqlx::query("UPDATE ci_runs SET log_lines = ? WHERE id = ?")
-            .bind(super::super::logs::MAX_RUN_LOG_LINES - 2)
+            .bind(codeyard_model::ci::MAX_RUN_LOG_LINES - 2)
             .bind(run.id)
             .execute(raw)
             .await
@@ -2475,7 +2482,7 @@ mod tests {
                     .fetch_one(raw)
                     .await
                     .unwrap();
-                if stored == super::super::logs::MAX_RUN_LOG_LINES {
+                if stored == codeyard_model::ci::MAX_RUN_LOG_LINES {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -3420,9 +3427,7 @@ jobs:
         let cleanups = Arc::new(Mutex::new(JoinSet::new()));
         let (cleaned, cleanup) = oneshot::channel();
         let workspace_parent = tempfile::tempdir().unwrap();
-        let pool = crate::backend::db::init_db("sqlite::memory:")
-            .await
-            .unwrap();
+        let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
         let queue = RunQueue::Database {
             pool: pool.clone(),
             config: Arc::new(CiConfig::default()),
@@ -3636,8 +3641,8 @@ jobs:
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        let pool = DbPool::from(native);
-        db::run_migrations(&pool).await.unwrap();
+        let pool = codeyard_db_core::DbPool::from(native);
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let owner = db::users::accounts::create_user(&pool, "result_owner", None)
             .await
             .unwrap();

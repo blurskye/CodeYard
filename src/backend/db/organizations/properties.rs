@@ -1,7 +1,10 @@
 //! Organization-defined repository metadata. Definition authority and repository value
 //! authority remain separate; repository administrators cannot edit organization-only values.
-use crate::backend::db::{models::Repository, organizations::OrganizationOutcome, DbPool};
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::{ensure, Result};
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 

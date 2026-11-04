@@ -1,11 +1,13 @@
 use super::*;
-use crate::backend::db::{
-    models::Repository,
-    notifications::threads::{
-        self as model, NotificationThread, ThreadAction, ThreadFilter, ThreadInbox,
-        ThreadSubscription, ThreadSummary, ThreadView,
-    },
-};
+use crate::backend::db::notifications::threads as model;
+use crate::backend::db::notifications::threads::NotificationThread;
+use crate::backend::db::notifications::threads::ThreadAction;
+use crate::backend::db::notifications::threads::ThreadFilter;
+use crate::backend::db::notifications::threads::ThreadInbox;
+use crate::backend::db::notifications::threads::ThreadSubscription;
+use crate::backend::db::notifications::threads::ThreadSummary;
+use crate::backend::db::notifications::threads::ThreadView;
+use codeyard_db_core::models::Repository;
 
 pub(super) async fn ensure(
     connection: &mut sqlx::SqliteConnection,

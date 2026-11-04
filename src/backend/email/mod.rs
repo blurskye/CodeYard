@@ -10,12 +10,13 @@ pub mod send;
 
 use crate::backend::api::http::config::public_origin;
 use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db::{self, DbPool};
+use crate::backend::db;
+use codeyard_db_core::DbPool;
 use tracing::warn;
 
 /// Mails a notification to its recipient, if the site has a mail server and the recipient has a
 /// verified address and wants email.
-pub async fn notify_user(pool: &DbPool, notification: &db::models::Notification) {
+pub async fn notify_user(pool: &DbPool, notification: &codeyard_db_core::models::Notification) {
     if !config::is_configured(pool).await {
         return;
     }
@@ -108,13 +109,13 @@ mod tests {
 
     async fn fixture() -> Fixture {
         let directory = tempfile::tempdir().unwrap();
-        let pool = db::init_db(&format!(
+        let pool = codeyard_db_core::init_db(&format!(
             "sqlite://{}",
             directory.path().join("test.db").display()
         ))
         .await
         .unwrap();
-        db::run_migrations(&pool).await.unwrap();
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let admin = db::users::accounts::create_user(&pool, "admin", Some("admin@example.com"))
             .await
             .unwrap();

@@ -144,9 +144,11 @@ async fn change(
         Change::Revoke => cluster::revoke(pool, authority, &name).await,
     };
     match result {
-        Ok(db::models::NodeStatusChange::Changed { .. }) => ctx.redirect("/admin/nodes"),
+        Ok(codeyard_db_core::models::NodeStatusChange::Changed { .. }) => {
+            ctx.redirect("/admin/nodes")
+        }
         // The account stopped being an administrator after the page check above.
-        Ok(db::models::NodeStatusChange::Denied) => {
+        Ok(codeyard_db_core::models::NodeStatusChange::Denied) => {
             ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.")
         }
         _ => {

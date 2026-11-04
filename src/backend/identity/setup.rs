@@ -8,11 +8,10 @@ use super::{
     sessions::{self, SessionContext, SessionIssueError},
     AuthenticatedAccount,
 };
-use crate::backend::db::{
-    self,
-    users::transitions::{self, SetupClaim},
-    DbPool,
-};
+use crate::backend::db;
+use crate::backend::db::users::transitions;
+use crate::backend::db::users::transitions::SetupClaim;
+use codeyard_db_core::DbPool;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 

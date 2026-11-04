@@ -1,11 +1,15 @@
 //! Releases and their assets. Writers create and change them; readers see published releases,
 //! and writers also see drafts. Authorized reads derive visibility in their database snapshot.
+use codeyard_db_core::native_operation;
 mod notes;
 pub use notes::{release_note_pulls, ReleaseNotePull};
 
-use crate::backend::db::models::{File, Release, ReleaseAsset, ReleaseRow};
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::File;
+use codeyard_db_core::models::Release;
+use codeyard_db_core::models::ReleaseAsset;
+use codeyard_db_core::models::ReleaseRow;
+use codeyard_db_core::DbPool;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -53,7 +57,7 @@ pub enum ReleaseSelection<'a> {
 }
 
 pub struct ReleaseSnapshot {
-    pub repository: crate::backend::db::models::Repository,
+    pub repository: codeyard_db_core::models::Repository,
     pub releases: Vec<ReleaseRow>,
     pub assets: Vec<ReleaseAsset>,
     pub total: i64,

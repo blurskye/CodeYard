@@ -21,7 +21,7 @@ pub(crate) async fn resolve(
 
 pub(crate) fn run_contexts(
     mut contexts: Contexts,
-    run: &crate::backend::db::models::CiRun,
+    run: &codeyard_db_core::models::CiRun,
     original_actor: Option<(i64, String)>,
 ) -> Contexts {
     use expressions::Value;

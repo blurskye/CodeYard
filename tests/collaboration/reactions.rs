@@ -718,7 +718,7 @@ async fn sqlite_reaction_returns_to_its_discussion_page() {
 }
 
 /// The id of alice's repository, for checks that read the database.
-async fn proj_id(pool: &db::DbPool) -> i64 {
+async fn proj_id(pool: &codeyard_db_core::DbPool) -> i64 {
     db::repositories::records::get_repository(pool, "alice", "proj")
         .await
         .unwrap()
@@ -727,7 +727,7 @@ async fn proj_id(pool: &db::DbPool) -> i64 {
 }
 
 /// The number of `unassigned` lines in the timeline of an issue.
-async fn unassigned_lines(pool: &db::DbPool, issue: i64) -> usize {
+async fn unassigned_lines(pool: &codeyard_db_core::DbPool, issue: i64) -> usize {
     db::timeline::list_events(
         pool,
         proj_id(pool).await,
@@ -746,7 +746,7 @@ async fn unassigned_lines(pool: &db::DbPool, issue: i64) -> usize {
 }
 
 /// The reactions of `viewer` on an issue, summed over every reaction.
-async fn reaction_total(pool: &db::DbPool, issue: i64, viewer: i64) -> i64 {
+async fn reaction_total(pool: &codeyard_db_core::DbPool, issue: i64, viewer: i64) -> i64 {
     db::reactions::reaction_counts(pool, "issue", &[issue], viewer)
         .await
         .unwrap()
@@ -815,9 +815,14 @@ async fn toggles_check_access_in_their_transaction(pg: bool) {
     assert_eq!(reaction_total(pool, issue, owner).await, 0);
 
     // With a grant he can react. Taking the grant back refuses his next toggle and keeps his heart.
-    db::repositories::access::grant_repo_access(pool, bob, repo, db::models::AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        pool,
+        bob,
+        repo,
+        codeyard_db_core::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     assert!(toggle(bob).await.unwrap());
     db::repositories::access::revoke_repo_access(pool, bob, repo)
         .await

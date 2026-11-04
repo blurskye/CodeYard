@@ -93,7 +93,7 @@ async fn metadata_contract(pg: bool) {
         f.pool(),
         alice,
         repo.id,
-        db::models::AccessLevel::Admin,
+        codeyard_db_core::models::AccessLevel::Admin,
     )
     .await
     .unwrap();

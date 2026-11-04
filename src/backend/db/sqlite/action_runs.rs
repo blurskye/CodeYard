@@ -1,8 +1,9 @@
-use crate::backend::db::{
-    action_runs::{RunMetadata, RunPage, RunQuery},
-    models::{CiRun, Repository},
-};
+use crate::backend::db::action_runs::RunMetadata;
+use crate::backend::db::action_runs::RunPage;
+use crate::backend::db::action_runs::RunQuery;
 use anyhow::Result;
+use codeyard_db_core::models::CiRun;
+use codeyard_db_core::models::Repository;
 use sqlx::{types::Json, SqliteConnection, SqlitePool};
 
 /// Called inside admission's immediate transaction.

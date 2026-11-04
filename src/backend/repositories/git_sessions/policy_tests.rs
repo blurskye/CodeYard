@@ -6,9 +6,9 @@ pub(in crate::backend::repositories::git_sessions) use fixture::{
 #[cfg(test)]
 mod fixture {
     use super::super::*;
-    use crate::backend::db::models::AccessLevel;
     use crate::backend::repositories::git_sessions::validation::ZERO_SHA;
     use base64::Engine;
+
     use std::sync::LazyLock;
     use tokio::sync::oneshot;
 
@@ -114,7 +114,7 @@ mod fixture {
                 .await
                 .unwrap();
             let pool = DbPool::from(native.clone());
-            db::run_migrations(&pool).await.unwrap();
+            codeyard_db_core::run_migrations(&pool).await.unwrap();
             let owner = db::users::accounts::create_user(&pool, "owner", None)
                 .await
                 .unwrap();
@@ -179,7 +179,7 @@ mod fixture {
                         owner.id,
                         organization.id,
                         actor.id,
-                        db::models::OrgRole::Member,
+                        codeyard_db_core::models::OrgRole::Member,
                     )
                     .await
                     .unwrap()
@@ -268,7 +268,7 @@ mod fixture {
                         &pool,
                         actor.id,
                         repo.id,
-                        AccessLevel::Write,
+                        codeyard_db_core::models::AccessLevel::Write,
                     )
                     .await
                     .unwrap();
@@ -607,9 +607,9 @@ mod fixture {
                 assert_eq!(
                     access,
                     if organization {
-                        AccessLevel::Write
+                        codeyard_db_core::models::AccessLevel::Write
                     } else {
-                        AccessLevel::Owner
+                        codeyard_db_core::models::AccessLevel::Owner
                     }
                 );
             }
@@ -1326,7 +1326,7 @@ mod fixture {
                     &fixture.pool,
                     fixture.actor_id,
                     fixture.repo_id,
-                    AccessLevel::Admin,
+                    codeyard_db_core::models::AccessLevel::Admin,
                 )
                 .await
                 .unwrap();
@@ -1361,7 +1361,7 @@ mod fixture {
             &fixture.pool,
             fixture.actor_id,
             fixture.repo_id,
-            AccessLevel::Admin,
+            codeyard_db_core::models::AccessLevel::Admin,
         )
         .await
         .unwrap();
@@ -1403,7 +1403,7 @@ mod fixture {
                     &fixture.pool,
                     fixture.actor_id,
                     fixture.repo_id,
-                    AccessLevel::Admin,
+                    codeyard_db_core::models::AccessLevel::Admin,
                 )
                 .await
                 .unwrap();

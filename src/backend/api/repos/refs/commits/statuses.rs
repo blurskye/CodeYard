@@ -73,8 +73,8 @@ pub async fn list_commit_statuses(
 }
 
 pub(super) async fn status_responses(
-    pool: &db::DbPool,
-    statuses: Vec<db::models::CommitStatus>,
+    pool: &codeyard_db_core::DbPool,
+    statuses: Vec<codeyard_db_core::models::CommitStatus>,
 ) -> ApiResult<Vec<CommitStatusResponse>> {
     let mut ids: Vec<_> = statuses
         .iter()

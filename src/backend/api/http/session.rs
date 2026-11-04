@@ -1,9 +1,10 @@
 use super::error::ApiError;
-use crate::backend::{crypto::is_hex_token, db};
+use crate::backend::db;
 use axum::{
     http::{header, HeaderMap, StatusCode},
     Json,
 };
+use codeyard_support::crypto::is_hex_token;
 
 fn cookie_domain() -> Option<String> {
     std::env::var("COOKIE_DOMAIN")
@@ -43,7 +44,7 @@ pub(crate) fn session_duration_days() -> i64 {
 }
 
 pub(crate) fn generate_session_id() -> String {
-    crate::backend::crypto::random_hex()
+    codeyard_support::crypto::random_hex()
 }
 
 pub(crate) fn build_session_cookie(session_id: &str, max_age_days: i64) -> String {
@@ -172,9 +173,9 @@ pub(crate) fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
 }
 
 pub(crate) async fn get_current_user(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     headers: &HeaderMap,
-) -> Result<db::models::User, (StatusCode, Json<ApiError>)> {
+) -> Result<codeyard_db_core::models::User, (StatusCode, Json<ApiError>)> {
     get_optional_user(pool, headers).await?.ok_or_else(|| {
         crate::backend::api::auth::errors::admin_authority_failure(
             crate::backend::identity::sessions::AccountAuthorityError::NotAuthenticated,
@@ -183,9 +184,9 @@ pub(crate) async fn get_current_user(
 }
 
 pub(crate) async fn get_optional_user(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     headers: &HeaderMap,
-) -> Result<Option<db::models::User>, (StatusCode, Json<ApiError>)> {
+) -> Result<Option<codeyard_db_core::models::User>, (StatusCode, Json<ApiError>)> {
     let Some(session_id) = extract_session_id(headers) else {
         return Ok(None);
     };
@@ -202,7 +203,7 @@ pub(crate) async fn get_optional_user(
     Ok(user)
 }
 
-fn optional_user_allowed(user: &db::models::User) -> bool {
+fn optional_user_allowed(user: &codeyard_db_core::models::User) -> bool {
     !user.is_banned
 }
 
@@ -237,7 +238,7 @@ mod tests {
 
     #[test]
     fn optional_identity_rejects_banned_accounts_including_admins() {
-        let mut user: db::models::User = serde_json::from_value(serde_json::json!({
+        let mut user: codeyard_db_core::models::User = serde_json::from_value(serde_json::json!({
             "id": 1,
             "username": "fixture",
             "is_admin": false,

@@ -1,7 +1,9 @@
 //! Organization profile contacts and enforced member/repository policies.
 use super::{OrganizationOutcome, OrganizationProfile};
-use crate::backend::db::{models::Organization, DbPool};
 use anyhow::Result;
+use codeyard_db_core::models::Organization;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde_json::{Map, Value};
 
 #[derive(Clone, Debug, sqlx::FromRow)]

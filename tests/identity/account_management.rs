@@ -4,17 +4,16 @@
 
 use crate::support::database::Database;
 use chrono::{Duration, Utc};
-use codeyard::backend::{
-    db::{
-        self,
-        models::OrgRole,
-        organizations::{
-            NewOrganization, OrganizationOutcome, OrganizationPage, OrganizationProfile,
-        },
-        users::transitions::{BanChange, RoleChange},
-    },
-    identity::{self, accounts::EmailChangeError},
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::OrganizationOutcome;
+use codeyard::backend::db::organizations::OrganizationPage;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::db::users::transitions::BanChange;
+use codeyard::backend::db::users::transitions::RoleChange;
+use codeyard::backend::identity;
+use codeyard::backend::identity::accounts::EmailChangeError;
+use codeyard_db_core::models::OrgRole;
 
 async fn make_administrator(f: &Database, id: i64) {
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[id])

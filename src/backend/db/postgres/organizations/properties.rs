@@ -1,9 +1,10 @@
 use super::authority::*;
-use crate::backend::db::{
-    models::{AccessLevel, OrgRole, Repository},
-    organizations::{properties::*, OrganizationOutcome},
-};
+use crate::backend::db::organizations::properties::*;
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::{ensure, Result};
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Repository;
 use sqlx::{PgConnection, PgPool};
 use std::collections::HashSet;
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing};

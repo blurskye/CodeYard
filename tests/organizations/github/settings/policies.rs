@@ -9,7 +9,10 @@ pub(super) async fn contract(
     browser: &Client,
     owner: i64,
     orgs: &[organizations::OrganizationMetadata],
-    repositories: (&db::models::Repository, &db::models::Repository),
+    repositories: (
+        &codeyard_db_core::models::Repository,
+        &codeyard_db_core::models::Repository,
+    ),
     write: Option<&str>,
 ) {
     let (first, second) = repositories;

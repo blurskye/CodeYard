@@ -662,7 +662,7 @@ async fn contract(pg: bool) {
             alice_id,
             repo.id,
             "bob",
-            Some(db::models::AccessLevel::Write)
+            Some(codeyard_db_core::models::AccessLevel::Write)
         )
         .await
         .unwrap(),
@@ -811,9 +811,24 @@ async fn contract(pg: bool) {
     // Revoking the real contributor's source access freezes that snapshot even
     // when its historical author and the current source writer can still read it.
     for (repository, actor, name, level) in [
-        (repo.id, alice_id, "carol", db::models::AccessLevel::Write),
-        (fork.id, bob_id, "carol", db::models::AccessLevel::Read),
-        (fork.id, bob_id, "alice", db::models::AccessLevel::Read),
+        (
+            repo.id,
+            alice_id,
+            "carol",
+            codeyard_db_core::models::AccessLevel::Write,
+        ),
+        (
+            fork.id,
+            bob_id,
+            "carol",
+            codeyard_db_core::models::AccessLevel::Read,
+        ),
+        (
+            fork.id,
+            bob_id,
+            "alice",
+            codeyard_db_core::models::AccessLevel::Read,
+        ),
     ] {
         assert!(matches!(
             db::repositories::access::change_personal_repository_collaborator(

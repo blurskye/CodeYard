@@ -24,7 +24,7 @@ pub(super) fn ids(value: &Value, expected: &str) -> Result<Vec<i64>> {
 }
 pub(super) async fn prepare(
     input: &Value,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     request: &RequestContext,
 ) -> Result<github::issues::Metadata> {
     let mut translated = json!({});
@@ -100,7 +100,7 @@ pub(super) async fn prepare(
         .map_err(github::Error::graphql)
 }
 pub(super) async fn apply(
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     item: AssignedItem,
     number: i32,
     title: &str,

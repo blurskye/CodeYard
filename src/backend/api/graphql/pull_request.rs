@@ -1,7 +1,7 @@
 //! Pull request Git reads and review presentation from the shared REST operations.
 pub(super) async fn review_request(
-    pull: &db::models::PullRequest,
-    reviewer: &db::models::User,
+    pull: &codeyard_db_core::models::PullRequest,
+    reviewer: &codeyard_db_core::models::User,
     request: &RequestContext,
 ) -> Result<Value> {
     Ok(
@@ -16,8 +16,8 @@ use crate::backend::repositories::{access, pull_requests::merge, store::repo_sto
 use serde_json::json;
 
 async fn mergeable(
-    repo: &db::models::Repository,
-    pull: &db::models::PullRequest,
+    repo: &codeyard_db_core::models::Repository,
+    pull: &codeyard_db_core::models::PullRequest,
     request: &RequestContext,
 ) -> Result<Option<(bool, String)>> {
     use crate::backend::repositories::store::{MergeMethod, MergeRequest};
@@ -68,7 +68,7 @@ pub(super) async fn resolve(
     args: &Arguments,
     request: &RequestContext,
     parent: &Value,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
 ) -> Result<Value> {
     let mut pull = db::pull_requests::records::get_pull_request_by_id(
         &request.state.pool,

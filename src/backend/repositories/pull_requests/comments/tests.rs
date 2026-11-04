@@ -5,13 +5,13 @@ use crate::backend::db::pull_requests::{records, reviews};
 #[tokio::test]
 async fn discarded_review_cannot_authorize_comment_publication() {
     let root = tempfile::tempdir().unwrap();
-    let pool = db::init_db(&format!(
+    let pool = codeyard_db_core::init_db(&format!(
         "sqlite://{}",
         root.path().join("app.db").display()
     ))
     .await
     .unwrap();
-    db::run_migrations(&pool).await.unwrap();
+    codeyard_db_core::run_migrations(&pool).await.unwrap();
     let user = db::users::accounts::create_user(&pool, "alice", None)
         .await
         .unwrap();

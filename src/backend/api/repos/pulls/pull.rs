@@ -70,7 +70,7 @@ pub struct PullRequestResponse {
 
 impl PullRequestResponse {
     pub fn from_pull_request(
-        pull_request: db::models::PullRequest,
+        pull_request: codeyard_db_core::models::PullRequest,
         author: Option<UserResponse>,
     ) -> Self {
         let maintainer_can_modify = pull_request.maintainer_edits_enabled();
@@ -130,8 +130,8 @@ pub struct StackEntryResponse {
 /// The single pull request answer. A storage failure is an error, never an answer without
 /// the author or the stack.
 pub(crate) async fn detail_response(
-    pool: &db::DbPool,
-    pull_request: db::models::PullRequest,
+    pool: &codeyard_db_core::DbPool,
+    pull_request: codeyard_db_core::models::PullRequest,
 ) -> Result<PullRequestDetailResponse, ApiFailure> {
     let author = db::users::accounts::get_user_by_id(pool, pull_request.author_id)
         .await

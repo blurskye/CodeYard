@@ -6,7 +6,7 @@ pub(super) async fn contract(
     browser: &Client,
     owner: i64,
     org: i64,
-    first: &db::models::Repository,
+    first: &codeyard_db_core::models::Repository,
     write: Option<&str>,
 ) {
     let settings_page = format!("/settings/organizations/{org}?tab=settings");

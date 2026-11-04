@@ -1,7 +1,9 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::models::{Repository, SharedRepository};
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::SharedRepository;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// Forks in the whole network, as GitHub's GraphQL `forkCount` reports it. Only public forks
 /// count, so the number reveals no private repository to any audience.

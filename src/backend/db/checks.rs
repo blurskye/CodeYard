@@ -1,7 +1,8 @@
 //! Publisher-owned checks. Native CI keeps its own queue and cannot be overwritten here.
-use super::DbPool;
 use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 use sqlx::{types::Json, FromRow};
 
@@ -416,7 +417,7 @@ native_operation!(crate::backend::db::postgres::checks::run, crate::backend::db:
 native_operation!(crate::backend::db::postgres::checks::automatic_suites, crate::backend::db::sqlite::checks::automatic_suites,
     /// Newly requested suites for at most 100 active installed Apps. The cursor advances over
     /// eligible Apps even when their suite already exists; a repeated push never requests it twice.
-    fn automatic_suites(pool: &DbPool, repo: &super::models::Repository, sha: &str, branch: &str, after: i64) -> Result<AutomaticSuites>);
+    fn automatic_suites(pool: &DbPool, repo: &codeyard_db_core::models::Repository, sha: &str, branch: &str, after: i64) -> Result<AutomaticSuites>);
 native_operation!(crate::backend::db::postgres::checks::create_suite, crate::backend::db::sqlite::checks::create_suite,
     fn create_suite(pool: &DbPool, credential: Credential<'_>, repo: i64, sha: &str, branch: Option<&str>) -> Result<(Suite, bool)>);
 native_operation!(crate::backend::db::postgres::checks::create_run, crate::backend::db::sqlite::checks::create_run,

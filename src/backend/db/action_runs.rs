@@ -1,10 +1,10 @@
 //! Durable workflow-run identities and repository-scoped history.
-use super::{
-    models::{CiRun, Repository},
-    DbPool,
-};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::CiRun;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use sqlx::{types::Json, FromRow};
 
 #[derive(FromRow)]

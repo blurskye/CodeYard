@@ -6,7 +6,7 @@ use super::{
 use crate::backend::repositories::store::repo_store;
 
 pub(super) async fn drafts_visible(
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     request: &RequestContext,
 ) -> Result<bool> {
     if request.private_viewer(repo.id, "contents").await?.is_none() {
@@ -26,7 +26,7 @@ pub(super) async fn resolve(
     field: &str,
     ctx: &Arguments,
     request: &RequestContext,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
 ) -> Result<Value> {
     request.authorize(repo.id, "contents", false).await?;
     let pool = &request.state.pool;

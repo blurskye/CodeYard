@@ -1,10 +1,13 @@
-use crate::backend::db::{
-    models::Repository,
-    relationships::{
-        related_sql, window_sql, Kind, Link, Mutation, Refusal, RelationCounts, Window,
-    },
-};
+use crate::backend::db::relationships::related_sql;
+use crate::backend::db::relationships::window_sql;
+use crate::backend::db::relationships::Kind;
+use crate::backend::db::relationships::Link;
+use crate::backend::db::relationships::Mutation;
+use crate::backend::db::relationships::Refusal;
+use crate::backend::db::relationships::RelationCounts;
+use crate::backend::db::relationships::Window;
 use anyhow::Result;
+use codeyard_db_core::models::Repository;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 pub async fn window(pool: &SqlitePool, page: &Window<'_>) -> Result<Vec<Link>> {
     anyhow::ensure!(

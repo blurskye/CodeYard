@@ -58,7 +58,10 @@ fn unavailable(message: &'static str) -> RepoError {
     RepoError::new(ErrorKind::Unavailable, message)
 }
 
-async fn require_legacy_publisher(pool: &db::DbPool, repo: i64) -> Result<(), RepoError> {
+async fn require_legacy_publisher(
+    pool: &codeyard_db_core::DbPool,
+    repo: i64,
+) -> Result<(), RepoError> {
     crate::backend::cluster::writes::require_legacy_publisher(pool, repo)
         .await
         .map_err(|error| {
@@ -71,7 +74,7 @@ async fn require_legacy_publisher(pool: &db::DbPool, repo: i64) -> Result<(), Re
 }
 
 async fn record_secret_bypasses(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     actor: i64,
     bypasses: Vec<crate::backend::repositories::secret_scanning::push_protection::ApprovedBypass>,
@@ -111,7 +114,7 @@ fn normalize_blob_range(range: BlobRange, size: u64) -> Result<(u64, usize), Rep
 }
 
 fn repository_matches_path(
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     path: &Path,
     node_id: Option<Option<i64>>,
 ) -> bool {
@@ -129,7 +132,7 @@ fn repository_matches_path(
 }
 
 async fn live_pull_read(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     actor: super::PullHeadActor,
     path: &Path,
@@ -174,7 +177,7 @@ async fn live_pull_read(
 }
 
 async fn live_read(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     actor: i64,
     path: &Path,
@@ -206,14 +209,14 @@ async fn live_read(
 /// the moment the ref is about to move. `history` says what the new commits of a branch write
 /// look like. Tag writes pass `None` and `&History::SingleCommit`.
 async fn live_write(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     actor: i64,
     branch: Option<&BranchWrite<'_>>,
     history: &History<'_>,
     path: &Path,
     node_id: Option<Option<i64>>,
-) -> Result<db::models::Repository, RepoError> {
+) -> Result<codeyard_db_core::models::Repository, RepoError> {
     let (repository, user) = access::check_write(pool, repo_id, actor)
         .await
         .map_err(|error| match error {
@@ -228,9 +231,9 @@ async fn live_write(
 }
 
 async fn checked_branch_write(
-    pool: &db::DbPool,
-    repository: &db::models::Repository,
-    user: &db::models::User,
+    pool: &codeyard_db_core::DbPool,
+    repository: &codeyard_db_core::models::Repository,
+    user: &codeyard_db_core::models::User,
     branch: Option<&BranchWrite<'_>>,
     history: &History<'_>,
 ) -> Result<(), RepoError> {
@@ -248,13 +251,13 @@ async fn checked_branch_write(
 }
 
 async fn live_pull_head_write(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     (head_id, base_id, actor): (i64, i64, i64),
     request: &super::PullBranchUpdate,
     target: &LocalStore,
     branch: Option<&BranchWrite<'_>>,
     history: &History<'_>,
-) -> Result<db::models::Repository, RepoError> {
+) -> Result<codeyard_db_core::models::Repository, RepoError> {
     let user = db::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| RepoError::authority_unavailable())?
@@ -312,7 +315,7 @@ async fn live_pull_head_write(
 /// refreshes the stored languages when the branch is the default branch. Git has already moved
 /// the branch, so a failure is logged rather than reported as a failed write.
 async fn record_branch_update(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     actor: i64,
     storage: (&Path, Option<Option<i64>>),
@@ -360,12 +363,16 @@ static SIZE_REFRESHES: LazyLock<Mutex<HashMap<PathBuf, SizeRefresh>>> =
     LazyLock::new(Default::default);
 
 /// Coalesce writes while a scan runs. Accounting never holds a publication lock or RefChange.
-pub(super) fn refresh_storage_size(pool: db::DbPool, repo_id: i64, store: LocalStore) {
+pub(super) fn refresh_storage_size(
+    pool: codeyard_db_core::DbPool,
+    repo_id: i64,
+    store: LocalStore,
+) {
     request_storage_size(pool, repo_id, store);
 }
 
 pub(super) async fn refresh_storage_size_now(
-    pool: db::DbPool,
+    pool: codeyard_db_core::DbPool,
     repo_id: i64,
     store: LocalStore,
 ) -> Result<i64, RepoError> {
@@ -387,7 +394,7 @@ pub(super) async fn refresh_storage_size_now(
 }
 
 fn request_storage_size(
-    pool: db::DbPool,
+    pool: codeyard_db_core::DbPool,
     repo_id: i64,
     store: LocalStore,
 ) -> (u64, tokio::sync::watch::Receiver<SizeResult>) {
@@ -481,7 +488,7 @@ impl Drop for RefChange {
 /// asks for its pack while the change is counted is refused, so it never claims a version whose
 /// change it lacks. If the change is refused, nothing is counted.
 pub async fn begin_ref_change(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     path: &Path,
     node_id: Option<Option<i64>>,
@@ -506,7 +513,7 @@ async fn count_ref_change(path: &Path) -> RefChange {
 
 /// Only publishers which use the coordinator may skip the legacy replication counter.
 pub(crate) async fn begin_coordinated_ref_change(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     path: &Path,
     node_id: Option<Option<i64>>,
@@ -592,7 +599,7 @@ fn ensure_pull_head_room(held: git::RefsInUse, reference: &str) -> Result<(), Re
 /// Reconstructs a non-serving tenure without moving or modifying its predecessor.
 /// Missing retained objects leave the repository fenced rather than guessing at refs.
 pub(super) async fn recover_term(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: i64,
     node: i64,
     root: &Path,
@@ -743,7 +750,10 @@ impl LocalStore {
         Ok(())
     }
 
-    async fn verify_canonical(&self, values: &[db::models::RefValue]) -> anyhow::Result<()> {
+    async fn verify_canonical(
+        &self,
+        values: &[codeyard_db_core::models::RefValue],
+    ) -> anyhow::Result<()> {
         let values = values.to_vec();
         self.blocking(move |path| {
             let refs = git::list_mirror_refs(path)?;
@@ -881,7 +891,7 @@ impl LocalStore {
 
     async fn begin_branch_change(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         writes: &[&BranchWrite<'_>],
@@ -963,7 +973,7 @@ impl LocalStore {
     /// Recheck the initiating contents credential on a write that publishes no ref yet.
     async fn check_contents_grant(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
         actor: i64,
         token: Option<i64>,
@@ -984,7 +994,7 @@ impl LocalStore {
     /// revoked meanwhile refuses the ref update that follows.
     async fn check_publication_grant(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
         actor: i64,
         token: Option<i64>,
@@ -1041,7 +1051,7 @@ impl LocalStore {
 
     pub(super) async fn write_git_object(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         token: Option<i64>,
@@ -1218,7 +1228,7 @@ impl LocalStore {
 
     pub(super) async fn initialize_copy(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         source_repo_id: i64,
         authority: db::credentials::Actor,
@@ -1977,7 +1987,7 @@ impl LocalStore {
     )]
     pub(super) async fn fetch_pull_head(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         source_repo_id: i64,
         actor: impl Into<super::PullHeadActor>,
@@ -2028,7 +2038,7 @@ impl LocalStore {
     )]
     pub(super) async fn publish_fetched_pull_head(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         source_repo_id: i64,
         actor: impl Into<super::PullHeadActor>,
@@ -2114,7 +2124,7 @@ impl LocalStore {
 
     pub(super) async fn create_branch(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         authority: db::credentials::Actor,
         name: &str,
@@ -2217,7 +2227,7 @@ impl LocalStore {
 
     pub(super) async fn update_reference(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         authority: db::credentials::Actor,
         reference: &str,
@@ -2361,7 +2371,7 @@ impl LocalStore {
 
     pub(super) async fn delete_branch(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         authority: db::credentials::Actor,
         name: &str,
@@ -2440,7 +2450,7 @@ impl LocalStore {
     )]
     pub(super) async fn create_tag(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         authority: db::credentials::Actor,
         name: &str,
@@ -2556,7 +2566,7 @@ impl LocalStore {
 
     pub(super) async fn delete_tag(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         authority: db::credentials::Actor,
         name: &str,
@@ -2678,7 +2688,7 @@ impl LocalStore {
     /// Boxed with an explicit `Send` bound for the same reason as `rename_branch`.
     pub(super) fn publish_file(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         prepared: &editor::PreparedFile,
@@ -2710,7 +2720,7 @@ impl LocalStore {
 
     async fn publish_file_owned(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         prepared: &editor::PreparedFile,
@@ -2929,7 +2939,7 @@ impl LocalStore {
     /// Follow-ups run on the owning store, including when the caller reached it over RPC.
     async fn after_ref_change(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         moves: &[crate::backend::webhooks::ref_changes::RefMove],
@@ -3029,7 +3039,7 @@ impl LocalStore {
     /// Git has already published the branch. A metadata failure must not imply rollback.
     async fn synchronize_default_branch(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
     ) -> Result<(), RepoError> {
         let result: anyhow::Result<()> = async {
@@ -3064,7 +3074,7 @@ impl LocalStore {
 
     pub(super) async fn update_pull_branch(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         source: (i64, &LocalStore),
@@ -3349,7 +3359,7 @@ impl LocalStore {
     )]
     pub(super) async fn publish_merge(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         heads: &[(&str, &str)],
@@ -3381,7 +3391,7 @@ impl LocalStore {
     }
     pub(super) async fn publish_async_merge(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         request: &AsyncMergePublication,
@@ -3414,7 +3424,7 @@ impl LocalStore {
     )]
     async fn publish_merge_authorized(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         heads: &[(&str, &str)],
@@ -3636,7 +3646,7 @@ impl LocalStore {
     )]
     pub(super) async fn publish_restack(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         authority: db::credentials::Actor,
         stack_id: i64,
@@ -4028,7 +4038,7 @@ impl LocalStore {
 
     pub(super) async fn set_default_branch(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: db::credentials::Actor,
         name: &str,
@@ -4042,11 +4052,11 @@ impl LocalStore {
     /// partially applied metadata. A refused transaction restores the exact previous HEAD.
     pub(super) async fn transfer_repository(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         authority: db::credentials::Actor,
         new_owner: &str,
-    ) -> Result<db::models::Repository, RepoError> {
+    ) -> Result<codeyard_db_core::models::Repository, RepoError> {
         let actor = authority.user_id;
         let (store, pool, new_owner) = (self.clone(), pool.clone(), new_owner.to_owned());
         tokio::spawn(async move {
@@ -4109,7 +4119,7 @@ impl LocalStore {
     )]
     pub(super) async fn configure_dependency_security(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         credential: db::users::accounts::OwnedAccountCredential,
@@ -4149,12 +4159,12 @@ impl LocalStore {
     /// publication-time proof and release SQL are committed under this Git lease.
     pub(super) async fn mutate_release(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         mut mutation: crate::backend::repositories::releases::immutable::Mutation,
         attestation: Option<crate::backend::repositories::releases::integrity::Attestation>,
-    ) -> Result<(db::models::Release, bool), RepoError> {
+    ) -> Result<(codeyard_db_core::models::Release, bool), RepoError> {
         use crate::backend::repositories::releases::immutable::Mutation;
         mutation.validate()?;
         let (store, pool) = (self.clone(), pool.clone());
@@ -4315,12 +4325,12 @@ impl LocalStore {
 
     pub(super) async fn patch_repository(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: db::credentials::Actor,
         name: &str,
         changes: db::repositories::records::RepositoryChanges<String>,
-    ) -> Result<db::models::Repository, RepoError> {
+    ) -> Result<codeyard_db_core::models::Repository, RepoError> {
         // Publication and compensation finish even when the client disconnects.
         let (store, pool, name) = (self.clone(), pool.clone(), name.to_owned());
         tokio::spawn(async move {
@@ -4334,12 +4344,12 @@ impl LocalStore {
 
     async fn patch_repository_owned(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         authority: db::credentials::Actor,
         name: &str,
         changes: &db::repositories::records::RepositoryChanges<String>,
-    ) -> Result<db::models::Repository, RepoError> {
+    ) -> Result<codeyard_db_core::models::Repository, RepoError> {
         let actor = authority.user_id;
         let _lock = git::locks::lock(self.path()).await;
         let previous =
@@ -4484,7 +4494,7 @@ impl LocalStore {
                     .head_target()
                     .await?
                     .ok_or_else(|| unavailable("Detached HEAD requires recovery"))?;
-                let changes = [db::models::RefChange {
+                let changes = [codeyard_db_core::models::RefChange {
                     name: "HEAD".into(),
                     kind: "symbolic".into(),
                     old_target: Some(old),
@@ -4509,7 +4519,7 @@ impl LocalStore {
         &self,
         session: super::GitSession,
         receive: Option<(
-            crate::backend::db::DbPool,
+            codeyard_db_core::DbPool,
             std::sync::Arc<crate::backend::ci::CiRuns>,
         )>,
         streams: super::GitStreams<'_>,

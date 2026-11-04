@@ -1,8 +1,11 @@
 //! Uploaded file records, upload quotas and download accounting.
-use crate::backend::db::models::{
-    File, FileReason, FileReasonLimit, FileVisibility, UserFileStats,
-};
-use crate::backend::db::DbPool;
+use codeyard_db_core::models::File;
+use codeyard_db_core::models::FileReason;
+use codeyard_db_core::models::FileReasonLimit;
+use codeyard_db_core::models::FileVisibility;
+use codeyard_db_core::models::UserFileStats;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use std::net::IpAddr;
 use uuid::Uuid;
 

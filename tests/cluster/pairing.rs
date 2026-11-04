@@ -5,19 +5,25 @@ use crate::support::native_database as support;
 
 use chrono::{Duration as Age, Utc};
 use codeyard::backend::cli::cluster::Command;
-use codeyard::backend::{
-    cluster::{
-        self, InviteOptions, JoinTicket, Listen, NodeAddress, NodeKey, Relay, Settings, ALPN_PAIR,
-        ALPN_RPC,
-    },
-    db::{
-        self,
-        cluster::{Authority, DeclaredMember, JoinRequest, NewJoinToken},
-        models::{JoinOutcome, NodeStatusChange},
-        DbPool,
-    },
-    node::NodeRoles,
-};
+use codeyard::backend::cluster;
+use codeyard::backend::cluster::InviteOptions;
+use codeyard::backend::cluster::JoinTicket;
+use codeyard::backend::cluster::Listen;
+use codeyard::backend::cluster::NodeAddress;
+use codeyard::backend::cluster::NodeKey;
+use codeyard::backend::cluster::Relay;
+use codeyard::backend::cluster::Settings;
+use codeyard::backend::cluster::ALPN_PAIR;
+use codeyard::backend::cluster::ALPN_RPC;
+use codeyard::backend::db;
+use codeyard::backend::db::cluster::Authority;
+use codeyard::backend::db::cluster::DeclaredMember;
+use codeyard::backend::db::cluster::JoinRequest;
+use codeyard::backend::db::cluster::NewJoinToken;
+use codeyard::backend::node::NodeRoles;
+use codeyard_db_core::models::JoinOutcome;
+use codeyard_db_core::models::NodeStatusChange;
+use codeyard_db_core::DbPool;
 use iroh::{
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
@@ -1139,7 +1145,9 @@ async fn membership_contract(pool: &DbPool) {
     );
     let outside = ["storage".to_owned()];
     match request(&hash(2), &key_c, "c", Some(&outside)).await {
-        JoinOutcome::RolesNotAllowed { allowed } => assert_eq!(allowed, ["web", "ssh"]),
+        JoinOutcome::RolesNotAllowed { allowed } => {
+            assert_eq!(allowed, ["web", "ssh"])
+        }
         other => panic!("{other:?}"),
     }
     assert_eq!(

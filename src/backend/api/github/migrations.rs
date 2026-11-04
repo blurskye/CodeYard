@@ -43,7 +43,7 @@ async fn administrator(
     owner: &str,
     name: &str,
     write: bool,
-) -> Result<(db::models::Repository, auth::Authentication)> {
+) -> Result<(codeyard_db_core::models::Repository, auth::Authentication)> {
     let (repo, actor) = repository(state, headers, owner, name, write).await?;
     let actor = actor.ok_or_else(auth::required)?;
     if !access::can_admin(&state.pool, &actor.user, &repo)
@@ -109,7 +109,7 @@ fn credentials(input: &Input) -> Result<Option<imports::Credentials>> {
 
 async fn begin(
     state: Arc<AppState>,
-    repo: db::models::Repository,
+    repo: codeyard_db_core::models::Repository,
     actor: auth::Authentication,
     input: Input,
     url: &str,

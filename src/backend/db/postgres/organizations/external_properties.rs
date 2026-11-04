@@ -1,12 +1,10 @@
 use super::authority::*;
-use crate::backend::db::{
-    models::OrgRole,
-    organizations::{
-        external_properties::{self, Installation, RepositoryValue},
-        OrganizationOutcome,
-    },
-};
+use crate::backend::db::organizations::external_properties;
+use crate::backend::db::organizations::external_properties::Installation;
+use crate::backend::db::organizations::external_properties::RepositoryValue;
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use OrganizationOutcome::{Applied, Conflict, Denied};

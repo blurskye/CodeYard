@@ -3,7 +3,6 @@ use super::*;
 #[tokio::test]
 async fn privileged_node_and_crawler_changes_require_the_original_live_session() {
     use db::cluster::Authority;
-    use db::models::NodeStatusChange;
     for pg in [false, true] {
         let mut f = Database::new(pg).await;
         let admin = f.actor("session_admin").await;
@@ -43,7 +42,7 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
             )
             .await
             .unwrap(),
-            NodeStatusChange::Changed { .. }
+            codeyard_db_core::models::NodeStatusChange::Changed { .. }
         ));
         db::users::sessions::delete_session(f.pool(), &original)
             .await
@@ -66,7 +65,7 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
                 )
                 .await
                 .unwrap(),
-                NodeStatusChange::Denied
+                codeyard_db_core::models::NodeStatusChange::Denied
             );
         }
         // A second login must not substitute for the revoked session, but remains usable itself.
@@ -97,13 +96,13 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
             )
             .await
             .unwrap(),
-            NodeStatusChange::Denied
+            codeyard_db_core::models::NodeStatusChange::Denied
         );
         assert!(matches!(
             db::cluster::set_node_status(f.pool(), Authority::Operator, "session-node", "active")
                 .await
                 .unwrap(),
-            NodeStatusChange::Changed { .. }
+            codeyard_db_core::models::NodeStatusChange::Changed { .. }
         ));
         f.finish().await;
     }

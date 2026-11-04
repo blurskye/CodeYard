@@ -1,8 +1,7 @@
-use crate::backend::db::{
-    models::{AccessLevel, Repository},
-    organizations::*,
-};
+use crate::backend::db::organizations::*;
 use anyhow::Result;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::Repository;
 use sqlx::PgPool;
 use OrganizationOutcome::Applied;
 

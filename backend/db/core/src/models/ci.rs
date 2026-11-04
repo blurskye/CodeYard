@@ -95,7 +95,7 @@ impl CiRun {
 
     /// The executing ref, not a pull request's stored base branch. A missing PR identity
     /// cannot be treated as an ordinary branch when evaluating deployment protections.
-    pub(crate) fn workflow_reference(&self, pull_number: Option<i64>) -> Option<String> {
+    pub fn workflow_reference(&self, pull_number: Option<i64>) -> Option<String> {
         if self.event == "pull_request" {
             let number = self
                 .pull_request_event

@@ -83,7 +83,7 @@ pub struct BulkUpdateResponse {
 }
 
 pub(crate) fn map_notification_response(
-    notification: db::models::Notification,
+    notification: codeyard_db_core::models::Notification,
     actor: Option<UserResponse>,
 ) -> NotificationResponse {
     NotificationResponse {

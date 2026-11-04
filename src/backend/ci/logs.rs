@@ -1,11 +1,9 @@
 //! Runner stage names and the limit on what one run stores.
+use codeyard_model::ci::MAX_RUN_LOG_BYTES;
+use codeyard_model::ci::MAX_RUN_LOG_LINES;
 pub mod archive;
-use super::queue::LogLine;
+use codeyard_model::ci::LogLine;
 
-/// Lines one run may store, counting its truncation line.
-pub const MAX_RUN_LOG_LINES: i64 = 100_000;
-/// Stage and line bytes one run may store.
-pub const MAX_RUN_LOG_BYTES: i64 = 32 * 1024 * 1024;
 const TRUNCATED_LINE: &str = "Log output truncated: this run reached its log limit.";
 /// Bytes kept free for the truncation line, whose stage is at most 255 bytes.
 const TRUNCATION_RESERVE: i64 = 255 + TRUNCATED_LINE.len() as i64;

@@ -1,6 +1,7 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// Failed attempts one client address may make in a window.
 pub(in crate::backend::db) const CLIENT_LIMIT: i32 = 30;

@@ -1,15 +1,18 @@
 //! Cluster membership on SQLite. Roles are a JSON array in a TEXT column.
 //! Clustering itself needs PostgreSQL; these keep the two engines interchangeable.
 pub(crate) mod writes;
-use super::models::{
-    ClusterNode, HeldReplica, JoinInvite, JoinOutcome, NodeReplicaCounts, NodeStatusChange,
-};
 use crate::backend::db::cluster::{
     Authority, DeclaredMember, FamilyOutcome, JoinRequest, NewJoinToken, PrimaryReplicaRow,
     PromoteOutcome,
 };
 use crate::backend::db::sqlite::users::transitions::{active_admin, live_session};
 use anyhow::{anyhow, bail, Result};
+use codeyard_db_core::models::ClusterNode;
+use codeyard_db_core::models::HeldReplica;
+use codeyard_db_core::models::JoinInvite;
+use codeyard_db_core::models::JoinOutcome;
+use codeyard_db_core::models::NodeReplicaCounts;
+use codeyard_db_core::models::NodeStatusChange;
 use sqlx::{SqliteConnection, SqlitePool};
 
 const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%f000Z','now')";
@@ -440,7 +443,7 @@ pub async fn replica_applied_version(
 pub async fn get_repository_by_uuid(
     pool: &SqlitePool,
     uuid: &str,
-) -> Result<Option<crate::backend::db::models::Repository>> {
+) -> Result<Option<codeyard_db_core::models::Repository>> {
     Ok(
         sqlx::query_as("SELECT * FROM repositories WHERE substr(disk_path, -40) = ?1 || '.git'")
             .bind(uuid)
@@ -570,7 +573,7 @@ pub async fn assign_replica_family(
     pool: &SqlitePool,
     repository: i64,
     primary: i64,
-    setting: crate::backend::db::models::ReplicaSetting,
+    setting: codeyard_db_core::models::ReplicaSetting,
 ) -> Result<Vec<i64>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let members: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(FORK_FAMILY)

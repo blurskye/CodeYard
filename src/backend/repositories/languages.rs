@@ -1,14 +1,13 @@
 //! Stored default-branch languages, including successfully computed empty results.
-use crate::backend::{
-    db::{self, repository_stats::LanguageSource, DbPool},
-    repositories::store::RepoStore,
-};
+use crate::backend::db;
+use crate::backend::db::repository_stats::LanguageSource;
+use crate::backend::repositories::store::ErrorKind;
+use crate::backend::repositories::store::RepoError;
+use crate::backend::repositories::store::RepoStore;
 use anyhow::Result;
-use codeyard_git::{
-    self as git,
-    error::{ErrorKind, RepoError},
-    LanguageStat,
-};
+use codeyard_db_core::DbPool;
+use codeyard_git as git;
+use codeyard_git::LanguageStat;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -54,7 +53,7 @@ fn computation(repo_id: i64) -> Arc<tokio::sync::Mutex<()>> {
 pub async fn compute_and_store(
     pool: &DbPool,
     store: &RepoStore,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     branch: &str,
 ) -> Result<Vec<LanguageStat>, RepoError> {
     let Some(path) = store.local_dir() else {

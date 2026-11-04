@@ -1,11 +1,11 @@
 //! Resolve human issue references without exposing private repositories.
 use super::{db, OperationError};
 pub async fn resolve(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor_id: i64,
     (owner, repo): (&str, &str),
     reference: &str,
-) -> Result<db::models::Issue, OperationError> {
+) -> Result<codeyard_db_core::models::Issue, OperationError> {
     let invalid = || OperationError::Invalid {
         code: "invalid_reference",
         message: "Use an issue number or owner/repository#number.".into(),

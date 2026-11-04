@@ -1,20 +1,11 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::models::{SshKey, UserWithKey};
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::SshKey;
+use codeyard_db_core::models::UserWithKey;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
+use codeyard_model::identity::SshKeyWriteRefusal;
 use ssh_key::{HashAlg, PublicKey};
-
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum SshKeyWriteRefusal {
-    #[error("Invalid SSH public key")]
-    InvalidKey,
-    #[error("This SSH public key is already registered")]
-    AlreadyUsed,
-    #[error("SSH keys cannot be changed while the account is restricted")]
-    AccountRestricted,
-    #[error("SSH key enrollment requires a live session")]
-    InvalidSession,
-}
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct SshKeySummary {
@@ -31,7 +22,7 @@ native_operation!(crate::backend::db::postgres::users::ssh_keys::list_user_key_s
     fn list_user_key_summaries(pool: &DbPool, user_id: i64, credential: &super::accounts::AccountCredential<'_>, after: i64) -> Result<Vec<SshKeySummary>>);
 
 fn parse_key_parts(key_type: &str, blob: &str) -> Result<PublicKey, SshKeyWriteRefusal> {
-    use SshKeyWriteRefusal::InvalidKey;
+    use codeyard_model::identity::SshKeyWriteRefusal::InvalidKey;
     if !matches!(
         key_type,
         "ssh-ed25519"
@@ -60,7 +51,7 @@ pub const MAX_PUBLIC_KEY_BYTES: usize = 32768;
 
 /// One complete-key policy for enrollment and both SSH transports; comments are labels only.
 pub(crate) fn parse_public_key(public_key: &str) -> Result<PublicKey, SshKeyWriteRefusal> {
-    use SshKeyWriteRefusal::InvalidKey;
+    use codeyard_model::identity::SshKeyWriteRefusal::InvalidKey;
     let public_key = public_key.trim();
     if public_key.len() > MAX_PUBLIC_KEY_BYTES || public_key.contains(['\r', '\n', '\0']) {
         return Err(InvalidKey);

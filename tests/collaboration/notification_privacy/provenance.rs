@@ -11,7 +11,7 @@ async fn provenance(pg: bool) {
         f.pool(),
         recipient,
         repo,
-        db::models::repositories::AccessLevel::Read,
+        codeyard_db_core::models::repositories::AccessLevel::Read,
     )
     .await
     .unwrap();

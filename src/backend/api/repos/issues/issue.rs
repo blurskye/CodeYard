@@ -69,9 +69,9 @@ pub struct IssueResponse {
 
 impl IssueResponse {
     pub fn from_issue(
-        issue: db::models::Issue,
+        issue: codeyard_db_core::models::Issue,
         author: Option<UserResponse>,
-        labels: Vec<db::models::Label>,
+        labels: Vec<codeyard_db_core::models::Label>,
         comments_count: i64,
     ) -> Self {
         Self {
@@ -94,8 +94,8 @@ impl IssueResponse {
 /// The response for one issue, with its labels and comment count read from storage.
 /// Lists load the same data in batches instead.
 pub(crate) async fn load_issue_response(
-    pool: &db::DbPool,
-    issue: db::models::Issue,
+    pool: &codeyard_db_core::DbPool,
+    issue: codeyard_db_core::models::Issue,
     author: Option<UserResponse>,
 ) -> anyhow::Result<IssueResponse> {
     let labels = db::labels::get_issue_labels(pool, issue.repo_id, issue.id).await?;

@@ -18,7 +18,7 @@ pub(super) async fn linked(
 type LinkedSnapshots = std::collections::HashMap<
     i64,
     Option<(
-        db::models::Repository,
+        codeyard_db_core::models::Repository,
         std::collections::HashMap<String, String>,
     )>,
 >;
@@ -83,7 +83,7 @@ pub(super) async fn resolve(
     field: &str,
     ctx: &Arguments,
     request: &RequestContext,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     id: i64,
 ) -> Result<Value> {
     match field {
@@ -168,7 +168,7 @@ pub(super) async fn mutation(
     field: &str,
     input: &Value,
     request: &RequestContext,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     id: i64,
 ) -> Result<Value> {
     let pool = &request.state.pool;

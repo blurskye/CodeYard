@@ -3,16 +3,16 @@ use crate::support::{
     database::{wait_until_blocked, Database},
     http_client::Client,
 };
-use codeyard::backend::db::{
-    self,
-    interactions::{
-        InteractionExpiry, InteractionGroup, InteractionRefusal, InteractionScope, NewRestriction,
-    },
-    models::AccessLevel,
-    users::accounts::AccountCredential,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::interactions::InteractionExpiry;
+use codeyard::backend::db::interactions::InteractionGroup;
+use codeyard::backend::db::interactions::InteractionRefusal;
+use codeyard::backend::db::interactions::InteractionScope;
+use codeyard::backend::db::interactions::NewRestriction;
+use codeyard::backend::db::users::accounts::AccountCredential;
+use codeyard::backend::db::users::accounts::AccountRestricted;
 use codeyard::backend::identity::tokens::{self, TokenInput};
-use codeyard_support::credentials::AccountRestricted;
+use codeyard_db_core::models::AccessLevel;
 use serde_json::json;
 
 async fn contract(pg: bool) {

@@ -1,4 +1,3 @@
-pub(crate) use crate::backend::db::models;
 pub(crate) mod action_concurrency;
 pub(crate) mod action_jobs;
 pub(crate) mod action_logs;
@@ -53,7 +52,6 @@ pub(crate) mod issue_attributes;
 pub(crate) mod issues;
 pub(crate) mod labels;
 pub(crate) mod metrics;
-pub(super) mod migrations;
 pub(crate) mod milestones;
 pub(crate) mod node_config;
 pub(crate) mod notifications;

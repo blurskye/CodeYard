@@ -1,9 +1,9 @@
 use super::fixture::{applied, Fixture};
 use axum::http::StatusCode;
-use codeyard::backend::db::{
-    models::OrgRole,
-    organizations::{self as orgs, OrganizationOutcome, OrganizationPage},
-};
+use codeyard::backend::db::organizations as orgs;
+use codeyard::backend::db::organizations::OrganizationOutcome;
+use codeyard::backend::db::organizations::OrganizationPage;
+use codeyard_db_core::models::OrgRole;
 
 pub async fn contracts(f: &Fixture) {
     let pool = f.database.pool();

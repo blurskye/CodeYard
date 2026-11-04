@@ -4,10 +4,10 @@ use crate::backend::db::notifications::records;
 /// The invitation stands even if its notification cannot be stored. Its email was queued in the
 /// transaction that saved it.
 pub async fn organization_invitation(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: i64,
-    invitation: &db::models::OrgInvitation,
+    invitation: &codeyard_db_core::models::OrgInvitation,
 ) {
     let Some(user_id) = invitation.user_id else {
         return;
@@ -63,7 +63,7 @@ impl NotificationRequest<'_> {
 /// threads retain the native recipient policy. The ordinary creation path applies ignores
 /// and, for a fork notice, Read on the fork.
 pub async fn notify_subscribers(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     request: NotificationRequest<'_>,
     notified: &[i64],
@@ -110,10 +110,10 @@ pub enum CreateError {
 }
 
 pub async fn create_and_broadcast_notification(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     request: NotificationRequest<'_>,
-) -> Result<db::models::Notification, CreateError> {
+) -> Result<codeyard_db_core::models::Notification, CreateError> {
     if let Some(repo_id) = request.repo_id {
         // A repository notice carries its content into the inbox and the email, so the
         // recipient must still be able to read the repository.
@@ -141,9 +141,9 @@ pub async fn create_and_broadcast_notification(
 /// Announces a committed notification and queues its email. Every stored notification is
 /// delivered here, whichever transaction wrote it.
 pub(super) async fn deliver(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
-    notification: &db::models::Notification,
+    notification: &codeyard_db_core::models::Notification,
 ) {
     // Delivery reloads the count under the recipient's current authority.
     broadcaster

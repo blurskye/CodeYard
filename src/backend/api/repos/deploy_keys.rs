@@ -8,10 +8,7 @@ use crate::backend::api::repos::chrome::Loaded;
 use crate::backend::api::repos::forms::{checkbox, field};
 use crate::backend::api::repos::repository::{settings_model, settings_response};
 use crate::backend::app::AppState;
-use crate::backend::db::models::{DeployKey, Repository, User};
-use crate::backend::db::users::ssh_keys::SshKeyWriteRefusal;
 use crate::backend::repositories::deploy_keys as keys;
-use crate::backend::repositories::deploy_keys::DeployKeyError;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -20,6 +17,11 @@ use axum::{
     Json, Router,
 };
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::DeployKey;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
+use codeyard_model::identity::SshKeyWriteRefusal;
+use codeyard_model::repositories::DeployKeyError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;

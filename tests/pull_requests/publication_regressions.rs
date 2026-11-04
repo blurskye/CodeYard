@@ -19,7 +19,7 @@ fn ci(w: &World) -> CiRuns {
     )
 }
 
-async fn row(w: &World, number: i32) -> db::models::PullRequest {
+async fn row(w: &World, number: i32) -> codeyard_db_core::models::PullRequest {
     db::pull_requests::records::get_pull_request(w.database.pool(), w.repository.id, number)
         .await
         .unwrap()
@@ -360,7 +360,7 @@ async fn stack_target(pg: bool) {
         &row(&w, new.number).await,
         w.alice_id,
         false,
-        db::models::AccessLevel::Owner,
+        codeyard_db_core::models::AccessLevel::Owner,
     )
     .await
     .unwrap();
@@ -547,7 +547,7 @@ async fn target_specific_checks(pg: bool) {
         &row(&w, 1).await,
         w.alice_id,
         false,
-        db::models::AccessLevel::Owner,
+        codeyard_db_core::models::AccessLevel::Owner,
     )
     .await
     .unwrap();
@@ -718,7 +718,7 @@ async fn path_failure_keeps_unfiltered(pg: bool) {
         &ci,
         w.alice_id,
         w.pull.id,
-        Some(db::models::AccessLevel::Owner),
+        Some(codeyard_db_core::models::AccessLevel::Owner),
     )
     .await
     .unwrap();
@@ -741,7 +741,7 @@ async fn path_failure_keeps_unfiltered(pg: bool) {
             &row(&w, 1).await,
             w.alice_id,
             true,
-            db::models::AccessLevel::Owner,
+            codeyard_db_core::models::AccessLevel::Owner,
         )
         .await
         .is_err(),
@@ -904,7 +904,7 @@ async fn deleted_head_takes_the_pull_ref(pg: bool) {
             &ci,
             w.alice_id,
             w.pull.id,
-            Some(db::models::AccessLevel::Owner),
+            Some(codeyard_db_core::models::AccessLevel::Owner),
         )
         .await
         .unwrap();

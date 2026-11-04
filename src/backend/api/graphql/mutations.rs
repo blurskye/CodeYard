@@ -27,7 +27,10 @@ pub(super) fn target(input: &Value, key: &str, expected: &str) -> Result<i64> {
     Ok(id)
 }
 /// The merge method a merge or auto-merge names, refused when the client read an older head.
-fn merge_method(input: &Value, current: &db::models::PullRequest) -> Result<MergeMethod> {
+fn merge_method(
+    input: &Value,
+    current: &codeyard_db_core::models::PullRequest,
+) -> Result<MergeMethod> {
     if !input["expectedHeadOid"].is_null()
         && !text(input, "expectedHeadOid")?.eq_ignore_ascii_case(&current.head_sha)
     {

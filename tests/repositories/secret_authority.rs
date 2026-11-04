@@ -6,15 +6,13 @@ use crate::support::database;
 use crate::support::organizations::applied;
 mod fixture;
 
-use codeyard::backend::{
-    crypto::SecretEncryptor,
-    db::{
-        self,
-        models::{AccessLevel, OrgRole},
-        organizations as orgs,
-        secrets::{self, SecretsError},
-    },
-};
+use codeyard::backend::crypto::SecretEncryptor;
+use codeyard::backend::db;
+use codeyard::backend::db::organizations as orgs;
+use codeyard::backend::db::secrets;
+use codeyard::backend::db::secrets::SecretsError;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
 use database::Database;
 
 const NAME: &str = "SENSITIVE_DEPLOY_TOKEN";
@@ -28,7 +26,11 @@ fn denied<T>(result: Result<T, SecretsError>) {
         "expected typed secret denial"
     );
 }
-async fn put(pool: &db::DbPool, repo: i64, actor: Option<i64>) -> Result<(), SecretsError> {
+async fn put(
+    pool: &codeyard_db_core::DbPool,
+    repo: i64,
+    actor: Option<i64>,
+) -> Result<(), SecretsError> {
     secrets::create_or_update_secret(
         pool,
         &encryptor(),

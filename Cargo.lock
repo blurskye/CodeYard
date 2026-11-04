@@ -1367,8 +1367,10 @@ dependencies = [
  "chrono",
  "clap",
  "codeyard-actions",
+ "codeyard-db-core",
  "codeyard-git",
  "codeyard-github-graphql",
+ "codeyard-model",
  "codeyard-support",
  "codeyard-webui",
  "croner",
@@ -1450,6 +1452,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "codeyard-db-core"
+version = "0.1.5"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "codeyard-git"
 version = "0.1.5"
 dependencies = [
@@ -1491,11 +1511,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "codeyard-model"
+version = "0.1.5"
+dependencies = [
+ "anyhow",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "codeyard-support"
 version = "0.1.5"
 dependencies = [
  "anyhow",
+ "hex",
+ "hmac 0.12.1",
  "libc",
+ "rand 0.8.8",
+ "sha2 0.10.9",
  "thiserror 2.0.21",
  "tokio",
  "url",

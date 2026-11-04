@@ -1,12 +1,9 @@
 use super::authority::*;
-use crate::backend::db::{
-    models::OrgRole,
-    organizations::{
-        immutable_releases::{Change, Settings},
-        OrganizationOutcome,
-    },
-};
+use crate::backend::db::organizations::immutable_releases::Change;
+use crate::backend::db::organizations::immutable_releases::Settings;
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
 use sqlx::SqlitePool;
 use OrganizationOutcome::{Applied, Conflict, Denied};
 

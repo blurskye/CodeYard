@@ -108,7 +108,10 @@ pub struct PullRequestCommentResponse {
 }
 
 impl PullRequestCommentResponse {
-    fn new(comment: db::models::PullRequestComment, author: Option<UserResponse>) -> Self {
+    fn new(
+        comment: codeyard_db_core::models::PullRequestComment,
+        author: Option<UserResponse>,
+    ) -> Self {
         Self {
             id: comment.id,
             pull_request_id: comment.pull_request_id,

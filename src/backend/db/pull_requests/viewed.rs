@@ -1,6 +1,7 @@
 //! Shared named operation surface for the files a reader marked as viewed on a pull request.
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 native_operation!(crate::backend::db::postgres::pull_requests::viewed::set_pull_request_file_viewed,
     crate::backend::db::sqlite::pull_requests::viewed::set_pull_request_file_viewed,

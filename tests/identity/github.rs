@@ -1150,7 +1150,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob,
         repositories[0].id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -1158,7 +1158,7 @@ async fn contract(pg: bool) {
         f.pool(),
         alice,
         repositories[1].id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -1276,8 +1276,8 @@ async fn contract(pg: bool) {
         .await
         .unwrap_err();
         assert_eq!(
-            error.downcast_ref::<db::users::ssh_keys::SshKeyWriteRefusal>(),
-            Some(&db::users::ssh_keys::SshKeyWriteRefusal::AccountRestricted)
+            error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>(),
+            Some(&codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted)
         );
         let error = codeyard::backend::identity::keys::enroll_signing(
             f.pool(),
@@ -1306,8 +1306,8 @@ async fn contract(pg: bool) {
     .await
     .unwrap_err();
     assert_eq!(
-        error.downcast_ref::<db::users::ssh_keys::SshKeyWriteRefusal>(),
-        Some(&db::users::ssh_keys::SshKeyWriteRefusal::AccountRestricted)
+        error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>(),
+        Some(&codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted)
     );
     assert_eq!(
         db::users::ssh_keys::list_user_keys(f.pool(), alice)

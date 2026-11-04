@@ -1,11 +1,12 @@
-use crate::backend::db::{
-    action_jobs::Job,
-    action_replays,
-    ci::{CiAdmissionRefusal as Refusal, CiReplaySelection, CiRunOptions, NewCiAttempt},
-    models::CiRun,
-};
+use crate::backend::db::action_jobs::Job;
+use crate::backend::db::action_replays;
+use crate::backend::db::ci::CiAdmissionRefusal as Refusal;
+use crate::backend::db::ci::CiReplaySelection;
+use crate::backend::db::ci::CiRunOptions;
+use crate::backend::db::ci::NewCiAttempt;
 use anyhow::{ensure, Result};
 use codeyard_actions::progress::{Replay, State};
+use codeyard_db_core::models::CiRun;
 use sqlx::{types::Json, PgConnection};
 
 pub(crate) async fn prepare(

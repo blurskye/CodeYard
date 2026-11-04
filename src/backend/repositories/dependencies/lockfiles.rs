@@ -1,7 +1,7 @@
 //! Read resolved versions without invoking package managers or following external files.
 use super::npm::{MAX_LOCK_BYTES, MAX_PACKAGES};
-use crate::backend::repositories::dependency_graph::Package;
 use anyhow::{ensure, Context, Result};
+use codeyard_model::repositories::Package;
 use serde_json::Value;
 
 pub const FILES: &[&str] = &[

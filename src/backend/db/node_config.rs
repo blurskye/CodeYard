@@ -1,7 +1,8 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::models::NodeConfiguration;
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::NodeConfiguration;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 native_operation!(crate::backend::db::postgres::node_config::get_node_configuration,
     crate::backend::db::sqlite::node_config::get_node_configuration,

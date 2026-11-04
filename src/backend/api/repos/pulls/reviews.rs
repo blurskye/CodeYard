@@ -91,7 +91,10 @@ pub struct PullRequestReviewResponse {
 }
 
 impl PullRequestReviewResponse {
-    fn new(review: db::models::PullRequestReview, author: Option<UserResponse>) -> Self {
+    fn new(
+        review: codeyard_db_core::models::PullRequestReview,
+        author: Option<UserResponse>,
+    ) -> Self {
         Self {
             id: review.id,
             pull_request_id: review.pull_request_id,

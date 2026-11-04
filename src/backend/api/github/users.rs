@@ -1,15 +1,12 @@
 //! Accounts and follow edges use the same identity operations as the profile pages.
 use super::{api_url, auth, pagination::Pagination, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        models::User,
-        users::{accounts, ssh_keys},
-    },
-    identity::{following, keys},
-    webhooks::payloads,
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::users::accounts;
+use crate::backend::db::users::ssh_keys;
+use crate::backend::identity::following;
+use crate::backend::identity::keys;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -17,6 +14,7 @@ use axum::{
     routing::{delete, get, patch, post, put, MethodRouter},
     Json,
 };
+use codeyard_db_core::models::User;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -620,7 +618,7 @@ async fn hovercard_subject(
 }
 
 // gh compares the key without its optional OpenSSH comment when avoiding duplicate uploads.
-fn key_text(key: &db::models::SshKey) -> String {
+fn key_text(key: &codeyard_db_core::models::SshKey) -> String {
     key.public_key
         .split_whitespace()
         .take(2)
@@ -628,7 +626,7 @@ fn key_text(key: &db::models::SshKey) -> String {
         .join(" ")
 }
 
-fn key_document(key: &db::models::SshKey) -> Value {
+fn key_document(key: &codeyard_db_core::models::SshKey) -> Value {
     json!({"id":key.id,"key":key_text(key),"url":api_url(&format!("/user/keys/{}", key.id)),"title":key.name,"created_at":key.created_at,"verified":key.last_used_at.is_some(),"read_only":false,"last_used":key.last_used_at})
 }
 
@@ -714,18 +712,18 @@ async fn create_key(
         &input.key,
     )
     .await
-    .map_err(
-        |error| match error.downcast_ref::<ssh_keys::SshKeyWriteRefusal>() {
-            Some(ssh_keys::SshKeyWriteRefusal::InvalidKey) => {
+    .map_err(|error| {
+        match error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>() {
+            Some(codeyard_model::identity::SshKeyWriteRefusal::InvalidKey) => {
                 Error::validation("Key", "key", "invalid")
             }
-            Some(ssh_keys::SshKeyWriteRefusal::AlreadyUsed) => {
+            Some(codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed) => {
                 Error::validation("Key", "key", "already_exists")
             }
             Some(_) => Error::new(StatusCode::FORBIDDEN, "Account is restricted"),
             None => Error::unavailable(error),
-        },
-    )?;
+        }
+    })?;
     Ok((
         StatusCode::CREATED,
         [(header::LOCATION, api_url(&format!("/user/keys/{}", key.id)))],
@@ -750,14 +748,14 @@ async fn delete_key(
         id,
     )
     .await
-    .map_err(
-        |error| match error.downcast_ref::<ssh_keys::SshKeyWriteRefusal>() {
-            Some(ssh_keys::SshKeyWriteRefusal::AccountRestricted) => {
+    .map_err(|error| {
+        match error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>() {
+            Some(codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted) => {
                 Error::new(StatusCode::FORBIDDEN, "Account is restricted")
             }
             _ => Error::unavailable(error),
-        },
-    )?;
+        }
+    })?;
     if !deleted {
         return Err(Error::missing());
     }

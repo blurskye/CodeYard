@@ -79,7 +79,7 @@ pub(super) async fn checked(
 
 pub(super) async fn artifact(
     router: &Router,
-    run: &db::models::CiRun,
+    run: &codeyard_db_core::models::CiRun,
     token: &str,
     name: &str,
     bytes: &[u8],
@@ -137,7 +137,11 @@ pub(super) async fn pat(f: &Database, router: &Router, actor: i64, scope: &str) 
 
 /// Issues the job credentials a runner gets for `jobs` of ci.yml, which it must hold before it
 /// reports their progress.
-pub(super) async fn job_credentials(f: &Database, run: &db::models::CiRun, jobs: &[&str]) {
+pub(super) async fn job_credentials(
+    f: &Database,
+    run: &codeyard_db_core::models::CiRun,
+    jobs: &[&str],
+) {
     let jobs: String = jobs
         .iter()
         .map(|job| {

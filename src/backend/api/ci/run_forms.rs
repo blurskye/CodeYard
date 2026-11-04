@@ -16,7 +16,13 @@ async fn readable_run(
     owner: &str,
     name: &str,
     run_id: &str,
-) -> Result<(db::models::Repository, db::models::CiRun), Response> {
+) -> Result<
+    (
+        codeyard_db_core::models::Repository,
+        codeyard_db_core::models::CiRun,
+    ),
+    Response,
+> {
     ctx.return_to = Some(
         Uuid::parse_str(run_id)
             .map(|id| run_page(owner, name, id))

@@ -1,7 +1,8 @@
 //! Creating repositories.
-use crate::backend::db::models::Repository;
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RepositoryTarget {

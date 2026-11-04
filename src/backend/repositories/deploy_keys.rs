@@ -2,28 +2,19 @@
 //! section that lists them. A key acts only for its own repository and never signs in to the web
 //! UI. Its pushes are attributed to the account that added it, and it gets no more than that
 //! account's access, capped at write.
-use crate::backend::db::models::{AccessLevel, DeployKey, Repository, User};
-use crate::backend::db::users::ssh_keys::{self, SshKeyWriteRefusal};
+use crate::backend::db::users::ssh_keys;
 use crate::backend::db::{self, deploy_keys::NewDeployKey};
 use crate::backend::repositories::access::can_admin;
 use anyhow::{ensure, Context, Result};
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::DeployKey;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
+use codeyard_model::identity::SshKeyWriteRefusal;
+use codeyard_model::repositories::DeployKeyError;
 use codeyard_webui::components::deploy_keys::{DeployKeyPanel, DeployKeyRow};
 use ssh_key::HashAlg;
 use tracing::warn;
-
-#[derive(Debug, thiserror::Error)]
-pub enum DeployKeyError {
-    #[error("Repository admin access is required")]
-    Denied,
-    #[error("Enter a title of up to 255 characters")]
-    InvalidTitle,
-    #[error("Deploy key not found")]
-    NotFound,
-    #[error(transparent)]
-    Key(#[from] SshKeyWriteRefusal),
-    #[error("Deploy key storage is unavailable")]
-    Unavailable(anyhow::Error),
-}
 
 /// Keeps a typed key refusal from the database layer, and turns anything else into unavailable.
 fn refusal(error: anyhow::Error) -> DeployKeyError {
@@ -40,7 +31,7 @@ fn refusal(error: anyhow::Error) -> DeployKeyError {
 }
 
 async fn require_admin(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: &User,
     repo: &Repository,
 ) -> Result<(), DeployKeyError> {
@@ -52,7 +43,7 @@ async fn require_admin(
 }
 
 pub async fn list_keys(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: &User,
     repo: &Repository,
     credential: impl Into<db::deploy_keys::Credential>,
@@ -66,7 +57,7 @@ pub async fn list_keys(
 /// Adds a key. The public key is validated by the same parser as account keys, and its
 /// fingerprint must not already belong to an account key or a deploy key.
 pub async fn add_key(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: &User,
     credential: impl Into<db::deploy_keys::Credential>,
     repo: &Repository,
@@ -94,7 +85,7 @@ pub async fn add_key(
 }
 
 pub async fn remove_key(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: &User,
     credential: impl Into<db::deploy_keys::Credential>,
     repo: &Repository,
@@ -124,7 +115,7 @@ pub struct Place<'a> {
 /// The section for the settings page. `notice` is the query's `notice` value, which names a
 /// finished action.
 pub async fn settings_panel(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: &User,
     repo: &Repository,
     place: Place<'_>,
@@ -190,7 +181,7 @@ fn row(key: DeployKey) -> DeployKeyRow {
 /// write needs a write key. It returns the account the session is attributed to, and the access
 /// that account grants, capped at write so a key is never an admin.
 pub async fn authorize(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     key_id: i64,
     repo: &Repository,
     write: bool,
@@ -229,7 +220,7 @@ pub async fn authorize(
 }
 
 /// Records that a key authenticated. A failure is logged and does not refuse the session.
-pub async fn record_use(pool: &db::DbPool, key_id: i64) {
+pub async fn record_use(pool: &codeyard_db_core::DbPool, key_id: i64) {
     if let Err(error) = db::deploy_keys::touch_deploy_key(pool, key_id).await {
         warn!(key_id, error = %error, "could not record deploy key use");
     }

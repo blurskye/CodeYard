@@ -343,7 +343,7 @@ async fn markdown(
 pub(super) async fn resolve_references(
     state: &AppState,
     authentication: Option<&super::auth::Authentication>,
-    repo: &crate::backend::db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     name: &str,
     texts: &[&str],

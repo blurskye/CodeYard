@@ -62,7 +62,7 @@ impl World {
                 database.pool(),
                 user,
                 proj,
-                db::models::AccessLevel::Read,
+                codeyard_db_core::models::AccessLevel::Read,
             )
             .await
             .unwrap();
@@ -86,7 +86,7 @@ impl World {
         }
     }
 
-    fn pool(&self) -> &db::DbPool {
+    fn pool(&self) -> &codeyard_db_core::DbPool {
         self.database.pool()
     }
 
@@ -105,7 +105,11 @@ async fn mentions(world: &World, user: i64) -> Vec<(String, Option<String>)> {
 }
 
 /// The notifications of `user` with `kind`.
-async fn notices(world: &World, user: i64, kind: &str) -> Vec<db::models::Notification> {
+async fn notices(
+    world: &World,
+    user: i64,
+    kind: &str,
+) -> Vec<codeyard_db_core::models::Notification> {
     db::notifications::records::list_notifications_for_user(world.pool(), user, 100, false)
         .await
         .unwrap()
@@ -652,7 +656,7 @@ async fn unreadable_names_are_bounded_per_write(pg: bool) {
             world.pool(),
             user,
             vault,
-            db::models::AccessLevel::Read,
+            codeyard_db_core::models::AccessLevel::Read,
         )
         .await
         .unwrap();

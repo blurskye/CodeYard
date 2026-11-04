@@ -50,7 +50,7 @@ async fn product(
         .await
         .map_err(Error::unavailable)?,
     )?;
-    if role != crate::backend::db::models::OrgRole::Owner {
+    if role != codeyard_db_core::models::OrgRole::Owner {
         return Err(Error::new(
             StatusCode::FORBIDDEN,
             "Must be an organization owner",

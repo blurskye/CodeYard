@@ -1,11 +1,15 @@
 //! Cluster membership: the `nodes` table and the join tokens that admit new nodes.
+use codeyard_db_core::native_operation;
 pub(crate) mod replicas;
 pub mod writes;
-use super::models::{
-    ClusterNode, HeldReplica, JoinInvite, JoinOutcome, NodeReplicaCounts, NodeStatusChange,
-};
-use super::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::ClusterNode;
+use codeyard_db_core::models::HeldReplica;
+use codeyard_db_core::models::JoinInvite;
+use codeyard_db_core::models::JoinOutcome;
+use codeyard_db_core::models::NodeReplicaCounts;
+use codeyard_db_core::models::NodeStatusChange;
+use codeyard_db_core::DbPool;
 
 /// Retains a serving lease on a dedicated connection; closing it releases the advisory lock.
 pub struct ServingLock {
@@ -69,7 +73,7 @@ pub const REPLICA_STAGING_FACTOR: i64 = 2;
 native_operation!(crate::backend::db::postgres::cluster::assign_replica_family,
     crate::backend::db::sqlite::cluster::assign_replica_family,
     /// Replans a complete fork family under serialized capacity reservation ownership.
-    fn assign_replica_family(pool: &DbPool, repository: i64, primary: i64, setting: super::models::ReplicaSetting) -> Result<Vec<i64>>);
+    fn assign_replica_family(pool: &DbPool, repository: i64, primary: i64, setting: codeyard_db_core::models::ReplicaSetting) -> Result<Vec<i64>>);
 
 /// A primary and optional copy: id, path, holder, applied version, size, ever completed.
 pub type PrimaryReplicaRow = (i64, String, Option<i64>, Option<i64>, i64, bool);
@@ -220,7 +224,7 @@ native_operation!(crate::backend::db::postgres::cluster::replica_applied_version
     fn replica_applied_version(pool: &DbPool, repository: i64, node: i64) -> Result<Option<i64>>);
 native_operation!(crate::backend::db::postgres::cluster::get_repository_by_uuid,
     crate::backend::db::sqlite::cluster::get_repository_by_uuid,
-    fn get_repository_by_uuid(pool: &DbPool, uuid: &str) -> Result<Option<super::models::Repository>>);
+    fn get_repository_by_uuid(pool: &DbPool, uuid: &str) -> Result<Option<codeyard_db_core::models::Repository>>);
 
 /// What a promotion did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

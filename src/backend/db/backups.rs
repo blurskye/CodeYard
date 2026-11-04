@@ -1,7 +1,8 @@
 //! The rows backups, restores and repository checks read and repair.
-use crate::backend::db::models::Repository;
-use crate::backend::db::DbPool;
 use anyhow::{bail, Result};
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// The recorded revisions of one pull request.
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -66,6 +67,8 @@ pub async fn copy_sqlite(pool: &DbPool, path: &str) -> Result<()> {
         DbPool::Sqlite(native) => {
             crate::backend::db::sqlite::backups::vacuum_into(native, path).await
         }
-        DbPool::Postgres(_) => bail!("a PostgreSQL database is copied with pg_dump"),
+        DbPool::Postgres(_) => {
+            bail!("a PostgreSQL database is copied with pg_dump")
+        }
     }
 }

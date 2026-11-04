@@ -5,11 +5,9 @@ use super::{
     pagination::Pagination,
     repo_url, repository, Error, Result,
 };
-use crate::backend::{
-    app::AppState,
-    db::models::Repository,
-    repositories::{reads::same_fork_network, store::repo_store},
-};
+use crate::backend::app::AppState;
+use crate::backend::repositories::reads::same_fork_network;
+use crate::backend::repositories::store::repo_store;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::HeaderMap,
@@ -17,6 +15,7 @@ use axum::{
     routing::{get, MethodRouter},
     Json,
 };
+use codeyard_db_core::models::Repository;
 use serde_json::json;
 use std::sync::Arc;
 

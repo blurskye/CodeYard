@@ -1,11 +1,9 @@
 //! Deploy-key writes retain live credentials and cross-account fingerprint uniqueness.
 use super::{auth, pagination::Pagination, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db,
-    repositories::deploy_keys::{self as keys, DeployKeyError},
-    webhooks::payloads,
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::repositories::deploy_keys as keys;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -13,6 +11,7 @@ use axum::{
     routing::{delete, get, post, MethodRouter},
     Json,
 };
+use codeyard_model::repositories::DeployKeyError;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -32,7 +31,7 @@ async fn document(
     state: &AppState,
     owner: &str,
     name: &str,
-    key: &db::models::DeployKey,
+    key: &codeyard_db_core::models::DeployKey,
 ) -> Result<Value> {
     let added_by = match key.created_by_id {
         Some(id) => db::users::accounts::get_user_by_id(&state.pool, id)

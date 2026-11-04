@@ -1,8 +1,8 @@
-use crate::backend::db::models::Repository;
 use crate::backend::db::repositories::dependencies::{
     self as records, Feature, Job, Policy, Refusal, Snapshot, State, Update, COLUMNS, LEASE_SECONDS,
 };
 use anyhow::{ensure, Result};
+use codeyard_db_core::models::Repository;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
 async fn admin(

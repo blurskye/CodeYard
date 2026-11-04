@@ -30,7 +30,7 @@ struct Parameters {
 
 async fn live_logs(
     state: &AppState,
-    run: db::models::CiRun,
+    run: codeyard_db_core::models::CiRun,
     after: i64,
     limit: Option<i64>,
 ) -> Result<Response> {

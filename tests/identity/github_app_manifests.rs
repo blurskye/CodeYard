@@ -587,14 +587,14 @@ async fn contract(pg: bool) {
         .unwrap()
         .unwrap();
     let password = match f.pool() {
-        db::DbPool::Sqlite(pool) => {
+        codeyard_db_core::DbPool::Sqlite(pool) => {
             sqlx::query("UPDATE users SET password_hash='forbidden' WHERE id=$1")
                 .bind(app.bot_id)
                 .execute(pool)
                 .await
                 .map(|_| ())
         }
-        db::DbPool::Postgres(pool) => {
+        codeyard_db_core::DbPool::Postgres(pool) => {
             sqlx::query("UPDATE users SET password_hash='forbidden' WHERE id=$1")
                 .bind(app.bot_id)
                 .execute(pool)

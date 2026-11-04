@@ -1,7 +1,9 @@
 //! Owner-inherited issue types and organization custom fields.
-use super::{credentials::Actor, DbPool};
+use super::credentials::Actor;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[derive(Clone, Debug, Serialize, Deserialize, sqlx::FromRow)]

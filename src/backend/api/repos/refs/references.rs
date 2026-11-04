@@ -23,7 +23,7 @@ pub(crate) fn autolink(row: db::repositories::autolinks::Autolink) -> references
 /// anything else is a comment.
 pub(crate) async fn resolve_references(
     ctx: &PageContext,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     owner: &str,
     name: &str,
     texts: &[&str],
@@ -57,9 +57,9 @@ pub(crate) async fn resolve_references(
     reason = "Callers pass their own repository audience next to the resolver's bounded inputs."
 )]
 pub(crate) async fn resolve_references_with<F, Fut>(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&crate::backend::cluster::NodeContext>,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     owner: &str,
     name: &str,
     texts: &[&str],
@@ -67,7 +67,7 @@ pub(crate) async fn resolve_references_with<F, Fut>(
     authorize: F,
 ) -> anyhow::Result<References>
 where
-    F: Fn(Vec<db::models::Repository>) -> Fut,
+    F: Fn(Vec<codeyard_db_core::models::Repository>) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<std::collections::HashSet<i64>>>,
 {
     let sources: Vec<String> = texts.iter().map(|text| (*text).to_owned()).collect();
@@ -234,7 +234,7 @@ where
 /// failing the page.
 pub(crate) async fn resolve_references_or_none(
     ctx: &PageContext,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     owner: &str,
     name: &str,
     texts: &[&str],

@@ -7,20 +7,28 @@ use axum::{
     response::Response,
     Router,
 };
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    db::{
-        self, files as files_db,
-        models::{FileReason, FileVisibility},
-    },
-    files::{
-        self, ConfirmationError, DeleteError, DownloadCapability, DownloadError, DownloadTransport,
-        LocalUploadError, UploadCapability, UploadDeclaration, UploadError,
-    },
-    identity::avatars::{self, AvatarError},
-    storage::{local::LocalStore, s3::S3Config, ObjectStore, Upload},
-};
+use codeyard::backend::api::create_router;
+use codeyard::backend::app::AppState;
+use codeyard::backend::db;
+use codeyard::backend::db::files as files_db;
+use codeyard::backend::files;
+use codeyard::backend::files::ConfirmationError;
+use codeyard::backend::files::DeleteError;
+use codeyard::backend::files::DownloadCapability;
+use codeyard::backend::files::DownloadError;
+use codeyard::backend::files::DownloadTransport;
+use codeyard::backend::files::LocalUploadError;
+use codeyard::backend::files::UploadCapability;
+use codeyard::backend::files::UploadDeclaration;
+use codeyard::backend::files::UploadError;
+use codeyard::backend::identity::avatars;
+use codeyard::backend::identity::avatars::AvatarError;
+use codeyard::backend::storage::local::LocalStore;
+use codeyard::backend::storage::s3::S3Config;
+use codeyard::backend::storage::ObjectStore;
+use codeyard::backend::storage::Upload;
+use codeyard_db_core::models::FileReason;
+use codeyard_db_core::models::FileVisibility;
 use codeyard_webui::{
     app::{Page, PageEnvelope},
     pages::admin::storage as storage_view,
@@ -239,7 +247,12 @@ struct Login {
     csrf: String,
 }
 
-async fn login(pool: &db::DbPool, user: i64, session_fill: char, csrf_fill: char) -> Login {
+async fn login(
+    pool: &codeyard_db_core::DbPool,
+    user: i64,
+    session_fill: char,
+    csrf_fill: char,
+) -> Login {
     let session = session_fill.to_string().repeat(64);
     let csrf = csrf_fill.to_string().repeat(64);
     db::users::sessions::create_session(
@@ -264,7 +277,7 @@ async fn login(pool: &db::DbPool, user: i64, session_fill: char, csrf_fill: char
 struct Fixture {
     temporary: tempfile::TempDir,
     raw: sqlx::SqlitePool,
-    pool: db::DbPool,
+    pool: codeyard_db_core::DbPool,
     storage: Arc<ObjectStore>,
     owner: i64,
     stranger: i64,
@@ -287,8 +300,8 @@ impl Fixture {
             )
             .await
             .unwrap();
-        let pool: db::DbPool = raw.clone().into();
-        db::run_migrations(&pool)
+        let pool: codeyard_db_core::DbPool = raw.clone().into();
+        codeyard_db_core::run_migrations(&pool)
             .await
             .expect("native SQLite migrations are required, not success-skipped");
         let owner =

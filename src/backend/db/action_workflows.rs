@@ -1,7 +1,9 @@
 //! Stable workflow identities and repository execution policy; files still come from Git.
-use super::{models::CiRun, DbPool};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::CiRun;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Clone, sqlx::FromRow)]
 pub struct Workflow {

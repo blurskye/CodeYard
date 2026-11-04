@@ -15,7 +15,7 @@ not exported through `backend::api`.
 ## Configuration and upgrade
 
 - The schema is a baseline (`schema/<engine>/0001.schema.sql`) followed by any later
-  migrations in the same directories. `db::run_migrations` applies the pending ones, in
+  migrations in the same directories. `codeyard_db_core::run_migrations` applies the pending ones, in
   order, on every start. Session CSRF fields, OAuth browser binding and the
   login-admission table are part of the baseline.
 - The migration runner records the applied history. If it reports a history or

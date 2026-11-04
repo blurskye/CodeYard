@@ -4,18 +4,14 @@ use crate::support::{
     database::{wait_until_blocked, Database},
     http_client::Client,
 };
-use codeyard::backend::{
-    db::{
-        self,
-        models::AccessLevel,
-        repositories::creation::{NewRepository, RepositoryCreationOwner},
-        users::accounts::AccountCredential,
-    },
-    identity::{
-        self,
-        tokens::{self, TokenInput},
-    },
-};
+use codeyard::backend::db;
+use codeyard::backend::db::repositories::creation::NewRepository;
+use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
+use codeyard::backend::db::users::accounts::AccountCredential;
+use codeyard::backend::identity;
+use codeyard::backend::identity::tokens;
+use codeyard::backend::identity::tokens::TokenInput;
+use codeyard_db_core::models::AccessLevel;
 use serde_json::json;
 
 async fn contract(pg: bool) {

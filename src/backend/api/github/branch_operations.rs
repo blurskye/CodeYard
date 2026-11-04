@@ -40,7 +40,7 @@ async fn rename(
         Some(&[&branch, &input.new_name]),
         &state.ci_runs,
         actor,
-        db::models::AccessLevel::Owner,
+        codeyard_db_core::models::AccessLevel::Owner,
     )
     .await
     .map_err(|_| {
@@ -114,8 +114,8 @@ async fn upstream(
 
 async fn complete_upstream(
     state: Arc<AppState>,
-    repo: db::models::Repository,
-    parent: db::models::Repository,
+    repo: codeyard_db_core::models::Repository,
+    parent: codeyard_db_core::models::Repository,
     input: Upstream,
     owner: String,
     base_branch: String,
@@ -157,7 +157,7 @@ async fn complete_upstream(
         Some(&[&input.branch]),
         &state.ci_runs,
         actor.id,
-        db::models::AccessLevel::Owner,
+        codeyard_db_core::models::AccessLevel::Owner,
     )
     .await
     .map_err(|_| {

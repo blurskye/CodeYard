@@ -122,7 +122,7 @@ fn session_context<'a>(fresh: &'a str, old: Option<&'a str>) -> SessionContext<'
 type Database = native::PostgresDatabase;
 impl Database {
     /// A second pool on the same schema, as a restarted server would open.
-    async fn reconnect(&self) -> db::DbPool {
+    async fn reconnect(&self) -> codeyard_db_core::DbPool {
         PgPoolOptions::new()
             .max_connections(8)
             .connect(&self.connection_url())
@@ -154,7 +154,7 @@ impl Database {
             }
         }).await.expect("requests must reach a real PostgreSQL lock barrier");
     }
-    async fn setup(&self, mode: &str) -> db::models::User {
+    async fn setup(&self, mode: &str) -> codeyard_db_core::models::User {
         match transitions::complete_setup(&self.pool, "admin", None, PHC, mode, None)
             .await
             .unwrap()
@@ -1037,7 +1037,9 @@ async fn oauth_state_requires_browser_provider_origin_and_one_atomic_consumer() 
     .unwrap()
     .is_none());
     // Running the migrations again changes nothing and keeps existing state.
-    db::run_migrations(&fixture.pool).await.unwrap();
+    codeyard_db_core::run_migrations(&fixture.pool)
+        .await
+        .unwrap();
     assert!(
         stored::get_oauth_state(&fixture.pool, &unbound)
             .await

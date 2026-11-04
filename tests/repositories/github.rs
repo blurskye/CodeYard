@@ -1752,7 +1752,8 @@ async fn deploy_keys_contract(pg: bool) {
         )
         .await;
     let id = key["id"].as_i64().unwrap();
-    use codeyard::backend::repositories::deploy_keys::{remove_key, DeployKeyError};
+    use codeyard::backend::repositories::deploy_keys::remove_key;
+
     assert!(matches!(
         remove_key(
             f.pool(),
@@ -1765,7 +1766,7 @@ async fn deploy_keys_contract(pg: bool) {
             id
         )
         .await,
-        Err(DeployKeyError::Denied)
+        Err(codeyard_model::repositories::DeployKeyError::Denied)
     ));
     f.execute(
         "UPDATE personal_access_tokens SET expires_at='2000-01-01T00:00:00Z' WHERE id=$1",
@@ -1784,7 +1785,7 @@ async fn deploy_keys_contract(pg: bool) {
             id
         )
         .await,
-        Err(DeployKeyError::Denied)
+        Err(codeyard_model::repositories::DeployKeyError::Denied)
     ));
     checked(
         &router,
@@ -2564,7 +2565,7 @@ async fn collaborators_contract(pg: bool) {
             alice,
             org.id,
             bob,
-            db::models::OrgRole::Member
+            codeyard_db_core::models::OrgRole::Member
         )
         .await
         .unwrap(),

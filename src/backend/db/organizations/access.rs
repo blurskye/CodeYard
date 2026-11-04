@@ -1,9 +1,9 @@
 use super::{OrganizationOutcome, OrganizationPage};
-use crate::backend::db::{
-    models::{AccessLevel, Repository},
-    DbPool,
-};
 use anyhow::Result;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 // Display only; effectful callers recheck access in their native transaction.
 native_operation!(crate::backend::db::postgres::organizations::access::get_organization_repo_access, crate::backend::db::sqlite::organizations::access::get_organization_repo_access,

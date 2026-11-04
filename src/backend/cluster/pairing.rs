@@ -9,17 +9,17 @@ use super::{
     link::{read_to_end_within, Link},
     transport::{self, NodeAddress, Relay, ALPN_PAIR, CLOSE_UNAVAILABLE},
 };
-use crate::backend::{
-    db::{
-        self,
-        cluster::{Authority, DeclaredMember, JoinRequest, NewJoinToken},
-        models::{JoinOutcome, NodeStatusChange},
-        DbPool,
-    },
-    node::NodeRoles,
-};
+use crate::backend::db;
+use crate::backend::db::cluster::Authority;
+use crate::backend::db::cluster::DeclaredMember;
+use crate::backend::db::cluster::JoinRequest;
+use crate::backend::db::cluster::NewJoinToken;
+use crate::backend::node::NodeRoles;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use codeyard_db_core::models::JoinOutcome;
+use codeyard_db_core::models::NodeStatusChange;
+use codeyard_db_core::DbPool;
 use iroh::{
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler},

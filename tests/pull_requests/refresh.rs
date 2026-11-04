@@ -37,7 +37,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob_id,
         repository.id,
-        db::models::repositories::AccessLevel::Write,
+        codeyard_db_core::models::repositories::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -748,7 +748,7 @@ async fn concurrent_refresh_converges(pg: bool) {
                 Some(&["main", "topic"][..]),
                 &ci,
                 actor,
-                codeyard::backend::db::models::AccessLevel::Owner,
+                codeyard_db_core::models::AccessLevel::Owner,
             )
             .await
         })

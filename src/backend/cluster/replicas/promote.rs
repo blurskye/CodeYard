@@ -5,13 +5,12 @@
 //! A fork is stored on the same node as its source, because pull requests between them need
 //! both there. So a promotion moves the whole fork family that shares the repository's
 //! primary, or nothing at all.
-use crate::backend::db::{
-    self,
-    cluster::{FamilyOutcome, PromoteOutcome},
-    models::ClusterNode,
-    DbPool,
-};
+use crate::backend::db;
+use crate::backend::db::cluster::FamilyOutcome;
+use crate::backend::db::cluster::PromoteOutcome;
 use anyhow::{bail, ensure, Context, Result};
+use codeyard_db_core::models::ClusterNode;
+use codeyard_db_core::DbPool;
 use std::{
     cmp::Reverse,
     collections::{HashMap, HashSet},

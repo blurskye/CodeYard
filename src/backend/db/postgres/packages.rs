@@ -1297,7 +1297,7 @@ pub async fn registry_token(pool: &PgPool, hash: &str) -> Result<Option<packages
 pub async fn registry_source(
     pool: &PgPool,
     id: i64,
-) -> Result<Option<super::models::PersonalAccessToken>> {
+) -> Result<Option<codeyard_db_core::models::PersonalAccessToken>> {
     Ok(sqlx::query_as("SELECT id,user_id,name,scope,expires_at,created_at FROM personal_access_tokens WHERE id=$1").bind(id).fetch_optional(pool).await?)
 }
 

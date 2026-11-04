@@ -452,7 +452,7 @@ async fn contract(pg: bool) {
         f.pool(),
         outsider,
         repo.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -483,14 +483,14 @@ async fn contract(pg: bool) {
     )
     .await;
     let stored: Vec<u8> = match f.pool() {
-        db::DbPool::Sqlite(pool) => sqlx::query_scalar(
+        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_scalar(
             "SELECT encrypted_value FROM repo_secrets WHERE repo_id=$1 AND name='DEPLOY_TOKEN'",
         )
         .bind(repo.id)
         .fetch_one(pool)
         .await
         .unwrap(),
-        db::DbPool::Postgres(pool) => sqlx::query_scalar(
+        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_scalar(
             "SELECT encrypted_value FROM repo_secrets WHERE repo_id=$1 AND name='DEPLOY_TOKEN'",
         )
         .bind(repo.id)

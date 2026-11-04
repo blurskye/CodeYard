@@ -6,7 +6,8 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client::Client;
 use axum::http::StatusCode;
-use codeyard::backend::{db, db::models::AccessLevel};
+use codeyard::backend::db;
+use codeyard_db_core::models::AccessLevel;
 use database::Database;
 use serde_json::{json, Value};
 

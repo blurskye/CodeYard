@@ -3,7 +3,8 @@ use super::{
     profile::html,
 };
 use axum::http::StatusCode;
-use codeyard::backend::db::{models::OrgRole, organizations::*};
+use codeyard::backend::db::organizations::*;
+use codeyard_db_core::models::OrgRole;
 
 pub async fn contracts(f: &Fixture) {
     for value in ["garbage", "-1", "9223372036854775808", "", "1.5"] {

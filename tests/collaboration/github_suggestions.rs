@@ -69,7 +69,7 @@ async fn suggestions(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        db::models::AccessLevel::Triage,
+        codeyard_db_core::models::AccessLevel::Triage,
     )
     .await
     .unwrap();
@@ -77,7 +77,7 @@ async fn suggestions(pg: bool) {
         f.pool(),
         carol,
         repo.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -596,7 +596,7 @@ async fn suggestions(pg: bool) {
         f.pool(),
         dave,
         repo.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();

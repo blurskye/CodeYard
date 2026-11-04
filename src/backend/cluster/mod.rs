@@ -29,11 +29,12 @@ pub use transport::{
     Relay, ALPN_EVENTS, ALPN_PAIR, ALPN_RPC, CLOSE_NOT_A_MEMBER, CLOSE_UNAVAILABLE,
 };
 
-use crate::backend::{
-    db::{self, models::ClusterNode, DbPool},
-    node::{NodeRole, NodeRoles},
-};
+use crate::backend::db;
+use crate::backend::node::NodeRole;
+use crate::backend::node::NodeRoles;
 use anyhow::{anyhow, bail, ensure, Context, Result};
+use codeyard_db_core::models::ClusterNode;
+use codeyard_db_core::DbPool;
 
 use iroh::Endpoint;
 use std::{

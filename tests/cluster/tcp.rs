@@ -831,7 +831,7 @@ async fn a_membership_check_that_stalls_keeps_its_handshake_slot() {
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     let address = address_of(&core);
-    let db::DbPool::Postgres(pool) = &database.pool else {
+    let codeyard_db_core::DbPool::Postgres(pool) = &database.pool else {
         panic!("the cluster tests run on PostgreSQL");
     };
     // Every membership check reads `nodes`, so with this lock held, each check waits.

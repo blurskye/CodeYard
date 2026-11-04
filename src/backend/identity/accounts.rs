@@ -8,16 +8,16 @@ use super::{
     sessions::{self, AccountAuthorityError},
     setup,
 };
-use crate::backend::db::{
-    self,
-    models::User,
-    users::{
-        signup_requests::ReviewError,
-        transitions::{self, AccountAdmission, BanChange, EmailChange, RoleChange},
-    },
-    DbPool,
-};
+use crate::backend::db;
+use crate::backend::db::users::signup_requests::ReviewError;
+use crate::backend::db::users::transitions;
+use crate::backend::db::users::transitions::AccountAdmission;
+use crate::backend::db::users::transitions::BanChange;
+use crate::backend::db::users::transitions::EmailChange;
+use crate::backend::db::users::transitions::RoleChange;
 use crate::backend::email::links;
+use codeyard_db_core::models::User;
+use codeyard_db_core::DbPool;
 
 pub struct PasswordChange<'a> {
     pub current_password: &'a str,

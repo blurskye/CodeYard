@@ -2,15 +2,13 @@
 #![cfg(not(target_arch = "wasm32"))]
 use crate::support::native_database as native;
 use chrono::{DateTime, Utc};
-use codeyard::backend::{
-    cluster::{writes as coordinator, NodeKey},
-    db::{
-        self,
-        cluster::writes,
-        models::{RefChange, RefValue},
-        DbPool,
-    },
-};
+use codeyard::backend::cluster::writes as coordinator;
+use codeyard::backend::cluster::NodeKey;
+use codeyard::backend::db;
+use codeyard::backend::db::cluster::writes;
+use codeyard_db_core::models::RefChange;
+use codeyard_db_core::models::RefValue;
+use codeyard_db_core::DbPool;
 use uuid::Uuid;
 
 const OLD: &str = "1111111111111111111111111111111111111111";
@@ -671,16 +669,20 @@ async fn cascades(pool: &DbPool) {
     votes(pool, &f, &id).await;
     // Node references restrict deletion while a repository uses them.
     match pool {
-        DbPool::Postgres(raw) => assert!(sqlx::query("DELETE FROM nodes WHERE id=$1")
-            .bind(f.voters[1])
-            .execute(raw)
-            .await
-            .is_err()),
-        DbPool::Sqlite(raw) => assert!(sqlx::query("DELETE FROM nodes WHERE id=$1")
-            .bind(f.voters[1])
-            .execute(raw)
-            .await
-            .is_err()),
+        DbPool::Postgres(raw) => {
+            assert!(sqlx::query("DELETE FROM nodes WHERE id=$1")
+                .bind(f.voters[1])
+                .execute(raw)
+                .await
+                .is_err())
+        }
+        DbPool::Sqlite(raw) => {
+            assert!(sqlx::query("DELETE FROM nodes WHERE id=$1")
+                .bind(f.voters[1])
+                .execute(raw)
+                .await
+                .is_err())
+        }
     }
     db::repositories::records::delete_repository(pool, f.owner, f.repo)
         .await

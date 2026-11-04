@@ -1,9 +1,8 @@
 use super::authority::*;
-use crate::backend::db::{
-    models::{OrgRole, User},
-    organizations::OrganizationOutcome,
-};
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::User;
 use sqlx::{PgConnection, PgPool};
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing};
 

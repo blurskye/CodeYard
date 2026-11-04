@@ -1,8 +1,8 @@
-use crate::backend::db::{
-    action_concurrency::{Configuration, Group, Member},
-    models::CiRun,
-};
+use crate::backend::db::action_concurrency::Configuration;
+use crate::backend::db::action_concurrency::Group;
+use crate::backend::db::action_concurrency::Member;
 use anyhow::Result;
+use codeyard_db_core::models::CiRun;
 use sqlx::{SqliteConnection, SqlitePool};
 
 pub(crate) async fn record(

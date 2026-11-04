@@ -225,7 +225,7 @@ fn write_private(path: PathBuf, contents: &str) -> io::Result<TemporaryFile> {
 pub fn parse_public_key(text: &str) -> Result<PublicKey> {
     let text = text.trim();
     ensure!(
-        crate::backend::crypto::is_hex_token(text, 64),
+        codeyard_support::crypto::is_hex_token(text, 64),
         "a public key is 64 hex characters"
     );
     PublicKey::from_str(&text.to_ascii_lowercase())

@@ -7,18 +7,17 @@ use crate::support::organizations::applied;
 mod fixture;
 use crate::support::http_client as http;
 
-use codeyard::backend::{
-    db::{
-        self,
-        models::{AccessLevel, OrgRole, Repository},
-        organizations as orgs,
-        repositories::creation::{
-            self as creation, NewRepository, RepositoryCreationOwner, RepositoryStorageRefusal,
-            RepositoryTarget,
-        },
-    },
-    repositories::lifecycle,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations as orgs;
+use codeyard::backend::db::repositories::creation;
+use codeyard::backend::db::repositories::creation::NewRepository;
+use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
+use codeyard::backend::db::repositories::creation::RepositoryStorageRefusal;
+use codeyard::backend::db::repositories::creation::RepositoryTarget;
+use codeyard::backend::repositories::lifecycle;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Repository;
 use database::Database;
 
 fn owner(actor_id: i64, target: RepositoryTarget) -> RepositoryCreationOwner {
@@ -554,7 +553,10 @@ async fn shared_fixture_lifecycle(pg: bool) {
     let schema: Option<String> = match &database {
         Database::Postgres(f) => {
             assert!(pg);
-            assert!(matches!(database.pool(), db::DbPool::Postgres(_)));
+            assert!(matches!(
+                database.pool(),
+                codeyard_db_core::DbPool::Postgres(_)
+            ));
             let user = db::users::accounts::get_user_by_id(database.pool(), f.owner.id)
                 .await
                 .unwrap()
@@ -586,7 +588,10 @@ async fn shared_fixture_lifecycle(pg: bool) {
         }
         Database::Sqlite(_) => {
             assert!(!pg);
-            assert!(matches!(database.pool(), db::DbPool::Sqlite(_)));
+            assert!(matches!(
+                database.pool(),
+                codeyard_db_core::DbPool::Sqlite(_)
+            ));
             None
         }
     };

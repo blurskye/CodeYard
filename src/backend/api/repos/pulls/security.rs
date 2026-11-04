@@ -1,11 +1,10 @@
 //! Code scanning checks are projections of accepted analyses, never fabricated CI runs.
-use crate::backend::{
-    api::{
-        http::context::PageContext,
-        repos::discussion::{unavailable, RepositoryData, ResultPage},
-    },
-    db::{code_scanning as records, models::PullRequest},
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::repos::discussion::unavailable;
+use crate::backend::api::repos::discussion::RepositoryData;
+use crate::backend::api::repos::discussion::ResultPage;
+use crate::backend::db::code_scanning as records;
+use codeyard_db_core::models::PullRequest;
 use codeyard_webui::{encode_component, excerpt, pages::repos::security as view};
 use serde_json::Value;
 

@@ -1,7 +1,8 @@
 //! Regression contracts for database effects and their current authority on both engines.
 use crate::support::database::Database;
 use codeyard::backend::{db, identity, notifications};
-use db::models::{AccessLevel, Repository};
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::Repository;
 use db::notifications::{NewNotification, NotificationFilter, NotificationInboxAction};
 use db::repositories::{creation::RepositoryTarget, records};
 use std::time::Duration;
@@ -43,11 +44,11 @@ async fn org_repo(f: &Database, owner: i64, org: i64, name: &str) -> Repository 
 }
 
 async fn notice(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     user: i64,
     repository: Option<i64>,
     title: &str,
-) -> db::models::Notification {
+) -> codeyard_db_core::models::Notification {
     db::notifications::records::create_notification(
         pool,
         NewNotification {
@@ -65,7 +66,7 @@ async fn notice(
     .unwrap()
 }
 
-async fn session(pool: &db::DbPool, user: i64) -> String {
+async fn session(pool: &codeyard_db_core::DbPool, user: i64) -> String {
     let id = uuid::Uuid::new_v4().simple().to_string();
     db::users::sessions::create_session(
         pool,
@@ -382,8 +383,8 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
                 filename: "asset.zip",
                 content_type: "application/zip",
                 file_size: 100,
-                reason: db::models::FileReason::ReleaseAsset,
-                visibility: db::models::FileVisibility::Owner,
+                reason: codeyard_db_core::models::FileReason::ReleaseAsset,
+                visibility: codeyard_db_core::models::FileVisibility::Owner,
                 sha256_hex: &"a".repeat(64),
             },
         )
@@ -435,7 +436,7 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
                 // Existing data can share a file even though new attachments may not.
                 let sql = "INSERT INTO release_assets(release_id,file_id,name,content_type,size) VALUES($1,$2,'asset.zip','application/zip',100)";
                 match f.pool() {
-                    db::DbPool::Postgres(pool) => {
+                    codeyard_db_core::DbPool::Postgres(pool) => {
                         sqlx::query(sql)
                             .bind(release.id)
                             .bind(file.id)
@@ -443,7 +444,7 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
                             .await
                             .unwrap();
                     }
-                    db::DbPool::Sqlite(pool) => {
+                    codeyard_db_core::DbPool::Sqlite(pool) => {
                         sqlx::query(sql)
                             .bind(release.id)
                             .bind(file.id)

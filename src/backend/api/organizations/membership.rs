@@ -4,11 +4,11 @@ use super::organization;
 use super::organization::{unavailable, unit, Fields};
 use crate::backend::api::http::context::PageContext;
 use crate::backend::db;
-use crate::backend::db::models::OrgRole;
 use crate::backend::db::organizations;
 use crate::backend::db::organizations::OrganizationOutcome;
 use crate::backend::notifications::create::organization_invitation;
 use axum::response::Response;
+use codeyard_db_core::models::OrgRole;
 use codeyard_webui::pages::orgs as view;
 use std::collections::HashMap;
 
@@ -39,7 +39,7 @@ pub(super) async fn project(
 
 pub(super) async fn project_invitations(
     ctx: &PageContext,
-    invitations: Vec<db::models::OrgInvitation>,
+    invitations: Vec<codeyard_db_core::models::OrgInvitation>,
 ) -> Result<Vec<view::PendingInvitation>, Response> {
     // An email-addressed invitation is accepted by whoever currently owns the address, so
     // the account resolved when it was sent is not its recipient.

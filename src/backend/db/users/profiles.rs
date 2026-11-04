@@ -1,6 +1,8 @@
 use super::accounts::AccountCredential;
-use crate::backend::db::{models::User, DbPool};
 use anyhow::Result;
+use codeyard_db_core::models::User;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Default)]
 pub struct ProfilePatch<'a> {

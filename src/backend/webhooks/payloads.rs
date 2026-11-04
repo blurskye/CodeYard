@@ -2,11 +2,18 @@
 //! fields. Fields without a Codeyard counterpart are left out rather than invented.
 use crate::backend::api::github::{node_id, repo_url};
 use crate::backend::api::http::config::{http_clone_base, link_origin};
-use crate::backend::db::models::{
-    CommitComment, DeployKey, Issue, IssueComment, PullRequest, PullRequestComment,
-    PullRequestReview, Release, ReleaseAsset, Repository, User,
-};
 use crate::backend::repositories::store::CommitInfo;
+use codeyard_db_core::models::CommitComment;
+use codeyard_db_core::models::DeployKey;
+use codeyard_db_core::models::Issue;
+use codeyard_db_core::models::IssueComment;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::PullRequestComment;
+use codeyard_db_core::models::PullRequestReview;
+use codeyard_db_core::models::Release;
+use codeyard_db_core::models::ReleaseAsset;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
 use serde_json::{json, Value};
 use std::path::Path;
 mod code_scanning;
@@ -52,7 +59,7 @@ pub fn team(access: &crate::backend::db::repositories::push_teams::TeamAccess) -
     team_document(&access.team, &access.org_slug, access.permission)
 }
 
-pub fn team_document(team: &crate::backend::db::models::Team, org: &str, permission: i16) -> Value {
+pub fn team_document(team: &codeyard_db_core::models::Team, org: &str, permission: i16) -> Value {
     let org = codeyard_webui::encode_component(org);
     let slug = codeyard_webui::encode_component(&team.slug);
     let url = crate::backend::api::github::api_url(&format!("/teams/{}", team.id));
@@ -141,7 +148,7 @@ pub fn organization_role_user(
 }
 
 /// An organization's picture: its uploaded file, or the generated one.
-pub fn organization_avatar(org: &crate::backend::db::models::Organization) -> String {
+pub fn organization_avatar(org: &codeyard_db_core::models::Organization) -> String {
     org.avatar_file_id.map_or_else(
         || {
             format!(
@@ -155,7 +162,7 @@ pub fn organization_avatar(org: &crate::backend::db::models::Organization) -> St
 }
 
 /// Organization links are shared by membership responses and organization events.
-pub fn organization(org: &crate::backend::db::models::Organization) -> Value {
+pub fn organization(org: &codeyard_db_core::models::Organization) -> Value {
     let name = codeyard_webui::encode_component(&org.name);
     let url = crate::backend::api::github::api_url(&format!("/orgs/{name}"));
     let avatar = organization_avatar(org);
@@ -168,8 +175,8 @@ pub fn organization(org: &crate::backend::db::models::Organization) -> Value {
 }
 
 pub fn organization_invitation(
-    invitation: &crate::backend::db::models::OrgInvitation,
-    org: &crate::backend::db::models::Organization,
+    invitation: &codeyard_db_core::models::OrgInvitation,
+    org: &codeyard_db_core::models::Organization,
     recipient: Option<&User>,
     inviter: Option<&User>,
     team_count: i64,
@@ -259,7 +266,7 @@ pub fn community_profile(profile: &crate::backend::repositories::community::Prof
         "files":{"code_of_conduct":if profile.contributor_covenant {json!({"key":"contributor_covenant","name":"Contributor Covenant","html_url":conduct["html_url"],"url":api_url("/codes_of_conduct/contributor_covenant")})}else {Value::Null},"code_of_conduct_file":conduct,"license":license,"readme":community_file(profile.readme.as_ref()),"contributing":community_file(profile.contributing.as_ref()),"issue_template":community_file(profile.issue_template.as_ref()),"pull_request_template":community_file(profile.pull_request_template.as_ref())}})
 }
 
-pub fn collaborator(user: &User, level: crate::backend::db::models::AccessLevel) -> Value {
+pub fn collaborator(user: &User, level: codeyard_db_core::models::AccessLevel) -> Value {
     let mut value = simple_person(&Person::of(user));
     value["site_admin"] = json!(user.is_admin);
     value["role_name"] = json!(if level.can_admin() {
@@ -267,7 +274,7 @@ pub fn collaborator(user: &User, level: crate::backend::db::models::AccessLevel)
     } else {
         level.as_str()
     });
-    value["permissions"] = json!({"pull":level.can_read(), "triage":level>=crate::backend::db::models::AccessLevel::Triage, "push":level.can_write(), "maintain":level.can_maintain(), "admin":level.can_admin()});
+    value["permissions"] = json!({"pull":level.can_read(), "triage":level>=codeyard_db_core::models::AccessLevel::Triage, "push":level.can_write(), "maintain":level.can_maintain(), "admin":level.can_admin()});
     value
 }
 
@@ -281,7 +288,7 @@ pub fn repository_invitation(
         "url":crate::backend::api::github::api_url(&format!("/user/repository_invitations/{}",invitation.id)),
         "html_url":format!("{}/invitations", repo["html_url"].as_str().unwrap_or("")),
         "repository":repo, "inviter":simple_person(inviter), "invitee":simple_person(invitee),
-        "permissions":crate::backend::db::models::AccessLevel::from(invitation.permission).as_str(), "created_at":invitation.created_at, "expired":false})
+        "permissions":codeyard_db_core::models::AccessLevel::from(invitation.permission).as_str(), "created_at":invitation.created_at, "expired":false})
 }
 
 pub fn deploy_key(key: &DeployKey, owner: &str, name: &str, added_by: Option<&str>) -> Value {
@@ -291,7 +298,7 @@ pub fn deploy_key(key: &DeployKey, owner: &str, name: &str, added_by: Option<&st
         "added_by": added_by, "last_used": key.last_used_at})
 }
 
-pub fn webhook_config(hook: &crate::backend::db::models::Webhook) -> Value {
+pub fn webhook_config(hook: &codeyard_db_core::models::Webhook) -> Value {
     let mut config = json!({"url": hook.payload_url,
         "content_type": if hook.content_type == "application/json" { "json" } else { "form" },
         "insecure_ssl": if hook.ssl_verify { "0" } else { "1" },
@@ -307,7 +314,7 @@ pub fn webhook_config(hook: &crate::backend::db::models::Webhook) -> Value {
     config
 }
 
-pub fn webhook(hook: &crate::backend::db::models::Webhook, url: &str) -> Value {
+pub fn webhook(hook: &codeyard_db_core::models::Webhook, url: &str) -> Value {
     json!({"id": hook.id, "url": url, "name": "web",
         "type": if hook.org_id.is_some() { "Organization" } else { "Repository" },
         "active": hook.active, "events": hook.events.split(',').collect::<Vec<_>>(),
@@ -316,7 +323,7 @@ pub fn webhook(hook: &crate::backend::db::models::Webhook, url: &str) -> Value {
         "deliveries_url": format!("{url}/deliveries")})
 }
 
-fn delivery_payload(delivery: &crate::backend::db::models::WebhookDelivery) -> Value {
+fn delivery_payload(delivery: &codeyard_db_core::models::WebhookDelivery) -> Value {
     serde_json::from_str(&delivery.request_body).unwrap_or_else(|_| {
         url::form_urlencoded::parse(delivery.request_body.as_bytes())
             .find(|(key, _)| key == "payload")
@@ -326,7 +333,7 @@ fn delivery_payload(delivery: &crate::backend::db::models::WebhookDelivery) -> V
 }
 
 pub fn webhook_delivery(
-    delivery: &crate::backend::db::models::WebhookDelivery,
+    delivery: &codeyard_db_core::models::WebhookDelivery,
     detail: bool,
 ) -> Value {
     let payload = delivery_payload(delivery);
@@ -406,7 +413,7 @@ pub fn deployment_status(
 }
 
 pub fn team_organization(
-    org: &crate::backend::db::models::Organization,
+    org: &codeyard_db_core::models::Organization,
     public_repos: i64,
     has_organization_projects: bool,
 ) -> Value {
@@ -1021,7 +1028,7 @@ pub fn commit(
 
 /// A `status` event. `commit` is the commit object, and `branches` the branches whose tip it is.
 pub fn status(
-    status: &crate::backend::db::models::CommitStatus,
+    status: &codeyard_db_core::models::CommitStatus,
     commit: Value,
     branches: &[String],
     scope: Scope<'_>,
@@ -1077,7 +1084,7 @@ pub fn reaction(
 }
 
 pub fn milestone(
-    summary: &crate::backend::db::models::MilestoneSummary,
+    summary: &codeyard_db_core::models::MilestoneSummary,
     creator: Option<&User>,
     owner: &str,
     repo: &str,
@@ -1111,7 +1118,7 @@ pub fn milestone(
 }
 
 /// Labels use the same object in REST and issue webhook payloads.
-pub fn label(label: &crate::backend::db::models::Label, owner: &str, repo: &str) -> Value {
+pub fn label(label: &codeyard_db_core::models::Label, owner: &str, repo: &str) -> Value {
     json!({
         "id": label.id,
         "node_id": crate::backend::api::github::node_id::encode("L", label.id),
@@ -2214,7 +2221,7 @@ pub fn workflow_job(action: &str, job: Value, scope: Scope<'_>) -> Value {
 /// `head_repository` is the pull request's head repository, which for a `pull_request_target`
 /// run is not the repository the run checked out.
 pub fn action_run_pull_requests(
-    run: &crate::backend::db::models::CiRun,
+    run: &codeyard_db_core::models::CiRun,
     pull: Option<&PullRequest>,
     repository: &Value,
     head_repository: &Value,
@@ -2251,7 +2258,7 @@ pub fn action_run_pull_requests(
 }
 
 pub fn action_run(
-    run: &crate::backend::db::models::CiRun,
+    run: &codeyard_db_core::models::CiRun,
     owner: &str,
     repository: Value,
     head_repository: Value,
@@ -2307,7 +2314,7 @@ pub fn action_run(
 pub fn action_job(
     job: &crate::backend::db::action_jobs::Job,
     steps: &[crate::backend::db::action_jobs::Step],
-    run: &crate::backend::db::models::CiRun,
+    run: &codeyard_db_core::models::CiRun,
     owner: &str,
     repo: &str,
 ) -> Value {
@@ -2331,7 +2338,7 @@ pub fn action_job(
 
 pub fn action_artifact(
     object: &crate::backend::db::action_objects::ActionObject,
-    run: Option<&crate::backend::db::models::CiRun>,
+    run: Option<&codeyard_db_core::models::CiRun>,
     owner: &str,
     repo: &str,
 ) -> Value {
@@ -2391,7 +2398,7 @@ mod tests {
     use super::*;
     #[test]
     fn workflow_branch_names_preserve_literal_ref_prefixes() {
-        use crate::backend::db::models::ci::workflow_branch;
+        use codeyard_db_core::models::ci::workflow_branch;
         assert_eq!(workflow_branch("main"), "main");
         assert_eq!(workflow_branch("refs/heads/main"), "main");
         assert_eq!(workflow_branch("refs/tags/v1"), "v1");

@@ -96,7 +96,11 @@ struct Documents {
 }
 
 impl Documents {
-    async fn load(state: &AppState, repo: i64, runs: &[db::models::CiRun]) -> Result<Self> {
+    async fn load(
+        state: &AppState,
+        repo: i64,
+        runs: &[codeyard_db_core::models::CiRun],
+    ) -> Result<Self> {
         let ids: Vec<_> = runs.iter().map(|run| run.id).collect();
         let metadata = action_runs::metadata(&state.pool, repo, &ids)
             .await
@@ -142,9 +146,9 @@ async fn referenced_document(
 async fn document(
     state: &Arc<AppState>,
     auth: Option<&auth::Authentication>,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
-    run: &db::models::CiRun,
+    run: &codeyard_db_core::models::CiRun,
     exclude: bool,
     documents: &mut Documents,
 ) -> Result<Value> {

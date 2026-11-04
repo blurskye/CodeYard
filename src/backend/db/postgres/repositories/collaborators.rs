@@ -1,10 +1,12 @@
-use crate::backend::db::{
-    models::{AccessLevel, User},
-    repositories::collaborators::{
-        Added, Collaborator, CollaboratorQuery, Invitation, InvitationSummary, Refusal,
-    },
-};
+use crate::backend::db::repositories::collaborators::Added;
+use crate::backend::db::repositories::collaborators::Collaborator;
+use crate::backend::db::repositories::collaborators::CollaboratorQuery;
+use crate::backend::db::repositories::collaborators::Invitation;
+use crate::backend::db::repositories::collaborators::InvitationSummary;
+use crate::backend::db::repositories::collaborators::Refusal;
 use anyhow::Result;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::User;
 use sqlx::{PgPool, Postgres, Transaction};
 
 async fn admin(tx: &mut Transaction<'_, Postgres>, actor: i64, repo: i64) -> Result<()> {

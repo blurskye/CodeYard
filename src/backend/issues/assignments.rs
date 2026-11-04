@@ -7,8 +7,8 @@ use crate::backend::notifications::NotificationBroadcaster;
 
 /// The issue or pull request whose assignees change, and who changes them.
 pub struct Target<'a> {
-    pub actor: &'a db::models::User,
-    pub repository: &'a db::models::Repository,
+    pub actor: &'a codeyard_db_core::models::User,
+    pub repository: &'a codeyard_db_core::models::Repository,
     pub owner: &'a str,
     pub item: AssignedItem,
     pub number: i32,
@@ -18,17 +18,17 @@ pub struct Target<'a> {
 /// Assigns `users` in one transaction. Each user who was not assigned before gets an `assigned`
 /// timeline event and a notification. Returns the ids of those users.
 pub async fn assign(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     target: &Target<'_>,
     authority: impl Into<db::credentials::Actor>,
-    users: &[db::models::User],
+    users: &[codeyard_db_core::models::User],
 ) -> anyhow::Result<Vec<i64>> {
     let ids: Vec<i64> = users.iter().map(|user| user.id).collect();
     let added =
         db::assignees::assign_users(pool, authority, target.repository.id, target.item, &ids)
             .await?;
-    let added_users: Vec<&db::models::User> = users
+    let added_users: Vec<&codeyard_db_core::models::User> = users
         .iter()
         .filter(|user| added.contains(&user.id))
         .collect();
@@ -39,7 +39,7 @@ pub async fn assign(
 /// Removes the users named in `usernames` in one transaction and records an `unassigned`
 /// timeline event for each one that was assigned. Returns those names.
 pub async fn unassign(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     target: &Target<'_>,
     authority: impl Into<db::credentials::Actor>,
     usernames: &[String],
@@ -57,10 +57,10 @@ pub async fn unassign(
 
 /// Announces assignments already saved with their timeline events.
 pub async fn announce(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     target: &Target<'_>,
-    users: &[&db::models::User],
+    users: &[&codeyard_db_core::models::User],
 ) {
     if users.is_empty() {
         return;

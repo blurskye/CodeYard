@@ -1,28 +1,17 @@
 //! OSV mirrors and repository alerts share the pinned dependency inventory.
+use codeyard_model::vulnerabilities::ECOSYSTEMS;
+use codeyard_model::vulnerabilities::MAX_AFFECTED_PACKAGES;
 pub(crate) mod versions;
-use crate::backend::{
-    app::AppState,
-    db,
-    repositories::dependency_graph::{self, Package},
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::repositories::dependency_graph;
+use crate::backend::repositories::store::ErrorKind;
 use anyhow::{ensure, Result};
-use codeyard_git::error::ErrorKind;
+use codeyard_model::repositories::Package;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{cmp::Ordering, io::Read, sync::Arc, time::Duration};
 
-pub const ECOSYSTEMS: &[&str] = &[
-    "npm",
-    "PyPI",
-    "crates.io",
-    "Go",
-    "Maven",
-    "RubyGems",
-    "Packagist",
-    "NuGet",
-    "Pub",
-    "Hex",
-];
 pub fn ecosystem(name: &str) -> Option<&'static str> {
     Some(match name {
         "npm" => "npm",
@@ -136,8 +125,6 @@ pub struct Range {
     #[serde(default)]
     pub events: Vec<Value>,
 }
-pub(crate) const MAX_AFFECTED_PACKAGES: usize = 2000;
-
 /// The validated catalogue projection paired with its original OSV record.
 pub struct PreparedAdvisory {
     pub(crate) advisory: Advisory,
@@ -396,7 +383,7 @@ impl Advisory {
     }
 }
 
-pub async fn ingest(pool: &db::DbPool, bytes: &[u8]) -> Result<bool> {
+pub async fn ingest(pool: &codeyard_db_core::DbPool, bytes: &[u8]) -> Result<bool> {
     let bytes = bytes.to_vec();
     let record = tokio::task::spawn_blocking(move || Advisory::parse(&bytes)?.prepare()).await??;
     let changed = db::vulnerabilities::upsert(pool, &record).await?;
@@ -405,7 +392,7 @@ pub async fn ingest(pool: &db::DbPool, bytes: &[u8]) -> Result<bool> {
     }
     Ok(changed)
 }
-pub async fn findings(pool: &db::DbPool, package: &Package) -> Result<Vec<Advisory>> {
+pub async fn findings(pool: &codeyard_db_core::DbPool, package: &Package) -> Result<Vec<Advisory>> {
     let Some(ecosystem) = ecosystem(&package.ecosystem) else {
         return Ok(Vec::new());
     };
@@ -424,7 +411,11 @@ pub async fn findings(pool: &db::DbPool, package: &Package) -> Result<Vec<Adviso
         })
         .collect()
 }
-pub async fn scan(state: &AppState, repo: &db::models::Repository, generation: i64) -> Result<()> {
+pub async fn scan(
+    state: &AppState,
+    repo: &codeyard_db_core::models::Repository,
+    generation: i64,
+) -> Result<()> {
     let reader = db::dependency_graph::Reader::Scan(generation);
     let reference = format!("refs/heads/{}", repo.default_branch);
     let (sha, packages) =
@@ -444,7 +435,7 @@ async fn sync(state: &AppState) -> Result<()> {
 }
 /// Downloads each enabled ecosystem's `all.zip` from the OSV mirror and stores its records.
 pub async fn synchronize(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     settings: &db::vulnerabilities::Settings,
 ) -> Result<()> {
     let enabled: Vec<String> = serde_json::from_str(&settings.ecosystems)?;

@@ -1,12 +1,10 @@
 use super::*;
-use crate::backend::{
-    ci::workflows::WorkflowMatchBudget,
-    db::{
-        models::Repository,
-        organizations::properties::PropertyValue,
-        rulesets::{ListFilter, Owner, RepositoryContext},
-    },
-};
+use crate::backend::ci::workflows::WorkflowMatchBudget;
+use crate::backend::db::organizations::properties::PropertyValue;
+use crate::backend::db::rulesets::ListFilter;
+use crate::backend::db::rulesets::Owner;
+use crate::backend::db::rulesets::RepositoryContext;
+use codeyard_db_core::models::Repository;
 use sqlx::{Postgres, Transaction};
 use std::collections::HashMap;
 

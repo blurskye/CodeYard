@@ -417,7 +417,7 @@ async fn fork_choices(pg: bool) {
         database.pool(),
         owner,
         selected.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();

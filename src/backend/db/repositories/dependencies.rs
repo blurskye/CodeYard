@@ -1,7 +1,9 @@
 //! Delegated security-update work and receipts over the shared Dependabot alerts.
-use crate::backend::db::{models::Repository, DbPool};
 use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;

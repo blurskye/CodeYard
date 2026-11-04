@@ -8,20 +8,19 @@ use crate::support::http_client::{visible_text, Client};
 use crate::support::PASSWORD_WORK as SERIAL;
 use axum::http::StatusCode;
 use chrono::{Duration, Utc};
-use codeyard::backend::{
-    db::{
-        self,
-        email::NewEmailSettings,
-        models::{OutboxMessage, User},
-        DbPool,
-    },
-    email::links::{self, LinkError, Purpose},
-    identity::{
-        self,
-        accounts::{PasswordChange, PasswordResetError},
-        admission, passwords,
-    },
-};
+use codeyard::backend::db;
+use codeyard::backend::db::email::NewEmailSettings;
+use codeyard::backend::email::links;
+use codeyard::backend::email::links::LinkError;
+use codeyard::backend::email::links::Purpose;
+use codeyard::backend::identity;
+use codeyard::backend::identity::accounts::PasswordChange;
+use codeyard::backend::identity::accounts::PasswordResetError;
+use codeyard::backend::identity::admission;
+use codeyard::backend::identity::passwords;
+use codeyard_db_core::models::OutboxMessage;
+use codeyard_db_core::models::User;
+use codeyard_db_core::DbPool;
 
 const PAST: &str = "2020-01-01T00:00:00.000000Z";
 

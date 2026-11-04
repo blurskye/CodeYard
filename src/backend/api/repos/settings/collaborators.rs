@@ -48,7 +48,7 @@ pub async fn list_collaborators(
     let users = db::users::accounts::get_users_by_ids(&state.pool, &user_ids)
         .await
         .map_err(|_| repository_unavailable())?;
-    let user_map: std::collections::HashMap<i64, db::models::User> =
+    let user_map: std::collections::HashMap<i64, codeyard_db_core::models::User> =
         users.into_iter().map(|user| (user.id, user)).collect();
 
     Ok(Json(
@@ -77,16 +77,18 @@ pub async fn add_collaborator(
 ) -> Result<Json<CollaboratorResponse>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
     let access_level = match req.access_level.as_deref() {
-        None => db::models::AccessLevel::Read,
-        Some(name) => db::models::AccessLevel::parse_collaborator(name).ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiError::new(
-                    "validation_error",
-                    "Choose read, write or admin collaborator access.",
-                )),
-            )
-        })?,
+        None => codeyard_db_core::models::AccessLevel::Read,
+        Some(name) => {
+            codeyard_db_core::models::AccessLevel::parse_collaborator(name).ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiError::new(
+                        "validation_error",
+                        "Choose read, write or admin collaborator access.",
+                    )),
+                )
+            })?
+        }
     };
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     let target_user = crate::backend::repositories::access::change_collaborator(

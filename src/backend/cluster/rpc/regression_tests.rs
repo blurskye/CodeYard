@@ -1,20 +1,21 @@
 use super::*;
-use crate::backend::{
-    ci::CiConfig,
-    cluster::{IrohDialer, NodeKey, Relay},
-    db::{self, DbPool},
-    repositories::{
-        git_sessions::ReceiveCredential,
-        store::{GitService, GitSession, RepoStore},
-    },
-};
+use crate::backend::ci::CiConfig;
+use crate::backend::cluster::IrohDialer;
+use crate::backend::cluster::NodeKey;
+use crate::backend::cluster::Relay;
+use crate::backend::db;
+use crate::backend::repositories::git_sessions::ReceiveCredential;
+use crate::backend::repositories::store::GitService;
+use crate::backend::repositories::store::GitSession;
+use crate::backend::repositories::store::RepoStore;
+use codeyard_db_core::DbPool;
 use std::{path::Path, sync::Arc, time::Duration};
 
 async fn context(path: &Path) -> NodeContext {
-    let pool = db::init_db(&format!("sqlite://{}", path.join("test.db").display()))
+    let pool = codeyard_db_core::init_db(&format!("sqlite://{}", path.join("test.db").display()))
         .await
         .unwrap();
-    db::run_migrations(&pool).await.unwrap();
+    codeyard_db_core::run_migrations(&pool).await.unwrap();
     // A web and storage node only exists in cluster mode.
     db::cluster::enable_cluster(&pool).await.unwrap();
     let key = NodeKey::generate();
@@ -288,7 +289,7 @@ async fn storage_git_admission_rechecks_live_tokens_keys_and_grants() {
         pool,
         actor.id,
         repo.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -360,7 +361,7 @@ async fn storage_git_admission_rechecks_live_tokens_keys_and_grants() {
         pool,
         actor.id,
         repo.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();

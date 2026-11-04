@@ -1,15 +1,18 @@
 //! Check publishers share repository authority, but cannot overwrite another publisher's runs.
 use super::{contents::store_error, pagination::Pagination, repo_url, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        checks::{self, Credential, Filter, Preference, Run, RunPatch, Suite, ACTIONS_APP_ID},
-        models::Repository,
-    },
-    repositories::store::repo_store,
-    webhooks::{self, payloads},
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::checks;
+use crate::backend::db::checks::Credential;
+use crate::backend::db::checks::Filter;
+use crate::backend::db::checks::Preference;
+use crate::backend::db::checks::Run;
+use crate::backend::db::checks::RunPatch;
+use crate::backend::db::checks::Suite;
+use crate::backend::db::checks::ACTIONS_APP_ID;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::webhooks;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -17,6 +20,7 @@ use axum::{
     routing::{get, patch, post, MethodRouter},
     Json,
 };
+use codeyard_db_core::models::Repository;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -33,7 +37,7 @@ pub(in crate::backend::api) fn write_error(error: anyhow::Error) -> Error {
     }
 }
 
-async fn app(pool: &db::DbPool, id: Option<i64>) -> Result<Value> {
+async fn app(pool: &codeyard_db_core::DbPool, id: Option<i64>) -> Result<Value> {
     let Some(id) = id else {
         return Ok(Value::Null);
     };
@@ -55,7 +59,11 @@ fn app_value(app: &checks::Publisher) -> Value {
 }
 
 /// The app that publishes workflow run check suites, acting as the Actions bot account.
-async fn actions_app(pool: &db::DbPool, repo: &Repository, owner: &str) -> Result<Value> {
+async fn actions_app(
+    pool: &codeyard_db_core::DbPool,
+    repo: &Repository,
+    owner: &str,
+) -> Result<Value> {
     let Some(bot) = db::users::accounts::get_user_by_username(pool, db::ci_tokens::BOT)
         .await
         .map_err(Error::unavailable)?
@@ -73,7 +81,12 @@ async fn actions_app(pool: &db::DbPool, repo: &Repository, owner: &str) -> Resul
     )
 }
 
-async fn pulls(pool: &db::DbPool, repo: &Repository, owner: &str, sha: &str) -> Result<Value> {
+async fn pulls(
+    pool: &codeyard_db_core::DbPool,
+    repo: &Repository,
+    owner: &str,
+    sha: &str,
+) -> Result<Value> {
     let rows = checks::pulls(pool, repo.id, sha)
         .await
         .map_err(Error::unavailable)?;
@@ -134,7 +147,7 @@ async fn suite_document(
 }
 
 async fn suite_document_at(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: &Repository,
     owner: &str,
     suite: &Suite,
@@ -211,7 +224,7 @@ fn suite_value(
 /// Uses the bounded head snapshot captured on the store that accepted the publication. The
 /// push is already accepted, so a failure here is logged rather than returned.
 pub(crate) async fn requested_after_push(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: &Repository,
     actor: i64,
     sha: &str,
@@ -228,7 +241,7 @@ pub(crate) async fn requested_after_push(
 }
 
 async fn request_after_push(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: &Repository,
     actor: i64,
     sha: &str,
@@ -793,7 +806,7 @@ async fn emit(
 }
 
 async fn emit_for_pool(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: &Repository,
     actor: i64,
     event: &'static str,

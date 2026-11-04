@@ -46,7 +46,7 @@ fn failure(error: &anyhow::Error) -> (StatusCode, String) {
 }
 pub(crate) async fn load(
     ctx: &PageContext,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     issue: i64,
     locked: bool,
     admin: bool,
@@ -179,7 +179,7 @@ pub(crate) async fn load(
 }
 async fn native_propose(
     ctx: &PageContext,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     (owner, name): (&str, &str),
     issue: i64,
     form: &HashMap<String, String>,

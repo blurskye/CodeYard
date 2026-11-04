@@ -1,6 +1,7 @@
 //! Organization and repository Actions settings share their native settings rows.
-use super::DbPool;
 use anyhow::{ensure, Result};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde_json::{json, Value};
 
 #[derive(Clone, Debug)]
@@ -331,7 +332,7 @@ pub(crate) fn change_selection(
 
 native_operation!(crate::backend::db::postgres::action_settings::repositories,
     crate::backend::db::sqlite::action_settings::repositories,
-    fn repositories(pool: &DbPool, actor: impl Into<super::credentials::Actor>, scope: &Scope, setting: Setting, change: Option<&SelectionChange>, window: (i64, i64)) -> Result<(i64, Vec<super::models::Repository>)>);
+    fn repositories(pool: &DbPool, actor: impl Into<super::credentials::Actor>, scope: &Scope, setting: Setting, change: Option<&SelectionChange>, window: (i64, i64)) -> Result<(i64, Vec<codeyard_db_core::models::Repository>)>);
 
 #[derive(sqlx::FromRow)]
 pub struct Policy {

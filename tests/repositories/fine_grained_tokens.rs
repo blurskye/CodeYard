@@ -90,7 +90,7 @@ async fn git_refs(router: &Router, token: &str, repo: &str, service: &str) -> u1
 }
 
 async fn token(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     user: i64,
     session: &str,
     owner: Owner,

@@ -1,8 +1,9 @@
-use super::models::{EmailSettings, OutboxMessage};
 use crate::backend::db::email::{
     delivery_allowed_sql, primary_link_condition, EmailLink, NewEmailSettings, RESEND_SECONDS,
 };
 use anyhow::Result;
+use codeyard_db_core::models::EmailSettings;
+use codeyard_db_core::models::OutboxMessage;
 use sqlx::{PgConnection, PgPool};
 
 pub async fn get_email_settings(pool: &PgPool) -> Result<Option<EmailSettings>> {

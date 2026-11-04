@@ -1,10 +1,10 @@
 //! Repository invitations do not grant access until their recipient accepts.
-use crate::backend::db::{
-    models::{AccessLevel, User},
-    DbPool,
-};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::User;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Invitation {

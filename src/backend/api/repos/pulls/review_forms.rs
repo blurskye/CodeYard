@@ -39,7 +39,7 @@ pub(crate) fn conversation(
     repo: &RepositoryData,
     pull_author_id: i64,
     head: &str,
-    comment: &db::models::PullRequestComment,
+    comment: &codeyard_db_core::models::PullRequestComment,
 ) -> pulls::Conversation {
     let viewer = ctx.user.as_ref();
     pulls::Conversation {
@@ -90,7 +90,7 @@ pub(crate) fn comment_view(
 pub(crate) fn discussion_comment(
     ctx: &PageContext,
     repo: &RepositoryData,
-    pull: &db::models::PullRequest,
+    pull: &codeyard_db_core::models::PullRequest,
     entry: PullRequestCommentEntry,
 ) -> view::Comment {
     let conversation = (entry.comment.path.is_some()
@@ -105,7 +105,7 @@ pub(crate) fn discussion_comment(
 pub(crate) fn threads(
     ctx: &PageContext,
     repo: &RepositoryData,
-    pull: &db::models::PullRequest,
+    pull: &codeyard_db_core::models::PullRequest,
     entries: Vec<PullRequestCommentEntry>,
     pending: &HashSet<i64>,
 ) -> Vec<pulls::Thread> {
@@ -180,7 +180,7 @@ fn review_view(entry: PullRequestReviewEntry, head: &str) -> pulls::Review {
 pub(crate) async fn page_reviews(
     ctx: &PageContext,
     repo: &RepositoryData,
-    pull: &db::models::PullRequest,
+    pull: &codeyard_db_core::models::PullRequest,
     entries: Vec<PullRequestReviewEntry>,
     rights: &crate::backend::api::repos::discussion::CommentRights,
 ) -> ResultPage<Vec<pulls::Review>> {
@@ -362,7 +362,7 @@ async fn review_location(
     ctx: &PageContext,
     repo: &RepositoryData,
     number: i32,
-    review: &db::models::PullRequestReview,
+    review: &codeyard_db_core::models::PullRequestReview,
 ) -> String {
     let position = db::pull_requests::reviews::count_discussion_items_through(
         &ctx.state.pool,

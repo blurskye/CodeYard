@@ -1,11 +1,17 @@
-use super::{
-    assert_github_schema, db, json, protection::call, request, Client, Router, StatusCode, Value,
-};
-use codeyard::backend::{db::models::AccessLevel, repositories::access::change_collaborator};
+use super::assert_github_schema;
+use super::json;
+use super::protection::call;
+use super::request;
+use super::Client;
+use super::Router;
+use super::StatusCode;
+use super::Value;
+use codeyard::backend::repositories::access::change_collaborator;
+use codeyard_db_core::models::AccessLevel;
 
 pub(super) async fn run(
     router: &Router,
-    resource: (&db::DbPool, i64, i64, i64),
+    resource: (&codeyard_db_core::DbPool, i64, i64, i64),
     base: &str,
     tokens: (&str, &str, &str),
     sha: &str,

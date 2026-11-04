@@ -19,7 +19,7 @@ use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 
 async fn target(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     p: &Params,
     route: &str,
@@ -120,7 +120,7 @@ pub(in crate::backend::api) fn write_error(error: anyhow::Error) -> Error {
     Error::unavailable(error)
 }
 
-async fn document(pool: &db::DbPool, reaction: &Reaction) -> Result<Value> {
+async fn document(pool: &codeyard_db_core::DbPool, reaction: &Reaction) -> Result<Value> {
     let user = db::users::accounts::get_user_by_id(pool, reaction.user_id)
         .await
         .map_err(Error::unavailable)?;

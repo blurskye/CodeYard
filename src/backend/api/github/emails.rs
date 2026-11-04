@@ -36,7 +36,7 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 }
 async fn documents(
     state: &AppState,
-    user: &crate::backend::db::models::User,
+    user: &codeyard_db_core::models::User,
     public: bool,
 ) -> Result<Vec<Value>> {
     let settings = profiles::get_profile_settings(&state.pool, user.id)

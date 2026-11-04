@@ -1,6 +1,8 @@
 //! The mail server settings: read from the database row or from CODEYARD_SMTP_* variables.
 use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db::{self, models::EmailSettings, DbPool};
+use crate::backend::db;
+use codeyard_db_core::models::EmailSettings;
+use codeyard_db_core::DbPool;
 use lettre::message::Mailbox;
 use std::str::FromStr;
 

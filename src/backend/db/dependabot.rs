@@ -1,7 +1,10 @@
 //! Organization Dependabot credentials are separate from workflow secrets.
-use super::{models::Repository, secrets::SecretsError, DbPool};
+use super::secrets::SecretsError;
 use crate::backend::crypto::SecretEncryptor;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(sqlx::FromRow, serde::Serialize)]
 pub struct OrganizationSecret {

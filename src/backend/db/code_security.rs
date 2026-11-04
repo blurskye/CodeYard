@@ -1,7 +1,9 @@
 //! Organization configurations apply to the repository's shared security settings.
-use super::{models::Repository, DbPool};
 use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde_json::{json, Value};
 
 #[derive(Debug, thiserror::Error)]

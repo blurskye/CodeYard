@@ -1,8 +1,7 @@
-use crate::backend::db::{
-    models::{Issue, PullRequest},
-    pull_requests::records::IssueConversionRefusal,
-};
+use crate::backend::db::pull_requests::records::IssueConversionRefusal;
 use anyhow::Result;
+use codeyard_db_core::models::Issue;
+use codeyard_db_core::models::PullRequest;
 use sqlx::{Sqlite, Transaction};
 
 pub(super) async fn read_source(

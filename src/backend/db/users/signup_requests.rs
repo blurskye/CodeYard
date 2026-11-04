@@ -1,7 +1,9 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::models::{SignupRequest, User};
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::SignupRequest;
+use codeyard_db_core::models::User;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Debug)]
 pub enum ReviewError {

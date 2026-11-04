@@ -32,8 +32,8 @@ pub(crate) fn profile_failure(error: ProfileError) -> (StatusCode, Json<ApiError
 }
 
 pub(crate) async fn load_profile(
-    pool: &db::DbPool,
-    user: &db::models::User,
+    pool: &codeyard_db_core::DbPool,
+    user: &codeyard_db_core::models::User,
 ) -> anyhow::Result<Profile> {
     let settings = db::users::profiles::get_profile_settings(pool, user.id).await?;
     let accounts = db::users::social_accounts::list_social_accounts(pool, user.id).await?;
@@ -41,7 +41,7 @@ pub(crate) async fn load_profile(
 }
 
 pub(crate) fn profile_model(
-    user: &db::models::User,
+    user: &codeyard_db_core::models::User,
     settings: &db::users::profiles::ProfileSettings,
     accounts: Vec<db::users::social_accounts::SocialAccount>,
 ) -> Profile {

@@ -1,9 +1,8 @@
 //! Shared organization lifecycle effects for native settings and REST.
-use crate::backend::{
-    app::AppState,
-    db::{organizations, DbPool},
-    repositories::lifecycle,
-};
+use crate::backend::app::AppState;
+use crate::backend::db::organizations;
+use crate::backend::repositories::lifecycle;
+use codeyard_db_core::DbPool;
 use organizations::OrganizationOutcome::{self, Applied};
 use tokio::sync::Semaphore;
 

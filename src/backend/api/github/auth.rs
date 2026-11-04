@@ -1,15 +1,13 @@
 //! Token-only authentication, separate from browser sessions and CSRF.
 use super::{Error, Result};
-use crate::backend::{
-    api::http::session,
-    app::AppState,
-    db::{
-        self,
-        models::{PersonalAccessToken, User},
-    },
-    identity::{admission, tokens::token_hash},
-};
+use crate::backend::api::http::session;
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::identity::admission;
+use crate::backend::identity::tokens::token_hash;
 use axum::http::{header, HeaderMap, Method, StatusCode};
+use codeyard_db_core::models::PersonalAccessToken;
+use codeyard_db_core::models::User;
 
 #[derive(Clone)]
 pub(in crate::backend::api) struct Authentication {
@@ -147,7 +145,7 @@ impl Authentication {
 
     pub async fn repository_scope(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         scope: &str,
         write: bool,
@@ -219,7 +217,7 @@ impl Authentication {
 
     /// Checks that the token still works, for a request whose body took long to arrive after
     /// it authenticated: a token revoked meanwhile must not publish that body.
-    pub async fn require_live(&self, pool: &db::DbPool) -> Result<()> {
+    pub async fn require_live(&self, pool: &codeyard_db_core::DbPool) -> Result<()> {
         db::users::tokens::token_user(pool, self.token.id, true)
             .await
             .map_err(Error::unavailable)?
@@ -310,7 +308,7 @@ pub(super) async fn referenced_repository(
     state: &AppState,
     auth: Option<&Authentication>,
     id: i64,
-) -> Result<Option<db::models::Repository>> {
+) -> Result<Option<codeyard_db_core::models::Repository>> {
     let Some(repo) = db::repositories::records::get_repository_by_id(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
@@ -703,7 +701,7 @@ fn level(write: bool) -> &'static str {
 async fn bound_repository(
     state: &AppState,
     params: &std::collections::HashMap<String, String>,
-) -> Result<db::models::Repository> {
+) -> Result<codeyard_db_core::models::Repository> {
     let repo = if let Some(id) = params.get("repository_id") {
         db::repositories::records::get_repository_by_id(
             &state.pool,
@@ -722,7 +720,7 @@ async fn bound_repository(
 }
 
 /// Numbered collections and individual comment routes address the same PR conversation.
-async fn pull_conversation(pool: &db::DbPool, repo: i64, path: &str) -> Result<bool> {
+async fn pull_conversation(pool: &codeyard_db_core::DbPool, repo: i64, path: &str) -> Result<bool> {
     let segments: Vec<_> = path.trim_start_matches('/').split('/').collect();
     match segments.as_slice() {
         ["repos", _, _, "issues", number, "comments"] => match number.parse() {

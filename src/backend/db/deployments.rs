@@ -1,7 +1,8 @@
 //! Deployment requests and append-only status history, independent of CI execution attempts.
-use crate::backend::db::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::Deserialize;
 
 #[derive(Debug, thiserror::Error)]

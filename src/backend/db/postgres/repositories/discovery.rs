@@ -1,11 +1,14 @@
 use crate::backend::db::discussions::contains_pattern;
-use crate::backend::db::models::{Issue, PullRequest, Repository, User};
 use crate::backend::db::postgres::repositories::access::readable_condition;
 use crate::backend::db::repositories::discovery::{
     repository_order_by, ItemSort, NewForkedRepository, RepositorySearch,
 };
 use crate::backend::db::repositories::records::RepositorySort;
 use anyhow::Result;
+use codeyard_db_core::models::Issue;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
 use sqlx::PgPool;
 
 pub async fn create_forked_repository(

@@ -7,11 +7,10 @@ use crate::support::{
     github_spec::assert_github_schema,
     native_database as native,
 };
-use codeyard::backend::{
-    cluster::replicas,
-    db::{self, users::accounts::AccountCredential},
-    repositories::deploy_keys::DeployKeyError,
-};
+use codeyard::backend::cluster::replicas;
+use codeyard::backend::db;
+use codeyard::backend::db::users::accounts::AccountCredential;
+use codeyard_model::repositories::DeployKeyError;
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

@@ -4,12 +4,13 @@
 use crate::support::database::Database;
 use crate::support::organizations::applied;
 
-use codeyard::backend::db::{
-    self,
-    discussions::DiscussionEdit,
-    models::{AccessLevel, CiRun, OrgRole, Repository},
-    organizations as orgs,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::discussions::DiscussionEdit;
+use codeyard::backend::db::organizations as orgs;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::CiRun;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Repository;
 use db::repositories::{insert_repository, NewRepository};
 use uuid::Uuid;
 
@@ -145,7 +146,11 @@ async fn expect_writes(database: &Database, actor: i64, repo: i64, allowed: bool
     };
     assert_eq!(can_merge, allowed, "merge actor={actor}");
 }
-async fn fork(pool: &db::DbPool, actor: i64, source: i64) -> anyhow::Result<Option<Repository>> {
+async fn fork(
+    pool: &codeyard_db_core::DbPool,
+    actor: i64,
+    source: i64,
+) -> anyhow::Result<Option<Repository>> {
     let name = format!("fork_{}", Uuid::new_v4().simple());
     insert_repository(
         pool,
@@ -162,7 +167,7 @@ async fn fork(pool: &db::DbPool, actor: i64, source: i64) -> anyhow::Result<Opti
     .await
 }
 async fn enqueue(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     repo: i64,
     cd: bool,

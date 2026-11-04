@@ -3,19 +3,30 @@
 use super::quorum_sql::{replace_node_key, set_timeout, setup_with_refs, Fixture};
 use crate::support::native_database as native;
 use base64::Engine;
-use codeyard::backend::{
-    ci::{queue::RunQueue, CiConfig, CiRuns},
-    cluster::{
-        self, context::term_path, rpc, tcp, IrohDialer, NodeAddress, NodeContext, PairingHandler,
-        Relay,
-    },
-    db::{self, cluster::writes, models::RefValue, DbPool},
-    notifications::NotificationBroadcaster,
-    repositories::{
-        git_sessions::{receive_session, ReceiveCredential, ReceiveSession},
-        store::{GitService, GitSession, GitStreams, RepoStore},
-    },
-};
+use codeyard::backend::ci::queue::RunQueue;
+use codeyard::backend::ci::CiConfig;
+use codeyard::backend::ci::CiRuns;
+use codeyard::backend::cluster;
+use codeyard::backend::cluster::context::term_path;
+use codeyard::backend::cluster::rpc;
+use codeyard::backend::cluster::tcp;
+use codeyard::backend::cluster::IrohDialer;
+use codeyard::backend::cluster::NodeAddress;
+use codeyard::backend::cluster::NodeContext;
+use codeyard::backend::cluster::PairingHandler;
+use codeyard::backend::cluster::Relay;
+use codeyard::backend::db;
+use codeyard::backend::db::cluster::writes;
+use codeyard::backend::notifications::NotificationBroadcaster;
+use codeyard::backend::repositories::git_sessions::receive_session;
+use codeyard::backend::repositories::git_sessions::ReceiveCredential;
+use codeyard::backend::repositories::git_sessions::ReceiveSession;
+use codeyard::backend::repositories::store::GitService;
+use codeyard::backend::repositories::store::GitSession;
+use codeyard::backend::repositories::store::GitStreams;
+use codeyard::backend::repositories::store::RepoStore;
+use codeyard_db_core::models::RefValue;
+use codeyard_db_core::DbPool;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::time::{timeout, Instant};
 
@@ -268,7 +279,7 @@ impl Stores {
     }
 }
 
-async fn last_write(pool: &DbPool, repo: i64) -> db::models::WriteRecord {
+async fn last_write(pool: &DbPool, repo: i64) -> codeyard_db_core::models::WriteRecord {
     let query = "SELECT id FROM repository_writes WHERE repository_id=$1 ORDER BY base_version DESC LIMIT 1";
     let id: String = match pool {
         DbPool::Postgres(raw) => sqlx::query_scalar(query)

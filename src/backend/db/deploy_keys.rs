@@ -1,8 +1,9 @@
 //! Deploy keys: mutations retain live session and repository-admin authority and keep
 //! each public key unique across account keys and deploy keys.
-use crate::backend::db::models::DeployKey;
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::DeployKey;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// A live browser session or write token, checked with the repository mutation.
 pub use crate::backend::db::users::accounts::OwnedAccountCredential as Credential;

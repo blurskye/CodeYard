@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 /// Repository checks read only the repositories this node stores. In cluster mode most of them
 /// live on other nodes, so the checks refuse to report success for repositories they did not read.
-async fn refuse_cluster(pool: &db::DbPool, command: &str) -> Result<()> {
+async fn refuse_cluster(pool: &codeyard_db_core::DbPool, command: &str) -> Result<()> {
     ensure!(
         !db::cluster::cluster_enabled(pool).await?,
         "codeyard repo {command} covers a single-node installation; this one is in cluster mode"
@@ -35,7 +35,7 @@ fn pull_number(reference: &str) -> Option<i64> {
 /// A retained pull ref has no branch provenance. Hold the recorded head branch's publication
 /// lease through the SQL CAS, and accept its retained commit only while that live branch matches.
 async fn retain_matching_head(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     pull: &db::backups::PullRequestHead,
     candidate: &str,
 ) -> Result<Option<Arc<git::locks::PublicationGuard>>> {
@@ -64,7 +64,7 @@ async fn retain_matching_head(
 }
 
 /// Checks every repository this node stores and returns how many problems remain.
-pub async fn verify(pool: &db::DbPool, repair: bool) -> Result<usize> {
+pub async fn verify(pool: &codeyard_db_core::DbPool, repair: bool) -> Result<usize> {
     refuse_cluster(pool, "verify").await?;
     let mut problems = 0;
     let mut report = |line: String| {
@@ -298,7 +298,7 @@ pub async fn verify(pool: &db::DbPool, repair: bool) -> Result<usize> {
 
 /// Rebuilds what is derived from the stored repositories: Git's pack indexes and commit
 /// graph, then each default branch's language statistics.
-pub async fn rebuild(pool: &db::DbPool) -> Result<()> {
+pub async fn rebuild(pool: &codeyard_db_core::DbPool) -> Result<()> {
     refuse_cluster(pool, "rebuild").await?;
     let mut rebuilt = 0;
     for repository in db::backups::list_repositories(pool).await? {

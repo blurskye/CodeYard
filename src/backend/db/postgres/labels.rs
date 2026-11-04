@@ -1,8 +1,8 @@
-use super::models::Label;
 use crate::backend::db::labels::{
     bounded_label_ids, ItemLabel, LabelTarget, LabelWriteRefusal, PAGE_DESCRIPTION_CHARS,
 };
 use anyhow::Result;
+use codeyard_db_core::models::Label;
 use sqlx::{PgPool, Postgres, Transaction};
 
 async fn begin_label_write<'a>(

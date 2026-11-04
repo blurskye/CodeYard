@@ -1,16 +1,11 @@
 use super::{auth, pagination::Pagination, users, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        models::User,
-        users::{
-            accounts::AccountCredential,
-            gpg_keys::{self, GpgKey},
-        },
-    },
-    identity::gpg::{self, GpgError},
-    webhooks::payloads,
-};
+use crate::backend::app::AppState;
+use crate::backend::db::users::accounts::AccountCredential;
+use crate::backend::db::users::gpg_keys;
+use crate::backend::db::users::gpg_keys::GpgKey;
+use crate::backend::identity::gpg;
+use crate::backend::identity::gpg::GpgError;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -18,6 +13,7 @@ use axum::{
     routing::{delete, get, post, MethodRouter},
     Json,
 };
+use codeyard_db_core::models::User;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;

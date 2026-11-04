@@ -7,14 +7,15 @@ use crate::backend::api::http::session::{get_current_user, get_optional_user};
 use crate::backend::api::repos::access::find_repository;
 use crate::backend::api::repos::paging::{json_page, PageQuery};
 use crate::backend::app::AppState;
-use crate::backend::db;
-use crate::backend::db::models::{ReleaseAsset, ReleaseRow};
+
 use crate::backend::repositories::releases::{
     self as releases, ReleaseChanges, ReleaseError, ReleaseFields, ReleaseInput,
 };
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
+use codeyard_db_core::models::ReleaseAsset;
+use codeyard_db_core::models::ReleaseRow;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -119,7 +120,7 @@ fn asset_response(origin: &str, base: &str, tag: &str, asset: &ReleaseAsset) -> 
 /// What the source archives of a release are cut from: the tag's full ref, so a branch with the
 /// same name is not downloaded. A draft whose tag does not exist yet keeps the commit it was
 /// saved for.
-pub(super) fn archive_revision(release: &db::models::Release) -> String {
+pub(super) fn archive_revision(release: &codeyard_db_core::models::Release) -> String {
     if release.is_draft && codeyard_git::is_full_commit_id(&release.target_commitish) {
         release.target_commitish.clone()
     } else {

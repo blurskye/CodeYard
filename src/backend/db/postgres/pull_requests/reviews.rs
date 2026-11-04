@@ -1,4 +1,3 @@
-use crate::backend::db::models::{PullRequest, PullRequestComment, PullRequestReview, User};
 use crate::backend::db::postgres::discussions::{self, AUTHORITY_DENIED};
 use crate::backend::db::pull_requests::reviews::DiscussionItem;
 use crate::backend::db::pull_requests::reviews::DiscussionRef;
@@ -9,6 +8,10 @@ use crate::backend::db::pull_requests::reviews::PullRequestReviewDecision;
 use crate::backend::db::pull_requests::reviews::PullRequestReviewEntry;
 use crate::backend::db::pull_requests::reviews::MAX_REVIEW_COMMENTS;
 use anyhow::Result;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::PullRequestComment;
+use codeyard_db_core::models::PullRequestReview;
+use codeyard_db_core::models::User;
 use sqlx::PgPool;
 use std::collections::HashMap;
 
@@ -1175,7 +1178,7 @@ pub async fn request_code_owner_reviews(
     let mut tx = pool.begin().await?;
     discussions::require_contribution_authority(&mut tx, actor_id, pull.repo_id).await?;
     anyhow::ensure!(
-        owners.len() <= crate::backend::repositories::code_owners::MAX_REVIEWERS,
+        owners.len() <= codeyard_model::repositories::MAX_REVIEWERS,
         "Too many code owners"
     );
     // The actor locks the common organization, governance and repository scope once.

@@ -1,5 +1,5 @@
-use crate::backend::db::models::RepoLanguage;
 use anyhow::Result;
+use codeyard_db_core::models::RepoLanguage;
 use sqlx::PgPool;
 
 use crate::backend::db::repository_stats::{LanguageSource, RepoActivityPoint, WorkflowUsage};

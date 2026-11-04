@@ -112,12 +112,12 @@ async fn administration(pg: bool) {
     let sql =
         "SELECT action,target_id FROM audit_log WHERE actor_id=$1 AND org_id IS NULL ORDER BY id";
     let rows: Vec<(String, i64)> = match f.pool() {
-        db::DbPool::Postgres(pool) => sqlx::query_as(sql)
+        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_as(sql)
             .bind(actor)
             .fetch_all(pool)
             .await
             .unwrap(),
-        db::DbPool::Sqlite(pool) => sqlx::query_as(sql)
+        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_as(sql)
             .bind(actor)
             .fetch_all(pool)
             .await

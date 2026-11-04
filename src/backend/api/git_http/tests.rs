@@ -4,13 +4,13 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 
 async fn fixture() -> (tempfile::TempDir, Arc<AppState>, Repository, i64) {
     let root = tempfile::tempdir().unwrap();
-    let pool = db::init_db(&format!(
+    let pool = codeyard_db_core::init_db(&format!(
         "sqlite://{}",
         root.path().join("test.db").display()
     ))
     .await
     .unwrap();
-    db::run_migrations(&pool).await.unwrap();
+    codeyard_db_core::run_migrations(&pool).await.unwrap();
     db::node_config::upsert_node_configuration(&pool, "public", true)
         .await
         .unwrap();
@@ -45,7 +45,7 @@ async fn personal_administrator_git_access_keeps_token_scopes_and_org_restrictio
     let actor = db::users::accounts::create_user(&state.pool, "admin", None)
         .await
         .unwrap();
-    let db::DbPool::Sqlite(raw) = &state.pool else {
+    let codeyard_db_core::DbPool::Sqlite(raw) = &state.pool else {
         unreachable!()
     };
     sqlx::query("UPDATE users SET is_admin=1 WHERE id=?")

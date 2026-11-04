@@ -28,13 +28,13 @@ struct Fixture {
 impl Fixture {
     async fn new() -> Self {
         let root = tempfile::tempdir().unwrap();
-        let pool = db::init_db(&format!(
+        let pool = codeyard_db_core::init_db(&format!(
             "sqlite://{}",
             root.path().join("app.sqlite").display()
         ))
         .await
         .unwrap();
-        db::run_migrations(&pool).await.unwrap();
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let user = db::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();

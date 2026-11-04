@@ -273,7 +273,10 @@ struct List {
     until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-async fn identity_emails(pool: &db::DbPool, value: Option<&str>) -> Result<Option<Vec<String>>> {
+async fn identity_emails(
+    pool: &codeyard_db_core::DbPool,
+    value: Option<&str>,
+) -> Result<Option<Vec<String>>> {
     match value.map(str::trim) {
         None | Some("") => Ok(Some(Vec::new())),
         Some(address) if address.contains('@') => Ok(Some(vec![address.to_owned()])),

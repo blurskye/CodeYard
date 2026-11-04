@@ -1,5 +1,7 @@
-use crate::backend::db::{models::User, DbPool};
 use anyhow::Result;
+use codeyard_db_core::models::User;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 pub(crate) fn connections_sql(followers: bool) -> &'static str {
     if followers {

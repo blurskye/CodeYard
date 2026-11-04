@@ -162,9 +162,15 @@ impl Fixture {
         )
         .id;
         applied(
-            add_organization_member(pool, owner.id, org, member.id, db::models::OrgRole::Member)
-                .await
-                .unwrap(),
+            add_organization_member(
+                pool,
+                owner.id,
+                org,
+                member.id,
+                codeyard_db_core::models::OrgRole::Member,
+            )
+            .await
+            .unwrap(),
         );
         let root = tempfile::tempdir().expect("owned organization page Git/objects");
         let path = root.path().join("pages.git");
@@ -221,7 +227,7 @@ impl Fixture {
     pub fn path(&self) -> String {
         format!("{INDEX}/{}", self.org)
     }
-    pub async fn actor(pool: &db::DbPool, username: &str) -> Actor {
+    pub async fn actor(pool: &codeyard_db_core::DbPool, username: &str) -> Actor {
         let id = db::users::accounts::create_user(pool, username, None)
             .await
             .unwrap()

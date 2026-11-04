@@ -9,12 +9,14 @@ use crate::support::native_database as native;
 use crate::support::organizations::applied;
 use crate::support::production_ci as production;
 
-use codeyard::backend::db::{
-    self,
-    discussions::DiscussionEdit,
-    models::{AccessLevel, Issue, OrgRole, PullRequest, Repository},
-    organizations as orgs,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::discussions::DiscussionEdit;
+use codeyard::backend::db::organizations as orgs;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::Issue;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::Repository;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -104,7 +106,11 @@ impl Database {
 fn refusal<T: std::fmt::Debug>(result: anyhow::Result<T>) {
     assert_eq!(result.unwrap_err().to_string(), DENIED);
 }
-async fn new_pr(pool: &db::DbPool, repo: i64, actor: i64) -> anyhow::Result<PullRequest> {
+async fn new_pr(
+    pool: &codeyard_db_core::DbPool,
+    repo: i64,
+    actor: i64,
+) -> anyhow::Result<PullRequest> {
     let branch = format!(
         "feature-{actor}-{}",
         NEXT_PR_BRANCH.fetch_add(1, Ordering::Relaxed)
@@ -242,7 +248,13 @@ async fn review_denied(
 }
 /// Edits the title and body of `issue` and `pr`, and checks that both edits are `allowed` or both
 /// refused.
-async fn edits(pool: &db::DbPool, actor: i64, issue: &Issue, pr: &PullRequest, allowed: bool) {
+async fn edits(
+    pool: &codeyard_db_core::DbPool,
+    actor: i64,
+    issue: &Issue,
+    pr: &PullRequest,
+    allowed: bool,
+) {
     let issue_edit = db::issues::update_issue(
         pool,
         issue.id,
@@ -275,7 +287,7 @@ async fn edits(pool: &db::DbPool, actor: i64, issue: &Issue, pr: &PullRequest, a
     .unwrap();
     assert_eq!(pr_edit.is_some(), allowed);
 }
-async fn edit_denied(pool: &db::DbPool, actor: i64, issue: &Issue, pr: &PullRequest) {
+async fn edit_denied(pool: &codeyard_db_core::DbPool, actor: i64, issue: &Issue, pr: &PullRequest) {
     edits(pool, actor, issue, pr, false).await;
 }
 
@@ -955,7 +967,7 @@ async fn contract(pg: bool) {
     d.finish().await;
 }
 
-async fn file_comment(pool: &db::DbPool, pr: i64, author: i64) -> i64 {
+async fn file_comment(pool: &codeyard_db_core::DbPool, pr: i64, author: i64) -> i64 {
     db::pull_requests::reviews::add_pull_request_comment(
         pool,
         db::pull_requests::reviews::NewPullRequestComment {
@@ -977,18 +989,18 @@ async fn file_comment(pool: &db::DbPool, pr: i64, author: i64) -> i64 {
     .id
 }
 async fn resolve(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     pr: i64,
     comment: i64,
     resolved: bool,
     actor: i64,
-) -> anyhow::Result<Option<db::models::PullRequestComment>> {
+) -> anyhow::Result<Option<codeyard_db_core::models::PullRequestComment>> {
     db::pull_requests::reviews::set_pull_request_comment_resolved(
         pool, pr, comment, resolved, actor,
     )
     .await
 }
-async fn still_open(pool: &db::DbPool, comment: i64) -> bool {
+async fn still_open(pool: &codeyard_db_core::DbPool, comment: i64) -> bool {
     db::pull_requests::reviews::get_pull_request_comment_by_id(pool, comment)
         .await
         .unwrap()

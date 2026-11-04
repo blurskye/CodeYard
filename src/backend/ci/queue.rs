@@ -1,13 +1,17 @@
 //! One CI queue, reached through the database or a paired core node.
 use super::{config::RunLimits, CiConfig, CiExecutionMode};
-use crate::backend::{
-    cluster::{self, rpc, NodeContext},
-    crypto::SecretEncryptor,
-    db::{self, models::CiRun, DbPool},
-    notifications::NotificationBroadcaster,
-    repositories::store::{repo_store, RepoStore},
-};
+use crate::backend::cluster;
+use crate::backend::cluster::rpc;
+use crate::backend::cluster::NodeContext;
+use crate::backend::crypto::SecretEncryptor;
+use crate::backend::db;
+use crate::backend::notifications::NotificationBroadcaster;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::RepoStore;
 use anyhow::{ensure, Context, Result};
+use codeyard_db_core::models::CiRun;
+use codeyard_db_core::DbPool;
+use codeyard_model::ci::LogLine;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::watch;
@@ -113,17 +117,6 @@ pub enum RunQueue {
         peers: Vec<cluster::CorePeer>,
         preferred: Arc<std::sync::Mutex<Option<String>>>,
     },
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct LogLine {
-    pub stage: String,
-    pub line: String,
-    pub level: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub job_id: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step_number: Option<i32>,
 }
 
 /// Replaces each control byte except tab, CR and LF with `?`. PostgreSQL cannot store NUL.

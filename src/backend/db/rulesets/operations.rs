@@ -1,6 +1,8 @@
 use super::{Definition, ListFilter, Owner, Page, Ruleset, Suite, SuiteFilter, Version, View};
-use crate::backend::db::{organizations::OrganizationOutcome, DbPool};
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde_json::Value;
 
 native_operation!(crate::backend::db::postgres::organizations::rulesets::list,crate::backend::db::sqlite::organizations::rulesets::list,

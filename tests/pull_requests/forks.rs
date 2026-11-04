@@ -329,7 +329,7 @@ async fn contract(pg: bool) {
         None,
         &ci_runs,
         bob_id,
-        codeyard::backend::db::models::AccessLevel::Owner,
+        codeyard_db_core::models::AccessLevel::Owner,
     )
     .await
     .unwrap();
@@ -714,7 +714,7 @@ echo isolated-checkout-only-admitted-objects
         f.pool(),
         bob_id,
         base.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -1045,7 +1045,7 @@ async fn private_fork_revocation_contract(pg: bool) {
         f.pool(),
         bob_id,
         fork.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -1176,7 +1176,7 @@ async fn private_fork_revocation_contract(pg: bool) {
         Some(&["main", "later"][..]),
         &ci,
         alice_id,
-        codeyard::backend::db::models::AccessLevel::Owner
+        codeyard_db_core::models::AccessLevel::Owner
     )
     .await
     .is_err());

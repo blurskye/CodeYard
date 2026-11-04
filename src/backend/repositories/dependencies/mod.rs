@@ -22,7 +22,7 @@ pub struct Status {
     pub paused: bool,
 }
 async fn delegated_admin(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: i64,
     actor: Option<i64>,
 ) -> Result<bool, DependencyError> {
@@ -38,7 +38,7 @@ async fn delegated_admin(
     }
 }
 pub async fn status(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     repo: i64,
     feature: Feature,
@@ -92,7 +92,7 @@ pub async fn status(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn set_enabled(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     actor: i64,
     credential: db::users::accounts::OwnedAccountCredential,
@@ -125,8 +125,8 @@ pub async fn set_enabled(
 }
 
 pub(crate) async fn observe_refs(
-    pool: &db::DbPool,
-    repo: &db::models::Repository,
+    pool: &codeyard_db_core::DbPool,
+    repo: &codeyard_db_core::models::Repository,
     moves: &[crate::backend::webhooks::ref_changes::RefMove],
 ) {
     let default = format!("refs/heads/{}", repo.default_branch);
@@ -149,7 +149,7 @@ pub(crate) async fn observe_refs(
 }
 pub(crate) fn check_publication(
     actor: i64,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     prepared: &super::store::PreparedFile,
     publication: &records::Publication,
     refs: &std::collections::HashMap<String, String>,

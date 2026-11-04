@@ -1,6 +1,8 @@
 //! Commit discussions. Mutations recheck contribution or moderation authority in their transaction.
-use crate::backend::db::{models::CommitComment, DbPool};
 use anyhow::Result;
+use codeyard_db_core::models::CommitComment;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CommentRefusal {

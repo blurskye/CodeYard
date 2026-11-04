@@ -71,7 +71,7 @@ async fn lists(pg: bool) {
         f.pool(),
         alice,
         repos[1].id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();

@@ -1,6 +1,7 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// An issue or a pull request, the two rows that can have assignees.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,7 +83,7 @@ native_operation!(crate::backend::db::postgres::assignees::count_assignable_user
     fn count_assignable_users(pool: &DbPool, repo_id: i64, query: &str) -> Result<i64>);
 native_operation!(crate::backend::db::postgres::assignees::list_assignable_users,
     crate::backend::db::sqlite::assignees::list_assignable_users,
-    fn list_assignable_users(pool: &DbPool, repo_id: i64, query: &str, offset: i64, limit: i64) -> Result<Vec<crate::backend::db::models::User>>);
+    fn list_assignable_users(pool: &DbPool, repo_id: i64, query: &str, offset: i64, limit: i64) -> Result<Vec<codeyard_db_core::models::User>>);
 
 // The usernames that may be assigned in a repository: its personal owner and its collaborators.
 native_operation!(crate::backend::db::postgres::assignees::list_assignable_usernames,

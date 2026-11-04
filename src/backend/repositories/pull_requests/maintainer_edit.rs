@@ -1,16 +1,14 @@
 //! Personal-fork consent is scoped to one open pull request, never general Git write access.
-use crate::backend::{
-    db::{
-        self,
-        models::{PullRequest, Repository, User},
-    },
-    repositories::access,
-};
+use crate::backend::db;
+use crate::backend::repositories::access;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
 
 /// A fork's ongoing publication grant follows the real contributor's live access.
 /// Importing an issue's author must never borrow that historical user's authority.
 pub(crate) async fn publication_authorized(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     publisher: Option<i64>,
     head: &Repository,
 ) -> anyhow::Result<bool> {
@@ -27,7 +25,7 @@ pub(crate) async fn publication_authorized(
 }
 
 pub(crate) async fn can_update_head(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: &User,
     base: &Repository,
     head: &Repository,

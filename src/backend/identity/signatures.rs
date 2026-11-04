@@ -1,14 +1,13 @@
 //! Commit and tag signatures are checked against the signer's registered GPG and SSH signing
 //! keys, and the committer address must be a verified address of the key's owner. The reasons
 //! are GitHub's verification reasons.
-use crate::backend::db::{
-    self,
-    models::User,
-    users::{gpg_keys::GpgKey, signing_keys::SigningKeyOwner},
-    DbPool,
-};
+use crate::backend::db;
+use crate::backend::db::users::gpg_keys::GpgKey;
+use crate::backend::db::users::signing_keys::SigningKeyOwner;
 use anyhow::Result;
 use base64::Engine;
+use codeyard_db_core::models::User;
+use codeyard_db_core::DbPool;
 use pgp::{
     composed::{Deserializable, DetachedSignature},
     crypto::hash::HashAlgorithm,

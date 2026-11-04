@@ -67,7 +67,7 @@ pub struct CommentResponse {
 }
 
 impl CommentResponse {
-    fn new(comment: db::models::IssueComment, author: UserResponse) -> Self {
+    fn new(comment: codeyard_db_core::models::IssueComment, author: UserResponse) -> Self {
         Self {
             id: comment.id,
             issue_id: comment.issue_id,

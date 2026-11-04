@@ -12,7 +12,7 @@ use codeyard::backend::{
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-const CLI: &str = oauth::CLI_CLIENT;
+const CLI: &str = codeyard_model::identity::CLI_CLIENT;
 const SECRET: &str = "34ddeff2b558a23d38fba8a6de74f086ede1cc0b";
 const DEVICE: &str = "urn:ietf:params:oauth:grant-type:device_code";
 
@@ -464,7 +464,7 @@ async fn contract(pg: bool) {
         base64::engine::general_purpose::STANDARD.encode(format!("{CLI}:{SECRET}"))
     );
     let path = format!("/api/v3/applications/{CLI}/token");
-    let other_id = codeyard::backend::crypto::random_hex();
+    let other_id = codeyard_support::crypto::random_hex();
     let other_app = db::oauth_apps::register(
         f.pool(),
         actor,
@@ -727,7 +727,7 @@ async fn contract(pg: bool) {
         .await["error"],
         "access_denied"
     );
-    let owned_id = codeyard::backend::crypto::random_hex();
+    let owned_id = codeyard_support::crypto::random_hex();
     db::oauth_apps::register(
         f.pool(),
         actor,

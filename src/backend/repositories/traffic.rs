@@ -1,11 +1,10 @@
 //! Traffic means observed native navigations and completed initial Git object transfers.
 pub(crate) mod clone;
-use crate::backend::db::{
-    self,
-    models::{Repository, User},
-    DbPool,
-};
+use crate::backend::db;
 use anyhow::{ensure, Result};
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
+use codeyard_db_core::DbPool;
 pub use db::repositories::traffic::{
     Bucket, Identity, Kind, Metric, PopularPath, PopularReferrer, Summary, Totals, Window,
 };

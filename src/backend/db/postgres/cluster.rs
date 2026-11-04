@@ -1,14 +1,17 @@
 //! Cluster membership on PostgreSQL. Roles are a `TEXT[]` column.
 pub(crate) mod writes;
-use super::models::{
-    ClusterNode, HeldReplica, JoinInvite, JoinOutcome, NodeReplicaCounts, NodeStatusChange,
-};
 use crate::backend::db::cluster::{
     Authority, DeclaredMember, FamilyOutcome, JoinRequest, NewJoinToken, PrimaryReplicaRow,
     PromoteOutcome,
 };
 use crate::backend::db::postgres::users::transitions::{active_admin, live_session};
 use anyhow::{anyhow, bail, ensure, Result};
+use codeyard_db_core::models::ClusterNode;
+use codeyard_db_core::models::HeldReplica;
+use codeyard_db_core::models::JoinInvite;
+use codeyard_db_core::models::JoinOutcome;
+use codeyard_db_core::models::NodeReplicaCounts;
+use codeyard_db_core::models::NodeStatusChange;
 use sqlx::{PgConnection, PgPool};
 
 /// Turns the name-uniqueness failure into a message an operator can act on.
@@ -473,7 +476,7 @@ pub async fn replica_applied_version(
 pub async fn get_repository_by_uuid(
     pool: &PgPool,
     uuid: &str,
-) -> Result<Option<crate::backend::db::models::Repository>> {
+) -> Result<Option<codeyard_db_core::models::Repository>> {
     Ok(
         sqlx::query_as("SELECT * FROM repositories WHERE right(disk_path, 40) = $1 || '.git'")
             .bind(uuid)
@@ -608,7 +611,7 @@ pub async fn assign_replica_family(
     pool: &PgPool,
     repository: i64,
     primary: i64,
-    setting: crate::backend::db::models::ReplicaSetting,
+    setting: codeyard_db_core::models::ReplicaSetting,
 ) -> Result<Vec<i64>> {
     let mut tx = pool.begin().await?;
     // One reservation owner across primaries, held through every family-row change.

@@ -24,8 +24,8 @@ pub(super) enum Reader<'a> {
 
 /// The REST issue document that webhook payloads send. `None` when the item is gone.
 pub(crate) async fn webhook_document(
-    pool: &db::DbPool,
-    repo: &db::models::Repository,
+    pool: &codeyard_db_core::DbPool,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     item: AssignedItem,
 ) -> Option<Value> {
@@ -35,9 +35,9 @@ pub(crate) async fn webhook_document(
 }
 
 pub(super) async fn document(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     reader: Reader<'_>,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     item: AssignedItem,
 ) -> Result<Value> {
@@ -50,9 +50,9 @@ pub(super) async fn document(
 /// The documents of items in several repositories, in the order given. Items of one repository
 /// are read together.
 pub(super) async fn documents_across(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     reader: Reader<'_>,
-    items: &[(&db::models::Repository, &str, AssignedItem)],
+    items: &[(&codeyard_db_core::models::Repository, &str, AssignedItem)],
 ) -> Result<Vec<Value>> {
     let mut groups: Vec<(i64, Vec<usize>)> = Vec::new();
     for (index, (repo, _, _)) in items.iter().enumerate() {
@@ -80,9 +80,9 @@ pub(super) async fn documents_across(
 /// The issue documents of `items`, all in `repo`, in the same order. An item that is gone or in
 /// another repository is missing.
 pub(super) async fn documents(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     reader: Reader<'_>,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     items: &[AssignedItem],
 ) -> Result<Vec<Value>> {
@@ -137,21 +137,21 @@ fn sorted(mut ids: Vec<i64>) -> Vec<i64> {
 
 /// Up to 100 documents. Each kind of metadata is read in one batch for the whole page.
 async fn documents_page(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     reader: Reader<'_>,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     items: &[AssignedItem],
 ) -> Result<Vec<Value>> {
     let (issue_ids, pull_ids) = split(items);
-    let issues: HashMap<i64, db::models::Issue> =
+    let issues: HashMap<i64, codeyard_db_core::models::Issue> =
         db::issues::get_issues_by_ids(pool, repo.id, &issue_ids)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
             .map(|issue| (issue.id, issue))
             .collect();
-    let pulls: HashMap<i64, db::models::PullRequest> =
+    let pulls: HashMap<i64, codeyard_db_core::models::PullRequest> =
         db::pull_requests::records::get_pull_requests_by_ids(pool, repo.id, &pull_ids)
             .await
             .map_err(Error::unavailable)?
@@ -162,7 +162,7 @@ async fn documents_page(
         AssignedItem::Issue(id) => issues.contains_key(&id),
         AssignedItem::PullRequest(id) => pulls.contains_key(&id),
     };
-    let milestones: HashMap<i64, db::models::MilestoneSummary> =
+    let milestones: HashMap<i64, codeyard_db_core::models::MilestoneSummary> =
         db::milestones::get_milestones_by_ids(
             pool,
             repo.id,
@@ -180,31 +180,32 @@ async fn documents_page(
         .map(|summary| (summary.milestone.id, summary))
         .collect();
     // People: authors, closers and milestone creators by id, assignees by name, each read once.
-    let users: HashMap<i64, db::models::User> = db::users::accounts::get_users_by_ids(
-        pool,
-        &sorted(
-            issues
-                .values()
-                .flat_map(|issue| [Some(issue.author_id), issue.closed_by_id])
-                .chain(
-                    pulls
-                        .values()
-                        .flat_map(|pull| [Some(pull.author_id), pull.closed_by_id]),
-                )
-                .flatten()
-                .chain(
-                    milestones
-                        .values()
-                        .filter_map(|summary| summary.milestone.creator_id),
-                )
-                .collect(),
-        ),
-    )
-    .await
-    .map_err(Error::unavailable)?
-    .into_iter()
-    .map(|user| (user.id, user))
-    .collect();
+    let users: HashMap<i64, codeyard_db_core::models::User> =
+        db::users::accounts::get_users_by_ids(
+            pool,
+            &sorted(
+                issues
+                    .values()
+                    .flat_map(|issue| [Some(issue.author_id), issue.closed_by_id])
+                    .chain(
+                        pulls
+                            .values()
+                            .flat_map(|pull| [Some(pull.author_id), pull.closed_by_id]),
+                    )
+                    .flatten()
+                    .chain(
+                        milestones
+                            .values()
+                            .filter_map(|summary| summary.milestone.creator_id),
+                    )
+                    .collect(),
+            ),
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .into_iter()
+        .map(|user| (user.id, user))
+        .collect();
     let mut assigned: HashMap<(bool, i64), Vec<String>> = HashMap::new();
     for (pull, ids) in [(false, &issue_ids), (true, &pull_ids)] {
         if ids.is_empty() {
@@ -220,7 +221,7 @@ async fn documents_page(
     let mut names: Vec<String> = assigned.values().flatten().cloned().collect();
     names.sort_unstable();
     names.dedup();
-    let assignees: HashMap<String, db::models::User> = if names.is_empty() {
+    let assignees: HashMap<String, codeyard_db_core::models::User> = if names.is_empty() {
         HashMap::new()
     } else {
         db::users::accounts::get_users_by_usernames(pool, &names)
@@ -425,9 +426,9 @@ struct Summary {
 /// The relationship counts of `issue_ids`, all in `repo`, from the related issues the reader may
 /// read.
 async fn relationship_summaries(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     reader: Reader<'_>,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     issue_ids: &[i64],
 ) -> Result<HashMap<i64, Summary>> {
     let mut rows = Vec::new();
@@ -477,7 +478,11 @@ async fn relationship_summaries(
     Ok(summaries)
 }
 
-pub(super) async fn required_issue(pool: &db::DbPool, repo: i64, number: &str) -> Result<i64> {
+pub(super) async fn required_issue(
+    pool: &codeyard_db_core::DbPool,
+    repo: i64,
+    number: &str,
+) -> Result<i64> {
     let number = number.parse().map_err(|_| Error::missing())?;
     db::issues::get_issue(pool, repo, number)
         .await
@@ -727,7 +732,10 @@ fn assignee_names(names: Vec<String>) -> Result<Vec<String>> {
     Ok(unique.into_iter().collect())
 }
 
-async fn resolve_assignees(pool: &db::DbPool, names: &[String]) -> Result<Vec<db::models::User>> {
+async fn resolve_assignees(
+    pool: &codeyard_db_core::DbPool,
+    names: &[String],
+) -> Result<Vec<codeyard_db_core::models::User>> {
     let users = db::users::accounts::get_users_by_usernames(pool, names)
         .await
         .map_err(Error::unavailable)?;
@@ -741,7 +749,7 @@ async fn resolve_assignees(pool: &db::DbPool, names: &[String]) -> Result<Vec<db
 pub(in crate::backend::api) struct Metadata {
     issue_type: Option<Option<i64>>,
     labels: Option<Vec<i64>>,
-    assignees: Option<Vec<db::models::User>>,
+    assignees: Option<Vec<codeyard_db_core::models::User>>,
     milestone: Option<Option<i32>>,
 }
 
@@ -764,9 +772,9 @@ impl Metadata {
 }
 
 pub(in crate::backend::api) async fn metadata(
-    pool: &db::DbPool,
-    repo: &db::models::Repository,
-    actor: &db::models::User,
+    pool: &codeyard_db_core::DbPool,
+    repo: &codeyard_db_core::models::Repository,
+    actor: &codeyard_db_core::models::User,
     input: &Value,
 ) -> Result<Metadata> {
     if !crate::backend::repositories::access::can_triage(pool, actor, repo)
@@ -876,7 +884,7 @@ pub(in crate::backend::api) fn assignment_error(error: anyhow::Error) -> Error {
 pub(in crate::backend::api) async fn apply_metadata(
     state: &AppState,
     authentication: &auth::Authentication,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     item: AssignedItem,
     detail: (&str, i32, &str),
     metadata: Metadata,

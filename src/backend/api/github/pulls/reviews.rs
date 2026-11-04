@@ -16,9 +16,9 @@ use std::sync::Arc;
 async fn document(
     state: &AppState,
     owner: &str,
-    repo: &db::models::Repository,
-    pull: &db::models::PullRequest,
-    review: &db::models::PullRequestReview,
+    repo: &codeyard_db_core::models::Repository,
+    pull: &codeyard_db_core::models::PullRequest,
+    review: &codeyard_db_core::models::PullRequestReview,
 ) -> Result<Value> {
     let user = db::users::accounts::get_user_by_id(&state.pool, review.author_id)
         .await

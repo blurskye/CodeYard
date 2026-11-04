@@ -1,13 +1,10 @@
 //! Accepted ref activity shared by editor/branch/merge publication and Git HTTP/SSH hooks.
-use crate::backend::{
-    db::{
-        self,
-        repositories::activity::{Kind, RefActivity},
-        DbPool,
-    },
-    webhooks::ref_changes::RefMove,
-};
+use crate::backend::db;
+use crate::backend::db::repositories::activity::Kind;
+use crate::backend::db::repositories::activity::RefActivity;
+use crate::backend::webhooks::ref_changes::RefMove;
 use anyhow::{Context, Result};
+use codeyard_db_core::DbPool;
 use codeyard_git as git;
 use std::path::Path;
 use uuid::Uuid;

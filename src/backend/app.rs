@@ -1,11 +1,10 @@
 //! Shared application state: database, storage, CI and notification services.
-use crate::backend::{
-    ci::{CiConfig, CiRuns},
-    crypto::SecretEncryptor,
-    db::DbPool,
-    notifications::NotificationBroadcaster,
-    storage::ObjectStore,
-};
+use crate::backend::ci::CiConfig;
+use crate::backend::ci::CiRuns;
+use crate::backend::crypto::SecretEncryptor;
+use crate::backend::notifications::NotificationBroadcaster;
+use crate::backend::storage::ObjectStore;
+use codeyard_db_core::DbPool;
 use std::{path::PathBuf, sync::Arc};
 
 /// Allows the primary and one replica their full transport admission budgets, plus search time.

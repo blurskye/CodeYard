@@ -1,5 +1,7 @@
-use crate::backend::db::{credentials::Actor, models::OrgRole, organizations::*};
+use crate::backend::db::credentials::Actor;
+use crate::backend::db::organizations::*;
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
 use sqlx::{SqliteConnection, SqlitePool};
 use OrganizationOutcome::{Applied, Conflict, Denied};
 
@@ -100,7 +102,7 @@ pub async fn delete_organization_repository(
     actor: impl Into<Actor>,
     org: i64,
     repo: i64,
-) -> Result<OrganizationOutcome<crate::backend::db::models::Repository>> {
+) -> Result<OrganizationOutcome<codeyard_db_core::models::Repository>> {
     let owner = actor.into();
     let actor = owner.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;

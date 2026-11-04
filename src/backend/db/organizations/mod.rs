@@ -1,7 +1,7 @@
 //! Authoritative organization operations, dispatched while holding DB selection.
 //! Site administrators have NO implicit organization membership/management here.
 //! Ingress must supply a verified actor; IDs never imply user/org equivalence.
-use crate::backend::db::models::OrgRole;
+use codeyard_db_core::models::OrgRole;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OrganizationOutcome<T> {

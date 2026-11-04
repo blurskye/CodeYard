@@ -2,7 +2,7 @@ use super::{db, json, protection::call, request, Router, Value};
 
 pub(super) async fn run(
     router: &Router,
-    scope: (&db::DbPool, i64, i64),
+    scope: (&codeyard_db_core::DbPool, i64, i64),
     base: &str,
     tokens: (&str, &str, &str),
     sha: &str,

@@ -1,13 +1,13 @@
 //! Open scanners submit SARIF; queued uploads survive restarts and commit atomically.
 #[cfg(test)]
 mod tests;
-use crate::backend::db::{
-    self,
-    code_scanning::{Finding, Run, Upload},
-    DbPool,
-};
+use crate::backend::db;
+use crate::backend::db::code_scanning::Finding;
+use crate::backend::db::code_scanning::Run;
+use crate::backend::db::code_scanning::Upload;
 use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
+use codeyard_db_core::DbPool;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

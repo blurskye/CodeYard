@@ -138,7 +138,7 @@ pub async fn get_organization_avatar(
 pub async fn get_public_organization(
     pool: &PgPool,
     name: &str,
-) -> Result<Option<crate::backend::db::models::Organization>> {
+) -> Result<Option<codeyard_db_core::models::Organization>> {
     // Governance-suspended means no active owner, as in get_organization_metadata.
     Ok(sqlx::query_as(
         "SELECT o.* FROM organizations o WHERE o.name=$1 AND EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password)",
@@ -150,7 +150,7 @@ pub async fn get_public_organization(
 pub async fn get_public_organization_by_id(
     pool: &PgPool,
     id: i64,
-) -> Result<Option<crate::backend::db::models::Organization>> {
+) -> Result<Option<codeyard_db_core::models::Organization>> {
     Ok(sqlx::query_as(
         "SELECT o.* FROM organizations o WHERE o.id=$1 AND EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password)",
     ).bind(id).fetch_optional(pool).await?)

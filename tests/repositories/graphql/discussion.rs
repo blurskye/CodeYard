@@ -142,7 +142,6 @@ async fn discussions(
     repo: i64,
     label: &Value,
 ) {
-    use db::models::AccessLevel;
     let bob = f.actor("discussion-bob").await;
     let bob_token = credentials(f, router, bob, "write").await;
     let read_token = credentials(f, router, alice, "read").await;
@@ -226,9 +225,14 @@ async fn discussions(
     assert_eq!(second["number"], 3);
     refused(router, &read_token, create, json!({"input":new})).await;
     refused(router, &bob_token, create, json!({"input":new})).await;
-    db::repositories::access::grant_repo_access(f.pool(), bob, repo, AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        bob,
+        repo,
+        codeyard_db_core::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     let edit =
         "mutation($input:UpdateDiscussionInput!){updateDiscussion(input:$input){discussion{id}}}";
     refused(
@@ -261,9 +265,14 @@ async fn discussions(
         json!({"input":{"discussionId":discussion,"body":"Reader cannot comment"}}),
     )
     .await;
-    db::repositories::access::grant_repo_access(f.pool(), bob, repo, AccessLevel::Write)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        bob,
+        repo,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
     let c = mutation(
         router,
         &bob_token,
@@ -312,9 +321,14 @@ async fn discussions(
     let update_comment="mutation($input:UpdateDiscussionCommentInput!){updateDiscussionComment(input:$input){comment{id}}}";
     let charlie = f.actor("discussion-charlie").await;
     let charlie_token = credentials(f, router, charlie, "write").await;
-    db::repositories::access::grant_repo_access(f.pool(), charlie, repo, AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        charlie,
+        repo,
+        codeyard_db_core::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     refused(
         router,
         &charlie_token,
@@ -467,14 +481,24 @@ async fn discussions(
     assert_eq!(unmarked["discussion"]["isAnswered"], false);
     assert!(unmarked["discussion"]["answer"].is_null());
     // Labels are repository-scoped and require triage, not just read access.
-    db::repositories::access::grant_repo_access(f.pool(), bob, repo, AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        bob,
+        repo,
+        codeyard_db_core::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     let labels_input = json!({"labelableId":discussion,"labelIds":[label]});
     refused(router,&bob_token,"mutation($input:AddLabelsToLabelableInput!){addLabelsToLabelable(input:$input){labelable{...on Discussion{id}}}}",json!({"input":labels_input})).await;
-    db::repositories::access::grant_repo_access(f.pool(), bob, repo, AccessLevel::Triage)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        bob,
+        repo,
+        codeyard_db_core::models::AccessLevel::Triage,
+    )
+    .await
+    .unwrap();
     let labelled = mutation(
         router,
         &bob_token,
@@ -531,9 +555,14 @@ async fn discussions(
     )
     .await;
     // The author keeps edit/delete authority with only read access.
-    db::repositories::access::grant_repo_access(f.pool(), bob, repo, AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        bob,
+        repo,
+        codeyard_db_core::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     let own = mutation(
         router,
         &bob_token,

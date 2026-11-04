@@ -11,22 +11,22 @@ use axum::{
     http::{header, HeaderMap, Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    crypto::SecretEncryptor,
-    db,
-    db::models::User,
-    identity::{
-        self,
-        login::{FirstFactor, LoginError, PasswordCredentials},
-        passwords,
-        sessions::{InitiatingSession, SessionContext},
-        two_factor::{self, TwoFactorError},
-    },
-    storage::ObjectStore,
-};
+use codeyard::backend::api::create_router;
+use codeyard::backend::app::AppState;
+use codeyard::backend::ci::CiConfig;
+use codeyard::backend::crypto::SecretEncryptor;
+use codeyard::backend::db;
+use codeyard::backend::identity;
+use codeyard::backend::identity::login::FirstFactor;
+use codeyard::backend::identity::login::LoginError;
+use codeyard::backend::identity::login::PasswordCredentials;
+use codeyard::backend::identity::passwords;
+use codeyard::backend::identity::sessions::InitiatingSession;
+use codeyard::backend::identity::sessions::SessionContext;
+use codeyard::backend::identity::two_factor;
+use codeyard::backend::identity::two_factor::TwoFactorError;
+use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::User;
 use std::sync::Arc;
 use tower::ServiceExt;
 
@@ -875,12 +875,12 @@ async fn unsuccessful_disable_changes_nothing(pg: bool) {
     );
     let sql = "SELECT COUNT(*) FROM two_factor_recovery_codes WHERE user_id=$1";
     let remaining: i64 = match database.pool() {
-        db::DbPool::Postgres(pool) => sqlx::query_scalar(sql)
+        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_scalar(sql)
             .bind(alice.id)
             .fetch_one(pool)
             .await
             .unwrap(),
-        db::DbPool::Sqlite(pool) => sqlx::query_scalar(sql)
+        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_scalar(sql)
             .bind(alice.id)
             .fetch_one(pool)
             .await

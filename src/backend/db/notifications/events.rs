@@ -1,5 +1,7 @@
 //! Bounded, durable notification hints shared by web nodes.
-use crate::backend::db::{postgres, sqlite, DbPool};
+use crate::backend::db::postgres;
+use crate::backend::db::sqlite;
+use codeyard_db_core::DbPool;
 
 pub const BATCH_SIZE: usize = 256;
 const MAX_ACTIVE_TRANSACTIONS: usize = 4096;

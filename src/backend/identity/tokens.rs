@@ -1,7 +1,9 @@
 //! Personal token lifecycle (only hashes persist) and restricted activity-feed credentials.
 
-use crate::backend::db::{models::PersonalAccessToken, users::tokens, DbPool};
+use crate::backend::db::users::tokens;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::PersonalAccessToken;
+use codeyard_db_core::DbPool;
 use sha2::{Digest, Sha256};
 
 use codeyard_support::tokens::{INSTALLATION_PREFIX, PAT_PREFIX};
@@ -18,7 +20,7 @@ pub struct CreatedToken {
 }
 
 pub struct ActivityFeedUser {
-    pub user: crate::backend::db::models::User,
+    pub user: codeyard_db_core::models::User,
     pub token: i64,
 }
 
@@ -39,7 +41,7 @@ pub enum TokenError {
 pub(crate) fn installation_token() -> String {
     format!(
         "{INSTALLATION_PREFIX}{}",
-        crate::backend::crypto::random_hex()
+        codeyard_support::crypto::random_hex()
     )
 }
 
@@ -61,7 +63,7 @@ pub async fn activity_feed_token(pool: &DbPool, token_id: i64) -> Result<String,
     crate::backend::db::events::activity_feed_token(
         pool,
         token_id,
-        &format!("feed_{}", crate::backend::crypto::random_hex()),
+        &format!("feed_{}", codeyard_support::crypto::random_hex()),
     )
     .await
     .map_err(|_| TokenError::Unavailable)?
@@ -169,7 +171,7 @@ pub async fn create(
 ) -> Result<CreatedToken, TokenError> {
     validate(&input, Utc::now())?;
     let session_id = session_id.ok_or(TokenError::Denied)?;
-    let value = format!("{PAT_PREFIX}{}", crate::backend::crypto::random_hex());
+    let value = format!("{PAT_PREFIX}{}", codeyard_support::crypto::random_hex());
     let token = tokens::create_token(
         pool,
         actor,

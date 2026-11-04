@@ -91,10 +91,10 @@ pub(super) async fn run(
     repo: i64,
     actor: i64,
     branch: &str,
-) -> (db::models::CiRun, runtime::RuntimeCredentials) {
+) -> (codeyard_db_core::models::CiRun, runtime::RuntimeCredentials) {
     let sql="INSERT INTO ci_runs(run_id,repo_id,triggered_by_id,mode,pipeline,event,branch,workflow_path,status,worker) VALUES($1,$2,$3,'local','ci','push',$4,'.github/workflows/ci.yml','running','test') RETURNING *";
     let row = match f.pool() {
-        db::DbPool::Postgres(pool) => sqlx::query_as(sql)
+        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_as(sql)
             .bind(Uuid::new_v4())
             .bind(repo)
             .bind(actor)
@@ -102,7 +102,7 @@ pub(super) async fn run(
             .fetch_one(pool)
             .await
             .unwrap(),
-        db::DbPool::Sqlite(pool) => sqlx::query_as(sql)
+        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_as(sql)
             .bind(Uuid::new_v4())
             .bind(repo)
             .bind(actor)
@@ -117,7 +117,7 @@ pub(super) async fn run(
     (row, credentials)
 }
 
-pub(super) fn artifact_body(run: &db::models::CiRun, name: &str) -> Value {
+pub(super) fn artifact_body(run: &codeyard_db_core::models::CiRun, name: &str) -> Value {
     json!({"workflowRunBackendId":run.run_id.to_string(),"workflowJobRunBackendId":run.run_id.to_string(),"name":name})
 }
 pub(super) async fn put(router: &Router, url: &str, body: &[u8], expected: StatusCode) {

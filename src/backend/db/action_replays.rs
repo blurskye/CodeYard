@@ -1,11 +1,11 @@
 //! Private dependency contexts come from completed observations, never workflow plans.
-use super::{
-    action_jobs::Job,
-    ci::{CiAdmissionRefusal as Refusal, CiReplaySelection, NewCiAttempt},
-    models::CiRun,
-};
+use super::action_jobs::Job;
+use super::ci::CiAdmissionRefusal as Refusal;
+use super::ci::CiReplaySelection;
+use super::ci::NewCiAttempt;
 use anyhow::{ensure, Result};
 use codeyard_actions::progress::{Replay, State};
+use codeyard_db_core::models::CiRun;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A claim carries its replay across a cluster RPC frame together with the run, workflow and

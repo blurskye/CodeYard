@@ -7,7 +7,7 @@ use crate::backend::repositories::{
 impl LocalStore {
     pub(in crate::backend::repositories::store) async fn import_git(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         mut import: GitImport,
@@ -45,7 +45,7 @@ impl LocalStore {
 
     async fn import_git_locked(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         import: GitImport,
@@ -222,7 +222,7 @@ impl LocalStore {
         if let Some(branch) = branch {
             let target = format!("refs/heads/{branch}");
             let old = self.head_target().await?;
-            let changes = [db::models::RefChange {
+            let changes = [codeyard_db_core::models::RefChange {
                 name: "HEAD".into(),
                 kind: "symbolic".into(),
                 old_target: old,
@@ -375,7 +375,7 @@ impl LocalStore {
 
     async fn import_authority(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         import: &GitImport,
@@ -428,7 +428,7 @@ impl LocalStore {
 
     pub(in crate::backend::repositories::store) async fn cancel_import(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
     ) -> Result<(), RepoError> {

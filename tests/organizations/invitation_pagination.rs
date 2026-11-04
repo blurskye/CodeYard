@@ -38,7 +38,7 @@ async fn pages(pg: bool) {
                 owner,
                 org,
                 recipient,
-                db::models::OrgRole::Member,
+                codeyard_db_core::models::OrgRole::Member,
             )
             .await
             .unwrap(),
@@ -54,7 +54,7 @@ async fn pages(pg: bool) {
                 owner,
                 first_org,
                 user,
-                db::models::OrgRole::Member,
+                codeyard_db_core::models::OrgRole::Member,
             )
             .await
             .unwrap(),
@@ -202,8 +202,8 @@ async fn deletion_removes_release_uploads(pg: bool) {
             filename: "tool.bin",
             content_type: "application/octet-stream",
             file_size: 1,
-            reason: db::models::FileReason::ReleaseAsset,
-            visibility: db::models::FileVisibility::Owner,
+            reason: codeyard_db_core::models::FileReason::ReleaseAsset,
+            visibility: codeyard_db_core::models::FileVisibility::Owner,
             sha256_hex: &"a".repeat(64),
         },
     )
@@ -237,7 +237,7 @@ async fn deletion_removes_release_uploads(pg: bool) {
             .unwrap()
             .is_active
     );
-    if let db::DbPool::Postgres(raw) = f.pool() {
+    if let codeyard_db_core::DbPool::Postgres(raw) = f.pool() {
         let mut reader = raw.begin().await.unwrap();
         let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *reader)

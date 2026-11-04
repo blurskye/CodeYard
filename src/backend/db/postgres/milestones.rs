@@ -1,8 +1,9 @@
 use crate::backend::db::milestones::{
     MilestoneDocumentFacts, MilestoneInput, MilestoneWriteRefusal,
 };
-use crate::backend::db::models::{Milestone, MilestoneSummary};
 use anyhow::Result;
+use codeyard_db_core::models::Milestone;
+use codeyard_db_core::models::MilestoneSummary;
 use sqlx::{PgPool, Postgres, Transaction};
 
 pub async fn milestone_document_facts(

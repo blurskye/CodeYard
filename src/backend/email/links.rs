@@ -3,9 +3,11 @@
 //! Only its hash is stored. A token works once, until it expires.
 use super::{config, messages};
 use crate::backend::api::http::config::public_origin;
-use crate::backend::db::{self, models::User, DbPool};
+use crate::backend::db;
 use crate::backend::identity::admission::{self, AdmissionError};
 use crate::backend::identity::tokens::token_hash as hash;
+use codeyard_db_core::models::User;
+use codeyard_db_core::DbPool;
 use tracing::warn;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,7 +61,7 @@ async fn queue_link(
     user: &User,
     email: &str,
 ) -> Result<(), LinkError> {
-    let token = crate::backend::crypto::random_hex();
+    let token = codeyard_support::crypto::random_hex();
     let origin = public_origin();
     let mail = match purpose {
         Purpose::Verify => messages::verify_email(&origin, &user.username, &token),
@@ -128,7 +130,7 @@ pub async fn send_secondary_verifications(
     }
     admission::admit_mail(pool, None, &format!("user:{}", user.id)).await?;
     for email in pending {
-        let token = crate::backend::crypto::random_hex();
+        let token = codeyard_support::crypto::random_hex();
         let mail = messages::verify_email(&public_origin(), &user.username, &token);
         db::users::emails::save_verification(
             pool,

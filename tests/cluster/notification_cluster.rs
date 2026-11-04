@@ -1,10 +1,10 @@
 //! Notification hints cross web nodes through a bounded database cursor.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database::Database;
-use codeyard::backend::{
-    db::DbPool,
-    notifications::{broadcast::MAX_SOCKETS_PER_USER, NotificationBroadcaster, NotificationEvent},
-};
+use codeyard::backend::notifications::broadcast::MAX_SOCKETS_PER_USER;
+use codeyard::backend::notifications::NotificationBroadcaster;
+use codeyard::backend::notifications::NotificationEvent;
+use codeyard_db_core::DbPool;
 use std::time::Duration;
 use tokio::sync::broadcast;
 

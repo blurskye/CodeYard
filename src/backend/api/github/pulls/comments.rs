@@ -30,9 +30,12 @@ fn operation_error(error: pull_requests::OperationError) -> Error {
 pub(super) async fn visible(
     state: &AppState,
     headers: &HeaderMap,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     id: i64,
-) -> Result<(db::models::PullRequest, db::models::PullRequestComment)> {
+) -> Result<(
+    codeyard_db_core::models::PullRequest,
+    codeyard_db_core::models::PullRequestComment,
+)> {
     let comment = db::pull_requests::reviews::get_pull_request_comment_by_id(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
@@ -63,9 +66,9 @@ pub(super) async fn visible(
 pub(super) async fn document(
     state: &AppState,
     owner: &str,
-    repo: &db::models::Repository,
-    pull: &db::models::PullRequest,
-    comment: &db::models::PullRequestComment,
+    repo: &codeyard_db_core::models::Repository,
+    pull: &codeyard_db_core::models::PullRequest,
+    comment: &codeyard_db_core::models::PullRequestComment,
 ) -> Result<Value> {
     document_cached(state, owner, repo, pull, comment, &mut HashMap::new()).await
 }
@@ -77,9 +80,9 @@ const MAX_CACHED_DIFFS: usize = 8;
 async fn document_cached(
     state: &AppState,
     owner: &str,
-    repo: &db::models::Repository,
-    pull: &db::models::PullRequest,
-    comment: &db::models::PullRequestComment,
+    repo: &codeyard_db_core::models::Repository,
+    pull: &codeyard_db_core::models::PullRequest,
+    comment: &codeyard_db_core::models::PullRequestComment,
     diffs: &mut HashMap<(String, String, String), Vec<DiffFileInfo>>,
 ) -> Result<Value> {
     let user = db::users::accounts::get_user_by_id(&state.pool, comment.author_id)
@@ -137,8 +140,8 @@ pub(super) struct Create {
 pub(super) async fn prepare(
     state: &AppState,
     headers: &HeaderMap,
-    repo: &db::models::Repository,
-    pull: &db::models::PullRequest,
+    repo: &codeyard_db_core::models::Repository,
+    pull: &codeyard_db_core::models::PullRequest,
     input: Create,
     pending: bool,
 ) -> Result<domain::CreatePullRequestCommentRequest> {
@@ -148,8 +151,8 @@ pub(super) async fn prepare(
 pub(super) async fn prepare_with_diff(
     state: &AppState,
     headers: &HeaderMap,
-    repo: &db::models::Repository,
-    pull: &db::models::PullRequest,
+    repo: &codeyard_db_core::models::Repository,
+    pull: &codeyard_db_core::models::PullRequest,
     input: Create,
     pending: bool,
     cached: Option<&codeyard_git::DiffInfo>,

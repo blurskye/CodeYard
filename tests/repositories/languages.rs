@@ -43,7 +43,7 @@ async fn get_json(router: &Router, session: Option<&str>) -> (StatusCode, Value)
     (status, serde_json::from_slice(&body).unwrap())
 }
 
-async fn languages_contract(pool: &db::DbPool) {
+async fn languages_contract(pool: &codeyard_db_core::DbPool) {
     let owner = match db::users::transitions::complete_setup(
         pool,
         "language_owner",
@@ -344,7 +344,10 @@ fn commit_and_push(
 }
 
 /// The stored languages of `repo_id`, once a background refresh has written them.
-async fn stored_languages(pool: &db::DbPool, repo_id: i64) -> Vec<db::models::RepoLanguage> {
+async fn stored_languages(
+    pool: &codeyard_db_core::DbPool,
+    repo_id: i64,
+) -> Vec<codeyard_db_core::models::RepoLanguage> {
     for _ in 0..100 {
         let rows = db::repository_stats::get_repo_languages(pool, repo_id)
             .await
@@ -373,7 +376,7 @@ async fn page(router: &Router, path: &str) -> (StatusCode, String) {
 
 /// Pushes to a public repository over smart HTTP, the way a client does, and checks what the
 /// database, the repository page and Explore show of the languages it stores.
-async fn push_contract(pool: &db::DbPool, database_url: &str) {
+async fn push_contract(pool: &codeyard_db_core::DbPool, database_url: &str) {
     bundle::install();
     db::node_config::upsert_node_configuration(pool, "public", true)
         .await

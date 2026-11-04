@@ -1,7 +1,8 @@
 use super::{
     assert_github_schema, db, request, tokens, Client, Database, StatusCode, TokenInput, Value,
 };
-use codeyard::backend::db::{dependabot_alerts as store, DbPool};
+use codeyard::backend::db::dependabot_alerts as store;
+use codeyard_db_core::DbPool;
 use serde_json::json;
 
 fn advisory() -> Value {

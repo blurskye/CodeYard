@@ -1,8 +1,9 @@
 //! The iroh endpoint: protocol names, relay choice, binding, and the rule that only
 //! active cluster members may connect.
 use super::{identity::NodeKey, link::Link, pairing::PairingHandler, tcp};
-use crate::backend::db::{self, DbPool};
+use crate::backend::db;
 use anyhow::{anyhow, bail, Context, Result};
+use codeyard_db_core::DbPool;
 use futures_util::{stream::FuturesUnordered, StreamExt};
 use iroh::{
     endpoint::{presets, AfterHandshakeOutcome, Connection, EndpointHooks, QuicTransportConfig},

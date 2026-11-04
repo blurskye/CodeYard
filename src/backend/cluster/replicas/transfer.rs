@@ -242,13 +242,13 @@ mod tests {
         let server_key = NodeKey::generate();
         // The copy reads its repository row and its retained commits, and marks the copy
         // incomplete before it installs the pack.
-        let pool = db::init_db(&format!(
+        let pool = codeyard_db_core::init_db(&format!(
             "sqlite://{}",
             root.path().join("test.db").display()
         ))
         .await
         .unwrap();
-        db::run_migrations(&pool).await.unwrap();
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let mut nodes = Vec::new();
         for (node_key, name) in [
             (key.public_hex(), "copy"),

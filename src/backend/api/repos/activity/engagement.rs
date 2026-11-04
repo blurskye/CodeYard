@@ -57,7 +57,7 @@ async fn viewer_engagement(
     owner: &str,
     repo: &str,
     kind: Engagement,
-) -> ApiResult<(bool, db::models::Repository)> {
+) -> ApiResult<(bool, codeyard_db_core::models::Repository)> {
     let repository = readable_repository(&state.pool, owner, repo, headers).await?;
     let Some(user) = get_optional_user(&state.pool, headers).await? else {
         return Ok((false, repository));

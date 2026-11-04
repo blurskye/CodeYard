@@ -1,8 +1,10 @@
 //! Shared named operation surface; native transactions stay inside db.
 //! The mail server settings, the outbox of mail to send, and each account's email preference.
-use crate::backend::db::models::{EmailSettings, OutboxMessage};
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::EmailSettings;
+use codeyard_db_core::models::OutboxMessage;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// Settings from the admin form. `password` is the encrypted password and its nonce; `None`
 /// keeps the one already saved.

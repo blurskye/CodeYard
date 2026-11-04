@@ -1,7 +1,8 @@
-use crate::backend::{
-    db::{files as files_db, models::File, DbPool},
-    storage::{Download, ObjectStore},
-};
+use crate::backend::db::files as files_db;
+use crate::backend::storage::Download;
+use crate::backend::storage::ObjectStore;
+use codeyard_db_core::models::File;
+use codeyard_db_core::DbPool;
 use serde::Serialize;
 use tokio::sync::OwnedSemaphorePermit;
 use uuid::Uuid;

@@ -178,9 +178,15 @@ async fn history(pg: bool) {
     )
     .await;
     assert!(matches!(
-        membership::add_organization_member(f.pool(), alice, org, bob, db::models::OrgRole::Admin)
-            .await
-            .unwrap(),
+        membership::add_organization_member(
+            f.pool(),
+            alice,
+            org,
+            bob,
+            codeyard_db_core::models::OrgRole::Admin
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Applied(_)
     ));
     checked(

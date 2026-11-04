@@ -1,5 +1,5 @@
-use super::models::AuditEntry;
 use anyhow::Result;
+use codeyard_db_core::models::AuditEntry;
 use sqlx::PgPool;
 
 pub async fn page(

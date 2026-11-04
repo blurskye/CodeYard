@@ -3,7 +3,7 @@ use codeyard::backend::code_scanning;
 
 pub(super) async fn fixed_revision(
     router: &Router,
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     hook: i64,
     token: &str,
     head: &str,

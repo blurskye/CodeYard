@@ -31,7 +31,10 @@ async fn target(
     owner: &str,
     name: &str,
     number: i32,
-) -> Result<(db::models::Repository, db::models::PullRequest)> {
+) -> Result<(
+    codeyard_db_core::models::Repository,
+    codeyard_db_core::models::PullRequest,
+)> {
     let (repo, _) = repository(state, headers, owner, name, false).await?;
     let pull = db::pull_requests::records::get_pull_request(&state.pool, repo.id, number)
         .await
@@ -48,8 +51,8 @@ async fn person(state: &AppState, id: i64) -> Result<Value> {
 }
 
 pub(super) async fn association(
-    pool: &db::DbPool,
-    repo: &db::models::Repository,
+    pool: &codeyard_db_core::DbPool,
+    repo: &codeyard_db_core::models::Repository,
     user_id: i64,
 ) -> Result<&'static str> {
     access::author_association(pool, repo, user_id)
@@ -60,8 +63,8 @@ pub(super) async fn association(
 pub(super) async fn readable_head(
     state: &AppState,
     auth: Option<&super::auth::Authentication>,
-    pull: &db::models::PullRequest,
-) -> Result<Option<db::models::Repository>> {
+    pull: &codeyard_db_core::models::PullRequest,
+) -> Result<Option<codeyard_db_core::models::Repository>> {
     match pull.head_repo_id {
         Some(id) => super::auth::referenced_repository(state, auth, id).await,
         None => Ok(None),
@@ -70,7 +73,10 @@ pub(super) async fn readable_head(
 
 /// The head of a pull request whose head repository the viewer cannot read: GitHub still
 /// names the head owner, but not the repository.
-pub(super) async fn hidden_head(state: &AppState, pull: &db::models::PullRequest) -> Result<Value> {
+pub(super) async fn hidden_head(
+    state: &AppState,
+    pull: &codeyard_db_core::models::PullRequest,
+) -> Result<Value> {
     let head = match pull.head_repo_id {
         Some(id) => db::repositories::records::get_repository_by_id(&state.pool, id)
             .await
@@ -98,9 +104,9 @@ pub(super) async fn hidden_head(state: &AppState, pull: &db::models::PullRequest
 pub(super) async fn document(
     state: &AppState,
     headers: &HeaderMap,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
-    pull: &db::models::PullRequest,
+    pull: &codeyard_db_core::models::PullRequest,
     detail: bool,
 ) -> Result<Value> {
     let viewer = super::auth::authenticate(state, headers, false).await?;
@@ -312,8 +318,8 @@ async fn get_pull(
 /// The pull request's diff or patch as plain text, for `gh pr diff` and `.diff` links.
 pub(super) async fn diff_response(
     state: &AppState,
-    repo: &db::models::Repository,
-    pull: &db::models::PullRequest,
+    repo: &codeyard_db_core::models::Repository,
+    pull: &codeyard_db_core::models::PullRequest,
     media: super::diff_media::Media,
 ) -> Result<Response> {
     let store = repo_store(repo, state.cluster.as_ref());

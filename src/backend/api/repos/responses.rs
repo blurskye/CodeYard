@@ -9,15 +9,15 @@ use chrono::{TimeZone, Utc};
 use serde::Serialize;
 /// Safe canonical namespace projection, never numeric-ID owner inference.
 pub(crate) async fn repository_owner(
-    pool: &db::DbPool,
-    repository: &db::models::Repository,
+    pool: &codeyard_db_core::DbPool,
+    repository: &codeyard_db_core::models::Repository,
 ) -> Result<String, (StatusCode, Json<ApiError>)> {
     let mut owners = repository_owners(pool, &[repository.id]).await?;
     Ok(owners.remove(&repository.id).expect("validated owner"))
 }
 
 pub(crate) async fn repository_owners(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ids: &[i64],
 ) -> Result<std::collections::BTreeMap<i64, String>, (StatusCode, Json<ApiError>)> {
     let unavailable = || {
@@ -40,7 +40,7 @@ pub(crate) async fn repository_owners(
 
 /// The topics of each listed repository. A repository without topics is absent from the map.
 pub(crate) async fn repository_topics(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ids: &[i64],
 ) -> Result<std::collections::BTreeMap<i64, Vec<String>>, (StatusCode, Json<ApiError>)> {
     db::repositories::topics::repository_topics(pool, ids)
@@ -57,7 +57,7 @@ pub(crate) async fn repository_topics(
 }
 
 pub(crate) fn map_commit_status_response(
-    status: db::models::CommitStatus,
+    status: codeyard_db_core::models::CommitStatus,
     creator: Option<UserResponse>,
 ) -> CommitStatusResponse {
     CommitStatusResponse {
@@ -75,7 +75,7 @@ pub(crate) fn map_commit_status_response(
 }
 
 pub(crate) async fn repository_fork_counts(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     headers: Option<&axum::http::HeaderMap>,
     ids: &[i64],
 ) -> Result<std::collections::HashMap<i64, i32>, (StatusCode, Json<ApiError>)> {
@@ -128,7 +128,7 @@ pub struct RepoResponse {
 impl RepoResponse {
     /// The repository as the API lists it. `owner` is the namespace it belongs to.
     pub(crate) fn new(
-        repository: &db::models::Repository,
+        repository: &codeyard_db_core::models::Repository,
         owner: &str,
         topics: Vec<String>,
         forked_from: Option<ForkParent>,

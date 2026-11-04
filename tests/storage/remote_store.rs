@@ -211,7 +211,7 @@ async fn remote_first_reader_persists_languages() {
 async fn direct_branch_merges(
     remote: &RepoStore,
     local: &RepoStore,
-    scope: (&db::DbPool, i64, i64, i64),
+    scope: (&codeyard_db_core::DbPool, i64, i64, i64),
     head: &str,
     base: &str,
 ) {
@@ -739,7 +739,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         &database.pool,
         writer.id,
         repository.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -2001,7 +2001,7 @@ async fn remote_web_contract() {
         &database.pool,
         late_writer.id,
         repository.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -2545,7 +2545,7 @@ async fn remote_web_contract() {
             .unwrap(),
         updated
     );
-    if let db::DbPool::Postgres(pool) = &database.pool {
+    if let codeyard_db_core::DbPool::Postgres(pool) = &database.pool {
         sqlx::query("UPDATE pull_requests SET state='closed' WHERE id=$1")
             .bind(update_pull.id)
             .execute(pool)
@@ -2763,7 +2763,7 @@ async fn remote_web_contract() {
             updated
         );
     }
-    if let db::DbPool::Postgres(pool) = &database.pool {
+    if let codeyard_db_core::DbPool::Postgres(pool) = &database.pool {
         sqlx::query("UPDATE repositories SET is_private=TRUE WHERE id=$1")
             .bind(fork.id)
             .execute(pool)
@@ -3040,7 +3040,7 @@ async fn remote_web_contract() {
     )
     .await
     .unwrap();
-    if let db::DbPool::Postgres(pool) = &database.pool {
+    if let codeyard_db_core::DbPool::Postgres(pool) = &database.pool {
         sqlx::query("UPDATE repositories SET storage_node_id=$1 WHERE id=$2")
             .bind(storage.context.node_id)
             .bind(outage.id)

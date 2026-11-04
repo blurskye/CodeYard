@@ -13,7 +13,7 @@ pub(super) async fn exercise(
         actors.0,
         repo,
         "graphql-bob",
-        Some(db::models::AccessLevel::Read),
+        Some(codeyard_db_core::models::AccessLevel::Read),
     )
     .await
     .unwrap();

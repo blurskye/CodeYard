@@ -1,7 +1,8 @@
 //! CodeQL archive metadata; object bytes use the shared object store.
-use super::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(sqlx::FromRow)]
 pub struct Database {

@@ -1,7 +1,8 @@
 //! Authenticator-app second factor: the encrypted secret, the last accepted time step and the
 //! hashed recovery codes. A row in `two_factor_auth` means two-factor sign-in is on.
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// What the server keeps for a user with two-factor sign-in. The secret is ciphertext.
 #[derive(Debug, Clone, PartialEq, Eq)]

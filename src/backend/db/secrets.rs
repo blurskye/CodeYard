@@ -1,7 +1,8 @@
 //! Shared named operation surface; native transactions stay inside db.
 use crate::backend::crypto::{SecretEncryptor, SecretError};
-use crate::backend::db::models::RepoSecretMeta;
-use crate::backend::db::DbPool;
+use codeyard_db_core::models::RepoSecretMeta;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 // One bounded sample per encryption domain, from one database snapshot.
 pub(crate) const ENCRYPTION_SAMPLES_SQL: &str = "
