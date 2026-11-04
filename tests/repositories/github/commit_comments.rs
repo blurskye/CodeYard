@@ -34,15 +34,9 @@ pub(super) async fn run(
 ) {
     let (pool, repo, alice, bob) = resource;
     let (writer, reader, other) = tokens;
-    change_collaborator(
-        pool,
-        alice,
-        repo,
-        "bob",
-        Some(codeyard_db_core::models::AccessLevel::Read),
-    )
-    .await
-    .unwrap();
+    change_collaborator(pool, alice, repo, "bob", Some(AccessLevel::Read))
+        .await
+        .unwrap();
     let hook_owner = db::webhooks::HookOwner::Repository(repo);
     let hook = db::webhooks::insert_webhook(
         pool,

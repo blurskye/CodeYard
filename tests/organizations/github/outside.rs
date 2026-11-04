@@ -50,9 +50,9 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     for (id, role) in [
-        (member, codeyard_db_core::models::OrgRole::Member),
-        (delegated, codeyard_db_core::models::OrgRole::Admin),
-        (asynchronous, codeyard_db_core::models::OrgRole::Member),
+        (member, OrgRole::Member),
+        (delegated, OrgRole::Admin),
+        (asynchronous, OrgRole::Member),
     ] {
         applied(
             organizations::add_organization_member(f.pool(), owner, org.id, id, role)
@@ -66,7 +66,7 @@ async fn contract(pg: bool) {
             owner,
             foreign.id,
             member,
-            codeyard_db_core::models::OrgRole::Member,
+            OrgRole::Member,
         )
         .await
         .unwrap(),
@@ -155,31 +155,11 @@ async fn contract(pg: bool) {
         );
     }
     for (user, repo, permission) in [
-        (
-            member,
-            repos[0].id,
-            codeyard_db_core::models::AccessLevel::Read,
-        ),
-        (
-            member,
-            repos[1].id,
-            codeyard_db_core::models::AccessLevel::Maintain,
-        ),
-        (
-            member,
-            repos[3].id,
-            codeyard_db_core::models::AccessLevel::Write,
-        ),
-        (
-            outsider,
-            repos[0].id,
-            codeyard_db_core::models::AccessLevel::Read,
-        ),
-        (
-            secure,
-            repos[0].id,
-            codeyard_db_core::models::AccessLevel::Read,
-        ),
+        (member, repos[0].id, AccessLevel::Read),
+        (member, repos[1].id, AccessLevel::Maintain),
+        (member, repos[3].id, AccessLevel::Write),
+        (outsider, repos[0].id, AccessLevel::Read),
+        (secure, repos[0].id, AccessLevel::Read),
     ] {
         db::repositories::access::grant_repo_access(f.pool(), user, repo, permission)
             .await

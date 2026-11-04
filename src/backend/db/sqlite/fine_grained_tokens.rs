@@ -196,7 +196,7 @@ pub async fn policy(pool: &SqlitePool, org: i64) -> Result<Policy> {
 async fn active_owner(connection: &mut SqliteConnection, actor: i64, org: i64) -> Result<bool> {
     Ok(matches!(
         super::organizations::authority::authority(connection, actor, org).await?,
-        OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Owner)
+        OrganizationOutcome::Applied(OrgRole::Owner)
     ))
 }
 

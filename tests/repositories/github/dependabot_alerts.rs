@@ -37,14 +37,14 @@ async fn contract(pg: bool) {
     let owner = f.actor("alert-owner").await;
     let other = f.actor("alert-other").await;
     match f.pool() {
-        codeyard_db_core::DbPool::Sqlite(p) => {
+        DbPool::Sqlite(p) => {
             sqlx::query("UPDATE users SET is_admin=true WHERE id=$1")
                 .bind(owner)
                 .execute(p)
                 .await
                 .unwrap();
         }
-        codeyard_db_core::DbPool::Postgres(p) => {
+        DbPool::Postgres(p) => {
             sqlx::query("UPDATE users SET is_admin=true WHERE id=$1")
                 .bind(owner)
                 .execute(p)

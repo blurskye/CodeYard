@@ -497,13 +497,13 @@ pub async fn repository_owner_names(
     let mut owners = std::collections::BTreeMap::new();
     for chunk in ids.chunks(500) {
         let rows = match pool {
-            codeyard_db_core::DbPool::Postgres(pool) => {
+            DbPool::Postgres(pool) => {
                 crate::backend::db::postgres::repositories::records::repository_owner_names(
                     pool, chunk,
                 )
                 .await?
             }
-            codeyard_db_core::DbPool::Sqlite(pool) => {
+            DbPool::Sqlite(pool) => {
                 crate::backend::db::sqlite::repositories::records::repository_owner_names(
                     pool, chunk,
                 )

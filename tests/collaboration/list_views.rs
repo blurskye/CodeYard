@@ -61,14 +61,9 @@ async fn provision(database: &Database, root: &std::path::Path, alice: i64, bob:
     .await
     .unwrap()
     .id;
-    db::repositories::access::grant_repo_access(
-        database.pool(),
-        bob,
-        repo,
-        codeyard_db_core::models::AccessLevel::Read,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(database.pool(), bob, repo, AccessLevel::Read)
+        .await
+        .unwrap();
     repo
 }
 

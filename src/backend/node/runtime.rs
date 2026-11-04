@@ -687,7 +687,7 @@ mod tests {
         let owner = db::users::accounts::create_user(&pool, "owner", None)
             .await
             .unwrap();
-        let codeyard_db_core::DbPool::Sqlite(raw) = &pool else {
+        let DbPool::Sqlite(raw) = &pool else {
             unreachable!()
         };
         sqlx::query("INSERT INTO upload_rate_limit(user_id,file_size,uploaded_at) VALUES (?1,10,strftime('%Y-%m-%dT%H:%M:%f000Z','now','-731 days'))")

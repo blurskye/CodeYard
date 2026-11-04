@@ -675,7 +675,7 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        let pool = codeyard_db_core::DbPool::from(native);
+        let pool = DbPool::from(native);
         codeyard_db_core::run_migrations(&pool).await.unwrap();
         let ci = Arc::new(CiRuns::new(
             pool.clone(),

@@ -284,9 +284,9 @@ pub async fn grant_access_cmd(
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", username))?;
 
     let access_level = match level.to_lowercase().as_str() {
-        "read" => codeyard_db_core::models::AccessLevel::Read,
-        "write" => codeyard_db_core::models::AccessLevel::Write,
-        "admin" => codeyard_db_core::models::AccessLevel::Admin,
+        "read" => AccessLevel::Read,
+        "write" => AccessLevel::Write,
+        "admin" => AccessLevel::Admin,
         _ => {
             return Err(anyhow::anyhow!(
                 "Invalid access level: {}. Use: read, write, admin",

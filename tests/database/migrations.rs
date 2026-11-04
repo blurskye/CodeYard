@@ -5,10 +5,10 @@ use codeyard_db_core::DbPool;
 
 async fn execute(pool: &DbPool, sql: &str) {
     match pool {
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        DbPool::Sqlite(raw) => {
             sqlx::raw_sql(sql).execute(raw).await.unwrap();
         }
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        DbPool::Postgres(raw) => {
             sqlx::raw_sql(sql).execute(raw).await.unwrap();
         }
     };
@@ -16,19 +16,15 @@ async fn execute(pool: &DbPool, sql: &str) {
 
 async fn strings(pool: &DbPool, sql: &str) -> Vec<String> {
     match pool {
-        codeyard_db_core::DbPool::Sqlite(raw) => {
-            sqlx::query_scalar(sql).fetch_all(raw).await.unwrap()
-        }
-        codeyard_db_core::DbPool::Postgres(raw) => {
-            sqlx::query_scalar(sql).fetch_all(raw).await.unwrap()
-        }
+        DbPool::Sqlite(raw) => sqlx::query_scalar(sql).fetch_all(raw).await.unwrap(),
+        DbPool::Postgres(raw) => sqlx::query_scalar(sql).fetch_all(raw).await.unwrap(),
     }
 }
 
 fn ledger(pool: &DbPool) -> &'static str {
     match pool {
-        codeyard_db_core::DbPool::Sqlite(_) => "_gitserv_sqlite_migrations",
-        codeyard_db_core::DbPool::Postgres(_) => "_gitserv_migrations",
+        DbPool::Sqlite(_) => "_gitserv_sqlite_migrations",
+        DbPool::Postgres(_) => "_gitserv_migrations",
     }
 }
 
@@ -102,7 +98,7 @@ async fn sqlite_in_memory_migrations_keep_the_connection_and_restore_foreign_key
             .username,
         "kept"
     );
-    let codeyard_db_core::DbPool::Sqlite(raw) = &pool else {
+    let DbPool::Sqlite(raw) = &pool else {
         unreachable!()
     };
     let enabled: i64 = sqlx::query_scalar("PRAGMA foreign_keys")

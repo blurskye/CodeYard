@@ -14,9 +14,7 @@ pub async fn git_access(
 ) -> Result<AccessLevel> {
     let level: Option<i16> = sqlx::query_scalar(&format!("SELECT CASE WHEN u.is_banned OR u.must_change_password OR ($3 AND r.is_archived) THEN 0 WHEN r.is_gist THEN CASE WHEN EXISTS(SELECT 1 FROM gists g JOIN users own ON own.id=r.owner_user_id WHERE g.repo_id=r.id AND g.ready AND NOT own.is_banned) THEN CASE WHEN r.owner_user_id=u.id THEN 6 WHEN NOT $3 THEN 1 ELSE 0 END ELSE 0 END WHEN r.owner_kind='user' AND u.is_admin THEN 6 ELSE ({USER_REPO_ACCESS_SQL}) END FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2"))
         .bind(user_id).bind(repo_id).bind(write).fetch_optional(pool).await?;
-    Ok(codeyard_db_core::models::AccessLevel::from(
-        level.unwrap_or(0),
-    ))
+    Ok(AccessLevel::from(level.unwrap_or(0)))
 }
 
 pub async fn author_associations(
@@ -62,7 +60,7 @@ pub async fn get_users_repo_access(
     let rows: Vec<(i64, i16)> = query.build_query_as().fetch_all(pool).await?;
     Ok(rows
         .into_iter()
-        .map(|(id, level)| (id, codeyard_db_core::models::AccessLevel::from(level)))
+        .map(|(id, level)| (id, AccessLevel::from(level)))
         .collect())
 }
 
@@ -93,9 +91,7 @@ pub(crate) async fn user_repo_access_in_transaction(
     .bind(repo_id)
     .fetch_optional(connection)
     .await?;
-    Ok(codeyard_db_core::models::AccessLevel::from(
-        level.unwrap_or(0),
-    ))
+    Ok(AccessLevel::from(level.unwrap_or(0)))
 }
 
 // The actor's access level on repository `r`, 0 when none. A plain scalar over the
@@ -374,7 +370,7 @@ pub(super) async fn write_access_user_ids_on(
         "SELECT u.id FROM repositories r JOIN users u ON u.id IN (SELECT value FROM json_each(?2))
          WHERE r.id = ?1 AND NOT r.is_archived AND NOT u.is_banned AND NOT u.must_change_password
          AND ((r.owner_kind = 'user' AND (u.is_admin OR r.owner_user_id = u.id)) OR ({USER_REPO_ACCESS_SQL}) >= ?3)"
-    )).bind(repo_id).bind(serde_json::to_string(ids)?).bind(codeyard_db_core::models::AccessLevel::Write as i16).fetch_all(connection).await?)
+    )).bind(repo_id).bind(serde_json::to_string(ids)?).bind(AccessLevel::Write as i16).fetch_all(connection).await?)
 }
 
 /// Up to 30 users other than `viewer_id` who can write to the repository, most privileged first.
@@ -401,12 +397,12 @@ pub async fn list_write_access_users(
     ))
     .bind(repo_id)
     .bind(viewer_id)
-    .bind(codeyard_db_core::models::AccessLevel::Write as i16)
+    .bind(AccessLevel::Write as i16)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(username, level)| (username, codeyard_db_core::models::AccessLevel::from(level)))
+        .map(|(username, level)| (username, AccessLevel::from(level)))
         .collect())
 }
 

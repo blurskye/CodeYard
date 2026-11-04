@@ -66,13 +66,13 @@ async fn node(pool: &DbPool, name: &str) -> i64 {
 
 async fn configure(pool: &DbPool, setting: &str) -> Result<(), sqlx::Error> {
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        DbPool::Postgres(raw) => {
             sqlx::query("UPDATE node_configuration SET write_quorum=$1 WHERE id=1")
                 .bind(setting)
                 .execute(raw)
                 .await?;
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        DbPool::Sqlite(raw) => {
             sqlx::query("UPDATE node_configuration SET write_quorum=$1 WHERE id=1")
                 .bind(setting)
                 .execute(raw)
@@ -84,16 +84,14 @@ async fn configure(pool: &DbPool, setting: &str) -> Result<(), sqlx::Error> {
 
 async fn clock(pool: &DbPool) -> DateTime<Utc> {
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => sqlx::query_scalar("SELECT clock_timestamp()")
+        DbPool::Postgres(raw) => sqlx::query_scalar("SELECT clock_timestamp()")
             .fetch_one(raw)
             .await
             .unwrap(),
-        codeyard_db_core::DbPool::Sqlite(raw) => {
-            sqlx::query_scalar("SELECT strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
-                .fetch_one(raw)
-                .await
-                .unwrap()
-        }
+        DbPool::Sqlite(raw) => sqlx::query_scalar("SELECT strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
+            .fetch_one(raw)
+            .await
+            .unwrap(),
     }
 }
 
@@ -353,10 +351,10 @@ async fn deadline(pool: &DbPool) {
     votes(pool, &f, &id).await;
     let sql = "UPDATE repository_writes SET deadline='2000-01-01T00:00:00.000000Z' WHERE id=$1";
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        DbPool::Postgres(raw) => {
             sqlx::query(sql).bind(&id).execute(raw).await.unwrap();
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        DbPool::Sqlite(raw) => {
             sqlx::query(sql).bind(&id).execute(raw).await.unwrap();
         }
     }
@@ -671,14 +669,14 @@ async fn cascades(pool: &DbPool) {
     votes(pool, &f, &id).await;
     // Node references restrict deletion while a repository uses them.
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        DbPool::Postgres(raw) => {
             assert!(sqlx::query("DELETE FROM nodes WHERE id=$1")
                 .bind(f.voters[1])
                 .execute(raw)
                 .await
                 .is_err())
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        DbPool::Sqlite(raw) => {
             assert!(sqlx::query("DELETE FROM nodes WHERE id=$1")
                 .bind(f.voters[1])
                 .execute(raw)
@@ -700,12 +698,8 @@ async fn cascades(pool: &DbPool) {
     ] {
         let sql = format!("SELECT COUNT(*) FROM {table}");
         let count: i64 = match pool {
-            codeyard_db_core::DbPool::Postgres(raw) => {
-                sqlx::query_scalar(&sql).fetch_one(raw).await.unwrap()
-            }
-            codeyard_db_core::DbPool::Sqlite(raw) => {
-                sqlx::query_scalar(&sql).fetch_one(raw).await.unwrap()
-            }
+            DbPool::Postgres(raw) => sqlx::query_scalar(&sql).fetch_one(raw).await.unwrap(),
+            DbPool::Sqlite(raw) => sqlx::query_scalar(&sql).fetch_one(raw).await.unwrap(),
         };
         assert_eq!(count, 0, "{table}");
     }
@@ -832,10 +826,10 @@ async fn input_and_config(pool: &DbPool) {
 pub(super) async fn set_timeout(pool: &DbPool, seconds: i64) -> Result<(), sqlx::Error> {
     let sql = "UPDATE node_configuration SET write_timeout_seconds=$1 WHERE id=1";
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        DbPool::Postgres(raw) => {
             sqlx::query(sql).bind(seconds).execute(raw).await?;
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        DbPool::Sqlite(raw) => {
             sqlx::query(sql).bind(seconds).execute(raw).await?;
         }
     }
@@ -1081,7 +1075,7 @@ async fn coordinator_recovery(pool: &DbPool) {
 pub(super) async fn replace_node_key(pool: &DbPool, node: i64) -> NodeKey {
     let key = NodeKey::generate();
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        DbPool::Postgres(raw) => {
             sqlx::query("UPDATE nodes SET public_key=$1 WHERE id=$2")
                 .bind(key.public_hex())
                 .bind(node)
@@ -1089,7 +1083,7 @@ pub(super) async fn replace_node_key(pool: &DbPool, node: i64) -> NodeKey {
                 .await
                 .unwrap();
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        DbPool::Sqlite(raw) => {
             sqlx::query("UPDATE nodes SET public_key=$1 WHERE id=$2")
                 .bind(key.public_hex())
                 .bind(node)
@@ -1352,13 +1346,13 @@ async fn legacy_publishers_refused(pool: &DbPool) {
         .await
         .unwrap();
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        DbPool::Postgres(raw) => {
             sqlx::query("UPDATE node_configuration SET write_quorum=NULL WHERE id=1")
                 .execute(raw)
                 .await
                 .unwrap();
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        DbPool::Sqlite(raw) => {
             sqlx::query("UPDATE node_configuration SET write_quorum=NULL WHERE id=1")
                 .execute(raw)
                 .await

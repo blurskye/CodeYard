@@ -76,8 +76,8 @@ const SWITCHES: [&str; 11] = [
 /// Clustering shares one PostgreSQL database between machines; SQLite cannot.
 pub fn require_postgres(pool: &DbPool) -> Result<()> {
     match pool {
-        codeyard_db_core::DbPool::Postgres(_) => Ok(()),
-        codeyard_db_core::DbPool::Sqlite(_) => bail!(NEEDS_POSTGRES),
+        DbPool::Postgres(_) => Ok(()),
+        DbPool::Sqlite(_) => bail!(NEEDS_POSTGRES),
     }
 }
 

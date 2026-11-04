@@ -31,14 +31,9 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .id;
-    db::repositories::access::grant_repo_access(
-        f.pool(),
-        bob_id,
-        proj,
-        codeyard_db_core::models::AccessLevel::Write,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(f.pool(), bob_id, proj, AccessLevel::Write)
+        .await
+        .unwrap();
     let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), alice_id).await;
     let bob = Client::login(&router, f.pool(), bob_id).await;

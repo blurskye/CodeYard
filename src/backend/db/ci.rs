@@ -97,7 +97,7 @@ pub(crate) async fn prepare_claim<T>(
     prepare: impl std::future::Future<Output = Result<T>>,
 ) -> Result<T> {
     match pool {
-        codeyard_db_core::DbPool::Postgres(pool) => {
+        DbPool::Postgres(pool) => {
             use sqlx::{
                 postgres::{PgAdvisoryLock, PgConnection},
                 Connection,
@@ -114,7 +114,7 @@ pub(crate) async fn prepare_claim<T>(
             guard.release_now().await?;
             result
         }
-        codeyard_db_core::DbPool::Sqlite(_) => {
+        DbPool::Sqlite(_) => {
             use std::{
                 collections::HashMap,
                 sync::{Arc, Mutex, OnceLock, Weak},

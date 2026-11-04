@@ -58,10 +58,8 @@ pub struct Reservation {
 }
 pub async fn policy(pool: &DbPool, repo: i64) -> Result<(bool, bool)> {
     match pool {
-        codeyard_db_core::DbPool::Sqlite(p) => {
-            db::sqlite::repositories::immutable_releases::policy(p, repo).await
-        }
-        codeyard_db_core::DbPool::Postgres(p) => {
+        DbPool::Sqlite(p) => db::sqlite::repositories::immutable_releases::policy(p, repo).await,
+        DbPool::Postgres(p) => {
             db::postgres::repositories::immutable_releases::policy(p, repo).await
         }
     }
@@ -69,10 +67,8 @@ pub async fn policy(pool: &DbPool, repo: i64) -> Result<(bool, bool)> {
 
 pub async fn enabled(pool: &DbPool, repo: i64) -> Result<bool> {
     match pool {
-        codeyard_db_core::DbPool::Sqlite(p) => {
-            db::sqlite::repositories::immutable_releases::enabled(p, repo).await
-        }
-        codeyard_db_core::DbPool::Postgres(p) => {
+        DbPool::Sqlite(p) => db::sqlite::repositories::immutable_releases::enabled(p, repo).await,
+        DbPool::Postgres(p) => {
             db::postgres::repositories::immutable_releases::enabled(p, repo).await
         }
     }
@@ -86,10 +82,10 @@ pub async fn set_enabled(
 ) -> Result<()> {
     let actor = actor.into();
     match pool {
-        codeyard_db_core::DbPool::Sqlite(p) => {
+        DbPool::Sqlite(p) => {
             db::sqlite::repositories::immutable_releases::set_enabled(p, actor, repo, enabled).await
         }
-        codeyard_db_core::DbPool::Postgres(p) => {
+        DbPool::Postgres(p) => {
             db::postgres::repositories::immutable_releases::set_enabled(p, actor, repo, enabled)
                 .await
         }
@@ -107,11 +103,11 @@ pub async fn reservations(
         return Ok(vec![]);
     }
     let rows = match pool {
-        codeyard_db_core::DbPool::Sqlite(p) => {
+        DbPool::Sqlite(p) => {
             db::sqlite::repositories::immutable_releases::reservations(p, repo, owner, name, tags)
                 .await?
         }
-        codeyard_db_core::DbPool::Postgres(p) => {
+        DbPool::Postgres(p) => {
             db::postgres::repositories::immutable_releases::reservations(p, repo, owner, name, tags)
                 .await?
         }
@@ -124,10 +120,10 @@ pub async fn reservations(
 }
 pub async fn assets(pool: &DbPool, release: i64) -> Result<Vec<Artifact>> {
     let mut assets = match pool {
-        codeyard_db_core::DbPool::Sqlite(p) => {
+        DbPool::Sqlite(p) => {
             db::sqlite::repositories::immutable_releases::assets(p, release).await?
         }
-        codeyard_db_core::DbPool::Postgres(p) => {
+        DbPool::Postgres(p) => {
             db::postgres::repositories::immutable_releases::assets(p, release).await?
         }
     };
@@ -144,10 +140,10 @@ pub async fn attestation(
     release: i64,
 ) -> Result<Option<(String, String)>> {
     match pool {
-        codeyard_db_core::DbPool::Sqlite(p) => {
+        DbPool::Sqlite(p) => {
             db::sqlite::repositories::immutable_releases::attestation(p, repo, release).await
         }
-        codeyard_db_core::DbPool::Postgres(p) => {
+        DbPool::Postgres(p) => {
             db::postgres::repositories::immutable_releases::attestation(p, repo, release).await
         }
     }

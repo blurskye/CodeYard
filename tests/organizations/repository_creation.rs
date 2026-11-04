@@ -87,30 +87,9 @@ async fn creation_contract(mut database: Database) {
     let siteadmin = actor(&database, "siteadmin").await;
     let unknown = actor(&database, "unknown_role").await;
     let org = organization(&database, own, "creation_org").await;
-    member(
-        &database,
-        own,
-        org,
-        admin,
-        codeyard_db_core::models::OrgRole::Admin,
-    )
-    .await;
-    member(
-        &database,
-        own,
-        org,
-        ordinary,
-        codeyard_db_core::models::OrgRole::Member,
-    )
-    .await;
-    member(
-        &database,
-        own,
-        org,
-        unknown,
-        codeyard_db_core::models::OrgRole::Member,
-    )
-    .await;
+    member(&database, own, org, admin, OrgRole::Admin).await;
+    member(&database, own, org, ordinary, OrgRole::Member).await;
+    member(&database, own, org, unknown, OrgRole::Member).await;
     database
         .execute(
             "UPDATE org_memberships SET role='future_role' WHERE org_id=$1 AND user_id=$2",
@@ -177,7 +156,7 @@ async fn creation_contract(mut database: Database) {
             database.pool(),
             direct_writer,
             created.id,
-            codeyard_db_core::models::AccessLevel::Write,
+            AccessLevel::Write,
         )
         .await
         .unwrap();
@@ -257,15 +236,9 @@ async fn creation_contract(mut database: Database) {
             .await;
     }
     applied(
-        orgs::update_organization_member_role(
-            database.pool(),
-            own,
-            org,
-            admin,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        orgs::update_organization_member_role(database.pool(), own, org, admin, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     denied(
         create(
@@ -326,7 +299,7 @@ async fn personal_fork_contract(mut database: Database) {
         database.pool(),
         creator,
         private_source.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -869,7 +842,7 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
         database.pool(),
         forker,
         source.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -962,7 +935,7 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
         database.pool(),
         forker,
         source.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        AccessLevel::Read,
     )
     .await
     .unwrap();

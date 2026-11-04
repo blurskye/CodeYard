@@ -39,5 +39,5 @@ pub async fn storage_node(
 /// Online storage nodes that report their free space, most free space first. Ties go
 /// to the older node. New repositories and replica copies both pick from this order.
 pub fn ranked(nodes: &[ClusterNode]) -> Vec<&ClusterNode> {
-    codeyard_db_core::models::ClusterNode::ranked_storage(nodes)
+    ClusterNode::ranked_storage(nodes)
 }

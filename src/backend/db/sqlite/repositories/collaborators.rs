@@ -203,7 +203,7 @@ pub async fn respond(
             &mut tx,
             actor,
             invitation.repo_id,
-            codeyard_db_core::models::AccessLevel::from(current.max(invitation.permission)),
+            AccessLevel::from(current.max(invitation.permission)),
         )
         .await?;
     }

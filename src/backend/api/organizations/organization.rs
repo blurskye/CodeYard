@@ -347,10 +347,7 @@ pub(super) async fn respond_with_hook_draft(
     let (can_manage, is_owner) = match org {
         Some(org) => {
             match organizations::get_organization_role(&ctx.state.pool, actor, org).await {
-                Ok(Applied(role)) => (
-                    administers(role),
-                    role == codeyard_db_core::models::OrgRole::Owner,
-                ),
+                Ok(Applied(role)) => (administers(role), role == OrgRole::Owner),
                 Ok(_) => return not_found(ctx),
                 Err(_) => return unavailable(ctx),
             }

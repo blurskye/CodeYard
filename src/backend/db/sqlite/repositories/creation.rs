@@ -32,11 +32,8 @@ pub(crate) async fn creation_authority(
             )
             .await?
             {
-                OrganizationOutcome::Applied(
-                    codeyard_db_core::models::OrgRole::Owner
-                    | codeyard_db_core::models::OrgRole::Admin,
-                ) => {}
-                OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Member) => {
+                OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {}
+                OrganizationOutcome::Applied(OrgRole::Member) => {
                     let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organization_settings WHERE org_id=?1 AND (members_can_create_public_repositories OR members_can_create_private_repositories))").bind(org).fetch_one(&mut *connection).await?;
                     anyhow::ensure!(allowed, RepositoryStorageRefusal::Denied);
                 }

@@ -31,11 +31,11 @@ fn access_error(error: AccessError) -> Error {
 
 pub fn permission(value: &str) -> Option<AccessLevel> {
     match value {
-        "read" | "pull" => Some(codeyard_db_core::models::AccessLevel::Read),
-        "triage" => Some(codeyard_db_core::models::AccessLevel::Triage),
-        "write" | "push" => Some(codeyard_db_core::models::AccessLevel::Write),
-        "maintain" => Some(codeyard_db_core::models::AccessLevel::Maintain),
-        "admin" => Some(codeyard_db_core::models::AccessLevel::Admin),
+        "read" | "pull" => Some(AccessLevel::Read),
+        "triage" => Some(AccessLevel::Triage),
+        "write" | "push" => Some(AccessLevel::Write),
+        "maintain" => Some(AccessLevel::Maintain),
+        "admin" => Some(AccessLevel::Admin),
         _ => None,
     }
 }

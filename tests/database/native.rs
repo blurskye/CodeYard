@@ -56,7 +56,7 @@ fn upload(user_id: i64, reason: FileReason, visibility: FileVisibility) -> Reser
     ReserveUpload {
         user_id,
         filename: "fixture.bin",
-        content_type: if reason == codeyard_db_core::models::FileReason::Avatar {
+        content_type: if reason == FileReason::Avatar {
             "image/png"
         } else {
             "application/octet-stream"
@@ -935,15 +935,7 @@ async fn upload_quota_is_integer_atomic_and_charged_per_reservation() {
         let pool = fixture.pool.clone();
         let id = user.id;
         tasks.spawn(async move {
-            files::reserve_upload(
-                &pool,
-                upload(
-                    id,
-                    codeyard_db_core::models::FileReason::Other,
-                    codeyard_db_core::models::FileVisibility::Owner,
-                ),
-            )
-            .await
+            files::reserve_upload(&pool, upload(id, FileReason::Other, FileVisibility::Owner)).await
         });
     }
     let mut admitted = vec![];
@@ -969,13 +961,7 @@ async fn upload_quota_is_integer_atomic_and_charged_per_reservation() {
     assert!(window > Duration::minutes(14) && window <= Duration::minutes(15));
 
     // Deleting a reservation or letting it expire does not refund the quota.
-    let full = || {
-        upload(
-            user.id,
-            codeyard_db_core::models::FileReason::Other,
-            codeyard_db_core::models::FileVisibility::Owner,
-        )
-    };
+    let full = || upload(user.id, FileReason::Other, FileVisibility::Owner);
     let files::DeleteFileOutcome::Deleted(removed) =
         files::delete_file(&fixture.pool, file.id, user.id)
             .await
@@ -1000,11 +986,7 @@ async fn upload_quota_is_integer_atomic_and_charged_per_reservation() {
     // Each reason has its own budget.
     files::reserve_upload(
         &fixture.pool,
-        upload(
-            user.id,
-            codeyard_db_core::models::FileReason::Avatar,
-            codeyard_db_core::models::FileVisibility::Public,
-        ),
+        upload(user.id, FileReason::Avatar, FileVisibility::Public),
     )
     .await
     .unwrap();
@@ -1053,7 +1035,7 @@ async fn upload_quota_is_integer_atomic_and_charged_per_reservation() {
         (
             "public file that is not an avatar",
             ReserveUpload {
-                visibility: codeyard_db_core::models::FileVisibility::Public,
+                visibility: FileVisibility::Public,
                 ..full()
             },
         ),
@@ -1061,11 +1043,7 @@ async fn upload_quota_is_integer_atomic_and_charged_per_reservation() {
             "avatar that is not an image",
             ReserveUpload {
                 content_type: "text/plain",
-                ..upload(
-                    user.id,
-                    codeyard_db_core::models::FileReason::Avatar,
-                    codeyard_db_core::models::FileVisibility::Public,
-                )
+                ..upload(user.id, FileReason::Avatar, FileVisibility::Public)
             },
         ),
         (
@@ -1118,11 +1096,7 @@ async fn file_activation_is_atomic_happens_once_and_survives_reopen() {
         .unwrap();
     let file = files::reserve_upload(
         &fixture.pool,
-        upload(
-            user.id,
-            codeyard_db_core::models::FileReason::Avatar,
-            codeyard_db_core::models::FileVisibility::Public,
-        ),
+        upload(user.id, FileReason::Avatar, FileVisibility::Public),
     )
     .await
     .unwrap();
@@ -1209,11 +1183,7 @@ async fn file_activation_is_atomic_happens_once_and_survives_reopen() {
     // An upload whose window has ended cannot be activated and can be swept.
     let stale = files::reserve_upload(
         &fixture.pool,
-        upload(
-            user.id,
-            codeyard_db_core::models::FileReason::Other,
-            codeyard_db_core::models::FileVisibility::Owner,
-        ),
+        upload(user.id, FileReason::Other, FileVisibility::Owner),
     )
     .await
     .unwrap();
@@ -1741,21 +1711,13 @@ async fn accounting_and_explore_indexes(pool: &codeyard_db_core::DbPool) {
     )).await;
     let expired = files::reserve_upload(
         pool,
-        upload(
-            owner.id,
-            codeyard_db_core::models::FileReason::Other,
-            codeyard_db_core::models::FileVisibility::Owner,
-        ),
+        upload(owner.id, FileReason::Other, FileVisibility::Owner),
     )
     .await
     .unwrap();
     let kept = files::reserve_upload(
         pool,
-        upload(
-            owner.id,
-            codeyard_db_core::models::FileReason::Avatar,
-            codeyard_db_core::models::FileVisibility::Public,
-        ),
+        upload(owner.id, FileReason::Avatar, FileVisibility::Public),
     )
     .await
     .unwrap();
@@ -2746,11 +2708,7 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
     assert_eq!(secrets, vec![("TOKEN".into(), "fixture-secret".into())]);
     let avatar = files::reserve_upload(
         pool,
-        upload(
-            owner.id,
-            codeyard_db_core::models::FileReason::Avatar,
-            codeyard_db_core::models::FileVisibility::Public,
-        ),
+        upload(owner.id, FileReason::Avatar, FileVisibility::Public),
     )
     .await
     .unwrap();
@@ -3708,11 +3666,7 @@ async fn check_expired_transfer_rows_are_bounded_and_preserve_windows(
     let owner = setup(pool, "public").await;
     let live = files::reserve_upload(
         pool,
-        upload(
-            owner.id,
-            codeyard_db_core::models::FileReason::Other,
-            codeyard_db_core::models::FileVisibility::Owner,
-        ),
+        upload(owner.id, FileReason::Other, FileVisibility::Owner),
     )
     .await
     .unwrap();
@@ -3724,11 +3678,7 @@ async fn check_expired_transfer_rows_are_bounded_and_preserve_windows(
         .unwrap();
     let deleted = files::reserve_upload(
         pool,
-        upload(
-            owner.id,
-            codeyard_db_core::models::FileReason::Other,
-            codeyard_db_core::models::FileVisibility::Owner,
-        ),
+        upload(owner.id, FileReason::Other, FileVisibility::Owner),
     )
     .await
     .unwrap();
@@ -3846,11 +3796,7 @@ async fn check_expired_transfer_rows_are_bounded_and_preserve_windows(
         assert!(matches!(
             files::reserve_upload(
                 pool,
-                upload(
-                    owner.id,
-                    codeyard_db_core::models::FileReason::Other,
-                    codeyard_db_core::models::FileVisibility::Owner
-                )
+                upload(owner.id, FileReason::Other, FileVisibility::Owner)
             )
             .await,
             Err(AdmissionError::Quota)

@@ -74,9 +74,7 @@ async fn require_key_account(
             .await
             .map_err(|error| {
                 if error.is::<AccountRestricted>() {
-                    anyhow::Error::from(
-                        codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted,
-                    )
+                    anyhow::Error::from(SshKeyWriteRefusal::AccountRestricted)
                 } else {
                     error
                 }
@@ -88,14 +86,11 @@ async fn require_key_account(
     .bind(user)
     .fetch_optional(&mut **tx)
     .await?;
-    anyhow::ensure!(
-        active == Some(true),
-        codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted
-    );
+    anyhow::ensure!(active == Some(true), SshKeyWriteRefusal::AccountRestricted);
     if let Some(AccountCredential::Session(session)) = credential {
         anyhow::ensure!(
             super::transitions::live_session(tx, user, session).await?,
-            codeyard_model::identity::SshKeyWriteRefusal::InvalidSession
+            SshKeyWriteRefusal::InvalidSession
         );
     }
     Ok(())
@@ -124,10 +119,7 @@ async fn insert_ssh_key(
             .bind(&fingerprint)
             .fetch_one(&mut *tx)
             .await?;
-    anyhow::ensure!(
-        !used,
-        codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed
-    );
+    anyhow::ensure!(!used, SshKeyWriteRefusal::AlreadyUsed);
     let result = sqlx::query_as::<_, SshKey>(
         r#"
         INSERT INTO ssh_keys (user_id, name, fingerprint, public_key, key_type)
@@ -145,7 +137,7 @@ async fn insert_ssh_key(
     // The unique index is the final guard; report its violation as the refusal above.
     .map_err(|error| match &error {
         sqlx::Error::Database(database) if database.is_unique_violation() => {
-            anyhow::Error::from(codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed)
+            anyhow::Error::from(SshKeyWriteRefusal::AlreadyUsed)
         }
         _ => anyhow::Error::from(error),
     })?;

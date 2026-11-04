@@ -84,7 +84,7 @@ async fn owner(state: &AppState, actor: i64, org: i64) -> Result<()> {
             .await
             .map_err(Error::unavailable)?,
     )?;
-    if role != codeyard_db_core::models::OrgRole::Owner {
+    if role != OrgRole::Owner {
         return Err(Error::new(
             StatusCode::FORBIDDEN,
             "Must be an organization owner",

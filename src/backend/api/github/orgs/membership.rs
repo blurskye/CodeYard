@@ -44,8 +44,8 @@ async fn set(
         _ => return Err(Error::validation("Membership", "role", "invalid")),
     };
     let role = match role {
-        "admin" => codeyard_db_core::models::OrgRole::Owner,
-        "member" => codeyard_db_core::models::OrgRole::Member,
+        "admin" => OrgRole::Owner,
+        "member" => OrgRole::Member,
         _ => return Err(Error::validation("Membership", "role", "invalid")),
     };
     let org = target(&state, &name).await?;

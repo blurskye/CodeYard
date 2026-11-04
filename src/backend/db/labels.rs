@@ -179,7 +179,7 @@ async fn labels_of_items(
     let mut labels = std::collections::BTreeMap::<i64, Vec<Label>>::new();
     for chunk in ids.chunks(500) {
         let rows = match pool {
-            codeyard_db_core::DbPool::Postgres(pool) => {
+            DbPool::Postgres(pool) => {
                 crate::backend::db::postgres::labels::get_items_labels(
                     &mut *pool.acquire().await?,
                     target,
@@ -188,7 +188,7 @@ async fn labels_of_items(
                 )
                 .await?
             }
-            codeyard_db_core::DbPool::Sqlite(pool) => {
+            DbPool::Sqlite(pool) => {
                 crate::backend::db::sqlite::labels::get_items_labels(
                     &mut *pool.acquire().await?,
                     target,

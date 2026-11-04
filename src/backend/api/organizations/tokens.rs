@@ -37,7 +37,7 @@ pub(super) fn router() -> Router<Arc<AppState>> {
 )]
 async fn require_owner(ctx: &PageContext, actor: i64, org: i64) -> Result<(), Response> {
     match organizations::get_organization_role(&ctx.state.pool, actor, org).await {
-        Ok(OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Owner)) => Ok(()),
+        Ok(OrganizationOutcome::Applied(OrgRole::Owner)) => Ok(()),
         Ok(OrganizationOutcome::Applied(_)) => Err(ctx.error(
             StatusCode::FORBIDDEN,
             "Only organization owners can manage personal access tokens.",

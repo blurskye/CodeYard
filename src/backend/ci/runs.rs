@@ -615,7 +615,7 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        let pool = codeyard_db_core::DbPool::from(native.clone());
+        let pool = DbPool::from(native.clone());
         codeyard_db_core::run_migrations(&pool).await.unwrap();
         let owner = db::users::accounts::create_user(&pool, "preflight_owner", None)
             .await

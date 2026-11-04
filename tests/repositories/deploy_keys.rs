@@ -345,7 +345,7 @@ async fn keys_api_and_forms(pg: bool) {
 
 async fn live_authority(pg: bool) {
     use codeyard::backend::repositories::deploy_keys as keys;
-    use codeyard_db_core::models::AccessLevel;
+
     let (mut database, _root, alice, bob) = setup(pg).await;
     let pool = database.pool();
     let repository = db::repositories::records::get_repository(pool, "alice", "proj")

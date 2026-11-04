@@ -363,7 +363,7 @@ impl CiRuns {
                         triggered_by_id: actor,
                         manual: false,
                     },
-                    codeyard_db_core::models::AccessLevel::Owner,
+                    AccessLevel::Owner,
                     payload.clone(),
                     credential.clone(),
                 )

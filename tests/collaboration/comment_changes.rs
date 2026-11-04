@@ -47,19 +47,14 @@ async fn setup(pg: bool) -> World {
     .await
     .unwrap()
     .id;
-    db::repositories::access::grant_repo_access(
-        database.pool(),
-        bob_id,
-        proj,
-        codeyard_db_core::models::AccessLevel::Write,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(database.pool(), bob_id, proj, AccessLevel::Write)
+        .await
+        .unwrap();
     db::repositories::access::grant_repo_access(
         database.pool(),
         carol_id,
         proj,
-        codeyard_db_core::models::AccessLevel::Maintain,
+        AccessLevel::Maintain,
     )
     .await
     .unwrap();

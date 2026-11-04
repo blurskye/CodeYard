@@ -14,7 +14,7 @@ pub async fn repository_teams(
 ) -> Result<Option<Vec<crate::backend::db::repositories::github::RepositoryTeam>>> {
     use crate::backend::db::organizations::OrganizationOutcome;
     use crate::backend::db::repositories::github::REPOSITORY_TEAMS_SQL;
-    use codeyard_db_core::models::OrgRole;
+
     anyhow::ensure!(
         (1..=101).contains(&limit) && offset >= 0,
         "Invalid team page"

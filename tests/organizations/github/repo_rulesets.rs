@@ -61,15 +61,9 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        organizations::add_organization_member(
-            f.pool(),
-            owner,
-            org.id,
-            admin,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        organizations::add_organization_member(f.pool(), owner, org.id, admin, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;

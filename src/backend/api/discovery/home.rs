@@ -124,13 +124,13 @@ pub(super) async fn home(
 
 /// The name of a collaborator level, as the repository settings name it.
 fn role_name(level: i16) -> &'static str {
-    match codeyard_db_core::models::AccessLevel::from(level) {
-        codeyard_db_core::models::AccessLevel::None => "None",
-        codeyard_db_core::models::AccessLevel::Read => "Read",
-        codeyard_db_core::models::AccessLevel::Triage => "Triage",
-        codeyard_db_core::models::AccessLevel::Write => "Write",
-        codeyard_db_core::models::AccessLevel::Maintain => "Maintain",
-        codeyard_db_core::models::AccessLevel::Admin => "Admin",
-        codeyard_db_core::models::AccessLevel::Owner => "Owner",
+    match AccessLevel::from(level) {
+        AccessLevel::None => "None",
+        AccessLevel::Read => "Read",
+        AccessLevel::Triage => "Triage",
+        AccessLevel::Write => "Write",
+        AccessLevel::Maintain => "Maintain",
+        AccessLevel::Admin => "Admin",
+        AccessLevel::Owner => "Owner",
     }
 }

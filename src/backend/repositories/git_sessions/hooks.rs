@@ -890,7 +890,7 @@ impl Gateway {
             .await
         {
             Ok((identity, access)) if identity.id == actor_id => access,
-            _ => codeyard_db_core::models::AccessLevel::None,
+            _ => AccessLevel::None,
         };
         let repo = db::repositories::records::get_repository_by_id(&self.pool, repo.id)
             .await?
@@ -1144,7 +1144,7 @@ impl Gateway {
                     .credential
                     .authorize(&self.pool, &fresh_repo, true)
                     .await?;
-                if pipeline.includes_cd() && access < codeyard_db_core::models::AccessLevel::Admin {
+                if pipeline.includes_cd() && access < AccessLevel::Admin {
                     failed = true;
                     continue;
                 }

@@ -138,14 +138,9 @@ async fn visibility_contract(pg: bool) {
         "vault-token here",
     )
     .await;
-    db::repositories::access::grant_repo_access(
-        f.pool(),
-        bob,
-        secret.id,
-        codeyard_db_core::models::AccessLevel::Read,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(f.pool(), bob, secret.id, AccessLevel::Read)
+        .await
+        .unwrap();
     let acme = match db::organizations::create_organization(
         f.pool(),
         alice,

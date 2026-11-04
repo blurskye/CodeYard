@@ -12,10 +12,8 @@ async fn write<'a>(
 ) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     match super::organizations::authority::authority(&mut tx, actor.user_id, org).await? {
-        OrganizationOutcome::Applied(
-            codeyard_db_core::models::OrgRole::Owner | codeyard_db_core::models::OrgRole::Admin,
-        ) => {}
-        OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Member)
+        OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {}
+        OrganizationOutcome::Applied(OrgRole::Member)
             if super::organizations::roles::manages_security(&mut tx, actor.user_id, org)
                 .await? => {}
         OrganizationOutcome::Missing => return Err(Refusal::Missing.into()),
@@ -30,10 +28,8 @@ async fn write<'a>(
 }
 async fn readable(connection: &mut SqliteConnection, actor: i64, org: i64) -> Result<()> {
     match super::organizations::authority::read_authority(connection, actor, org).await? {
-        OrganizationOutcome::Applied(
-            codeyard_db_core::models::OrgRole::Owner | codeyard_db_core::models::OrgRole::Admin,
-        ) => Ok(()),
-        OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Member)
+        OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => Ok(()),
+        OrganizationOutcome::Applied(OrgRole::Member)
             if super::organizations::roles::holds_security_role(connection, actor, org).await? =>
         {
             Ok(())

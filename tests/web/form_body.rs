@@ -25,7 +25,7 @@ async fn completed_forms_release_their_slots_before_the_handler_finishes() {
         None,
     );
     let router = create_router(state);
-    let codeyard_db_core::DbPool::Sqlite(pool) = database.pool() else {
+    let DbPool::Sqlite(pool) = database.pool() else {
         panic!("not SQLite")
     };
     let mut connections = Vec::new();

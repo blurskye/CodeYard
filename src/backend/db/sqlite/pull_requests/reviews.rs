@@ -1321,7 +1321,7 @@ pub async fn converted_issue_comment(
 impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for PullRequestCommentEntry {
     fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
         Ok(Self {
-            comment: codeyard_db_core::models::PullRequestComment::from_row(row)?,
+            comment: PullRequestComment::from_row(row)?,
             author: crate::backend::db::sqlite::users::accounts::author_display(row)?,
         })
     }
@@ -1330,7 +1330,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for PullRequestCommentEntry 
 impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for PullRequestReviewEntry {
     fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
         Ok(Self {
-            review: codeyard_db_core::models::PullRequestReview::from_row(row)?,
+            review: PullRequestReview::from_row(row)?,
             author: crate::backend::db::sqlite::users::accounts::author_display(row)?,
         })
     }

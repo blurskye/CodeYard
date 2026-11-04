@@ -100,9 +100,7 @@ pub(crate) async fn lock_triage_authority(
     Ok(
         lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared, false)
             .await?
-            .is_some_and(|a| {
-                a.access >= codeyard_db_core::models::AccessLevel::Triage || a.personal_override
-            }),
+            .is_some_and(|a| a.access >= AccessLevel::Triage || a.personal_override),
     )
 }
 

@@ -103,15 +103,9 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        organizations::add_organization_member(
-            f.pool(),
-            owner,
-            org.id,
-            member,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        organizations::add_organization_member(f.pool(), owner, org.id, member, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     applied(
         organizations::invite_organization_member(
@@ -119,7 +113,7 @@ async fn contract(pg: bool) {
             owner,
             org.id,
             outsider,
-            codeyard_db_core::models::OrgRole::Member,
+            OrgRole::Member,
         )
         .await
         .unwrap(),
@@ -568,7 +562,7 @@ async fn contract(pg: bool) {
             owner,
             org.id,
             member,
-            codeyard_db_core::models::OrgRole::Admin,
+            OrgRole::Admin,
         )
         .await
         .unwrap(),
@@ -599,7 +593,7 @@ async fn contract(pg: bool) {
             owner,
             org.id,
             member,
-            codeyard_db_core::models::OrgRole::Member,
+            OrgRole::Member,
         )
         .await
         .unwrap(),

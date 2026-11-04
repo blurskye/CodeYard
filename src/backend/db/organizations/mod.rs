@@ -54,20 +54,17 @@ impl OrganizationPage {
 pub(crate) const MAX_SCOPED_REPOSITORIES: usize = 1000;
 
 pub(crate) fn administers(role: OrgRole) -> bool {
-    matches!(
-        role,
-        codeyard_db_core::models::OrgRole::Owner | codeyard_db_core::models::OrgRole::Admin
-    )
+    matches!(role, OrgRole::Owner | OrgRole::Admin)
 }
 pub(crate) fn can_change_member(
     actor: OrgRole,
     old: Option<OrgRole>,
     new: Option<OrgRole>,
 ) -> bool {
-    actor == codeyard_db_core::models::OrgRole::Owner
-        || (actor == codeyard_db_core::models::OrgRole::Admin
-            && old.is_none_or(|role| role == codeyard_db_core::models::OrgRole::Member)
-            && new.is_none_or(|role| role == codeyard_db_core::models::OrgRole::Member))
+    actor == OrgRole::Owner
+        || (actor == OrgRole::Admin
+            && old.is_none_or(|role| role == OrgRole::Member)
+            && new.is_none_or(|role| role == OrgRole::Member))
 }
 
 pub mod access;

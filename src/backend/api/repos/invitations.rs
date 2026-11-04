@@ -1,11 +1,9 @@
 //! Native recipient workflow, backed by the same invitation transactions as the REST adapters.
 use super::paging;
-use crate::backend::{
-    api::http::context::PageContext,
-    app::AppState,
-    db,
-    repositories::collaborators::{self, Error},
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::app::AppState;
+use crate::backend::repositories::collaborators;
+use crate::backend::repositories::collaborators::Error;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},

@@ -119,7 +119,7 @@ mod tests {
         let admin = db::users::accounts::create_user(&pool, "admin", Some("admin@example.com"))
             .await
             .unwrap();
-        let codeyard_db_core::DbPool::Sqlite(raw) = &pool else {
+        let DbPool::Sqlite(raw) = &pool else {
             unreachable!()
         };
         sqlx::query("UPDATE users SET is_admin=1, email_verified=1 WHERE id=?1")
@@ -362,7 +362,7 @@ mod tests {
     #[tokio::test]
     async fn the_outbox_claims_retries_gives_up_and_prunes() {
         let f = fixture().await;
-        let codeyard_db_core::DbPool::Sqlite(raw) = &f.pool else {
+        let DbPool::Sqlite(raw) = &f.pool else {
             unreachable!()
         };
         db::email::enqueue_email(&f.pool, "a@example.com", "One", "Body")

@@ -61,15 +61,9 @@ pub async fn contracts(f: &Fixture) {
     let pool = f.database.pool();
     let bystander = Fixture::actor(pool, "org_bystander").await;
     applied(
-        add_organization_member(
-            pool,
-            f.owner.id,
-            f.org,
-            bystander.id,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        add_organization_member(pool, f.owner.id, f.org, bystander.id, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     // Signed in, but not a member of the organization.
     let stranger = Fixture::actor(pool, "stranger").await;

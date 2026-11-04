@@ -1,7 +1,7 @@
 //! Admin storage overview page.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::user::responses::require_account;
-use crate::backend::{app::AppState, db};
+use crate::backend::app::AppState;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode, Uri},

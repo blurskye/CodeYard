@@ -37,14 +37,9 @@ async fn repository_with_writer(pool: &codeyard_db_core::DbPool, name: &str) -> 
     .await
     .unwrap()
     .id;
-    db::repositories::access::grant_repo_access(
-        pool,
-        writer,
-        repo,
-        codeyard_db_core::models::AccessLevel::Write,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(pool, writer, repo, AccessLevel::Write)
+        .await
+        .unwrap();
     (owner, writer, repo)
 }
 
@@ -86,21 +81,9 @@ async fn run(pool: &codeyard_db_core::DbPool, id: Uuid) -> CiRun {
 
 async fn grant_changes(pool: &codeyard_db_core::DbPool) {
     for (name, level, reduced) in [
-        (
-            "downgrade",
-            codeyard_db_core::models::AccessLevel::Read,
-            true,
-        ),
-        (
-            "unchanged",
-            codeyard_db_core::models::AccessLevel::Write,
-            false,
-        ),
-        (
-            "upgrade",
-            codeyard_db_core::models::AccessLevel::Admin,
-            false,
-        ),
+        ("downgrade", AccessLevel::Read, true),
+        ("unchanged", AccessLevel::Write, false),
+        ("upgrade", AccessLevel::Admin, false),
     ] {
         let (owner, writer, repo) = repository_with_writer(pool, name).await;
         let trusted = [owner, writer];
@@ -614,7 +597,7 @@ async fn cancellation_after_access_loss(pool: &codeyard_db_core::DbPool) {
         db::repositories::access::get_user_repo_access(pool, writer, repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        AccessLevel::None
     );
     assert!(
         db::ci::request_ci_cancellation(pool, running.run_id, writer)
@@ -683,15 +666,9 @@ async fn team_writer_repository(
     )
     .id;
     applied(
-        organizations::add_organization_member(
-            pool,
-            owner,
-            org,
-            member,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        organizations::add_organization_member(pool, owner, org, member, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let team = applied(
         organizations::create_organization_team(

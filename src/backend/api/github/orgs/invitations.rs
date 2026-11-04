@@ -96,8 +96,8 @@ async fn create(
     let (org, actor) = context(&state, &headers, &name, true).await?;
     let Json(input) = body.map_err(super::super::json_error)?;
     let role = match input.role.as_deref().unwrap_or("direct_member") {
-        "admin" => codeyard_db_core::models::OrgRole::Owner,
-        "direct_member" | "reinstate" => codeyard_db_core::models::OrgRole::Member,
+        "admin" => OrgRole::Owner,
+        "direct_member" | "reinstate" => OrgRole::Member,
         "billing_manager" => return Err(Error::invalid("Billing manager invitations require a billing service, which Codeyard does not provide")),
         _ => return Err(Error::validation("OrganizationInvitation", "role", "invalid")),
     };
@@ -183,8 +183,8 @@ async fn pending(
     };
     match query.role.as_deref().unwrap_or("all") {
         "all" => {}
-        "admin" => filter.role = Some(codeyard_db_core::models::OrgRole::Owner),
-        "direct_member" => filter.role = Some(codeyard_db_core::models::OrgRole::Member),
+        "admin" => filter.role = Some(OrgRole::Owner),
+        "direct_member" => filter.role = Some(OrgRole::Member),
         "billing_manager" | "hiring_manager" => filter.empty = true,
         _ => {
             return Err(Error::validation(

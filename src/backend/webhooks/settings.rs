@@ -96,7 +96,7 @@ pub async fn authorize(pool: &DbPool, actor: &User, owner: HookOwner) -> Result<
             db::organizations::membership::get_organization_role(pool, actor.id, org)
                 .await
                 .map_err(unavailable)?,
-            OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Owner)
+            OrganizationOutcome::Applied(OrgRole::Owner)
         ),
     };
     if allowed {

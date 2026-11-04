@@ -142,7 +142,6 @@ async fn discussions(
     repo: i64,
     label: &Value,
 ) {
-    use codeyard_db_core::models::AccessLevel;
     let bob = f.actor("discussion-bob").await;
     let bob_token = credentials(f, router, bob, "write").await;
     let read_token = credentials(f, router, alice, "read").await;

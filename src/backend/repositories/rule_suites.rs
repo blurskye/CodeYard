@@ -68,16 +68,13 @@ async fn exempted(
     let role = if has(ActorType::RepositoryRole) {
         super::access::user_access(pool, actor, repository).await?
     } else {
-        codeyard_db_core::models::AccessLevel::None
+        AccessLevel::None
     };
     let org_admin = if has(ActorType::OrganizationAdmin) && repository.owner_kind == "org" {
         if let Some(org) = repository.owner_org_id {
             matches!(
                 db::organizations::membership::get_organization_role(pool, actor.id, org).await?,
-                OrganizationOutcome::Applied(
-                    codeyard_db_core::models::OrgRole::Owner
-                        | codeyard_db_core::models::OrgRole::Admin
-                )
+                OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin)
             )
         } else {
             false

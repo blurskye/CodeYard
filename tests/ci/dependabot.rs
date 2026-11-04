@@ -363,7 +363,6 @@ async fn repository_secrets(pg: bool) {
 }
 
 async fn organization_secrets(pg: bool) {
-    use codeyard_db_core::models::OrgRole;
     use db::organizations;
     use db::organizations::NewOrganization;
     use db::organizations::OrganizationOutcome;

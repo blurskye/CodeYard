@@ -38,14 +38,9 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
-        f.pool(),
-        bob_id,
-        repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(f.pool(), bob_id, repo.id, AccessLevel::Write)
+        .await
+        .unwrap();
     let router = create_router(AppState::new(
         f.pool().clone(),
         root.path().to_owned(),
@@ -669,14 +664,9 @@ async fn pull_request_run_is_run_again(pg: bool) {
     .await
     .unwrap();
     for writer in [bob_id, carol_id] {
-        db::repositories::access::grant_repo_access(
-            f.pool(),
-            writer,
-            repo.id,
-            codeyard_db_core::models::AccessLevel::Write,
-        )
-        .await
-        .unwrap();
+        db::repositories::access::grant_repo_access(f.pool(), writer, repo.id, AccessLevel::Write)
+            .await
+            .unwrap();
     }
     let router = create_router(AppState::new(
         f.pool().clone(),

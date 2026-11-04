@@ -56,20 +56,18 @@ pub async fn postgres_snapshot(
     Vec<Repository>,
 )> {
     match pool {
-        codeyard_db_core::DbPool::Postgres(pool) => {
-            super::postgres::backups::export_snapshot(pool).await
-        }
-        codeyard_db_core::DbPool::Sqlite(_) => bail!("only PostgreSQL exports snapshots"),
+        DbPool::Postgres(pool) => super::postgres::backups::export_snapshot(pool).await,
+        DbPool::Sqlite(_) => bail!("only PostgreSQL exports snapshots"),
     }
 }
 
 /// Writes a consistent copy of a SQLite database to `path` while the server runs.
 pub async fn copy_sqlite(pool: &DbPool, path: &str) -> Result<()> {
     match pool {
-        codeyard_db_core::DbPool::Sqlite(native) => {
+        DbPool::Sqlite(native) => {
             crate::backend::db::sqlite::backups::vacuum_into(native, path).await
         }
-        codeyard_db_core::DbPool::Postgres(_) => {
+        DbPool::Postgres(_) => {
             bail!("a PostgreSQL database is copied with pg_dump")
         }
     }

@@ -152,7 +152,7 @@ async fn account_manages_hooks(
         }
         HookOwner::Organization(org) => matches!(
             authority(tx, actor_id, org).await?,
-            OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Owner)
+            OrganizationOutcome::Applied(OrgRole::Owner)
         ),
     })
 }

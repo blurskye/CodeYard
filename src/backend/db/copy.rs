@@ -173,8 +173,8 @@ fn engine_of(url: &str) -> Result<Engine> {
 /// deferred read transaction already sees one snapshot for all of its reads.
 async fn snapshot(pool: &DbPool) -> Result<Tx> {
     match pool {
-        codeyard_db_core::DbPool::Sqlite(pool) => Ok(Tx::Sqlite(pool.begin().await?)),
-        codeyard_db_core::DbPool::Postgres(pool) => {
+        DbPool::Sqlite(pool) => Ok(Tx::Sqlite(pool.begin().await?)),
+        DbPool::Postgres(pool) => {
             let mut tx = pool.begin().await?;
             sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
                 .execute(&mut *tx)
@@ -188,10 +188,8 @@ async fn snapshot(pool: &DbPool) -> Result<Tx> {
 /// the load, where a busy lock would fail after rows were already written.
 async fn write(pool: &DbPool) -> Result<Tx> {
     match pool {
-        codeyard_db_core::DbPool::Sqlite(pool) => {
-            Ok(Tx::Sqlite(pool.begin_with("BEGIN IMMEDIATE").await?))
-        }
-        codeyard_db_core::DbPool::Postgres(pool) => {
+        DbPool::Sqlite(pool) => Ok(Tx::Sqlite(pool.begin_with("BEGIN IMMEDIATE").await?)),
+        DbPool::Postgres(pool) => {
             let mut tx = pool.begin().await?;
             // The load drops and re-adds foreign keys; fail rather than wait forever
             // when a server is still attached to the destination.

@@ -2295,7 +2295,7 @@ mod tests {
     use super::*;
     use crate::backend::ci::CiConfig;
     use crate::backend::repositories::store::RepoStore;
-    use codeyard_db_core::DbPool;
+
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
@@ -2461,7 +2461,7 @@ mod tests {
             unreachable!()
         };
         sqlx::query("UPDATE ci_runs SET log_lines = ? WHERE id = ?")
-            .bind(super::super::logs::MAX_RUN_LOG_LINES - 2)
+            .bind(codeyard_model::ci::MAX_RUN_LOG_LINES - 2)
             .bind(run.id)
             .execute(raw)
             .await
@@ -2484,7 +2484,7 @@ mod tests {
                     .fetch_one(raw)
                     .await
                     .unwrap();
-                if stored == super::super::logs::MAX_RUN_LOG_LINES {
+                if stored == codeyard_model::ci::MAX_RUN_LOG_LINES {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(5)).await;

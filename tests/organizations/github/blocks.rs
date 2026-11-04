@@ -47,10 +47,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap(),
     );
-    for (user, role) in [
-        (member, codeyard_db_core::models::OrgRole::Member),
-        (admin, codeyard_db_core::models::OrgRole::Admin),
-    ] {
+    for (user, role) in [(member, OrgRole::Member), (admin, OrgRole::Admin)] {
         applied(
             organizations::add_organization_member(f.pool(), owner, org.id, user, role)
                 .await
@@ -95,7 +92,7 @@ async fn contract(pg: bool) {
             f.pool(),
             outsider,
             repo.id,
-            codeyard_db_core::models::AccessLevel::Write,
+            AccessLevel::Write,
         )
         .await
         .unwrap();
@@ -485,15 +482,9 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(matches!(
-        organizations::add_organization_member(
-            f.pool(),
-            owner,
-            org.id,
-            outsider,
-            codeyard_db_core::models::OrgRole::Member
-        )
-        .await
-        .unwrap(),
+        organizations::add_organization_member(f.pool(), owner, org.id, outsider, OrgRole::Member)
+            .await
+            .unwrap(),
         organizations::OrganizationOutcome::Denied
     ));
     // Even grants retained by a future repository transfer cannot override the organization block.

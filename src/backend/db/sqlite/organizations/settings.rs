@@ -29,7 +29,7 @@ pub async fn owned(
     org: i64,
 ) -> Result<OrganizationOutcome<Updated>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
+    if require_read_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     let settings = get_on(&mut tx, org)
@@ -54,7 +54,7 @@ pub async fn change(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    if require_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
+    if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     if !credential(&mut tx, &grant, org, "organization_administration").await? {

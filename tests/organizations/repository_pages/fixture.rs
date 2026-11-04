@@ -117,9 +117,9 @@ impl Fixture {
         database.complete_setup().await;
         let org = Self::organization(pool, owner.id, "canonical_org").await;
         for (actor, role) in [
-            (&admin, codeyard_db_core::models::OrgRole::Admin),
-            (&member, codeyard_db_core::models::OrgRole::Member),
-            (&unknown, codeyard_db_core::models::OrgRole::Member),
+            (&admin, OrgRole::Admin),
+            (&member, OrgRole::Member),
+            (&unknown, OrgRole::Member),
         ] {
             applied(
                 orgs::add_organization_member(pool, owner.id, org, actor.id, role)

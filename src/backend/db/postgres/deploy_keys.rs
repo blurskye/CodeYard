@@ -128,10 +128,7 @@ pub async fn insert_deploy_key(
     .bind(&key.fingerprint)
     .fetch_one(&mut *tx)
     .await?;
-    anyhow::ensure!(
-        !used,
-        codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed
-    );
+    anyhow::ensure!(!used, SshKeyWriteRefusal::AlreadyUsed);
     let sql = format!(
         "INSERT INTO deploy_keys (repo_id, name, fingerprint, public_key, read_only, created_by_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING {COLUMNS}"
     );

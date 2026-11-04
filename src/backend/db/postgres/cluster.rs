@@ -125,7 +125,7 @@ pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(node) = known {
-        return Ok(codeyard_db_core::models::JoinOutcome::AlreadyMember(node));
+        return Ok(JoinOutcome::AlreadyMember(node));
     }
     // One statement checks expiry and use count and takes the use, so two joins
     // cannot both succeed with a one-time token.
@@ -138,12 +138,12 @@ pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<
     .fetch_optional(&mut *tx)
     .await?;
     let Some((allowed, requires_approval)) = token else {
-        return Ok(codeyard_db_core::models::JoinOutcome::InvalidToken);
+        return Ok(JoinOutcome::InvalidToken);
     };
     let roles = match request.roles {
         None => allowed,
         Some(wanted) if wanted.iter().all(|role| allowed.contains(role)) => wanted.to_vec(),
-        Some(_) => return Ok(codeyard_db_core::models::JoinOutcome::RolesNotAllowed { allowed }),
+        Some(_) => return Ok(JoinOutcome::RolesNotAllowed { allowed }),
     };
     let status = if requires_approval {
         "pending"
@@ -175,7 +175,7 @@ pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<
     if let Some(node) = inserted {
         super::runners::bind_registration(&mut tx, request.token_hash, &node, request.name).await?;
         tx.commit().await?;
-        return Ok(codeyard_db_core::models::JoinOutcome::Joined(node));
+        return Ok(JoinOutcome::Joined(node));
     }
     // Either the name is taken, or the same key joined concurrently.
     let raced = sqlx::query_as::<_, ClusterNode>(
@@ -185,8 +185,8 @@ pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<
     .fetch_optional(&mut *tx)
     .await?;
     Ok(match raced {
-        Some(node) => codeyard_db_core::models::JoinOutcome::AlreadyMember(node),
-        None => codeyard_db_core::models::JoinOutcome::NameTaken,
+        Some(node) => JoinOutcome::AlreadyMember(node),
+        None => JoinOutcome::NameTaken,
     })
 }
 
@@ -320,7 +320,7 @@ pub async fn set_node_status(
         if !active_admin(&mut tx, user_id).await?
             || !live_session(&mut tx, user_id, session).await?
         {
-            return Ok(codeyard_db_core::models::NodeStatusChange::Denied);
+            return Ok(NodeStatusChange::Denied);
         }
     }
     let before: Option<String> =
@@ -329,11 +329,11 @@ pub async fn set_node_status(
             .fetch_optional(&mut *tx)
             .await?;
     let Some(before) = before else {
-        return Ok(codeyard_db_core::models::NodeStatusChange::Missing);
+        return Ok(NodeStatusChange::Missing);
     };
     if let Authority::Administrator { user_id, session } = authority {
         if !live_session(&mut tx, user_id, session).await? {
-            return Ok(codeyard_db_core::models::NodeStatusChange::Denied);
+            return Ok(NodeStatusChange::Denied);
         }
     }
     let node = sqlx::query_as::<_, ClusterNode>(
@@ -348,7 +348,7 @@ pub async fn set_node_status(
             .bind(actor).bind(node.id).bind(serde_json::json!({"before":before,"status":status})).execute(&mut *tx).await?;
     }
     tx.commit().await?;
-    Ok(codeyard_db_core::models::NodeStatusChange::Changed {
+    Ok(NodeStatusChange::Changed {
         before,
         node: Box::new(node),
     })

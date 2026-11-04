@@ -179,14 +179,9 @@ async fn world(db: &Database, prefix: &str) -> World {
     let owner = db.site_admin(&format!("{prefix}_owner")).await;
     let collab = db.actor(&format!("{prefix}_collab")).await;
     let repo = db.repo(owner, &format!("{prefix}_repo")).await;
-    db::repositories::access::grant_repo_access(
-        db.pool(),
-        collab,
-        repo,
-        codeyard_db_core::models::AccessLevel::Write,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(db.pool(), collab, repo, AccessLevel::Write)
+        .await
+        .unwrap();
     World {
         owner,
         collab,
@@ -290,14 +285,9 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
     assert!(!untouched.cancel_requested);
 
     // Other ways to lose the right to run workflows. Each is seen only by the claim.
-    db::repositories::access::grant_repo_access(
-        db.pool(),
-        w.collab,
-        w.repo,
-        codeyard_db_core::models::AccessLevel::Write,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(db.pool(), w.collab, w.repo, AccessLevel::Write)
+        .await
+        .unwrap();
     for (what, apply, undo, id) in [
         (
             "banned",
@@ -473,14 +463,9 @@ async fn revocations_stop_queued_and_running_runs(db: &Database) {
     let w = world(db, "stop").await;
     let trusted = [w.collab];
     let other = db.repo(w.owner, "stop_other").await;
-    db::repositories::access::grant_repo_access(
-        db.pool(),
-        w.collab,
-        other,
-        codeyard_db_core::models::AccessLevel::Write,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(db.pool(), w.collab, other, AccessLevel::Write)
+        .await
+        .unwrap();
 
     for case in ["ban", "forced password change", "collaborator removal"] {
         // A run a worker has started, with more of the collaborator's runs and the
@@ -564,7 +549,7 @@ async fn revocations_stop_queued_and_running_runs(db: &Database) {
                     db.pool(),
                     w.collab,
                     w.repo,
-                    codeyard_db_core::models::AccessLevel::Write,
+                    AccessLevel::Write,
                 )
                 .await
                 .unwrap();
@@ -651,7 +636,7 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
         db.pool(),
         runner,
         affected.repo,
-        codeyard_db_core::models::AccessLevel::Admin,
+        AccessLevel::Admin,
     )
     .await
     .unwrap();
@@ -684,21 +669,15 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
     let survivor = db.actor(&format!("{kind}_survivor")).await;
     let retained = organization_repository(db, owner, &format!("{kind}_retained")).await;
     applied(
-        orgs::add_organization_member(
-            db.pool(),
-            owner,
-            retained.id,
-            survivor,
-            codeyard_db_core::models::OrgRole::Owner,
-        )
-        .await
-        .unwrap(),
+        orgs::add_organization_member(db.pool(), owner, retained.id, survivor, OrgRole::Owner)
+            .await
+            .unwrap(),
     );
     db::repositories::access::grant_repo_access(
         db.pool(),
         runner,
         retained.repo,
-        codeyard_db_core::models::AccessLevel::Admin,
+        AccessLevel::Admin,
     )
     .await
     .unwrap();
@@ -713,7 +692,7 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
         db.pool(),
         runner,
         unrelated.repo,
-        codeyard_db_core::models::AccessLevel::Admin,
+        AccessLevel::Admin,
     )
     .await
     .unwrap();
@@ -791,7 +770,7 @@ async fn ordinary_password_changes_leave_organization_work_running(db: &Database
         db.pool(),
         runner,
         organization.repo,
-        codeyard_db_core::models::AccessLevel::Admin,
+        AccessLevel::Admin,
     )
     .await
     .unwrap();
@@ -1317,26 +1296,14 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
         .unwrap(),
     );
     applied(
-        orgs::add_organization_member(
-            db.pool(),
-            owner,
-            org.id,
-            member,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        orgs::add_organization_member(db.pool(), owner, org.id, member, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     applied(
-        orgs::add_organization_member(
-            db.pool(),
-            owner,
-            org.id,
-            site,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        orgs::add_organization_member(db.pool(), owner, org.id, site, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let team = applied(
         orgs::create_organization_team(
@@ -1384,14 +1351,9 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     );
     let personal = db.repo(owner, "list_personal").await;
     let direct = db.repo(owner, "list_direct").await;
-    db::repositories::access::grant_repo_access(
-        db.pool(),
-        member,
-        direct,
-        codeyard_db_core::models::AccessLevel::Read,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(db.pool(), member, direct, AccessLevel::Read)
+        .await
+        .unwrap();
     let public = db.repo(owner, "list_public").await;
     db.execute(
         "UPDATE repositories SET is_private = FALSE WHERE id = $1",
@@ -2389,7 +2351,7 @@ async fn ci_notification_links_follow_renames_and_transfers(db: &Database) {
                 db.pool(),
                 w.collab,
                 w.repo,
-                codeyard_db_core::models::AccessLevel::Admin,
+                AccessLevel::Admin,
             )
             .await
             .unwrap();
@@ -2812,7 +2774,7 @@ mod interleaved {
                 first_owner,
                 organization.id,
                 second_owner,
-                codeyard_db_core::models::OrgRole::Owner,
+                OrgRole::Owner,
             )
             .await
             .unwrap(),
@@ -2821,7 +2783,7 @@ mod interleaved {
             db.pool(),
             runner,
             organization.repo,
-            codeyard_db_core::models::AccessLevel::Admin,
+            AccessLevel::Admin,
         )
         .await
         .unwrap();
@@ -2977,15 +2939,9 @@ mod interleaved {
         let actor = db.actor("enqueue_org_revoke_actor").await;
         let organization = organization_repository(&db, owner, "enqueue_org_revoke").await;
         applied(
-            orgs::add_organization_member(
-                db.pool(),
-                owner,
-                organization.id,
-                actor,
-                codeyard_db_core::models::OrgRole::Admin,
-            )
-            .await
-            .unwrap(),
+            orgs::add_organization_member(db.pool(), owner, organization.id, actor, OrgRole::Admin)
+                .await
+                .unwrap(),
         );
         let mut revocation = fixture(&db).raw.begin().await.unwrap();
         let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")

@@ -33,7 +33,7 @@ async fn contract(pg: bool) {
             owner,
             orgs[0].id,
             member,
-            codeyard_db_core::models::OrgRole::Member,
+            OrgRole::Member,
         )
         .await
         .unwrap(),

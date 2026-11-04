@@ -17,8 +17,8 @@ async fn restricted_account_cannot_delete(pg: bool) {
             filename: "avatar.png",
             content_type: "image/png",
             file_size: 8,
-            reason: codeyard_db_core::models::FileReason::Avatar,
-            visibility: codeyard_db_core::models::FileVisibility::Public,
+            reason: FileReason::Avatar,
+            visibility: FileVisibility::Public,
             sha256_hex: &"a".repeat(64),
         },
     )

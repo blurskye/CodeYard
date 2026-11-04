@@ -119,10 +119,7 @@ pub async fn insert_deploy_key(
     .bind(&key.fingerprint)
     .fetch_one(&mut *tx)
     .await?;
-    anyhow::ensure!(
-        !used,
-        codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed
-    );
+    anyhow::ensure!(!used, SshKeyWriteRefusal::AlreadyUsed);
     let sql = format!(
         "INSERT INTO deploy_keys (repo_id, name, fingerprint, public_key, read_only, created_by_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6) RETURNING {COLUMNS}"
     );
@@ -138,7 +135,7 @@ pub async fn insert_deploy_key(
         // The unique index is the final guard for a concurrent insert of the same key.
         .map_err(|error| match &error {
             sqlx::Error::Database(database) if database.is_unique_violation() => {
-                anyhow::Error::from(codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed)
+                anyhow::Error::from(SshKeyWriteRefusal::AlreadyUsed)
             }
             _ => anyhow::Error::from(error),
         })?;

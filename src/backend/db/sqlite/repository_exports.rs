@@ -14,7 +14,7 @@ async fn authority(
     if let Some(org) = org {
         return Ok(matches!(
             super::organizations::authority::authority(connection, actor, org).await?,
-            OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Owner)
+            OrganizationOutcome::Applied(OrgRole::Owner)
         ));
     }
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)").bind(actor).fetch_one(connection).await?)

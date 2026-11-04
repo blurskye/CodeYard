@@ -28,15 +28,9 @@ pub(super) async fn run(
     )
     .id;
     applied(
-        orgs::add_organization_member(
-            pool,
-            alice,
-            org,
-            bob,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        orgs::add_organization_member(pool, alice, org, bob, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let writers = applied(
         orgs::create_organization_team(
@@ -103,14 +97,9 @@ pub(super) async fn run(
             .unwrap(),
         );
     }
-    db::repositories::access::grant_repo_access(
-        pool,
-        bob,
-        repo,
-        codeyard_db_core::models::AccessLevel::Write,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(pool, bob, repo, AccessLevel::Write)
+        .await
+        .unwrap();
     db::repositories::protection::upsert_branch_protection_rule(
         pool,
         db::repositories::protection::BranchProtectionRuleUpsert {

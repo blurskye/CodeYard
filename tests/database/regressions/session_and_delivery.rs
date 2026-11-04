@@ -2,7 +2,6 @@ use super::*;
 
 #[tokio::test]
 async fn privileged_node_and_crawler_changes_require_the_original_live_session() {
-    use codeyard_db_core::models::NodeStatusChange;
     use db::cluster::Authority;
     for pg in [false, true] {
         let mut f = Database::new(pg).await;

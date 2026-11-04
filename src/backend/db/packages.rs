@@ -346,12 +346,10 @@ impl Drop for CollectorLock {
 /// installation has a single server, so its lock is always free.
 pub async fn collector_lock(pool: &DbPool) -> Result<Option<CollectorLock>> {
     match pool {
-        codeyard_db_core::DbPool::Sqlite(_) => Ok(Some(CollectorLock(None))),
-        codeyard_db_core::DbPool::Postgres(pool) => {
-            Ok(super::postgres::packages::collector_lock(pool)
-                .await?
-                .map(|connection| CollectorLock(Some(connection))))
-        }
+        DbPool::Sqlite(_) => Ok(Some(CollectorLock(None))),
+        DbPool::Postgres(pool) => Ok(super::postgres::packages::collector_lock(pool)
+            .await?
+            .map(|connection| CollectorLock(Some(connection)))),
     }
 }
 

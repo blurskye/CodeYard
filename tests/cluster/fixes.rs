@@ -103,7 +103,7 @@ async fn adoption_and_index(pool: &DbPool) {
     let source = make("source").await;
     let fork = make("fork").await;
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        DbPool::Postgres(raw) => {
             sqlx::query("UPDATE repositories SET forked_from_id=$1,is_fork=true WHERE id=$2")
                 .bind(source.id)
                 .bind(fork.id)
@@ -113,7 +113,7 @@ async fn adoption_and_index(pool: &DbPool) {
             let definition: String = sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() AND indexname='idx_repositories_storage_node'").fetch_one(raw).await.unwrap();
             assert!(definition.contains("(storage_node_id, id)"));
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        DbPool::Sqlite(raw) => {
             sqlx::query("UPDATE repositories SET forked_from_id=?1,is_fork=true WHERE id=?2")
                 .bind(source.id)
                 .bind(fork.id)

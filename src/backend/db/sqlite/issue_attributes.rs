@@ -403,7 +403,7 @@ async fn begin_organization_write<'a>(
     authority: &Actor,
 ) -> Result<Transaction<'a, Sqlite>> {
     use crate::backend::db::organizations::OrganizationOutcome;
-    use codeyard_db_core::models::OrgRole;
+
     let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     match super::organizations::authority::authority(&mut tx, actor, org).await? {

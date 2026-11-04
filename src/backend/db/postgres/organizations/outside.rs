@@ -15,7 +15,7 @@ pub async fn list(
     window: (i64, i64),
 ) -> Result<OrganizationOutcome<Vec<User>>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
+    if require_read_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     if !matches!(filter, "all" | "2fa_disabled" | "2fa_insecure") {
@@ -40,7 +40,7 @@ pub async fn remove(
         &[actor, target],
     )
     .await?;
-    if require_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
+    if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     if !credential(&mut tx, &grant, org, "members").await? {

@@ -10,7 +10,7 @@ use codeyard::backend::api::create_router;
 use codeyard::backend::app::AppState;
 use codeyard::backend::ci::CiConfig;
 use codeyard::backend::crypto::SecretEncryptor;
-use codeyard::backend::db;
+
 use codeyard::backend::db::organizations;
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::OrganizationProfile;
@@ -57,10 +57,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap(),
     );
-    for (user, role) in [
-        (member, codeyard_db_core::models::OrgRole::Member),
-        (admin, codeyard_db_core::models::OrgRole::Admin),
-    ] {
+    for (user, role) in [(member, OrgRole::Member), (admin, OrgRole::Admin)] {
         applied(
             organizations::add_organization_member(f.pool(), owner, org.id, user, role)
                 .await

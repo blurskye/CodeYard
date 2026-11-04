@@ -1753,7 +1753,7 @@ async fn deploy_keys_contract(pg: bool) {
         .await;
     let id = key["id"].as_i64().unwrap();
     use codeyard::backend::repositories::deploy_keys::remove_key;
-    use codeyard_model::repositories::DeployKeyError;
+
     assert!(matches!(
         remove_key(
             f.pool(),

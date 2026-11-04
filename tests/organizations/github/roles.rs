@@ -98,9 +98,9 @@ async fn contract(pg: bool) {
         ));
     }
     for (id, role) in [
-        (member, codeyard_db_core::models::OrgRole::Member),
-        (other, codeyard_db_core::models::OrgRole::Member),
-        (delegated, codeyard_db_core::models::OrgRole::Admin),
+        (member, OrgRole::Member),
+        (other, OrgRole::Member),
+        (delegated, OrgRole::Admin),
     ] {
         applied(
             organizations::add_organization_member(f.pool(), owner, orgs[0].id, id, role)
@@ -114,7 +114,7 @@ async fn contract(pg: bool) {
             owner,
             orgs[1].id,
             member,
-            codeyard_db_core::models::OrgRole::Member,
+            OrgRole::Member,
         )
         .await
         .unwrap(),
@@ -506,7 +506,7 @@ async fn contract(pg: bool) {
         organizations::get_organization_repo_access(f.pool(), member, &first)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::Read
+        AccessLevel::Read
     );
     request(
         &router,
@@ -524,7 +524,7 @@ async fn contract(pg: bool) {
                 .await
                 .unwrap()
         ),
-        codeyard_db_core::models::OrgRole::Member
+        OrgRole::Member
     );
     let (_, issue) = request(
         &router,
@@ -879,7 +879,7 @@ async fn contract(pg: bool) {
             owner,
             orgs[0].id,
             member,
-            codeyard_db_core::models::OrgRole::Member,
+            OrgRole::Member,
         )
         .await
         .unwrap(),
@@ -1096,7 +1096,7 @@ async fn contract(pg: bool) {
             owner,
             orgs[0].id,
             nested,
-            codeyard_db_core::models::OrgRole::Member,
+            OrgRole::Member,
         )
         .await
         .unwrap(),
@@ -1184,7 +1184,7 @@ async fn contract(pg: bool) {
         organizations::get_organization_repo_access(f.pool(), nested, &first)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::Write
+        AccessLevel::Write
     );
     let (_, users) = request(
         &router,

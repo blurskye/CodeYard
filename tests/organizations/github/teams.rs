@@ -86,26 +86,14 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        orgs::add_organization_member(
-            f.pool(),
-            alice,
-            org.id,
-            bob,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        orgs::add_organization_member(f.pool(), alice, org.id, bob, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     applied(
-        orgs::add_organization_member(
-            f.pool(),
-            alice,
-            org.id,
-            charlie,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        orgs::add_organization_member(f.pool(), alice, org.id, charlie, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let router = create_router(AppState::new(

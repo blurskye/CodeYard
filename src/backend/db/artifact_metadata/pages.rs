@@ -27,13 +27,13 @@ pub async fn list(
         Refusal::Invalid
     );
     match pool {
-        codeyard_db_core::DbPool::Postgres(pool) => {
+        DbPool::Postgres(pool) => {
             crate::backend::db::postgres::artifact_metadata::pages::list(
                 pool, session, org, digest, kind, after,
             )
             .await
         }
-        codeyard_db_core::DbPool::Sqlite(pool) => {
+        DbPool::Sqlite(pool) => {
             crate::backend::db::sqlite::artifact_metadata::pages::list(
                 pool, session, org, digest, kind, after,
             )

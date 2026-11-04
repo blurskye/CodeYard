@@ -28,9 +28,7 @@ async fn authorize(
     let allowed = match scope {
         PullCapScope::Organization(org) => matches!(
             super::organizations::authority::authority(&mut *connection, actor, org).await?,
-            OrganizationOutcome::Applied(
-                codeyard_db_core::models::OrgRole::Owner | codeyard_db_core::models::OrgRole::Admin
-            )
+            OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin)
         ),
         PullCapScope::Repository(repo) => {
             super::discussions::lock_policy_authority_with(

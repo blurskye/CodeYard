@@ -98,12 +98,7 @@ async fn list(
         &uri,
         rows.into_iter()
             .take(limit)
-            .map(|row| {
-                payloads::collaborator(
-                    &row.user,
-                    codeyard_db_core::models::AccessLevel::from(row.permission),
-                )
-            })
+            .map(|row| payloads::collaborator(&row.user, AccessLevel::from(row.permission)))
             .collect(),
         next,
     )

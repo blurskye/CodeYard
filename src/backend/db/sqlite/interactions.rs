@@ -46,7 +46,7 @@ async fn authorize(
     }
     let allowed = match scope {
         InteractionScope::User(user) => user==actor && sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)").bind(actor).fetch_one(&mut **tx).await?,
-        InteractionScope::Organization(org) => match super::organizations::authority::authority(tx,actor,org).await? {OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Owner)=>true,OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Admin)=>!write,_=>false},
+        InteractionScope::Organization(org) => match super::organizations::authority::authority(tx,actor,org).await? {OrganizationOutcome::Applied(OrgRole::Owner)=>true,OrganizationOutcome::Applied(OrgRole::Admin)=>!write,_=>false},
         InteractionScope::Repository(repo) => super::discussions::lock_archive_authority(tx,actor,repo).await?,
     };
     anyhow::ensure!(allowed, InteractionRefusal::Denied);

@@ -258,7 +258,7 @@ pub async fn teams(f: &Fixture) {
     use super::{fixture::applied, profile::html};
     use codeyard::backend::db;
     use codeyard::backend::db::organizations::*;
-    use codeyard_db_core::models::AccessLevel;
+
     let pool = f.database.pool();
     for slug in ["api", "admin", "search"] {
         let reserved = f

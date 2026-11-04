@@ -1,6 +1,6 @@
 //! Disposable native-database fixtures. Raw drivers are test-only, never exposed
 //! through the application handle. No environment mutation, .env or silent skip.
-use codeyard::backend::db;
+
 use sqlx::{
     postgres::PgPoolOptions,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},

@@ -80,10 +80,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap(),
     );
-    for (user, role) in [
-        (member, codeyard_db_core::models::OrgRole::Member),
-        (delegated, codeyard_db_core::models::OrgRole::Admin),
-    ] {
+    for (user, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
         applied(
             organizations::add_organization_member(f.pool(), owner, org.id, user, role)
                 .await

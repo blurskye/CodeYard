@@ -20,13 +20,13 @@ use tracing::warn;
 fn refusal(error: anyhow::Error) -> DeployKeyError {
     if error
         .downcast_ref::<DeployKeyError>()
-        .is_some_and(|error| matches!(error, codeyard_model::repositories::DeployKeyError::Denied))
+        .is_some_and(|error| matches!(error, DeployKeyError::Denied))
     {
-        return codeyard_model::repositories::DeployKeyError::Denied;
+        return DeployKeyError::Denied;
     }
     match error.downcast::<SshKeyWriteRefusal>() {
-        Ok(refusal) => codeyard_model::repositories::DeployKeyError::Key(refusal),
-        Err(error) => codeyard_model::repositories::DeployKeyError::Unavailable(error),
+        Ok(refusal) => DeployKeyError::Key(refusal),
+        Err(error) => DeployKeyError::Unavailable(error),
     }
 }
 
@@ -37,10 +37,8 @@ async fn require_admin(
 ) -> Result<(), DeployKeyError> {
     match can_admin(pool, actor, repo).await {
         Ok(true) => Ok(()),
-        Ok(false) => Err(codeyard_model::repositories::DeployKeyError::Denied),
-        Err(error) => Err(codeyard_model::repositories::DeployKeyError::Unavailable(
-            error,
-        )),
+        Ok(false) => Err(DeployKeyError::Denied),
+        Err(error) => Err(DeployKeyError::Unavailable(error)),
     }
 }
 
@@ -70,7 +68,7 @@ pub async fn add_key(
     require_admin(pool, actor, repo).await?;
     let title = title.trim();
     if title.is_empty() || title.chars().count() > 255 || title.contains('\0') {
-        return Err(codeyard_model::repositories::DeployKeyError::InvalidTitle);
+        return Err(DeployKeyError::InvalidTitle);
     }
     let parsed = ssh_keys::parse_public_key(public_key)?;
     let key = NewDeployKey {
@@ -100,7 +98,7 @@ pub async fn remove_key(
     if deleted {
         Ok(())
     } else {
-        Err(codeyard_model::repositories::DeployKeyError::NotFound)
+        Err(DeployKeyError::NotFound)
     }
 }
 
@@ -208,20 +206,17 @@ pub async fn authorize(
         "identity unavailable"
     );
     let access = if repo.owner_kind == "user" && creator.is_admin {
-        codeyard_db_core::models::AccessLevel::Write
+        AccessLevel::Write
     } else {
         db::repositories::access::get_user_repo_access(pool, creator.id, repo.id).await?
     };
     let required = if write {
-        codeyard_db_core::models::AccessLevel::Write
+        AccessLevel::Write
     } else {
-        codeyard_db_core::models::AccessLevel::Read
+        AccessLevel::Read
     };
     ensure!(access >= required, "repository access denied");
-    Ok((
-        creator,
-        access.min(codeyard_db_core::models::AccessLevel::Write),
-    ))
+    Ok((creator, access.min(AccessLevel::Write)))
 }
 
 /// Records that a key authenticated. A failure is logged and does not refuse the session.

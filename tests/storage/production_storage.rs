@@ -108,8 +108,8 @@ async fn reserve(db: &Database, bytes: i64) -> Result<File, AdmissionError> {
             filename: "fixture.txt",
             content_type: "text/plain",
             file_size: bytes,
-            reason: codeyard_db_core::models::FileReason::Other,
-            visibility: codeyard_db_core::models::FileVisibility::Owner,
+            reason: FileReason::Other,
+            visibility: FileVisibility::Owner,
             sha256_hex: &digest(b"fixture"),
         },
     )
@@ -124,7 +124,7 @@ async fn reserve_avatar(db: &Database, visibility: FileVisibility) -> File {
             filename: "me.png",
             content_type: "image/png",
             file_size: PNG.len() as i64,
-            reason: codeyard_db_core::models::FileReason::Avatar,
+            reason: FileReason::Avatar,
             visibility,
             sha256_hex: &digest(PNG),
         },
@@ -476,8 +476,8 @@ async fn s3_reservations_sign_the_declared_object_and_charge_the_quota() {
         filename: "fixture.txt",
         content_type: "text/plain",
         file_size: 7,
-        reason: codeyard_db_core::models::FileReason::Other,
-        visibility: codeyard_db_core::models::FileVisibility::Owner,
+        reason: FileReason::Other,
+        visibility: FileVisibility::Owner,
         sha256_hex: &checksum,
     };
     let reservation =
@@ -610,7 +610,7 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
     );
 
     // A public avatar image is the one thing displayed inline.
-    let avatar = reserve_avatar(&db, codeyard_db_core::models::FileVisibility::Public).await;
+    let avatar = reserve_avatar(&db, FileVisibility::Public).await;
     activate(&db, avatar.id).await;
     for actor in [None, Some(db.user)] {
         let opened = file_operations::open_asset_download(&db.pool, &store, actor, avatar.id)
@@ -672,8 +672,8 @@ async fn s3_confirmation_needs_the_object_to_match_the_declaration() {
             filename: "me.png",
             content_type: "image/png",
             file_size: PNG.len() as i64,
-            reason: codeyard_db_core::models::FileReason::Avatar,
-            visibility: codeyard_db_core::models::FileVisibility::Public,
+            reason: FileReason::Avatar,
+            visibility: FileVisibility::Public,
             sha256_hex: &digest(PNG),
         },
     )
@@ -764,8 +764,8 @@ async fn s3_stores_bytes_the_server_holds_and_leaves_nothing_behind_on_failure()
         filename: "me.png",
         content_type: "image/png",
         file_size: PNG.len() as i64,
-        reason: codeyard_db_core::models::FileReason::Avatar,
-        visibility: codeyard_db_core::models::FileVisibility::Public,
+        reason: FileReason::Avatar,
+        visibility: FileVisibility::Public,
         sha256_hex: &checksum,
     };
     let files_of_owner = || async {
@@ -832,8 +832,8 @@ async fn s3_failed_direct_upload_persists_cleanup_without_retaining_metadata() {
             filename: "me.png",
             content_type: "image/png",
             file_size: PNG.len() as i64,
-            reason: codeyard_db_core::models::FileReason::Avatar,
-            visibility: codeyard_db_core::models::FileVisibility::Public,
+            reason: FileReason::Avatar,
+            visibility: FileVisibility::Public,
             sha256_hex: &digest(PNG),
         },
         PNG.to_vec(),
@@ -1109,9 +1109,9 @@ async fn s3_deletes_are_not_sent_while_every_storage_slot_is_busy() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pg_a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
     let db = database().await;
-    let old = reserve_avatar(&db, codeyard_db_core::models::FileVisibility::Public).await;
+    let old = reserve_avatar(&db, FileVisibility::Public).await;
     activate(&db, old.id).await;
-    let new = reserve_avatar(&db, codeyard_db_core::models::FileVisibility::Public).await;
+    let new = reserve_avatar(&db, FileVisibility::Public).await;
     activate(&db, new.id).await;
     assert_eq!(
         db::users::accounts::set_user_avatar(
@@ -1188,9 +1188,9 @@ async fn pg_a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pg_a_banned_account_keeps_its_picture() {
     let db = database().await;
-    let old = reserve_avatar(&db, codeyard_db_core::models::FileVisibility::Public).await;
+    let old = reserve_avatar(&db, FileVisibility::Public).await;
     activate(&db, old.id).await;
-    let new = reserve_avatar(&db, codeyard_db_core::models::FileVisibility::Public).await;
+    let new = reserve_avatar(&db, FileVisibility::Public).await;
     activate(&db, new.id).await;
     // The request was authenticated before the ban, so it still holds the account as it was.
     let user = db::users::accounts::get_user_by_id(&db.pool, db.user)
@@ -1258,8 +1258,8 @@ async fn pg_confirmation_waits_for_the_bytes_and_then_succeeds_once() {
             filename: "retry",
             content_type: "text/plain",
             file_size: 5,
-            reason: codeyard_db_core::models::FileReason::Other,
-            visibility: codeyard_db_core::models::FileVisibility::Owner,
+            reason: FileReason::Other,
+            visibility: FileVisibility::Owner,
             sha256_hex: &digest(b"retry"),
         },
     )
@@ -1636,14 +1636,14 @@ async fn downloads_are_owner_only_unless_the_file_is_a_public_avatar() {
             filename: "asset",
             content_type: "text/plain",
             file_size: 1,
-            reason: codeyard_db_core::models::FileReason::Other,
-            visibility: codeyard_db_core::models::FileVisibility::Public,
+            reason: FileReason::Other,
+            visibility: FileVisibility::Public,
             sha256_hex: &digest(b"x"),
         },
     )
     .await;
     assert!(matches!(invalid, Err(AdmissionError::Invalid)));
-    let public = reserve_avatar(&db, codeyard_db_core::models::FileVisibility::Public).await;
+    let public = reserve_avatar(&db, FileVisibility::Public).await;
     assert!(
         files::get_downloadable_file(&db.pool, public.id, None)
             .await
@@ -1875,8 +1875,8 @@ async fn actual_presigned_put_replay_confirmation_download_and_delete() {
             filename: "fixture.txt",
             content_type: "text/plain",
             file_size: data.len() as i64,
-            reason: codeyard_db_core::models::FileReason::Other,
-            visibility: codeyard_db_core::models::FileVisibility::Owner,
+            reason: FileReason::Other,
+            visibility: FileVisibility::Owner,
             sha256_hex: &digest(data),
         },
     )
@@ -1988,8 +1988,8 @@ async fn actual_presigned_put_replay_confirmation_download_and_delete() {
             filename: "pending.txt",
             content_type: "text/plain",
             file_size: data.len() as i64,
-            reason: codeyard_db_core::models::FileReason::Other,
-            visibility: codeyard_db_core::models::FileVisibility::Owner,
+            reason: FileReason::Other,
+            visibility: FileVisibility::Owner,
             sha256_hex: &digest(data),
         },
     )
@@ -2047,8 +2047,8 @@ async fn actual_wrong_size_type_checksum_and_changed_headers_are_refused() {
             filename: "fixture.txt",
             content_type: "text/plain",
             file_size: data.len() as i64,
-            reason: codeyard_db_core::models::FileReason::Other,
-            visibility: codeyard_db_core::models::FileVisibility::Owner,
+            reason: FileReason::Other,
+            visibility: FileVisibility::Owner,
             sha256_hex: &digest(data),
         },
     )
@@ -2092,8 +2092,8 @@ async fn actual_wrong_size_type_checksum_and_changed_headers_are_refused() {
             filename: "fixture.txt",
             content_type: "text/plain",
             file_size: data.len() as i64,
-            reason: codeyard_db_core::models::FileReason::Other,
-            visibility: codeyard_db_core::models::FileVisibility::Owner,
+            reason: FileReason::Other,
+            visibility: FileVisibility::Owner,
             sha256_hex: &digest(data),
         },
     )
@@ -2118,8 +2118,8 @@ async fn actual_wrong_size_type_checksum_and_changed_headers_are_refused() {
             filename: "me.png",
             content_type: "image/png",
             file_size: PNG.len() as i64,
-            reason: codeyard_db_core::models::FileReason::Avatar,
-            visibility: codeyard_db_core::models::FileVisibility::Public,
+            reason: FileReason::Avatar,
+            visibility: FileVisibility::Public,
             sha256_hex: &digest(PNG),
         },
     )
@@ -2165,8 +2165,8 @@ async fn actual_equal_endpoints_and_public_avatar_still_work() {
             filename: "fixture.png",
             content_type: "image/png",
             file_size: data.len() as i64,
-            reason: codeyard_db_core::models::FileReason::Avatar,
-            visibility: codeyard_db_core::models::FileVisibility::Public,
+            reason: FileReason::Avatar,
+            visibility: FileVisibility::Public,
             sha256_hex: &digest(&data),
         },
     )

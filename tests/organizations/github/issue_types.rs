@@ -29,15 +29,9 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        organizations::add_organization_member(
-            f.pool(),
-            owner,
-            org.id,
-            member,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        organizations::add_organization_member(f.pool(), owner, org.id, member, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     applied(
         organizations::create_organization(

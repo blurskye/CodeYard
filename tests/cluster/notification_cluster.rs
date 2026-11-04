@@ -122,8 +122,7 @@ async fn sqlite_local_delivery_and_poller_shutdown() {
 
 #[tokio::test]
 async fn an_account_holds_a_bounded_number_of_sockets() {
-    let pool =
-        codeyard_db_core::DbPool::from(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
+    let pool = DbPool::from(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
     let broadcaster = NotificationBroadcaster::new(&pool);
     let slots: Vec<_> = (0..MAX_SOCKETS_PER_USER)
         .map(|_| broadcaster.open_socket(42).expect("a slot below the limit"))

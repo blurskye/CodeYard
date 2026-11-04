@@ -272,14 +272,14 @@ pub async fn run(
         }
         // The operator needs no account, so only an unknown name refuses.
         Command::Approve { name } => match approve(pool, Authority::Operator, name).await? {
-            codeyard_db_core::models::NodeStatusChange::Changed { before, node } => {
+            NodeStatusChange::Changed { before, node } => {
                 println!("'{}' was {before}; it is now {}.", node.name, node.status);
                 Ok(())
             }
             _ => bail!("no node is named '{name}'; `codeyard cluster list` shows the names"),
         },
         Command::Revoke { name } => match revoke(pool, Authority::Operator, name).await? {
-            codeyard_db_core::models::NodeStatusChange::Changed { before, node } => {
+            NodeStatusChange::Changed { before, node } => {
                 println!(
                     "'{}' was {before}; it is now {} and can no longer connect.",
                     node.name, node.status
@@ -339,13 +339,11 @@ pub async fn run(
 /// What the replica setting means for a repository.
 fn describe(setting: ReplicaSetting) -> String {
     match setting {
-        codeyard_db_core::models::ReplicaSetting::Copies(1) => {
-            "one copy, on its primary".to_owned()
-        }
-        codeyard_db_core::models::ReplicaSetting::Copies(count) => {
+        ReplicaSetting::Copies(1) => "one copy, on its primary".to_owned(),
+        ReplicaSetting::Copies(count) => {
             format!("{count} copies in all, the primary included")
         }
-        codeyard_db_core::models::ReplicaSetting::All => "a copy on every storage node".to_owned(),
+        ReplicaSetting::All => "a copy on every storage node".to_owned(),
     }
 }
 

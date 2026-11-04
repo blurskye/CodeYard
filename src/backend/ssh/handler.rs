@@ -233,12 +233,12 @@ impl GitSshHandler {
             Err(error) => match error.downcast_ref::<CredentialRefusal>() {
                 Some(CredentialRefusal::Missing | CredentialRefusal::Credential) => {
                     Self::repository_denial_message(
-                        Some((repo.is_private, codeyard_db_core::models::AccessLevel::None)),
+                        Some((repo.is_private, AccessLevel::None)),
                         write,
                     )
                 }
                 Some(_) => Self::repository_denial_message(
-                    Some((repo.is_private, codeyard_db_core::models::AccessLevel::Read)),
+                    Some((repo.is_private, AccessLevel::Read)),
                     write,
                 ),
                 None => return Err(error),
@@ -730,26 +730,18 @@ mod tests {
     fn private_repository_denials_match_missing_repository() {
         for is_write in [false, true] {
             let missing = GitSshHandler::repository_denial_message(None, is_write);
-            let private = GitSshHandler::repository_denial_message(
-                Some((true, codeyard_db_core::models::AccessLevel::None)),
-                is_write,
-            );
+            let private =
+                GitSshHandler::repository_denial_message(Some((true, AccessLevel::None)), is_write);
             assert_eq!(missing, private);
             assert_eq!(missing, "Repository not found\n");
         }
 
         assert_eq!(
-            GitSshHandler::repository_denial_message(
-                Some((false, codeyard_db_core::models::AccessLevel::None)),
-                true,
-            ),
+            GitSshHandler::repository_denial_message(Some((false, AccessLevel::None)), true,),
             "Permission denied: write access required for git-receive-pack\n"
         );
         assert_eq!(
-            GitSshHandler::repository_denial_message(
-                Some((true, codeyard_db_core::models::AccessLevel::Read)),
-                true
-            ),
+            GitSshHandler::repository_denial_message(Some((true, AccessLevel::Read)), true),
             "Permission denied: write access required for git-receive-pack\n"
         );
     }
@@ -803,7 +795,7 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        let pool = codeyard_db_core::DbPool::from(native.clone());
+        let pool = DbPool::from(native.clone());
         codeyard_db_core::run_migrations(&pool).await.unwrap();
         let owner = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
             .await
@@ -884,7 +876,7 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        let pool = codeyard_db_core::DbPool::from(native);
+        let pool = DbPool::from(native);
         codeyard_db_core::run_migrations(&pool).await.unwrap();
         let owner = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
             .await
@@ -957,7 +949,7 @@ mod tests {
             .connect_lazy("postgres://fixture:fixture@127.0.0.1:1/unused")
             .unwrap();
         pool.close().await;
-        let pool = codeyard_db_core::DbPool::from(pool);
+        let pool = DbPool::from(pool);
         let ci_service = Arc::new(CiRuns::new(
             pool.clone(),
             Arc::new(crate::backend::ci::CiConfig::default()),

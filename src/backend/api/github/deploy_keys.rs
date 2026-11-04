@@ -18,11 +18,11 @@ use std::sync::Arc;
 
 fn key_error(error: DeployKeyError) -> Error {
     match error {
-        codeyard_model::repositories::DeployKeyError::Denied => {
+        DeployKeyError::Denied => {
             Error::new(StatusCode::FORBIDDEN, "Repository administration required")
         }
-        codeyard_model::repositories::DeployKeyError::NotFound => Error::missing(),
-        codeyard_model::repositories::DeployKeyError::Unavailable(_) => Error::unavailable(()),
+        DeployKeyError::NotFound => Error::missing(),
+        DeployKeyError::Unavailable(_) => Error::unavailable(()),
         _ => Error::invalid(error.to_string()),
     }
 }

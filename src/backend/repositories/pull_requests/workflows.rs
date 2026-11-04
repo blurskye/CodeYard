@@ -369,13 +369,13 @@ pub struct RunWorkflowsRequest {
 }
 
 pub async fn run_pull_request_workflows(
-    pool: &codeyard_db_core::DbPool,
+    pool: &DbPool,
     ci: &CiRuns,
     actor_id: i64,
-    repository: &codeyard_db_core::models::Repository,
+    repository: &Repository,
     number: i32,
     request: RunWorkflowsRequest,
-) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
+) -> Result<PullRequest, OperationError> {
     // The caller resolved and authorized this repository; a rename must not switch it.
     let user = super::actor(pool, actor_id).await?;
     super::require_write(pool, &user, repository).await?;

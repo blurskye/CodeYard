@@ -386,7 +386,7 @@ async fn gists_http_ssh_remote_and_promotion() {
         .unwrap();
     assert!(matches!(
         refusal.downcast_ref::<DeployKeyError>(),
-        Some(codeyard_model::repositories::DeployKeyError::Denied)
+        Some(DeployKeyError::Denied)
     ));
     sqlx::query("INSERT INTO deploy_keys(repo_id,name,fingerprint,public_key,read_only,created_by_id) VALUES($1,'legacy',$2,$3,FALSE,$4)").bind(repo.id).bind(fingerprint).bind(deploy_public).bind(alice.id).execute(&database.raw).await.unwrap();
     assert!(!git(root.path(), &["ls-remote", &ssh], None, &deploy)

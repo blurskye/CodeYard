@@ -547,10 +547,7 @@ async fn contract(pg: bool) {
 
     // ----- An organization's picture -----
     let org = organization(f.pool(), ids[2], "acme").await;
-    for (user, role) in [
-        (ids[1], codeyard_db_core::models::OrgRole::Admin),
-        (ids[3], codeyard_db_core::models::OrgRole::Member),
-    ] {
+    for (user, role) in [(ids[1], OrgRole::Admin), (ids[3], OrgRole::Member)] {
         assert!(matches!(
             organizations::add_organization_member(f.pool(), ids[2], org, user, role)
                 .await
@@ -932,8 +929,7 @@ async fn contract(pg: bool) {
 
 async fn pending_picture_contract(pg: bool) {
     use codeyard::backend::files::{self, UploadDeclaration};
-    use codeyard_db_core::models::FileReason;
-    use codeyard_db_core::models::FileVisibility;
+
     let mut f = Database::new(pg).await;
     let actor = f.actor("pending_picture").await;
     let org = organization(f.pool(), actor, "pending-org").await;

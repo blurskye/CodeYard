@@ -88,7 +88,7 @@ async fn store_picture(
             content_type,
             file_size: bytes.len() as i64,
             reason,
-            visibility: codeyard_db_core::models::FileVisibility::Public,
+            visibility: FileVisibility::Public,
             sha256_hex: &checksum,
         },
         bytes,
@@ -128,14 +128,7 @@ pub async fn upload_user_avatar(
     credential: &AccountCredential<'_>,
     bytes: Vec<u8>,
 ) -> Result<(), AvatarError> {
-    let file = store_picture(
-        pool,
-        store,
-        user.id,
-        codeyard_db_core::models::FileReason::Avatar,
-        bytes,
-    )
-    .await?;
+    let file = store_picture(pool, store, user.id, FileReason::Avatar, bytes).await?;
     if let Err(error) = set_user_avatar(pool, user, credential, file).await {
         discard(pool, store, user.id, file).await;
         return Err(error);
@@ -196,14 +189,7 @@ pub async fn upload_org_avatar(
     org: i64,
     bytes: Vec<u8>,
 ) -> Result<(), AvatarError> {
-    let file = store_picture(
-        pool,
-        store,
-        actor.id,
-        codeyard_db_core::models::FileReason::OrgAvatar,
-        bytes,
-    )
-    .await?;
+    let file = store_picture(pool, store, actor.id, FileReason::OrgAvatar, bytes).await?;
     if let Err(error) = set_org_avatar(pool, actor, org, Some(file)).await {
         discard(pool, store, actor.id, file).await;
         return Err(error);

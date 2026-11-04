@@ -368,7 +368,7 @@ async fn storage_git_admission_rechecks_live_tokens_keys_and_grants() {
     db::users::tokens::delete_token(pool, actor.id, &session_id, token.id)
         .await
         .unwrap();
-    let codeyard_db_core::DbPool::Sqlite(raw) = pool else {
+    let DbPool::Sqlite(raw) = pool else {
         unreachable!()
     };
     sqlx::query("DELETE FROM ssh_keys WHERE id=?")
@@ -490,7 +490,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
     db::cluster::place_repository(pool, repo.id, primary.id)
         .await
         .unwrap();
-    let codeyard_db_core::DbPool::Sqlite(raw) = pool else {
+    let DbPool::Sqlite(raw) = pool else {
         unreachable!()
     };
     sqlx::query(

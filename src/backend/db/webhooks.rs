@@ -210,7 +210,7 @@ pub struct NewDelivery {
 }
 
 /// Which deliveries by status code a history keeps: successes are 2xx, as in
-/// `codeyard_db_core::models::WebhookDelivery::succeeded`; everything else, including deliveries without a response, failed.
+/// `WebhookDelivery::succeeded`; everything else, including deliveries without a response, failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeliveryOutcome {
     Success,

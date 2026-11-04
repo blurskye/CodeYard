@@ -63,28 +63,21 @@ pub struct CreateDeployKeyRequest {
 /// The HTTP status and stable code for a refused key operation. The JSON and form paths share it.
 fn refusal(error: &DeployKeyError) -> (StatusCode, &'static str) {
     match error {
-        codeyard_model::repositories::DeployKeyError::Denied => {
-            (StatusCode::FORBIDDEN, "repository_admin_required")
+        DeployKeyError::Denied => (StatusCode::FORBIDDEN, "repository_admin_required"),
+        DeployKeyError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+        DeployKeyError::Key(SshKeyWriteRefusal::AlreadyUsed) => {
+            (StatusCode::CONFLICT, "key_in_use")
         }
-        codeyard_model::repositories::DeployKeyError::NotFound => {
-            (StatusCode::NOT_FOUND, "not_found")
-        }
-        codeyard_model::repositories::DeployKeyError::Key(
-            codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed,
-        ) => (StatusCode::CONFLICT, "key_in_use"),
-        codeyard_model::repositories::DeployKeyError::InvalidTitle
-        | codeyard_model::repositories::DeployKeyError::Key(_) => {
+        DeployKeyError::InvalidTitle | DeployKeyError::Key(_) => {
             (StatusCode::BAD_REQUEST, "validation_error")
         }
-        codeyard_model::repositories::DeployKeyError::Unavailable(_) => {
-            (StatusCode::SERVICE_UNAVAILABLE, "database_unavailable")
-        }
+        DeployKeyError::Unavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, "database_unavailable"),
     }
 }
 
 fn json_error(error: DeployKeyError) -> (StatusCode, Json<ApiError>) {
     let (status, code) = refusal(&error);
-    if let codeyard_model::repositories::DeployKeyError::Unavailable(cause) = &error {
+    if let DeployKeyError::Unavailable(cause) = &error {
         error!(error = %cause, "deploy key storage failed");
     }
     (status, Json(ApiError::new(code, &error.to_string())))
@@ -248,7 +241,7 @@ pub(super) async fn form(
             )
             .await
             .map(|()| "deleted"),
-            Err(_) => Err(codeyard_model::repositories::DeployKeyError::NotFound),
+            Err(_) => Err(DeployKeyError::NotFound),
         }
     };
     match outcome {

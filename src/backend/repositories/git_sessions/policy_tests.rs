@@ -8,7 +8,7 @@ mod fixture {
     use super::super::*;
     use crate::backend::repositories::git_sessions::validation::ZERO_SHA;
     use base64::Engine;
-    use codeyard_db_core::models::AccessLevel;
+
     use std::sync::LazyLock;
     use tokio::sync::oneshot;
 

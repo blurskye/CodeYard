@@ -124,7 +124,7 @@ mod tests {
         let owner = db::users::accounts::create_user(&pool, "owner", None)
             .await
             .unwrap();
-        let codeyard_db_core::DbPool::Sqlite(raw) = &pool else {
+        let DbPool::Sqlite(raw) = &pool else {
             unreachable!()
         };
         for index in 0..20 {
@@ -151,14 +151,9 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        assign(
-            &pool,
-            nodes[0],
-            codeyard_db_core::models::ReplicaSetting::Copies(2),
-            &primaries,
-        )
-        .await
-        .unwrap();
+        assign(&pool, nodes[0], ReplicaSetting::Copies(2), &primaries)
+            .await
+            .unwrap();
         let allocations = db::cluster::pending_replica_bytes(&pool).await.unwrap();
         assert_eq!(allocations.iter().map(|row| row.1).sum::<i64>(), 22 * GIB);
         assert!(allocations
@@ -271,9 +266,7 @@ async fn step(
     let pool = context.database()?;
     let node = context.node_id;
     take_over(pool, node, &context.repos_path, silent, TAKE_OVER_AFTER).await?;
-    let setting = codeyard_db_core::models::ReplicaSetting::from_str(
-        &db::cluster::get_replicas(pool).await?,
-    )?;
+    let setting = ReplicaSetting::from_str(&db::cluster::get_replicas(pool).await?)?;
     let primaries = group_primaries(db::cluster::list_primary_repositories(pool, node).await?);
     assign(pool, node, setting, &primaries).await?;
     place_and_start(context, &primaries, retry, copying).await?;

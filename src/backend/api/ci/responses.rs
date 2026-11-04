@@ -1,4 +1,3 @@
-use crate::backend::db;
 use codeyard_webui::pages::ci as view;
 use codeyard_webui::pages::repos::actions as view_actions;
 use serde::{Deserialize, Serialize};

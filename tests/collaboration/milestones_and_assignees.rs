@@ -69,22 +69,12 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .id;
-    db::repositories::access::grant_repo_access(
-        pool,
-        reader,
-        repo,
-        codeyard_db_core::models::AccessLevel::Read,
-    )
-    .await
-    .unwrap();
-    db::repositories::access::grant_repo_access(
-        pool,
-        writer,
-        repo,
-        codeyard_db_core::models::AccessLevel::Write,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(pool, reader, repo, AccessLevel::Read)
+        .await
+        .unwrap();
+    db::repositories::access::grant_repo_access(pool, writer, repo, AccessLevel::Write)
+        .await
+        .unwrap();
 
     let first = db::issues::create_issue(pool, repo, owner, "First", "")
         .await
@@ -135,27 +125,17 @@ async fn contract(pg: bool) {
     // At most ten assignees per issue.
     for index in 0..8 {
         let member = f.actor(&format!("member{index}")).await;
-        db::repositories::access::grant_repo_access(
-            pool,
-            member,
-            repo,
-            codeyard_db_core::models::AccessLevel::Read,
-        )
-        .await
-        .unwrap();
+        db::repositories::access::grant_repo_access(pool, member, repo, AccessLevel::Read)
+            .await
+            .unwrap();
         db::assignees::assign_user(pool, owner, repo, on_first, member)
             .await
             .unwrap();
     }
     let extra = f.actor("member8").await;
-    db::repositories::access::grant_repo_access(
-        pool,
-        extra,
-        repo,
-        codeyard_db_core::models::AccessLevel::Read,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(pool, extra, repo, AccessLevel::Read)
+        .await
+        .unwrap();
     assert_eq!(
         assignment_refusal(
             db::assignees::assign_user(pool, owner, repo, on_first, extra)
@@ -621,14 +601,9 @@ async fn postgres_concurrent_assignments_stop_at_the_limit() {
     let mut members = Vec::new();
     for index in 0..17 {
         let member = f.actor(&format!("racer{index}")).await;
-        db::repositories::access::grant_repo_access(
-            &pool,
-            member,
-            repo,
-            codeyard_db_core::models::AccessLevel::Read,
-        )
-        .await
-        .unwrap();
+        db::repositories::access::grant_repo_access(&pool, member, repo, AccessLevel::Read)
+            .await
+            .unwrap();
         members.push(member);
     }
     for &member in &members[..9] {

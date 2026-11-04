@@ -214,7 +214,7 @@ pub async fn create_or_update_secret_for(
     let name = &name.to_ascii_uppercase();
     validate_repository_secret(name, value)?;
     match pool {
-        codeyard_db_core::DbPool::Postgres(native) => {
+        DbPool::Postgres(native) => {
             crate::backend::db::postgres::secrets::create_or_update_secret(
                 native,
                 encryptor,
@@ -226,7 +226,7 @@ pub async fn create_or_update_secret_for(
             )
             .await
         }
-        codeyard_db_core::DbPool::Sqlite(native) => {
+        DbPool::Sqlite(native) => {
             crate::backend::db::sqlite::secrets::create_or_update_secret(
                 native,
                 encryptor,

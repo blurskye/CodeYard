@@ -668,7 +668,7 @@ pub async fn count_viewer_issues(
 impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for IssueListEntry {
     fn from_row(row: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
         Ok(Self {
-            issue: codeyard_db_core::models::Issue::from_row(row)?,
+            issue: Issue::from_row(row)?,
             author: crate::backend::db::postgres::users::accounts::author_display(row)?,
         })
     }
@@ -677,7 +677,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for IssueListEntry {
 impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for IssueCommentEntry {
     fn from_row(row: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
         Ok(Self {
-            comment: codeyard_db_core::models::IssueComment::from_row(row)?,
+            comment: IssueComment::from_row(row)?,
             author: crate::backend::db::postgres::users::accounts::author_display(row)?,
         })
     }

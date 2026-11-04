@@ -1,6 +1,12 @@
-use super::{
-    call, checked, db, encode_sarif, json, sarif_document, Client, Router, StatusCode, Value,
-};
+use super::call;
+use super::checked;
+use super::encode_sarif;
+use super::json;
+use super::sarif_document;
+use super::Client;
+use super::Router;
+use super::StatusCode;
+use super::Value;
 use codeyard::backend::code_scanning;
 
 async fn remove_upload(router: &Router, token: &str, upload: &str) {

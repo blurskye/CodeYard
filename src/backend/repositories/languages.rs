@@ -245,7 +245,7 @@ mod tests {
         let raw = sqlx::sqlite::SqlitePoolOptions::new()
             .connect_lazy("sqlite::memory:")
             .unwrap();
-        let pool = codeyard_db_core::DbPool::Sqlite(raw);
+        let pool = DbPool::Sqlite(raw);
         let path = PathBuf::from(format!("/unused/{}.git", uuid::Uuid::new_v4()));
         for _ in 0..100 {
             refresh_default_branch(pool.clone(), 1, path.clone(), "main".into(), Some(None));

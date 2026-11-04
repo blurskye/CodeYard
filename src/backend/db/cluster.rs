@@ -30,11 +30,11 @@ impl ServingLock {
 
 pub async fn serving_lock(pool: &DbPool, identity: &str) -> Result<ServingLock> {
     match pool {
-        codeyard_db_core::DbPool::Postgres(pool) => Ok(ServingLock {
+        DbPool::Postgres(pool) => Ok(ServingLock {
             postgres: Some(super::postgres::cluster::serving_lock(pool, identity).await?),
             _file: None,
         }),
-        codeyard_db_core::DbPool::Sqlite(pool) => {
+        DbPool::Sqlite(pool) => {
             let mut path = pool.connect_options().get_filename().as_os_str().to_owned();
             path.push(".serve.lock");
             Ok(ServingLock {

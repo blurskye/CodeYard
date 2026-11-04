@@ -1758,7 +1758,7 @@ impl RepoStore {
         repo_id: i64,
         actor: impl Into<db::credentials::Actor>,
         new_owner: &str,
-    ) -> Result<codeyard_db_core::models::Repository, RepoError> {
+    ) -> Result<Repository, RepoError> {
         let actor = actor.into();
         match &self.0 {
             Backend::Local(local) => {
@@ -1863,7 +1863,7 @@ impl RepoStore {
         actor: impl Into<db::credentials::Actor>,
         name: &str,
         changes: &db::repositories::records::RepositoryChanges<&str>,
-    ) -> Result<codeyard_db_core::models::Repository, RepoError> {
+    ) -> Result<Repository, RepoError> {
         if git::branch_ref(name).is_none() {
             return Err(invalid_ref("branch"));
         }

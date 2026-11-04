@@ -88,7 +88,7 @@ async fn contract(pg: bool) {
         fixture.pool(),
         writer,
         repository.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -118,7 +118,7 @@ async fn contract(pg: bool) {
         fixture.pool(),
         writer,
         repository.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        AccessLevel::Write,
     )
     .await
     .unwrap();

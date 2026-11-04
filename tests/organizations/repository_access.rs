@@ -136,17 +136,8 @@ async fn canonical_access_contract(database: &Database) {
         .await;
     let org = database.org(owner, "access_org").await;
     let foreign_org = database.org(foreign, "access_foreign_org").await;
-    database
-        .member(owner, org, admin, codeyard_db_core::models::OrgRole::Admin)
-        .await;
-    database
-        .member(
-            owner,
-            org,
-            member,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await;
+    database.member(owner, org, admin, OrgRole::Admin).await;
+    database.member(owner, org, member, OrgRole::Member).await;
     let secret = database.team(owner, org, "access_secret", Secret).await;
     let visible = database.team(owner, org, "access_visible", Visible).await;
     let foreign_team = database
@@ -199,11 +190,7 @@ async fn canonical_access_contract(database: &Database) {
             .grant_team(owner, org, secret, private, level)
             .await;
         database
-            .expect(
-                member,
-                private,
-                codeyard_db_core::models::AccessLevel::from(level),
-            )
+            .expect(member, private, AccessLevel::from(level))
             .await;
     }
     database.grant_team(owner, org, secret, private, 3).await;
@@ -244,16 +231,12 @@ async fn canonical_access_contract(database: &Database) {
             pool,
             outsider,
             private,
-            codeyard_db_core::models::AccessLevel::from(level),
+            AccessLevel::from(level),
         )
         .await
         .unwrap();
         database
-            .expect(
-                outsider,
-                private,
-                codeyard_db_core::models::AccessLevel::from(level),
-            )
+            .expect(outsider, private, AccessLevel::from(level))
             .await;
     }
     assert!(
@@ -359,14 +342,7 @@ async fn canonical_access_contract(database: &Database) {
         )
         .await;
     database.expect(member, private, NoAccess).await;
-    database
-        .member(
-            owner,
-            org,
-            member,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await;
+    database.member(owner, org, member, OrgRole::Member).await;
     database.expect(member, private, Write).await;
 
     // Actor restrictions beat every source, including public and personal Owner.
@@ -447,14 +423,7 @@ async fn canonical_access_contract(database: &Database) {
     database.expect(outsider, private, Admin).await;
 
     // A second usable owner keeps governance live when the original is banned.
-    database
-        .member(
-            owner,
-            org,
-            foreign,
-            codeyard_db_core::models::OrgRole::Owner,
-        )
-        .await;
+    database.member(owner, org, foreign, OrgRole::Owner).await;
     database
         .execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[owner])
         .await;

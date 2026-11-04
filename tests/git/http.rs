@@ -356,10 +356,10 @@ async fn near_budget_http_clone(root: &Path, disk_path: &str, url: &str) {
 
 async fn update(pool: &DbPool, sql: &str, id: i64) {
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        DbPool::Postgres(raw) => {
             sqlx::query(sql).bind(id).execute(raw).await.unwrap();
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        DbPool::Sqlite(raw) => {
             sqlx::query(sql).bind(id).execute(raw).await.unwrap();
         }
     };
@@ -713,10 +713,10 @@ async fn signature_push(client: &Client, base: &str, root: &Path, token: &str, e
 async fn exercise(pool: &DbPool, url: &str) {
     bundle::install();
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        DbPool::Postgres(raw) => {
             sqlx::query("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(raw).await.unwrap();
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        DbPool::Sqlite(raw) => {
             sqlx::query("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(raw).await.unwrap();
         }
     }
@@ -1570,14 +1570,14 @@ async fn exercise(pool: &DbPool, url: &str) {
     .unwrap()
     .unwrap();
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        DbPool::Postgres(raw) => {
             sqlx::query("UPDATE users SET is_banned=TRUE WHERE id=$1")
                 .bind(banned.id)
                 .execute(raw)
                 .await
                 .unwrap();
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        DbPool::Sqlite(raw) => {
             sqlx::query("UPDATE users SET is_banned=TRUE WHERE id=?1")
                 .bind(banned.id)
                 .execute(raw)
@@ -1650,10 +1650,10 @@ async fn hold_the_session_slot(address: std::net::SocketAddr, repo: &str) -> tok
 async fn push_rechecks_access_after_waiting_for_a_slot(pool: &DbPool, url: &str) {
     bundle::install();
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        DbPool::Postgres(raw) => {
             sqlx::query("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(raw).await.unwrap();
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        DbPool::Sqlite(raw) => {
             sqlx::query("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(raw).await.unwrap();
         }
     }

@@ -169,10 +169,7 @@ mod tests {
         let value = serde_json::json!({"filename":"owned.txt", "content_type":"text/plain", "file_size":1,
             "reason":"pr_attachment", "visibility":"owner", "sha256_hex":"00".repeat(32)});
         let decoded: CreateUploadUrlRequest = serde_json::from_value(value.clone()).unwrap();
-        assert_eq!(
-            decoded.reason,
-            codeyard_db_core::models::FileReason::PullRequestAttachment
-        );
+        assert_eq!(decoded.reason, FileReason::PullRequestAttachment);
         for key in ["visibility", "sha256_hex"] {
             let mut incomplete = value.clone();
             incomplete.as_object_mut().unwrap().remove(key);

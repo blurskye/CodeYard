@@ -88,14 +88,9 @@ async fn archive_writes_recheck_personal_and_organization_authority() {
         let owner = f.actor("archive_owner").await;
         let admin = f.actor("archive_admin").await;
         let r = repo(&f, owner, "archive").await;
-        db::repositories::access::grant_repo_access(
-            f.pool(),
-            admin,
-            r.id,
-            codeyard_db_core::models::AccessLevel::Admin,
-        )
-        .await
-        .unwrap();
+        db::repositories::access::grant_repo_access(f.pool(), admin, r.id, AccessLevel::Admin)
+            .await
+            .unwrap();
         assert!(
             records::set_repository_archived(f.pool(), admin, r.id, true)
                 .await
@@ -289,18 +284,13 @@ async fn shared_selectors_include_scoped_inherited_grants_once() {
             &[foreign.id],
         )
         .await;
-        db::repositories::access::grant_repo_access(
-            f.pool(),
-            writer,
-            r.id,
-            codeyard_db_core::models::AccessLevel::Read,
-        )
-        .await
-        .unwrap();
+        db::repositories::access::grant_repo_access(f.pool(), writer, r.id, AccessLevel::Read)
+            .await
+            .unwrap();
         for (actor, level) in [
-            (owner, codeyard_db_core::models::AccessLevel::Owner),
-            (admin, codeyard_db_core::models::AccessLevel::Admin),
-            (writer, codeyard_db_core::models::AccessLevel::Write),
+            (owner, AccessLevel::Owner),
+            (admin, AccessLevel::Admin),
+            (writer, AccessLevel::Write),
         ] {
             let rows = records::list_shared_repositories(f.pool(), actor)
                 .await
@@ -514,14 +504,9 @@ async fn transfers_drop_unmanageable_grants_and_stop_old_ci_authority() {
         )
         .await;
         let r = repo(&f, owner, "transfer").await;
-        db::repositories::access::grant_repo_access(
-            f.pool(),
-            outsider,
-            r.id,
-            codeyard_db_core::models::AccessLevel::Admin,
-        )
-        .await
-        .unwrap();
+        db::repositories::access::grant_repo_access(f.pool(), outsider, r.id, AccessLevel::Admin)
+            .await
+            .unwrap();
         f.execute(
             "INSERT INTO teams(id,org_id,name,slug) VALUES(2001,1001,'writers','writers')",
             &[],
@@ -579,7 +564,7 @@ async fn transfers_drop_unmanageable_grants_and_stop_old_ci_authority() {
             db::repositories::access::get_user_repo_access(f.pool(), owner, r.id)
                 .await
                 .unwrap(),
-            codeyard_db_core::models::AccessLevel::None
+            AccessLevel::None
         );
         let running = db::ci::get_ci_run_by_run_id(f.pool(), run_ids[0])
             .await

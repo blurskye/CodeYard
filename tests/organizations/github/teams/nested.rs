@@ -150,13 +150,13 @@ pub(super) async fn run(
         orgs::get_organization_repo_access(pool, charlie, &row)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::Write
+        AccessLevel::Write
     );
     assert_eq!(
         db::repositories::access::get_user_repo_access(pool, charlie, repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::Write
+        AccessLevel::Write
     );
     assert!(
         db::repositories::push_teams::contains_actor(pool, repo, charlie, &[child_id])
@@ -208,7 +208,7 @@ pub(super) async fn run(
         db::repositories::access::get_user_repo_access(pool, charlie, repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::Write
+        AccessLevel::Write
     );
     for (path, input) in [
         (&child_path, json!({"privacy":"secret"})),
@@ -338,7 +338,7 @@ pub(super) async fn run(
         db::repositories::access::get_user_repo_access(pool, charlie, repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        AccessLevel::None
     );
     call(router,"PUT",file_path,member,json!({"message":"Refuse a detached team write","content":"bmVzdGVkCg==","sha":file["content"]["sha"]}),("repos/create-or-update-file-contents",404)).await;
     assert!(
@@ -382,17 +382,14 @@ pub(super) async fn run(
         db::repositories::access::get_user_repo_access(pool, charlie, repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::Write
+        AccessLevel::Write
     );
     let team_id = child_id.to_string();
     let settings = format!("/settings/organizations/{org}?tab=teams&team={child_id}");
     assert!(session.page_ok(&settings).await.contains("Parent team ID"));
     for (parent, expected) in [
-        ("", codeyard_db_core::models::AccessLevel::None),
-        (
-            parent_id.as_str(),
-            codeyard_db_core::models::AccessLevel::Write,
-        ),
+        ("", AccessLevel::None),
+        (parent_id.as_str(), AccessLevel::Write),
     ] {
         let reply = session
             .form_reply(
@@ -438,7 +435,7 @@ pub(super) async fn run(
         db::repositories::access::get_user_repo_access(pool, charlie, repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        AccessLevel::None
     );
     // The sibling went with the parent as well.
     call(

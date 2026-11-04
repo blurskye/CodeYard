@@ -42,10 +42,7 @@ async fn contract(pg: bool) {
             .unwrap(),
         ));
     }
-    for (id, role) in [
-        (member, codeyard_db_core::models::OrgRole::Member),
-        (delegated, codeyard_db_core::models::OrgRole::Admin),
-    ] {
+    for (id, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
         applied(
             organizations::add_organization_member(f.pool(), owner, orgs[0].id, id, role)
                 .await
@@ -58,7 +55,7 @@ async fn contract(pg: bool) {
             owner,
             orgs[1].id,
             member,
-            codeyard_db_core::models::OrgRole::Member,
+            OrgRole::Member,
         )
         .await
         .unwrap(),
@@ -228,13 +225,13 @@ async fn contract(pg: bool) {
         db::repositories::access::get_user_repo_access(f.pool(), member, second.id)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::Read
+        AccessLevel::Read
     );
     assert_eq!(
         db::repositories::access::get_user_repo_access(f.pool(), member, foreign.id)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        AccessLevel::None
     );
     // The legacy and replacement APIs observe the exact same assignment rows.
     let role_path =
@@ -295,7 +292,7 @@ async fn contract(pg: bool) {
         db::repositories::access::get_user_repo_access(f.pool(), member, second.id)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::Read,
+        AccessLevel::Read,
         "the independent read role survives"
     );
     assert_eq!(
@@ -373,7 +370,7 @@ async fn contract(pg: bool) {
         db::repositories::access::get_user_repo_access(f.pool(), member, second.id)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::Read
+        AccessLevel::Read
     );
     applied(
         organizations::remove_organization_team_member(

@@ -468,7 +468,7 @@ impl PairingHandler {
         )
         .await;
         match outcome {
-            Ok(codeyard_db_core::models::JoinOutcome::Joined(node)) => {
+            Ok(JoinOutcome::Joined(node)) => {
                 info!(name = %node.name, status = %node.status, key = %peer.fmt_short(), "node joined the cluster");
                 JoinReply::Joined {
                     name: node.name,
@@ -476,21 +476,20 @@ impl PairingHandler {
                     status: node.status,
                 }
             }
-            Ok(codeyard_db_core::models::JoinOutcome::AlreadyMember(node)) => {
-                JoinReply::AlreadyMember {
-                    name: node.name,
-                    roles: node.roles,
-                    status: node.status,
-                }
-            }
-            Ok(codeyard_db_core::models::JoinOutcome::InvalidToken) => {
+            Ok(JoinOutcome::AlreadyMember(node)) => JoinReply::AlreadyMember {
+                name: node.name,
+                roles: node.roles,
+                status: node.status,
+            },
+            Ok(JoinOutcome::InvalidToken) => {
                 warn!(key = %peer.fmt_short(), "pairing refused: invite not valid");
                 refuse(INVALID_INVITE)
             }
-            Ok(codeyard_db_core::models::JoinOutcome::RolesNotAllowed { allowed }) => refuse(
-                &format!("this invite allows only these roles: {}", allowed.join(",")),
-            ),
-            Ok(codeyard_db_core::models::JoinOutcome::NameTaken) => refuse(&format!(
+            Ok(JoinOutcome::RolesNotAllowed { allowed }) => refuse(&format!(
+                "this invite allows only these roles: {}",
+                allowed.join(",")
+            )),
+            Ok(JoinOutcome::NameTaken) => refuse(&format!(
                 "a node named '{name}' already exists; choose another name (NODE_NAME)"
             )),
             Err(error) => {

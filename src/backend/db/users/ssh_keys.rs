@@ -117,7 +117,7 @@ mod tests {
         ] {
             assert_eq!(
                 parse_public_key(&input).unwrap_err(),
-                codeyard_model::identity::SshKeyWriteRefusal::InvalidKey,
+                SshKeyWriteRefusal::InvalidKey,
                 "{input}"
             );
         }
@@ -134,7 +134,7 @@ mod tests {
             );
             assert_eq!(
                 parse_public_key(&input).unwrap_err(),
-                codeyard_model::identity::SshKeyWriteRefusal::InvalidKey
+                SshKeyWriteRefusal::InvalidKey
             );
         }
         let blob = ED.split_whitespace().nth(1).unwrap();

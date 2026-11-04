@@ -19,7 +19,7 @@ pub async fn delete_organization(
         .await?;
     super::super::credentials::require_account(&mut tx, &owner).await?;
     let role = require_org!(tx, actor, org);
-    if role != codeyard_db_core::models::OrgRole::Owner
+    if role != OrgRole::Owner
         || !super::super::credentials::organization(
             &mut tx,
             &owner,
@@ -69,7 +69,7 @@ pub async fn count_organization_repositories(
     org: i64,
 ) -> Result<OrganizationOutcome<i64>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
+    if require_read_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     let count = repository_count(&mut tx, org).await?;
@@ -89,7 +89,7 @@ pub async fn list_organization_deletion_repositories(
     crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
         .await?;
     super::super::credentials::require_account(&mut tx, &owner).await?;
-    if require_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner
+    if require_org!(tx, actor, org) != OrgRole::Owner
         || !super::super::credentials::organization(
             &mut tx,
             &owner,
@@ -125,7 +125,7 @@ pub async fn delete_organization_repository(
     crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
         .await?;
     super::super::credentials::require_account(&mut tx, &owner).await?;
-    if require_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner
+    if require_org!(tx, actor, org) != OrgRole::Owner
         || !super::super::credentials::organization(
             &mut tx,
             &owner,

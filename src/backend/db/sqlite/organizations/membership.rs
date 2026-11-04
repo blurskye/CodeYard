@@ -122,7 +122,7 @@ async fn update_member_role(
     let actor_role = require_org!(tx, actor, org);
     if !credential(&mut tx, &grant, org, "members").await?
         || !administers(actor_role)
-        || (owner_only && actor_role != codeyard_db_core::models::OrgRole::Owner)
+        || (owner_only && actor_role != OrgRole::Owner)
     {
         return Ok(Denied);
     }
@@ -139,17 +139,14 @@ async fn update_member_role(
     }
     // Inactive targets get no new authority: only an owner may lower an owner or admin to member.
     if !target_active
-        && !(actor_role == codeyard_db_core::models::OrgRole::Owner
-            && role == codeyard_db_core::models::OrgRole::Member
-            && matches!(
-                old,
-                codeyard_db_core::models::OrgRole::Owner | codeyard_db_core::models::OrgRole::Admin
-            ))
+        && !(actor_role == OrgRole::Owner
+            && role == OrgRole::Member
+            && matches!(old, OrgRole::Owner | OrgRole::Admin))
     {
         return Ok(Denied);
     }
-    if old == codeyard_db_core::models::OrgRole::Owner
-        && role != codeyard_db_core::models::OrgRole::Owner
+    if old == OrgRole::Owner
+        && role != OrgRole::Owner
         && !remaining_active_owner(&mut tx, org, target).await?
     {
         return Ok(Conflict);
@@ -162,10 +159,8 @@ async fn update_member_role(
     .bind(role.as_str())
     .fetch_one(&mut *tx)
     .await?;
-    if (old == codeyard_db_core::models::OrgRole::Owner
-        && role != codeyard_db_core::models::OrgRole::Owner)
-        || (old == codeyard_db_core::models::OrgRole::Admin
-            && role == codeyard_db_core::models::OrgRole::Member)
+    if (old == OrgRole::Owner && role != OrgRole::Owner)
+        || (old == OrgRole::Admin && role == OrgRole::Member)
     {
         cancel_actor(&mut tx, org, target).await?;
     }
@@ -225,10 +220,7 @@ async fn remove_member(
     }
     // Any member may leave on their own; the last-owner check below still applies.
     let leaving = actor == target && mode == Removal::Remove && !owner_only;
-    if !leaving
-        && (!administers(actor_role)
-            || (owner_only && actor_role != codeyard_db_core::models::OrgRole::Owner))
-    {
+    if !leaving && (!administers(actor_role) || (owner_only && actor_role != OrgRole::Owner)) {
         return Ok(Denied);
     }
     let Some(old) = membership_role(&mut tx, org, target).await? else {
@@ -253,9 +245,7 @@ async fn remove_member(
     if !leaving && !can_change_member(actor_role, Some(old), None) {
         return Ok(Denied);
     }
-    if old == codeyard_db_core::models::OrgRole::Owner
-        && !remaining_active_owner(&mut tx, org, target).await?
-    {
+    if old == OrgRole::Owner && !remaining_active_owner(&mut tx, org, target).await? {
         return Ok(Conflict);
     }
     if mode == Removal::Convert {

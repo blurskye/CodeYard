@@ -101,7 +101,7 @@ async fn test_get_user_by_username() {
 }
 
 /// The lookups that resolve Markdown references, run on whichever engine the pool is.
-async fn reference_lookups(pool: &codeyard_db_core::DbPool) {
+async fn reference_lookups(pool: &DbPool) {
     let alice =
         codeyard::backend::db::users::accounts::create_user(pool, &unique_name("refalice"), None)
             .await
@@ -289,8 +289,6 @@ async fn test_ssh_key_operations() {
 
 #[tokio::test]
 async fn test_access_control() {
-    use codeyard_db_core::models::AccessLevel;
-
     let fixture = setup_test_db().await;
     let pool = fixture.pool.clone();
 
@@ -363,7 +361,7 @@ async fn test_access_control() {
 #[tokio::test]
 async fn test_private_repository_grants_are_scoped_and_revocable() {
     use codeyard::backend::db;
-    use codeyard_db_core::models::AccessLevel;
+
     let fixture = setup_test_db().await;
     let owner = db::users::accounts::create_user(&fixture.pool, &unique_name("access-owner"), None)
         .await
@@ -838,8 +836,6 @@ async fn test_fingerprint_calculation() {
 
 #[tokio::test]
 async fn test_access_level_ordering() {
-    use codeyard_db_core::models::AccessLevel;
-
     assert!(
         codeyard_db_core::models::AccessLevel::Read > codeyard_db_core::models::AccessLevel::None
     );
@@ -1963,7 +1959,7 @@ async fn test_pull_request_branch_filter_on_sqlite() {
 /// Sets the columns that explore ranks by, the same way on both engines.
 async fn set_repository_ranking(pool: &DbPool, repo_id: i64, stars: i32, created_at: &str) {
     match pool {
-        codeyard_db_core::DbPool::Postgres(pool) => {
+        DbPool::Postgres(pool) => {
             sqlx::query(
                 "UPDATE repositories SET stars_count = $1, created_at = $2::timestamptz WHERE id = $3",
             )
@@ -1974,7 +1970,7 @@ async fn set_repository_ranking(pool: &DbPool, repo_id: i64, stars: i32, created
             .await
             .expect("set repository ranking");
         }
-        codeyard_db_core::DbPool::Sqlite(pool) => {
+        DbPool::Sqlite(pool) => {
             sqlx::query("UPDATE repositories SET stars_count = ?1, created_at = ?2 WHERE id = ?3")
                 .bind(stars)
                 .bind(created_at)
@@ -2084,7 +2080,7 @@ async fn public_repository_search_contract(pool: &DbPool) {
             list_shared_repositories, search_public_repositories, RepositoryFilter, RepositorySort,
         },
     };
-    use codeyard_db_core::models::AccessLevel;
+
     let owner = codeyard::backend::db::users::accounts::create_user(
         pool,
         &unique_name("search-owner"),
@@ -2239,7 +2235,7 @@ async fn test_public_repository_search_and_shares_on_sqlite() {
 /// the workflows that set them.
 async fn set_state(pool: &DbPool, table: &str, id: i64, state: &str) {
     match pool {
-        codeyard_db_core::DbPool::Sqlite(pool) => {
+        DbPool::Sqlite(pool) => {
             sqlx::query(&format!("UPDATE {table} SET state = ?1 WHERE id = ?2"))
                 .bind(state)
                 .bind(id)
@@ -2247,7 +2243,7 @@ async fn set_state(pool: &DbPool, table: &str, id: i64, state: &str) {
                 .await
                 .unwrap();
         }
-        codeyard_db_core::DbPool::Postgres(pool) => {
+        DbPool::Postgres(pool) => {
             sqlx::query(&format!("UPDATE {table} SET state = $1 WHERE id = $2"))
                 .bind(state)
                 .bind(id)
@@ -2272,7 +2268,7 @@ async fn viewer_work_contract(pool: &DbPool) {
     use codeyard::backend::db::issues::IssueRelation;
     use codeyard::backend::db::pull_requests::records::NewPullRequest;
     use codeyard::backend::db::pull_requests::records::PullRequestRelation;
-    use codeyard_db_core::models::AccessLevel;
+
     let owner = db::users::accounts::create_user(pool, &unique_name("work-owner"), None)
         .await
         .unwrap();

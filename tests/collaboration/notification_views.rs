@@ -644,7 +644,7 @@ async fn other_users_and_hidden_history_are_untouched(pg: bool) {
         w.database.pool(),
         w.bob_id,
         w.vault,
-        codeyard_db_core::models::repositories::AccessLevel::Read,
+        AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -701,7 +701,7 @@ async fn other_users_and_hidden_history_are_untouched(pg: bool) {
         w.database.pool(),
         w.bob_id,
         w.vault,
-        codeyard_db_core::models::repositories::AccessLevel::Read,
+        AccessLevel::Read,
     )
     .await
     .unwrap();

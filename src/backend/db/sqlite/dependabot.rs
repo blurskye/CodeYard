@@ -22,9 +22,7 @@ pub(super) async fn authorized(
         .await
         .map_err(SecretsError::authority)?
     {
-        OrganizationOutcome::Applied(
-            codeyard_db_core::models::OrgRole::Owner | codeyard_db_core::models::OrgRole::Admin,
-        ) => {
+        OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {
             if !super::credentials::organization(
                 &mut tx,
                 &actor,

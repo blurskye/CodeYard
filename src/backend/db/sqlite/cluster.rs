@@ -121,7 +121,7 @@ pub async fn join_with_token(pool: &SqlitePool, request: JoinRequest<'_>) -> Res
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(node) = known {
-        return Ok(codeyard_db_core::models::JoinOutcome::AlreadyMember(node));
+        return Ok(JoinOutcome::AlreadyMember(node));
     }
     let token = sqlx::query_as::<_, (String, bool)>(&format!(
         "UPDATE join_tokens SET uses = uses + 1
@@ -132,13 +132,13 @@ pub async fn join_with_token(pool: &SqlitePool, request: JoinRequest<'_>) -> Res
     .fetch_optional(&mut *tx)
     .await?;
     let Some((allowed, requires_approval)) = token else {
-        return Ok(codeyard_db_core::models::JoinOutcome::InvalidToken);
+        return Ok(JoinOutcome::InvalidToken);
     };
     let allowed: Vec<String> = serde_json::from_str(&allowed)?;
     let roles = match request.roles {
         None => allowed,
         Some(wanted) if wanted.iter().all(|role| allowed.contains(role)) => wanted.to_vec(),
-        Some(_) => return Ok(codeyard_db_core::models::JoinOutcome::RolesNotAllowed { allowed }),
+        Some(_) => return Ok(JoinOutcome::RolesNotAllowed { allowed }),
     };
     let status = if requires_approval {
         "pending"
@@ -170,7 +170,7 @@ pub async fn join_with_token(pool: &SqlitePool, request: JoinRequest<'_>) -> Res
     if let Some(node) = inserted {
         super::runners::bind_registration(&mut tx, request.token_hash, &node, request.name).await?;
         tx.commit().await?;
-        return Ok(codeyard_db_core::models::JoinOutcome::Joined(node));
+        return Ok(JoinOutcome::Joined(node));
     }
     let raced = sqlx::query_as::<_, ClusterNode>(&format!(
         "SELECT *, {NOW} AS observed_at FROM nodes WHERE public_key = ?1"
@@ -179,8 +179,8 @@ pub async fn join_with_token(pool: &SqlitePool, request: JoinRequest<'_>) -> Res
     .fetch_optional(&mut *tx)
     .await?;
     Ok(match raced {
-        Some(node) => codeyard_db_core::models::JoinOutcome::AlreadyMember(node),
-        None => codeyard_db_core::models::JoinOutcome::NameTaken,
+        Some(node) => JoinOutcome::AlreadyMember(node),
+        None => JoinOutcome::NameTaken,
     })
 }
 
@@ -318,7 +318,7 @@ pub async fn set_node_status(
         if !active_admin(&mut tx, user_id).await?
             || !live_session(&mut tx, user_id, session).await?
         {
-            return Ok(codeyard_db_core::models::NodeStatusChange::Denied);
+            return Ok(NodeStatusChange::Denied);
         }
     }
     let before: Option<String> = sqlx::query_scalar("SELECT status FROM nodes WHERE name = ?1")
@@ -326,7 +326,7 @@ pub async fn set_node_status(
         .fetch_optional(&mut *tx)
         .await?;
     let Some(before) = before else {
-        return Ok(codeyard_db_core::models::NodeStatusChange::Missing);
+        return Ok(NodeStatusChange::Missing);
     };
     let node = sqlx::query_as::<_, ClusterNode>(&format!(
         "UPDATE nodes SET status = ?2 WHERE name = ?1 RETURNING *, {NOW} AS observed_at"
@@ -340,7 +340,7 @@ pub async fn set_node_status(
             .bind(actor).bind(node.id).bind(serde_json::json!({"before":before,"status":status}).to_string()).execute(&mut *tx).await?;
     }
     tx.commit().await?;
-    Ok(codeyard_db_core::models::NodeStatusChange::Changed {
+    Ok(NodeStatusChange::Changed {
         before,
         node: Box::new(node),
     })

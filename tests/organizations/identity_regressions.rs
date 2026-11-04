@@ -54,15 +54,9 @@ async fn discovery_and_deletion(pg: bool) {
     let first_org = org(&f, owner, "first_org").await;
     let second_org = org(&f, owner, "second_org").await;
     applied(
-        add_organization_member(
-            f.pool(),
-            owner,
-            first_org,
-            member,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        add_organization_member(f.pool(), owner, first_org, member, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let mut repositories = Vec::new();
     for number in 0..31 {
@@ -394,15 +388,9 @@ async fn postgres_accept_and_decline_have_one_winner() {
     let member = f.actor("invite_member").await;
     let organization = org(&f, owner, "invite_org").await;
     applied(
-        invite_organization_member(
-            f.pool(),
-            owner,
-            organization,
-            member,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        invite_organization_member(f.pool(), owner, organization, member, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let raw = f.pg();
     let mut gate = raw.begin().await.unwrap();
@@ -445,15 +433,9 @@ async fn answers_use_the_chosen_offer(pg: bool) {
     let organization = org(&f, owner, "offer_org").await;
     let mut offers = Vec::new();
     for (email, role) in [
-        (
-            "first@offer.test",
-            codeyard_db_core::models::OrgRole::Member,
-        ),
-        (
-            "second@offer.test",
-            codeyard_db_core::models::OrgRole::Member,
-        ),
-        ("third@offer.test", codeyard_db_core::models::OrgRole::Admin),
+        ("first@offer.test", OrgRole::Member),
+        ("second@offer.test", OrgRole::Member),
+        ("third@offer.test", OrgRole::Admin),
     ] {
         let input = NewInvitation {
             user_id: None,

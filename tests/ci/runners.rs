@@ -123,15 +123,9 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        orgs::add_organization_member(
-            f.pool(),
-            alice,
-            org.id,
-            bob,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        orgs::add_organization_member(f.pool(), alice, org.id, bob, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let key = NodeKey::generate();

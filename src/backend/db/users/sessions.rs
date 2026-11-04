@@ -137,7 +137,7 @@ pub async fn rotate_authenticated_session<'a, 'c>(
         .and_then(|address| address.parse::<std::net::IpAddr>().ok())
         .map(|address| address.to_string());
     match pool {
-        codeyard_db_core::DbPool::Postgres(pool) => {
+        DbPool::Postgres(pool) => {
             crate::backend::db::postgres::users::sessions::rotate_authenticated_session(
                 pool,
                 old,
@@ -150,7 +150,7 @@ pub async fn rotate_authenticated_session<'a, 'c>(
             )
             .await
         }
-        codeyard_db_core::DbPool::Sqlite(pool) => {
+        DbPool::Sqlite(pool) => {
             crate::backend::db::sqlite::users::sessions::rotate_authenticated_session(
                 pool,
                 old,

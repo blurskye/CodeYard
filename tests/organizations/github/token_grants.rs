@@ -87,15 +87,9 @@ async fn contract(pg: bool) {
     .id;
     for user in [carol, dave] {
         applied(
-            organizations::add_organization_member(
-                f.pool(),
-                alice,
-                org,
-                user,
-                codeyard_db_core::models::OrgRole::Member,
-            )
-            .await
-            .unwrap(),
+            organizations::add_organization_member(f.pool(), alice, org, user, OrgRole::Member)
+                .await
+                .unwrap(),
         );
     }
     let root = tempfile::tempdir().unwrap();
@@ -119,14 +113,9 @@ async fn contract(pg: bool) {
         );
     }
     for user in [carol, dave] {
-        db::repositories::access::grant_repo_access(
-            f.pool(),
-            user,
-            repos[0].id,
-            codeyard_db_core::models::AccessLevel::Read,
-        )
-        .await
-        .unwrap();
+        db::repositories::access::grant_repo_access(f.pool(), user, repos[0].id, AccessLevel::Read)
+            .await
+            .unwrap();
     }
     let router = f.router(root.path()).await;
     let owner = Client::login(&router, f.pool(), alice).await;
@@ -288,15 +277,9 @@ async fn contract(pg: bool) {
     // A banned owner keeps the membership row but cannot review requests or set the policy.
     let erin = f.actor("erin").await;
     applied(
-        organizations::add_organization_member(
-            f.pool(),
-            alice,
-            org,
-            erin,
-            codeyard_db_core::models::OrgRole::Owner,
-        )
-        .await
-        .unwrap(),
+        organizations::add_organization_member(f.pool(), alice, org, erin, OrgRole::Owner)
+            .await
+            .unwrap(),
     );
     f.execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[erin])
         .await;

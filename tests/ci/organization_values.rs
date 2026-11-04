@@ -50,15 +50,9 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        orgs::add_organization_member(
-            f.pool(),
-            owner,
-            org.id,
-            manager,
-            codeyard_db_core::models::OrgRole::Admin,
-        )
-        .await
-        .unwrap(),
+        orgs::add_organization_member(f.pool(), owner, org.id, manager, OrgRole::Admin)
+            .await
+            .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let mut repos = Vec::new();
@@ -626,15 +620,9 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
     applied(
-        orgs::update_organization_member_role(
-            f.pool(),
-            owner,
-            org.id,
-            manager,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        orgs::update_organization_member_role(f.pool(), owner, org.id, manager, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     request(
         &router,

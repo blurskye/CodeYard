@@ -152,14 +152,9 @@ async fn contract(pg: bool) {
         200,
     )
     .await;
-    db::repositories::access::grant_repo_access(
-        f.pool(),
-        bob,
-        project.id,
-        codeyard_db_core::models::AccessLevel::Maintain,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(f.pool(), bob, project.id, AccessLevel::Maintain)
+        .await
+        .unwrap();
     request(
         &router,
         "interactions/get-pull-request-creation-cap-for-repo",

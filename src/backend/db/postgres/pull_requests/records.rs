@@ -1340,7 +1340,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for PullRequestListEntry {
             None => None,
         };
         Ok(Self {
-            pull_request: codeyard_db_core::models::PullRequest::from_row(row)?,
+            pull_request: PullRequest::from_row(row)?,
             head_repository,
             author: crate::backend::db::postgres::users::accounts::author_display(row)?,
         })

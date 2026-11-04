@@ -114,9 +114,9 @@ async fn independent_people_filters(pg: bool) {
         .unwrap()
         .unwrap();
     for (id, level) in [
-        (none, codeyard_db_core::models::AccessLevel::Read),
-        (bob.id, codeyard_db_core::models::AccessLevel::Read),
-        (writer, codeyard_db_core::models::AccessLevel::Write),
+        (none, AccessLevel::Read),
+        (bob.id, AccessLevel::Read),
+        (writer, AccessLevel::Write),
     ] {
         db::repositories::access::grant_repo_access(pool, id, repo.id, level)
             .await

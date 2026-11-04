@@ -50,23 +50,16 @@ use uuid::Uuid;
 #[test]
 fn replica_setting_accepts_counts_and_all_and_nothing_else() {
     for (text, setting) in [
-        ("1", codeyard_db_core::models::ReplicaSetting::Copies(1)),
-        ("2", codeyard_db_core::models::ReplicaSetting::Copies(2)),
-        ("999", codeyard_db_core::models::ReplicaSetting::Copies(999)),
-        ("all", codeyard_db_core::models::ReplicaSetting::All),
+        ("1", ReplicaSetting::Copies(1)),
+        ("2", ReplicaSetting::Copies(2)),
+        ("999", ReplicaSetting::Copies(999)),
+        ("all", ReplicaSetting::All),
     ] {
-        assert_eq!(
-            codeyard_db_core::models::ReplicaSetting::from_str(text).unwrap(),
-            setting,
-            "{text}"
-        );
+        assert_eq!(ReplicaSetting::from_str(text).unwrap(), setting, "{text}");
         assert_eq!(setting.to_string(), text);
     }
     for text in ["", "0", "01", "1000", "-1", "two", "ALL", " 2", "2 "] {
-        assert!(
-            codeyard_db_core::models::ReplicaSetting::from_str(text).is_err(),
-            "{text:?}"
-        );
+        assert!(ReplicaSetting::from_str(text).is_err(), "{text:?}");
     }
 }
 
@@ -2042,7 +2035,7 @@ async fn family_member(pool: &DbPool, name: &str, primary: i64, source: Option<i
 /// before families moved together.
 async fn move_primary(pool: &DbPool, repository: i64, node: i64) {
     let changed = match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        DbPool::Postgres(raw) => {
             sqlx::query("UPDATE repositories SET storage_node_id = $1 WHERE id = $2")
                 .bind(node)
                 .bind(repository)
@@ -2051,7 +2044,7 @@ async fn move_primary(pool: &DbPool, repository: i64, node: i64) {
                 .unwrap()
                 .rows_affected()
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        DbPool::Sqlite(raw) => {
             sqlx::query("UPDATE repositories SET storage_node_id = ?1 WHERE id = ?2")
                 .bind(node)
                 .bind(repository)
@@ -2616,7 +2609,7 @@ async fn manual_promotion_reports_a_fork_inserted_after_its_family_snapshot() {
     let owner = db::users::accounts::create_user(pool, "late-fork-owner", None)
         .await
         .unwrap();
-    let codeyard_db_core::DbPool::Postgres(raw) = pool else {
+    let DbPool::Postgres(raw) = pool else {
         unreachable!()
     };
     let mut lock = raw.begin().await.unwrap();

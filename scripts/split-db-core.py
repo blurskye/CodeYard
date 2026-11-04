@@ -43,6 +43,36 @@ def leaves(tree, prefix=""):
     return result
 
 
+def shorten_imported_paths(text):
+    imports = list(re.finditer(r"(?m)^use\s+([^;]+);", text))
+    names = {}
+    for match in imports:
+        for leaf in leaves(match[1]):
+            path, *alias = re.split(r"\s+as\s+", leaf)
+            if path.startswith(("codeyard_db_core::", "codeyard_model::", "codeyard_support::")):
+                name = alias[0] if alias else path.split("::")[-1]
+                if name not in ("*", "_"):
+                    names[path] = name
+    for match in re.finditer(r"(?m)^[ \t]*(?:pub(?:\([^\n]*?\))?\s+)?use\s+([^;]+);", text):
+        for leaf in leaves(match[1]):
+            path, *alias = re.split(r"\s+as\s+", leaf)
+            name = alias[0] if alias else path.split("::")[-1]
+            names = {key: value for key, value in names.items() if value != name or key == path}
+    names = {path: name for path, name in names.items() if not re.search(r"\b(?:struct|enum|type|trait)\s+" + re.escape(name) + r"\b", text)}
+    if not names:
+        return text
+    pattern = re.compile(r"\b(" + "|".join(re.escape(path) for path in sorted(names, key=len, reverse=True)) + r")\b")
+    def shorten(part):
+        return pattern.sub(lambda match: names[match[0]], part)
+    parts = []
+    at = 0
+    for match in re.finditer(r"(?m)^[ \t]*(?:pub(?:\([^\n]*?\))?\s+)?use\s+[^;]+;", text):
+        parts.extend((shorten(text[at:match.start()]), match[0]))
+        at = match.end()
+    parts.append(shorten(text[at:]))
+    return "".join(parts)
+
+
 def rewrite(mappings):
     for root in ROOTS:
         for path in Path(root).rglob("*"):
@@ -103,8 +133,34 @@ def rewrite(mappings):
             text = re.sub(r"(?m)^([ \t]*)(pub(?:\([^\n]*?\))?\s+)?use\s+([^;]+);", import_replacement, text)
             # Qualified references, including references through an imported module alias.
             text = re.sub(r"\b[a-zA-Z_]\w*(?:::[a-zA-Z_]\w*)+", lambda m: mapped(m[0]), text)
+            if path.suffix == ".rs":
+                text = shorten_imported_paths(text)
             if text != original:
                 path.write_text(text)
+
+
+def remove_unused_database_imports():
+    uses = re.compile(r"(?m)^([ \t]*)use\s+([^;]+);")
+    for root in ("src", "tests"):
+        for path in Path(root).rglob("*.rs"):
+            text = path.read_text()
+            directory = path.parent if path.name == "mod.rs" else path.with_suffix("")
+            children = "".join(child.read_text() for child in directory.rglob("*.rs") if child != path) if directory.is_dir() else ""
+            body = uses.sub("", text + children)
+            def prune(match):
+                kept = []
+                for leaf in leaves(match[2]):
+                    item, *alias = re.split(r"\s+as\s+", leaf)
+                    name = alias[0] if alias else item.split("::")[-1]
+                    moved = item.startswith(("codeyard_db_core::", "codeyard_model::")) or name == "db"
+                    if name in ("*", "_") or not moved or re.search(r"(?<![:\w])" + re.escape(name) + r"\b", body):
+                        kept.append(leaf)
+                if kept == leaves(match[2]):
+                    return match[0]
+                return "\n".join(match[1] + "use " + item + ";" for item in kept)
+            updated = uses.sub(prune, text)
+            if updated != text:
+                path.write_text(updated)
 
 
 def extract(path, start, end):
@@ -163,6 +219,8 @@ def types():
         "vulnerabilities::MAX_AFFECTED_PACKAGES": "vulnerabilities::MAX_AFFECTED_PACKAGES",
     }
     rewrite([("crate::backend::" + old, "crate::backend::model::" + new) for old, new in names.items()])
+    path = Path("src/backend/ci/worker.rs")
+    path.write_text(path.read_text().replace("super::super::logs::MAX_RUN_LOG_LINES", "crate::backend::model::ci::MAX_RUN_LOG_LINES"))
     for path, imports in {
         "ci/queue.rs": "use crate::backend::model::ci::LogLine;",
         "ci/tokens.rs": "use crate::backend::model::ci::MAX_EXPANDED_JOBS;",
@@ -238,6 +296,7 @@ def core():
     for path in old.rglob("*.rs"):
         if re.search(r"(?m)^\s*native_operation!\(", path.read_text()):
             prepend(path, "use codeyard_db_core::native_operation;")
+    remove_unused_database_imports()
 
 
 if __name__ == "__main__":

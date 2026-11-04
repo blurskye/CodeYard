@@ -316,10 +316,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     )
     .id;
-    for (actor, role) in [
-        (admin, codeyard_db_core::models::OrgRole::Admin),
-        (member, codeyard_db_core::models::OrgRole::Member),
-    ] {
+    for (actor, role) in [(admin, OrgRole::Admin), (member, OrgRole::Member)] {
         applied(
             orgs::add_organization_member(d.pool(), owner, org, actor, role)
                 .await
@@ -353,14 +350,9 @@ async fn contract(pg: bool) {
             .unwrap();
     let foreign_pr = new_pr(d.pool(), foreign.id, other).await.unwrap();
     for repo in [private.id, public.id, personal.id] {
-        db::repositories::access::grant_repo_access(
-            d.pool(),
-            writer,
-            repo,
-            codeyard_db_core::models::AccessLevel::Write,
-        )
-        .await
-        .unwrap();
+        db::repositories::access::grant_repo_access(d.pool(), writer, repo, AccessLevel::Write)
+            .await
+            .unwrap();
     }
     let review = db::pull_requests::reviews::add_pull_request_review(
         d.pool(),
@@ -433,22 +425,12 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
-        d.pool(),
-        reader,
-        private.id,
-        codeyard_db_core::models::AccessLevel::Read,
-    )
-    .await
-    .unwrap();
-    db::repositories::access::grant_repo_access(
-        d.pool(),
-        reader,
-        personal.id,
-        codeyard_db_core::models::AccessLevel::Read,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(d.pool(), reader, private.id, AccessLevel::Read)
+        .await
+        .unwrap();
+    db::repositories::access::grant_repo_access(d.pool(), reader, personal.id, AccessLevel::Read)
+        .await
+        .unwrap();
     for (repo, i, p) in [
         (private.id, issue.id, pr.id),
         (personal.id, personal_issue.id, personal_pr.id),
@@ -592,24 +574,14 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
-        d.pool(),
-        writer,
-        private.id,
-        codeyard_db_core::models::AccessLevel::Triage,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(d.pool(), writer, private.id, AccessLevel::Triage)
+        .await
+        .unwrap();
     contributions(&d, private.id, writer, issue.id, pr.id, true).await;
     review_denied(&d, private.id, writer, issue.id, pr.id, review.id, reader).await;
-    db::repositories::access::grant_repo_access(
-        d.pool(),
-        writer,
-        private.id,
-        codeyard_db_core::models::AccessLevel::Write,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(d.pool(), writer, private.id, AccessLevel::Write)
+        .await
+        .unwrap();
 
     // Caller-supplied CAS survives comment/review touches. Never reload and
     // substitute the revision, including when current authority is sufficient.
@@ -846,38 +818,21 @@ async fn contract(pg: bool) {
         .unwrap();
     contributions(&d, private.id, reader, issue.id, pr.id, false).await;
     applied(
-        orgs::update_organization_member_role(
-            d.pool(),
-            owner,
-            org,
-            admin,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        orgs::update_organization_member_role(d.pool(), owner, org, admin, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     contributions(&d, private.id, admin, issue.id, pr.id, false).await;
     review_denied(&d, private.id, admin, issue.id, pr.id, review.id, writer).await;
     review_refused(&d, pr.id, admin).await;
     applied(
-        orgs::update_organization_member_role(
-            d.pool(),
-            owner,
-            org,
-            admin,
-            codeyard_db_core::models::OrgRole::Admin,
-        )
-        .await
-        .unwrap(),
+        orgs::update_organization_member_role(d.pool(), owner, org, admin, OrgRole::Admin)
+            .await
+            .unwrap(),
     );
-    db::repositories::access::grant_repo_access(
-        d.pool(),
-        reader,
-        private.id,
-        codeyard_db_core::models::AccessLevel::Read,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(d.pool(), reader, private.id, AccessLevel::Read)
+        .await
+        .unwrap();
     for flag in ["is_banned", "must_change_password"] {
         d.execute(
             &format!("UPDATE users SET {flag}=TRUE WHERE id=$1"),
@@ -913,7 +868,7 @@ async fn contract(pg: bool) {
                 db::repositories::access::get_user_repo_access(d.pool(), actor, public.id)
                     .await
                     .unwrap(),
-                codeyard_db_core::models::AccessLevel::Read
+                AccessLevel::Read
             );
             contributions(&d, public.id, actor, public_issue.id, public_pr.id, false).await;
             contributions(&d, private.id, actor, issue.id, pr.id, false).await;
@@ -1064,9 +1019,9 @@ async fn comment_resolution_contract(pg: bool) {
     let revoked = d.actor("resolve_revoked").await;
     let personal = d.new_repo(owner, None, "resolve_personal", true).await;
     for (actor, level) in [
-        (author, codeyard_db_core::models::AccessLevel::Read),
-        (writer, codeyard_db_core::models::AccessLevel::Write),
-        (revoked, codeyard_db_core::models::AccessLevel::Write),
+        (author, AccessLevel::Read),
+        (writer, AccessLevel::Write),
+        (revoked, AccessLevel::Write),
     ] {
         db::repositories::access::grant_repo_access(d.pool(), actor, personal.id, level)
             .await
@@ -1127,14 +1082,9 @@ async fn comment_resolution_contract(pg: bool) {
     )
     .id;
     let shared = d.new_repo(owner, Some(org), "resolve_shared", true).await;
-    db::repositories::access::grant_repo_access(
-        d.pool(),
-        author,
-        shared.id,
-        codeyard_db_core::models::AccessLevel::Read,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(d.pool(), author, shared.id, AccessLevel::Read)
+        .await
+        .unwrap();
     let shared_pr = new_pr(d.pool(), shared.id, author).await.unwrap();
     let shared_thread = file_comment(d.pool(), shared_pr.id, author).await;
     resolve(d.pool(), shared_pr.id, shared_thread, true, author)
@@ -1201,14 +1151,9 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
     .execute(&f.raw)
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(
-        &f.pool,
-        actor,
-        f.repo.id,
-        codeyard_db_core::models::AccessLevel::Admin,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(&f.pool, actor, f.repo.id, AccessLevel::Admin)
+        .await
+        .unwrap();
     let issue = db::issues::create_issue(&f.pool, f.repo.id, f.owner.id, "Wait", "Fixture")
         .await
         .unwrap();
@@ -1227,14 +1172,9 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
     .await
     .unwrap();
     for operation in 0..8 {
-        db::repositories::access::grant_repo_access(
-            &f.pool,
-            actor,
-            f.repo.id,
-            codeyard_db_core::models::AccessLevel::Admin,
-        )
-        .await
-        .unwrap();
+        db::repositories::access::grant_repo_access(&f.pool, actor, f.repo.id, AccessLevel::Admin)
+            .await
+            .unwrap();
         let mut revoke = f.raw.begin().await.unwrap();
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *revoke)
@@ -1329,14 +1269,9 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
     }
     // A comment accepted before a later revocation stays, but a saved author ID
     // cannot authorize a replay.
-    db::repositories::access::grant_repo_access(
-        &f.pool,
-        actor,
-        f.repo.id,
-        codeyard_db_core::models::AccessLevel::Read,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(&f.pool, actor, f.repo.id, AccessLevel::Read)
+        .await
+        .unwrap();
     let accepted = db::issues::add_issue_comment(
         &f.pool,
         issue.repo_id,
@@ -1380,14 +1315,9 @@ async fn postgres_contribution_keeps_its_grant_until_the_effect_commits() {
         .await
         .unwrap()
         .id;
-    db::repositories::access::grant_repo_access(
-        &f.pool,
-        actor,
-        f.repo.id,
-        codeyard_db_core::models::AccessLevel::Read,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(&f.pool, actor, f.repo.id, AccessLevel::Read)
+        .await
+        .unwrap();
     let issue = db::issues::create_issue(&f.pool, f.repo.id, f.owner.id, "Commit order", "Fixture")
         .await
         .unwrap();
@@ -1581,14 +1511,9 @@ async fn sqlite_contributions_use_reserved_writer_snapshot() {
     let issue = db::issues::create_issue(&f.pool, repo.id, owner, "Reserved", "Fixture")
         .await
         .unwrap();
-    db::repositories::access::grant_repo_access(
-        &f.pool,
-        actor,
-        repo.id,
-        codeyard_db_core::models::AccessLevel::Read,
-    )
-    .await
-    .unwrap();
+    db::repositories::access::grant_repo_access(&f.pool, actor, repo.id, AccessLevel::Read)
+        .await
+        .unwrap();
     let accepted = db::issues::add_issue_comment(
         &f.pool,
         issue.repo_id,

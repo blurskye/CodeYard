@@ -30,7 +30,7 @@ pub async fn invite_team_member(
         &mut tx,
         grant,
         org,
-        &NewInvitation::user(target, codeyard_db_core::models::OrgRole::Member),
+        &NewInvitation::user(target, OrgRole::Member),
         false,
         InvitationOffer::Retain,
     )

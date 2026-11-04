@@ -170,7 +170,7 @@ async fn badge_skips_repositories_the_reader_cannot_read(pg: bool) {
         w.database.pool(),
         w.bob_id,
         w.vault,
-        codeyard_db_core::models::repositories::AccessLevel::Read,
+        AccessLevel::Read,
     )
     .await
     .unwrap();

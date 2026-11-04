@@ -132,14 +132,9 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     for repo in [&public, &private] {
-        db::repositories::access::grant_repo_access(
-            f.pool(),
-            bob,
-            repo.id,
-            codeyard_db_core::models::AccessLevel::Write,
-        )
-        .await
-        .unwrap();
+        db::repositories::access::grant_repo_access(f.pool(), bob, repo.id, AccessLevel::Write)
+            .await
+            .unwrap();
     }
     let issue = db::issues::create_issue(f.pool(), public.id, alice, "Issue", "Body")
         .await
@@ -261,13 +256,13 @@ async fn contract(pg: bool) {
         db::repositories::access::get_user_repo_access(f.pool(), bob, private.id)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        AccessLevel::None
     );
     assert_eq!(
         db::repositories::access::get_user_repo_access(f.pool(), bob, public.id)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::Read
+        AccessLevel::Read
     );
     assert_eq!(
         f.scalar(
@@ -361,7 +356,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob,
         public.id,
-        codeyard_db_core::models::AccessLevel::Write
+        AccessLevel::Write
     )
     .await
     .is_err());
@@ -555,7 +550,7 @@ async fn contract(pg: bool) {
         db::repositories::access::get_user_repo_access(f.pool(), bob, private.id)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        AccessLevel::None
     );
     db::issues::add_issue_comment(
         f.pool(),

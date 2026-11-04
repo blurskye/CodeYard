@@ -102,7 +102,7 @@ pub(super) async fn populate(
         orgs::get_organization_role(&ctx.state.pool, actor, org)
             .await
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
-        Applied(codeyard_db_core::models::OrgRole::Owner)
+        Applied(OrgRole::Owner)
     );
     form.properties_owner_org_id = org.to_string();
     form.property_values.retain(|name, _| {

@@ -715,7 +715,7 @@ async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
         &database.pool,
         reader.id,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -758,7 +758,7 @@ async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
         &database.pool,
         reader.id,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        AccessLevel::Write,
     )
     .await
     .unwrap();

@@ -39,7 +39,7 @@ pub async fn contracts(f: &Fixture) {
                 f.owner.id,
                 f.org,
                 actor.id,
-                codeyard_db_core::models::OrgRole::Member,
+                OrgRole::Member,
             )
             .await
             .unwrap(),
@@ -197,15 +197,9 @@ pub async fn contracts(f: &Fixture) {
     // private grants through team membership, which is not the filtering case.
     let observer = Fixture::actor(pool, "detail_observer").await;
     applied(
-        add_organization_member(
-            pool,
-            f.owner.id,
-            f.org,
-            observer.id,
-            codeyard_db_core::models::OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        add_organization_member(pool, f.owner.id, f.org, observer.id, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let foreign_org = applied(
         create_organization(

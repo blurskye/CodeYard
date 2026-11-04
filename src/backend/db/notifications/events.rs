@@ -22,12 +22,10 @@ async fn poll(pool: &DbPool, cursor: i64, pending: &[i64]) -> Result<EventBatch,
         ));
     }
     let batch = match pool {
-        codeyard_db_core::DbPool::Postgres(pool) => {
+        DbPool::Postgres(pool) => {
             postgres::notifications::events::poll(pool, cursor, pending).await?
         }
-        codeyard_db_core::DbPool::Sqlite(pool) => {
-            sqlite::notifications::events::poll(pool, cursor).await?
-        }
+        DbPool::Sqlite(pool) => sqlite::notifications::events::poll(pool, cursor).await?,
     };
     if batch.active.len() > MAX_ACTIVE_TRANSACTIONS {
         return Err(sqlx::Error::Protocol(
@@ -87,21 +85,15 @@ pub async fn announce(pool: &DbPool, payload: &str) -> Result<(), sqlx::Error> {
         ));
     }
     match pool {
-        codeyard_db_core::DbPool::Postgres(pool) => {
-            postgres::notifications::events::announce(pool, payload).await
-        }
-        codeyard_db_core::DbPool::Sqlite(pool) => {
-            sqlite::notifications::events::announce(pool, payload).await
-        }
+        DbPool::Postgres(pool) => postgres::notifications::events::announce(pool, payload).await,
+        DbPool::Sqlite(pool) => sqlite::notifications::events::announce(pool, payload).await,
     }
 }
 
 /// Hints are not inbox history. A disconnected browser reloads the authoritative inbox.
 pub async fn prune(pool: &DbPool) -> Result<u64, sqlx::Error> {
     match pool {
-        codeyard_db_core::DbPool::Postgres(pool) => {
-            postgres::notifications::events::prune(pool).await
-        }
-        codeyard_db_core::DbPool::Sqlite(pool) => sqlite::notifications::events::prune(pool).await,
+        DbPool::Postgres(pool) => postgres::notifications::events::prune(pool).await,
+        DbPool::Sqlite(pool) => sqlite::notifications::events::prune(pool).await,
     }
 }

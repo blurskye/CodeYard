@@ -1,4 +1,3 @@
-use crate::backend::db;
 use crate::backend::db::users::sessions as stored;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::models::User;
@@ -100,7 +99,7 @@ pub(crate) async fn administrator(
 pub struct SessionStorageUnavailable;
 
 pub async fn end_session(
-    pool: &codeyard_db_core::DbPool,
+    pool: &DbPool,
     session_id: Option<&str>,
 ) -> Result<(), SessionStorageUnavailable> {
     if let Some(id) = session_id {
