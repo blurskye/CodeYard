@@ -17,7 +17,6 @@ use axum::{
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
-use codeyard_app::ci;
 use codeyard_db_actions::action_objects as objects;
 use codeyard_db_actions::action_objects::NewObject;
 use codeyard_db_actions::actions::RepoActionsSettings;

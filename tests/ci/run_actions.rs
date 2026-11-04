@@ -10,7 +10,6 @@ use axum::http::StatusCode;
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;
-use codeyard_identity::tokens;
 
 use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::models::AccessLevel;
@@ -400,6 +399,7 @@ async fn browser_logs(
     run: &codeyard_db_core::models::CiRun,
 ) {
     use axum::{body::Body, http::Request};
+
     use codeyard_identity::tokens;
     use codeyard_identity::tokens::TokenInput;
     use tower::ServiceExt;

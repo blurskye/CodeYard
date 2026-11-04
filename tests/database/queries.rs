@@ -2,7 +2,7 @@
 
 use crate::support::native_database as native;
 use codeyard_db_core::DbPool;
-use codeyard_identity::tokens;
+
 use uuid::Uuid;
 
 async fn setup_test_db() -> native::PostgresDatabase {
@@ -972,6 +972,7 @@ async fn token_session_revocation_contract(pool: &DbPool) {
     use codeyard_db_identity::users::accounts;
     use codeyard_db_identity::users::sessions;
     use codeyard_db_identity::users::transitions;
+
     use codeyard_identity::tokens;
     use codeyard_identity::tokens::TokenError;
     use codeyard_identity::tokens::TokenInput;

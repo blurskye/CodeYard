@@ -11,7 +11,7 @@ use axum::{http::StatusCode, Router};
 use codeyard_actions::progress::Conclusion;
 use codeyard_actions::progress::Event;
 use codeyard_actions::progress::Update;
-use codeyard_app::ci::runtime;
+
 use serde_json::json;
 
 const WORKFLOW: &str = ".github/workflows/ci.yml";
