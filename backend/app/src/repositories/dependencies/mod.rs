@@ -5,8 +5,6 @@ use codeyard_db_repos::repositories::dependencies as records;
 use codeyard_db_repos::repositories::dependencies::Feature;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
-pub mod lockfiles;
-pub mod npm;
 pub mod registry;
 pub(crate) mod updates;
 pub mod worker;
@@ -127,7 +125,7 @@ pub async fn set_enabled(
 pub(crate) async fn observe_refs(
     pool: &codeyard_db_core::DbPool,
     repo: &codeyard_db_core::models::Repository,
-    moves: &[crate::webhooks::ref_changes::RefMove],
+    moves: &[codeyard_repos::ref_changes::RefMove],
 ) {
     let default = format!("refs/heads/{}", repo.default_branch);
     if !moves.iter().any(|(reference, _, _)| reference == &default) {
@@ -150,7 +148,7 @@ pub(crate) async fn observe_refs(
 pub(crate) fn check_publication(
     actor: i64,
     repo: &codeyard_db_core::models::Repository,
-    prepared: &crate::repositories::store::editor::PreparedFile,
+    prepared: &codeyard_repos::editor::PreparedFile,
     publication: &records::Publication,
     refs: &std::collections::HashMap<String, String>,
 ) -> Result<(), RepoError> {
@@ -197,3 +195,5 @@ pub(crate) fn store_error(error: anyhow::Error) -> codeyard_git::error::RepoErro
         ),
     }
 }
+
+use codeyard_repos::dependencies::{lockfiles, npm};

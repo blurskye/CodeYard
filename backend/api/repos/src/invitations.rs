@@ -14,7 +14,7 @@ use axum::Form;
 use axum::Router;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::collaborators::Error;
+use codeyard_repos::collaborators::Error;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
 use codeyard_webui::pages::repos::invitations as view;
@@ -38,7 +38,7 @@ fn refusal(ctx: &PageContext, error: Error) -> Response {
 async fn load(ctx: &PageContext, actor: i64, page: usize) -> Result<view::Page, Error> {
     let limit = crate::paging::DEFAULT_PER_PAGE;
     let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let mut rows = codeyard_app::repositories::collaborators::recipient_invitations(
+    let mut rows = codeyard_repos::collaborators::recipient_invitations(
         &ctx.state.pool,
         actor,
         &session,
@@ -113,7 +113,7 @@ async fn respond(
         _ => return ctx.error(StatusCode::NOT_FOUND, "Unknown invitation action."),
     };
     let authority = ctx.database_actor(actor);
-    match codeyard_app::repositories::collaborators::respond(&ctx.state.pool, authority, id, accept)
+    match codeyard_repos::collaborators::respond(&ctx.state.pool, authority, id, accept)
         .await
     {
         Ok(()) => ctx.redirect("/settings/invitations"),

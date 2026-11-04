@@ -37,3 +37,5 @@ pub mod token_hash;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod secret_detection;
+
+pub mod outbound;

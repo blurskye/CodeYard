@@ -1,5 +1,5 @@
 //! Read resolved versions without invoking package managers or following external files.
-use crate::repositories::dependencies::npm::MAX_LOCK_BYTES;
+use crate::dependencies::npm::MAX_LOCK_BYTES;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;

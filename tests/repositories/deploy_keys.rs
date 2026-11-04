@@ -395,7 +395,7 @@ async fn live_authority(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    let key = codeyard_app::repositories::deploy_keys::add_key(
+    let key = codeyard_repos::deploy_keys::add_key(
         pool,
         &administrator,
         &bob.session,
@@ -408,7 +408,7 @@ async fn live_authority(pg: bool) {
     .unwrap();
     for write in [false, true] {
         let (_, access) =
-            codeyard_app::repositories::deploy_keys::authorize(pool, key.id, &repository, write)
+            codeyard_repos::deploy_keys::authorize(pool, key.id, &repository, write)
                 .await
                 .unwrap();
         assert_eq!(access, codeyard_db_core::models::AccessLevel::Write);
@@ -417,7 +417,7 @@ async fn live_authority(pg: bool) {
         .await
         .unwrap();
     assert!(matches!(
-        codeyard_app::repositories::deploy_keys::add_key(
+        codeyard_repos::deploy_keys::add_key(
             pool,
             &owner,
             &alice.session,
@@ -441,7 +441,7 @@ async fn live_authority(pg: bool) {
     database
         .execute("UPDATE users SET is_admin=FALSE WHERE id=$1", &[bob_id])
         .await;
-    assert!(codeyard_app::repositories::deploy_keys::remove_key(
+    assert!(codeyard_repos::deploy_keys::remove_key(
         pool,
         &administrator,
         &bob.session,
@@ -484,7 +484,7 @@ async fn live_authority(pg: bool) {
         .await;
     let organization_repository = database.repository(repository.id).await;
     assert!(
-        codeyard_app::repositories::deploy_keys::authorize(
+        codeyard_repos::deploy_keys::authorize(
             pool,
             key.id,
             &organization_repository,

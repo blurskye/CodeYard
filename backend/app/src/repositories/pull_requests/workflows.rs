@@ -168,7 +168,7 @@ async fn queue_pull_request_workflow_event(
     let (trunk, base_sha) = if target {
         (pull.base_branch.clone(), pull.base_sha.clone())
     } else {
-        let (branch, sha, _) = crate::repositories::pull_requests::stacks::merge_target(pool, pull)
+        let (branch, sha, _) = codeyard_repos::stacks::merge_target(pool, pull)
             .await
             .map_err(|_| AdmissionError::Unavailable)?;
         (branch, sha)
@@ -463,7 +463,7 @@ async fn release_awaiting_runs(
     pull: &PullRequest,
     actor_id: i64,
 ) -> Result<(), AdmissionError> {
-    let (trunk, _, _) = crate::repositories::pull_requests::stacks::merge_target(pool, pull)
+    let (trunk, _, _) = codeyard_repos::stacks::merge_target(pool, pull)
         .await
         .map_err(|_| AdmissionError::Unavailable)?;
     let runs = codeyard_db_actions::ci::latest_ci_runs_for_commit(

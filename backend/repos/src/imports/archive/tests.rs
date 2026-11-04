@@ -1,9 +1,9 @@
 use super::*;
-use crate::repositories::imports::archive::read;
-use crate::repositories::imports::archive::refs;
-use crate::repositories::imports::archive::Records;
-use crate::repositories::imports::archive::MAX_RECORDS;
-use crate::repositories::migration_archive::MigrationArchive;
+use crate::imports::archive::read;
+use crate::imports::archive::refs;
+use crate::imports::archive::Records;
+use crate::imports::archive::MAX_RECORDS;
+use crate::migration_archive::MigrationArchive;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use serde_json::json;
@@ -236,7 +236,7 @@ async fn repacks_loose_git_history_and_tags_without_source_configuration() {
     writer.repository("owner/project", &bytes).unwrap();
     let source = read(&writer.finish().unwrap(), None).unwrap();
     assert!(!source.git_files.contains_key("config"));
-    let prepared = crate::repositories::imports::archive::git::prepare(&source)
+    let prepared = crate::imports::archive::git::prepare(&source)
         .await
         .unwrap();
     assert_eq!(prepared.default_branch.as_deref(), Some("trunk"));
@@ -290,10 +290,10 @@ async fn refuses_a_missing_object_instead_of_publishing_partial_history() {
         )
         .unwrap();
     let source = read(&writer.finish().unwrap(), None).unwrap();
-    assert!(crate::repositories::imports::archive::git::prepare(&source)
+    assert!(crate::imports::archive::git::prepare(&source)
         .await
         .is_err());
-    assert!(crate::repositories::imports::archive::git::prepare(&source)
+    assert!(crate::imports::archive::git::prepare(&source)
         .await
         .is_err());
 }

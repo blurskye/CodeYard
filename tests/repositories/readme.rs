@@ -11,7 +11,7 @@ use axum::{
 };
 
 use codeyard_app::repositories::lifecycle::provision;
-use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_repos::editor::FileWrite;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_app::repositories::store::RepoStore;
 use codeyard_webui::app::Page;

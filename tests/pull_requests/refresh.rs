@@ -573,7 +573,7 @@ async fn concurrent_refresh_converges(pg: bool) {
             f.pool(),
             repository.id,
             actor,
-            &codeyard_app::repositories::store::editor::FileWrite {
+            &codeyard_repos::editor::FileWrite {
                 branch: "main".into(),
                 path: "README.md".into(),
                 message: "initial".into(),
@@ -615,7 +615,7 @@ async fn concurrent_refresh_converges(pg: bool) {
             f.pool(),
             repository.id,
             actor,
-            &codeyard_app::repositories::store::editor::FileWrite {
+            &codeyard_repos::editor::FileWrite {
                 branch: "topic".into(),
                 path: "one.txt".into(),
                 message: "first head".into(),
@@ -634,7 +634,7 @@ async fn concurrent_refresh_converges(pg: bool) {
             f.pool(),
             repository.id,
             actor,
-            &codeyard_app::repositories::store::editor::FileWrite {
+            &codeyard_repos::editor::FileWrite {
                 branch: "main".into(),
                 path: "base-one.txt".into(),
                 message: "first base".into(),
@@ -650,7 +650,7 @@ async fn concurrent_refresh_converges(pg: bool) {
         .unwrap();
     let second_head = store
         .prepare_file(
-            &codeyard_app::repositories::store::editor::FileWrite {
+            &codeyard_repos::editor::FileWrite {
                 branch: "topic".into(),
                 path: "two.txt".into(),
                 message: "second head".into(),
@@ -666,7 +666,7 @@ async fn concurrent_refresh_converges(pg: bool) {
         .unwrap();
     let second_base = store
         .prepare_file(
-            &codeyard_app::repositories::store::editor::FileWrite {
+            &codeyard_repos::editor::FileWrite {
                 branch: "main".into(),
                 path: "base-two.txt".into(),
                 message: "second base".into(),

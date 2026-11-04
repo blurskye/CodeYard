@@ -47,7 +47,7 @@ pub(super) async fn contract(
     assert_eq!(status, StatusCode::CREATED, "{key}");
     let id = key["id"].as_i64().unwrap();
     assert_eq!(
-        codeyard_app::repositories::deploy_keys::authorize(f.pool(), id, first, true)
+        codeyard_repos::deploy_keys::authorize(f.pool(), id, first, true)
             .await
             .unwrap()
             .1,
@@ -65,7 +65,7 @@ pub(super) async fn contract(
     .await;
     for write in [false, true] {
         assert!(
-            codeyard_app::repositories::deploy_keys::authorize(f.pool(), id, first, write)
+            codeyard_repos::deploy_keys::authorize(f.pool(), id, first, write)
                 .await
                 .is_err()
         );
@@ -91,7 +91,7 @@ pub(super) async fn contract(
     )
     .await;
     assert!(
-        codeyard_app::repositories::deploy_keys::authorize(f.pool(), id, first, true)
+        codeyard_repos::deploy_keys::authorize(f.pool(), id, first, true)
             .await
             .is_ok()
     );
@@ -111,13 +111,13 @@ pub(super) async fn contract(
     .await
     .unwrap();
     assert!(
-        codeyard_app::repositories::deploy_keys::authorize(f.pool(), id, first, true)
+        codeyard_repos::deploy_keys::authorize(f.pool(), id, first, true)
             .await
             .is_err(),
         "a cached old organization must not bypass the destination key policy"
     );
     assert!(
-        codeyard_app::repositories::deploy_keys::authorize(f.pool(), id, &moved, true)
+        codeyard_repos::deploy_keys::authorize(f.pool(), id, &moved, true)
             .await
             .is_err()
     );
@@ -207,7 +207,7 @@ pub(super) async fn contract(
         .await
         .unwrap()
         .unwrap();
-    let input = codeyard_app::repositories::store::editor::FileWrite {
+    let input = codeyard_repos::editor::FileWrite {
         branch: "main".into(),
         path: "policy.txt".into(),
         message: "Prepared before enabling the policy".into(),
@@ -225,7 +225,7 @@ pub(super) async fn contract(
         .await
         .unwrap();
     prepared.web_commit = true;
-    let mut prepared: codeyard_app::repositories::store::editor::PreparedFile =
+    let mut prepared: codeyard_repos::editor::PreparedFile =
         serde_json::from_value(serde_json::to_value(prepared).unwrap()).unwrap();
     request(
         router,

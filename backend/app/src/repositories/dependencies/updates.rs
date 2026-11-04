@@ -7,8 +7,8 @@ use crate::repositories::dependencies::registry::Client;
 use crate::repositories::dependencies::worker::Pinned;
 use crate::repositories::pull_requests::mutations::create_pull_request;
 use crate::repositories::pull_requests::mutations::CreatePullRequestRequest;
-use crate::repositories::store::editor::UploadFile;
-use crate::repositories::store::editor::UploadWrite;
+use codeyard_repos::editor::UploadFile;
+use codeyard_repos::editor::UploadWrite;
 use crate::repositories::store::repo_store;
 use anyhow::ensure;
 use anyhow::Result;
@@ -174,7 +174,7 @@ pub(crate) async fn propose(
         })
         .collect::<std::collections::HashMap<_, _>>();
     let packages =
-        crate::repositories::dependencies::npm::Lockfile::parse(&pinned.manifest, &pinned.lock)?
+        codeyard_repos::dependencies::npm::Lockfile::parse(&pinned.manifest, &pinned.lock)?
             .packages;
     let store = repo_store(&pinned.repository, ci.cluster.as_ref());
     // The advisories without OSV records veto every candidate too, and they are read once for
@@ -311,7 +311,7 @@ pub(crate) async fn propose(
                 Err(error) if error.is::<reqwest::Error>() => return Err(error),
                 Err(_) => continue,
             };
-            let patch = match crate::repositories::dependencies::npm::Lockfile::parse(
+            let patch = match codeyard_repos::dependencies::npm::Lockfile::parse(
                 &pinned.manifest,
                 &pinned.lock,
             )?

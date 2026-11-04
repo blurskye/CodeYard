@@ -1,10 +1,10 @@
 use crate::ci::push::RefUpdate;
 use crate::ci::runs::CiRuns;
-use crate::repositories::protection::check_branch_write;
-use crate::repositories::protection::BranchWrite;
-use crate::repositories::protection::History;
-use crate::repositories::protection::Refusal;
-use crate::repositories::protection::WriteVia;
+use codeyard_repos::protection::check_branch_write;
+use codeyard_repos::protection::BranchWrite;
+use codeyard_repos::protection::History;
+use codeyard_repos::protection::Refusal;
+use codeyard_repos::protection::WriteVia;
 use crate::repositories::pull_requests::database_error;
 use crate::repositories::pull_requests::OperationError;
 use crate::repositories::store::repo_store;
@@ -211,9 +211,9 @@ pub async fn review_decision(
     repository: &codeyard_db_core::models::Repository,
     pull: &codeyard_db_core::models::PullRequest,
 ) -> anyhow::Result<Option<ReviewDecision>> {
-    let target = crate::repositories::pull_requests::stacks::merge_target(pool, pull).await?;
+    let target = codeyard_repos::stacks::merge_target(pool, pull).await?;
     let rules =
-        crate::repositories::protection::matching_rules(pool, repository, &target.0).await?;
+        codeyard_repos::protection::matching_rules(pool, repository, &target.0).await?;
     let decisions = eligible_reviews(pool, pull, repository).await?;
     let mut approved = false;
     for rule in &rules {
@@ -775,12 +775,12 @@ pub(super) async fn open_chain(
     pool: &codeyard_db_core::DbPool,
     pull_request: &codeyard_db_core::models::PullRequest,
 ) -> Result<Vec<codeyard_db_core::models::PullRequest>, OperationError> {
-    let chain = crate::repositories::pull_requests::stacks::chain_below(pool, pull_request)
+    let chain = codeyard_repos::stacks::chain_below(pool, pull_request)
         .await
         .map_err(database_error)?;
     match chain {
-        crate::repositories::pull_requests::stacks::Chain::Open(layers) => Ok(layers),
-        crate::repositories::pull_requests::stacks::Chain::BelowClosed(number) => {
+        codeyard_repos::stacks::Chain::Open(layers) => Ok(layers),
+        codeyard_repos::stacks::Chain::BelowClosed(number) => {
             Err(OperationError::Conflict {
                 code: "stack_layer_closed",
                 message: format!(
@@ -788,7 +788,7 @@ pub(super) async fn open_chain(
             ),
             })
         }
-        crate::repositories::pull_requests::stacks::Chain::Broken => {
+        codeyard_repos::stacks::Chain::Broken => {
             Err(OperationError::Conflict {
                 code: "stack_broken",
                 message:
@@ -1532,7 +1532,7 @@ async fn publish_prepared_merge_owned(
             .await
         {
             Ok(Some(merged_row)) => moved.extend(
-                crate::repositories::pull_requests::stacks::retarget_after_merge(
+                codeyard_repos::stacks::retarget_after_merge(
                     pool,
                     user.id,
                     &merged_row,

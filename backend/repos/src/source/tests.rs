@@ -1,8 +1,8 @@
-use crate::repositories::store::source::advertisement;
-use crate::repositories::store::source::append_packet;
+use crate::source::advertisement;
+use crate::source::append_packet;
 
-use crate::repositories::store::source::packet;
-use crate::repositories::store::source::unpack;
+use crate::source::packet;
+use crate::source::unpack;
 
 #[test]
 fn git_packets_refuse_truncation_and_control_lengths() {

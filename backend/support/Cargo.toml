@@ -6,6 +6,7 @@ description = "Codeyard pure helpers shared by the server and browser"
 license = "LGPL-3.0-or-later"
 
 [dependencies]
+reqwest.workspace = true
 thiserror.workspace = true
 url.workspace = true
 

@@ -49,7 +49,7 @@ impl From<DeployKey> for DeployKeyResponse {
             id: key.id,
             title: key.title,
             fingerprint: key.fingerprint,
-            key_type: codeyard_app::repositories::deploy_keys::key_type(&key.public_key),
+            key_type: codeyard_repos::deploy_keys::key_type(&key.public_key),
             can_write: key.can_write,
             created_at: key.created_at,
             last_used_at: key.last_used_at,
@@ -104,7 +104,7 @@ pub async fn list_keys(
 ) -> Result<Json<Vec<DeployKeyResponse>>, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = repository_for(&state, &owner, &repo, &headers).await?;
-    let keys = codeyard_app::repositories::deploy_keys::list_keys(
+    let keys = codeyard_repos::deploy_keys::list_keys(
         &state.pool,
         &actor,
         &repository,
@@ -125,7 +125,7 @@ pub async fn create_key(
 ) -> Result<(StatusCode, Json<DeployKeyResponse>), (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = repository_for(&state, &owner, &repo, &headers).await?;
-    let key = codeyard_app::repositories::deploy_keys::add_key(
+    let key = codeyard_repos::deploy_keys::add_key(
         &state.pool,
         &actor,
         &extract_session_id(&headers).unwrap_or_default(),
@@ -146,7 +146,7 @@ pub async fn delete_key(
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = repository_for(&state, &owner, &repo, &headers).await?;
-    codeyard_app::repositories::deploy_keys::remove_key(
+    codeyard_repos::deploy_keys::remove_key(
         &state.pool,
         &actor,
         &extract_session_id(&headers).unwrap_or_default(),
@@ -175,7 +175,7 @@ pub(super) async fn settings_section(
 ) -> Result<Box<codeyard_webui::components::deploy_keys::DeployKeyPanel>, Response> {
     let base = format!("{}/settings?tab=deploy-keys", loaded.chrome.base());
     let action = format!("{}/_forms", loaded.chrome.base());
-    let place = codeyard_app::repositories::deploy_keys::Place {
+    let place = codeyard_repos::deploy_keys::Place {
         base: &base,
         action: &action,
         csrf_token: &loaded.chrome.csrf_token,
@@ -183,7 +183,7 @@ pub(super) async fn settings_section(
             extract_session_id(&ctx.headers).unwrap_or_default(),
         ),
     };
-    codeyard_app::repositories::deploy_keys::settings_panel(
+    codeyard_repos::deploy_keys::settings_panel(
         &ctx.state.pool,
         viewer,
         &loaded.repository,
@@ -224,7 +224,7 @@ pub(super) async fn form(
     let repository = &loaded.repository;
     let base = format!("{}/settings?tab=deploy-keys", loaded.chrome.base());
     let outcome = if action == "deploy-key-add" {
-        codeyard_app::repositories::deploy_keys::add_key(
+        codeyard_repos::deploy_keys::add_key(
             pool,
             actor,
             &extract_session_id(&ctx.headers).unwrap_or_default(),
@@ -237,7 +237,7 @@ pub(super) async fn form(
         .map(|_| "added")
     } else {
         match field(form, "key_id").parse::<i64>() {
-            Ok(key_id) => codeyard_app::repositories::deploy_keys::remove_key(
+            Ok(key_id) => codeyard_repos::deploy_keys::remove_key(
                 pool,
                 actor,
                 &extract_session_id(&ctx.headers).unwrap_or_default(),

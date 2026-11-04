@@ -1,7 +1,7 @@
 //! Every repository operation, with whether a worker may read it while claimed.
 use codeyard_app::cluster::rpc::wire::Operation;
 use codeyard_app::repositories::git_sessions::ReceiveCredential;
-use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_repos::editor::FileWrite;
 use codeyard_app::repositories::store::types::GitService;
 use codeyard_app::repositories::store::types::GitSession;
 use codeyard_app::repositories::store::types::MergeMethod;
@@ -10,8 +10,8 @@ use codeyard_app::repositories::store::types::RestackMove;
 use codeyard_storage::range::ByteRange as BlobRange;
 use uuid::Uuid;
 
-fn prepared(sha: &str) -> codeyard_app::repositories::store::editor::PreparedFile {
-    use codeyard_app::repositories::store::editor::PreparedFile;
+fn prepared(sha: &str) -> codeyard_repos::editor::PreparedFile {
+    use codeyard_repos::editor::PreparedFile;
     use codeyard_git::CommitInfo;
     PreparedFile {
         staging: None,
@@ -69,7 +69,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::GistWrite {
-                credential: codeyard_app::repositories::store::gists::GistCredential::Token(1, String::new()),
+                credential: codeyard_repos::gists::GistCredential::Token(1, String::new()),
             },
             false,
         ),
@@ -427,7 +427,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::PublishFile {
-                prepared: codeyard_app::repositories::store::editor::PreparedFile {
+                prepared: codeyard_repos::editor::PreparedFile {
                     staging: None,
                     authority: None,
                     branch: "main".into(),

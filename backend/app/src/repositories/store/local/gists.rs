@@ -1,5 +1,5 @@
 use super::*;
-use crate::repositories::store::gists::GistCredential;
+use codeyard_repos::gists::GistCredential;
 use crate::repositories::store::local::refresh_storage_size;
 use crate::repositories::store::local::LocalStore;
 use codeyard_db_repos::gists::Admission;

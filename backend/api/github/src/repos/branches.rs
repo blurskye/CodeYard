@@ -45,7 +45,7 @@ async fn list(
         per_page: query.per_page,
     };
     let (offset, limit) = page.window()?;
-    let rules = codeyard_app::repositories::protection::load_rules(&state.pool, &repo)
+    let rules = codeyard_repos::protection::load_rules(&state.pool, &repo)
         .await
         .map_err(Error::unavailable)?;
     let refs = repo_store(&repo, state.cluster.as_ref())
@@ -68,7 +68,7 @@ async fn list(
     let mut branches = Vec::new();
     let mut budget = WorkflowMatchBudget::new();
     for (branch, sha) in refs {
-        let protected = codeyard_app::repositories::protection::branch_is_protected(
+        let protected = codeyard_repos::protection::branch_is_protected(
             &rules,
             &branch,
             &mut budget,
@@ -140,7 +140,7 @@ pub(super) async fn document(
         .get(&format!("refs/heads/{branch}"))
         .ok_or_else(Error::missing)?;
     let commit = store.commit(sha).await.map_err(store_error)?;
-    let rules = codeyard_app::repositories::protection::matching_rules(&state.pool, repo, branch)
+    let rules = codeyard_repos::protection::matching_rules(&state.pool, repo, branch)
         .await
         .map_err(Error::unavailable)?;
     let protected = !rules.is_empty();
@@ -195,7 +195,7 @@ async fn heads(
     let store = repo_store(&repo, state.cluster.as_ref());
     let sha = store.commit(&sha).await.map_err(store_error)?.sha;
     let refs = store.refs().await.map_err(store_error)?;
-    let rules = codeyard_app::repositories::protection::load_rules(&state.pool, &repo)
+    let rules = codeyard_repos::protection::load_rules(&state.pool, &repo)
         .await
         .map_err(Error::unavailable)?;
     let mut matches: Vec<_> = refs
@@ -212,7 +212,7 @@ async fn heads(
     let mut values = Vec::new();
     let mut budget = WorkflowMatchBudget::new();
     for branch in matches.into_iter().skip(offset).take(limit) {
-        let protected = codeyard_app::repositories::protection::branch_is_protected(
+        let protected = codeyard_repos::protection::branch_is_protected(
             &rules,
             &branch,
             &mut budget,

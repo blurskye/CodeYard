@@ -7,10 +7,10 @@ use std::collections::HashSet;
 use std::path::Component;
 use std::path::Path;
 
-pub(crate) const MAX_HEADER: usize = 512 * 1024;
+pub const MAX_HEADER: usize = 512 * 1024;
 pub const MAX_HOOK_BYTES: usize = 256 * 1024;
-pub(crate) const MAX_UPDATES: usize = 256;
-pub(crate) const ZERO_SHA: &str = "0000000000000000000000000000000000000000";
+pub const MAX_UPDATES: usize = 256;
+pub const ZERO_SHA: &str = "0000000000000000000000000000000000000000";
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct GitCommand {
@@ -109,7 +109,7 @@ pub fn canonical_key(key_type: &str, blob: &str) -> Result<String> {
     codeyard_db_identity::users::ssh_keys::canonical_key(key_type, blob)
 }
 
-pub(crate) fn canonical_db_key(public_key: &str, key_type: &str) -> Result<String> {
+pub fn canonical_db_key(public_key: &str, key_type: &str) -> Result<String> {
     let key = codeyard_db_identity::users::ssh_keys::parse_public_key(public_key)?;
     ensure!(
         key.algorithm().to_string() == key_type,
@@ -126,7 +126,7 @@ pub struct RefUpdate {
     pub reference: String,
 }
 
-pub(crate) fn validate_updates(updates: &[RefUpdate]) -> Result<()> {
+pub fn validate_updates(updates: &[RefUpdate]) -> Result<()> {
     ensure!(
         !updates.is_empty() && updates.len() <= MAX_UPDATES,
         "invalid number of ref updates"
@@ -157,7 +157,7 @@ pub fn parse_updates(input: &[u8]) -> Result<Vec<RefUpdate>> {
     Ok(updates)
 }
 
-pub(crate) fn validate_transaction_updates(updates: &[RefUpdate]) -> Result<()> {
+pub fn validate_transaction_updates(updates: &[RefUpdate]) -> Result<()> {
     ensure!(updates.len() <= MAX_UPDATES, "too many ref updates");
     let mut names = HashSet::new();
     let mut bytes = 0;

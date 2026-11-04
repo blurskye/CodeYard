@@ -407,7 +407,7 @@ async fn reader_merge_form_leaves_the_stored_head(pg: bool) {
             world.database.pool(),
             repository.id,
             repository.owner_user_id.unwrap(),
-            &codeyard_app::repositories::store::editor::FileWrite {
+            &codeyard_repos::editor::FileWrite {
                 branch: "topic".into(),
                 path: "second.txt".into(),
                 message: "second".into(),

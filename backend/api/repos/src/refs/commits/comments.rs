@@ -449,7 +449,7 @@ pub(super) async fn submit(
     .await;
     let (status, message) = match operation {
         Ok(Some(entry)) => {
-            let mut target = codeyard_app::repositories::commit_comments::comment_link(
+            let mut target = codeyard_repos::commit_comments::comment_link(
                 &loaded.chrome.owner,
                 &loaded.chrome.name,
                 &entry.comment,

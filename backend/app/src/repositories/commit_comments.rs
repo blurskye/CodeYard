@@ -204,17 +204,6 @@ async fn writable(
     Ok((user, repository, owner))
 }
 
-pub fn comment_link(owner: &str, name: &str, comment: &CommitComment) -> String {
-    format!(
-        "/{}/{}/commit/{}?comment={}#commitcomment-{}",
-        codeyard_webui::encode_component(owner),
-        codeyard_webui::encode_component(name),
-        comment.sha,
-        comment.id,
-        comment.id
-    )
-}
-
 async fn emit(
     pool: &codeyard_db_core::DbPool,
     repo: &Repository,
@@ -519,3 +508,5 @@ pub async fn delete(
     .map_err(write_error)?
     .ok_or(CommentError::Missing)
 }
+
+use codeyard_repos::commit_comments::comment_link;

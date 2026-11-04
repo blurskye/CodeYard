@@ -134,7 +134,7 @@ async fn octocat(Query(query): Query<HashMap<String, String>>) -> String {
 }
 
 pub(super) fn license_document(
-    template: &codeyard_app::repositories::templates::Template,
+    template: &codeyard_repos::templates::Template,
     full: bool,
 ) -> Value {
     let key = template.name.to_ascii_lowercase();
@@ -204,7 +204,7 @@ async fn licenses(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
-    let rows = codeyard_app::repositories::templates::LICENSE_TEMPLATES
+    let rows = codeyard_repos::templates::LICENSE_TEMPLATES
         .iter()
         .skip(offset)
         .take(limit)
@@ -213,11 +213,11 @@ async fn licenses(
     page.response(
         &uri,
         rows,
-        codeyard_app::repositories::templates::LICENSE_TEMPLATES.len() > offset + limit,
+        codeyard_repos::templates::LICENSE_TEMPLATES.len() > offset + limit,
     )
 }
 async fn license(Path(key): Path<String>) -> Result<Json<Value>> {
-    let template = codeyard_app::repositories::templates::LICENSE_TEMPLATES
+    let template = codeyard_repos::templates::LICENSE_TEMPLATES
         .iter()
         .find(|template| template.name.eq_ignore_ascii_case(&key))
         .ok_or_else(Error::missing)?;
@@ -247,7 +247,7 @@ async fn repository_license(
         .iter()
         .find(|entry| {
             entry.entry_type == "file"
-                && codeyard_app::repositories::templates::is_license_file(&entry.name)
+                && codeyard_repos::templates::is_license_file(&entry.name)
         })
         .ok_or_else(Error::missing)?
         .path
@@ -271,7 +271,7 @@ async fn repository_license(
     );
     value["encoding"] = json!("base64");
     value["content"] = json!(STANDARD.encode(&blob.bytes));
-    value["license"] = codeyard_app::repositories::templates::detect_license(&blob.bytes)
+    value["license"] = codeyard_repos::templates::detect_license(&blob.bytes)
         .map(|template| license_document(template, false))
         .unwrap_or(Value::Null);
     Ok(Json(value).into_response())
@@ -297,7 +297,7 @@ async fn conduct_code(Path(key): Path<String>) -> Result<Json<Value>> {
 }
 async fn ignores() -> Json<Value> {
     Json(json!(
-        codeyard_app::repositories::templates::GITIGNORE_TEMPLATES
+        codeyard_repos::templates::GITIGNORE_TEMPLATES
             .iter()
             .map(|template| template.name)
             .collect::<Vec<_>>()
@@ -305,7 +305,7 @@ async fn ignores() -> Json<Value> {
 }
 async fn ignore(Path(name): Path<String>, headers: HeaderMap) -> Result<Response> {
     let template =
-        codeyard_app::repositories::templates::gitignore(&name).ok_or_else(Error::missing)?;
+        codeyard_repos::templates::gitignore(&name).ok_or_else(Error::missing)?;
     if headers
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok())

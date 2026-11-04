@@ -1,6 +1,6 @@
 use axum::http::HeaderMap;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::migration_archive::MigrationArchive;
+use codeyard_repos::migration_archive::MigrationArchive;
 use codeyard_app::repositories::releases::ReleaseDetail;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_storage::Upload;

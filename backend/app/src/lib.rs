@@ -25,7 +25,6 @@ pub mod gists;
 
 pub mod issues;
 
-pub mod npm;
 
 pub mod nuget;
 

@@ -109,7 +109,7 @@ struct Input {
     vcs_password: Option<String>,
 }
 
-fn credentials(input: &Input) -> Result<Option<codeyard_app::repositories::imports::Credentials>> {
+fn credentials(input: &Input) -> Result<Option<codeyard_repos::imports::Credentials>> {
     if input.vcs.as_deref().is_some_and(|vcs| vcs != "git") {
         return Err(Error::validation("Import", "vcs", "invalid"));
     }
@@ -117,7 +117,7 @@ fn credentials(input: &Input) -> Result<Option<codeyard_app::repositories::impor
     let password = input.vcs_password.clone().unwrap_or_default();
     Ok(
         if input.vcs_password.is_some() || input.vcs_username.is_some() {
-            Some(codeyard_app::repositories::imports::Credentials { username, password })
+            Some(codeyard_repos::imports::Credentials { username, password })
         } else {
             None
         },
@@ -134,26 +134,26 @@ async fn begin(
     codeyard_app::repositories::imports::start(
         state,
         repo,
-        codeyard_app::repositories::imports::ImportCredential::Token(actor.token.id),
+        codeyard_repos::imports::ImportCredential::Token(actor.token.id),
         url,
         credentials(&input)?,
     )
     .await
     .map_err(|error| match error {
-        codeyard_app::repositories::imports::ImportError::Source => {
+        codeyard_repos::imports::ImportError::Source => {
             Error::validation("Import", "vcs_url", "invalid")
         }
-        codeyard_app::repositories::imports::ImportError::Credentials => {
+        codeyard_repos::imports::ImportError::Credentials => {
             Error::validation("Import", "vcs_password", "invalid")
         }
-        codeyard_app::repositories::imports::ImportError::Denied => {
+        codeyard_repos::imports::ImportError::Denied => {
             Error::new(StatusCode::FORBIDDEN, error.to_string())
         }
-        codeyard_app::repositories::imports::ImportError::NotEmpty
-        | codeyard_app::repositories::imports::ImportError::Running => {
+        codeyard_repos::imports::ImportError::NotEmpty
+        | codeyard_repos::imports::ImportError::Running => {
             Error::new(StatusCode::CONFLICT, error.to_string())
         }
-        codeyard_app::repositories::imports::ImportError::Unavailable => Error::unavailable(error),
+        codeyard_repos::imports::ImportError::Unavailable => Error::unavailable(error),
     })
 }
 

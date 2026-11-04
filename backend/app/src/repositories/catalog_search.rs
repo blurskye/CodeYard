@@ -49,7 +49,7 @@ pub async fn git_facts(
             let is_readme =
                 readme && !read_readme && (name == "readme" || name.starts_with("readme."));
             let is_license =
-                !read_license && crate::repositories::templates::is_license_file(&name);
+                !read_license && codeyard_repos::templates::is_license_file(&name);
             if !is_readme && !is_license {
                 continue;
             }
@@ -75,7 +75,7 @@ pub async fn git_facts(
             }
             if is_license {
                 facts.license =
-                    crate::repositories::templates::detect_license(&blob.bytes).map(|t| t.name);
+                    codeyard_repos::templates::detect_license(&blob.bytes).map(|t| t.name);
             }
         }
     }

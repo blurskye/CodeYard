@@ -18,7 +18,7 @@ use codeyard_api_http::shared::repos::access::access_error;
 use codeyard_api_http::shared::repos::responses::repository_fork_counts;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::lifecycle::InitialFiles;
-use codeyard_app::repositories::templates::Template;
+use codeyard_repos::templates::Template;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::OrganizationPage;
 use codeyard_db_repos::repositories::records::RepositoryFilter;
@@ -314,12 +314,12 @@ fn decode_creation(
             readme: values.readme,
             gitignore: template_choice(
                 form.get("gitignore").map(String::as_str).unwrap_or(""),
-                codeyard_app::repositories::templates::gitignore,
+                codeyard_repos::templates::gitignore,
                 "Choose a .gitignore template from the list.",
             )?,
             license: template_choice(
                 form.get("license").map(String::as_str).unwrap_or(""),
-                codeyard_app::repositories::templates::license,
+                codeyard_repos::templates::license,
                 "Choose a license from the list.",
             )?,
         };

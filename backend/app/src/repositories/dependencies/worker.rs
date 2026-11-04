@@ -85,19 +85,19 @@ async fn process(
                 &store,
                 &sha,
                 "package.json",
-                crate::repositories::dependencies::npm::MAX_MANIFEST,
+                codeyard_repos::dependencies::npm::MAX_MANIFEST,
             )
             .await,
             file(
                 &store,
                 &sha,
                 "package-lock.json",
-                crate::repositories::dependencies::npm::MAX_LOCK_BYTES,
+                codeyard_repos::dependencies::npm::MAX_LOCK_BYTES,
             )
             .await,
         ) {
             (Ok(manifest), Ok(lock))
-                if crate::repositories::dependencies::npm::Lockfile::parse(&manifest, &lock)
+                if codeyard_repos::dependencies::npm::Lockfile::parse(&manifest, &lock)
                     .is_ok_and(|parsed| parsed.unsupported == 0) =>
             {
                 (manifest, lock)

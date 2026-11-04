@@ -113,12 +113,12 @@ pub async fn authorize(pool: &DbPool, actor: &User, owner: HookOwner) -> Result<
 
 fn validate_url(text: &str) -> Result<String, HookError> {
     let payload_url = text.trim();
-    crate::webhooks::outbound::validate_url(
+    codeyard_support::outbound::validate_url(
         payload_url,
-        crate::webhooks::outbound::allow_private(),
+        codeyard_support::outbound::allow_private(),
     )
     .map_err(|refusal| match refusal {
-        crate::webhooks::outbound::Refusal::Invalid(text) => HookError::Invalid(text),
+        codeyard_support::outbound::Refusal::Invalid(text) => HookError::Invalid(text),
         _ => HookError::Invalid("Payload URL is not allowed"),
     })?;
     Ok(payload_url.to_owned())

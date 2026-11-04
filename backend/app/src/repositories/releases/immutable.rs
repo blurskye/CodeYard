@@ -1,7 +1,7 @@
 //! Publication-time immutable releases share the primary Git lock with every tag writer.
 use crate::cluster::context::NodeContext;
-use crate::repositories::git_sessions::validation::RefUpdate;
-use crate::repositories::git_sessions::validation::ZERO_SHA;
+use codeyard_repos::validation::RefUpdate;
+use codeyard_repos::validation::ZERO_SHA;
 use crate::repositories::releases::ReleaseError;
 use crate::repositories::store::repo_store;
 use anyhow::ensure;

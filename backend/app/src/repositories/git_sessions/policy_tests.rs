@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod fixture {
     use super::super::*;
-    use crate::repositories::git_sessions::validation::ZERO_SHA;
+    use codeyard_repos::validation::ZERO_SHA;
     use base64::Engine;
 
     use crate::repositories::git_sessions::hook_barrier::hold_next_hook;

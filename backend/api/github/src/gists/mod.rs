@@ -22,7 +22,7 @@ use codeyard_app::app::AppState;
 use codeyard_app::gists as domain;
 use codeyard_app::repositories::lifecycle::LifecycleFailure;
 use codeyard_app::repositories::lifecycle::StorageError;
-use codeyard_app::repositories::store::gists::GistCredential;
+use codeyard_repos::gists::GistCredential;
 use codeyard_db_repos::gists::GistList;
 use codeyard_db_repos::gists::GistRefusal;
 use codeyard_db_repos::gists::ListScope;

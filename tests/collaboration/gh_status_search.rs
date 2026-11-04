@@ -12,7 +12,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 
 use codeyard_app::repositories::lifecycle;
 use codeyard_app::repositories::store::repo_store;
-use codeyard_app::repositories::templates;
+use codeyard_repos::templates;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};

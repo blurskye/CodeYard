@@ -2,12 +2,12 @@
 use crate::ci::push::RefUpdate;
 use crate::ci::runs::CiRuns;
 use crate::cluster::context::NodeContext;
-use crate::repositories::protection::check_branch_write;
-use crate::repositories::protection::BranchWrite;
-use crate::repositories::protection::History;
-use crate::repositories::protection::Refusal;
-use crate::repositories::protection::WriteVia;
-use crate::repositories::protection::ANY_TIP;
+use codeyard_repos::protection::check_branch_write;
+use codeyard_repos::protection::BranchWrite;
+use codeyard_repos::protection::History;
+use codeyard_repos::protection::Refusal;
+use codeyard_repos::protection::WriteVia;
+use codeyard_repos::protection::ANY_TIP;
 use crate::repositories::store::repo_store;
 use codeyard_git as git;
 use codeyard_git::error::ErrorKind;

@@ -1,5 +1,5 @@
 //! Bounded forge metadata reads. Upstream pagination links never choose a request destination.
-use crate::repositories::imports::Credentials;
+use crate::imports::Credentials;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
@@ -28,7 +28,7 @@ pub struct Project {
 
 impl Project {
     pub fn parse(source: &str, forge: Forge) -> Result<Self> {
-        let source = crate::repositories::imports::source_url(source)?;
+        let source = crate::imports::source_url(source)?;
         Self::from_url(&source, forge)
     }
 
@@ -248,14 +248,14 @@ pub async fn fetch(project: Project, credentials: Option<&Credentials>) -> Resul
 async fn fetch_inner(project: Project, credentials: Option<&Credentials>) -> Result<Metadata> {
     let addresses = tokio::time::timeout(
         Duration::from_secs(15),
-        crate::webhooks::outbound::resolve(
+        codeyard_support::outbound::resolve(
             &project.api,
-            crate::repositories::imports::allow_private(),
+            crate::imports::allow_private(),
         ),
     )
     .await?
     .map_err(|_| anyhow::anyhow!("Source forge address refused"))?;
-    let client = crate::webhooks::outbound::pinned_client(&project.api, &addresses)
+    let client = codeyard_support::outbound::pinned_client(&project.api, &addresses)
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(60))
         .user_agent("Codeyard repository migration")

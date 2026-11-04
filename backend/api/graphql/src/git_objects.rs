@@ -196,7 +196,7 @@ pub(super) async fn reference_field(
     }
     let branch = parent["name"].as_str().ok_or_else(missing)?;
     if field == "branchProtectionRule" {
-        let rules = codeyard_app::repositories::protection::matching_rules(
+        let rules = codeyard_repos::protection::matching_rules(
             &request.state.pool,
             &repo,
             branch,

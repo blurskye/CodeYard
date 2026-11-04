@@ -803,7 +803,7 @@ async fn contract(pg: bool, source: &Source) {
 #[tokio::test]
 async fn github_source_imports() {
     crate::support::fake_webui_bundle::install();
-    use codeyard_app::repositories::imports::source_url;
+    use codeyard_repos::imports::source_url;
     assert!(source_url("http://127.0.0.1/repo.git").is_err());
     std::env::set_var("MIGRATIONS_ALLOW_PRIVATE", "true");
     let source = source().await;

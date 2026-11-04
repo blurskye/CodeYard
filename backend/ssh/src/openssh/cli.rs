@@ -6,12 +6,12 @@ use codeyard_app::repositories::git_sessions::protocol::EXIT;
 use codeyard_app::repositories::git_sessions::protocol::STDERR;
 use codeyard_app::repositories::git_sessions::protocol::STDIN;
 use codeyard_app::repositories::git_sessions::protocol::STDOUT;
-use codeyard_app::repositories::git_sessions::validation::canonical_key;
-use codeyard_app::repositories::git_sessions::validation::parse_command;
-use codeyard_app::repositories::git_sessions::validation::parse_updates;
-use codeyard_app::repositories::git_sessions::validation::protocol as git_protocol;
-use codeyard_app::repositories::git_sessions::validation::shell_safe_path;
-use codeyard_app::repositories::git_sessions::validation::MAX_HOOK_BYTES;
+use codeyard_repos::validation::canonical_key;
+use codeyard_repos::validation::parse_command;
+use codeyard_repos::validation::parse_updates;
+use codeyard_repos::validation::protocol as git_protocol;
+use codeyard_repos::validation::shell_safe_path;
+use codeyard_repos::validation::MAX_HOOK_BYTES;
 use crate::openssh::Commands;
 use anyhow::ensure;
 use anyhow::Result;
@@ -252,7 +252,7 @@ async fn hook_request(
             repo_id,
             token,
             phase,
-            updates: codeyard_app::repositories::git_sessions::validation::parse_transaction_updates(
+            updates: codeyard_repos::validation::parse_transaction_updates(
                 &bytes,
             )?,
         });

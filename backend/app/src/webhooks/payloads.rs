@@ -914,7 +914,7 @@ pub fn commit_comment(
         "id": comment.id, "node_id": codeyard_model::node_id::encode("CC", comment.id), "body": comment.body,
         "user": author.map(person), "author_association": association,
         "url": format!("{url}/comments/{}", comment.id),
-        "html_url": format!("{}{}", link_origin(), crate::repositories::commit_comments::comment_link(owner, &repo.name, comment)),
+        "html_url": format!("{}{}", link_origin(), codeyard_repos::commit_comments::comment_link(owner, &repo.name, comment)),
         "commit_id": comment.sha, "path": comment.path, "position": comment.position, "line": comment.line,
         "reactions":reaction_rollup(&format!("{url}/comments/{}/reactions",comment.id),reactions),
         "created_at": time(comment.created_at), "updated_at": time(comment.updated_at),

@@ -63,7 +63,7 @@ fn package_name<'a>(owner: &str, value: &'a str) -> Result<(&'a str, &'a str)> {
         return Err(Error::missing());
     }
     let (name, rest) = rest.split_once('/').unwrap_or((rest, ""));
-    if !codeyard_app::npm::package_name(&format!("@{scope}/{name}")) {
+    if !codeyard_repos::npm::package_name(&format!("@{scope}/{name}")) {
         return Err(Error::invalid());
     }
     Ok((name, rest))

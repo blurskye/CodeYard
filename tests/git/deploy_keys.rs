@@ -535,7 +535,7 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     let still_reads = git(&reader, &["fetch", "-q", "origin"], None, &read_key).await;
     assert!(still_reads.status.success());
 
-    let observed = codeyard_app::repositories::traffic::summary(
+    let observed = codeyard_repos::traffic::summary(
         &database.pool,
         Some(&owner),
         &project,
@@ -558,7 +558,7 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
         )
         .await,
     );
-    let observed = codeyard_app::repositories::traffic::summary(
+    let observed = codeyard_repos::traffic::summary(
         &database.pool,
         Some(&owner),
         &project,

@@ -1,9 +1,9 @@
 //! Migration records and bare repositories share one bounded tar.gz archive.
-use crate::repositories::imports::archive::safe_path;
-use crate::repositories::imports::archive::MAX_ENTRIES;
-use crate::repositories::imports::archive::MAX_METADATA_BYTES;
-use crate::repositories::imports::archive::MAX_RECORDS;
-use crate::repositories::imports::archive::MAX_UNPACKED_BYTES;
+use codeyard_repos::imports::archive::safe_path;
+use codeyard_repos::imports::archive::MAX_ENTRIES;
+use codeyard_repos::imports::archive::MAX_METADATA_BYTES;
+use codeyard_repos::imports::archive::MAX_RECORDS;
+use codeyard_repos::imports::archive::MAX_UNPACKED_BYTES;
 use anyhow::ensure;
 use anyhow::Result;
 use flate2::write::GzEncoder;

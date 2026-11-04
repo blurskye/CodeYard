@@ -16,12 +16,12 @@ use std::path::Path;
 pub mod git;
 
 const MAX_ARCHIVE_BYTES: usize = codeyard_support::object_limits::MAX_OBJECT_BYTES as usize;
-pub(crate) const MAX_UNPACKED_BYTES: u64 = 512 * 1024 * 1024;
+pub const MAX_UNPACKED_BYTES: u64 = 512 * 1024 * 1024;
 // The export writes archives within these limits too, so every archive it reports as complete
 // can be imported.
-pub(crate) const MAX_METADATA_BYTES: usize = 64 * 1024 * 1024;
-pub(crate) const MAX_RECORDS: usize = 50_000;
-pub(crate) const MAX_ENTRIES: usize = 100_000;
+pub const MAX_METADATA_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_RECORDS: usize = 50_000;
+pub const MAX_ENTRIES: usize = 100_000;
 const MAX_TAR_BYTES: u64 = MAX_UNPACKED_BYTES + MAX_ENTRIES as u64 * 2048 + 1024;
 
 pub struct ArchiveSource {
@@ -60,7 +60,7 @@ impl<'de> Deserialize<'de> for Records {
 }
 
 /// A nonempty relative path of plain names, without roots or traversal.
-pub(crate) fn safe_path(path: &Path) -> bool {
+pub fn safe_path(path: &Path) -> bool {
     !path.as_os_str().is_empty()
         && path
             .components()
@@ -336,7 +336,7 @@ pub fn read(bytes: &[u8], selected: Option<&str>) -> Result<ArchiveSource> {
         if let Some(relative) = prefixes.iter().find_map(|prefix| path.strip_prefix(prefix)) {
             if git_object_path(relative) {
                 ensure!(
-                    data.len() <= crate::repositories::imports::MAX_IMPORT_PACK_BYTES - git_bytes,
+                    data.len() <= crate::imports::MAX_IMPORT_PACK_BYTES - git_bytes,
                     "Migration Git data exceeds its size limit"
                 );
                 git_bytes += data.len();

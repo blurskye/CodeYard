@@ -7,7 +7,7 @@ use codeyard_app::ci::runs::CiRuns;
 use codeyard_app::ci::workers::CiWorkers;
 use codeyard_app::repositories::git_sessions::private_files;
 use codeyard_app::repositories::git_sessions::protocol;
-use codeyard_app::repositories::git_sessions::validation;
+use codeyard_repos::validation;
 use codeyard_app::repositories::git_sessions::ReceiveCredential;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
@@ -570,7 +570,7 @@ async fn host_openssh_deploy_keys_clone_push_and_keep_repository_scope() {
         .await;
         assert!(!outside.status.success());
     }
-    let observed = codeyard_app::repositories::traffic::summary(
+    let observed = codeyard_repos::traffic::summary(
         &database.pool,
         Some(&owner),
         &repo,
@@ -2144,7 +2144,7 @@ use codeyard_app::repositories::git_sessions::protocol::STDIN;
 
 use codeyard_app::repositories::git_sessions::protocol::STDOUT;
 
-use codeyard_app::repositories::git_sessions::validation::RefUpdate;
+use codeyard_repos::validation::RefUpdate;
 
 use anyhow::Result;
 

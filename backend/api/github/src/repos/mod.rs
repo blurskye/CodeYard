@@ -59,7 +59,7 @@ pub(super) async fn search_document(
 ) -> Result<Value> {
     let mut value = document(state, repo, viewer).await?;
     let license = match cached_license {
-        Some(license) => license.and_then(codeyard_app::repositories::templates::license),
+        Some(license) => license.and_then(codeyard_repos::templates::license),
         None => tokio::time::timeout_at(
             deadline,
             codeyard_app::repositories::catalog_search::git_facts(
@@ -72,7 +72,7 @@ pub(super) async fn search_document(
         .ok()
         .and_then(|result| result.ok())
         .and_then(|git| git.license)
-        .and_then(codeyard_app::repositories::templates::license),
+        .and_then(codeyard_repos::templates::license),
     };
     value["license"] = license
         .map(|template| crate::meta::license_document(template, false))
@@ -165,7 +165,7 @@ async fn create(
         .gitignore_template
         .as_deref()
         .map(|name| {
-            codeyard_app::repositories::templates::gitignore(name)
+            codeyard_repos::templates::gitignore(name)
                 .ok_or_else(|| Error::invalid("Unknown gitignore template"))
         })
         .transpose()?;
@@ -173,7 +173,7 @@ async fn create(
         .license_template
         .as_deref()
         .map(|name| {
-            codeyard_app::repositories::templates::license(name)
+            codeyard_repos::templates::license(name)
                 .ok_or_else(|| Error::invalid("Unknown license template"))
         })
         .transpose()?;

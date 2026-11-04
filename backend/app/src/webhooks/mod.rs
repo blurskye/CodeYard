@@ -21,7 +21,6 @@ pub mod deployment_protection;
 pub mod documents;
 
 pub mod github_apps;
-pub mod outbound;
 pub mod panel;
 pub mod payloads;
 pub mod ref_changes;

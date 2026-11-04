@@ -74,8 +74,8 @@ fn normalized(text: &str) -> String {
 }
 fn license_info(text: &str) -> License {
     let known =
-        crate::repositories::templates::detect_license(text.as_bytes()).and_then(|template| {
-            let index = crate::repositories::templates::LICENSE_TEMPLATES
+        codeyard_repos::templates::detect_license(text.as_bytes()).and_then(|template| {
+            let index = codeyard_repos::templates::LICENSE_TEMPLATES
                 .iter()
                 // A const slice has no fixed address, so the template is found by name.
                 .position(|known| known.name == template.name)?;
@@ -351,9 +351,9 @@ mod tests {
     use super::*;
     #[test]
     fn standard_licenses_survive_the_native_copyright_substitution() {
-        for template in crate::repositories::templates::LICENSE_TEMPLATES {
+        for template in codeyard_repos::templates::LICENSE_TEMPLATES {
             let filled =
-                crate::repositories::templates::fill_license(template.text, 2026, "A person");
+                codeyard_repos::templates::fill_license(template.text, 2026, "A person");
             assert_eq!(license_info(&filled).spdx, template.name);
         }
         assert_eq!(license_info("This is not a license").spdx, "NOASSERTION");

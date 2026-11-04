@@ -158,7 +158,7 @@ async fn editor_and_streamed_admission_release_their_slots_at_the_deadline() {
         actor: Some(1),
         ci_run: None,
         operation: Operation::SaveFile {
-            write: crate::repositories::store::editor::FileWrite {
+            write: codeyard_repos::editor::FileWrite {
                 branch: "main".into(),
                 path: "file.txt".into(),
                 expected_revision: "unborn".into(),

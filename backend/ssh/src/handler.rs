@@ -453,7 +453,7 @@ impl russh::server::Handler for GitSshHandler {
             .filter(|_| variable_name == "GIT_PROTOCOL")
             .and_then(|state| {
                 let protocol =
-                    codeyard_app::repositories::git_sessions::validation::protocol(Some(variable_value))
+                    codeyard_repos::validation::protocol(Some(variable_value))
                         .ok()?;
                 state.git_protocol = protocol.map(str::to_owned);
                 Some(())
@@ -531,7 +531,7 @@ impl russh::server::Handler for GitSshHandler {
             return Ok(());
         }
         // Parse git command
-        let git_cmd = match codeyard_app::repositories::git_sessions::validation::parse_command(&command) {
+        let git_cmd = match codeyard_repos::validation::parse_command(&command) {
             Ok(cmd) => cmd,
             Err(_) => {
                 self.refuse_command(
@@ -636,13 +636,13 @@ impl russh::server::Handler for GitSshHandler {
                     _permit = wait_for_session_slot(&store, &queued).await?;
                 }
                 match credential {
-                    ReceiveCredential::DeployKey(id) => { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), codeyard_app::repositories::deploy_keys::record_use(&pool, id)).await; }
+                    ReceiveCredential::DeployKey(id) => { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), codeyard_repos::deploy_keys::record_use(&pool, id)).await; }
                     ReceiveCredential::SshKey(id) => { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), codeyard_db_identity::users::ssh_keys::touch_ssh_key(&pool, id)).await; }
                     _ => {}
                 }
                 let (actor,_) = tokio::time::timeout(std::time::Duration::from_secs(5), credential.authorize(&pool, &repo, git_cmd.write)).await??;
                 let visitor=match credential { ReceiveCredential::DeployKey(id)=>codeyard_db_repos::repositories::traffic::Identity::deploy_key(id), _=>codeyard_db_repos::repositories::traffic::Identity::account(actor.id) };
-                let observation=codeyard_app::repositories::traffic::clone::Observation::default();
+                let observation=codeyard_repos::traffic::clone::Observation::default();
                 let mut input=observation.input(io.input.as_mut().expect("open input"));
                 let mut output=observation.output(&mut output);
                 let execution = store.git_session(options, receive, GitStreams {
@@ -658,7 +658,7 @@ impl russh::server::Handler for GitSshHandler {
                 drop(_permit);
                 drop(_task_slot);
                 if !git_cmd.write && status.success() && observation.initial_transfer() {
-                    if let Some(visitor)=visitor { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), codeyard_app::repositories::traffic::observe(&pool,repo.id,&visitor,&codeyard_db_repos::repositories::traffic::Metric::clone_transfer())).await; }
+                    if let Some(visitor)=visitor { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), codeyard_repos::traffic::observe(&pool,repo.id,&visitor,&codeyard_db_repos::repositories::traffic::Metric::clone_transfer())).await; }
                 }
                 Ok::<_,anyhow::Error>(status)
             }.await;
@@ -782,7 +782,7 @@ mod tests {
             ("owner/project.git.git.git", "project.git.git"),
         ] {
             for (service, write) in [("git-upload-pack", false), ("git-receive-pack", true)] {
-                let parsed = codeyard_app::repositories::git_sessions::validation::parse_command(
+                let parsed = codeyard_repos::validation::parse_command(
                     &format!("{service} '{path}'"),
                 )
                 .unwrap();
@@ -792,13 +792,13 @@ mod tests {
             }
         }
         assert!(
-            codeyard_app::repositories::git_sessions::validation::parse_command(
+            codeyard_repos::validation::parse_command(
                 "git-upload-pack 'owner/a/b.git'"
             )
             .is_err()
         );
         assert!(
-            codeyard_app::repositories::git_sessions::validation::parse_command(
+            codeyard_repos::validation::parse_command(
                 "not-git 'owner/project.git'"
             )
             .is_err()
@@ -809,13 +809,13 @@ mod tests {
     fn builtin_git_commands_use_the_shared_parser() {
         // The built-in server uses the OpenSSH helper's parser, which refuses extra slashes.
         assert!(
-            codeyard_app::repositories::git_sessions::validation::parse_command(
+            codeyard_repos::validation::parse_command(
                 "git-upload-pack //alice/repo.git"
             )
             .is_err()
         );
         assert!(
-            codeyard_app::repositories::git_sessions::validation::parse_command(
+            codeyard_repos::validation::parse_command(
                 "git-upload-pack 'alice/repo.git'"
             )
             .is_ok()

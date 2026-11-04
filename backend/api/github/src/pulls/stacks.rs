@@ -42,7 +42,7 @@ async fn document(
     meta: &codeyard_db_repos::pull_requests::records::StackMetadata,
     detail: bool,
 ) -> Result<Value> {
-    let members = codeyard_app::repositories::pull_requests::stacks::order_layers(
+    let members = codeyard_repos::stacks::order_layers(
         codeyard_db_repos::pull_requests::records::list_stack_members(
             &state.pool,
             repo.id,

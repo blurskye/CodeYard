@@ -1,7 +1,7 @@
 use super::*;
-use crate::repositories::protection::BranchWrite;
-use crate::repositories::protection::History;
-use crate::repositories::protection::WriteVia;
+use codeyard_repos::protection::BranchWrite;
+use codeyard_repos::protection::History;
+use codeyard_repos::protection::WriteVia;
 use crate::repositories::store::local::live_read;
 use crate::repositories::store::local::live_write;
 use crate::repositories::store::local::record_branch_update;
@@ -208,7 +208,7 @@ impl LocalStore {
         let mut protected = repository.default_branch == old;
         for branch in [old, new] {
             protected |=
-                !crate::repositories::protection::matching_rules(pool, &repository, branch)
+                !codeyard_repos::protection::matching_rules(pool, &repository, branch)
                     .await
                     .map_err(|_| RepoError::authority_unavailable())?
                     .is_empty();
@@ -339,7 +339,7 @@ impl LocalStore {
             .map_err(|_| RepoError::write_denied())?;
         let quarantine = prepared.path().join("objects");
         let bypasses =
-            crate::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
+            codeyard_repos::push_protection::refuse_blocked_secrets(
                 pool,
                 &repository,
                 actor,

@@ -2,18 +2,18 @@
 use crate::ci::runs::CiRunRequest;
 use crate::repositories::git_sessions::broker::Gateway;
 use crate::repositories::git_sessions::broker::Operation;
-use crate::repositories::git_sessions::validation::RefUpdate;
-use crate::repositories::git_sessions::validation::ZERO_SHA;
+use codeyard_repos::validation::RefUpdate;
+use codeyard_repos::validation::ZERO_SHA;
 use crate::repositories::git_sessions::ReceiveCredential;
-use crate::repositories::protection::check_branch_write_with;
-use crate::repositories::protection::load_rules;
-use crate::repositories::protection::BranchWrite;
-use crate::repositories::protection::History;
-use crate::repositories::protection::Refusal;
-use crate::repositories::protection::WriteVia;
+use codeyard_repos::protection::check_branch_write_with;
+use codeyard_repos::protection::load_rules;
+use codeyard_repos::protection::BranchWrite;
+use codeyard_repos::protection::History;
+use codeyard_repos::protection::Refusal;
+use codeyard_repos::protection::WriteVia;
 use crate::repositories::store::local::ensure_ref_room;
 use crate::repositories::store::repo_store;
-use crate::webhooks::ref_changes::RefMove;
+use codeyard_repos::ref_changes::RefMove;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
@@ -156,7 +156,7 @@ impl Gateway {
         use crate::repositories::git_sessions::protocol::TransactionPhase;
 
         use codeyard_db_cluster::cluster::writes as journal;
-        crate::repositories::git_sessions::validation::validate_transaction_updates(updates)?;
+        codeyard_repos::validation::validate_transaction_updates(updates)?;
         if !operation
             .state
             .lock()
@@ -205,7 +205,7 @@ impl Gateway {
                     );
                     ensure!(
                         state.writes.len()
-                            < crate::repositories::git_sessions::validation::MAX_UPDATES,
+                            < codeyard_repos::validation::MAX_UPDATES,
                         "too many reference transactions"
                     );
                     state.quorum_started = true;
@@ -412,7 +412,7 @@ impl Gateway {
         updates: &[RefUpdate],
         quarantine: Option<&str>,
     ) -> Result<()> {
-        crate::repositories::git_sessions::validation::validate_updates(updates)?;
+        codeyard_repos::validation::validate_updates(updates)?;
         crate::repositories::git_sessions::hook_barrier::before_authorize(operation, post).await;
         if post {
             self.post_receive(operation, updates).await
@@ -553,7 +553,7 @@ impl Gateway {
             .map(|update| update.new.clone())
             .collect();
         let bypasses =
-            crate::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
+            codeyard_repos::push_protection::refuse_blocked_secrets(
                 &self.pool,
                 &repo,
                 identity.id,
@@ -917,7 +917,7 @@ impl Gateway {
                 )
             })
             .collect();
-        if let Err(error) = crate::repositories::activity::record_moves(
+        if let Err(error) = codeyard_repos::activity::record_moves(
             &self.pool, repo.id, actor_id, &path, &moves,
         )
         .await

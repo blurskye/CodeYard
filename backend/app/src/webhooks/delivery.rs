@@ -2,7 +2,7 @@
 //! errors and timeouts, and recorded with what was sent and what came back.
 use hmac::Mac;
 
-use crate::webhooks::outbound::Refusal;
+use codeyard_support::outbound::Refusal;
 use base64::Engine as _;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::models::WebhookDelivery;
@@ -207,9 +207,9 @@ async fn transmit(
         return Ok(None);
     }
     let secret = open_secret(hook)?;
-    let url = crate::webhooks::outbound::validate_url(
+    let url = codeyard_support::outbound::validate_url(
         &hook.payload_url,
-        crate::webhooks::outbound::allow_private(),
+        codeyard_support::outbound::allow_private(),
     )
     .map_err(refusal_text)?;
     let mut headers = vec![
@@ -369,7 +369,7 @@ async fn attempt_inner(
     body: &str,
 ) -> Result<reqwest::Response, Attempt> {
     let addresses =
-        match crate::webhooks::outbound::resolve(url, crate::webhooks::outbound::allow_private())
+        match codeyard_support::outbound::resolve(url, codeyard_support::outbound::allow_private())
             .await
         {
             Ok(addresses) => addresses,
@@ -429,7 +429,7 @@ fn client(
     addresses: &[SocketAddr],
     ssl_verify: bool,
 ) -> reqwest::Result<reqwest::Client> {
-    crate::webhooks::outbound::pinned_client(url, addresses)
+    codeyard_support::outbound::pinned_client(url, addresses)
         .timeout(TIMEOUT)
         .danger_accept_invalid_certs(!ssl_verify)
         .user_agent(user_agent())

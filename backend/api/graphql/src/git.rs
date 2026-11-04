@@ -248,7 +248,7 @@ pub(super) async fn resolve(
             if pull.repo_id != repo.id {
                 return Ok(json!(false));
             }
-            let rules = codeyard_app::repositories::protection::matching_rules(
+            let rules = codeyard_repos::protection::matching_rules(
                 &request.state.pool,
                 &repo,
                 &pull.base_branch,

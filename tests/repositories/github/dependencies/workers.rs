@@ -1,7 +1,7 @@
 use super::*;
 use codeyard_app::repositories::pull_requests::mutations::update_pull_request;
 use codeyard_app::repositories::pull_requests::mutations::UpdatePullRequestRequest;
-use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_repos::editor::FileWrite;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_db_repos::repositories::dependencies as records;
 use codeyard_db_repos::repositories::dependencies::AlertState;

@@ -1,10 +1,10 @@
 use super::*;
 use crate::npm::dependency_name;
-use crate::repositories::dependencies::npm::formatted;
+use crate::dependencies::npm::formatted;
 
-use crate::repositories::dependencies::npm::registry_url;
-use crate::repositories::dependencies::npm::Archive;
-use crate::repositories::dependencies::npm::Lockfile;
+use crate::dependencies::npm::registry_url;
+use crate::dependencies::npm::Archive;
+use crate::dependencies::npm::Lockfile;
 use serde_json::json;
 use sha2::Digest;
 use std::io::Write;

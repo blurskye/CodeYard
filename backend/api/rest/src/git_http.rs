@@ -241,7 +241,7 @@ pub async fn info_refs(
     }
     let service = query.service.unwrap();
     let mut body = Vec::new();
-    codeyard_app::repositories::store::source::append_packet(
+    codeyard_repos::source::append_packet(
         &mut body,
         &format!("# service={service}\n"),
     );
@@ -405,7 +405,7 @@ async fn rpc(
     let git_tasks = state.git_tasks.clone();
     if !git_tasks.spawn(async move {
         let _permit = permit;
-        let observation = codeyard_app::repositories::traffic::clone::Observation::default();
+        let observation = codeyard_repos::traffic::clone::Observation::default();
         if !write {
             input = Box::new(observation.input(input));
         }
@@ -435,7 +435,7 @@ async fn rpc(
         }
         if status.is_ok() && !write && observation.initial_transfer() {
             if let Some(visitor) = visitor {
-                codeyard_app::repositories::traffic::observe(
+                codeyard_repos::traffic::observe(
                     &state.pool,
                     repo.id,
                     &visitor,

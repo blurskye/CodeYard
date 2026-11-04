@@ -33,7 +33,7 @@ pub fn valid_package_name(kind: &str, name: &str) -> bool {
         return valid_name(name);
     }
     if kind == "npm" {
-        return !name.starts_with('@') && !name.contains('/') && crate::npm::package_name(name);
+        return !name.starts_with('@') && !name.contains('/') && codeyard_repos::npm::package_name(name);
     }
     let part = |s: &str| {
         !s.is_empty()

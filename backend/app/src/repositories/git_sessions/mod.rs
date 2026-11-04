@@ -18,7 +18,6 @@ mod hooks;
 pub mod private_files;
 #[cfg(target_os = "linux")]
 pub mod protocol;
-pub mod validation;
 
 /// Serves until `stop` is set. After that only hooks of pushes already running are served,
 /// and other requests are refused until the connections in progress finish. The caller
@@ -158,7 +157,7 @@ impl ReceiveCredential {
                     !identity.user.is_banned && !identity.user.must_change_password,
                     CredentialRefusal::Credential
                 );
-                let canonical = crate::repositories::git_sessions::validation::canonical_db_key(
+                let canonical = codeyard_repos::validation::canonical_db_key(
                     &identity.key.public_key,
                     &identity.key.key_type,
                 )?;
@@ -171,7 +170,7 @@ impl ReceiveCredential {
             }
             Self::DeployKey(id) => {
                 let admitted =
-                    crate::repositories::deploy_keys::authorize(pool, id, repo, write).await?;
+                    codeyard_repos::deploy_keys::authorize(pool, id, repo, write).await?;
                 anyhow::ensure!(
                     !write || !codeyard_db_repos::repository_exports::locked(pool, repo.id).await?,
                     CredentialRefusal::Migration
@@ -308,3 +307,5 @@ pub async fn receive_session(
         anyhow::bail!("Git receive requires Linux")
     }
 }
+
+use codeyard_repos::validation;

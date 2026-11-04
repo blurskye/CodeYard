@@ -157,7 +157,7 @@ impl CiRuns {
             }
             codeyard_git::PublicationActor::DeployKey(key) => {
                 let (actor, cap) =
-                    crate::repositories::deploy_keys::authorize(&self.pool, key, &repo, true)
+                    codeyard_repos::deploy_keys::authorize(&self.pool, key, &repo, true)
                         .await
                         .map_err(|_| AdmissionError::Denied("CI repository access denied"))?;
                 (actor.id, cap)

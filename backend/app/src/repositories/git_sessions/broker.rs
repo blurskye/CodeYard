@@ -5,7 +5,7 @@ use crate::repositories::git_sessions::protocol::EOF;
 use crate::repositories::git_sessions::protocol::STDERR;
 use crate::repositories::git_sessions::protocol::STDIN;
 use crate::repositories::git_sessions::protocol::STDOUT;
-use crate::repositories::git_sessions::validation::RefUpdate;
+use codeyard_repos::validation::RefUpdate;
 use crate::repositories::git_sessions::ReceiveCredential;
 use crate::repositories::store::repo_store;
 use crate::repositories::store::types::GitService;
@@ -74,7 +74,7 @@ pub(super) struct HookState {
     pub(super) proposed: Option<Vec<RefUpdate>>,
     pub(super) previous_refs: Vec<String>,
     pub(super) secret_bypasses:
-        Vec<crate::repositories::secret_scanning::push_protection::ApprovedBypass>,
+        Vec<codeyard_repos::push_protection::ApprovedBypass>,
     pub(super) post_started: bool,
     pub(super) dispatch_failed: bool,
     // Acquired in pre-receive through the description already inherited by the child.
@@ -617,7 +617,7 @@ impl Gateway {
                     "hook identity mismatch"
                 );
                 if post {
-                    crate::repositories::git_sessions::validation::validate_updates(&updates)?;
+                    codeyard_repos::validation::validate_updates(&updates)?;
                     let mut state = operation
                         .state
                         .lock()
@@ -678,7 +678,7 @@ impl Gateway {
             return Ok(None);
         }
         let supplied =
-            crate::repositories::git_sessions::validation::canonical_key(key_type, blob)?;
+            codeyard_repos::validation::canonical_key(key_type, blob)?;
         let fingerprint = codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&supplied)?;
         let account = codeyard_db_identity::users::ssh_keys::get_user_by_key_fingerprint(
             &self.pool,
@@ -707,7 +707,7 @@ impl Gateway {
             {
                 return Ok(None);
             }
-            let canonical = crate::repositories::git_sessions::validation::canonical_db_key(
+            let canonical = codeyard_repos::validation::canonical_db_key(
                 &key.public_key,
                 key_type,
             )?;
@@ -732,7 +732,7 @@ impl Gateway {
         if identity.user.is_banned || identity.user.must_change_password {
             return Ok(None);
         }
-        let canonical = crate::repositories::git_sessions::validation::canonical_db_key(
+        let canonical = codeyard_repos::validation::canonical_db_key(
             &identity.key.public_key,
             &identity.key.key_type,
         )?;
@@ -793,8 +793,8 @@ impl Gateway {
         git_protocol: Option<&str>,
         slot: OwnedSemaphorePermit,
     ) -> Result<()> {
-        let command = crate::repositories::git_sessions::validation::parse_command(raw_command)?;
-        let git_protocol = crate::repositories::git_sessions::validation::protocol(git_protocol)?;
+        let command = codeyard_repos::validation::parse_command(raw_command)?;
+        let git_protocol = codeyard_repos::validation::protocol(git_protocol)?;
         let repo = codeyard_db_repos::repositories::records::get_git_repository(
             &self.pool,
             &command.owner,
@@ -822,7 +822,7 @@ impl Gateway {
             ReceiveCredential::DeployKey(id) => {
                 let _ = timeout(
                     Duration::from_secs(1),
-                    crate::repositories::deploy_keys::record_use(&self.pool, id),
+                    codeyard_repos::deploy_keys::record_use(&self.pool, id),
                 )
                 .await;
             }
@@ -868,7 +868,7 @@ impl Gateway {
         };
         let repo_id = repo.id;
         let write = command.write;
-        let observation = crate::repositories::traffic::clone::Observation::default();
+        let observation = codeyard_repos::traffic::clone::Observation::default();
         let observed = observation.clone();
         let session = async move {
             let mut child_input = observed.input(child_input);
@@ -904,7 +904,7 @@ impl Gateway {
         };
         if !write && status.success() && delivered && observation.initial_transfer() {
             if let Some(visitor) = visitor {
-                crate::repositories::traffic::observe(
+                codeyard_repos::traffic::observe(
                     &self.pool,
                     repo_id,
                     &visitor,
@@ -988,7 +988,7 @@ impl Gateway {
             None => self.git_command(&operation, &token, write, options.stateless)?,
         };
         drop(publication_lease);
-        if let Some(protocol) = crate::repositories::git_sessions::validation::protocol(
+        if let Some(protocol) = codeyard_repos::validation::protocol(
             options.git_protocol.as_deref(),
         )? {
             command_process.env("GIT_PROTOCOL", protocol);
@@ -1073,7 +1073,7 @@ impl Gateway {
             .arg("-c")
             .arg(format!(
                 "core.hooksPath={}",
-                crate::repositories::git_sessions::validation::shell_safe_path(
+                codeyard_repos::validation::shell_safe_path(
                     operation.hooks.path()
                 )?
             ))
@@ -1091,7 +1091,7 @@ impl Gateway {
         let directory = tempfile::Builder::new()
             .prefix("receive-hooks-")
             .tempdir_in(self.socket.parent().context("socket parent required")?)?;
-        crate::repositories::git_sessions::validation::shell_safe_path(directory.path())?;
+        codeyard_repos::validation::shell_safe_path(directory.path())?;
         if write {
             for name in ["pre-receive", "post-receive", "reference-transaction"] {
                 let path = directory.path().join(name);
@@ -1103,11 +1103,11 @@ impl Gateway {
                 writeln!(
                     file,
                     "#!/bin/sh\nexec {} ssh {} --socket {} --key-id {} --repo-id {}{}",
-                    crate::repositories::git_sessions::validation::shell_safe_path(
+                    codeyard_repos::validation::shell_safe_path(
                         &self.executable
                     )?,
                     name,
-                    crate::repositories::git_sessions::validation::shell_safe_path(&self.socket)?,
+                    codeyard_repos::validation::shell_safe_path(&self.socket)?,
                     key_id,
                     repo_id,
                     if name == "reference-transaction" {
@@ -1215,7 +1215,7 @@ fn published_updates(path: &Path, updates: &[RefUpdate]) -> Result<bool> {
             Ok(id) if id.to_string() == update.new => return Ok(true),
             Err(error)
                 if error.code() == git2::ErrorCode::NotFound
-                    && update.new == crate::repositories::git_sessions::validation::ZERO_SHA =>
+                    && update.new == codeyard_repos::validation::ZERO_SHA =>
             {
                 return Ok(true)
             }

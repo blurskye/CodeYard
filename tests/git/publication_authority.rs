@@ -4,7 +4,7 @@ use crate::support::database;
 use crate::support::organizations::applied;
 
 use codeyard_app::repositories::lifecycle::provision;
-use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_repos::editor::FileWrite;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_db_core::models::AccessLevel;
 use database::Database;

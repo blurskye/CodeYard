@@ -110,7 +110,7 @@ impl History<'_> {
         Ok(false)
     }
 
-    pub(crate) async fn is_fast_forward(&self, old: &str, new: &str) -> Result<bool> {
+    pub async fn is_fast_forward(&self, old: &str, new: &str) -> Result<bool> {
         match self {
             Self::SingleCommit => Ok(true),
             Self::Push {
@@ -126,7 +126,7 @@ impl History<'_> {
         }
     }
 
-    pub(crate) async fn adds_merge_commit(&self, old: Option<&str>, new: &str) -> Result<bool> {
+    pub async fn adds_merge_commit(&self, old: Option<&str>, new: &str) -> Result<bool> {
         match self {
             Self::SingleCommit => Ok(false),
             Self::Push {

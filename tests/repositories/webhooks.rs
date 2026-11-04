@@ -833,7 +833,7 @@ async fn pull_request_head_synchronize_hook(pg: bool, url: &str) {
 }
 
 async fn server_ref_events(pg: bool, url: &str) {
-    use codeyard_app::repositories::store::editor::FileWrite;
+    use codeyard_repos::editor::FileWrite;
     use codeyard_app::repositories::store::repo_store;
     use codeyard_app::repositories::store::types::MergeMethod;
     use codeyard_app::repositories::store::types::MergeRequest;
@@ -971,7 +971,7 @@ async fn server_ref_events(pg: bool, url: &str) {
 
 async fn repository_creation_is_not_a_ref_event(pg: bool, url: &str) {
     use codeyard_app::repositories::lifecycle;
-    use codeyard_app::repositories::store::editor::FileWrite;
+    use codeyard_repos::editor::FileWrite;
     use codeyard_app::repositories::store::repo_store;
     let mut database = Database::new(pg).await;
     database.complete_setup().await;

@@ -29,7 +29,7 @@ pub const MAX_UPLOAD_FILE_BYTES: usize = 25 * 1024 * 1024;
 pub const MAX_UPLOAD_TOTAL_BYTES: usize = 100 * 1024 * 1024;
 const MAX_OUTPUT: usize = 8 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(60);
-pub(super) const ZERO: &str = "0000000000000000000000000000000000000000";
+pub const ZERO: &str = "0000000000000000000000000000000000000000";
 
 /// Optional API attribution. Each omitted identity defaults independently to the actor.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -57,7 +57,7 @@ impl CommitIdentities {
         )
     }
 
-    pub(super) fn check_prepared(&self, commit: &CommitInfo) -> Result<(), RepoError> {
+    pub fn check_prepared(&self, commit: &CommitInfo) -> Result<(), RepoError> {
         for (identity, name, email, timestamp) in [
             (
                 &self.author,
@@ -229,13 +229,13 @@ fn unavailable() -> RepoError {
 
 // Preparation crosses RPC requests. Keep isolated objects under a bounded, expiring server
 // lease rather than publishing them in the real object database or accepting a client path.
-pub(super) struct StagedFile {
+pub struct StagedFile {
     temporary: tempfile::TempDir,
     destination: PathBuf,
     _permit: tokio::sync::OwnedSemaphorePermit,
 }
 impl StagedFile {
-    pub(super) fn path(&self) -> &Path {
+    pub fn path(&self) -> &Path {
         self.temporary.path()
     }
 }
@@ -246,7 +246,7 @@ static STAGING_SLOTS: LazyLock<Arc<tokio::sync::Semaphore>> =
 
 /// The staged objects of `prepared`. They stay staged until a publication succeeds, so a refused
 /// one can be tried again until the preparation expires.
-pub(super) fn claim_staged(
+pub fn claim_staged(
     path: &Path,
     prepared: &PreparedFile,
 ) -> Result<Option<Arc<StagedFile>>, RepoError> {
@@ -264,7 +264,7 @@ pub(super) fn claim_staged(
 }
 
 /// Drops the staged objects of a published file; the branch now holds them.
-pub(super) fn release_staged(prepared: &PreparedFile) {
+pub fn release_staged(prepared: &PreparedFile) {
     if let (Some(key), Ok(mut staged)) = (&prepared.staging, STAGED.lock()) {
         staged.remove(key);
     }
@@ -587,7 +587,7 @@ async fn prepare_commit(
 }
 
 /// Creates the new commit for one file without touching any ref.
-pub(super) async fn prepare(
+pub async fn prepare(
     path: &Path,
     input: &FileWrite,
     content: &[u8],
@@ -605,7 +605,7 @@ pub(super) async fn prepare(
     .await
 }
 
-pub(super) async fn prepare_with_identities(
+pub async fn prepare_with_identities(
     path: &Path,
     input: &FileWrite,
     content: &[u8],
@@ -641,7 +641,7 @@ pub(super) async fn prepare_with_identities(
 
 /// Creates the one commit of an upload without touching any ref. Each file's bytes are the next
 /// `size` bytes of `content`. A path that holds a file has that file replaced.
-pub(super) async fn prepare_upload(
+pub async fn prepare_upload(
     path: &Path,
     write: &UploadWrite,
     content: &[u8],
@@ -680,7 +680,7 @@ pub(super) async fn prepare_upload(
     .await
 }
 
-pub(super) async fn validate_staged(
+pub async fn validate_staged(
     path: &Path,
     prepared: &PreparedFile,
     staged: Option<&StagedFile>,
@@ -734,7 +734,7 @@ pub(super) async fn validate_staged(
     Ok(())
 }
 
-pub(super) async fn publish_staged(
+pub async fn publish_staged(
     path: &Path,
     prepared: &PreparedFile,
     staged: Option<&StagedFile>,

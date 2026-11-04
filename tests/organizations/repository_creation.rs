@@ -810,7 +810,7 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
     use codeyard_app::app::AppState;
     use codeyard_app::ci::config::CiConfig;
     use codeyard_app::cluster;
-    use codeyard_app::repositories::store::editor::FileWrite;
+    use codeyard_repos::editor::FileWrite;
     use codeyard_app::repositories::store::repo_store;
     use codeyard_storage::ObjectStore;
     use serde_json::Value;

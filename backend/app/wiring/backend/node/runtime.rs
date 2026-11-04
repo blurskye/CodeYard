@@ -460,7 +460,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         return started.map(|_| ()).and(stopped);
     }
     let (stop_traffic, traffic_stop) = tokio::sync::watch::channel(false);
-    let traffic = tokio::spawn(codeyard_app::repositories::traffic::maintain(
+    let traffic = tokio::spawn(codeyard_repos::traffic::maintain(
         pool.clone(),
         traffic_stop,
     ));

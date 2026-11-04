@@ -48,7 +48,7 @@ impl Client {
     }
     fn archive_url(&self, official: &str) -> Result<Url> {
         ensure!(
-            crate::repositories::dependencies::npm::registry_url(official),
+            codeyard_repos::dependencies::npm::registry_url(official),
             "Untrusted npm archive URL"
         );
         let source = Url::parse(official)?;
@@ -92,9 +92,9 @@ impl Client {
         name: &str,
         version: &Version,
         expected: Option<&str>,
-    ) -> Result<crate::repositories::dependencies::npm::Archive> {
+    ) -> Result<codeyard_repos::dependencies::npm::Archive> {
         ensure!(
-            crate::npm::dependency_name(name) && version.to_string().len() <= 256,
+            codeyard_repos::npm::dependency_name(name) && version.to_string().len() <= 256,
             "Invalid npm package request"
         );
         let mut url = self.registry.clone();
@@ -116,17 +116,17 @@ impl Client {
             .and_then(Value::as_str)
             .context("Missing npm archive URL")?;
         ensure!(
-            crate::repositories::dependencies::npm::registry_url(tarball),
+            codeyard_repos::dependencies::npm::registry_url(tarball),
             "Untrusted npm archive URL"
         );
         let bytes = Self::body(
             self.http.get(self.archive_url(tarball)?).send().await?,
-            crate::repositories::dependencies::npm::MAX_ARCHIVE,
+            codeyard_repos::dependencies::npm::MAX_ARCHIVE,
         )
         .await?;
         let expected = expected.map(str::to_owned);
         tokio::task::spawn_blocking(move || {
-            crate::repositories::dependencies::npm::Archive::verify(
+            codeyard_repos::dependencies::npm::Archive::verify(
                 &metadata,
                 &bytes,
                 expected.as_deref(),

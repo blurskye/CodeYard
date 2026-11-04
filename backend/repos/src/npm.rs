@@ -6,7 +6,7 @@ pub fn package_name(name: &str) -> bool {
 }
 
 /// A name dependency metadata may refer to; older public packages still have uppercase letters.
-pub(crate) fn dependency_name(name: &str) -> bool {
+pub fn dependency_name(name: &str) -> bool {
     valid_name(name, true)
 }
 

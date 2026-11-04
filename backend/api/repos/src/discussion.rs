@@ -482,7 +482,7 @@ pub(crate) fn pull_item(
 }
 /// The stack a pull request page shows, with the viewed pull request marked.
 fn stack_map(
-    stack: &codeyard_app::repositories::pull_requests::stacks::Stack,
+    stack: &codeyard_repos::stacks::Stack,
     current: i64,
     restack: bool,
 ) -> view::StackMap {
@@ -614,21 +614,21 @@ async fn item_with_comparison(
             };
             let head_repository = head_for_viewer(ctx, head).await?;
             let current = value.id;
-            let stack = codeyard_app::repositories::pull_requests::stacks::stack_of(
+            let stack = codeyard_repos::stacks::stack_of(
                 &ctx.state.pool,
                 &value,
             )
             .await
             .map_err(|_| unavailable(ctx))?;
             let stack_candidate =
-                codeyard_app::repositories::pull_requests::stacks::join_candidate(
+                codeyard_repos::stacks::join_candidate(
                     &ctx.state.pool,
                     &value,
                 )
                 .await
                 .map_err(|_| unavailable(ctx))?;
             let (merge_target, _, merge_with) =
-                codeyard_app::repositories::pull_requests::stacks::merge_target(
+                codeyard_repos::stacks::merge_target(
                     &ctx.state.pool,
                     &value,
                 )

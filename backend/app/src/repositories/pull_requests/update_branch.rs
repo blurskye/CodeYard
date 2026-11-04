@@ -81,7 +81,7 @@ pub async fn update_branch(
         crate::repositories::pull_requests::branches::HeadError::Unavailable => database_error(()),
         _ => invalid("Head branch is unavailable"),
     })?;
-    if !crate::repositories::pull_requests::maintainer_edit::can_update_head(
+    if !codeyard_repos::maintainer_edit::can_update_head(
         pool, &actor, &base, &head, &pull,
     )
     .await

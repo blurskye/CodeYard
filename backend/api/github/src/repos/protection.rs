@@ -85,7 +85,7 @@ pub(super) async fn protected(
         .ok_or_else(Error::missing)?
     } else {
         let mut matching =
-            codeyard_app::repositories::protection::matching_rules(&state.pool, &repo, branch)
+            codeyard_repos::protection::matching_rules(&state.pool, &repo, branch)
                 .await
                 .map_err(Error::unavailable)?;
         // Native enforcement intersects all matching rules. Classic protection cannot losslessly

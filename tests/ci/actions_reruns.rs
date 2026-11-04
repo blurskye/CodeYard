@@ -13,7 +13,7 @@ use codeyard_app::ci::queue::RunQueue;
 use codeyard_app::ci::runs::CiRunRequest;
 use codeyard_app::ci::workers::CiWorkers;
 use codeyard_app::repositories;
-use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_repos::editor::FileWrite;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_storage::ObjectStore;
 use codeyard_notifications::broadcast::NotificationBroadcaster;

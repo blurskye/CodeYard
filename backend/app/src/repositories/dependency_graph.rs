@@ -1,6 +1,6 @@
 //! Dependency inventories pin Git before reading either file and never execute package managers.
 use crate::app::AppState;
-use crate::repositories::dependencies::npm::Lockfile;
+use codeyard_repos::dependencies::npm::Lockfile;
 use crate::repositories::store::repo_store;
 use codeyard_db_core::models::Repository;
 use codeyard_db_security::dependency_graph::Reader;
@@ -31,7 +31,7 @@ async fn file(
     sha: &str,
     name: &str,
 ) -> Result<Option<Vec<u8>>, RepoError> {
-    let limit = crate::repositories::dependencies::npm::MAX_LOCK_BYTES as u64;
+    let limit = codeyard_repos::dependencies::npm::MAX_LOCK_BYTES as u64;
     match store
         .blob_range(
             sha,
@@ -64,7 +64,7 @@ fn is_manifest(path: &str) -> bool {
     (matches!(
         name,
         "package.json" | "package-lock.json" | "npm-shrinkwrap.json"
-    ) || crate::repositories::dependencies::lockfiles::FILES.contains(&name))
+    ) || codeyard_repos::dependencies::lockfiles::FILES.contains(&name))
         && !directory
             .split('/')
             .any(|part| matches!(part, "node_modules" | "vendor" | ".git"))
@@ -254,7 +254,7 @@ pub(crate) async fn native_inventory_at(
         let parsed = if matches!(name, "package-lock.json" | "npm-shrinkwrap.json") {
             npm_packages(&store, &sha, directory, path, &bytes).await?
         } else {
-            crate::repositories::dependencies::lockfiles::parse(path, &bytes)
+            codeyard_repos::dependencies::lockfiles::parse(path, &bytes)
                 .map_err(|error| invalid(error.to_string()))?
         };
         for package in parsed {

@@ -3,13 +3,11 @@ pub mod auto_merge;
 pub mod branches;
 pub mod code_owners;
 pub mod comments;
-pub(crate) mod maintainer_edit;
-pub mod merge;
+pub(crate) pub mod merge;
 pub mod mutations;
 pub mod restack;
 pub mod revert;
 pub mod reviews;
-pub mod stacks;
 pub mod team_reviewers;
 pub mod update_branch;
 

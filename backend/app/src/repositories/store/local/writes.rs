@@ -1,8 +1,8 @@
 use super::*;
 use crate::cluster::writes::OutcomeUnknown;
-use crate::repositories::protection::BranchWrite;
-use crate::repositories::protection::History;
-use crate::repositories::protection::WriteVia;
+use codeyard_repos::protection::BranchWrite;
+use codeyard_repos::protection::History;
+use codeyard_repos::protection::WriteVia;
 use crate::repositories::store::local::begin_coordinated_ref_change;
 use crate::repositories::store::local::live_write;
 use crate::repositories::store::local::unavailable;
@@ -214,7 +214,7 @@ impl LocalStore {
             crate::repositories::releases::immutable::check_current_tag_updates(
                 pool,
                 &repository,
-                &[crate::repositories::git_sessions::validation::RefUpdate {
+                &[codeyard_repos::validation::RefUpdate {
                     reference: reference.to_owned(),
                     old: old.unwrap_or(editor::ZERO).to_owned(),
                     new: new.unwrap_or(editor::ZERO).to_owned(),

@@ -220,7 +220,7 @@ pub(super) async fn resolve(
             files.sort_by_key(|file| file.name.to_ascii_lowercase());
             let Some(file) = files.iter().find(|file| {
                 file.entry_type == "file"
-                    && codeyard_app::repositories::templates::is_license_file(&file.name)
+                    && codeyard_repos::templates::is_license_file(&file.name)
             }) else {
                 return Ok(Value::Null);
             };
@@ -229,7 +229,7 @@ pub(super) async fn resolve(
                 .await
                 .map_err(unavailable)?;
             Ok(texts.first().and_then(Option::as_ref).map(|(_, text)| {
-                codeyard_app::repositories::templates::detect_license(text.as_bytes()).map(|template| json!({"key":template.name.to_lowercase(),"name":template.name,"nickname":Value::Null})).unwrap_or(json!({"key":"other","name":"Other","nickname":Value::Null}))
+                codeyard_repos::templates::detect_license(text.as_bytes()).map(|template| json!({"key":template.name.to_lowercase(),"name":template.name,"nickname":Value::Null})).unwrap_or(json!({"key":"other","name":"Other","nickname":Value::Null}))
             }).unwrap_or(Value::Null))
         }
         "languages" | "primaryLanguage" => {

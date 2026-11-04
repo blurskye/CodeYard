@@ -554,8 +554,8 @@ pub(super) async fn run(
             .collect();
         assert_eq!(actual, repo_store(repo, None).mirror_refs().await.unwrap());
         // Exercise the reader and the authorized native publication path, not only tar extraction.
-        let source = codeyard_app::repositories::imports::archive::read(&bytes, None).unwrap();
-        let prepared = codeyard_app::repositories::imports::archive::git::prepare(&source)
+        let source = codeyard_repos::imports::archive::read(&bytes, None).unwrap();
+        let prepared = codeyard_repos::imports::archive::git::prepare(&source)
             .await
             .unwrap();
         let user_refs: std::collections::HashMap<_, _> = actual
@@ -607,9 +607,9 @@ pub(super) async fn run(
                 f.pool(),
                 restored.id,
                 alice,
-                codeyard_app::repositories::imports::GitImport {
+                codeyard_repos::imports::GitImport {
                     generation: generation.clone(),
-                    credential: codeyard_app::repositories::imports::ImportCredential::Token(
+                    credential: codeyard_repos::imports::ImportCredential::Token(
                         token.id,
                     ),
                     refs: prepared.refs,

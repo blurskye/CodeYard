@@ -1,6 +1,6 @@
 //! Files and sockets only the server's user may touch, for the OpenSSH gateway (Linux).
 //! Native children use backend::process.
-use crate::repositories::git_sessions::validation::shell_safe_path;
+use codeyard_repos::validation::shell_safe_path;
 use anyhow::bail;
 use anyhow::ensure;
 use anyhow::Context;

@@ -19,7 +19,7 @@ use codeyard_api_http::shared::repos::access::check_repo_read_access;
 use codeyard_api_http::shared::repos::chrome::store_error;
 use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::editor::MAX_EDITOR_BYTES;
+use codeyard_repos::editor::MAX_EDITOR_BYTES;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_app::repositories::store::types::BlobBytes;
 use codeyard_app::repositories::store::RepoStore;

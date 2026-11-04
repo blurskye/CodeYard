@@ -145,9 +145,9 @@ async fn contract(pg: bool) {
 
     // Uploading an unchanged source alongside changed documentation must not run source CI.
     use codeyard_app::repositories::files;
-    use codeyard_app::repositories::store::editor::FileWrite;
-    use codeyard_app::repositories::store::editor::UploadFile;
-    use codeyard_app::repositories::store::editor::UploadWrite;
+    use codeyard_repos::editor::FileWrite;
+    use codeyard_repos::editor::UploadFile;
+    use codeyard_repos::editor::UploadWrite;
     let uploaded = files::upload_files(
         f.pool(),
         None,
@@ -348,16 +348,16 @@ async fn contract(pg: bool) {
         actor,
         "writer",
         repo.id,
-        codeyard_app::repositories::store::editor::UploadWrite {
+        codeyard_repos::editor::UploadWrite {
             branch: "feature".into(),
             expected_revision: new.clone(),
             message: "Docs only".into(),
             files: vec![
-                codeyard_app::repositories::store::editor::UploadFile {
+                codeyard_repos::editor::UploadFile {
                     path: "src.txt".into(),
                     size: 7,
                 },
-                codeyard_app::repositories::store::editor::UploadFile {
+                codeyard_repos::editor::UploadFile {
                     path: "docs.txt".into(),
                     size: 7,
                 },

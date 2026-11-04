@@ -82,7 +82,7 @@ async fn ref_activity(
     Path((owner, name)): Path<(String, String)>,
     headers: HeaderMap,
     uri: Uri,
-    axum::extract::Query(input): axum::extract::Query<codeyard_app::repositories::activity::Query>,
+    axum::extract::Query(input): axum::extract::Query<codeyard_repos::activity::Query>,
 ) -> Response {
     use codeyard_webui::pages::repos::insights::activity::Page as ActivityPage;
     use codeyard_webui::pages::repos::insights::activity::Row;
@@ -90,7 +90,7 @@ async fn ref_activity(
         Ok(opened) => opened,
         Err(response) => return response,
     };
-    let page = match codeyard_app::repositories::activity::page(
+    let page = match codeyard_repos::activity::page(
         &ctx.state.pool,
         loaded.repository.id,
         &input,
@@ -100,7 +100,7 @@ async fn ref_activity(
     {
         Ok(page) => page,
         Err(error) => {
-            return match error.downcast_ref::<codeyard_app::repositories::activity::InvalidQuery>()
+            return match error.downcast_ref::<codeyard_repos::activity::InvalidQuery>()
             {
                 Some(invalid) => ctx.error(
                     axum::http::StatusCode::UNPROCESSABLE_ENTITY,
@@ -114,13 +114,13 @@ async fn ref_activity(
     let previous = page.previous.as_ref().map(|cursor| {
         format!(
             "{base}?{}",
-            codeyard_app::repositories::activity::query_string(&input, Some(cursor), None)
+            codeyard_repos::activity::query_string(&input, Some(cursor), None)
         )
     });
     let next = page.next.as_ref().map(|cursor| {
         format!(
             "{base}?{}",
-            codeyard_app::repositories::activity::query_string(&input, None, Some(cursor))
+            codeyard_repos::activity::query_string(&input, None, Some(cursor))
         )
     });
     let rows = page

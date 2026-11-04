@@ -4,10 +4,10 @@ use tracing::instrument::WithSubscriber;
 use tracing::Instrument;
 
 use crate::cluster::context::NodeContext;
-use crate::repositories::store::editor::UploadFile;
-use crate::repositories::store::editor::UploadWrite;
+use codeyard_repos::editor::UploadFile;
+use codeyard_repos::editor::UploadWrite;
 use crate::repositories::store::repo_store;
-use crate::repositories::templates::Template;
+use codeyard_repos::templates::Template;
 use chrono::Utc;
 use codeyard_db_core::models::Repository;
 use codeyard_git::error::ErrorKind;
@@ -783,7 +783,7 @@ async fn commit_initial_files(
     if files.readme {
         texts.push((
             "README.md",
-            crate::repositories::templates::readme(&repository.name, description),
+            codeyard_repos::templates::readme(&repository.name, description),
         ));
     }
     if let Some(template) = files.gitignore {
@@ -792,7 +792,7 @@ async fn commit_initial_files(
     if let Some(template) = files.license {
         texts.push((
             "LICENSE",
-            crate::repositories::templates::fill_license(template.text, year, holder),
+            codeyard_repos::templates::fill_license(template.text, year, holder),
         ));
     }
     let write = UploadWrite {

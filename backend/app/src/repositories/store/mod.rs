@@ -8,12 +8,12 @@
 //! host OpenSSH gateway.
 use crate::cluster::context::NodeContext;
 use crate::cluster::rpc::wire::Operation;
-use crate::repositories::protection::WriteVia;
-use crate::repositories::store::editor::CommitIdentities;
-use crate::repositories::store::editor::FileWrite;
-use crate::repositories::store::editor::PreparedFile;
-use crate::repositories::store::editor::UploadWrite;
-use crate::repositories::store::gists::GistCredential;
+use codeyard_repos::protection::WriteVia;
+use codeyard_repos::editor::CommitIdentities;
+use codeyard_repos::editor::FileWrite;
+use codeyard_repos::editor::PreparedFile;
+use codeyard_repos::editor::UploadWrite;
+use codeyard_repos::gists::GistCredential;
 use crate::repositories::store::types::AsyncMergePublication;
 use crate::repositories::store::types::BlobBytes;
 use crate::repositories::store::types::BranchMergePublication;
@@ -60,8 +60,6 @@ use codeyard_git::WeekChanges;
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
-pub mod editor;
-pub mod gists;
 
 pub mod local;
 mod remote;
@@ -394,7 +392,7 @@ impl RepoStore {
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
-        import: crate::repositories::imports::GitImport,
+        import: codeyard_repos::imports::GitImport,
         pack: Vec<u8>,
     ) -> Result<(), RepoError> {
         match &self.0 {
@@ -2731,3 +2729,5 @@ impl RepoStore {
 
 #[cfg(test)]
 mod tests;
+
+use codeyard_repos::{editor, gists, source};

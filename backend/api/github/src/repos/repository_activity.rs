@@ -11,7 +11,7 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::activity::InvalidQuery;
+use codeyard_repos::activity::InvalidQuery;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use std::sync::Arc;
@@ -20,11 +20,11 @@ async fn list(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
-    Query(input): Query<codeyard_app::repositories::activity::Query>,
+    Query(input): Query<codeyard_repos::activity::Query>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let page = codeyard_app::repositories::activity::page(
+    let page = codeyard_repos::activity::page(
         &state.pool,
         repo.id,
         &input,
@@ -41,7 +41,7 @@ async fn list(
         ("after", "next", page.next.as_deref()),
     ] {
         if let Some(cursor) = cursor {
-            let query = codeyard_app::repositories::activity::query_string(
+            let query = codeyard_repos::activity::query_string(
                 &input,
                 (key == "before").then_some(cursor),
                 (key == "after").then_some(cursor),

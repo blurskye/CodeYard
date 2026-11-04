@@ -16,8 +16,8 @@ use axum::Router;
 use base64::engine::general_purpose::STANDARD;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::store::editor::FileWrite;
-use codeyard_app::repositories::store::editor::MAX_EDITOR_BYTES;
+use codeyard_repos::editor::FileWrite;
+use codeyard_repos::editor::MAX_EDITOR_BYTES;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_app::webhooks::payloads::git_commit as commit_json;
 use codeyard_git::error::ErrorKind;
@@ -353,7 +353,7 @@ async fn read(
 #[derive(Deserialize)]
 struct Write {
     #[serde(flatten)]
-    identities: codeyard_app::repositories::store::editor::CommitIdentities,
+    identities: codeyard_repos::editor::CommitIdentities,
     message: String,
     content: Option<String>,
     sha: Option<String>,

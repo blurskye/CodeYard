@@ -20,7 +20,7 @@ use codeyard_app::cluster::rpc::wire::Operation;
 use codeyard_app::cluster::rpc::wire::Request;
 use codeyard_support::node_identity::NodeKey;
 
-use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_repos::editor::FileWrite;
 use codeyard_app::repositories::store::local::begin_ref_change;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_app::repositories::store::types::GitService;

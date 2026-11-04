@@ -83,7 +83,7 @@ pub async fn record_views(
     let observation = response.extensions_mut().remove::<Observation>();
     if navigation && response.status().is_success() {
         if let Some(observation) = observation {
-            codeyard_app::repositories::traffic::observe(
+            codeyard_repos::traffic::observe(
                 &state.pool,
                 observation.repo,
                 &observation.identity,

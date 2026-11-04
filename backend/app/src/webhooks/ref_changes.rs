@@ -6,9 +6,6 @@ use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
 use std::path::Path;
 
-/// One ref a push moved: `(reference, old, new)`, where an all-zero id means none.
-pub type RefMove = (String, String, String);
-
 fn is_zero(id: &str) -> bool {
     id.bytes().all(|byte| byte == b'0')
 }
@@ -209,3 +206,5 @@ async fn emit_ref_change(
     })
     .await;
 }
+
+use codeyard_repos::ref_changes::RefMove;

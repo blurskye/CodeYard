@@ -130,7 +130,7 @@ pub(crate) async fn detail_response(
         codeyard_db_identity::users::accounts::get_user_by_id(pool, pull_request.author_id)
             .await
             .map_err(|_| storage_unavailable())?;
-    let stack = codeyard_app::repositories::pull_requests::stacks::stack_of(pool, &pull_request)
+    let stack = codeyard_repos::stacks::stack_of(pool, &pull_request)
         .await
         .map_err(|_| storage_unavailable())?;
     let stack = stack.map(|stack| {

@@ -1,7 +1,7 @@
 //! Repack only verified, reachable objects in a fresh quarantine repository.
-use crate::repositories::imports::archive::refs;
-use crate::repositories::imports::archive::ArchiveSource;
-use crate::repositories::imports::MAX_IMPORT_PACK_BYTES;
+use crate::imports::archive::refs;
+use crate::imports::archive::ArchiveSource;
+use crate::imports::MAX_IMPORT_PACK_BYTES;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_git::repository::process;
@@ -42,8 +42,8 @@ pub async fn prepare(source: &ArchiveSource) -> Result<ArchiveGit> {
         git2::Repository::init_bare(directory.path())?;
         for (path, bytes) in loose {
             ensure!(
-                crate::repositories::imports::archive::safe_path(std::path::Path::new(&path))
-                    && crate::repositories::imports::archive::git_object_path(&path),
+                crate::imports::archive::safe_path(std::path::Path::new(&path))
+                    && crate::imports::archive::git_object_path(&path),
                 "Invalid migration object"
             );
             let path = directory.path().join(path);

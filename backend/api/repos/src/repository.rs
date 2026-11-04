@@ -96,9 +96,9 @@ fn immutable_releases_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>
 }
 
 fn invitation_error(
-    error: codeyard_app::repositories::collaborators::Error,
+    error: codeyard_repos::collaborators::Error,
 ) -> (StatusCode, Json<ApiError>) {
-    use codeyard_app::repositories::collaborators::Error;
+    use codeyard_repos::collaborators::Error;
     match error {
         Error::Denied => ApiError::failure(
             StatusCode::FORBIDDEN,
@@ -696,7 +696,7 @@ pub(super) async fn settings_model(
     if tab == "collaborators"
         && (loaded.chrome.can_manage_collaborators || loaded.chrome.can_manage_invitations)
     {
-        let invitations = codeyard_app::repositories::collaborators::invitations(
+        let invitations = codeyard_repos::collaborators::invitations(
             &ctx.state.pool,
             viewer.id,
             Some(loaded.repository.id),
@@ -2084,7 +2084,7 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "remove-invited-collaborator" => {
-            codeyard_app::repositories::collaborators::remove(
+            codeyard_repos::collaborators::remove(
                 pool,
                 actor.id,
                 repository.id,
@@ -2150,7 +2150,7 @@ async fn mutate(
         }
         "invite-collaborator" => {
             let permission =
-                codeyard_app::repositories::collaborators::permission(&field(form, "access"))
+                codeyard_repos::collaborators::permission(&field(form, "access"))
                     .ok_or_else(|| {
                         ApiError::failure(
                             StatusCode::UNPROCESSABLE_ENTITY,
@@ -2158,7 +2158,7 @@ async fn mutate(
                             "Invalid permission",
                         )
                     })?;
-            codeyard_app::repositories::collaborators::add(
+            codeyard_repos::collaborators::add(
                 pool,
                 actor.id,
                 repository.id,
@@ -2177,7 +2177,7 @@ async fn mutate(
                     "Invalid invitation",
                 )
             })?;
-            codeyard_app::repositories::collaborators::update_invitation(
+            codeyard_repos::collaborators::update_invitation(
                 pool,
                 actor.id,
                 repository.id,

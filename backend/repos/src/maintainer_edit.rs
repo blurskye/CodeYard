@@ -6,7 +6,7 @@ use codeyard_db_core::models::User;
 
 /// A fork's ongoing publication grant follows the real contributor's live access.
 /// Importing an issue's author must never borrow that historical user's authority.
-pub(crate) async fn publication_authorized(
+pub async fn publication_authorized(
     pool: &codeyard_db_core::DbPool,
     publisher: Option<i64>,
     head: &Repository,
@@ -23,7 +23,7 @@ pub(crate) async fn publication_authorized(
     codeyard_identity::repository_access::can_read(pool, Some(&user), head).await
 }
 
-pub(crate) async fn can_update_head(
+pub async fn can_update_head(
     pool: &codeyard_db_core::DbPool,
     actor: &User,
     base: &Repository,

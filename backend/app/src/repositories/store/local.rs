@@ -1,13 +1,13 @@
 //! The local store: the bare repository is a directory on this machine. Each
 //! method runs the matching Git code, moving blocking libgit2 work off the async
 //! threads and turning failures into [`RepoError`]s.
-use crate::repositories::protection::check_branch_write;
-use crate::repositories::protection::BranchWrite;
-use crate::repositories::protection::History;
-use crate::repositories::protection::Refusal;
-use crate::repositories::protection::WriteVia;
-use crate::repositories::store::editor;
-use crate::repositories::store::editor::FileWrite;
+use codeyard_repos::protection::check_branch_write;
+use codeyard_repos::protection::BranchWrite;
+use codeyard_repos::protection::History;
+use codeyard_repos::protection::Refusal;
+use codeyard_repos::protection::WriteVia;
+use codeyard_repos::editor;
+use codeyard_repos::editor::FileWrite;
 use crate::repositories::store::local::writes::oid_change;
 use crate::repositories::store::types::allowed_merge_methods;
 use crate::repositories::store::types::AsyncMergePublication;
@@ -102,7 +102,7 @@ async fn record_secret_bypasses(
     pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     actor: i64,
-    bypasses: Vec<crate::repositories::secret_scanning::push_protection::ApprovedBypass>,
+    bypasses: Vec<codeyard_repos::push_protection::ApprovedBypass>,
 ) -> Result<(), RepoError> {
     let mut failed = false;
     for bypass in bypasses {
@@ -330,7 +330,7 @@ async fn live_pull_head_write(
         return Err(RepoError::new(ErrorKind::Conflict, "Pull request changed"));
     }
     if !repository_matches_path(&head, target.path(), target.node_id)
-        || !crate::repositories::pull_requests::maintainer_edit::can_update_head(
+        || !codeyard_repos::maintainer_edit::can_update_head(
             pool, &user, &base, &head, &pull,
         )
         .await
@@ -2219,7 +2219,7 @@ impl LocalStore {
         )
         .await?;
         let bypasses =
-            crate::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
+            codeyard_repos::push_protection::refuse_blocked_secrets(
                 pool,
                 &repository,
                 actor,
@@ -2264,7 +2264,7 @@ impl LocalStore {
                 actor,
                 &[(
                     reference,
-                    crate::repositories::store::editor::ZERO.to_owned(),
+                    codeyard_repos::editor::ZERO.to_owned(),
                     target.clone(),
                 )],
             )
@@ -2337,7 +2337,7 @@ impl LocalStore {
         crate::repositories::releases::immutable::check_current_tag_updates(
             pool,
             &repository,
-            &[crate::repositories::git_sessions::validation::RefUpdate {
+            &[codeyard_repos::validation::RefUpdate {
                 reference: reference.to_owned(),
                 old: old.clone(),
                 new: new.clone(),
@@ -2356,7 +2356,7 @@ impl LocalStore {
             return Ok((old, new));
         }
         let bypasses =
-            crate::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
+            codeyard_repos::push_protection::refuse_blocked_secrets(
                 pool,
                 &repository,
                 actor,
@@ -2500,7 +2500,7 @@ impl LocalStore {
             &[(
                 reference,
                 old,
-                crate::repositories::store::editor::ZERO.to_owned(),
+                codeyard_repos::editor::ZERO.to_owned(),
             )],
         )
         .await
@@ -2563,9 +2563,9 @@ impl LocalStore {
         crate::repositories::releases::immutable::check_current_tag_updates(
             pool,
             &repository,
-            &[crate::repositories::git_sessions::validation::RefUpdate {
+            &[codeyard_repos::validation::RefUpdate {
                 reference: reference.clone(),
-                old: crate::repositories::store::editor::ZERO.to_owned(),
+                old: codeyard_repos::editor::ZERO.to_owned(),
                 new: tag.sha.clone(),
             }],
         )
@@ -2574,7 +2574,7 @@ impl LocalStore {
         self.blocking(move |path| git::check_tag_budget(path, None, &[replacement]))
             .await?;
         let bypasses =
-            crate::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
+            codeyard_repos::push_protection::refuse_blocked_secrets(
                 pool,
                 &repository,
                 actor,
@@ -2617,7 +2617,7 @@ impl LocalStore {
                 actor,
                 &[(
                     reference,
-                    crate::repositories::store::editor::ZERO.to_owned(),
+                    codeyard_repos::editor::ZERO.to_owned(),
                     tag.sha.clone(),
                 )],
             )
@@ -2659,10 +2659,10 @@ impl LocalStore {
         crate::repositories::releases::immutable::check_current_tag_updates(
             pool,
             &repository,
-            &[crate::repositories::git_sessions::validation::RefUpdate {
+            &[codeyard_repos::validation::RefUpdate {
                 reference: reference.clone(),
                 old: old.clone(),
-                new: crate::repositories::store::editor::ZERO.to_owned(),
+                new: codeyard_repos::editor::ZERO.to_owned(),
             }],
         )
         .await?;
@@ -2692,7 +2692,7 @@ impl LocalStore {
             &[(
                 reference,
                 old,
-                crate::repositories::store::editor::ZERO.to_owned(),
+                codeyard_repos::editor::ZERO.to_owned(),
             )],
         )
         .await
@@ -2704,8 +2704,8 @@ impl LocalStore {
         content: &[u8],
         author: &str,
         email: &str,
-    ) -> Result<crate::repositories::store::editor::PreparedFile, RepoError> {
-        crate::repositories::store::editor::prepare(
+    ) -> Result<codeyard_repos::editor::PreparedFile, RepoError> {
+        codeyard_repos::editor::prepare(
             &self.admitted_path(true).await?,
             write,
             content,
@@ -2721,9 +2721,9 @@ impl LocalStore {
         content: &[u8],
         author: &str,
         email: &str,
-        identities: &crate::repositories::store::editor::CommitIdentities,
-    ) -> Result<crate::repositories::store::editor::PreparedFile, RepoError> {
-        crate::repositories::store::editor::prepare_with_identities(
+        identities: &codeyard_repos::editor::CommitIdentities,
+    ) -> Result<codeyard_repos::editor::PreparedFile, RepoError> {
+        codeyard_repos::editor::prepare_with_identities(
             &self.admitted_path(true).await?,
             write,
             content,
@@ -2736,12 +2736,12 @@ impl LocalStore {
 
     pub(super) async fn prepare_upload(
         &self,
-        write: &crate::repositories::store::editor::UploadWrite,
+        write: &codeyard_repos::editor::UploadWrite,
         content: &[u8],
         author: &str,
         email: &str,
-    ) -> Result<crate::repositories::store::editor::PreparedFile, RepoError> {
-        crate::repositories::store::editor::prepare_upload(
+    ) -> Result<codeyard_repos::editor::PreparedFile, RepoError> {
+        codeyard_repos::editor::prepare_upload(
             &self.admitted_path(true).await?,
             write,
             content,
@@ -2757,7 +2757,7 @@ impl LocalStore {
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
-        prepared: &crate::repositories::store::editor::PreparedFile,
+        prepared: &codeyard_repos::editor::PreparedFile,
         dependency_publication: Option<&codeyard_db_repos::repositories::dependencies::Publication>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<CommitInfo, RepoError>> + Send>>
     {
@@ -2789,15 +2789,15 @@ impl LocalStore {
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
-        prepared: &crate::repositories::store::editor::PreparedFile,
+        prepared: &codeyard_repos::editor::PreparedFile,
         dependency_publication: Option<&codeyard_db_repos::repositories::dependencies::Publication>,
     ) -> Result<CommitInfo, RepoError> {
         self.admitted_path(false).await?;
-        let staged = crate::repositories::store::editor::claim_staged(self.path(), prepared)?;
+        let staged = codeyard_repos::editor::claim_staged(self.path(), prepared)?;
         let prepared_path = staged.as_ref().map_or(self.path(), |staged| staged.path());
         let quarantine = staged.as_ref().map(|staged| staged.path().join("objects"));
         if self.quorum_context(pool, repo_id).await?.is_some() {
-            crate::repositories::store::editor::validate_staged(
+            codeyard_repos::editor::validate_staged(
                 self.path(),
                 prepared,
                 staged.as_deref(),
@@ -2880,7 +2880,7 @@ impl LocalStore {
         // A saved file is scanned like a push. It must not carry a secret that push protection
         // blocks, even though it never goes through receive-pack.
         let bypasses =
-            crate::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
+            codeyard_repos::push_protection::refuse_blocked_secrets(
                 pool,
                 &repository,
                 actor,
@@ -2913,7 +2913,7 @@ impl LocalStore {
                     prepared
                         .expected
                         .clone()
-                        .unwrap_or_else(|| crate::repositories::store::editor::ZERO.to_owned()),
+                        .unwrap_or_else(|| codeyard_repos::editor::ZERO.to_owned()),
                     prepared.commit.sha.clone(),
                 )],
                 quarantine.clone(),
@@ -2954,7 +2954,7 @@ impl LocalStore {
                         authority.token_id(),
                         vec![(
                             prepared.expected.clone().unwrap_or_else(|| {
-                                crate::repositories::store::editor::ZERO.to_owned()
+                                codeyard_repos::editor::ZERO.to_owned()
                             }),
                             prepared.commit.sha.clone(),
                         )],
@@ -2975,14 +2975,14 @@ impl LocalStore {
             prepared.commit.clone()
         } else {
             publication
-                .scope(crate::repositories::store::editor::publish_staged(
+                .scope(codeyard_repos::editor::publish_staged(
                     self.path(),
                     prepared,
                     staged.as_deref(),
                 ))
                 .await?
         };
-        crate::repositories::store::editor::release_staged(prepared);
+        codeyard_repos::editor::release_staged(prepared);
         let bypass_followup = record_secret_bypasses(pool, repo_id, actor, bypasses).await;
         let followup = self
             .after_ref_change(
@@ -2994,7 +2994,7 @@ impl LocalStore {
                     prepared
                         .expected
                         .clone()
-                        .unwrap_or_else(|| crate::repositories::store::editor::ZERO.to_owned()),
+                        .unwrap_or_else(|| codeyard_repos::editor::ZERO.to_owned()),
                     commit.sha.clone(),
                 )],
             )
@@ -3020,7 +3020,7 @@ impl LocalStore {
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
-        moves: &[crate::webhooks::ref_changes::RefMove],
+        moves: &[codeyard_repos::ref_changes::RefMove],
     ) -> Result<(), RepoError> {
         // In-flight contributor proofs may have observed the pre-publication head after
         // the preparation-time version bump. Invalidate them before other follow-ups.
@@ -3029,7 +3029,7 @@ impl LocalStore {
                 .await
                 .map_err(|_| RepoError::applied_followup_failed());
         let activity =
-            crate::repositories::activity::record_moves(pool, repo_id, actor, self.path(), moves)
+            codeyard_repos::activity::record_moves(pool, repo_id, actor, self.path(), moves)
                 .await
                 .map_err(|error| {
                     tracing::error!(repo_id,%error,"could not record accepted ref activity");
@@ -3052,7 +3052,7 @@ impl LocalStore {
             let updates: Vec<_> = moves
                 .iter()
                 .map(|(reference, old, new)| {
-                    crate::repositories::git_sessions::validation::RefUpdate {
+                    codeyard_repos::validation::RefUpdate {
                         reference: reference.clone(),
                         old: old.clone(),
                         new: new.clone(),
@@ -3078,7 +3078,7 @@ impl LocalStore {
         let accepted = async {
             for (reference, _, new) in moves
                 .iter()
-                .filter(|(_, _, new)| new != crate::repositories::store::editor::ZERO)
+                .filter(|(_, _, new)| new != codeyard_repos::editor::ZERO)
             {
                 // Web and API saves get the same incremental secret scan that a push gets.
                 codeyard_db_security::secret_scanning::enqueue(pool, repo_id, new, actor)
@@ -3543,7 +3543,7 @@ impl LocalStore {
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
         let bypasses =
-            crate::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
+            codeyard_repos::push_protection::refuse_blocked_secrets(
                 pool,
                 &repository,
                 actor,
@@ -4685,7 +4685,7 @@ impl LocalStore {
         if session.stateless {
             command.arg("--stateless-rpc");
         }
-        if let Some(protocol) = crate::repositories::git_sessions::validation::protocol(
+        if let Some(protocol) = codeyard_repos::validation::protocol(
             session.git_protocol.as_deref(),
         )? {
             command.env("GIT_PROTOCOL", protocol);
