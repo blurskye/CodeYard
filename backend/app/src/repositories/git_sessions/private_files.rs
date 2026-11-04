@@ -32,7 +32,7 @@ fn same_inode(left: &Metadata, right: &Metadata) -> bool {
     left.dev() == right.dev() && left.ino() == right.ino()
 }
 
-pub(crate) fn ancestors(path: &Path, uid: u32) -> Result<()> {
+pub fn ancestors(path: &Path, uid: u32) -> Result<()> {
     for ancestor in path.ancestors() {
         let meta = std::fs::symlink_metadata(ancestor)?;
         ensure!(

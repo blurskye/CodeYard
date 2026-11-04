@@ -13,14 +13,14 @@ use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 use tokio::time::Duration;
 
-pub(crate) const CHUNK: usize = 32 * 1024;
+pub const CHUNK: usize = 32 * 1024;
 pub const STDIN: u8 = 0;
 pub const EOF: u8 = 1;
 pub const STDOUT: u8 = 2;
 pub const STDERR: u8 = 3;
 pub const EXIT: u8 = 4;
-pub(crate) const CONTROL_TIMEOUT: Duration = Duration::from_secs(120);
-pub(crate) const SESSION_TIMEOUT: Duration = codeyard_git::repository::process::SESSION_TIMEOUT;
+pub const CONTROL_TIMEOUT: Duration = Duration::from_secs(120);
+pub const SESSION_TIMEOUT: Duration = codeyard_git::repository::process::SESSION_TIMEOUT;
 const IO_TIMEOUT: Duration = codeyard_git::repository::process::IDLE_TIMEOUT;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -65,6 +65,7 @@ uuid = { workspace = true, features = ["v4"] }
 zip.workspace = true
 
 [dev-dependencies]
+codeyard-ssh.workspace = true
 codeyard-api-rest.workspace = true
 
 [lints]

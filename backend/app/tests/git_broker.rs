@@ -1474,7 +1474,7 @@ impl PushFixture {
         let state = self.state.clone();
         let mut server = if ssh {
             Some(
-                codeyard_app::ssh::server::SshServer::new(
+                codeyard_ssh::server::SshServer::new(
                     state.pool.clone(),
                     None,
                     state.ci_runs.clone(),

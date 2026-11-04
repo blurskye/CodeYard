@@ -562,7 +562,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
                     .host_key
                     .to_str()
                     .context("host key path is not UTF-8")?;
-                let mut server = codeyard_app::ssh::server::SshServer::new(
+                let mut server = codeyard_ssh::server::SshServer::new(
                     pool.clone(),
                     Some(host_key),
                     ci_runs.clone(),

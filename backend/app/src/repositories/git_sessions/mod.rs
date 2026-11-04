@@ -97,7 +97,7 @@ mod task_tests {
 
 #[derive(Debug, thiserror::Error)]
 #[error("Git writes were accepted but post-push bookkeeping or CI dispatch failed")]
-pub(crate) struct PostReceiveFailed;
+pub struct PostReceiveFailed;
 
 /// The credential is rechecked by the receive hooks, not just at HTTP/SSH ingress.
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]

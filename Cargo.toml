@@ -36,6 +36,7 @@ unicode-normalization.workspace = true
 
 # No SQLx, SSH, Git, AWS, credentials or server crypto in the browser graph.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+codeyard-ssh.workspace = true
 async-graphql.workspace = true
 async-graphql-derive.workspace = true
 async-graphql-parser.workspace = true
@@ -143,7 +144,7 @@ debug = false
 
 [workspace]
 resolver = "2"
-members = ["backend/test-support", "backend/api/rest", "backend/api/graphql", "backend/api/repos", "backend/api/github", "backend/api/http", "backend/app", "backend/notifications", "backend/identity", "backend/api/github-graphql", "backend/ci/runner", "backend/db/actions", "backend/db/cluster", "backend/db/core", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/model", "backend/support", "webui"]
+members = ["backend/ssh", "backend/test-support", "backend/api/rest", "backend/api/graphql", "backend/api/repos", "backend/api/github", "backend/api/http", "backend/app", "backend/notifications", "backend/identity", "backend/api/github-graphql", "backend/ci/runner", "backend/db/actions", "backend/db/cluster", "backend/db/core", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/model", "backend/support", "webui"]
 default-members = [".", "backend/api/github-graphql", "backend/ci/runner", "backend/db/actions", "backend/db/cluster", "backend/db/core", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/model", "backend/support", "webui"]
 
 [workspace.package]
@@ -157,6 +158,7 @@ undocumented_unsafe_blocks = "deny"
 allow_attributes_without_reason = "deny"
 
 [workspace.dependencies]
+codeyard-ssh = { path = "backend/ssh" }
 codeyard-test-support = { path = "backend/test-support" }
 codeyard-api-rest = { path = "backend/api/rest" }
 codeyard-api-graphql = { path = "backend/api/graphql" }

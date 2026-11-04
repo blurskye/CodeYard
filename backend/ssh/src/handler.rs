@@ -1,12 +1,12 @@
-use crate::ci::runs::CiRuns;
-use crate::repositories::git_sessions::GitTasks;
-use crate::repositories::git_sessions::ReceiveCredential;
-use crate::repositories::store::repo_store;
-use crate::repositories::store::types::GitService;
-use crate::repositories::store::types::GitSession;
-use crate::repositories::store::types::GitStreams;
-use crate::repositories::store::RepoStore;
-use crate::ssh::rate_limit::RateLimiter;
+use codeyard_app::ci::runs::CiRuns;
+use codeyard_app::repositories::git_sessions::GitTasks;
+use codeyard_app::repositories::git_sessions::ReceiveCredential;
+use codeyard_app::repositories::store::repo_store;
+use codeyard_app::repositories::store::types::GitService;
+use codeyard_app::repositories::store::types::GitSession;
+use codeyard_app::repositories::store::types::GitStreams;
+use codeyard_app::repositories::store::RepoStore;
+use crate::rate_limit::RateLimiter;
 use anyhow::Result;
 use bytes::Bytes;
 use codeyard_db_core::models::AccessLevel;
@@ -218,7 +218,7 @@ impl GitSshHandler {
         repo: &Repository,
         write: bool,
     ) -> Result<Option<ReceiveCredential>> {
-        use crate::repositories::git_sessions::CredentialRefusal;
+        use codeyard_app::repositories::git_sessions::CredentialRefusal;
         let credential = if let Some(key) = self.deploy_key {
             ReceiveCredential::DeployKey(key)
         } else if self.user.is_some() {
@@ -453,7 +453,7 @@ impl russh::server::Handler for GitSshHandler {
             .filter(|_| variable_name == "GIT_PROTOCOL")
             .and_then(|state| {
                 let protocol =
-                    crate::repositories::git_sessions::validation::protocol(Some(variable_value))
+                    codeyard_app::repositories::git_sessions::validation::protocol(Some(variable_value))
                         .ok()?;
                 state.git_protocol = protocol.map(str::to_owned);
                 Some(())
@@ -531,7 +531,7 @@ impl russh::server::Handler for GitSshHandler {
             return Ok(());
         }
         // Parse git command
-        let git_cmd = match crate::repositories::git_sessions::validation::parse_command(&command) {
+        let git_cmd = match codeyard_app::repositories::git_sessions::validation::parse_command(&command) {
             Ok(cmd) => cmd,
             Err(_) => {
                 self.refuse_command(
@@ -636,13 +636,13 @@ impl russh::server::Handler for GitSshHandler {
                     _permit = wait_for_session_slot(&store, &queued).await?;
                 }
                 match credential {
-                    ReceiveCredential::DeployKey(id) => { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), crate::repositories::deploy_keys::record_use(&pool, id)).await; }
+                    ReceiveCredential::DeployKey(id) => { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), codeyard_app::repositories::deploy_keys::record_use(&pool, id)).await; }
                     ReceiveCredential::SshKey(id) => { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), codeyard_db_identity::users::ssh_keys::touch_ssh_key(&pool, id)).await; }
                     _ => {}
                 }
                 let (actor,_) = tokio::time::timeout(std::time::Duration::from_secs(5), credential.authorize(&pool, &repo, git_cmd.write)).await??;
                 let visitor=match credential { ReceiveCredential::DeployKey(id)=>codeyard_db_repos::repositories::traffic::Identity::deploy_key(id), _=>codeyard_db_repos::repositories::traffic::Identity::account(actor.id) };
-                let observation=crate::repositories::traffic::clone::Observation::default();
+                let observation=codeyard_app::repositories::traffic::clone::Observation::default();
                 let mut input=observation.input(io.input.as_mut().expect("open input"));
                 let mut output=observation.output(&mut output);
                 let execution = store.git_session(options, receive, GitStreams {
@@ -658,7 +658,7 @@ impl russh::server::Handler for GitSshHandler {
                 drop(_permit);
                 drop(_task_slot);
                 if !git_cmd.write && status.success() && observation.initial_transfer() {
-                    if let Some(visitor)=visitor { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), crate::repositories::traffic::observe(&pool,repo.id,&visitor,&codeyard_db_repos::repositories::traffic::Metric::clone_transfer())).await; }
+                    if let Some(visitor)=visitor { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), codeyard_app::repositories::traffic::observe(&pool,repo.id,&visitor,&codeyard_db_repos::repositories::traffic::Metric::clone_transfer())).await; }
                 }
                 Ok::<_,anyhow::Error>(status)
             }.await;
@@ -676,7 +676,7 @@ impl russh::server::Handler for GitSshHandler {
                         {
                             "Git sessions busy\n"
                         } else if error
-                            .is::<crate::repositories::git_sessions::PostReceiveFailed>(
+                            .is::<codeyard_app::repositories::git_sessions::PostReceiveFailed>(
                         ) {
                             "ERR Git writes were accepted; post-push bookkeeping or CI dispatch failed.\n"
                         } else if error
@@ -782,7 +782,7 @@ mod tests {
             ("owner/project.git.git.git", "project.git.git"),
         ] {
             for (service, write) in [("git-upload-pack", false), ("git-receive-pack", true)] {
-                let parsed = crate::repositories::git_sessions::validation::parse_command(
+                let parsed = codeyard_app::repositories::git_sessions::validation::parse_command(
                     &format!("{service} '{path}'"),
                 )
                 .unwrap();
@@ -792,13 +792,13 @@ mod tests {
             }
         }
         assert!(
-            crate::repositories::git_sessions::validation::parse_command(
+            codeyard_app::repositories::git_sessions::validation::parse_command(
                 "git-upload-pack 'owner/a/b.git'"
             )
             .is_err()
         );
         assert!(
-            crate::repositories::git_sessions::validation::parse_command(
+            codeyard_app::repositories::git_sessions::validation::parse_command(
                 "not-git 'owner/project.git'"
             )
             .is_err()
@@ -809,13 +809,13 @@ mod tests {
     fn builtin_git_commands_use_the_shared_parser() {
         // The built-in server uses the OpenSSH helper's parser, which refuses extra slashes.
         assert!(
-            crate::repositories::git_sessions::validation::parse_command(
+            codeyard_app::repositories::git_sessions::validation::parse_command(
                 "git-upload-pack //alice/repo.git"
             )
             .is_err()
         );
         assert!(
-            crate::repositories::git_sessions::validation::parse_command(
+            codeyard_app::repositories::git_sessions::validation::parse_command(
                 "git-upload-pack 'alice/repo.git'"
             )
             .is_ok()
@@ -926,7 +926,7 @@ mod tests {
             .clone();
         let ci = Arc::new(CiRuns::new(
             pool.clone(),
-            Arc::new(crate::ci::config::CiConfig::default()),
+            Arc::new(codeyard_app::ci::config::CiConfig::default()),
             Arc::new(tokio::sync::Notify::new()),
             None,
             Arc::new(codeyard_notifications::broadcast::NotificationBroadcaster::new(&pool)),
@@ -984,7 +984,7 @@ mod tests {
         let pool = DbPool::from(pool);
         let ci_service = Arc::new(CiRuns::new(
             pool.clone(),
-            Arc::new(crate::ci::config::CiConfig::default()),
+            Arc::new(codeyard_app::ci::config::CiConfig::default()),
             Arc::new(tokio::sync::Notify::new()),
             None,
             Arc::new(codeyard_notifications::broadcast::NotificationBroadcaster::new(&pool)),

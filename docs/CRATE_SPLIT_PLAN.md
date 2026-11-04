@@ -105,7 +105,7 @@ and results stay the same. A stage can be the last one.
    (including pulls and issues), `actions`, `security` and `cluster` each own both
    engines. Shared transaction helpers and their records live under `db/core/src/queries`.
    All workspace targets check.
-6. **Services (partial).** `identity` and `notifications` are extracted. Repository
+6. **Services (partial).** `identity`, `notifications` and `ssh` are extracted. Repository
    authority, identity mail links and delivery helpers have one lower owner.
    `RepoStore` is a concrete enum-backed type, not the trait assumed above; its local
    and remote implementations call cluster RPC and CI, which call the concrete store
@@ -118,7 +118,7 @@ and results stay the same. A stage can be the last one.
    binary wiring. All workspace targets check.
 8. **`app`.** Source layout complete. `backend/app/src` is the app library;
    `backend/app/wiring` contains the existing binary package's entry points, CLI
-   and node startup. SSH, backups and storage live in the app library. The source
+   and node startup. Backups and storage live in the app library. SSH lives in `backend/ssh/`. The source
    stages are committed before workspace, Clippy and WASM checks begin. Broker
    tests now live in `backend/app/tests/git_broker.rs` and link the app library
    with REST through one `AppState`. Hook barriers have one shared owner.

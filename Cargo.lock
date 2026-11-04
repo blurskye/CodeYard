@@ -1385,6 +1385,7 @@ dependencies = [
  "codeyard-identity",
  "codeyard-model",
  "codeyard-notifications",
+ "codeyard-ssh",
  "codeyard-support",
  "codeyard-webui",
  "croner",
@@ -9512,6 +9513,7 @@ dependencies = [
  "codeyard-identity",
  "codeyard-model",
  "codeyard-notifications",
+ "codeyard-ssh",
  "codeyard-support",
  "codeyard-webui",
  "croner",
@@ -9784,3 +9786,32 @@ dependencies = [
  "url",
  "uuid",
 ]
+
+[[package]]
+name = "codeyard-ssh"
+version = "0.1.5"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "codeyard-app",
+ "codeyard-db-cluster",
+ "codeyard-db-core",
+ "codeyard-db-identity",
+ "codeyard-db-repos",
+ "codeyard-git",
+ "codeyard-notifications",
+ "codeyard-support",
+ "git2",
+ "libc",
+ "rand 0.8.8",
+ "russh",
+ "serde_json",
+ "sqlx",
+ "ssh-key 0.6.7",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+

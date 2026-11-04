@@ -8,18 +8,18 @@ use std::path::Component;
 use std::path::Path;
 
 pub(crate) const MAX_HEADER: usize = 512 * 1024;
-pub(crate) const MAX_HOOK_BYTES: usize = 256 * 1024;
+pub const MAX_HOOK_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_UPDATES: usize = 256;
 pub(crate) const ZERO_SHA: &str = "0000000000000000000000000000000000000000";
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct GitCommand {
+pub struct GitCommand {
     pub owner: String,
     pub repo: String,
     pub write: bool,
 }
 
-pub(crate) fn parse_command(command: &str) -> Result<GitCommand> {
+pub fn parse_command(command: &str) -> Result<GitCommand> {
     // Room for the longest owner and repository names that registration accepts.
     ensure!(command.len() <= 2048, "invalid Git command");
     let (service, path) = command
@@ -95,7 +95,7 @@ pub fn shell_safe_path(path: &Path) -> Result<&str> {
     Ok(value)
 }
 
-pub(crate) fn protocol(value: Option<&str>) -> Result<Option<&str>> {
+pub fn protocol(value: Option<&str>) -> Result<Option<&str>> {
     match value {
         None | Some("") => Ok(None),
         Some("version=1") => Ok(Some("version=1")),
@@ -105,7 +105,7 @@ pub(crate) fn protocol(value: Option<&str>) -> Result<Option<&str>> {
 }
 
 /// Parse and re-encode the wire key, never echo caller input or a DB comment/options.
-pub(crate) fn canonical_key(key_type: &str, blob: &str) -> Result<String> {
+pub fn canonical_key(key_type: &str, blob: &str) -> Result<String> {
     codeyard_db_identity::users::ssh_keys::canonical_key(key_type, blob)
 }
 
@@ -151,7 +151,7 @@ pub(crate) fn validate_updates(updates: &[RefUpdate]) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn parse_updates(input: &[u8]) -> Result<Vec<RefUpdate>> {
+pub fn parse_updates(input: &[u8]) -> Result<Vec<RefUpdate>> {
     let updates = parse_update_lines(input)?;
     validate_updates(&updates)?;
     Ok(updates)
@@ -176,7 +176,7 @@ pub(crate) fn validate_transaction_updates(updates: &[RefUpdate]) -> Result<()> 
     Ok(())
 }
 
-pub(crate) fn parse_transaction_updates(input: &[u8]) -> Result<Vec<RefUpdate>> {
+pub fn parse_transaction_updates(input: &[u8]) -> Result<Vec<RefUpdate>> {
     if input.is_empty() {
         return Ok(Vec::new());
     }

@@ -1,18 +1,18 @@
-use crate::repositories::git_sessions::private_files::connect as connect_private;
-use crate::repositories::git_sessions::protocol::Request;
-use crate::repositories::git_sessions::protocol::CHUNK;
-use crate::repositories::git_sessions::protocol::EOF;
-use crate::repositories::git_sessions::protocol::EXIT;
-use crate::repositories::git_sessions::protocol::STDERR;
-use crate::repositories::git_sessions::protocol::STDIN;
-use crate::repositories::git_sessions::protocol::STDOUT;
-use crate::repositories::git_sessions::validation::canonical_key;
-use crate::repositories::git_sessions::validation::parse_command;
-use crate::repositories::git_sessions::validation::parse_updates;
-use crate::repositories::git_sessions::validation::protocol as git_protocol;
-use crate::repositories::git_sessions::validation::shell_safe_path;
-use crate::repositories::git_sessions::validation::MAX_HOOK_BYTES;
-use crate::ssh::openssh::Commands;
+use codeyard_app::repositories::git_sessions::private_files::connect as connect_private;
+use codeyard_app::repositories::git_sessions::protocol::Request;
+use codeyard_app::repositories::git_sessions::protocol::CHUNK;
+use codeyard_app::repositories::git_sessions::protocol::EOF;
+use codeyard_app::repositories::git_sessions::protocol::EXIT;
+use codeyard_app::repositories::git_sessions::protocol::STDERR;
+use codeyard_app::repositories::git_sessions::protocol::STDIN;
+use codeyard_app::repositories::git_sessions::protocol::STDOUT;
+use codeyard_app::repositories::git_sessions::validation::canonical_key;
+use codeyard_app::repositories::git_sessions::validation::parse_command;
+use codeyard_app::repositories::git_sessions::validation::parse_updates;
+use codeyard_app::repositories::git_sessions::validation::protocol as git_protocol;
+use codeyard_app::repositories::git_sessions::validation::shell_safe_path;
+use codeyard_app::repositories::git_sessions::validation::MAX_HOOK_BYTES;
+use crate::openssh::Commands;
 use anyhow::ensure;
 use anyhow::Result;
 use std::fs::File;
@@ -69,7 +69,7 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
             key_id,
             deploy_key_id,
         } => {
-            use crate::repositories::git_sessions::ReceiveCredential;
+            use codeyard_app::repositories::git_sessions::ReceiveCredential;
             let credential = match (key_id, deploy_key_id) {
                 (Some(id), None) => ReceiveCredential::SshKey(id),
                 (None, Some(id)) => ReceiveCredential::DeployKey(id),
@@ -109,7 +109,7 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
             repo_id,
             phase,
         } => {
-            use crate::repositories::git_sessions::protocol::TransactionPhase;
+            use codeyard_app::repositories::git_sessions::protocol::TransactionPhase;
             let phase = match phase.as_str() {
                 // Newer Git runs the hook once before it locks the references; only the
                 // later phases carry the final old and new values.
@@ -136,7 +136,7 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
         ),
     };
     let mut connection = connect_private(&socket).await?;
-    crate::repositories::git_sessions::protocol::write_request(&mut connection, &request).await?;
+    codeyard_app::repositories::git_sessions::protocol::write_request(&mut connection, &request).await?;
     let (mut reader, mut writer) = connection.into_split();
     let mut output = stdio(std::io::stdout().as_fd())?;
     let mut errors = stdio(std::io::stderr().as_fd())?;
@@ -145,7 +145,7 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
     let status = if streaming {
         let input = pump_input(stdin()?, &mut writer);
         tokio::pin!(input);
-        timeout(crate::repositories::git_sessions::protocol::SESSION_TIMEOUT + Duration::from_secs(5), async {
+        timeout(codeyard_app::repositories::git_sessions::protocol::SESSION_TIMEOUT + Duration::from_secs(5), async {
             tokio::select! {
                 result = &mut receive => result,
                 result = &mut input => {
@@ -170,7 +170,7 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
         .await??
     } else {
         timeout(
-            crate::repositories::git_sessions::protocol::CONTROL_TIMEOUT + Duration::from_secs(5),
+            codeyard_app::repositories::git_sessions::protocol::CONTROL_TIMEOUT + Duration::from_secs(5),
             receive,
         )
         .await??
@@ -204,7 +204,7 @@ async fn refuse_unreadable_objects() -> Result<()> {
         .stderr(std::process::Stdio::null());
     process::read_stream_inherited(
         command,
-        crate::repositories::git_sessions::protocol::CONTROL_TIMEOUT,
+        codeyard_app::repositories::git_sessions::protocol::CONTROL_TIMEOUT,
         |stdout, _| async move {
             let mut lines = BufReader::new(stdout).lines();
             while let Some(line) = lines.next_line().await? {
@@ -229,7 +229,7 @@ async fn hook_request(
     key_id: i64,
     repo_id: i64,
     post: bool,
-    phase: Option<crate::repositories::git_sessions::protocol::TransactionPhase>,
+    phase: Option<codeyard_app::repositories::git_sessions::protocol::TransactionPhase>,
 ) -> Result<Request> {
     ensure!(key_id > 0 && repo_id > 0, "invalid key/repository ID");
     let token = std::env::var("GITSERV_OPENSSH_OPERATION")
@@ -252,7 +252,7 @@ async fn hook_request(
             repo_id,
             token,
             phase,
-            updates: crate::repositories::git_sessions::validation::parse_transaction_updates(
+            updates: codeyard_app::repositories::git_sessions::validation::parse_transaction_updates(
                 &bytes,
             )?,
         });
@@ -280,12 +280,12 @@ async fn pump_input<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     loop {
         let count = input.read(&mut bytes).await?;
         if count == 0 {
-            crate::repositories::git_sessions::protocol::write_frame(writer, EOF, &[]).await?;
+            codeyard_app::repositories::git_sessions::protocol::write_frame(writer, EOF, &[]).await?;
             // Do not half-close: keep the socket open until the exit frame so
             // the broker can distinguish stdin EOF from a helper disconnect.
             return Ok(());
         }
-        crate::repositories::git_sessions::protocol::write_frame(writer, STDIN, &bytes[..count])
+        codeyard_app::repositories::git_sessions::protocol::write_frame(writer, STDIN, &bytes[..count])
             .await?;
     }
 }
@@ -296,7 +296,7 @@ async fn receive_output<R: AsyncRead + Unpin, W: AsyncWrite + Unpin, E: AsyncWri
     errors: &mut E,
 ) -> Result<i32> {
     loop {
-        let (tag, bytes) = crate::repositories::git_sessions::protocol::read_frame(reader).await?;
+        let (tag, bytes) = codeyard_app::repositories::git_sessions::protocol::read_frame(reader).await?;
         match tag {
             STDOUT => {
                 output.write_all(&bytes).await?;

@@ -178,7 +178,7 @@ pub fn run() -> Result<()> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let status = runtime.block_on(codeyard_app::ssh::openssh::run_command(action))?;
+        let status = runtime.block_on(codeyard_ssh::openssh::run_command(action))?;
         std::process::exit(status.clamp(0, 255));
     }
     #[cfg(not(unix))]

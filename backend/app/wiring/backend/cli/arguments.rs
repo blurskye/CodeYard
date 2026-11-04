@@ -67,7 +67,7 @@ pub(super) enum Commands {
     #[cfg(unix)]
     Ssh {
         #[command(subcommand)]
-        action: codeyard_app::ssh::openssh::Commands,
+        action: codeyard_ssh::openssh::Commands,
     },
 
     /// User management

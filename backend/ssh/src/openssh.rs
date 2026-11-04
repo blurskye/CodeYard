@@ -71,7 +71,7 @@ fn positive_id(raw: &str) -> std::result::Result<i64, String> {
 pub async fn run_command(command: Commands) -> Result<i32> {
     #[cfg(target_os = "linux")]
     {
-        crate::ssh::openssh::cli::run(command).await
+        crate::openssh::cli::run(command).await
     }
     #[cfg(not(target_os = "linux"))]
     {
