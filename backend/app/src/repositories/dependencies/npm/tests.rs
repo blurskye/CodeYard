@@ -1,3 +1,4 @@
+use super::*;
 use crate::npm::dependency_name;
 use crate::repositories::dependencies::npm::formatted;
 use crate::repositories::dependencies::npm::json;
@@ -7,6 +8,7 @@ use crate::repositories::dependencies::npm::Archive;
 use crate::repositories::dependencies::npm::Lockfile;
 use serde_json::json;
 use sha2::Digest;
+use std::io::Write;
 
 fn archive(document: Value) -> (Value, Vec<u8>) {
     archive_extra(document, None)

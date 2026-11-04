@@ -4,7 +4,6 @@ use crate::organizations::team_invitations::TeamInvitation;
 use crate::organizations::teams::TeamRole;
 use crate::organizations::OrganizationPage;
 use crate::postgres::organizations::authority::read_scoped_team;
-use crate::postgres::organizations::authority::require_org;
 use crate::postgres::organizations::authority::scoped_team;
 use crate::postgres::organizations::authority::team_visible;
 use crate::postgres::organizations::invitations::LIVE;

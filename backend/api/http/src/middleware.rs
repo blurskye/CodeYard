@@ -14,6 +14,7 @@ use axum::Json;
 use codeyard_app::app::AppState;
 use codeyard_model::http_config::WebConfig;
 use futures_util::Stream;
+use futures_util::StreamExt;
 use std::collections::HashSet;
 use std::io;
 use std::net::IpAddr;

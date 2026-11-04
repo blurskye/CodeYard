@@ -1,17 +1,16 @@
 use crate::organizations::properties::checked_changes;
 use crate::organizations::properties::checked_definitions;
+use crate::organizations::properties::query;
 use crate::organizations::properties::DefinitionSummary;
 use crate::organizations::properties::RepositoryMetadata;
 use crate::organizations::properties::RepositoryValues;
 use crate::organizations::properties::MAX_DEFINITIONS;
 use crate::postgres::organizations::authority::credential;
-use crate::postgres::organizations::authority::require_org;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Repository;
-use codeyard_db_core::queries::organizations::properties::effective_values;
 use codeyard_db_core::queries::organizations::properties::invalid;
 use codeyard_db_core::queries::organizations::properties::Definition;
 use codeyard_db_core::queries::organizations::properties::DefinitionInput;
@@ -21,7 +20,6 @@ use codeyard_db_core::queries::organizations::properties::PropertyValue;
 use codeyard_db_core::queries::organizations::properties::Refusal;
 use codeyard_db_core::queries::organizations::properties::ValueInput;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::organizations::authority::authority;
 use codeyard_db_core::queries::postgres::organizations::authority::begin;
 use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
 use codeyard_db_core::queries::postgres::organizations::authority::read_authority;
@@ -575,5 +573,3 @@ pub async fn list_values(
 }
 
 use codeyard_db_core::queries::postgres::organizations::properties::values_on;
-
-use codeyard_db_core::queries::postgres::organizations::properties::definition;

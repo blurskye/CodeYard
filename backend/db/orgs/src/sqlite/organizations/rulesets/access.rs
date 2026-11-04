@@ -1,3 +1,4 @@
+use super::*;
 use crate::sqlite::organizations::authority::site_administrator;
 use crate::sqlite::organizations::rulesets::view;
 use codeyard_db_core::models::Repository;

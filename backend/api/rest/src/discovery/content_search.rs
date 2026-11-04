@@ -16,6 +16,7 @@ use codeyard_git::error::RepoError;
 use codeyard_git::CommitFilter;
 use codeyard_identity::repository_access::AccessError;
 use futures_util::stream;
+use futures_util::StreamExt;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use tokio::time::timeout_at;

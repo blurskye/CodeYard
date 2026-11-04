@@ -8,10 +8,10 @@ use crate::url;
 use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
-use codeyard_api_github::node_id;
 use codeyard_app::issues::comments::CreateCommentRequest;
 use codeyard_app::issues::mutations::CreateIssueRequest;
 use codeyard_app::issues::mutations::UpdateIssueRequest;
+use codeyard_model::node_id;
 use serde_json::json;
 use serde_json::Value;
 

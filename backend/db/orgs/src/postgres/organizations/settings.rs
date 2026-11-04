@@ -2,7 +2,6 @@ use crate::organizations::settings::Changes;
 use crate::organizations::settings::Settings;
 use crate::organizations::settings::Updated;
 use crate::postgres::organizations::authority::credential;
-use crate::postgres::organizations::authority::require_org;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;

@@ -1,6 +1,8 @@
+use super::*;
 use crate::code_scanning::parse;
 use crate::code_scanning::text;
 use crate::code_scanning::MAX_COMPRESSED;
+use std::io::Write;
 
 fn upload(sarif: Value) -> Upload {
     let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());

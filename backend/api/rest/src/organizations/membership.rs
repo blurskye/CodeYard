@@ -256,9 +256,11 @@ pub(super) async fn apply(
                 email,
                 role,
                 reinstate,
-                teams: Some(codeyard_db_orgs::organizations::InvitationTeams::Slugs(
-                    team_slugs,
-                )),
+                teams: Some(
+                    codeyard_db_orgs::organizations::invitations::InvitationTeams::Slugs(
+                        team_slugs,
+                    ),
+                ),
             };
             let outcome = super::create_organization_invitation(
                 pool,

@@ -3,9 +3,9 @@ use crate::mutations::text;
 use crate::unavailable;
 use crate::RequestContext;
 use crate::Result;
-use codeyard_api_github::node_id;
 use codeyard_db_repos::reactions::Subject;
 use codeyard_db_repos::reactions::Target;
+use codeyard_model::node_id;
 use serde_json::json;
 use serde_json::Value;
 

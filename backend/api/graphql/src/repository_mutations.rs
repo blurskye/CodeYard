@@ -7,11 +7,11 @@ use crate::unavailable;
 use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
-use codeyard_api_github::node_id;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 use codeyard_db_repos::repositories::records;
 use codeyard_db_repos::repositories::topics;
+use codeyard_model::node_id;
 use serde_json::json;
 use serde_json::Value;
 

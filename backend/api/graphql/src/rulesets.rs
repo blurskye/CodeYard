@@ -6,13 +6,13 @@ use crate::unavailable;
 use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
-use codeyard_api_github::node_id;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::rulesets::records::ListFilter;
 use codeyard_db_core::queries::rulesets::records::Owner;
 use codeyard_db_core::queries::rulesets::records::Page;
 use codeyard_db_core::queries::rulesets::records::Ruleset;
 use codeyard_db_core::queries::rulesets::Target;
+use codeyard_model::node_id;
 use serde_json::json;
 use serde_json::Value;
 
@@ -68,7 +68,7 @@ pub(super) async fn list(
     let mut rows = Vec::new();
     loop {
         let page = Page::new(rows.len() as i64, 100).map_err(unavailable)?;
-        let found = match codeyard_db_repos::rulesets::list_rulesets(
+        let found = match codeyard_db_repos::rulesets::operations::list_rulesets(
             &request.state.pool,
             Some(request.auth.user.id),
             owner,
@@ -112,7 +112,7 @@ pub(super) async fn node(id: i64, request: &RequestContext) -> Result<Value> {
         }
         _ => return Err(missing()),
     };
-    match codeyard_db_repos::rulesets::get_ruleset(
+    match codeyard_db_repos::rulesets::operations::get_ruleset(
         &request.state.pool,
         Some(request.auth.user.id),
         owner,

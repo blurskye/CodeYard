@@ -9,9 +9,6 @@ use codeyard_db_core::queries::credentials::Actor;
 use codeyard_db_core::queries::fine_grained_tokens::Policy;
 use codeyard_db_core::queries::fine_grained_tokens::Token;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::fine_grained_tokens::policy;
-use codeyard_db_core::queries::postgres::fine_grained_tokens::repositories;
-use codeyard_db_core::queries::postgres::fine_grained_tokens::selected;
 use sqlx::PgConnection;
 use sqlx::PgPool;
 

@@ -454,7 +454,7 @@ async fn contract(pg: bool) {
             orgs[0].id,
             metadata.id,
             first.id,
-            codeyard_db_orgs::organizations::TeamRepositoryPermission::new(1).unwrap(),
+            codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(1).unwrap(),
         )
         .await
         .unwrap(),
@@ -1360,7 +1360,7 @@ async fn contract(pg: bool) {
             orgs[0].id,
             scoped.id,
             first.id,
-            codeyard_db_orgs::organizations::TeamRepositoryPermission::new(3).unwrap(),
+            codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(3).unwrap(),
         )
         .await
         .unwrap(),

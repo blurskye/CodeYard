@@ -1,4 +1,5 @@
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::rulesets::records::ListFilter;
 use codeyard_db_core::queries::rulesets::records::Owner;

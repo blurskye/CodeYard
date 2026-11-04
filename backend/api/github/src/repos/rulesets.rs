@@ -209,7 +209,7 @@ async fn list(
         per_page: query.per_page,
     };
     let rows = outcome(
-        codeyard_db_repos::rulesets::list_rulesets(
+        codeyard_db_repos::rulesets::operations::list_rulesets(
             &state.pool,
             scope.actor,
             scope.owner,
@@ -245,7 +245,7 @@ async fn get_one(
 ) -> Result<Json<Value>> {
     let scope = Scope::resolve(&state, &headers, &params, false).await?;
     let row = outcome(
-        codeyard_db_repos::rulesets::get_ruleset(
+        codeyard_db_repos::rulesets::operations::get_ruleset(
             &state.pool,
             scope.actor,
             scope.owner,
@@ -269,7 +269,7 @@ async fn create(
     let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
     let input = Definition::parse(&input).map_err(|e| error(e.into()))?;
     let row = outcome(
-        codeyard_db_repos::rulesets::create_ruleset(
+        codeyard_db_repos::rulesets::operations::create_ruleset(
             &state.pool,
             scope.actor()?,
             scope.owner,
@@ -296,7 +296,7 @@ async fn update(
         serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?
     };
     let row = outcome(
-        codeyard_db_repos::rulesets::change_ruleset(
+        codeyard_db_repos::rulesets::operations::change_ruleset(
             &state.pool,
             scope.actor()?,
             scope.owner,
@@ -315,7 +315,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let scope = Scope::resolve(&state, &headers, &params, true).await?;
     outcome(
-        codeyard_db_repos::rulesets::remove_ruleset(
+        codeyard_db_repos::rulesets::operations::remove_ruleset(
             &state.pool,
             scope.actor()?,
             scope.owner,
@@ -335,7 +335,7 @@ async fn history(
 ) -> Result<Response> {
     let scope = Scope::resolve(&state, &headers, &params, false).await?;
     let rows = outcome(
-        codeyard_db_repos::rulesets::ruleset_versions(
+        codeyard_db_repos::rulesets::operations::ruleset_versions(
             &state.pool,
             scope.actor,
             scope.owner,
@@ -361,7 +361,7 @@ async fn version(
     let scope = Scope::resolve(&state, &headers, &params, false).await?;
     let ruleset = id(&params, "ruleset_id")?;
     let row = outcome(
-        codeyard_db_repos::rulesets::ruleset_version(
+        codeyard_db_repos::rulesets::operations::ruleset_version(
             &state.pool,
             scope.actor,
             scope.owner,

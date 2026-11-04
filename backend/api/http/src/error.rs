@@ -20,7 +20,7 @@ pub fn protection_write_error(
         );
     }
     use axum::{http::StatusCode, Json};
-    use codeyard_db_repos::repositories::ProtectionWriteRefusal as Refusal;
+    use codeyard_db_repos::repositories::protection::ProtectionWriteRefusal as Refusal;
     let (status, code, message) = match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => (
             StatusCode::FORBIDDEN,
@@ -64,7 +64,7 @@ pub fn repository_settings_error(
     error: anyhow::Error,
 ) -> (axum::http::StatusCode, axum::Json<ApiError>) {
     use axum::{http::StatusCode, Json};
-    use codeyard_db_repos::repositories::RepositorySettingsRefusal as Refusal;
+    use codeyard_db_repos::repositories::records::RepositorySettingsRefusal as Refusal;
     if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return ApiError::failure(
             StatusCode::FORBIDDEN,
@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn repository_settings_errors_preserve_refusals_not_private_context() {
         use axum::http::StatusCode;
-        use codeyard_db_repos::repositories::RepositorySettingsRefusal as Refusal;
+        use codeyard_db_repos::repositories::records::RepositorySettingsRefusal as Refusal;
         for (refusal, expected) in [
             (Refusal::Denied, StatusCode::FORBIDDEN),
             (Refusal::VisibilityLocked, StatusCode::FORBIDDEN),
@@ -180,16 +180,17 @@ mod tests {
 
     #[test]
     fn protection_denial_survives_context_without_driver_disclosure() {
-        let refusal =
-            anyhow::Error::from(codeyard_db_repos::repositories::ProtectionWriteRefusal::Denied)
-                .context("private driver diagnostic");
+        let refusal = anyhow::Error::from(
+            codeyard_db_repos::repositories::protection::ProtectionWriteRefusal::Denied,
+        )
+        .context("private driver diagnostic");
         let (status, axum::Json(error)) = protection_write_error(refusal);
         assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
         assert_eq!(error.error, "forbidden");
         assert!(!serde_json::to_string(&error).unwrap().contains("private"));
         let (status, axum::Json(error)) = protection_write_error(
             anyhow::Error::from(
-                codeyard_db_repos::repositories::ProtectionWriteRefusal::InvalidPattern,
+                codeyard_db_repos::repositories::protection::ProtectionWriteRefusal::InvalidPattern,
             )
             .context("private driver diagnostic"),
         );

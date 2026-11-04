@@ -2,6 +2,7 @@
 use axum::http::header;
 use axum::http::HeaderMap;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 
 pub fn basic(headers: &HeaderMap) -> Option<(String, String)> {
     let mut values = headers.get_all(header::AUTHORIZATION).iter();

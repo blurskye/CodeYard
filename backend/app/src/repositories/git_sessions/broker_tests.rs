@@ -1,11 +1,14 @@
 //! Gateway tests on throwaway databases and real Git repositories.
 //! GITSERV_TEST_OPENSSH_HELPER must point at the built codeyard binary.
+use super::*;
 use crate::ci::queue::RunQueue;
 use crate::ci::runs::CiRuns;
 use crate::ci::workers::CiWorkers;
 use crate::repositories::git_sessions::ReceiveCredential;
+use base64::Engine;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use std::os::unix::fs::PermissionsExt;
 use std::process::Output;
 use std::process::Stdio;
 use tokio::process::Command;

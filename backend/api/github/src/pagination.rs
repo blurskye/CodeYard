@@ -5,6 +5,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use serde::Deserialize;

@@ -3,6 +3,7 @@ use crate::arguments::Arguments;
 use crate::Result;
 use async_graphql::Error;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use serde_json::json;
 use serde_json::Value;
 

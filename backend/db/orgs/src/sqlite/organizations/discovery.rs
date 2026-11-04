@@ -1,12 +1,10 @@
 use crate::organizations::discovery::MembershipState;
 use crate::sqlite::organizations::authority::credential;
-use crate::sqlite::organizations::authority::require_org;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Organization;
 use codeyard_db_core::models::User;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::sqlite::organizations::authority::active;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
 use codeyard_db_core::queries::sqlite::organizations::authority::read_authority;
 use sqlx::SqlitePool;

@@ -1,3 +1,4 @@
+use super::*;
 use crate::postgres::organizations::authority::site_administrator;
 use crate::postgres::organizations::rulesets::view;
 use codeyard_db_core::models::Repository;

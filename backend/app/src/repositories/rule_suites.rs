@@ -88,8 +88,13 @@ async fn exempted(
         let ids: Vec<_> = ids.into_iter().collect();
         for batch in ids.chunks(500) {
             teams.extend(
-                codeyard_db_repos::rulesets::bypass_teams(pool, repository.id, actor.id, batch)
-                    .await?,
+                codeyard_db_repos::rulesets::operations::bypass_teams(
+                    pool,
+                    repository.id,
+                    actor.id,
+                    batch,
+                )
+                .await?,
             );
         }
     }
@@ -213,7 +218,8 @@ pub(crate) async fn record_push(
     history: &History<'_>,
     credential: Option<ReceiveCredential>,
 ) -> Result<()> {
-    let mut rulesets = codeyard_db_repos::rulesets::push_rulesets(pool, repository.id).await?;
+    let mut rulesets =
+        codeyard_db_repos::rulesets::operations::push_rulesets(pool, repository.id).await?;
     rulesets.retain(|ruleset| ruleset.definition.enforcement == Enforcement::Evaluate);
     if rulesets.is_empty() {
         return Ok(());
@@ -275,7 +281,7 @@ pub(crate) async fn record_push(
         if !targeted {
             continue;
         }
-        codeyard_db_repos::rulesets::record_rule_suite(
+        codeyard_db_repos::rulesets::operations::record_rule_suite(
             pool,
             &Suite {
                 id: 0,

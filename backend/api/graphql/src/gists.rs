@@ -1,4 +1,5 @@
 //! gh's gist picker uses creation order and loads file text only when requested.
+use base64::Engine;
 
 use crate::arguments::Arguments;
 use crate::missing;

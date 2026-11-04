@@ -1,6 +1,5 @@
 use crate::organizations::immutable_releases::Change;
 use crate::organizations::immutable_releases::Settings;
-use crate::sqlite::organizations::authority::require_org;
 use crate::sqlite::organizations::authority::scoped_repos;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;

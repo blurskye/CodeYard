@@ -144,7 +144,7 @@ pub(super) async fn list(
     let org = target(&state, &name).await?;
     let (pagination, filter) = query.filter()?;
     let rows = outcome(
-        codeyard_db_repos::rulesets::organization_rule_suites(
+        codeyard_db_repos::rulesets::operations::organization_rule_suites(
             &state.pool,
             actor.user.id,
             org.id,
@@ -180,7 +180,7 @@ pub(super) async fn get_one(
         .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let row = outcome(
-        codeyard_db_repos::rulesets::organization_rule_suite(
+        codeyard_db_repos::rulesets::operations::organization_rule_suite(
             &state.pool,
             actor.user.id,
             org.id,
@@ -212,7 +212,7 @@ pub(super) async fn list_repository(
     let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let (pagination, filter) = query.filter()?;
     let rows = repository_outcome(
-        codeyard_db_repos::rulesets::repository_rule_suites(
+        codeyard_db_repos::rulesets::operations::repository_rule_suites(
             &state.pool,
             actor.user.id,
             repo.id,
@@ -241,9 +241,14 @@ pub(super) async fn get_repository(
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let row = repository_outcome(
-        codeyard_db_repos::rulesets::repository_rule_suite(&state.pool, actor.user.id, repo.id, id)
-            .await
-            .map_err(error)?,
+        codeyard_db_repos::rulesets::operations::repository_rule_suite(
+            &state.pool,
+            actor.user.id,
+            repo.id,
+            id,
+        )
+        .await
+        .map_err(error)?,
     )?;
     Ok(Json(document(&row, true, query.include_metadata)?))
 }

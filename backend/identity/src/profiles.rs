@@ -137,10 +137,13 @@ pub async fn repository_count_on_profile(
         .await
         .map_err(|_| ProfileReadError::UserUnavailable)?
         .ok_or(ProfileReadError::Missing)?;
-    let count =
-        codeyard_db_repos::repositories::count_user_repositories(pool, user.id, owner_session)
-            .await
-            .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
+    let count = codeyard_db_repos::repositories::records::count_user_repositories(
+        pool,
+        user.id,
+        owner_session,
+    )
+    .await
+    .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
     Ok((user, usize::try_from(count).unwrap_or(usize::MAX)))
 }
 

@@ -5,6 +5,7 @@ use codeyard_db_actions::action_logs::Line;
 use codeyard_db_actions::action_logs::Snapshot;
 use std::collections::BTreeMap;
 use std::io::Cursor;
+use std::io::Write;
 use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 use zip::ZipWriter;

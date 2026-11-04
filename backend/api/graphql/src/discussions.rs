@@ -6,11 +6,11 @@ use crate::url;
 use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
-use codeyard_api_github::node_id;
 use codeyard_db_repos::repository_discussions as store;
 use codeyard_db_repos::repository_discussions::Filter;
 use codeyard_db_repos::repository_discussions::Order;
 use codeyard_db_repos::repository_discussions::Write;
+use codeyard_model::node_id;
 use serde_json::json;
 use serde_json::Value;
 

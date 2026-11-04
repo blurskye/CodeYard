@@ -10,10 +10,6 @@ use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use sqlx::Sqlite;
 use sqlx::SqliteConnection;
 use sqlx::Transaction;
-use OrganizationOutcome::Applied;
-use OrganizationOutcome::Denied;
-use OrganizationOutcome::Missing;
-use OrganizationOutcome::Suspended;
 
 /// Revalidate the initiating credential inside the same immediate transaction as the write.
 pub async fn credential(
@@ -166,8 +162,4 @@ pub(crate) async fn organization_repo_access_in_transaction(
     }))
 }
 
-use codeyard_db_core::queries::sqlite::organizations::authority::authority;
-
 use codeyard_db_core::queries::sqlite::organizations::authority::remaining_active_owner;
-
-use codeyard_db_core::queries::sqlite::organizations::authority::active;

@@ -782,12 +782,12 @@ async fn contract(pg: bool) {
             d.pool(),
             owner,
             org,
-            &codeyard_db_orgs::organizations::NewTeam::new(
+            &codeyard_db_orgs::organizations::teams::NewTeam::new(
                 "contribution_team",
-                codeyard_db_orgs::organizations::TeamProfile::new(
+                codeyard_db_orgs::organizations::teams::TeamProfile::new(
                     "Contribution",
                     None,
-                    codeyard_db_orgs::organizations::TeamPrivacy::Secret,
+                    codeyard_db_orgs::organizations::teams::TeamPrivacy::Secret,
                 )
                 .unwrap(),
             )
@@ -804,7 +804,7 @@ async fn contract(pg: bool) {
             org,
             team,
             member,
-            codeyard_db_orgs::organizations::TeamRole::Member,
+            codeyard_db_orgs::organizations::teams::TeamRole::Member,
         )
         .await
         .unwrap(),
@@ -816,7 +816,7 @@ async fn contract(pg: bool) {
             org,
             team,
             private.id,
-            codeyard_db_orgs::organizations::TeamRepositoryPermission::new(1).unwrap(),
+            codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(1).unwrap(),
         )
         .await
         .unwrap(),
@@ -836,7 +836,7 @@ async fn contract(pg: bool) {
             org,
             team,
             member,
-            codeyard_db_orgs::organizations::TeamRole::Member,
+            codeyard_db_orgs::organizations::teams::TeamRole::Member,
         )
         .await
         .unwrap(),

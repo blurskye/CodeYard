@@ -10,6 +10,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fmt;
+use std::io::Read;
 use std::path::Component;
 use std::path::Path;
 pub mod git;

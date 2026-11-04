@@ -23,6 +23,7 @@ use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::watch;

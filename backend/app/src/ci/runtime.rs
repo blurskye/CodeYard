@@ -1,4 +1,6 @@
 //! Credentials shared by today's act worker and future runners.
+use base64::Engine;
+use rand::RngCore;
 
 use anyhow::Result;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;

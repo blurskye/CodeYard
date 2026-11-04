@@ -39,9 +39,9 @@ impl Database {
                 self.pool(),
                 owner,
                 org,
-                &codeyard_db_orgs::organizations::NewTeam::new(
+                &codeyard_db_orgs::organizations::teams::NewTeam::new(
                     slug,
-                    codeyard_db_orgs::organizations::TeamProfile::new(
+                    codeyard_db_orgs::organizations::teams::TeamProfile::new(
                         "Access fixture",
                         None,
                         privacy,
@@ -63,7 +63,7 @@ impl Database {
                 org,
                 team,
                 actor,
-                codeyard_db_orgs::organizations::TeamRole::Member,
+                codeyard_db_orgs::organizations::teams::TeamRole::Member,
             )
             .await
             .unwrap(),
@@ -77,7 +77,8 @@ impl Database {
                 org,
                 team,
                 repo,
-                codeyard_db_orgs::organizations::TeamRepositoryPermission::new(level).unwrap(),
+                codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(level)
+                    .unwrap(),
             )
             .await
             .unwrap(),
@@ -120,8 +121,8 @@ async fn canonical_access_contract(database: &Database) {
     use codeyard_db_core::models::AccessLevel::Owner;
     use codeyard_db_core::models::AccessLevel::Read;
     use codeyard_db_core::models::AccessLevel::Write;
-    use codeyard_db_orgs::organizations::TeamPrivacy::Secret;
-    use codeyard_db_orgs::organizations::TeamPrivacy::Visible;
+    use codeyard_db_orgs::organizations::teams::TeamPrivacy::Secret;
+    use codeyard_db_orgs::organizations::teams::TeamPrivacy::Visible;
     let pool = database.pool();
     let owner = database.actor("access_owner").await;
     let admin = database.actor("access_admin").await;

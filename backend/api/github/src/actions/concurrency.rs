@@ -11,6 +11,7 @@ use axum::routing::get;
 use axum::routing::MethodRouter;
 use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_model::github_error::Error;

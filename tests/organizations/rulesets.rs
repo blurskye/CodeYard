@@ -36,25 +36,28 @@ async fn contract(pg: bool) {
     let scope = Owner::Organization(org.id);
     let input = Definition::parse(&json!({"name":"Release policy","enforcement":"active","bypass_actors":[{"actor_type":"OrganizationAdmin"}],"rules":[{"type":"non_fast_forward"}]})).unwrap();
     assert!(matches!(
-        codeyard_db_repos::rulesets::create_ruleset(f.pool(), member, scope, &input)
+        codeyard_db_repos::rulesets::operations::create_ruleset(f.pool(), member, scope, &input)
             .await
             .unwrap(),
         OrganizationOutcome::Denied
     ));
-    assert!(
-        codeyard_db_repos::rulesets::create_ruleset(f.pool(), owner, scope, &input)
-            .await
-            .is_err()
-    );
+    assert!(codeyard_db_repos::rulesets::operations::create_ruleset(
+        f.pool(),
+        owner,
+        scope,
+        &input
+    )
+    .await
+    .is_err());
     let input = input.merge(&json!({"enforcement":"disabled"})).unwrap();
     let rule = applied(
-        codeyard_db_repos::rulesets::create_ruleset(f.pool(), owner, scope, &input)
+        codeyard_db_repos::rulesets::operations::create_ruleset(f.pool(), owner, scope, &input)
             .await
             .unwrap(),
     );
     let page = Page::new(0, 2).unwrap();
     let listed = applied(
-        codeyard_db_repos::rulesets::list_rulesets(
+        codeyard_db_repos::rulesets::operations::list_rulesets(
             f.pool(),
             Some(member),
             scope,
@@ -68,13 +71,19 @@ async fn contract(pg: bool) {
     assert!(!listed[0].can_edit);
     assert!(listed[0].value.definition.bypass_actors.is_empty());
     assert!(matches!(
-        codeyard_db_repos::rulesets::get_ruleset(f.pool(), Some(outside), scope, rule.id, false)
-            .await
-            .unwrap(),
+        codeyard_db_repos::rulesets::operations::get_ruleset(
+            f.pool(),
+            Some(outside),
+            scope,
+            rule.id,
+            false
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Denied
     ));
     let changed = applied(
-        codeyard_db_repos::rulesets::change_ruleset(
+        codeyard_db_repos::rulesets::operations::change_ruleset(
             f.pool(),
             owner,
             scope,
@@ -86,14 +95,20 @@ async fn contract(pg: bool) {
     );
     assert!(changed.updated_at > rule.updated_at);
     let versions = applied(
-        codeyard_db_repos::rulesets::ruleset_versions(f.pool(), Some(owner), scope, rule.id, page)
-            .await
-            .unwrap(),
+        codeyard_db_repos::rulesets::operations::ruleset_versions(
+            f.pool(),
+            Some(owner),
+            scope,
+            rule.id,
+            page,
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(versions.value.len(), 2);
     assert_eq!(versions.value[0].definition.name, "Renamed");
     let version = applied(
-        codeyard_db_repos::rulesets::ruleset_version(
+        codeyard_db_repos::rulesets::operations::ruleset_version(
             f.pool(),
             Some(member),
             scope,
@@ -105,7 +120,7 @@ async fn contract(pg: bool) {
     );
     assert_eq!(version.value.definition.name, "Release policy");
     assert!(version.value.definition.bypass_actors.is_empty());
-    assert!(codeyard_db_repos::rulesets::change_ruleset(
+    assert!(codeyard_db_repos::rulesets::operations::change_ruleset(
         f.pool(),
         owner,
         scope,
@@ -115,13 +130,19 @@ async fn contract(pg: bool) {
     .await
     .is_err());
     let unchanged = applied(
-        codeyard_db_repos::rulesets::get_ruleset(f.pool(), Some(owner), scope, rule.id, false)
-            .await
-            .unwrap(),
+        codeyard_db_repos::rulesets::operations::get_ruleset(
+            f.pool(),
+            Some(owner),
+            scope,
+            rule.id,
+            false,
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(unchanged.value.definition.rules.len(), 1);
     assert!(applied(
-        codeyard_db_repos::rulesets::organization_rule_suites(
+        codeyard_db_repos::rulesets::operations::organization_rule_suites(
             f.pool(),
             owner,
             org.id,
@@ -140,20 +161,31 @@ async fn contract(pg: bool) {
     )
     .is_empty());
     assert!(matches!(
-        codeyard_db_repos::rulesets::organization_rule_suite(f.pool(), owner, org.id, 9999)
-            .await
-            .unwrap(),
+        codeyard_db_repos::rulesets::operations::organization_rule_suite(
+            f.pool(),
+            owner,
+            org.id,
+            9999
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Missing
     ));
     applied(
-        codeyard_db_repos::rulesets::remove_ruleset(f.pool(), owner, scope, rule.id)
+        codeyard_db_repos::rulesets::operations::remove_ruleset(f.pool(), owner, scope, rule.id)
             .await
             .unwrap(),
     );
     assert!(matches!(
-        codeyard_db_repos::rulesets::get_ruleset(f.pool(), Some(owner), scope, rule.id, false)
-            .await
-            .unwrap(),
+        codeyard_db_repos::rulesets::operations::get_ruleset(
+            f.pool(),
+            Some(owner),
+            scope,
+            rule.id,
+            false
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Missing
     ));
     f.finish().await;

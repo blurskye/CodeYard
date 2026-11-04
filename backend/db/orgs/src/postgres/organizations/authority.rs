@@ -10,10 +10,6 @@ use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use sqlx::PgConnection;
 use sqlx::Postgres;
 use sqlx::Transaction;
-use OrganizationOutcome::Applied;
-use OrganizationOutcome::Denied;
-use OrganizationOutcome::Missing;
-use OrganizationOutcome::Suspended;
 
 /// Revalidate the initiating credential only after the operation has acquired its authority locks.
 pub async fn credential(
@@ -179,7 +175,3 @@ pub(crate) async fn organization_repo_access_in_transaction(
         level.unwrap_or(0).min(1)
     }))
 }
-
-use codeyard_db_core::queries::postgres::organizations::authority::authority;
-
-use codeyard_db_core::queries::postgres::organizations::authority::active;

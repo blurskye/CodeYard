@@ -5,7 +5,6 @@ use crate::organizations::invitations::InvitationTeams;
 use crate::organizations::invitations::NewInvitation;
 use crate::organizations::OrganizationPage;
 use crate::sqlite::organizations::authority::credential;
-use crate::sqlite::organizations::authority::require_org;
 use anyhow::Result;
 use codeyard_db_core::models::OrgInvitation;
 use codeyard_db_core::models::OrgMembership;

@@ -1,8 +1,6 @@
 //! Release notes derived from a pinned Git range and the repository's real merged pull requests.
+use super::*;
 use crate::cluster::context::NodeContext;
-use crate::repositories::releases::notes::generate_notes;
-use crate::repositories::releases::notes::NotesInput;
-use crate::repositories::releases::notes::ReleaseNotes;
 use crate::repositories::releases::target_revision;
 use crate::repositories::releases::unavailable;
 use crate::repositories::releases::validate_fields;
@@ -13,6 +11,7 @@ use crate::storage::range::ByteRange;
 use codeyard_git::error::ErrorKind;
 use codeyard_model::http_config::link_origin;
 use serde::Deserialize;
+use std::io::Write;
 
 pub struct ReleaseNotes {
     pub target: String,

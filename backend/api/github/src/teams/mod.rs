@@ -240,7 +240,7 @@ fn string<'a>(input: &'a Map<String, Value>, field: &str) -> Result<Option<&'a s
 }
 
 fn permission(value: &str) -> Result<super::TeamRepositoryPermission> {
-    codeyard_db_orgs::organizations::TeamRepositoryPermission::new(match value {
+    codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(match value {
         "pull" => 1,
         "triage" => 2,
         "push" => 3,
@@ -294,7 +294,7 @@ fn profile(
             "invalid",
         )
     };
-    let mut profile = codeyard_db_orgs::organizations::TeamProfile::default();
+    let mut profile = codeyard_db_orgs::organizations::teams::TeamProfile::default();
     let name = string(input, "name")?;
     match name {
         Some(name) => profile = profile.with_name(name).map_err(refused)?,
@@ -314,14 +314,14 @@ fn profile(
         }
     }
     let privacy = match string(input, "privacy")? {
-        Some("secret") => Some(codeyard_db_orgs::organizations::TeamPrivacy::Secret),
-        Some("closed") => Some(codeyard_db_orgs::organizations::TeamPrivacy::Visible),
+        Some("secret") => Some(codeyard_db_orgs::organizations::teams::TeamPrivacy::Secret),
+        Some("closed") => Some(codeyard_db_orgs::organizations::teams::TeamPrivacy::Visible),
         Some(_) => return Err(Error::validation("Team", "privacy", "invalid")),
         // A new team is secret unless it has a parent: nested teams must be visible.
         None if creating && parent.flatten().is_some() => {
-            Some(codeyard_db_orgs::organizations::TeamPrivacy::Visible)
+            Some(codeyard_db_orgs::organizations::teams::TeamPrivacy::Visible)
         }
-        None if creating => Some(codeyard_db_orgs::organizations::TeamPrivacy::Secret),
+        None if creating => Some(codeyard_db_orgs::organizations::teams::TeamPrivacy::Secret),
         None => None,
     };
     if let Some(privacy) = privacy {
@@ -422,7 +422,7 @@ async fn create(
             .map_err(crate::auth::scope_error)?;
         repositories.push(repo.id);
     }
-    let new = codeyard_db_orgs::organizations::NewTeam::new(&slug(name), profile)
+    let new = codeyard_db_orgs::organizations::teams::NewTeam::new(&slug(name), profile)
         .map_err(|_| Error::validation("Team", "name", "invalid"))?
         .with_members_and_repositories(maintainers, repositories);
     let team = outcome(
@@ -627,7 +627,7 @@ async fn members(
     let role = match query.role.as_deref().unwrap_or("all") {
         "all" => None,
         value => Some(
-            codeyard_db_orgs::organizations::TeamRole::parse(value)
+            codeyard_db_orgs::organizations::teams::TeamRole::parse(value)
                 .map_err(|_| Error::validation("Team", "role", "invalid"))?,
         ),
     };
@@ -725,7 +725,7 @@ async fn team_member(
             .await
             .map_err(Error::unavailable)?;
         let input = input(request).await?;
-        let mut role = codeyard_db_orgs::organizations::TeamRole::parse(
+        let mut role = codeyard_db_orgs::organizations::teams::TeamRole::parse(
             string(&input, "role")?.unwrap_or("member"),
         )
         .map_err(|_| Error::validation("Team", "role", "invalid"))?;
@@ -764,7 +764,7 @@ async fn team_member(
         };
         // Organization owners maintain every team they are on.
         if matches!(target_role, codeyard_db_core::models::OrgRole::Owner) {
-            role = codeyard_db_orgs::organizations::TeamRole::Maintainer;
+            role = codeyard_db_orgs::organizations::teams::TeamRole::Maintainer;
         }
         let row = outcome(
             super::add_organization_team_member(
@@ -991,7 +991,7 @@ async fn repository(
         let input = input(request).await?;
         let permission = match string(&input, "permission")? {
             Some(value) => permission(value)?,
-            None => codeyard_db_orgs::organizations::TeamRepositoryPermission::new(
+            None => codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(
                 public.team.default_permission,
             )
             .map_err(|_| Error::unavailable(()))?,

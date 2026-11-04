@@ -688,12 +688,12 @@ async fn team_writer_repository(
             pool,
             owner,
             org,
-            &codeyard_db_orgs::organizations::NewTeam::new(
+            &codeyard_db_orgs::organizations::teams::NewTeam::new(
                 name,
-                codeyard_db_orgs::organizations::TeamProfile::new(
+                codeyard_db_orgs::organizations::teams::TeamProfile::new(
                     name,
                     None,
-                    codeyard_db_orgs::organizations::TeamPrivacy::Visible,
+                    codeyard_db_orgs::organizations::teams::TeamPrivacy::Visible,
                 )
                 .unwrap(),
             )
@@ -710,7 +710,7 @@ async fn team_writer_repository(
             org,
             team,
             member,
-            codeyard_db_orgs::organizations::TeamRole::Member,
+            codeyard_db_orgs::organizations::teams::TeamRole::Member,
         )
         .await
         .unwrap(),
@@ -741,7 +741,7 @@ async fn team_writer_repository(
             org,
             team,
             repo,
-            codeyard_db_orgs::organizations::TeamRepositoryPermission::new(3).unwrap(),
+            codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(3).unwrap(),
         )
         .await
         .unwrap(),

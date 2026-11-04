@@ -1,3 +1,4 @@
+use super::*;
 use crate::cluster::writes::OutcomeUnknown;
 use crate::repositories::protection::BranchWrite;
 use crate::repositories::protection::History;

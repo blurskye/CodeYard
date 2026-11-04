@@ -11,6 +11,7 @@ use flate2::Compression;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io;
+use std::io::Read;
 use std::io::Write;
 use std::path::Path;
 

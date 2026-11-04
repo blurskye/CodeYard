@@ -1,7 +1,4 @@
-use crate::postgres::projects::exports::fields_page;
-use crate::postgres::projects::exports::fields_window;
-use crate::postgres::projects::exports::list_page;
-use crate::postgres::projects::exports::list_window;
+use super::*;
 use crate::postgres::projects::fields;
 use crate::postgres::projects::readable;
 

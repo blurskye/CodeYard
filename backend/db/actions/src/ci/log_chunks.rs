@@ -9,6 +9,8 @@ use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use sha2::Digest;
 use sha2::Sha256;
+use std::io::Read;
+use std::io::Write;
 
 const MAX_ENCODED_BYTES: usize = 2 * 1024 * 1024;
 // A truncation marker can be longer than the line it replaces in an otherwise full batch.

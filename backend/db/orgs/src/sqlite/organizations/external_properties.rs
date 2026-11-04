@@ -1,7 +1,6 @@
 use crate::organizations::external_properties::Installation;
 use crate::organizations::external_properties::RepositoryValue;
 use crate::sqlite::organizations::authority::credential;
-use crate::sqlite::organizations::authority::require_org;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;

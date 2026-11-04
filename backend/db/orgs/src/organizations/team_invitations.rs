@@ -1,4 +1,4 @@
-use super::TeamRole;
+use super::teams::TeamRole;
 use crate::organizations::OrganizationPage;
 use anyhow::Result;
 use codeyard_db_core::models::OrgInvitation;

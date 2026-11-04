@@ -11,7 +11,6 @@ use crate::organizations::teams::TeamRole;
 use crate::organizations::OrganizationPage;
 use crate::postgres::organizations::authority::cancel_team;
 use crate::postgres::organizations::authority::read_scoped_team;
-use crate::postgres::organizations::authority::require_org;
 use crate::postgres::organizations::authority::scoped_repo;
 use crate::postgres::organizations::authority::scoped_team;
 use crate::postgres::organizations::authority::team_visible;
@@ -35,7 +34,7 @@ use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
 use OrganizationOutcome::Denied;
 use OrganizationOutcome::Missing;
-mod exports;
+pub(crate) mod exports;
 
 /// One page of a team's members who are still active members of its organization.
 const TEAM_MEMBERS_PAGE: &str = "SELECT tm.* FROM effective_team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=$1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=$2 AND tm.id>$3 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password ORDER BY tm.id LIMIT $4";

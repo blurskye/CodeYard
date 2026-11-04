@@ -17,6 +17,7 @@ use axum::routing::any;
 use axum::Json;
 use axum::Router;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::packages::Package;
 use codeyard_db_repos::packages::Publish;

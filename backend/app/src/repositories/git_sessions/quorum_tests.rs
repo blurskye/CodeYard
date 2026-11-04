@@ -1,3 +1,4 @@
+use super::*;
 use crate::ci::runs::CiRuns;
 use crate::cluster::context::NodeContext;
 use crate::cluster::transport::IrohDialer;
@@ -5,6 +6,7 @@ use crate::cluster::transport::NodeAddress;
 use crate::cluster::transport::Relay;
 use crate::repositories::git_sessions::ReceiveCredential;
 use crate::repositories::protocol::TransactionPhase;
+use base64::Engine;
 use codeyard_db_core::models::RefValue;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_support::node_identity::NodeKey;

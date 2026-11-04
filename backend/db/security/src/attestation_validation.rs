@@ -1,4 +1,5 @@
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
 use serde_json::Value;

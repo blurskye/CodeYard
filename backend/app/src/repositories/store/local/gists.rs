@@ -1,3 +1,4 @@
+use super::*;
 use crate::repositories::store::gists::GistCredential;
 use crate::repositories::store::local::refresh_storage_size;
 use crate::repositories::store::local::repository_matches_path;

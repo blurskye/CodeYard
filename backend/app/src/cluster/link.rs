@@ -5,7 +5,9 @@ use iroh::PublicKey;
 use std::fmt;
 use std::io;
 use tokio::io::AsyncRead;
+use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWrite;
+use tokio::io::AsyncWriteExt;
 
 /// One request stream and the authenticated key of the node at its other end.
 pub struct Link {

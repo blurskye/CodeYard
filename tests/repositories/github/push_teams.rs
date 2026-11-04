@@ -37,12 +37,12 @@ pub(super) async fn run(
             pool,
             alice,
             org,
-            &codeyard_db_orgs::organizations::NewTeam::new(
+            &codeyard_db_orgs::organizations::teams::NewTeam::new(
                 "writers",
-                codeyard_db_orgs::organizations::TeamProfile::new(
+                codeyard_db_orgs::organizations::teams::TeamProfile::new(
                     "Writers",
                     Some("Release publishers"),
-                    codeyard_db_orgs::organizations::TeamPrivacy::Secret,
+                    codeyard_db_orgs::organizations::teams::TeamPrivacy::Secret,
                 )
                 .unwrap(),
             )
@@ -57,12 +57,12 @@ pub(super) async fn run(
             pool,
             alice,
             org,
-            &codeyard_db_orgs::organizations::NewTeam::new(
+            &codeyard_db_orgs::organizations::teams::NewTeam::new(
                 "readers",
-                codeyard_db_orgs::organizations::TeamProfile::new(
+                codeyard_db_orgs::organizations::teams::TeamProfile::new(
                     "Readers",
                     None,
-                    codeyard_db_orgs::organizations::TeamPrivacy::Visible,
+                    codeyard_db_orgs::organizations::teams::TeamPrivacy::Visible,
                 )
                 .unwrap(),
             )
@@ -79,7 +79,7 @@ pub(super) async fn run(
             org,
             writers,
             bob,
-            codeyard_db_orgs::organizations::TeamRole::Member,
+            codeyard_db_orgs::organizations::teams::TeamRole::Member,
         )
         .await
         .unwrap(),
@@ -103,7 +103,8 @@ pub(super) async fn run(
                 org,
                 team,
                 repo,
-                codeyard_db_orgs::organizations::TeamRepositoryPermission::new(permission).unwrap(),
+                codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(permission)
+                    .unwrap(),
             )
             .await
             .unwrap(),
@@ -284,7 +285,7 @@ pub(super) async fn run(
             org,
             writers,
             bob,
-            codeyard_db_orgs::organizations::TeamRole::Member,
+            codeyard_db_orgs::organizations::teams::TeamRole::Member,
         )
         .await
         .unwrap(),
@@ -335,7 +336,7 @@ pub(super) async fn run(
             org,
             writers,
             repo,
-            codeyard_db_orgs::organizations::TeamRepositoryPermission::new(3).unwrap(),
+            codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(3).unwrap(),
         )
         .await
         .unwrap(),

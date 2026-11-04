@@ -1,6 +1,5 @@
 use crate::sqlite::organizations::authority::cancel_actor;
 use crate::sqlite::organizations::authority::credential;
-use crate::sqlite::organizations::authority::require_org;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::User;

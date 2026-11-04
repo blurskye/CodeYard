@@ -3,6 +3,7 @@ use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use codeyard_db_core::DbPool;
 use codeyard_db_security::code_scanning::Finding;
 use codeyard_db_security::code_scanning::Run;
@@ -14,6 +15,7 @@ use sha2::Digest;
 use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
+use std::io::Read;
 #[cfg(test)]
 mod tests;
 

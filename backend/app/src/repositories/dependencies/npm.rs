@@ -4,6 +4,7 @@ use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use codeyard_db_repos::repositories::dependencies::MAX_PACKAGES;
 use semver::Version;
 use semver::VersionReq;
@@ -11,6 +12,8 @@ use serde_json::Value;
 use sha2::Digest;
 use sha2::Sha512;
 use std::collections::BTreeMap;
+use std::io::Read;
+use std::io::Write;
 
 pub const MAX_LOCK_BYTES: usize = 4 * 1024 * 1024;
 

@@ -1,3 +1,4 @@
+use super::*;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::queries::credentials::Actor;
 

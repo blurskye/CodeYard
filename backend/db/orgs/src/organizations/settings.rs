@@ -1,4 +1,4 @@
-use super::OrganizationProfile;
+use super::profiles::OrganizationProfile;
 use anyhow::Result;
 use codeyard_db_core::models::Organization;
 use codeyard_db_core::native_operation;

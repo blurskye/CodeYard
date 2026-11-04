@@ -1,6 +1,5 @@
 use crate::organizations::profiles::OrganizationMetadata;
 use crate::organizations::OrganizationPage;
-use crate::sqlite::organizations::authority::metadata;
 use crate::sqlite::organizations::authority::site_administrator;
 use anyhow::Result;
 use codeyard_db_core::models::OrgMembership;

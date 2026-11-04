@@ -239,14 +239,8 @@ use codeyard_db_core::queries::organizations::properties::DefinitionInput;
 
 use codeyard_db_core::queries::organizations::properties::Definition;
 
-use codeyard_db_core::queries::organizations::properties::valid_name;
-
-use codeyard_db_core::queries::organizations::properties::EditableBy;
-
 use codeyard_db_core::queries::organizations::properties::invalid;
 
 use codeyard_db_core::queries::organizations::properties::MAX_VALUE_BYTES;
-
-use codeyard_db_core::queries::organizations::properties::PropertyValue;
 
 use codeyard_db_core::queries::organizations::properties::MAX_ALLOWED_VALUES;

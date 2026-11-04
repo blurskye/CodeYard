@@ -232,12 +232,12 @@ async fn authority_contract(pg: bool) {
             pool,
             owner,
             org,
-            &codeyard_db_orgs::organizations::NewTeam::new(
+            &codeyard_db_orgs::organizations::teams::NewTeam::new(
                 "write_team",
-                codeyard_db_orgs::organizations::TeamProfile::new(
+                codeyard_db_orgs::organizations::teams::TeamProfile::new(
                     "Write",
                     None,
-                    codeyard_db_orgs::organizations::TeamPrivacy::Secret,
+                    codeyard_db_orgs::organizations::teams::TeamPrivacy::Secret,
                 )
                 .unwrap(),
             )
@@ -254,7 +254,7 @@ async fn authority_contract(pg: bool) {
             org,
             team,
             member,
-            codeyard_db_orgs::organizations::TeamRole::Member,
+            codeyard_db_orgs::organizations::teams::TeamRole::Member,
         )
         .await
         .unwrap(),
@@ -270,7 +270,7 @@ async fn authority_contract(pg: bool) {
             org,
             team,
             repo.id,
-            codeyard_db_orgs::organizations::TeamRepositoryPermission::new(3).unwrap(),
+            codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(3).unwrap(),
         )
         .await
         .unwrap(),
@@ -397,7 +397,7 @@ async fn authority_contract(pg: bool) {
             org,
             team,
             repo.id,
-            codeyard_db_orgs::organizations::TeamRepositoryPermission::new(5).unwrap(),
+            codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(5).unwrap(),
         )
         .await
         .unwrap(),
@@ -607,12 +607,12 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
                 pool,
                 owner,
                 org,
-                &codeyard_db_orgs::organizations::NewTeam::new(
+                &codeyard_db_orgs::organizations::teams::NewTeam::new(
                     slug,
-                    codeyard_db_orgs::organizations::TeamProfile::new(
+                    codeyard_db_orgs::organizations::teams::TeamProfile::new(
                         slug,
                         None,
-                        codeyard_db_orgs::organizations::TeamPrivacy::Visible,
+                        codeyard_db_orgs::organizations::teams::TeamPrivacy::Visible,
                     )
                     .unwrap(),
                 )
@@ -629,7 +629,7 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
                 org,
                 team,
                 member,
-                codeyard_db_orgs::organizations::TeamRole::Member,
+                codeyard_db_orgs::organizations::teams::TeamRole::Member,
             )
             .await
             .unwrap(),
@@ -642,7 +642,7 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
                 org,
                 team,
                 repo.id,
-                codeyard_db_orgs::organizations::TeamRepositoryPermission::new(3).unwrap(),
+                codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(3).unwrap(),
             )
             .await
             .unwrap(),
@@ -698,7 +698,7 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
             org,
             team_a,
             member,
-            codeyard_db_orgs::organizations::TeamRole::Member,
+            codeyard_db_orgs::organizations::teams::TeamRole::Member,
         )
         .await
         .unwrap(),

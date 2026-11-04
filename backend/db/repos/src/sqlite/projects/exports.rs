@@ -1,7 +1,4 @@
-use crate::sqlite::projects::exports::fields_page;
-use crate::sqlite::projects::exports::fields_window;
-use crate::sqlite::projects::exports::list_page;
-use crate::sqlite::projects::exports::list_window;
+use super::*;
 use crate::sqlite::projects::fields;
 use crate::sqlite::projects::readable;
 

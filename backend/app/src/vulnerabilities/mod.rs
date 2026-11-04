@@ -12,6 +12,7 @@ use codeyard_model::vulnerabilities::OsvPackage;
 use codeyard_model::vulnerabilities::PreparedAdvisory;
 use codeyard_model::vulnerabilities::ECOSYSTEMS;
 use serde_json::json;
+use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
 

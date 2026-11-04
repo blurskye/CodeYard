@@ -292,12 +292,12 @@ async fn contract(pg: bool) {
             fixture.pool(),
             owner,
             org.id,
-            &codeyard_db_orgs::organizations::NewTeam::new(
+            &codeyard_db_orgs::organizations::teams::NewTeam::new(
                 "writers",
-                codeyard_db_orgs::organizations::TeamProfile::new(
+                codeyard_db_orgs::organizations::teams::TeamProfile::new(
                     "Writers",
                     None,
-                    codeyard_db_orgs::organizations::TeamPrivacy::Secret,
+                    codeyard_db_orgs::organizations::teams::TeamPrivacy::Secret,
                 )
                 .unwrap(),
             )
@@ -313,7 +313,7 @@ async fn contract(pg: bool) {
             org.id,
             team.id,
             writer,
-            codeyard_db_orgs::organizations::TeamRole::Member,
+            codeyard_db_orgs::organizations::teams::TeamRole::Member,
         )
         .await
         .unwrap(),
@@ -341,7 +341,7 @@ async fn contract(pg: bool) {
             org.id,
             team.id,
             org_repo.id,
-            codeyard_db_orgs::organizations::TeamRepositoryPermission::new(3).unwrap(),
+            codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(3).unwrap(),
         )
         .await
         .unwrap(),

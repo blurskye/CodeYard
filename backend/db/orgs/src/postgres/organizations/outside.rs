@@ -1,6 +1,5 @@
 use crate::postgres::organizations::authority::cancel_actor;
 use crate::postgres::organizations::authority::credential;
-use crate::postgres::organizations::authority::require_org;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::User;

@@ -1,11 +1,9 @@
 use crate::organizations::profiles::OrganizationMetadata;
 use crate::organizations::OrganizationPage;
-use crate::postgres::organizations::authority::metadata;
 use crate::postgres::organizations::authority::site_administrator;
 use anyhow::Result;
 use codeyard_db_core::models::OrgMembership;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::organizations::authority::active;
 use codeyard_db_core::queries::postgres::organizations::authority::begin;
 use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
 use codeyard_db_core::queries::postgres::organizations::authority::membership_role;

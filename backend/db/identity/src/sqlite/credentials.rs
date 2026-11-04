@@ -1,7 +1,6 @@
 use anyhow::Result;
 use codeyard_db_core::queries::ci::CiCredential;
 use codeyard_db_core::queries::credentials::Actor;
-use codeyard_db_core::queries::sqlite::credentials::live;
 use codeyard_db_core::queries::sqlite::credentials::repository;
 use codeyard_db_core::queries::users::accounts::OwnedAccountCredential;
 use codeyard_support::credentials::AccountRestricted;

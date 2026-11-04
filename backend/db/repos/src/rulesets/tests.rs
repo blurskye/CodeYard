@@ -1,3 +1,4 @@
+use super::*;
 use codeyard_db_core::queries::rulesets::matching::RepositoryContext;
 use codeyard_db_core::queries::rulesets::records::Owner;
 use codeyard_db_core::queries::rulesets::BypassMode;

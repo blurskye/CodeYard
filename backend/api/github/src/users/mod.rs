@@ -75,10 +75,13 @@ pub(super) async fn target(state: &AppState, username: &str) -> Result<User> {
 }
 
 pub(super) async fn document(state: &AppState, user: &User, token: Option<i64>) -> Result<Value> {
-    let repos =
-        codeyard_db_repos::repositories::count_user_repositories(&state.pool, user.id, None)
-            .await
-            .map_err(Error::unavailable)?;
+    let repos = codeyard_db_repos::repositories::records::count_user_repositories(
+        &state.pool,
+        user.id,
+        None,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     let status = codeyard_notifications::following::status(&state.pool, user.id, None)
         .await
         .map_err(Error::unavailable)?;

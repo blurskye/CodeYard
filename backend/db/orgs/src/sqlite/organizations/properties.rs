@@ -1,17 +1,16 @@
 use crate::organizations::properties::checked_changes;
 use crate::organizations::properties::checked_definitions;
+use crate::organizations::properties::query;
 use crate::organizations::properties::DefinitionSummary;
 use crate::organizations::properties::RepositoryMetadata;
 use crate::organizations::properties::RepositoryValues;
 use crate::organizations::properties::MAX_DEFINITIONS;
 use crate::sqlite::organizations::authority::credential;
-use crate::sqlite::organizations::authority::require_org;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Repository;
-use codeyard_db_core::queries::organizations::properties::effective_values;
 use codeyard_db_core::queries::organizations::properties::invalid;
 use codeyard_db_core::queries::organizations::properties::Definition;
 use codeyard_db_core::queries::organizations::properties::DefinitionInput;
@@ -559,7 +558,5 @@ pub async fn list_values(
     tx.commit().await?;
     Ok(Applied(result))
 }
-
-use codeyard_db_core::queries::sqlite::organizations::properties::definition;
 
 use codeyard_db_core::queries::sqlite::organizations::properties::values_on;

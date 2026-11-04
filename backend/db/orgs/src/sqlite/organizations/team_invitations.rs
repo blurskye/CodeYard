@@ -3,7 +3,6 @@ use crate::organizations::invitations::NewInvitation;
 use crate::organizations::team_invitations::TeamInvitation;
 use crate::organizations::teams::TeamRole;
 use crate::organizations::OrganizationPage;
-use crate::sqlite::organizations::authority::require_org;
 use crate::sqlite::organizations::authority::scoped_team;
 use crate::sqlite::organizations::authority::team_visible;
 use crate::sqlite::organizations::invitations::LIVE;

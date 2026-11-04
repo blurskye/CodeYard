@@ -10,6 +10,7 @@ use codeyard_db_core::init_db;
 use codeyard_db_core::run_migrations;
 use codeyard_db_core::DbPool;
 use futures_util::Stream;
+use futures_util::TryStreamExt;
 use sqlx::Postgres;
 use sqlx::Sqlite;
 use sqlx::Transaction;

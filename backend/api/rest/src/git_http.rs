@@ -1,4 +1,6 @@
 //! Git smart HTTP. Basic auth accepts a personal access token, never a password or session.
+use futures_util::StreamExt;
+use std::io::Read;
 
 use axum::body::to_bytes;
 use axum::body::Body;

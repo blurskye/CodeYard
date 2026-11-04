@@ -1,3 +1,4 @@
+use super::*;
 use crate::repositories::protection::BranchWrite;
 use crate::repositories::protection::History;
 use crate::repositories::protection::WriteVia;

@@ -44,24 +44,27 @@ pub async fn list_ci_workflows(
         ));
     }
 
-    let repository =
-        codeyard_db_repos::repositories::get_repository(&state.pool, &query.owner, &query.repo)
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiError::new(
-                        "database_error",
-                        "Repository data is unavailable",
-                    )),
-                )
-            })?
-            .ok_or_else(|| {
-                (
-                    StatusCode::NOT_FOUND,
-                    Json(ApiError::new("not_found", "Repository not found")),
-                )
-            })?;
+    let repository = codeyard_db_repos::repositories::records::get_repository(
+        &state.pool,
+        &query.owner,
+        &query.repo,
+    )
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError::new(
+                "database_error",
+                "Repository data is unavailable",
+            )),
+        )
+    })?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiError::new("not_found", "Repository not found")),
+        )
+    })?;
 
     codeyard_api_http::shared::ci::jobs::ensure_repo_read_access(&state, &user, &repository)
         .await?;

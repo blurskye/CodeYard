@@ -5,10 +5,11 @@ use crate::RequestContext;
 use crate::Result;
 use base64::engine::general_purpose::STANDARD;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use codeyard_api_github::node_id;
+use base64::Engine;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
+use codeyard_model::node_id;
 use serde_json::json;
 use serde_json::Value;
 
