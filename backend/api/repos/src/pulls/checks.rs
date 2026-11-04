@@ -1,9 +1,7 @@
 //! The Checks tab of a pull request: the workflow runs on its head commit.
 use crate::discussion::item;
-use crate::discussion::pull_item;
 use crate::discussion::repository;
 use crate::discussion::unavailable;
-use crate::discussion::HeadRepository;
 use crate::discussion::RepositoryData;
 use crate::discussion::ResultPage;
 use axum::extract::Path;
@@ -152,6 +150,8 @@ async fn render_checks(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::discussion::pull_item;
+    use crate::discussion::HeadRepository;
 
     #[tokio::test]
     async fn checks_keep_the_item_snapshot_after_a_push() {

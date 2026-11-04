@@ -44,7 +44,7 @@ pub struct CreateCommitStatusRequest {
     pub target_url: Option<String>,
 }
 
-pub async fn list_commit_statuses(
+pub(crate) async fn list_commit_statuses(
     State(state): State<Arc<AppState>>,
     Path((owner, repo, sha)): Path<(String, String, String)>,
     headers: HeaderMap,

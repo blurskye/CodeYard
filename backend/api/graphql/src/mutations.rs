@@ -253,7 +253,7 @@ pub(super) async fn resolve(
     let actor = request.auth.user.id;
     let pool = &request.state.pool;
     let broadcaster = &request.state.notification_broadcaster;
-    let mut payload = json!({"clientMutationId":input["clientMutationId"],"actor":user::actor_object(&request.auth.user,actor)});
+    let mut payload = json!({"clientMutationId":input["clientMutationId"],"actor":crate::user::actor_object(&request.auth.user,actor)});
     match field {
         "archiveRepository" | "unarchiveRepository" => {
             boxed(|| async move {

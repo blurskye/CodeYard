@@ -42,7 +42,7 @@ fn combined_commit_status_state(statuses: &[(String, i64)]) -> String {
     "success".to_string()
 }
 
-pub async fn get_combined_commit_status(
+pub(crate) async fn get_combined_commit_status(
     State(state): State<Arc<AppState>>,
     Path((owner, repo, sha)): Path<(String, String, String)>,
     headers: HeaderMap,

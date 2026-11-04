@@ -1,8 +1,6 @@
 use super::*;
 use crate::bindings::Object;
 use async_graphql::ID;
-use mutation_fields;
-use repository_fields;
 
 enums!(DiscussionStateReason);
 objects!(
@@ -132,3 +130,7 @@ comment_payload!(
     DeleteDiscussionCommentPayloadResolver,
     "DeleteDiscussionCommentPayload"
 );
+
+pub(super) use mutation_fields;
+
+pub(super) use repository_fields;

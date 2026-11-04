@@ -1,6 +1,4 @@
 use axum::http::HeaderMap;
-use axum::http::StatusCode;
-use axum::Json;
 use codeyard_api_http::shared::repos::chrome::ApiResult;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
@@ -78,6 +76,8 @@ pub(crate) async fn check_repo_write_access(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::StatusCode;
+    use axum::Json;
 
     #[test]
     fn repository_access_failures_preserve_status_and_json_contracts() {

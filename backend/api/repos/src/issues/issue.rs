@@ -1,5 +1,4 @@
 use crate::access::readable_repository;
-use crate::discussion::author;
 use crate::discussion::expected;
 use crate::discussion::item;
 use crate::discussion::kind;
@@ -7,7 +6,6 @@ use crate::discussion::render_detail;
 use crate::discussion::repository;
 use crate::discussion::safe_api_error;
 use crate::discussion::submitted_detail;
-use crate::discussion::submitted_new;
 use crate::discussion::unavailable;
 use crate::discussion::ResultPage;
 use crate::labels::LabelResponse;
@@ -24,13 +22,11 @@ use codeyard_api_http::context::PageContext;
 use codeyard_api_http::error::ApiError;
 use codeyard_api_http::error::ApiFailure;
 use codeyard_api_http::session::get_current_user;
-use codeyard_api_http::shared::repos::discussion::page;
 use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::user::responses::PublicUserResponse as UserResponse;
 use codeyard_app::app::AppState;
 use codeyard_app::issues::mutations::UpdateIssueRequest;
-use codeyard_app::issues::MAX_COMMENT_PAGE;
 use codeyard_webui::pages::repos::issues::DetailDraft;
 use codeyard_webui::pages::repos::issues::Kind;
 use serde::Serialize;
@@ -570,6 +566,7 @@ pub(crate) async fn native_change_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::discussion::submitted_new;
     use codeyard_webui::pages::repos::issues as view;
     fn value() -> view::Item {
         view::Item {

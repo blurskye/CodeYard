@@ -13,7 +13,7 @@ pub(super) async fn review_request(
     request: &RequestContext,
 ) -> Result<Value> {
     Ok(
-        json!({"__typename":"ReviewRequest","_repo":pull.repo_id,"_scope":"pull-requests","id":codeyard_model::node_id::git("RR",&format!("{}/{}",pull.id,reviewer.id)),"databaseId":null,"pullRequest":crate::issue::pull_object(pull),"requestedReviewer":user::actor_by_id(reviewer.id,request).await?}),
+        json!({"__typename":"ReviewRequest","_repo":pull.repo_id,"_scope":"pull-requests","id":codeyard_model::node_id::git("RR",&format!("{}/{}",pull.id,reviewer.id)),"databaseId":null,"pullRequest":crate::issue::pull_object(pull),"requestedReviewer":crate::user::actor_by_id(reviewer.id,request).await?}),
     )
 }
 
@@ -355,7 +355,7 @@ pub(super) async fn resolve(
                 json!({"__typename":"AutoMergeRequest","_repo":pull.repo_id,"_scope":"pull-requests",
                 "authorEmail":entry.author_email,"commitBody":entry.commit_message,
                 "commitHeadline":entry.commit_title,"enabledAt":entry.enabled_at,
-                "enabledBy":user::actor_by_id(entry.enabled_by, request).await?,
+                "enabledBy":crate::user::actor_by_id(entry.enabled_by, request).await?,
                 "mergeMethod":entry.merge_method.to_ascii_uppercase(),
                 "pullRequest":crate::issue::pull_object(&pull)}),
             )

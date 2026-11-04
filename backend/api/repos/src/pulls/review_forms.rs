@@ -2,16 +2,12 @@
 //! comments written from the diff, conversation resolution and Viewed marks on files. Each form checks the head it was
 //! written against, then calls the repository function its REST endpoint calls, so the rules
 //! stay in one place. The review data the Conversation tab and the diff show is built here too.
-use crate::discussion::author;
-use crate::discussion::discussion;
-use crate::discussion::expected;
 use crate::discussion::item;
 use crate::discussion::render_detail;
 use crate::discussion::repository;
 use crate::discussion::safe_api_error;
 use crate::discussion::submitted_detail;
 use crate::discussion::unavailable;
-use crate::discussion::CommentRights;
 use crate::discussion::RepositoryData;
 use crate::discussion::ResultPage;
 use crate::pulls::diff::diff_url;
@@ -25,14 +21,12 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
-use codeyard_api_http::shared::repos::discussion::page;
 use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_app::app::AppState;
 use codeyard_app::issues::discussion_link;
 use codeyard_app::issues::discussion_link_at;
 use codeyard_app::issues::discussion_page;
-use codeyard_app::issues::MAX_COMMENT_PAGE;
 use codeyard_app::issues::MAX_REVIEW_COMMENT_OFFSET;
 use codeyard_app::repositories::code_owners::load_rules;
 use codeyard_app::repositories::code_owners::resolve_owners;

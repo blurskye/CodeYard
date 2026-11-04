@@ -3,8 +3,6 @@
 //! may tick a box in the body, a comment author may tick one in it, and a stale page is refused.
 use codeyard_db_repos::discussions::comment_revision;
 
-use crate::discussion::author;
-use crate::discussion::expected;
 use crate::discussion::item;
 use crate::discussion::item_metadata;
 use crate::discussion::kind;
@@ -247,5 +245,3 @@ async fn save_comment_text(
         }
     }
 }
-
-use codeyard_api_http::shared::repos::discussion::page;

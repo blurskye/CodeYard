@@ -20,7 +20,6 @@ use codeyard_app::app::AppState;
 use codeyard_app::repositories::lifecycle::InitialFiles;
 use codeyard_app::repositories::templates::Template;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_orgs::organizations as orgs;
 use codeyard_db_orgs::organizations::OrganizationPage;
 use codeyard_db_repos::repositories::records::RepositoryFilter;
 use codeyard_db_repos::repositories::records::RepositorySort;
@@ -35,7 +34,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 mod properties;
-pub async fn list_repos(
+pub(crate) async fn list_repos(
     State(state): State<Arc<AppState>>,
     Query(query): Query<PageQuery>,
 ) -> Result<Json<Vec<RepoResponse>>, (StatusCode, Json<ApiError>)> {

@@ -113,7 +113,7 @@ impl PullRequestReviewResponse {
     }
 }
 
-pub async fn list_pull_request_reviews(
+pub(crate) async fn list_pull_request_reviews(
     State(state): State<Arc<AppState>>,
     Path((owner, repo, number)): Path<(String, String, i32)>,
     Query(query): Query<PageQuery>,

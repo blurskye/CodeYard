@@ -154,7 +154,7 @@ pub(crate) async fn visible_forks(
     Ok((forks, more))
 }
 
-pub async fn list_forks(
+pub(crate) async fn list_forks(
     State(state): State<Arc<AppState>>,
     Path((owner, repo)): Path<(String, String)>,
     Query(query): Query<PageQuery>,

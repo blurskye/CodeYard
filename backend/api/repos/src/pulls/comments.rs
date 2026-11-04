@@ -134,7 +134,7 @@ impl PullRequestCommentResponse {
     }
 }
 
-pub async fn list_pull_request_comments(
+pub(crate) async fn list_pull_request_comments(
     State(state): State<Arc<AppState>>,
     Path((owner, repo, number)): Path<(String, String, i32)>,
     Query(query): Query<PageQuery>,

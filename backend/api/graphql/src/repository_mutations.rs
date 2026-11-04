@@ -297,6 +297,6 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         .map_err(settings)?
     };
     Ok(
-        json!({"clientMutationId":input["clientMutationId"],"repository":repository::object(&saved)}),
+        json!({"clientMutationId":input["clientMutationId"],"repository":crate::repository::object(&saved)}),
     )
 }

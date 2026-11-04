@@ -12,7 +12,7 @@ use codeyard_api_http::shared::user::responses::PublicUserResponse as UserRespon
 use codeyard_app::app::AppState;
 use std::sync::Arc;
 
-pub async fn list_stargazers(
+pub(crate) async fn list_stargazers(
     State(state): State<Arc<AppState>>,
     Path((owner, repo)): Path<(String, String)>,
     Query(query): Query<PageQuery>,

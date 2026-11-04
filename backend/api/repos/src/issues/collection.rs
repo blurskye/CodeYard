@@ -1,9 +1,6 @@
 use crate::access::readable_repository;
-use crate::discussion::author;
-use crate::discussion::branches;
 use crate::discussion::head_choices;
 use crate::discussion::issue_item;
-use crate::discussion::item;
 use crate::discussion::kind;
 use crate::discussion::label;
 use crate::discussion::listed_assignees;

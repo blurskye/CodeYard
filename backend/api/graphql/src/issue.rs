@@ -195,7 +195,7 @@ pub(super) async fn comment(
         json!({"__typename":"IssueComment","id":node_id::encode("IC",codeyard_model::webhook_ids::conversation_comment_id(comment.id,false)),"databaseId":codeyard_model::webhook_ids::conversation_comment_id(comment.id,false),"_comment":comment.id,
         "_repo":issue.repo_id,"_number":issue.number,"_pull":false,"_author":comment.author_id,
         "viewerDidAuthor":comment.author_id==request.auth.user.id,"includesCreatedEdit":comment.updated_at>comment.created_at,"isMinimized":false,"minimizedReason":null,
-        "body":comment.body,"createdAt":comment.created_at,"updatedAt":comment.updated_at,"author":user::retained_author(comment.author_id,request).await?}),
+        "body":comment.body,"createdAt":comment.created_at,"updatedAt":comment.updated_at,"author":crate::user::retained_author(comment.author_id,request).await?}),
     )
 }
 
@@ -216,7 +216,7 @@ pub(super) async fn pull_comment(
         json!({"__typename":"IssueComment","id":node_id::encode("IC",codeyard_model::webhook_ids::conversation_comment_id(comment.id,true)),"databaseId":codeyard_model::webhook_ids::conversation_comment_id(comment.id,true),"_comment":comment.id,
         "_repo":pull.repo_id,"_number":pull.number,"_pull":true,"_author":comment.author_id,
         "viewerDidAuthor":comment.author_id==request.auth.user.id,"includesCreatedEdit":comment.updated_at>comment.created_at,"isMinimized":false,"minimizedReason":null,
-        "body":comment.body,"createdAt":comment.created_at,"updatedAt":comment.updated_at,"author":user::retained_author(comment.author_id,request).await?}),
+        "body":comment.body,"createdAt":comment.created_at,"updatedAt":comment.updated_at,"author":crate::user::retained_author(comment.author_id,request).await?}),
     )
 }
 
@@ -499,7 +499,7 @@ pub(super) async fn mutation(
         .await
         .map_err(unavailable)?
             - 1;
-        payload["commentEdge"] = json!({"cursor":connection::cursor(position),"node":pull_comment(&saved,request).await?});
+        payload["commentEdge"] = json!({"cursor":crate::connection::cursor(position),"node":pull_comment(&saved,request).await?});
         payload["subject"] = pull_object(&pull);
     } else {
         if kind != "I" {
@@ -542,7 +542,7 @@ pub(super) async fn mutation(
                 .await
                 .map_err(unavailable)?
                 - 1;
-            payload["commentEdge"] = json!({"cursor":connection::cursor(position),"node":comment(&saved,request).await?});
+            payload["commentEdge"] = json!({"cursor":crate::connection::cursor(position),"node":comment(&saved,request).await?});
             payload["subject"] = object(&issue);
         } else if field == "closeIssue" && !input["duplicateIssueId"].is_null() {
             let duplicate = crate::issue::mutations::id(&input, "duplicateIssueId", "I")?;

@@ -13,5 +13,3 @@ pub(crate) fn repeated(pairs: &[(String, String)], name: &str) -> Vec<String> {
 pub(crate) fn checkbox(form: &HashMap<String, String>, name: &str) -> bool {
     matches!(form.get(name).map(String::as_str), Some("on" | "true"))
 }
-
-use codeyard_api_http::shared::repos::forms::field;

@@ -2,10 +2,6 @@
 use super::*;
 use crate::bindings::Object;
 use async_graphql::ID;
-use classic_fields;
-use list_fields;
-use mutation_fields;
-use owner_fields;
 
 scalars!(Date);
 enums!(ProjectV2FieldType, ProjectV2ItemType);
@@ -310,3 +306,11 @@ impl gql::UpdateProjectV2ItemPositionPayloadResolver for Object {
         items(after: Option<String>, before: Option<String>, first: Option<i32>, last: Option<i32>) -> Option<gql::ProjectV2ItemConnection>;
     );
 }
+
+pub(super) use list_fields;
+
+pub(super) use classic_fields;
+
+pub(super) use owner_fields;
+
+pub(super) use mutation_fields;

@@ -6,7 +6,6 @@ use crate::discussion::unavailable;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_identity::repository_access::can_read;
-use codeyard_webui::components::references;
 use codeyard_webui::components::references::References;
 
 /// The references `texts` make, as the viewer of `repository`, named `owner/name`, may link them.

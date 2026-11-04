@@ -1,12 +1,9 @@
 use crate::access::check_repo_admin_access;
 use crate::access::find_repository;
-use crate::discussion::discussion;
 use crate::discussion::item;
 use crate::discussion::kind;
-use crate::discussion::label;
 use crate::discussion::render_detail;
 use crate::discussion::repository;
-use crate::discussion::require_item_binding;
 use crate::discussion::safe_api_error;
 use crate::discussion::submitted_detail;
 use crate::discussion::unavailable;

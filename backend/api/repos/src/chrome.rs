@@ -231,8 +231,4 @@ use codeyard_api_http::shared::repos::chrome::Loaded;
 
 use codeyard_api_http::shared::repos::chrome::MISSING_REVISION;
 
-use codeyard_api_http::shared::repos::chrome::commit;
-
 use codeyard_api_http::shared::repos::chrome::load_metadata;
-
-use codeyard_api_http::shared::repos::chrome::unavailable;

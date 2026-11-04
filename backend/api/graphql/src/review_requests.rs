@@ -283,7 +283,7 @@ pub(super) async fn mutation(
     .await
     .map_err(operation)?;
     Ok(
-        json!({"clientMutationId":input["clientMutationId"],"actor":user::by_id(actor.id,request).await?,
-        "pullRequest":issue::pull_object(&pull),"requestedReviewersEdge":null}),
+        json!({"clientMutationId":input["clientMutationId"],"actor":crate::user::by_id(actor.id,request).await?,
+        "pullRequest":crate::issue::pull_object(&pull),"requestedReviewersEdge":null}),
     )
 }

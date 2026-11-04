@@ -1,5 +1,4 @@
 use crate::access::readable_repository;
-use crate::discussion::author;
 use crate::discussion::item;
 use crate::discussion::kind;
 use crate::discussion::render_detail;
@@ -22,8 +21,6 @@ use axum::Json;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
-use codeyard_api_http::shared::repos::access::check_repo_read_access;
-use codeyard_api_http::shared::repos::discussion::page;
 use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::user::responses::PublicUserResponse as UserResponse;
 use codeyard_app::app::AppState;
@@ -89,7 +86,7 @@ impl CommentResponse {
     }
 }
 
-pub async fn list_issue_comments(
+pub(crate) async fn list_issue_comments(
     State(state): State<Arc<AppState>>,
     Path((owner, repo, number)): Path<(String, String, i32)>,
     Query(query): Query<PageQuery>,
