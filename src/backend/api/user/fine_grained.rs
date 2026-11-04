@@ -3,12 +3,11 @@
 use crate::backend::api::http::{context::PageContext, session::extract_session_id};
 use crate::backend::api::user::responses::{field, mutation_guard, require_account, Fields};
 use crate::backend::app::AppState;
-use crate::backend::db::{
-    self,
-    fine_grained_tokens::Token,
-    models::User,
-    organizations::{self, OrganizationOutcome, OrganizationPage},
-};
+use crate::backend::db;
+use crate::backend::db::fine_grained_tokens::Token;
+use crate::backend::db::organizations;
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::organizations::OrganizationPage;
 use crate::backend::identity::{
     fine_grained::{self, catalog, Access, Group, Owner, Request, TokenError, PERMISSIONS},
     tokens,
@@ -19,6 +18,7 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
+use codeyard_db_core::models::User;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::{
     account,

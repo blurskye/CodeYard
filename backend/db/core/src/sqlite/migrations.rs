@@ -6,7 +6,7 @@ use sqlx::{pool::PoolConnection, Connection, Sqlite, SqliteConnection, SqlitePoo
 const MIGRATIONS: &[(i64, &str, &str)] = &[(
     1,
     "schema",
-    include_str!("../../../../schema/sqlite/0001.schema.sql"),
+    include_str!("../../../../../schema/sqlite/0001.schema.sql"),
 )];
 
 // Cancellation must not return a connection with foreign keys disabled to the pool.
@@ -86,7 +86,7 @@ async fn apply_migrations(connection: &mut SqliteConnection) -> Result<()> {
     Ok(())
 }
 
-pub(in crate::backend::db) fn validate_history(applied: &[(i64, String)]) -> Result<()> {
+pub fn validate_history(applied: &[(i64, String)]) -> Result<()> {
     for (index, (version, checksum)) in applied.iter().enumerate() {
         let Some((expected, _, sql)) = MIGRATIONS.get(index) else {
             bail!("SQLite database history is newer than this application; downgrade refused");

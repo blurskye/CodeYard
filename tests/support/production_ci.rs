@@ -4,11 +4,11 @@ use crate::support::native_database::PostgresDatabase;
 use codeyard::backend::db;
 
 pub struct Fixture {
-    pub pool: db::DbPool,
+    pub pool: codeyard_db_core::DbPool,
     pub raw: sqlx::PgPool,
     pub temp: tempfile::TempDir,
-    pub owner: db::models::User,
-    pub repo: db::models::Repository,
+    pub owner: codeyard_db_core::models::User,
+    pub repo: codeyard_db_core::models::Repository,
     pub sha: String,
     database: PostgresDatabase,
 }

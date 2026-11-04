@@ -1,7 +1,8 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::models::User;
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::User;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// Browser operations retain the original session. Trusted local database callers use an ID.
 pub struct AdministratorActor {

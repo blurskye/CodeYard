@@ -49,9 +49,9 @@ impl World {
         .await
         .unwrap();
         for (user, level) in [
-            (bob_id, db::models::AccessLevel::Write),
-            (carol_id, db::models::AccessLevel::Write),
-            (dave_id, db::models::AccessLevel::Read),
+            (bob_id, codeyard_db_core::models::AccessLevel::Write),
+            (carol_id, codeyard_db_core::models::AccessLevel::Write),
+            (dave_id, codeyard_db_core::models::AccessLevel::Read),
         ] {
             db::repositories::access::grant_repo_access(
                 database.pool(),
@@ -1256,7 +1256,10 @@ async fn requested_reviewers(alice: &Client, number: i64) -> Vec<Value> {
 }
 
 /// The review-request notifications a user holds, as (title, link) pairs.
-async fn review_requests_for(pool: &db::DbPool, user_id: i64) -> Vec<(String, Option<String>)> {
+async fn review_requests_for(
+    pool: &codeyard_db_core::DbPool,
+    user_id: i64,
+) -> Vec<(String, Option<String>)> {
     db::notifications::records::list_notifications_for_user(pool, user_id, 100, false)
         .await
         .unwrap()

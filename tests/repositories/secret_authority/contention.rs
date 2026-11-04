@@ -5,7 +5,7 @@ use crate::support::database::wait_until_blocked;
 use std::{str::FromStr, time::Duration};
 
 async fn attempt(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     repo: i64,
     operation: u8,
@@ -166,7 +166,7 @@ async fn sqlite_secrets_require_reserved_writer_even_for_metadata() {
         )
         .await
         .expect("required independent SQLite contention connection");
-    let second: db::DbPool = raw.clone().into();
+    let second: codeyard_db_core::DbPool = raw.clone().into();
     let mut revoke = f.raw.begin_with("BEGIN IMMEDIATE").await.unwrap();
     for operation in 0..3 {
         let error = attempt(&second, actor, repo, operation)

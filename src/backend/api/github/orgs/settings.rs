@@ -1,21 +1,17 @@
 use super::{auth, outcome, target, AppState, Error, Result};
-use crate::backend::{
-    api::http::config::link_origin,
-    db::{
-        models::Organization,
-        organizations::{
-            discovery,
-            settings::{self, Changes, Settings},
-        },
-    },
-    webhooks::payloads,
-};
+use crate::backend::api::http::config::link_origin;
+use crate::backend::db::organizations::discovery;
+use crate::backend::db::organizations::settings;
+use crate::backend::db::organizations::settings::Changes;
+use crate::backend::db::organizations::settings::Settings;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     routing::{patch, MethodRouter},
     Json,
 };
+use codeyard_db_core::models::Organization;
 use serde_json::{json, Value};
 use std::sync::Arc;
 

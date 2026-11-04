@@ -1,7 +1,7 @@
 use super::{call, db, json, node_id, query, request};
 use axum::{http::StatusCode, Router};
 pub(super) async fn exercise(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     router: &Router,
     token: &str,
     bob: &str,
@@ -39,8 +39,8 @@ pub(super) async fn exercise(
             filename: "graphql.txt",
             content_type: "text/plain",
             file_size: 5,
-            reason: db::models::FileReason::ReleaseAsset,
-            visibility: db::models::FileVisibility::Owner,
+            reason: codeyard_db_core::models::FileReason::ReleaseAsset,
+            visibility: codeyard_db_core::models::FileVisibility::Owner,
             sha256_hex: &"a".repeat(64),
         },
     )

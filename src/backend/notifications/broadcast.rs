@@ -39,7 +39,7 @@ fn dispatch(subscriptions: &Subscriptions, event: NotificationEvent) {
 
 pub struct NotificationBroadcaster {
     subscriptions: Subscriptions,
-    pool: db::DbPool,
+    pool: codeyard_db_core::DbPool,
     origin: String,
     stop: watch::Sender<bool>,
     poller: Mutex<Option<AbortOnDropHandle<()>>>,
@@ -48,7 +48,7 @@ pub struct NotificationBroadcaster {
 
 impl NotificationBroadcaster {
     /// Construction does not start a task. Runtime starts delivery before sharing it.
-    pub fn new(pool: &db::DbPool) -> Self {
+    pub fn new(pool: &codeyard_db_core::DbPool) -> Self {
         let (stop, _) = watch::channel(false);
         Self {
             subscriptions: Subscriptions::default(),
@@ -186,7 +186,7 @@ impl Drop for SocketSlot {
 }
 
 async fn poll(
-    pool: db::DbPool,
+    pool: codeyard_db_core::DbPool,
     origin: String,
     subscriptions: Subscriptions,
     mut stop: watch::Receiver<bool>,
@@ -280,7 +280,7 @@ mod tests {
 
     #[tokio::test]
     async fn unrelated_recipients_do_not_fill_a_subscription() {
-        let pool = db::DbPool::Sqlite(
+        let pool = codeyard_db_core::DbPool::Sqlite(
             sqlx::sqlite::SqlitePoolOptions::new()
                 .connect_lazy("sqlite::memory:")
                 .unwrap(),

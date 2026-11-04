@@ -1,7 +1,8 @@
 //! Artifact inventory shares provenance repository associations with stored attestations.
+use codeyard_db_core::native_operation;
 pub mod pages;
-use super::DbPool;
 use anyhow::Result;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};

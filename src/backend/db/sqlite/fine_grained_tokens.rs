@@ -1,12 +1,15 @@
-use crate::backend::db::{
-    credentials::Actor,
-    fine_grained_tokens::{Bounds, NewToken, OwnerTokens, Policy, Token, TokenFilter},
-    models::OrgRole,
-    organizations::OrganizationOutcome,
-    sqlite::time,
-};
+use crate::backend::db::credentials::Actor;
+use crate::backend::db::fine_grained_tokens::Bounds;
+use crate::backend::db::fine_grained_tokens::NewToken;
+use crate::backend::db::fine_grained_tokens::OwnerTokens;
+use crate::backend::db::fine_grained_tokens::Policy;
+use crate::backend::db::fine_grained_tokens::Token;
+use crate::backend::db::fine_grained_tokens::TokenFilter;
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::sqlite::time;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::OrgRole;
 use sqlx::{SqliteConnection, SqlitePool};
 
 /// A token's bounds with its live membership and policy; package transactions read it too.
@@ -193,7 +196,7 @@ pub async fn policy(pool: &SqlitePool, org: i64) -> Result<Policy> {
 async fn active_owner(connection: &mut SqliteConnection, actor: i64, org: i64) -> Result<bool> {
     Ok(matches!(
         super::organizations::authority::authority(connection, actor, org).await?,
-        OrganizationOutcome::Applied(OrgRole::Owner)
+        OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Owner)
     ))
 }
 

@@ -13,13 +13,13 @@ use pulls::Client;
 use std::path::Path;
 
 async fn provision(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     root: &Path,
     owner: i64,
     name: &str,
     description: Option<&str>,
     private: bool,
-) -> db::models::Repository {
+) -> codeyard_db_core::models::Repository {
     lifecycle::provision(
         (pool, None),
         root,
@@ -72,7 +72,7 @@ async fn contract(pg: bool) {
         f.pool(),
         alice_id,
         shared.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -228,7 +228,7 @@ async fn filter_contract(pg: bool) {
         f.pool(),
         alice_id,
         shared.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();

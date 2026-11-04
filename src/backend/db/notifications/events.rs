@@ -1,5 +1,7 @@
 //! Bounded, durable notification hints shared by web nodes.
-use crate::backend::db::{postgres, sqlite, DbPool};
+use crate::backend::db::postgres;
+use crate::backend::db::sqlite;
+use codeyard_db_core::DbPool;
 
 pub const BATCH_SIZE: usize = 256;
 const MAX_ACTIVE_TRANSACTIONS: usize = 4096;
@@ -20,10 +22,12 @@ async fn poll(pool: &DbPool, cursor: i64, pending: &[i64]) -> Result<EventBatch,
         ));
     }
     let batch = match pool {
-        DbPool::Postgres(pool) => {
+        codeyard_db_core::DbPool::Postgres(pool) => {
             postgres::notifications::events::poll(pool, cursor, pending).await?
         }
-        DbPool::Sqlite(pool) => sqlite::notifications::events::poll(pool, cursor).await?,
+        codeyard_db_core::DbPool::Sqlite(pool) => {
+            sqlite::notifications::events::poll(pool, cursor).await?
+        }
     };
     if batch.active.len() > MAX_ACTIVE_TRANSACTIONS {
         return Err(sqlx::Error::Protocol(
@@ -83,15 +87,21 @@ pub async fn announce(pool: &DbPool, payload: &str) -> Result<(), sqlx::Error> {
         ));
     }
     match pool {
-        DbPool::Postgres(pool) => postgres::notifications::events::announce(pool, payload).await,
-        DbPool::Sqlite(pool) => sqlite::notifications::events::announce(pool, payload).await,
+        codeyard_db_core::DbPool::Postgres(pool) => {
+            postgres::notifications::events::announce(pool, payload).await
+        }
+        codeyard_db_core::DbPool::Sqlite(pool) => {
+            sqlite::notifications::events::announce(pool, payload).await
+        }
     }
 }
 
 /// Hints are not inbox history. A disconnected browser reloads the authoritative inbox.
 pub async fn prune(pool: &DbPool) -> Result<u64, sqlx::Error> {
     match pool {
-        DbPool::Postgres(pool) => postgres::notifications::events::prune(pool).await,
-        DbPool::Sqlite(pool) => sqlite::notifications::events::prune(pool).await,
+        codeyard_db_core::DbPool::Postgres(pool) => {
+            postgres::notifications::events::prune(pool).await
+        }
+        codeyard_db_core::DbPool::Sqlite(pool) => sqlite::notifications::events::prune(pool).await,
     }
 }

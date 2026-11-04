@@ -1,11 +1,12 @@
-use crate::backend::db::models::RepoLanguage;
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::RepoLanguage;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct RepositorySnapshot {
     #[sqlx(flatten)]
-    pub repository: crate::backend::db::models::Repository,
+    pub repository: codeyard_db_core::models::Repository,
     #[sqlx(flatten)]
     pub facts: RepositoryDocumentFacts,
     pub owner: String,

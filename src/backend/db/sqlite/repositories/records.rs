@@ -1,9 +1,10 @@
-use crate::backend::db::models::{Repository, SharedRepository};
 use crate::backend::db::repositories::discovery::public_fork_count_sql;
 use crate::backend::db::repositories::records::{
     MergeMethodUpdate, RepositoryFilter, RepositorySort,
 };
 use anyhow::Result;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::SharedRepository;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
 pub async fn network_fork_count(pool: &SqlitePool, repo: i64) -> Result<i64> {

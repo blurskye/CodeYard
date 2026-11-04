@@ -1,10 +1,13 @@
 //! Stored default-branch languages, including successfully computed empty results.
-use crate::backend::{
-    db::{self, repository_stats::LanguageSource, DbPool},
-    git::{self, LanguageStat},
-    repositories::store::{ErrorKind, RepoError, RepoStore},
-};
+use crate::backend::db;
+use crate::backend::db::repository_stats::LanguageSource;
+use crate::backend::git;
+use crate::backend::git::LanguageStat;
+use crate::backend::repositories::store::ErrorKind;
+use crate::backend::repositories::store::RepoError;
+use crate::backend::repositories::store::RepoStore;
 use anyhow::Result;
+use codeyard_db_core::DbPool;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -50,7 +53,7 @@ fn computation(repo_id: i64) -> Arc<tokio::sync::Mutex<()>> {
 pub async fn compute_and_store(
     pool: &DbPool,
     store: &RepoStore,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     branch: &str,
 ) -> Result<Vec<LanguageStat>, RepoError> {
     let Some(path) = store.local_dir() else {
@@ -242,7 +245,7 @@ mod tests {
         let raw = sqlx::sqlite::SqlitePoolOptions::new()
             .connect_lazy("sqlite::memory:")
             .unwrap();
-        let pool = DbPool::Sqlite(raw);
+        let pool = codeyard_db_core::DbPool::Sqlite(raw);
         let path = PathBuf::from(format!("/unused/{}.git", uuid::Uuid::new_v4()));
         for _ in 0..100 {
             refresh_default_branch(pool.clone(), 1, path.clone(), "main".into(), Some(None));

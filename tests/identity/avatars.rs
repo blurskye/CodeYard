@@ -8,18 +8,17 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db::{
-        self,
-        models::OrgRole,
-        organizations::{self, NewOrganization, OrganizationOutcome, OrganizationProfile},
-    },
-    identity::avatars,
-    storage::ObjectStore,
-};
+use codeyard::backend::api::create_router;
+use codeyard::backend::app::AppState;
+use codeyard::backend::ci::CiConfig;
+use codeyard::backend::db;
+use codeyard::backend::db::organizations;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::OrganizationOutcome;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::identity::avatars;
+use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::OrgRole;
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};
@@ -81,8 +80,8 @@ async fn upload(client: &Client, reason: &str, bytes: &[u8], confirm: bool) -> S
 }
 
 async fn set_avatar(
-    pool: &db::DbPool,
-    user: &db::models::User,
+    pool: &codeyard_db_core::DbPool,
+    user: &codeyard_db_core::models::User,
     file_id: &str,
 ) -> Result<(), avatars::AvatarError> {
     avatars::set_user_avatar(
@@ -137,7 +136,7 @@ fn take_io_slots(storage: &ObjectStore) -> Vec<tokio::sync::OwnedSemaphorePermit
     permits
 }
 
-async fn organization(pool: &db::DbPool, owner: i64, slug: &str) -> i64 {
+async fn organization(pool: &codeyard_db_core::DbPool, owner: i64, slug: &str) -> i64 {
     let profile = OrganizationProfile::new(None, None).unwrap();
     match organizations::create_organization(
         pool,
@@ -548,7 +547,10 @@ async fn contract(pg: bool) {
 
     // ----- An organization's picture -----
     let org = organization(f.pool(), ids[2], "acme").await;
-    for (user, role) in [(ids[1], OrgRole::Admin), (ids[3], OrgRole::Member)] {
+    for (user, role) in [
+        (ids[1], codeyard_db_core::models::OrgRole::Admin),
+        (ids[3], codeyard_db_core::models::OrgRole::Member),
+    ] {
         assert!(matches!(
             organizations::add_organization_member(f.pool(), ids[2], org, user, role)
                 .await
@@ -838,12 +840,12 @@ async fn contract(pg: bool) {
     );
     let sql = "SELECT EXISTS(SELECT 1 FROM pending_object_deletions WHERE object_key=$1)";
     let queued: bool = match f.pool() {
-        db::DbPool::Postgres(pool) => sqlx::query_scalar(sql)
+        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_scalar(sql)
             .bind(&file.object_key)
             .fetch_one(pool)
             .await
             .unwrap(),
-        db::DbPool::Sqlite(pool) => sqlx::query_scalar(sql)
+        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_scalar(sql)
             .bind(&file.object_key)
             .fetch_one(pool)
             .await
@@ -930,7 +932,8 @@ async fn contract(pg: bool) {
 
 async fn pending_picture_contract(pg: bool) {
     use codeyard::backend::files::{self, UploadDeclaration};
-    use db::models::{FileReason, FileVisibility};
+    use codeyard_db_core::models::FileReason;
+    use codeyard_db_core::models::FileVisibility;
     let mut f = Database::new(pg).await;
     let actor = f.actor("pending_picture").await;
     let org = organization(f.pool(), actor, "pending-org").await;
@@ -938,8 +941,11 @@ async fn pending_picture_contract(pg: bool) {
     let storage = ObjectStore::open(root.path(), None).await.unwrap();
     let checksum = hex::encode(Sha256::digest(PNG));
     for (reason, table) in [
-        (FileReason::Avatar, "users"),
-        (FileReason::OrgAvatar, "organizations"),
+        (codeyard_db_core::models::FileReason::Avatar, "users"),
+        (
+            codeyard_db_core::models::FileReason::OrgAvatar,
+            "organizations",
+        ),
     ] {
         let store = || {
             files::store_upload(
@@ -951,7 +957,7 @@ async fn pending_picture_contract(pg: bool) {
                     content_type: "image/png",
                     file_size: PNG.len() as i64,
                     reason,
-                    visibility: FileVisibility::Public,
+                    visibility: codeyard_db_core::models::FileVisibility::Public,
                     sha256_hex: &checksum,
                 },
                 PNG.to_vec(),
@@ -973,7 +979,7 @@ async fn pending_picture_contract(pg: bool) {
         }
         let pool = f.pool();
         let assign = |id| async move {
-            if reason == FileReason::Avatar {
+            if reason == codeyard_db_core::models::FileReason::Avatar {
                 db::users::accounts::set_user_avatar(
                     pool,
                     actor,
@@ -1035,7 +1041,7 @@ async fn pending_picture_contract(pg: bool) {
             &[],
         )
         .await;
-        if reason == FileReason::Avatar {
+        if reason == codeyard_db_core::models::FileReason::Avatar {
             assert_eq!(
                 db::users::accounts::set_user_avatar(
                     f.pool(),
@@ -1090,8 +1096,8 @@ async fn postgres_organization_picture_swaps_lock_files_in_uuid_order() {
                 filename: "picture.png",
                 content_type: "image/png",
                 file_size: PNG.len() as i64,
-                reason: db::models::FileReason::OrgAvatar,
-                visibility: db::models::FileVisibility::Public,
+                reason: codeyard_db_core::models::FileReason::OrgAvatar,
+                visibility: codeyard_db_core::models::FileVisibility::Public,
                 sha256_hex: &hex::encode(Sha256::digest(PNG)),
             },
         )

@@ -30,7 +30,7 @@ async fn remove_upload(router: &Router, token: &str, upload: &str) {
 
 pub(super) async fn contract(
     router: &Router,
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     token: &str,
     sha: &str,

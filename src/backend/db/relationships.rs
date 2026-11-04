@@ -1,6 +1,7 @@
 //! Issue-only relationship graphs. Native writes serialize graph validation with the change.
-use super::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     BlockedBy,

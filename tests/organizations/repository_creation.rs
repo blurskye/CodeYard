@@ -7,18 +7,17 @@ use crate::support::organizations::applied;
 mod fixture;
 use crate::support::http_client as http;
 
-use codeyard::backend::{
-    db::{
-        self,
-        models::{AccessLevel, OrgRole, Repository},
-        organizations as orgs,
-        repositories::creation::{
-            self as creation, NewRepository, RepositoryCreationOwner, RepositoryStorageRefusal,
-            RepositoryTarget,
-        },
-    },
-    repositories::lifecycle,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations as orgs;
+use codeyard::backend::db::repositories::creation;
+use codeyard::backend::db::repositories::creation::NewRepository;
+use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
+use codeyard::backend::db::repositories::creation::RepositoryStorageRefusal;
+use codeyard::backend::db::repositories::creation::RepositoryTarget;
+use codeyard::backend::repositories::lifecycle;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Repository;
 use database::Database;
 
 fn owner(actor_id: i64, target: RepositoryTarget) -> RepositoryCreationOwner {
@@ -88,9 +87,30 @@ async fn creation_contract(mut database: Database) {
     let siteadmin = actor(&database, "siteadmin").await;
     let unknown = actor(&database, "unknown_role").await;
     let org = organization(&database, own, "creation_org").await;
-    member(&database, own, org, admin, OrgRole::Admin).await;
-    member(&database, own, org, ordinary, OrgRole::Member).await;
-    member(&database, own, org, unknown, OrgRole::Member).await;
+    member(
+        &database,
+        own,
+        org,
+        admin,
+        codeyard_db_core::models::OrgRole::Admin,
+    )
+    .await;
+    member(
+        &database,
+        own,
+        org,
+        ordinary,
+        codeyard_db_core::models::OrgRole::Member,
+    )
+    .await;
+    member(
+        &database,
+        own,
+        org,
+        unknown,
+        codeyard_db_core::models::OrgRole::Member,
+    )
+    .await;
     database
         .execute(
             "UPDATE org_memberships SET role='future_role' WHERE org_id=$1 AND user_id=$2",
@@ -157,7 +177,7 @@ async fn creation_contract(mut database: Database) {
             database.pool(),
             direct_writer,
             created.id,
-            AccessLevel::Write,
+            codeyard_db_core::models::AccessLevel::Write,
         )
         .await
         .unwrap();
@@ -237,9 +257,15 @@ async fn creation_contract(mut database: Database) {
             .await;
     }
     applied(
-        orgs::update_organization_member_role(database.pool(), own, org, admin, OrgRole::Member)
-            .await
-            .unwrap(),
+        orgs::update_organization_member_role(
+            database.pool(),
+            own,
+            org,
+            admin,
+            codeyard_db_core::models::OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     denied(
         create(
@@ -300,7 +326,7 @@ async fn personal_fork_contract(mut database: Database) {
         database.pool(),
         creator,
         private_source.id,
-        AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -554,7 +580,10 @@ async fn shared_fixture_lifecycle(pg: bool) {
     let schema: Option<String> = match &database {
         Database::Postgres(f) => {
             assert!(pg);
-            assert!(matches!(database.pool(), db::DbPool::Postgres(_)));
+            assert!(matches!(
+                database.pool(),
+                codeyard_db_core::DbPool::Postgres(_)
+            ));
             let user = db::users::accounts::get_user_by_id(database.pool(), f.owner.id)
                 .await
                 .unwrap()
@@ -586,7 +615,10 @@ async fn shared_fixture_lifecycle(pg: bool) {
         }
         Database::Sqlite(_) => {
             assert!(!pg);
-            assert!(matches!(database.pool(), db::DbPool::Sqlite(_)));
+            assert!(matches!(
+                database.pool(),
+                codeyard_db_core::DbPool::Sqlite(_)
+            ));
             None
         }
     };
@@ -837,7 +869,7 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
         database.pool(),
         forker,
         source.id,
-        AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -930,7 +962,7 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
         database.pool(),
         forker,
         source.id,
-        AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();

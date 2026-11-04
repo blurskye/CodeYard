@@ -1,17 +1,17 @@
 //! Live default-branch search using the bounded native Git/RPC operations. No independent index.
 use super::store::{repo_store, BlobRange, CommitFilter, CommitInfo, RepoStore};
-use crate::backend::{
-    cluster::NodeContext,
-    db::{
-        self,
-        catalog_search::{self, Kind, Options, Search},
-        discussion_search::{self, Expr},
-        models::Repository,
-    },
-    git,
-};
+use crate::backend::cluster::NodeContext;
+use crate::backend::db;
+use crate::backend::db::catalog_search;
+use crate::backend::db::catalog_search::Kind;
+use crate::backend::db::catalog_search::Options;
+use crate::backend::db::catalog_search::Search;
+use crate::backend::db::discussion_search;
+use crate::backend::db::discussion_search::Expr;
+use crate::backend::git;
 use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDate, Utc};
+use codeyard_db_core::models::Repository;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     future::Future,
@@ -438,7 +438,7 @@ impl Scan<'_> {
     }
     async fn commits(
         &mut self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         store: &RepoStore,
         scope: &Arc<Scope>,
         tip: &CommitInfo,
@@ -567,7 +567,7 @@ struct CommitContext<'a> {
     scope: &'a Scope,
     viewer: Option<i64>,
     commit: &'a CommitInfo,
-    people: &'a HashMap<String, db::models::User>,
+    people: &'a HashMap<String, codeyard_db_core::models::User>,
 }
 impl CommitContext<'_> {
     fn term(&self, key: &str, value: &str) -> Option<bool> {
@@ -693,7 +693,7 @@ async fn until<T, E>(
 }
 
 pub async fn search(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     viewer: Option<i64>,
     query: &Query,

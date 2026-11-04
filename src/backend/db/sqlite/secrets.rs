@@ -2,7 +2,8 @@ use crate::backend::db::secrets::{SecretKind, SecretsError};
 use sqlx::SqlitePool;
 
 use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db::models::{RepoSecret, RepoSecretMeta};
+use codeyard_db_core::models::RepoSecret;
+use codeyard_db_core::models::RepoSecretMeta;
 
 pub async fn encryption_samples(pool: &SqlitePool) -> anyhow::Result<Vec<(Vec<u8>, Vec<u8>)>> {
     Ok(

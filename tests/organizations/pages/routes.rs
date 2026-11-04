@@ -256,7 +256,9 @@ fn tab_links(source: &str) -> Vec<&str> {
 
 pub async fn teams(f: &Fixture) {
     use super::{fixture::applied, profile::html};
-    use codeyard::backend::db::{self, models::AccessLevel, organizations::*};
+    use codeyard::backend::db;
+    use codeyard::backend::db::organizations::*;
+    use codeyard_db_core::models::AccessLevel;
     let pool = f.database.pool();
     for slug in ["api", "admin", "search"] {
         let reserved = f
@@ -687,9 +689,14 @@ pub async fn teams(f: &Fixture) {
         grants.iter().map(|grant| grant.repo_id).collect::<Vec<_>>(),
         vec![public]
     );
-    db::repositories::access::grant_repo_access(pool, f.member.id, private, AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        pool,
+        f.member.id,
+        private,
+        codeyard_db_core::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         f.get(&f.member, &path)
             .await

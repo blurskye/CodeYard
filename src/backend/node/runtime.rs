@@ -1,7 +1,10 @@
 //! `codeyard serve`: starts the HTTP server, the selected SSH transport and the
 //! CI service, then waits for a shutdown signal.
 use super::{config::ServeConfig, NodeRole};
-use crate::backend::{api, cluster, db::DbPool, fs::lock_state_dir, ssh};
+use crate::backend::api;
+use crate::backend::cluster;
+use crate::backend::fs::lock_state_dir;
+use crate::backend::ssh;
 use crate::backend::{
     app::AppState,
     ci::CiConfig,
@@ -9,6 +12,7 @@ use crate::backend::{
     storage::{s3::S3Config, ObjectStore},
 };
 use anyhow::{Context, Result};
+use codeyard_db_core::DbPool;
 use std::path::PathBuf;
 use std::{path::Path, sync::Arc};
 use tracing::{info, warn};
@@ -673,17 +677,17 @@ mod tests {
         use crate::backend::db;
 
         let directory = tempfile::tempdir().unwrap();
-        let pool = db::init_db(&format!(
+        let pool = codeyard_db_core::init_db(&format!(
             "sqlite://{}",
             directory.path().join("test.db").display()
         ))
         .await
         .unwrap();
-        db::run_migrations(&pool).await.unwrap();
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let owner = db::users::accounts::create_user(&pool, "owner", None)
             .await
             .unwrap();
-        let DbPool::Sqlite(raw) = &pool else {
+        let codeyard_db_core::DbPool::Sqlite(raw) = &pool else {
             unreachable!()
         };
         sqlx::query("INSERT INTO upload_rate_limit(user_id,file_size,uploaded_at) VALUES (?1,10,strftime('%Y-%m-%dT%H:%M:%f000Z','now','-731 days'))")

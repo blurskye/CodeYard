@@ -82,7 +82,7 @@ async fn scope(
     name: &str,
     write: bool,
     admin: bool,
-) -> Result<(db::models::Repository, auth::Authentication)> {
+) -> Result<(codeyard_db_core::models::Repository, auth::Authentication)> {
     let (repo, auth) = repository(state, headers, owner, name, write).await?;
     let auth = auth.ok_or_else(auth::required)?;
     let allowed = if admin {
@@ -464,7 +464,7 @@ async fn alert_repository(
     headers: &HeaderMap,
     owner: &str,
     name: &str,
-) -> Result<db::models::Repository> {
+) -> Result<codeyard_db_core::models::Repository> {
     let (repo, _) = repository(state, headers, owner, name, false).await?;
     if repo.is_private {
         scope(state, headers, owner, name, false, false).await?;
@@ -542,7 +542,7 @@ async fn alerts(
 async fn listed_alert(
     state: &AppState,
     row: &records::Alert,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     reference: Option<&str>,
     pull_request: Option<i32>,

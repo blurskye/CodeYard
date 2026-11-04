@@ -1,14 +1,17 @@
 //! Cluster membership on PostgreSQL. Roles are a `TEXT[]` column.
 pub(crate) mod writes;
-use super::models::{
-    ClusterNode, HeldReplica, JoinInvite, JoinOutcome, NodeReplicaCounts, NodeStatusChange,
-};
 use crate::backend::db::cluster::{
     Authority, DeclaredMember, FamilyOutcome, JoinRequest, NewJoinToken, PrimaryReplicaRow,
     PromoteOutcome,
 };
 use crate::backend::db::postgres::users::transitions::{active_admin, live_session};
 use anyhow::{anyhow, bail, ensure, Result};
+use codeyard_db_core::models::ClusterNode;
+use codeyard_db_core::models::HeldReplica;
+use codeyard_db_core::models::JoinInvite;
+use codeyard_db_core::models::JoinOutcome;
+use codeyard_db_core::models::NodeReplicaCounts;
+use codeyard_db_core::models::NodeStatusChange;
 use sqlx::{PgConnection, PgPool};
 
 /// Turns the name-uniqueness failure into a message an operator can act on.
@@ -122,7 +125,7 @@ pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(node) = known {
-        return Ok(JoinOutcome::AlreadyMember(node));
+        return Ok(codeyard_db_core::models::JoinOutcome::AlreadyMember(node));
     }
     // One statement checks expiry and use count and takes the use, so two joins
     // cannot both succeed with a one-time token.
@@ -135,12 +138,12 @@ pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<
     .fetch_optional(&mut *tx)
     .await?;
     let Some((allowed, requires_approval)) = token else {
-        return Ok(JoinOutcome::InvalidToken);
+        return Ok(codeyard_db_core::models::JoinOutcome::InvalidToken);
     };
     let roles = match request.roles {
         None => allowed,
         Some(wanted) if wanted.iter().all(|role| allowed.contains(role)) => wanted.to_vec(),
-        Some(_) => return Ok(JoinOutcome::RolesNotAllowed { allowed }),
+        Some(_) => return Ok(codeyard_db_core::models::JoinOutcome::RolesNotAllowed { allowed }),
     };
     let status = if requires_approval {
         "pending"
@@ -172,7 +175,7 @@ pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<
     if let Some(node) = inserted {
         super::runners::bind_registration(&mut tx, request.token_hash, &node, request.name).await?;
         tx.commit().await?;
-        return Ok(JoinOutcome::Joined(node));
+        return Ok(codeyard_db_core::models::JoinOutcome::Joined(node));
     }
     // Either the name is taken, or the same key joined concurrently.
     let raced = sqlx::query_as::<_, ClusterNode>(
@@ -182,8 +185,8 @@ pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<
     .fetch_optional(&mut *tx)
     .await?;
     Ok(match raced {
-        Some(node) => JoinOutcome::AlreadyMember(node),
-        None => JoinOutcome::NameTaken,
+        Some(node) => codeyard_db_core::models::JoinOutcome::AlreadyMember(node),
+        None => codeyard_db_core::models::JoinOutcome::NameTaken,
     })
 }
 
@@ -317,7 +320,7 @@ pub async fn set_node_status(
         if !active_admin(&mut tx, user_id).await?
             || !live_session(&mut tx, user_id, session).await?
         {
-            return Ok(NodeStatusChange::Denied);
+            return Ok(codeyard_db_core::models::NodeStatusChange::Denied);
         }
     }
     let before: Option<String> =
@@ -326,11 +329,11 @@ pub async fn set_node_status(
             .fetch_optional(&mut *tx)
             .await?;
     let Some(before) = before else {
-        return Ok(NodeStatusChange::Missing);
+        return Ok(codeyard_db_core::models::NodeStatusChange::Missing);
     };
     if let Authority::Administrator { user_id, session } = authority {
         if !live_session(&mut tx, user_id, session).await? {
-            return Ok(NodeStatusChange::Denied);
+            return Ok(codeyard_db_core::models::NodeStatusChange::Denied);
         }
     }
     let node = sqlx::query_as::<_, ClusterNode>(
@@ -345,7 +348,7 @@ pub async fn set_node_status(
             .bind(actor).bind(node.id).bind(serde_json::json!({"before":before,"status":status})).execute(&mut *tx).await?;
     }
     tx.commit().await?;
-    Ok(NodeStatusChange::Changed {
+    Ok(codeyard_db_core::models::NodeStatusChange::Changed {
         before,
         node: Box::new(node),
     })
@@ -473,7 +476,7 @@ pub async fn replica_applied_version(
 pub async fn get_repository_by_uuid(
     pool: &PgPool,
     uuid: &str,
-) -> Result<Option<crate::backend::db::models::Repository>> {
+) -> Result<Option<codeyard_db_core::models::Repository>> {
     Ok(
         sqlx::query_as("SELECT * FROM repositories WHERE right(disk_path, 40) = $1 || '.git'")
             .bind(uuid)
@@ -608,7 +611,7 @@ pub async fn assign_replica_family(
     pool: &PgPool,
     repository: i64,
     primary: i64,
-    setting: crate::backend::db::models::ReplicaSetting,
+    setting: codeyard_db_core::models::ReplicaSetting,
 ) -> Result<Vec<i64>> {
     let mut tx = pool.begin().await?;
     // One reservation owner across primaries, held through every family-row change.

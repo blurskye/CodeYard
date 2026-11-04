@@ -1,5 +1,6 @@
-use crate::backend::db::{backups::PullRequestHead, models::Repository};
+use crate::backend::db::backups::PullRequestHead;
 use anyhow::Result;
+use codeyard_db_core::models::Repository;
 use sqlx::SqlitePool;
 
 pub async fn snapshot_repositories(path: &std::path::Path) -> Result<Vec<Repository>> {

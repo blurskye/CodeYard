@@ -2,8 +2,6 @@ use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::access::{access_error, readable_repository};
 use crate::backend::api::repos::responses::repo_store_error;
 use crate::backend::app::AppState;
-use crate::backend::db::models::User;
-use crate::backend::db::DbPool;
 use crate::backend::repositories::access::AccessError;
 use crate::backend::repositories::store::{
     repo_store, ContributorInfo, RepoError, MAX_CONTRIBUTOR_RESPONSE_BYTES,
@@ -11,6 +9,8 @@ use crate::backend::repositories::store::{
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
+use codeyard_db_core::models::User;
+use codeyard_db_core::DbPool;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;

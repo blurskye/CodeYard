@@ -12,9 +12,11 @@ pub mod ref_changes;
 pub mod settings;
 pub mod statuses;
 
-use crate::backend::db::models::{Repository, Webhook};
+use crate::backend::db;
 use crate::backend::db::webhooks::HookOwner;
-use crate::backend::db::{self, DbPool};
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::Webhook;
+use codeyard_db_core::DbPool;
 use delivery::Outgoing;
 use payloads::Person;
 use serde_json::Value;
@@ -195,8 +197,8 @@ impl Drop for Ticket {
 
 fn pool_id(pool: &DbPool) -> usize {
     match pool {
-        DbPool::Postgres(pool) => Arc::as_ptr(&pool.connect_options()) as usize,
-        DbPool::Sqlite(pool) => Arc::as_ptr(&pool.connect_options()) as usize,
+        codeyard_db_core::DbPool::Postgres(pool) => Arc::as_ptr(&pool.connect_options()) as usize,
+        codeyard_db_core::DbPool::Sqlite(pool) => Arc::as_ptr(&pool.connect_options()) as usize,
     }
 }
 
@@ -611,7 +613,9 @@ mod tests {
 
     #[tokio::test]
     async fn owners_have_separate_capacity_and_manual_rate_limits() {
-        let pool = DbPool::Sqlite(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
+        let pool = codeyard_db_core::DbPool::Sqlite(
+            sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap(),
+        );
         let mut queue = Queue::default();
         let owner = HookOwner::Repository(1);
         for _ in 0..OWNER_QUEUE_LIMIT {
@@ -635,14 +639,17 @@ mod tests {
         }
         assert!(queue.take(&pool, other, Some(3), true, 0).is_none());
         assert!(queue.take(&pool, other, Some(3), false, 0).is_some());
-        let other_pool =
-            DbPool::Sqlite(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
+        let other_pool = codeyard_db_core::DbPool::Sqlite(
+            sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap(),
+        );
         assert!(queue.take(&other_pool, other, Some(3), true, 0).is_some());
     }
 
     #[tokio::test]
     async fn construction_and_delivery_share_the_queue_limit() {
-        let pool = DbPool::Sqlite(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
+        let pool = codeyard_db_core::DbPool::Sqlite(
+            sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap(),
+        );
         let mut queue = Queue::default();
         for id in 0..QUEUE_LIMIT as i64 {
             assert!(queue
@@ -660,7 +667,9 @@ mod tests {
 
     #[tokio::test]
     async fn queued_bodies_share_one_byte_budget() {
-        let pool = DbPool::Sqlite(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
+        let pool = codeyard_db_core::DbPool::Sqlite(
+            sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap(),
+        );
         let mut queue = Queue::default();
         let half = QUEUE_BYTES / 2;
         assert!(queue

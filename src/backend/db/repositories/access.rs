@@ -1,7 +1,11 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::models::{AccessLevel, RepoAccess, Repository, User};
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::RepoAccess;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 native_operation!(crate::backend::db::postgres::repositories::access::git_access,
     crate::backend::db::sqlite::repositories::access::git_access,

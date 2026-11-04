@@ -15,7 +15,7 @@ use std::{str::FromStr, time::Duration};
 // This handler suite needs only a disposable SQLite handle, not the shared
 // fixture's unrelated PostgreSQL/reopen API. Keep its ownership local.
 struct NativeDatabase {
-    pool: db::DbPool,
+    pool: codeyard_db_core::DbPool,
     raw: sqlx::SqlitePool,
     _directory: tempfile::TempDir,
 }
@@ -26,8 +26,10 @@ impl NativeDatabase {
             "sqlite://{}",
             directory.path().join("application.sqlite").display()
         );
-        let pool = db::init_db(&url).await.expect("native SQLite open");
-        db::run_migrations(&pool)
+        let pool = codeyard_db_core::init_db(&url)
+            .await
+            .expect("native SQLite open");
+        codeyard_db_core::run_migrations(&pool)
             .await
             .expect("native SQLite migration");
         let raw = SqlitePoolOptions::new()
@@ -70,7 +72,7 @@ use codeyard::backend::{
 use tower::ServiceExt;
 
 struct Actor {
-    user: db::models::User,
+    user: codeyard_db_core::models::User,
     session: String,
     csrf: String,
 }
@@ -81,9 +83,9 @@ struct Fixture {
     owner: Actor,
     admin: Actor,
     member: Actor,
-    public: db::models::Repository,
-    private: db::models::Repository,
-    personal: db::models::Repository,
+    public: codeyard_db_core::models::Repository,
+    private: codeyard_db_core::models::Repository,
+    personal: codeyard_db_core::models::Repository,
     sha: String,
 }
 impl Fixture {
@@ -176,7 +178,7 @@ impl Fixture {
             sha,
         }
     }
-    async fn actor(pool: &db::DbPool, username: &str) -> Actor {
+    async fn actor(pool: &codeyard_db_core::DbPool, username: &str) -> Actor {
         let user = db::users::accounts::create_user(pool, username, None)
             .await
             .unwrap();
@@ -304,14 +306,14 @@ impl Fixture {
         .unwrap();
         assert_eq!(unrelated_memberships, 0);
     }
-    async fn review(&self, repository: &db::models::Repository) -> (i32, i64) {
+    async fn review(&self, repository: &codeyard_db_core::models::Repository) -> (i32, i64) {
         // Fixture discussion data, not an authorized
         // contribution from the same-numbered unrelated account.
-        let pull = sqlx::query_as::<_, db::models::PullRequest>(
+        let pull = sqlx::query_as::<_, codeyard_db_core::models::PullRequest>(
             "INSERT INTO pull_requests(repo_id,number,author_id,title,body,head_branch,head_sha,base_branch,base_sha,is_draft) VALUES(?1,(SELECT COALESCE(MAX(number),0)+1 FROM pull_requests WHERE repo_id=?1),?2,'Fixture pull','','topic',?3,'main',?3,TRUE) RETURNING *",
         ).bind(repository.id).bind(self.member.user.id).bind(&self.sha)
             .fetch_one(&self.database.raw).await.unwrap();
-        let review = sqlx::query_as::<_, db::models::PullRequestReview>(
+        let review = sqlx::query_as::<_, codeyard_db_core::models::PullRequestReview>(
             "INSERT INTO pr_reviews(pull_request_id,author_id,state,commit_sha) VALUES(?1,?2,'approved',?3) RETURNING *",
         ).bind(pull.id).bind(self.admin.user.id).bind(&self.sha)
             .fetch_one(&self.database.raw).await.unwrap();
@@ -319,14 +321,17 @@ impl Fixture {
     }
 }
 
-async fn denied_owner_operations(fixture: &Fixture, repository: &db::models::Repository) {
+async fn denied_owner_operations(
+    fixture: &Fixture,
+    repository: &codeyard_db_core::models::Repository,
+) {
     assert_eq!(repository.owner_kind, "org");
     assert_eq!(repository.owner_org_id, Some(fixture.owner.user.id));
     db::repositories::access::grant_repo_access(
         &fixture.database.pool,
         fixture.member.user.id,
         repository.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -370,7 +375,7 @@ async fn denied_owner_operations(fixture: &Fixture, repository: &db::models::Rep
         )
         .await
         .unwrap(),
-        db::models::AccessLevel::Read
+        codeyard_db_core::models::AccessLevel::Read
     );
     let rules = db::repositories::protection::list_branch_protection_rules(
         &fixture.database.pool,
@@ -422,7 +427,7 @@ async fn private_org_equal_user_id_denied_even_with_explicit_read_access() {
         &fixture.database.pool,
         fixture.owner.user.id,
         fixture.private.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -445,7 +450,7 @@ async fn native_forms_and_page_controls_do_not_treat_org_id_as_personal_owner() 
         &fixture.database.pool,
         fixture.owner.user.id,
         fixture.private.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -541,7 +546,7 @@ async fn native_forms_and_page_controls_do_not_treat_org_id_as_personal_owner() 
         )
         .await
         .unwrap(),
-        db::models::AccessLevel::Write
+        codeyard_db_core::models::AccessLevel::Write
     );
     assert_eq!(
         fixture
@@ -735,13 +740,13 @@ async fn collaborator_api_projects_canonical_levels_without_changing_privileges_
     let base = "/api/repos/overlapping_user/personal";
     let mut actors = Vec::new();
     for (level, name) in [
-        (db::models::AccessLevel::None, "none"),
-        (db::models::AccessLevel::Read, "read"),
-        (db::models::AccessLevel::Triage, "triage"),
-        (db::models::AccessLevel::Write, "write"),
-        (db::models::AccessLevel::Maintain, "maintain"),
-        (db::models::AccessLevel::Admin, "admin"),
-        (db::models::AccessLevel::Owner, "owner"),
+        (codeyard_db_core::models::AccessLevel::None, "none"),
+        (codeyard_db_core::models::AccessLevel::Read, "read"),
+        (codeyard_db_core::models::AccessLevel::Triage, "triage"),
+        (codeyard_db_core::models::AccessLevel::Write, "write"),
+        (codeyard_db_core::models::AccessLevel::Maintain, "maintain"),
+        (codeyard_db_core::models::AccessLevel::Admin, "admin"),
+        (codeyard_db_core::models::AccessLevel::Owner, "owner"),
     ] {
         let actor = Fixture::actor(&fixture.database.pool, &format!("level_{name}")).await;
         db::repositories::access::grant_repo_access(
@@ -781,13 +786,14 @@ async fn collaborator_api_projects_canonical_levels_without_changing_privileges_
         // a floor and a direct Owner value is not ownership authority.
         let effective = if matches!(
             level,
-            db::models::AccessLevel::None | db::models::AccessLevel::Owner
+            codeyard_db_core::models::AccessLevel::None
+                | codeyard_db_core::models::AccessLevel::Owner
         ) {
-            db::models::AccessLevel::Read
+            codeyard_db_core::models::AccessLevel::Read
         } else {
             *level
         };
-        let effective_name = if effective == db::models::AccessLevel::Read {
+        let effective_name = if effective == codeyard_db_core::models::AccessLevel::Read {
             "read"
         } else {
             *name
@@ -993,7 +999,7 @@ async fn organization_engagement_forks_and_pulls_never_notify_same_numbered_user
         &fixture.database.pool,
         fixture.member.user.id,
         fixture.personal.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();

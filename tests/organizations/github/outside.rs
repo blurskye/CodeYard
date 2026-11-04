@@ -1,18 +1,22 @@
 use super::request;
 use crate::support::{database::Database, http_client::Client, organizations::applied};
 use axum::http::StatusCode;
-use codeyard::backend::{
-    db::{
-        self,
-        models::{AccessLevel, OrgRole},
-        organizations::{
-            self, NewOrganization, NewTeam, OrganizationProfile, TeamPrivacy, TeamProfile,
-            TeamRepositoryPermission, TeamRole,
-        },
-        repositories::creation::{NewRepository, RepositoryCreationOwner, RepositoryTarget},
-    },
-    identity::tokens::{self, TokenInput},
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::NewTeam;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::db::organizations::TeamPrivacy;
+use codeyard::backend::db::organizations::TeamProfile;
+use codeyard::backend::db::organizations::TeamRepositoryPermission;
+use codeyard::backend::db::organizations::TeamRole;
+use codeyard::backend::db::repositories::creation::NewRepository;
+use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
+use codeyard::backend::db::repositories::creation::RepositoryTarget;
+use codeyard::backend::identity::tokens;
+use codeyard::backend::identity::tokens::TokenInput;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -46,9 +50,9 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     for (id, role) in [
-        (member, OrgRole::Member),
-        (delegated, OrgRole::Admin),
-        (asynchronous, OrgRole::Member),
+        (member, codeyard_db_core::models::OrgRole::Member),
+        (delegated, codeyard_db_core::models::OrgRole::Admin),
+        (asynchronous, codeyard_db_core::models::OrgRole::Member),
     ] {
         applied(
             organizations::add_organization_member(f.pool(), owner, org.id, id, role)
@@ -62,7 +66,7 @@ async fn contract(pg: bool) {
             owner,
             foreign.id,
             member,
-            OrgRole::Member,
+            codeyard_db_core::models::OrgRole::Member,
         )
         .await
         .unwrap(),
@@ -151,11 +155,31 @@ async fn contract(pg: bool) {
         );
     }
     for (user, repo, permission) in [
-        (member, repos[0].id, AccessLevel::Read),
-        (member, repos[1].id, AccessLevel::Maintain),
-        (member, repos[3].id, AccessLevel::Write),
-        (outsider, repos[0].id, AccessLevel::Read),
-        (secure, repos[0].id, AccessLevel::Read),
+        (
+            member,
+            repos[0].id,
+            codeyard_db_core::models::AccessLevel::Read,
+        ),
+        (
+            member,
+            repos[1].id,
+            codeyard_db_core::models::AccessLevel::Maintain,
+        ),
+        (
+            member,
+            repos[3].id,
+            codeyard_db_core::models::AccessLevel::Write,
+        ),
+        (
+            outsider,
+            repos[0].id,
+            codeyard_db_core::models::AccessLevel::Read,
+        ),
+        (
+            secure,
+            repos[0].id,
+            codeyard_db_core::models::AccessLevel::Read,
+        ),
     ] {
         db::repositories::access::grant_repo_access(f.pool(), user, repo, permission)
             .await

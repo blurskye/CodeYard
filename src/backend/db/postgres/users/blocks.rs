@@ -1,11 +1,9 @@
-use crate::backend::db::{
-    models::User,
-    users::{
-        accounts::AccountCredential,
-        blocks::{BlockTargetMissing, InteractionBlocked, InvalidBlock},
-    },
-};
+use crate::backend::db::users::accounts::AccountCredential;
+use crate::backend::db::users::blocks::BlockTargetMissing;
+use crate::backend::db::users::blocks::InteractionBlocked;
+use crate::backend::db::users::blocks::InvalidBlock;
 use anyhow::Result;
+use codeyard_db_core::models::User;
 use sqlx::{PgConnection, PgPool};
 
 pub async fn list_blocks(pool: &PgPool, user: i64, limit: i64, offset: i64) -> Result<Vec<User>> {

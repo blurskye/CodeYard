@@ -1,16 +1,14 @@
-use crate::backend::db::models::Repository;
-use crate::backend::db::{
-    models::OrgRole,
-    organizations::{
-        properties::{invalid as invalid_property, ValueInput},
-        OrganizationOutcome,
-    },
-    repositories::creation::{
-        CreationAdmission, NewRepository, RepositoryCreationOwner, RepositoryStorageRefusal,
-        RepositoryTarget,
-    },
-};
+use crate::backend::db::organizations::properties::invalid as invalid_property;
+use crate::backend::db::organizations::properties::ValueInput;
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::repositories::creation::CreationAdmission;
+use crate::backend::db::repositories::creation::NewRepository;
+use crate::backend::db::repositories::creation::RepositoryCreationOwner;
+use crate::backend::db::repositories::creation::RepositoryStorageRefusal;
+use crate::backend::db::repositories::creation::RepositoryTarget;
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Repository;
 use sqlx::SqlitePool;
 
 /// Whether the actor may create a repository for this owner; `Ok(true)` for site admins.
@@ -34,8 +32,11 @@ pub(crate) async fn creation_authority(
             )
             .await?
             {
-                OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {}
-                OrganizationOutcome::Applied(OrgRole::Member) => {
+                OrganizationOutcome::Applied(
+                    codeyard_db_core::models::OrgRole::Owner
+                    | codeyard_db_core::models::OrgRole::Admin,
+                ) => {}
+                OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Member) => {
                     let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organization_settings WHERE org_id=?1 AND (members_can_create_public_repositories OR members_can_create_private_repositories))").bind(org).fetch_one(&mut *connection).await?;
                     anyhow::ensure!(allowed, RepositoryStorageRefusal::Denied);
                 }

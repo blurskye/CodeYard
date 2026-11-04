@@ -1,7 +1,8 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::models::Label;
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::Label;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum LabelWriteRefusal {
@@ -178,7 +179,7 @@ async fn labels_of_items(
     let mut labels = std::collections::BTreeMap::<i64, Vec<Label>>::new();
     for chunk in ids.chunks(500) {
         let rows = match pool {
-            DbPool::Postgres(pool) => {
+            codeyard_db_core::DbPool::Postgres(pool) => {
                 crate::backend::db::postgres::labels::get_items_labels(
                     &mut *pool.acquire().await?,
                     target,
@@ -187,7 +188,7 @@ async fn labels_of_items(
                 )
                 .await?
             }
-            DbPool::Sqlite(pool) => {
+            codeyard_db_core::DbPool::Sqlite(pool) => {
                 crate::backend::db::sqlite::labels::get_items_labels(
                     &mut *pool.acquire().await?,
                     target,

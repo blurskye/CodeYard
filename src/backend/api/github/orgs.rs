@@ -16,14 +16,11 @@ mod security;
 mod settings;
 mod token_grants;
 use super::{api_url, auth, pagination::Pagination, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        models::{Organization, User},
-        organizations::{self, discovery, OrganizationOutcome},
-    },
-    webhooks::payloads,
-};
+use crate::backend::app::AppState;
+use crate::backend::db::organizations;
+use crate::backend::db::organizations::discovery;
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode, Uri},
@@ -31,6 +28,8 @@ use axum::{
     routing::{delete, get, patch, put, MethodRouter},
     Json,
 };
+use codeyard_db_core::models::Organization;
+use codeyard_db_core::models::User;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -138,7 +137,7 @@ async fn owner_actor(
             .await
             .map_err(Error::unavailable)?,
     )?;
-    if role != crate::backend::db::models::OrgRole::Owner {
+    if role != codeyard_db_core::models::OrgRole::Owner {
         return Err(Error::new(
             StatusCode::FORBIDDEN,
             "Must be an organization owner",

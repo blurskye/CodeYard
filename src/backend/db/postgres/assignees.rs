@@ -1,6 +1,6 @@
 use crate::backend::db::assignees::{AssignedItem, AssignmentRefusal, MAX_ASSIGNEES};
-use crate::backend::db::models::User;
 use anyhow::Result;
+use codeyard_db_core::models::User;
 use sqlx::{PgPool, Postgres, Transaction};
 
 // Public visibility alone does not make a user an assignment candidate.

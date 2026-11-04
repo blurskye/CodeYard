@@ -1,9 +1,9 @@
 use super::*;
-use crate::backend::db::{
-    models::{OrgMembership, OrgRole},
-    DbPool,
-};
 use anyhow::Result;
+use codeyard_db_core::models::OrgMembership;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 native_operation!(crate::backend::db::postgres::organizations::membership::list_organization_members, crate::backend::db::sqlite::organizations::membership::list_organization_members,
     fn list_organization_members(pool: &DbPool, actor: i64, org: i64, page: OrganizationPage) -> Result<OrganizationOutcome<Vec<OrgMembership>>>);

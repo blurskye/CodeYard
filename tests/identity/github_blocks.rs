@@ -4,18 +4,14 @@ use crate::support::{
     database::{wait_until_blocked, Database},
     http_client::Client,
 };
-use codeyard::backend::{
-    db::{
-        self,
-        models::AccessLevel,
-        repositories::creation::{NewRepository, RepositoryCreationOwner},
-        users::accounts::AccountCredential,
-    },
-    identity::{
-        self,
-        tokens::{self, TokenInput},
-    },
-};
+use codeyard::backend::db;
+use codeyard::backend::db::repositories::creation::NewRepository;
+use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
+use codeyard::backend::db::users::accounts::AccountCredential;
+use codeyard::backend::identity;
+use codeyard::backend::identity::tokens;
+use codeyard::backend::identity::tokens::TokenInput;
+use codeyard_db_core::models::AccessLevel;
 use serde_json::json;
 
 async fn contract(pg: bool) {
@@ -136,9 +132,14 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     for repo in [&public, &private] {
-        db::repositories::access::grant_repo_access(f.pool(), bob, repo.id, AccessLevel::Write)
-            .await
-            .unwrap();
+        db::repositories::access::grant_repo_access(
+            f.pool(),
+            bob,
+            repo.id,
+            codeyard_db_core::models::AccessLevel::Write,
+        )
+        .await
+        .unwrap();
     }
     let issue = db::issues::create_issue(f.pool(), public.id, alice, "Issue", "Body")
         .await
@@ -260,13 +261,13 @@ async fn contract(pg: bool) {
         db::repositories::access::get_user_repo_access(f.pool(), bob, private.id)
             .await
             .unwrap(),
-        AccessLevel::None
+        codeyard_db_core::models::AccessLevel::None
     );
     assert_eq!(
         db::repositories::access::get_user_repo_access(f.pool(), bob, public.id)
             .await
             .unwrap(),
-        AccessLevel::Read
+        codeyard_db_core::models::AccessLevel::Read
     );
     assert_eq!(
         f.scalar(
@@ -360,7 +361,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob,
         public.id,
-        AccessLevel::Write
+        codeyard_db_core::models::AccessLevel::Write
     )
     .await
     .is_err());
@@ -554,7 +555,7 @@ async fn contract(pg: bool) {
         db::repositories::access::get_user_repo_access(f.pool(), bob, private.id)
             .await
             .unwrap(),
-        AccessLevel::None
+        codeyard_db_core::models::AccessLevel::None
     );
     db::issues::add_issue_comment(
         f.pool(),

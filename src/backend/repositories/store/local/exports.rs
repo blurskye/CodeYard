@@ -3,7 +3,7 @@ use super::*;
 impl LocalStore {
     pub(in crate::backend::repositories::store) async fn lock_migration(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
         actor: i64,
         migration: i64,
@@ -17,7 +17,7 @@ impl LocalStore {
 
     pub(in crate::backend::repositories::store) async fn migration_archive(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
         actor: i64,
     ) -> Result<Vec<u8>, RepoError> {

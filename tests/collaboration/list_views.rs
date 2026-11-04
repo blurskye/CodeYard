@@ -6,10 +6,11 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    db::{self, assignees::AssignedItem, discussions::DiscussionEdit, models::AccessLevel},
-    repositories::lifecycle,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::assignees::AssignedItem;
+use codeyard::backend::db::discussions::DiscussionEdit;
+use codeyard::backend::repositories::lifecycle;
+use codeyard_db_core::models::AccessLevel;
 use codeyard_webui::{app::Page, pages::repos::issues};
 use database::Database;
 use pulls::Client;
@@ -60,9 +61,14 @@ async fn provision(database: &Database, root: &std::path::Path, alice: i64, bob:
     .await
     .unwrap()
     .id;
-    db::repositories::access::grant_repo_access(database.pool(), bob, repo, AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        database.pool(),
+        bob,
+        repo,
+        codeyard_db_core::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     repo
 }
 

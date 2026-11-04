@@ -1,6 +1,7 @@
 //! Store signed Sigstore bundles without asserting a verifier's trust decision.
-use super::DbPool;
 use base64::{engine::general_purpose::STANDARD, Engine};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde_json::Value;
 
 #[derive(Debug, thiserror::Error)]

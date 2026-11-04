@@ -1,13 +1,14 @@
 //! The migration ledger refuses a database whose recorded history differs from this build.
 use crate::support::native_database::{NativeDatabase, PostgresDatabase};
-use codeyard::backend::db::{self, DbPool};
+use codeyard::backend::db;
+use codeyard_db_core::DbPool;
 
 async fn execute(pool: &DbPool, sql: &str) {
     match pool {
-        DbPool::Sqlite(raw) => {
+        codeyard_db_core::DbPool::Sqlite(raw) => {
             sqlx::raw_sql(sql).execute(raw).await.unwrap();
         }
-        DbPool::Postgres(raw) => {
+        codeyard_db_core::DbPool::Postgres(raw) => {
             sqlx::raw_sql(sql).execute(raw).await.unwrap();
         }
     };
@@ -15,15 +16,19 @@ async fn execute(pool: &DbPool, sql: &str) {
 
 async fn strings(pool: &DbPool, sql: &str) -> Vec<String> {
     match pool {
-        DbPool::Sqlite(raw) => sqlx::query_scalar(sql).fetch_all(raw).await.unwrap(),
-        DbPool::Postgres(raw) => sqlx::query_scalar(sql).fetch_all(raw).await.unwrap(),
+        codeyard_db_core::DbPool::Sqlite(raw) => {
+            sqlx::query_scalar(sql).fetch_all(raw).await.unwrap()
+        }
+        codeyard_db_core::DbPool::Postgres(raw) => {
+            sqlx::query_scalar(sql).fetch_all(raw).await.unwrap()
+        }
     }
 }
 
 fn ledger(pool: &DbPool) -> &'static str {
     match pool {
-        DbPool::Sqlite(_) => "_gitserv_sqlite_migrations",
-        DbPool::Postgres(_) => "_gitserv_migrations",
+        codeyard_db_core::DbPool::Sqlite(_) => "_gitserv_sqlite_migrations",
+        codeyard_db_core::DbPool::Postgres(_) => "_gitserv_migrations",
     }
 }
 
@@ -38,7 +43,7 @@ async fn check_refused(pool: &DbPool, change: &str, message: &str) {
     let history =
         format!("SELECT CAST(version AS TEXT)||':'||sha256 FROM {ledger} ORDER BY version");
     let before = strings(pool, &history).await;
-    let error = db::run_migrations(pool).await.unwrap_err();
+    let error = codeyard_db_core::run_migrations(pool).await.unwrap_err();
     assert!(format!("{error:#}").contains(message), "{error:#}");
     assert_eq!(strings(pool, &history).await, before);
     assert_eq!(db::users::accounts::count_users(pool).await.unwrap(), 1);
@@ -78,8 +83,8 @@ async fn postgres_newer_database_is_refused_without_changes() {
 
 #[tokio::test]
 async fn sqlite_in_memory_migrations_keep_the_connection_and_restore_foreign_keys() {
-    let pool = db::init_db("sqlite::memory:").await.unwrap();
-    db::run_migrations(&pool).await.unwrap();
+    let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
+    codeyard_db_core::run_migrations(&pool).await.unwrap();
     let user = db::users::accounts::create_user(&pool, "kept", None)
         .await
         .unwrap();
@@ -88,7 +93,7 @@ async fn sqlite_in_memory_migrations_keep_the_connection_and_restore_foreign_key
         "UPDATE _gitserv_sqlite_migrations SET sha256='wrong' WHERE version=1",
     )
     .await;
-    assert!(db::run_migrations(&pool).await.is_err());
+    assert!(codeyard_db_core::run_migrations(&pool).await.is_err());
     assert_eq!(
         db::users::accounts::get_user_by_id(&pool, user.id)
             .await
@@ -97,7 +102,7 @@ async fn sqlite_in_memory_migrations_keep_the_connection_and_restore_foreign_key
             .username,
         "kept"
     );
-    let DbPool::Sqlite(raw) = &pool else {
+    let codeyard_db_core::DbPool::Sqlite(raw) = &pool else {
         unreachable!()
     };
     let enabled: i64 = sqlx::query_scalar("PRAGMA foreign_keys")

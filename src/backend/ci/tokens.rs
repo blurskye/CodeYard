@@ -1,6 +1,9 @@
 //! Workflow permissions are replaced, not merged, at each explicit permissions block.
-use crate::backend::db::{self, ci_tokens::NewJobToken, models::CiRun, DbPool};
+use crate::backend::db;
+use crate::backend::db::ci_tokens::NewJobToken;
 use anyhow::{bail, ensure, Result};
+use codeyard_db_core::models::CiRun;
+use codeyard_db_core::DbPool;
 use codeyard_model::ci::MAX_EXPANDED_JOBS;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;

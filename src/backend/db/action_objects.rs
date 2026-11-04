@@ -1,6 +1,7 @@
 //! Run credentials, immutable cache entries and run artifacts.
-use super::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 
 pub(crate) const MAX_CACHE_ENTRIES: usize = 1024;

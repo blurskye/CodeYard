@@ -1,9 +1,10 @@
-use crate::backend::db::models::{SignupRequest, User};
 use crate::backend::db::users::{
     signup_requests::{ReviewError, SignupSummary},
     transitions::AdministratorActor,
 };
 use anyhow::Result;
+use codeyard_db_core::models::SignupRequest;
+use codeyard_db_core::models::User;
 use sqlx::PgPool;
 
 pub async fn create_signup_request(

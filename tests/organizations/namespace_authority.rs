@@ -26,7 +26,7 @@ enum Raw {
     Sqlite(sqlx::SqlitePool),
 }
 struct Database {
-    pool: db::DbPool,
+    pool: codeyard_db_core::DbPool,
     raw: Raw,
     pg: Option<production_ci::Fixture>,
     _directory: Option<tempfile::TempDir>,
@@ -74,7 +74,7 @@ impl Database {
             .await
             .expect("required SQLite fixture");
         let pool = raw.clone().into();
-        db::run_migrations(&pool)
+        codeyard_db_core::run_migrations(&pool)
             .await
             .expect("required native SQLite migrations");
         Self {
@@ -144,18 +144,18 @@ impl Database {
 fn organization(name: &str) -> NewOrganization {
     NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap()
 }
-fn admitted(outcome: AccountAdmission) -> db::models::User {
+fn admitted(outcome: AccountAdmission) -> codeyard_db_core::models::User {
     match outcome {
         AccountAdmission::User(user) => *user,
         _ => panic!("expected admitted account"),
     }
 }
-fn namespace_refusal(result: anyhow::Result<db::models::User>) {
+fn namespace_refusal(result: anyhow::Result<codeyard_db_core::models::User>) {
     let error = result.expect_err("organization name must not admit a user");
     assert_eq!(error.to_string(), "Account namespace conflict");
     assert_eq!(format!("{error:#}"), "Account namespace conflict");
 }
-fn review_denied(result: anyhow::Result<db::models::User>) {
+fn review_denied(result: anyhow::Result<codeyard_db_core::models::User>) {
     let error = result.expect_err("approval must be denied");
     assert!(matches!(
         error.downcast_ref::<ReviewError>(),
@@ -163,7 +163,7 @@ fn review_denied(result: anyhow::Result<db::models::User>) {
     ));
 }
 
-async fn setup_namespace_and_exact_recovery(database: &Database) -> db::models::User {
+async fn setup_namespace_and_exact_recovery(database: &Database) -> codeyard_db_core::models::User {
     assert_eq!(
         db::users::accounts::count_users(&database.pool)
             .await

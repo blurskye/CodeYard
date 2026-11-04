@@ -48,7 +48,7 @@ def rewrite(mappings):
         for path in Path(root).rglob("*"):
             if not path.is_file() or path.suffix not in (".rs", ".md", ".py", ".sh"):
                 continue
-            if path == Path(__file__):
+            if path.resolve() == Path(__file__).resolve():
                 continue
             text = path.read_text()
             original = text
@@ -76,7 +76,9 @@ def rewrite(mappings):
                 for leaf in leaves(match[3]):
                     name, *alias = re.split(r"\s+as\s+", leaf)
                     resolved = canonical(name)
-                    aliases[alias[0] if alias else name.split("::")[-1]] = resolved
+                    key = alias[0] if alias else name.split("::")[-1]
+                    if key != "db":
+                        aliases[key] = resolved
 
             def mapped(name):
                 resolved = canonical(name)
@@ -138,6 +140,8 @@ def types():
     repositories += extract(Path("src/backend/repositories/deploy_keys.rs"), "#[derive(Debug, thiserror::Error)]", "/// Keeps a typed key refusal")
     repositories += extract(Path("src/backend/repositories/code_owners.rs"), "pub(crate) const MAX_REVIEWERS", "/// One line")
     (destination / "repositories.rs").write_text("use super::identity::SshKeyWriteRefusal;\nuse serde::{Deserialize, Serialize};\n\n" + repositories.replace("pub(crate) const MAX_REVIEWERS", "pub const MAX_REVIEWERS"))
+    path = Path("src/backend/repositories/dependency_graph.rs")
+    path.write_text(path.read_text().replace("use serde::{Deserialize, Serialize};\n", ""))
     ecosystems = extract(Path("src/backend/vulnerabilities/mod.rs"), "pub const ECOSYSTEMS", "pub fn ecosystem")
     ecosystems += extract(Path("src/backend/vulnerabilities/mod.rs"), "pub(crate) const MAX_AFFECTED_PACKAGES", "/// The validated catalogue")
     (destination / "vulnerabilities.rs").write_text(ecosystems.replace("pub(crate) const", "pub const"))
@@ -151,24 +155,24 @@ def types():
         "ci::logs::MAX_RUN_LOG_LINES": "ci::MAX_RUN_LOG_LINES",
         "ci::logs::MAX_RUN_LOG_BYTES": "ci::MAX_RUN_LOG_BYTES",
         "identity::oauth_apps::CLI_CLIENT": "identity::CLI_CLIENT",
-        "codeyard_model::identity::SshKeyWriteRefusal": "identity::SshKeyWriteRefusal",
+        "db::users::ssh_keys::SshKeyWriteRefusal": "identity::SshKeyWriteRefusal",
         "repositories::dependency_graph::Package": "repositories::Package",
         "repositories::deploy_keys::DeployKeyError": "repositories::DeployKeyError",
         "repositories::code_owners::MAX_REVIEWERS": "repositories::MAX_REVIEWERS",
         "vulnerabilities::ECOSYSTEMS": "vulnerabilities::ECOSYSTEMS",
         "vulnerabilities::MAX_AFFECTED_PACKAGES": "vulnerabilities::MAX_AFFECTED_PACKAGES",
     }
-    rewrite([("crate::backend::" + old, "codeyard_model::" + new) for old, new in names.items()])
+    rewrite([("crate::backend::" + old, "crate::backend::model::" + new) for old, new in names.items()])
     for path, imports in {
-        "ci/queue.rs": "use codeyard_model::ci::LogLine;",
-        "ci/tokens.rs": "use codeyard_model::ci::MAX_EXPANDED_JOBS;",
-        "ci/logs.rs": "use codeyard_model::ci::{MAX_RUN_LOG_LINES, MAX_RUN_LOG_BYTES};",
-        "identity/oauth_apps.rs": "use codeyard_model::identity::CLI_CLIENT;",
-        "db/users/ssh_keys.rs": "use codeyard_model::identity::SshKeyWriteRefusal;",
-        "repositories/dependency_graph.rs": "use codeyard_model::repositories::Package;",
-        "repositories/deploy_keys.rs": "use codeyard_model::repositories::DeployKeyError;",
-        "repositories/code_owners.rs": "use codeyard_model::repositories::MAX_REVIEWERS;",
-        "vulnerabilities/mod.rs": "use codeyard_model::vulnerabilities::{ECOSYSTEMS, MAX_AFFECTED_PACKAGES};",
+        "ci/queue.rs": "use crate::backend::model::ci::LogLine;",
+        "ci/tokens.rs": "use crate::backend::model::ci::MAX_EXPANDED_JOBS;",
+        "ci/logs.rs": "use crate::backend::model::ci::{MAX_RUN_LOG_LINES, MAX_RUN_LOG_BYTES};",
+        "identity/oauth_apps.rs": "use crate::backend::model::identity::CLI_CLIENT;",
+        "db/users/ssh_keys.rs": "use crate::backend::model::identity::SshKeyWriteRefusal;",
+        "repositories/dependency_graph.rs": "use crate::backend::model::repositories::Package;",
+        "repositories/deploy_keys.rs": "use crate::backend::model::repositories::DeployKeyError;",
+        "repositories/code_owners.rs": "use crate::backend::model::repositories::MAX_REVIEWERS;",
+        "vulnerabilities/mod.rs": "use crate::backend::model::vulnerabilities::{ECOSYSTEMS, MAX_AFFECTED_PACKAGES};",
     }.items():
         prepend(Path("src/backend") / path, imports)
 
@@ -188,7 +192,7 @@ def model():
     (destination / "mod.rs").rename(destination / "lib.rs")
     path = Path("src/backend/mod.rs")
     path.write_text(path.read_text().replace("pub mod model;\n", ""))
-    rewrite([("codeyard_model", "codeyard_model")])
+    rewrite([("crate::backend::model", "codeyard_model")])
 
 
 def core():
@@ -209,20 +213,31 @@ def core():
     start = text.index("macro_rules! native_operation")
     end = text.index("mod postgres;", start)
     macro = text[start:end].replace("macro_rules!", "#[macro_export]\nmacro_rules!")
-    macro = macro.replace("crate::backend::db::DbPool", "$crate::DbPool").replace("$pool: &DbPool,", "$pool: &$crate::DbPool,")
-    text = text[:start] + "use codeyard_db_core::native_operation;\n\n" + text[end:]
+    macro = macro.replace("crate::backend::db::DbPool", "$crate::DbPool")
+    text = text[:start] + text[end:]
     for line in ("mod connection;\n", "mod migrations;\n", "pub mod models;\n", "pub use connection::{init_db, sqlite_file, DbPool};\n", "pub use migrations::run_migrations;\n"):
         text = text.replace(line, "")
     path.write_text(text)
     (destination / "lib.rs").write_text("//! Shared database connections, migrations and record types.\n\n" + macro + "pub mod connection;\nmod migrations;\npub mod models;\npub mod postgres;\npub mod sqlite;\n\npub use connection::{init_db, sqlite_file, DbPool};\npub use migrations::run_migrations;\n")
     mappings = [("crate::backend::db::" + item, "codeyard_db_core::" + item) for item in CORE_ITEMS]
     mappings += [("crate::backend::db::" + engine + "::migrations", "codeyard_db_core::" + engine + "::migrations") for engine in ("postgres", "sqlite")]
+    mappings += [("crate::backend::db::" + engine + "::models", "codeyard_db_core::models") for engine in ("postgres", "sqlite")]
     rewrite(mappings)
     for engine in ("postgres", "sqlite"):
         path = destination / engine / "migrations.rs"
         text = path.read_text().replace("pub(in crate::backend::db) fn validate_history", "pub fn validate_history")
         text = text.replace("../../../../schema/", "../../../../../schema/")
         path.write_text(text)
+    for engine in ("postgres", "sqlite"):
+        path = old / engine / "mod.rs"
+        path.write_text(path.read_text().replace("pub(crate) use codeyard_db_core::models;\n", ""))
+    path = destination / "connection.rs"
+    path.write_text(path.read_text().replace("codeyard_db_core::run_migrations", "crate::run_migrations"))
+    path = destination / "models/ci.rs"
+    path.write_text(path.read_text().replace("pub(crate) fn workflow_reference", "pub fn workflow_reference"))
+    for path in old.rglob("*.rs"):
+        if re.search(r"(?m)^\s*native_operation!\(", path.read_text()):
+            prepend(path, "use codeyard_db_core::native_operation;")
 
 
 if __name__ == "__main__":

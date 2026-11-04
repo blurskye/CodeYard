@@ -1,7 +1,7 @@
 //! Database layer tests
 
 use crate::support::native_database as native;
-use codeyard::backend::db::DbPool;
+use codeyard_db_core::DbPool;
 use uuid::Uuid;
 
 async fn setup_test_db() -> native::PostgresDatabase {
@@ -19,7 +19,7 @@ async fn test_repeated_migration_preserves_populated_fixture() {
     let user = codeyard::backend::db::users::accounts::create_user(&fixture.pool, &username, None)
         .await
         .expect("create preexisting fixture account");
-    codeyard::backend::db::run_migrations(&fixture.pool)
+    codeyard_db_core::run_migrations(&fixture.pool)
         .await
         .expect("repeat migration on populated isolated schema");
     let preserved = codeyard::backend::db::users::accounts::get_user_by_id(&fixture.pool, user.id)
@@ -101,7 +101,7 @@ async fn test_get_user_by_username() {
 }
 
 /// The lookups that resolve Markdown references, run on whichever engine the pool is.
-async fn reference_lookups(pool: &codeyard::backend::db::DbPool) {
+async fn reference_lookups(pool: &codeyard_db_core::DbPool) {
     let alice =
         codeyard::backend::db::users::accounts::create_user(pool, &unique_name("refalice"), None)
             .await
@@ -289,7 +289,7 @@ async fn test_ssh_key_operations() {
 
 #[tokio::test]
 async fn test_access_control() {
-    use codeyard::backend::db::models::AccessLevel;
+    use codeyard_db_core::models::AccessLevel;
 
     let fixture = setup_test_db().await;
     let pool = fixture.pool.clone();
@@ -336,7 +336,7 @@ async fn test_access_control() {
     )
     .await
     .expect("Query failed");
-    assert_eq!(owner_access, AccessLevel::Owner);
+    assert_eq!(owner_access, codeyard_db_core::models::AccessLevel::Owner);
 
     let stranger_public = codeyard::backend::db::repositories::access::get_user_repo_access(
         &pool,
@@ -345,7 +345,7 @@ async fn test_access_control() {
     )
     .await
     .expect("Query failed");
-    assert_eq!(stranger_public, AccessLevel::Read);
+    assert_eq!(stranger_public, codeyard_db_core::models::AccessLevel::Read);
 
     let stranger_private = codeyard::backend::db::repositories::access::get_user_repo_access(
         &pool,
@@ -354,12 +354,16 @@ async fn test_access_control() {
     )
     .await
     .expect("Query failed");
-    assert_eq!(stranger_private, AccessLevel::None);
+    assert_eq!(
+        stranger_private,
+        codeyard_db_core::models::AccessLevel::None
+    );
 }
 
 #[tokio::test]
 async fn test_private_repository_grants_are_scoped_and_revocable() {
-    use codeyard::backend::db::{self, models::AccessLevel};
+    use codeyard::backend::db;
+    use codeyard_db_core::models::AccessLevel;
     let fixture = setup_test_db().await;
     let owner = db::users::accounts::create_user(&fixture.pool, &unique_name("access-owner"), None)
         .await
@@ -391,7 +395,7 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
         &fixture.pool,
         collaborator.id,
         repositories[0].id,
-        AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .expect("grant fixture access");
@@ -403,7 +407,7 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
         )
         .await
         .unwrap(),
-        AccessLevel::Write
+        codeyard_db_core::models::AccessLevel::Write
     );
     assert_eq!(
         db::repositories::access::get_user_repo_access(
@@ -413,7 +417,7 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
         )
         .await
         .unwrap(),
-        AccessLevel::None
+        codeyard_db_core::models::AccessLevel::None
     );
     assert_eq!(
         db::repositories::access::get_user_repo_access(
@@ -423,7 +427,7 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
         )
         .await
         .unwrap(),
-        AccessLevel::None
+        codeyard_db_core::models::AccessLevel::None
     );
     assert!(db::repositories::access::revoke_repo_access(
         &fixture.pool,
@@ -440,13 +444,13 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
         )
         .await
         .unwrap(),
-        AccessLevel::None
+        codeyard_db_core::models::AccessLevel::None
     );
     assert_eq!(
         db::repositories::access::get_user_repo_access(&fixture.pool, owner.id, repositories[0].id)
             .await
             .unwrap(),
-        AccessLevel::Owner
+        codeyard_db_core::models::AccessLevel::Owner
     );
 }
 
@@ -807,7 +811,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         &pool,
         stranger.id,
         repo.id,
-        codeyard::backend::db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -834,24 +838,32 @@ async fn test_fingerprint_calculation() {
 
 #[tokio::test]
 async fn test_access_level_ordering() {
-    use codeyard::backend::db::models::AccessLevel;
+    use codeyard_db_core::models::AccessLevel;
 
-    assert!(AccessLevel::Read > AccessLevel::None);
-    assert!(AccessLevel::Write > AccessLevel::Read);
-    assert!(AccessLevel::Admin > AccessLevel::Write);
-    assert!(AccessLevel::Owner > AccessLevel::Admin);
+    assert!(
+        codeyard_db_core::models::AccessLevel::Read > codeyard_db_core::models::AccessLevel::None
+    );
+    assert!(
+        codeyard_db_core::models::AccessLevel::Write > codeyard_db_core::models::AccessLevel::Read
+    );
+    assert!(
+        codeyard_db_core::models::AccessLevel::Admin > codeyard_db_core::models::AccessLevel::Write
+    );
+    assert!(
+        codeyard_db_core::models::AccessLevel::Owner > codeyard_db_core::models::AccessLevel::Admin
+    );
 
-    assert!(AccessLevel::Read.can_read());
-    assert!(!AccessLevel::Read.can_write());
+    assert!(codeyard_db_core::models::AccessLevel::Read.can_read());
+    assert!(!codeyard_db_core::models::AccessLevel::Read.can_write());
 
-    assert!(AccessLevel::Write.can_read());
-    assert!(AccessLevel::Write.can_write());
-    assert!(!AccessLevel::Write.can_admin());
+    assert!(codeyard_db_core::models::AccessLevel::Write.can_read());
+    assert!(codeyard_db_core::models::AccessLevel::Write.can_write());
+    assert!(!codeyard_db_core::models::AccessLevel::Write.can_admin());
 
-    assert!(AccessLevel::Owner.can_read());
-    assert!(AccessLevel::Owner.can_write());
-    assert!(AccessLevel::Owner.can_admin());
-    assert!(AccessLevel::Owner.is_owner());
+    assert!(codeyard_db_core::models::AccessLevel::Owner.can_read());
+    assert!(codeyard_db_core::models::AccessLevel::Owner.can_write());
+    assert!(codeyard_db_core::models::AccessLevel::Owner.can_admin());
+    assert!(codeyard_db_core::models::AccessLevel::Owner.is_owner());
 }
 
 #[tokio::test]
@@ -1951,7 +1963,7 @@ async fn test_pull_request_branch_filter_on_sqlite() {
 /// Sets the columns that explore ranks by, the same way on both engines.
 async fn set_repository_ranking(pool: &DbPool, repo_id: i64, stars: i32, created_at: &str) {
     match pool {
-        DbPool::Postgres(pool) => {
+        codeyard_db_core::DbPool::Postgres(pool) => {
             sqlx::query(
                 "UPDATE repositories SET stars_count = $1, created_at = $2::timestamptz WHERE id = $3",
             )
@@ -1962,7 +1974,7 @@ async fn set_repository_ranking(pool: &DbPool, repo_id: i64, stars: i32, created
             .await
             .expect("set repository ranking");
         }
-        DbPool::Sqlite(pool) => {
+        codeyard_db_core::DbPool::Sqlite(pool) => {
             sqlx::query("UPDATE repositories SET stars_count = ?1, created_at = ?2 WHERE id = ?3")
                 .bind(stars)
                 .bind(created_at)
@@ -2066,13 +2078,13 @@ async fn test_public_repository_stars_order_on_sqlite() {
 /// Search matches a public repository's name or description, ignoring case, and never a private
 /// one. A shared repository is one that another user gives the viewer access to.
 async fn public_repository_search_contract(pool: &DbPool) {
-    use codeyard::backend::db::models::AccessLevel;
     use codeyard::backend::db::repositories::{
         access::grant_repo_access,
         records::{
             list_shared_repositories, search_public_repositories, RepositoryFilter, RepositorySort,
         },
     };
+    use codeyard_db_core::models::AccessLevel;
     let owner = codeyard::backend::db::users::accounts::create_user(
         pool,
         &unique_name("search-owner"),
@@ -2189,13 +2201,21 @@ async fn public_repository_search_contract(pool: &DbPool) {
         .await
         .unwrap()
         .is_empty());
-    grant_repo_access(pool, viewer.id, by_name.id, AccessLevel::Write)
-        .await
-        .unwrap();
+    grant_repo_access(
+        pool,
+        viewer.id,
+        by_name.id,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
     let shared = list_shared_repositories(pool, viewer.id).await.unwrap();
     assert_eq!(shared.len(), 1);
     assert_eq!(shared[0].repository.id, by_name.id);
-    assert_eq!(shared[0].access_level, AccessLevel::Write as i16);
+    assert_eq!(
+        shared[0].access_level,
+        codeyard_db_core::models::AccessLevel::Write as i16
+    );
     assert!(list_shared_repositories(pool, owner.id)
         .await
         .unwrap()
@@ -2219,7 +2239,7 @@ async fn test_public_repository_search_and_shares_on_sqlite() {
 /// the workflows that set them.
 async fn set_state(pool: &DbPool, table: &str, id: i64, state: &str) {
     match pool {
-        DbPool::Sqlite(pool) => {
+        codeyard_db_core::DbPool::Sqlite(pool) => {
             sqlx::query(&format!("UPDATE {table} SET state = ?1 WHERE id = ?2"))
                 .bind(state)
                 .bind(id)
@@ -2227,7 +2247,7 @@ async fn set_state(pool: &DbPool, table: &str, id: i64, state: &str) {
                 .await
                 .unwrap();
         }
-        DbPool::Postgres(pool) => {
+        codeyard_db_core::DbPool::Postgres(pool) => {
             sqlx::query(&format!("UPDATE {table} SET state = $1 WHERE id = $2"))
                 .bind(state)
                 .bind(id)
@@ -2246,13 +2266,13 @@ fn sorted(mut titles: Vec<&str>) -> Vec<&str> {
 /// A viewer's lists hold the issues and pull requests assigned to them, opened by them, or waiting
 /// for their review, in repositories they can read. Closed and merged items are in the closed list.
 async fn viewer_work_contract(pool: &DbPool) {
-    use codeyard::backend::db::{
-        self,
-        assignees::{assign_user, AssignedItem},
-        issues::IssueRelation,
-        models::AccessLevel,
-        pull_requests::records::{NewPullRequest, PullRequestRelation},
-    };
+    use codeyard::backend::db;
+    use codeyard::backend::db::assignees::assign_user;
+    use codeyard::backend::db::assignees::AssignedItem;
+    use codeyard::backend::db::issues::IssueRelation;
+    use codeyard::backend::db::pull_requests::records::NewPullRequest;
+    use codeyard::backend::db::pull_requests::records::PullRequestRelation;
+    use codeyard_db_core::models::AccessLevel;
     let owner = db::users::accounts::create_user(pool, &unique_name("work-owner"), None)
         .await
         .unwrap();
@@ -2271,9 +2291,14 @@ async fn viewer_work_contract(pool: &DbPool) {
     .await
     .unwrap();
     // Only the owner and collaborators can be assigned, so the viewer collaborates here first.
-    db::repositories::access::grant_repo_access(pool, viewer.id, public.id, AccessLevel::Write)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        pool,
+        viewer.id,
+        public.id,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
     let private_name = unique_name("work-private");
     let private = db::repositories::records::create_repository(
         pool,
@@ -2326,9 +2351,14 @@ async fn viewer_work_contract(pool: &DbPool) {
     let hidden = db::issues::create_issue(pool, private.id, owner.id, "private assigned", "")
         .await
         .unwrap();
-    db::repositories::access::grant_repo_access(pool, viewer.id, private.id, AccessLevel::Write)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        pool,
+        viewer.id,
+        private.id,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
     assign_user(
         pool,
         owner.id,
@@ -2368,9 +2398,14 @@ async fn viewer_work_contract(pool: &DbPool) {
         .unwrap();
     assert_eq!((counts.open, counts.closed), (1, 1));
 
-    db::repositories::access::grant_repo_access(pool, viewer.id, private.id, AccessLevel::Write)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        pool,
+        viewer.id,
+        private.id,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
     let assigned_open =
         db::issues::list_viewer_issues(pool, viewer.id, IssueRelation::Assigned, true, 100)
             .await
@@ -2471,9 +2506,14 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(review_open.iter().map(|e| e.title.as_str()).collect()),
         ["review pr"]
     );
-    db::repositories::access::grant_repo_access(pool, viewer.id, private.id, AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        pool,
+        viewer.id,
+        private.id,
+        codeyard_db_core::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     let review_open = db::pull_requests::records::list_viewer_pull_requests(
         pool,
         viewer.id,

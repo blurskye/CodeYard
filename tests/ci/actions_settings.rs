@@ -312,7 +312,7 @@ async fn rest_settings(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -978,7 +978,7 @@ async fn rest_reviews(pg: bool) {
             f.pool(),
             actor,
             repo.id,
-            db::models::AccessLevel::Read,
+            codeyard_db_core::models::AccessLevel::Read,
         )
         .await
         .unwrap();

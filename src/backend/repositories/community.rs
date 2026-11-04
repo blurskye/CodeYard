@@ -4,12 +4,11 @@ use super::{
     store::{repo_store, BlobRange, ErrorKind, RepoError, RepoStore},
     templates,
 };
-use crate::backend::{
-    cluster::NodeContext,
-    db::{self, models::Repository},
-    git::TreeEntry,
-};
+use crate::backend::cluster::NodeContext;
+use crate::backend::db;
+use crate::backend::git::TreeEntry;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::Repository;
 
 #[derive(Clone)]
 pub struct File {
@@ -272,7 +271,7 @@ async fn discover(
 }
 
 pub async fn load(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: &Repository,
     owner: &str,
     cluster: Option<&NodeContext>,

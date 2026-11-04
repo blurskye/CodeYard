@@ -28,8 +28,8 @@ impl WatchEvent {
 /// The new issue, pull request or published release a watch notification is about.
 pub struct WatchedItem<'a> {
     pub event: WatchEvent,
-    pub actor: &'a db::models::User,
-    pub repository: &'a db::models::Repository,
+    pub actor: &'a codeyard_db_core::models::User,
+    pub repository: &'a codeyard_db_core::models::Repository,
     pub owner: &'a str,
     pub repo: &'a str,
     /// The issue or pull request number; `None` for a release.
@@ -44,7 +44,7 @@ pub struct WatchedItem<'a> {
 /// Notifies the watchers of a new item. The write has already been saved, so a failure here
 /// never fails the request. Returns the users it notified, so a mention does not notify them again.
 pub async fn notify_watchers(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     item: WatchedItem<'_>,
 ) -> Vec<i64> {

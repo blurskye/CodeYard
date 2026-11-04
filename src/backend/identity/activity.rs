@@ -1,10 +1,10 @@
 //! A user's public activity, filtered to the repositories the viewer may read.
-use crate::backend::db::{
-    self,
-    activity::{ActivityRow, ActivityViewer, SCAN_ROWS},
-    DbPool,
-};
+use crate::backend::db;
+use crate::backend::db::activity::ActivityRow;
+use crate::backend::db::activity::ActivityViewer;
+use crate::backend::db::activity::SCAN_ROWS;
 use anyhow::Result;
+use codeyard_db_core::DbPool;
 
 pub const PAGE_SIZE: usize = 30;
 /// Later pages are not served, so one request reads a bounded number of rows.

@@ -10,8 +10,8 @@ use super::{
     tls,
     transport::{active_member, ALPN_PAIR, ALPN_RPC},
 };
-use crate::backend::db::DbPool;
 use anyhow::{bail, Context, Result};
+use codeyard_db_core::DbPool;
 use iroh::PublicKey;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{

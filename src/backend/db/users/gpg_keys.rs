@@ -1,7 +1,8 @@
 use super::accounts::AccountCredential;
-use crate::backend::db::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct GpgMaterial {

@@ -1,6 +1,7 @@
 use super::fixture::{applied, Fixture, INDEX};
 use axum::http::StatusCode;
-use codeyard::backend::db::{models::OrgRole, organizations::*};
+use codeyard::backend::db::organizations::*;
+use codeyard_db_core::models::OrgRole;
 
 fn row_fields(source: &str, href: &str, action: &str) -> Vec<(String, String)> {
     let row = source
@@ -786,9 +787,15 @@ pub async fn contracts(f: &Fixture) {
     // DAO last-usable-owner guard stays intact; successful self-removal goes to
     // the index, not the now-inaccessible organization. Create a second owner.
     applied(
-        update_organization_member_role(pool, f.owner.id, f.org, target.id, OrgRole::Owner)
-            .await
-            .unwrap(),
+        update_organization_member_role(
+            pool,
+            f.owner.id,
+            f.org,
+            target.id,
+            codeyard_db_core::models::OrgRole::Owner,
+        )
+        .await
+        .unwrap(),
     );
     f.form(
         &f.owner,
@@ -975,7 +982,7 @@ pub async fn recovery(f: &Fixture) {
             f.owner.id,
             f.org,
             former.id,
-            OrgRole::Member,
+            codeyard_db_core::models::OrgRole::Member,
         )
         .await
         .unwrap(),

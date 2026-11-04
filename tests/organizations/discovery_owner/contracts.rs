@@ -51,7 +51,7 @@ pub async fn run(f: &Fixture) {
         db::repositories::access::get_user_repo_access(pool, COLLISION, f.private_org)
             .await
             .unwrap(),
-        db::models::AccessLevel::None,
+        codeyard_db_core::models::AccessLevel::None,
     );
     assert_eq!(
         db::repositories::records::repository_owner_name(pool, f.private_org)
@@ -533,7 +533,7 @@ async fn api_contracts(f: &Fixture) {
         f.database.pool(),
         COLLISION,
         public_fork,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -713,7 +713,7 @@ pub async fn bounded_queries(f: &Fixture) {
         f.database.pool(),
         COLLISION,
         private_org,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();

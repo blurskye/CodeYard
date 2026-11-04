@@ -1,9 +1,8 @@
-use crate::backend::db::{
-    models::{PersonalAccessToken, User},
-    sqlite::time,
-};
+use crate::backend::db::sqlite::time;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::PersonalAccessToken;
+use codeyard_db_core::models::User;
 use sqlx::SqlitePool;
 
 /// The initiating credential is checked inside the same transaction as its repository write.
@@ -315,7 +314,7 @@ pub(crate) async fn permits_write(
     let Some(username) = live else {
         return Ok(false);
     };
-    let repository: Option<crate::backend::db::models::Repository> = match repo {
+    let repository: Option<codeyard_db_core::models::Repository> = match repo {
         Some(repo) => {
             sqlx::query_as("SELECT * FROM repositories WHERE id=?1")
                 .bind(repo)

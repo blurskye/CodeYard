@@ -42,7 +42,10 @@ async fn visible(
     headers: &HeaderMap,
     params: &Params,
     write: bool,
-) -> Result<(db::models::Repository, Option<auth::Authentication>)> {
+) -> Result<(
+    codeyard_db_core::models::Repository,
+    Option<auth::Authentication>,
+)> {
     repository(state, headers, &params["owner"], &params["repo"], write).await
 }
 fn reader(actor: Option<&auth::Authentication>) -> db::repositories::credentials::Reader<'_> {

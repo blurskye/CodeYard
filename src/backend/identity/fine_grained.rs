@@ -3,13 +3,14 @@
 //! can do is always the intersection of those grants with the user's own live rights: every
 //! request still runs as the user, and this module only narrows it.
 use super::tokens::token_hash;
-use crate::backend::db::{
-    self,
-    fine_grained_tokens::{within, Bounds, NewToken, Policy},
-    models::Repository,
-    DbPool,
-};
+use crate::backend::db;
+use crate::backend::db::fine_grained_tokens::within;
+use crate::backend::db::fine_grained_tokens::Bounds;
+use crate::backend::db::fine_grained_tokens::NewToken;
+use crate::backend::db::fine_grained_tokens::Policy;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::DbPool;
 use serde_json::{Map, Value};
 
 pub const PREFIX: &str = super::tokens::FGPAT_PREFIX;

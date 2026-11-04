@@ -12,13 +12,13 @@ use codeyard::backend::app::AppState;
 use codeyard::backend::ci::CiConfig;
 use codeyard::backend::crypto::SecretEncryptor;
 use codeyard::backend::db;
-use codeyard::backend::db::models::OrgRole;
 use codeyard::backend::db::organizations as orgs;
 use codeyard::backend::db::organizations::OrganizationOutcome;
 use codeyard::backend::db::users::accounts::AccountCredential;
 use codeyard::backend::db::webhooks::HookOwner;
 use codeyard::backend::db::webhooks::WebhookFields;
 use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::OrgRole;
 use codeyard_support::crypto::hmac_sha256;
 use database::Database;
 use pulls::Client;
@@ -188,7 +188,7 @@ async fn deliveries(
     database: &Database,
     hook: i64,
     count: usize,
-) -> Vec<db::models::WebhookDelivery> {
+) -> Vec<codeyard_db_core::models::WebhookDelivery> {
     for _ in 0..200 {
         let rows = db::webhooks::list_deliveries(database.pool(), hook)
             .await
@@ -745,7 +745,7 @@ async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
         pool,
         bob_id,
         repo.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -1109,19 +1109,27 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
     .unwrap() else {
         panic!("the organization was not created");
     };
-    let OrganizationOutcome::Applied(_) =
-        orgs::add_organization_member(pool, owner, org.id, second, OrgRole::Owner)
-            .await
-            .unwrap()
-    else {
+    let OrganizationOutcome::Applied(_) = orgs::add_organization_member(
+        pool,
+        owner,
+        org.id,
+        second,
+        codeyard_db_core::models::OrgRole::Owner,
+    )
+    .await
+    .unwrap() else {
         panic!("the second owner was not added");
     };
     // The first owner is demoted before any write of its own runs.
-    let OrganizationOutcome::Applied(_) =
-        orgs::update_organization_member_role(pool, second, org.id, owner, OrgRole::Member)
-            .await
-            .unwrap()
-    else {
+    let OrganizationOutcome::Applied(_) = orgs::update_organization_member_role(
+        pool,
+        second,
+        org.id,
+        owner,
+        codeyard_db_core::models::OrgRole::Member,
+    )
+    .await
+    .unwrap() else {
         panic!("the first owner was not demoted");
     };
     let fields = WebhookFields {

@@ -163,9 +163,9 @@ fn database_error<E>(_: E) -> OperationError {
 
 /// The repository a caller already resolved, read again by ID with its owner's name.
 pub(super) async fn repository(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     id: i64,
-) -> Result<(db::models::Repository, String), OperationError> {
+) -> Result<(codeyard_db_core::models::Repository, String), OperationError> {
     use crate::backend::repositories::access::{current_repository_with_owner, AccessError};
     current_repository_with_owner(pool, id)
         .await
@@ -178,7 +178,10 @@ pub(super) async fn repository(
         })
 }
 
-pub(super) async fn actor(pool: &db::DbPool, id: i64) -> Result<db::models::User, OperationError> {
+pub(super) async fn actor(
+    pool: &codeyard_db_core::DbPool,
+    id: i64,
+) -> Result<codeyard_db_core::models::User, OperationError> {
     db::users::accounts::get_user_by_id(pool, id)
         .await
         .map_err(write_error)?
@@ -215,9 +218,9 @@ fn access_error(error: access::AccessError) -> OperationError {
 }
 
 pub(super) async fn require_read(
-    pool: &db::DbPool,
-    user: &db::models::User,
-    repo: &db::models::Repository,
+    pool: &codeyard_db_core::DbPool,
+    user: &codeyard_db_core::models::User,
+    repo: &codeyard_db_core::models::Repository,
 ) -> Result<(), OperationError> {
     access::check_read(pool, repo.id, Some(user.id))
         .await
@@ -226,9 +229,9 @@ pub(super) async fn require_read(
 }
 
 pub(super) async fn require_write(
-    pool: &db::DbPool,
-    user: &db::models::User,
-    repo: &db::models::Repository,
+    pool: &codeyard_db_core::DbPool,
+    user: &codeyard_db_core::models::User,
+    repo: &codeyard_db_core::models::Repository,
 ) -> Result<(), OperationError> {
     access::check_write(pool, repo.id, user.id)
         .await

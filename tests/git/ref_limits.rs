@@ -24,7 +24,7 @@ struct Hosted {
 }
 
 impl Hosted {
-    async fn start(pool: &db::DbPool, url: &str, name: &str) -> Self {
+    async fn start(pool: &codeyard_db_core::DbPool, url: &str, name: &str) -> Self {
         bundle::install();
         db::node_config::upsert_node_configuration(pool, "public", true)
             .await
@@ -90,7 +90,7 @@ fn tip(disk_path: &str, branch: &str) -> String {
 /// Pushes that would create a branch or tag past the limit are refused, and the pusher is told
 /// why. Updating or deleting an existing branch still works, and deleting one makes room for
 /// exactly one more.
-async fn ref_limit_over_http(pool: &db::DbPool, url: &str) {
+async fn ref_limit_over_http(pool: &codeyard_db_core::DbPool, url: &str) {
     let hosted = Hosted::start(pool, url, "capped").await;
     let root = hosted.root.path();
     let repo_url = hosted.repo_url("capped");
@@ -141,7 +141,7 @@ async fn ref_limit_over_http(pool: &db::DbPool, url: &str) {
 }
 
 /// A branch whose name is not ASCII pushes over HTTP, and the branch is listed afterwards.
-async fn unicode_branch_over_http(pool: &db::DbPool, url: &str) {
+async fn unicode_branch_over_http(pool: &codeyard_db_core::DbPool, url: &str) {
     let hosted = Hosted::start(pool, url, "unicode").await;
     let root = hosted.root.path();
     let repo_url = hosted.repo_url("unicode");

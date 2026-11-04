@@ -1,10 +1,10 @@
 //! Bounded native creation drafts; definitions and write authority remain server-side.
 use super::{CreationRefusal, NewRepositoryForm, PageContext, RepositoryCreationChoices};
-use crate::backend::db::{
-    models::OrgRole,
-    organizations::{self as orgs, properties as data, OrganizationOutcome::Applied},
-};
+use crate::backend::db::organizations as orgs;
+use crate::backend::db::organizations::properties as data;
+use crate::backend::db::organizations::OrganizationOutcome::Applied;
 use axum::http::StatusCode;
+use codeyard_db_core::models::OrgRole;
 use codeyard_webui::components::repository_properties::RepositoryPropertyField;
 use std::collections::HashMap;
 
@@ -102,7 +102,7 @@ pub(super) async fn populate(
         orgs::get_organization_role(&ctx.state.pool, actor, org)
             .await
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
-        Applied(OrgRole::Owner)
+        Applied(codeyard_db_core::models::OrgRole::Owner)
     );
     form.properties_owner_org_id = org.to_string();
     form.property_values.retain(|name, _| {

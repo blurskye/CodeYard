@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 pub struct FileSave {
     pub commit: CommitInfo,
-    pub actor: db::models::User,
+    pub actor: codeyard_db_core::models::User,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,9 +160,9 @@ enum CommitOrigin {
 }
 
 async fn check_web_signoff(
-    pool: &db::DbPool,
-    repository: &db::models::Repository,
-    user: &db::models::User,
+    pool: &codeyard_db_core::DbPool,
+    repository: &codeyard_db_core::models::Repository,
+    user: &codeyard_db_core::models::User,
     message: &str,
 ) -> Result<(), WriteError> {
     let required =
@@ -189,7 +189,7 @@ async fn check_web_signoff(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn write_file(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
     actor_id: impl Into<db::credentials::Actor>,
@@ -226,9 +226,9 @@ pub async fn write_file(
 /// Whether the branch rules refuse `user` a direct commit to `branch` at `revision`. The pages
 /// then offer a commit on a new branch instead, as GitHub does for a protected branch.
 pub async fn direct_commit_refused(
-    pool: &db::DbPool,
-    repository: &db::models::Repository,
-    user: &db::models::User,
+    pool: &codeyard_db_core::DbPool,
+    repository: &codeyard_db_core::models::Repository,
+    user: &codeyard_db_core::models::User,
     branch: &str,
     revision: &str,
 ) -> bool {
@@ -283,8 +283,8 @@ fn check_new_branch_name(name: &str) -> Result<(), WriteError> {
 /// repository and an unreadable one get the same answer, so no refusal reveals which private
 /// names exist. The JSON handlers call this before they decode the body.
 pub async fn ensure_readable(
-    pool: &db::DbPool,
-    user: &db::models::User,
+    pool: &codeyard_db_core::DbPool,
+    user: &codeyard_db_core::models::User,
     owner: &str,
     name: &str,
 ) -> Result<i64, WriteError> {
@@ -310,10 +310,10 @@ pub async fn ensure_readable(
 /// The repository at `owner/name`. A missing one is refused like an unreadable one, by the
 /// callers that check access.
 pub async fn named_repository(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     owner: &str,
     name: &str,
-) -> Result<db::models::Repository, WriteError> {
+) -> Result<codeyard_db_core::models::Repository, WriteError> {
     db::repositories::records::get_repository(pool, owner, name)
         .await
         .map_err(|_| unavailable())?
@@ -329,7 +329,7 @@ pub async fn named_repository(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn write_file_bytes(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
     actor_id: impl Into<db::credentials::Actor>,
@@ -362,7 +362,7 @@ pub async fn write_file_bytes(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn delete_file(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
     actor_id: impl Into<db::credentials::Actor>,
@@ -393,7 +393,7 @@ pub async fn delete_file(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn delete_file_web(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
     actor_id: impl Into<db::credentials::Actor>,
@@ -434,13 +434,19 @@ pub(crate) fn default_commit_message(input: &FileWrite) -> String {
 /// runs only after that. The actor must then be able to write the branch, and the branch's
 /// protection rules must accept the commit.
 async fn authorize_write(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor_id: i64,
     repository_id: i64,
     branch: &str,
     expected_revision: &str,
     check: impl FnOnce() -> Result<(), WriteError>,
-) -> Result<(db::models::User, db::models::Repository), WriteError> {
+) -> Result<
+    (
+        codeyard_db_core::models::User,
+        codeyard_db_core::models::Repository,
+    ),
+    WriteError,
+> {
     let user = db::users::accounts::get_user_by_id(pool, actor_id)
         .await
         .map_err(|_| unavailable())?
@@ -499,7 +505,7 @@ async fn authorize_write(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 async fn save_file(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
     actor_id: impl Into<db::credentials::Actor>,
@@ -612,11 +618,11 @@ async fn save_file(
 /// requests that use the branch follow it, and push workflows are queued for the paths that
 /// changed.
 async fn publish_commit(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     store: &RepoStore,
     ci: &CiRuns,
-    repository: &db::models::Repository,
-    user: db::models::User,
+    repository: &codeyard_db_core::models::Repository,
+    user: codeyard_db_core::models::User,
     prepared: &PreparedFile,
     new_branch: Option<&str>,
 ) -> Result<FileSave, WriteError> {
@@ -680,7 +686,7 @@ async fn publish_commit(
         Some(&[branch][..]),
         ci,
         user.id,
-        crate::backend::db::models::AccessLevel::Owner,
+        codeyard_db_core::models::AccessLevel::Owner,
     )
     .await
     .is_ok();
@@ -722,7 +728,7 @@ async fn publish_commit(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn upload_files(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
     actor_id: impl Into<db::credentials::Actor>,

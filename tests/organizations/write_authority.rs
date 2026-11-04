@@ -4,12 +4,13 @@
 use crate::support::database::Database;
 use crate::support::organizations::applied;
 
-use codeyard::backend::db::{
-    self,
-    discussions::DiscussionEdit,
-    models::{AccessLevel, CiRun, OrgRole, Repository},
-    organizations as orgs,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::discussions::DiscussionEdit;
+use codeyard::backend::db::organizations as orgs;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::CiRun;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Repository;
 use db::repositories::{insert_repository, NewRepository};
 use uuid::Uuid;
 
@@ -145,7 +146,11 @@ async fn expect_writes(database: &Database, actor: i64, repo: i64, allowed: bool
     };
     assert_eq!(can_merge, allowed, "merge actor={actor}");
 }
-async fn fork(pool: &db::DbPool, actor: i64, source: i64) -> anyhow::Result<Option<Repository>> {
+async fn fork(
+    pool: &codeyard_db_core::DbPool,
+    actor: i64,
+    source: i64,
+) -> anyhow::Result<Option<Repository>> {
     let name = format!("fork_{}", Uuid::new_v4().simple());
     insert_repository(
         pool,
@@ -162,7 +167,7 @@ async fn fork(pool: &db::DbPool, actor: i64, source: i64) -> anyhow::Result<Opti
     .await
 }
 async fn enqueue(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     repo: i64,
     cd: bool,
@@ -215,7 +220,10 @@ async fn authority_contract(pg: bool) {
         .unwrap(),
     )
     .id;
-    for (actor, role) in [(admin, OrgRole::Admin), (member, OrgRole::Member)] {
+    for (actor, role) in [
+        (admin, codeyard_db_core::models::OrgRole::Admin),
+        (member, codeyard_db_core::models::OrgRole::Member),
+    ] {
         applied(
             orgs::add_organization_member(pool, owner, org, actor, role)
                 .await
@@ -258,9 +266,14 @@ async fn authority_contract(pg: bool) {
         .await
         .unwrap(),
     );
-    db::repositories::access::grant_repo_access(pool, direct, repo.id, AccessLevel::Write)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        pool,
+        direct,
+        repo.id,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
     for (actor, allowed) in [
         (owner, true),
         (admin, true),
@@ -359,9 +372,14 @@ async fn authority_contract(pg: bool) {
             still_queued
         );
     }
-    db::repositories::access::grant_repo_access(pool, direct, repo.id, AccessLevel::Admin)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        pool,
+        direct,
+        repo.id,
+        codeyard_db_core::models::AccessLevel::Admin,
+    )
+    .await
+    .unwrap();
     applied(
         orgs::grant_organization_team_repository(
             pool,
@@ -421,9 +439,15 @@ async fn authority_contract(pg: bool) {
             )
             .await;
         applied(
-            orgs::update_organization_member_role(pool, owner, org, admin, OrgRole::Admin)
-                .await
-                .unwrap(),
+            orgs::update_organization_member_role(
+                pool,
+                owner,
+                org,
+                admin,
+                codeyard_db_core::models::OrgRole::Admin,
+            )
+            .await
+            .unwrap(),
         );
     }
     // Restricted actors fail even with team/direct Admin; private grants do not
@@ -465,9 +489,14 @@ async fn authority_contract(pg: bool) {
     assert!(enqueue(pool, direct, repo.id, false, &[direct])
         .await
         .is_err());
-    db::repositories::access::grant_repo_access(pool, direct, repo.id, AccessLevel::Admin)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        pool,
+        direct,
+        repo.id,
+        codeyard_db_core::models::AccessLevel::Admin,
+    )
+    .await
+    .unwrap();
     let _role_run = enqueue(pool, admin, repo.id, false, &[admin])
         .await
         .unwrap();
@@ -478,9 +507,15 @@ async fn authority_contract(pg: bool) {
         )
         .await;
     applied(
-        orgs::update_organization_member_role(pool, owner, org, admin, OrgRole::Admin)
-            .await
-            .unwrap(),
+        orgs::update_organization_member_role(
+            pool,
+            owner,
+            org,
+            admin,
+            codeyard_db_core::models::OrgRole::Admin,
+        )
+        .await
+        .unwrap(),
     );
     database
         .execute(
@@ -559,9 +594,15 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
     )
     .id;
     applied(
-        orgs::add_organization_member(pool, owner, org, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        orgs::add_organization_member(
+            pool,
+            owner,
+            org,
+            member,
+            codeyard_db_core::models::OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let mut teams = Vec::new();
     for slug in ["team_cancel_a", "team_cancel_b"] {

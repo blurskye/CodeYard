@@ -6,15 +6,13 @@ use crate::support::database;
 use crate::support::organizations::applied;
 mod fixture;
 
-use codeyard::backend::{
-    crypto::SecretEncryptor,
-    db::{
-        self,
-        models::{AccessLevel, OrgRole},
-        organizations as orgs,
-        secrets::{self, SecretsError},
-    },
-};
+use codeyard::backend::crypto::SecretEncryptor;
+use codeyard::backend::db;
+use codeyard::backend::db::organizations as orgs;
+use codeyard::backend::db::secrets;
+use codeyard::backend::db::secrets::SecretsError;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
 use database::Database;
 
 const NAME: &str = "SENSITIVE_DEPLOY_TOKEN";
@@ -28,7 +26,11 @@ fn denied<T>(result: Result<T, SecretsError>) {
         "expected typed secret denial"
     );
 }
-async fn put(pool: &db::DbPool, repo: i64, actor: Option<i64>) -> Result<(), SecretsError> {
+async fn put(
+    pool: &codeyard_db_core::DbPool,
+    repo: i64,
+    actor: Option<i64>,
+) -> Result<(), SecretsError> {
     secrets::create_or_update_secret(
         pool,
         &encryptor(),
@@ -371,7 +373,10 @@ async fn contract(pg: bool) {
         .unwrap(),
     )
     .id;
-    for (actor, role) in [(admin, OrgRole::Admin), (member, OrgRole::Member)] {
+    for (actor, role) in [
+        (admin, codeyard_db_core::models::OrgRole::Admin),
+        (member, codeyard_db_core::models::OrgRole::Member),
+    ] {
         applied(
             orgs::add_organization_member(d.pool(), owner, org, actor, role)
                 .await
@@ -383,14 +388,19 @@ async fn contract(pg: bool) {
     let public = d.repo(owner, Some(org), "secret_public", false).await;
     validation_contract(&d, personal, owner).await;
     for repo in [personal, private, public] {
-        db::repositories::access::grant_repo_access(d.pool(), writer, repo, AccessLevel::Write)
-            .await
-            .unwrap();
+        db::repositories::access::grant_repo_access(
+            d.pool(),
+            writer,
+            repo,
+            codeyard_db_core::models::AccessLevel::Write,
+        )
+        .await
+        .unwrap();
         db::repositories::access::grant_repo_access(
             d.pool(),
             collaborator,
             repo,
-            AccessLevel::Admin,
+            codeyard_db_core::models::AccessLevel::Admin,
         )
         .await
         .unwrap();
@@ -461,20 +471,32 @@ async fn contract(pg: bool) {
         d.pool(),
         collaborator,
         private,
-        AccessLevel::Admin,
+        codeyard_db_core::models::AccessLevel::Admin,
     )
     .await
     .unwrap();
     applied(
-        orgs::update_organization_member_role(d.pool(), owner, org, admin, OrgRole::Member)
-            .await
-            .unwrap(),
+        orgs::update_organization_member_role(
+            d.pool(),
+            owner,
+            org,
+            admin,
+            codeyard_db_core::models::OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     refuse(&d, private, admin).await;
     applied(
-        orgs::update_organization_member_role(d.pool(), owner, org, admin, OrgRole::Admin)
-            .await
-            .unwrap(),
+        orgs::update_organization_member_role(
+            d.pool(),
+            owner,
+            org,
+            admin,
+            codeyard_db_core::models::OrgRole::Admin,
+        )
+        .await
+        .unwrap(),
     );
     applied(
         orgs::remove_organization_member(d.pool(), owner, org, admin)
@@ -483,9 +505,15 @@ async fn contract(pg: bool) {
     );
     refuse(&d, private, admin).await;
     applied(
-        orgs::add_organization_member(d.pool(), owner, org, admin, OrgRole::Admin)
-            .await
-            .unwrap(),
+        orgs::add_organization_member(
+            d.pool(),
+            owner,
+            org,
+            admin,
+            codeyard_db_core::models::OrgRole::Admin,
+        )
+        .await
+        .unwrap(),
     );
 
     for flag in ["is_banned", "must_change_password"] {

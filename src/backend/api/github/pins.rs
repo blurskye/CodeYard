@@ -26,7 +26,7 @@ async fn change(
     headers: &HeaderMap,
     p: &HashMap<String, String>,
     pinned: bool,
-) -> Result<(db::models::Repository, comments::Comment)> {
+) -> Result<(codeyard_db_core::models::Repository, comments::Comment)> {
     let (repo, auth) = repository(state, headers, &p["owner"], &p["repo"], true).await?;
     let actor = auth.ok_or_else(auth::required)?;
     let id = p["comment_id"].parse().map_err(|_| Error::missing())?;

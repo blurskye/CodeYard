@@ -1,8 +1,9 @@
-use crate::backend::db::{
-    models::{AccessLevel, OrgRole, Repository, Team},
-    organizations::*,
-};
+use crate::backend::db::organizations::*;
 use anyhow::Result;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::Team;
 use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
 use OrganizationOutcome::{Applied, Denied, Missing, Suspended};
 
@@ -231,17 +232,17 @@ pub(crate) async fn organization_repo_access_in_transaction(
     repository: &Repository,
 ) -> Result<AccessLevel> {
     if repository.owner_kind != "org" || repository.owner_user_id.is_some() {
-        return Ok(AccessLevel::None);
+        return Ok(codeyard_db_core::models::AccessLevel::None);
     }
     let Some(org) = repository.owner_org_id else {
-        return Ok(AccessLevel::None);
+        return Ok(codeyard_db_core::models::AccessLevel::None);
     };
     let level: Option<i16> = sqlx::query_scalar("SELECT MAX(CASE m.role WHEN 'owner' THEN 6 WHEN 'admin' THEN 5 WHEN 'member' THEN COALESCE((SELECT MAX(a.permission) FROM team_repo_access a JOIN teams t ON t.id=a.team_id AND t.org_id=m.org_id JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=m.user_id AND tm.role IN ('member','maintainer') WHERE a.repo_id=r.id AND a.permission BETWEEN 1 AND 5 AND t.privacy IN ('visible','secret')),0) ELSE 0 END,COALESCE((SELECT MAX(role.base_level) FROM organization_role_assignments assigned JOIN organization_roles role ON role.id=assigned.role_id AND role.base_level BETWEEN 1 AND 5 WHERE assigned.org_id=m.org_id AND ((assigned.user_id=m.user_id AND assigned.team_id IS NULL) OR (assigned.user_id IS NULL AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id WHERE t.id=assigned.team_id AND t.org_id=assigned.org_id AND t.privacy IN ('visible','secret') AND tm.user_id=m.user_id AND tm.role IN ('member','maintainer'))))),0),COALESCE((SELECT s.default_repository_permission FROM organization_settings s WHERE s.org_id=m.org_id AND s.default_repository_permission IN (1,3,5)),0)) FROM repositories r JOIN organizations o ON o.id=r.owner_org_id JOIN org_memberships m ON m.org_id=o.id AND m.user_id=?1 JOIN users u ON u.id=m.user_id WHERE r.id=?2 AND r.owner_kind='org' AND r.owner_org_id=?3 AND r.owner_user_id IS NULL AND NOT u.is_banned AND NOT u.must_change_password AND m.role IN ('owner','admin','member') AND NOT EXISTS(SELECT 1 FROM organization_blocks b WHERE b.org_id=m.org_id AND b.user_id=m.user_id)")
         .bind(user).bind(repository.id).bind(org).fetch_optional(&mut *connection).await?;
     let usable = remaining_active_owner(connection, org, -1).await?;
     // Preserve existing reads; suspended governance cannot grant org-role writes.
     // Canonical callers must additionally refuse direct-grant write admission.
-    Ok(AccessLevel::from(if usable {
+    Ok(codeyard_db_core::models::AccessLevel::from(if usable {
         level.unwrap_or(0)
     } else {
         level.unwrap_or(0).min(1)

@@ -1,11 +1,11 @@
 //! External status reporters share the status rows used by branch protection.
 use super::{contents::store_error, pagination::Pagination, repo_url, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{self, models::CommitStatus, repositories::protection},
-    repositories::store::repo_store,
-    webhooks::{self, payloads},
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::repositories::protection;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::webhooks;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -13,6 +13,7 @@ use axum::{
     routing::{get, post, MethodRouter},
     Json,
 };
+use codeyard_db_core::models::CommitStatus;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;

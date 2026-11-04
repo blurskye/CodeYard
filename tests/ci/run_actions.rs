@@ -7,10 +7,12 @@ use crate::support::database::Database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client::Client;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, db::models::AccessLevel,
-    storage::ObjectStore,
-};
+use codeyard::backend::api::create_router;
+use codeyard::backend::app::AppState;
+use codeyard::backend::ci::CiConfig;
+use codeyard::backend::db;
+use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::AccessLevel;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -36,9 +38,14 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::repositories::access::grant_repo_access(f.pool(), bob_id, repo.id, AccessLevel::Write)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        bob_id,
+        repo.id,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
     let router = create_router(AppState::new(
         f.pool().clone(),
         root.path().to_owned(),
@@ -387,7 +394,7 @@ async fn browser_logs(
     router: &axum::Router,
     alice: &Client,
     dave: &Client,
-    run: &db::models::CiRun,
+    run: &codeyard_db_core::models::CiRun,
 ) {
     use axum::{body::Body, http::Request};
     use codeyard::backend::identity::tokens::{self, TokenInput};
@@ -662,9 +669,14 @@ async fn pull_request_run_is_run_again(pg: bool) {
     .await
     .unwrap();
     for writer in [bob_id, carol_id] {
-        db::repositories::access::grant_repo_access(f.pool(), writer, repo.id, AccessLevel::Write)
-            .await
-            .unwrap();
+        db::repositories::access::grant_repo_access(
+            f.pool(),
+            writer,
+            repo.id,
+            codeyard_db_core::models::AccessLevel::Write,
+        )
+        .await
+        .unwrap();
     }
     let router = create_router(AppState::new(
         f.pool().clone(),

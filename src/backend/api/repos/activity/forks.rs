@@ -8,11 +8,11 @@ use crate::backend::api::repos::responses::{
 };
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::backend::db::models::Repository;
-use crate::backend::db::DbPool;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::DbPool;
 use serde::Serialize;
 use std::sync::Arc;
 #[derive(Serialize)]

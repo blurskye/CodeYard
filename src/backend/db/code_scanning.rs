@@ -1,7 +1,8 @@
 //! Durable SARIF uploads and alert instances, shared by REST and repository pages.
-use super::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
@@ -103,9 +104,9 @@ impl BranchAlert {
 
 pub struct OrganizationAlert {
     pub alert: Alert,
-    pub repository: super::models::Repository,
+    pub repository: codeyard_db_core::models::Repository,
     pub instance: Instance,
-    pub dismissed_by: Option<super::models::User>,
+    pub dismissed_by: Option<codeyard_db_core::models::User>,
 }
 
 pub struct NewUpload<'a> {

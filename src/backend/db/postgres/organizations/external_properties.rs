@@ -1,12 +1,10 @@
 use super::authority::*;
-use crate::backend::db::{
-    models::OrgRole,
-    organizations::{
-        external_properties::{self, Installation, RepositoryValue},
-        OrganizationOutcome,
-    },
-};
+use crate::backend::db::organizations::external_properties;
+use crate::backend::db::organizations::external_properties::Installation;
+use crate::backend::db::organizations::external_properties::RepositoryValue;
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use OrganizationOutcome::{Applied, Conflict, Denied};
@@ -17,7 +15,7 @@ pub async fn installations(
     org: i64,
 ) -> Result<OrganizationOutcome<Vec<Installation>>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
         return Ok(Denied);
     }
     let rows = sqlx::query_as("SELECT display_name,installation_id FROM organization_external_property_installations WHERE org_id=$1 ORDER BY id").bind(org).fetch_all(&mut *tx).await?;
@@ -35,7 +33,7 @@ pub async fn register(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner
+    if require_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner
         || !credential(&mut tx, &grant, org, "organization_custom_properties").await?
     {
         return Ok(Denied);
@@ -81,7 +79,7 @@ pub async fn definitions(
     org: i64,
 ) -> Result<OrganizationOutcome<Vec<String>>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
         return Ok(Denied);
     }
     let rows = sqlx::query_scalar("SELECT DISTINCT v.property_name FROM organization_external_property_values v JOIN repositories r ON r.id=v.repo_id WHERE v.org_id=$1 AND r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL ORDER BY v.property_name").bind(org).fetch_all(&mut *tx).await?;
@@ -98,7 +96,7 @@ pub async fn set_values(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner
+    if require_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner
         || !credential(&mut tx, &grant, org, "organization_custom_properties").await?
     {
         return Ok(Denied);
@@ -158,7 +156,7 @@ pub async fn delete_values(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner
+    if require_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner
         || !credential(&mut tx, &grant, org, "organization_custom_properties").await?
     {
         return Ok(Denied);

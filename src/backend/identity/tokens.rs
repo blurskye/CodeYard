@@ -1,7 +1,9 @@
 //! Personal token lifecycle (only hashes persist) and restricted activity-feed credentials.
 
-use crate::backend::db::{models::PersonalAccessToken, users::tokens, DbPool};
+use crate::backend::db::users::tokens;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::PersonalAccessToken;
+use codeyard_db_core::DbPool;
 use sha2::{Digest, Sha256};
 
 pub(crate) const TOKEN_BYTES: usize = 32;
@@ -24,7 +26,7 @@ pub struct CreatedToken {
 }
 
 pub struct ActivityFeedUser {
-    pub user: crate::backend::db::models::User,
+    pub user: codeyard_db_core::models::User,
     pub token: i64,
 }
 

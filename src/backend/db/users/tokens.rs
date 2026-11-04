@@ -1,9 +1,9 @@
-use crate::backend::db::{
-    models::{PersonalAccessToken, User},
-    DbPool,
-};
 use anyhow::Result;
 use chrono::{DateTime, Datelike, Utc};
+use codeyard_db_core::models::PersonalAccessToken;
+use codeyard_db_core::models::User;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// Token timestamps must round-trip through SQLite's four-digit calendar representation.
 pub(crate) fn supported_expiry(expiry: Option<DateTime<Utc>>) -> bool {

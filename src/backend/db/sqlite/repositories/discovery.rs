@@ -1,13 +1,15 @@
 use super::access::readable_condition;
+use crate::backend::db::repositories::discovery::repository_order_by;
+use crate::backend::db::repositories::discovery::ItemSort;
+use crate::backend::db::repositories::discovery::NewForkedRepository;
+use crate::backend::db::repositories::discovery::RepositorySearch;
+use crate::backend::db::repositories::records::RepositorySort;
 use crate::backend::db::sqlite::search::contains;
-use crate::backend::db::{
-    models::{Issue, PullRequest, Repository, User},
-    repositories::{
-        discovery::{repository_order_by, ItemSort, NewForkedRepository, RepositorySearch},
-        records::RepositorySort,
-    },
-};
 use anyhow::{ensure, Result};
+use codeyard_db_core::models::Issue;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
 use sqlx::SqlitePool;
 
 pub async fn create_forked_repository(

@@ -1,15 +1,14 @@
 use super::{auth, discovery, membership_document, outcome, target, AppState, Error, Result};
-use crate::backend::db::{
-    self,
-    models::OrgRole,
-    organizations::{self, OrganizationOutcome},
-};
+use crate::backend::db;
+use crate::backend::db::organizations;
+use crate::backend::db::organizations::OrganizationOutcome;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     routing::{delete, put, MethodRouter},
     Json,
 };
+use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -45,8 +44,8 @@ async fn set(
         _ => return Err(Error::validation("Membership", "role", "invalid")),
     };
     let role = match role {
-        "admin" => OrgRole::Owner,
-        "member" => OrgRole::Member,
+        "admin" => codeyard_db_core::models::OrgRole::Owner,
+        "member" => codeyard_db_core::models::OrgRole::Member,
         _ => return Err(Error::validation("Membership", "role", "invalid")),
     };
     let org = target(&state, &name).await?;

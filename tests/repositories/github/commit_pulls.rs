@@ -35,7 +35,7 @@ fn stable_documents(mut values: Value) -> Value {
 
 pub(super) async fn run(
     router: &Router,
-    resource: (&db::DbPool, i64, i64, i64),
+    resource: (&codeyard_db_core::DbPool, i64, i64, i64),
     base: &str,
     tokens: (&str, &str, &str),
     session: &Client,
@@ -428,7 +428,7 @@ pub(super) async fn run(
         alice,
         repo,
         "bob",
-        Some(db::models::AccessLevel::Read),
+        Some(codeyard_db_core::models::AccessLevel::Read),
     )
     .await
     .unwrap();
@@ -483,7 +483,7 @@ pub(super) async fn run(
         bob,
         fork.id,
         "alice",
-        Some(db::models::AccessLevel::Read),
+        Some(codeyard_db_core::models::AccessLevel::Read),
     )
     .await
     .unwrap();

@@ -1,7 +1,8 @@
 //! Deployment environments shared by REST and Actions configuration.
-use crate::backend::db::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]

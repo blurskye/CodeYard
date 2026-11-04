@@ -1,11 +1,11 @@
-use crate::backend::db::{
-    action_concurrency::Configuration,
-    action_jobs::{Job, Page, Step},
-    models::CiRun,
-};
+use crate::backend::db::action_concurrency::Configuration;
+use crate::backend::db::action_jobs::Job;
+use crate::backend::db::action_jobs::Page;
+use crate::backend::db::action_jobs::Step;
 use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
 use codeyard_actions::progress::{Annotation, Event, State, Update};
+use codeyard_db_core::models::CiRun;
 use sqlx::{types::Json, SqliteConnection, SqlitePool};
 
 async fn lease(

@@ -1,10 +1,10 @@
 //! Gate requests are private to the App whose decision the run is waiting for.
 use super::{enqueue, events, outgoing, payloads};
-use crate::backend::{
-    api::github::repo_url,
-    db::{self, models::CiRun, DbPool},
-    identity::github_apps,
-};
+use crate::backend::api::github::repo_url;
+use crate::backend::db;
+use crate::backend::identity::github_apps;
+use codeyard_db_core::models::CiRun;
+use codeyard_db_core::DbPool;
 use serde_json::{json, Value};
 
 pub async fn requested(pool: &DbPool, run: &CiRun) -> anyhow::Result<()> {

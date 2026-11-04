@@ -3,14 +3,11 @@ use super::{
     access,
     store::{repo_store, CommitInfo, ErrorKind, RepoError, RepoStore},
 };
-use crate::backend::{
-    cluster::NodeContext,
-    db::{
-        self,
-        models::{PullRequest, Repository},
-    },
-    git,
-};
+use crate::backend::cluster::NodeContext;
+use crate::backend::db;
+use crate::backend::git;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::Repository;
 use std::{collections::HashMap, time::Duration};
 
 #[derive(Debug)]
@@ -99,7 +96,7 @@ async fn introduced(
 /// and commits elsewhere include open and merged requests. Already-present base commits do not count.
 /// Pagination is over matches, never over the database candidates that were inspected.
 pub async fn associated_pulls(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     query: CommitPullQuery<'_>,
 ) -> Result<CommitPullPage, AssociationError> {

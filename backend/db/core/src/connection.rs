@@ -371,7 +371,7 @@ mod safe_logging_tests {
             unreachable!()
         };
         assert_eq!(raw.options().get_max_connections(), 1);
-        crate::backend::db::run_migrations(&pool).await.unwrap();
+        crate::run_migrations(&pool).await.unwrap();
         let (a, b) = tokio::join!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users").fetch_one(raw),
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users").fetch_one(raw),

@@ -1,13 +1,10 @@
 //! In cluster mode new repositories use the online storage node with the most free space.
 //! A single-node installation, with or without runners on other machines, records no node.
 use super::NodeContext;
-use crate::backend::{
-    db::{
-        self,
-        models::{ClusterNode, Repository},
-    },
-    repositories::store::RepoError,
-};
+use crate::backend::db;
+use crate::backend::repositories::store::RepoError;
+use codeyard_db_core::models::ClusterNode;
+use codeyard_db_core::models::Repository;
 
 pub async fn storage_node(
     context: Option<&NodeContext>,
@@ -42,5 +39,5 @@ pub async fn storage_node(
 /// Online storage nodes that report their free space, most free space first. Ties go
 /// to the older node. New repositories and replica copies both pick from this order.
 pub fn ranked(nodes: &[ClusterNode]) -> Vec<&ClusterNode> {
-    ClusterNode::ranked_storage(nodes)
+    codeyard_db_core::models::ClusterNode::ranked_storage(nodes)
 }

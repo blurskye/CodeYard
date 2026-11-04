@@ -373,7 +373,7 @@ async fn contract(pg: bool) {
         alice,
         repo.id,
         "graphql-reviewer",
-        Some(db::models::AccessLevel::Write),
+        Some(codeyard_db_core::models::AccessLevel::Write),
     )
     .await
     .unwrap();
@@ -600,10 +600,10 @@ async fn merge_and_revert(
     router: Router,
     state: &AppState,
     credentials: &[String],
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     pull_id: &Value,
     initial: &Value,
-    pull: &db::models::PullRequest,
+    pull: &codeyard_db_core::models::PullRequest,
 ) {
     let token = &credentials[0];
     let input = json!({"input":{"pullRequestId":pull_id}});
@@ -740,7 +740,7 @@ async fn clone_templates(
     router: Router,
     f: &Database,
     credentials: &[String],
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     repo_id: &Value,
 ) {
     let token = &credentials[0];

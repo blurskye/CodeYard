@@ -3,7 +3,8 @@ use super::{
     profile::html,
 };
 use axum::http::StatusCode;
-use codeyard::backend::db::{models::OrgRole, organizations::*};
+use codeyard::backend::db::organizations::*;
+use codeyard_db_core::models::OrgRole;
 
 pub async fn contracts(f: &Fixture) {
     for value in ["garbage", "-1", "9223372036854775808", "", "1.5"] {
@@ -38,7 +39,7 @@ pub async fn contracts(f: &Fixture) {
                 f.owner.id,
                 f.org,
                 actor.id,
-                OrgRole::Member,
+                codeyard_db_core::models::OrgRole::Member,
             )
             .await
             .unwrap(),
@@ -196,9 +197,15 @@ pub async fn contracts(f: &Fixture) {
     // private grants through team membership, which is not the filtering case.
     let observer = Fixture::actor(pool, "detail_observer").await;
     applied(
-        add_organization_member(pool, f.owner.id, f.org, observer.id, OrgRole::Member)
-            .await
-            .unwrap(),
+        add_organization_member(
+            pool,
+            f.owner.id,
+            f.org,
+            observer.id,
+            codeyard_db_core::models::OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let foreign_org = applied(
         create_organization(

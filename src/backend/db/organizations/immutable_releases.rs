@@ -1,7 +1,9 @@
 //! Organization enforcement is stored separately from repository release data.
 use super::OrganizationOutcome;
-use crate::backend::db::{repository_stats::RepositorySnapshot, DbPool};
+use crate::backend::db::repository_stats::RepositorySnapshot;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 pub struct Settings {
     pub enforced_repositories: String,

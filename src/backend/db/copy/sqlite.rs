@@ -1,8 +1,8 @@
 //! SQLite side of a database copy.
 
-use super::super::sqlite::migrations::validate_history;
 use super::{literal, quote, Catalog, Column, Sequence, Table};
 use anyhow::{bail, Result};
+use codeyard_db_core::sqlite::migrations::validate_history;
 use sqlx::{Sqlite, Transaction};
 
 pub(super) async fn catalog(tx: &mut Transaction<'static, Sqlite>) -> Result<Catalog> {

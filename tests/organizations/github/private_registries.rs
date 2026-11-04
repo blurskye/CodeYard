@@ -155,7 +155,7 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(fetched, registry);
     let (encrypted, nonce): (Vec<u8>, Vec<u8>) = match f.pool() {
-        db::DbPool::Sqlite(pool) => sqlx::query_as(
+        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_as(
             "SELECT encrypted_value,nonce FROM org_private_registries WHERE org_id=$1 AND name=$2",
         )
         .bind(orgs[0].id)
@@ -163,7 +163,7 @@ async fn contract(pg: bool) {
         .fetch_one(pool)
         .await
         .unwrap(),
-        db::DbPool::Postgres(pool) => sqlx::query_as(
+        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_as(
             "SELECT encrypted_value,nonce FROM org_private_registries WHERE org_id=$1 AND name=$2",
         )
         .bind(orgs[0].id)

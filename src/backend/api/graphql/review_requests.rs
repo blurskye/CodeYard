@@ -9,7 +9,7 @@ use async_graphql::Error;
 use serde_json::json;
 
 pub(super) async fn team_object(
-    team: &db::models::Team,
+    team: &codeyard_db_core::models::Team,
     request: &RequestContext,
 ) -> Result<Value> {
     let organization = user::organization_by_id(team.org_id, request).await?;
@@ -26,7 +26,7 @@ pub(super) async fn team_object(
     )
 }
 
-async fn pull(id: i64, request: &RequestContext) -> Result<db::models::PullRequest> {
+async fn pull(id: i64, request: &RequestContext) -> Result<codeyard_db_core::models::PullRequest> {
     let pull = db::pull_requests::records::get_pull_request_by_id(&request.state.pool, id)
         .await
         .map_err(unavailable)?
@@ -41,7 +41,7 @@ async fn pull(id: i64, request: &RequestContext) -> Result<db::models::PullReque
 }
 
 async fn window(
-    pull: &db::models::PullRequest,
+    pull: &codeyard_db_core::models::PullRequest,
     request: &RequestContext,
 ) -> Result<db::pull_requests::team_reviewers::RequestWindow> {
     Ok(db::pull_requests::team_reviewers::RequestWindow {
@@ -58,7 +58,7 @@ async fn window(
 }
 
 async fn objects(
-    pull: &db::models::PullRequest,
+    pull: &codeyard_db_core::models::PullRequest,
     origins: &[db::pull_requests::reviews::ReviewRequestOrigin],
     viewer: Option<i64>,
     request: &RequestContext,

@@ -8,7 +8,8 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::{db, db::models::AccessLevel};
+use codeyard::backend::db;
+use codeyard_db_core::models::AccessLevel;
 use database::Database;
 use pulls::Client;
 use serde_json::json;
@@ -46,14 +47,19 @@ async fn setup(pg: bool) -> World {
     .await
     .unwrap()
     .id;
-    db::repositories::access::grant_repo_access(database.pool(), bob_id, proj, AccessLevel::Write)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        database.pool(),
+        bob_id,
+        proj,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
     db::repositories::access::grant_repo_access(
         database.pool(),
         carol_id,
         proj,
-        AccessLevel::Maintain,
+        codeyard_db_core::models::AccessLevel::Maintain,
     )
     .await
     .unwrap();

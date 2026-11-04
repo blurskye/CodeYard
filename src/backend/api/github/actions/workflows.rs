@@ -25,7 +25,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 pub(super) async fn discover(
     state: &AppState,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
 ) -> Result<Vec<Workflow>> {
     let store = repo_store(repo, state.cluster.as_ref());
     if store.refs().await.map_err(store_error)?.is_empty() {
@@ -46,7 +46,7 @@ pub(super) async fn discover(
 
 pub(super) async fn lookup(
     state: &AppState,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     key: &str,
 ) -> Result<Workflow> {
     discover(state, repo)
@@ -115,7 +115,7 @@ async fn get_one(
 
 pub(super) async fn lookup_read(
     state: &AppState,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     key: &str,
 ) -> Result<workflows::Workflow> {
     match lookup(state, repo, key).await {

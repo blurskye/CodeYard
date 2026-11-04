@@ -1,6 +1,9 @@
-use crate::backend::db::models::{AdminAccountSummary, AdminActivityPoint, AdminUser, User};
 use crate::backend::db::users::accounts::CommitAuthor;
 use anyhow::Result;
+use codeyard_db_core::models::AdminAccountSummary;
+use codeyard_db_core::models::AdminActivityPoint;
+use codeyard_db_core::models::AdminUser;
+use codeyard_db_core::models::User;
 use sqlx::PgPool;
 
 pub async fn create_user(pool: &PgPool, username: &str, email: Option<&str>) -> Result<User> {

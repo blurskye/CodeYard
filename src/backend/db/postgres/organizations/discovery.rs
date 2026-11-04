@@ -1,9 +1,10 @@
 use super::authority::*;
-use crate::backend::db::{
-    models::{OrgRole, Organization, User},
-    organizations::{discovery::MembershipState, *},
-};
+use crate::backend::db::organizations::discovery::MembershipState;
+use crate::backend::db::organizations::*;
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Organization;
+use codeyard_db_core::models::User;
 use sqlx::PgPool;
 use OrganizationOutcome::{Applied, Denied};
 
@@ -43,7 +44,7 @@ pub async fn list_visible_members(
         None
     };
     let member = actor_role.is_some();
-    if filter != "all" && actor_role != Some(OrgRole::Owner) {
+    if filter != "all" && actor_role != Some(codeyard_db_core::models::OrgRole::Owner) {
         return Ok(Denied);
     }
     let rows = sqlx::query_as("SELECT u.* FROM users u JOIN org_memberships m ON m.user_id=u.id WHERE m.org_id=$1 AND m.role IN ('owner','admin','member') AND (($2 AND NOT $3) OR m.is_public) AND ($4='all' OR ($4='admin' AND m.role='owner') OR ($4='member' AND m.role IN ('admin','member'))) AND ($5='all' OR ($5='2fa_disabled' AND NOT u.two_factor_enabled)) ORDER BY u.username,u.id LIMIT $6 OFFSET $7")

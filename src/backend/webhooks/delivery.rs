@@ -2,10 +2,11 @@
 //! errors and timeouts, and recorded with what was sent and what came back.
 use super::outbound::{self, Refusal};
 use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db::models::{Webhook, WebhookDelivery};
 use crate::backend::db::webhooks::{self as hooks, NewDelivery};
-use crate::backend::db::DbPool;
 use base64::Engine as _;
+use codeyard_db_core::models::Webhook;
+use codeyard_db_core::models::WebhookDelivery;
+use codeyard_db_core::DbPool;
 use codeyard_support::crypto::hmac_sha256;
 use hmac::{Hmac, Mac};
 use std::net::SocketAddr;

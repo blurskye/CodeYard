@@ -1,12 +1,15 @@
-use crate::backend::db::{
-    gists::{
-        validate_comment, Admission, Comment, Gist, GistList, GistRefusal, ListScope, NewGist,
-        PendingWrite,
-    },
-    models::Repository,
-    users::accounts::AccountCredential,
-};
+use crate::backend::db::gists::validate_comment;
+use crate::backend::db::gists::Admission;
+use crate::backend::db::gists::Comment;
+use crate::backend::db::gists::Gist;
+use crate::backend::db::gists::GistList;
+use crate::backend::db::gists::GistRefusal;
+use crate::backend::db::gists::ListScope;
+use crate::backend::db::gists::NewGist;
+use crate::backend::db::gists::PendingWrite;
+use crate::backend::db::users::accounts::AccountCredential;
 use anyhow::Result;
+use codeyard_db_core::models::Repository;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 const FIELDS:&str="g.repo_id,g.id,r.owner_user_id AS owner_id,r.forked_from_id,g.description,g.is_public,g.ready,g.created_at,g.updated_at,(SELECT COUNT(*) FROM gist_comments c WHERE c.repo_id=g.repo_id) AS comments";
 const FROM:&str="FROM gists g JOIN repositories r ON r.id=g.repo_id AND r.is_gist AND r.owner_kind='user' JOIN users u ON u.id=r.owner_user_id AND NOT u.is_banned";

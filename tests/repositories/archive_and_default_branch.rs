@@ -6,7 +6,8 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client::Client;
 use axum::http::StatusCode;
-use codeyard::backend::{db, db::models::AccessLevel};
+use codeyard::backend::db;
+use codeyard_db_core::models::AccessLevel;
 use database::Database;
 use serde_json::{json, Value};
 
@@ -30,9 +31,14 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .id;
-    db::repositories::access::grant_repo_access(f.pool(), bob_id, proj, AccessLevel::Write)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        bob_id,
+        proj,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
     let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), alice_id).await;
     let bob = Client::login(&router, f.pool(), bob_id).await;

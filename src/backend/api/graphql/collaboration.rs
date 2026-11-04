@@ -6,7 +6,7 @@ use super::{
 use serde_json::json;
 
 pub(super) async fn milestone(
-    summary: db::models::MilestoneSummary,
+    summary: codeyard_db_core::models::MilestoneSummary,
     request: &RequestContext,
 ) -> Result<Value> {
     let row = summary.milestone;
@@ -27,7 +27,7 @@ pub(super) async fn resolve(
     args: &Arguments,
     request: &RequestContext,
     parent: &Value,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
 ) -> Result<Value> {
     let id = parent["databaseId"].as_i64().ok_or_else(missing)?;
     let pool = &request.state.pool;

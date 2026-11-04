@@ -19,15 +19,14 @@ mod remote;
 pub(crate) mod source;
 mod types;
 
-use crate::backend::{
-    cluster::{
-        rpc::{self, Operation},
-        NodeContext,
-    },
-    db::{self, models::Repository},
-    git::{self, repository::process},
-    repositories::protection::WriteVia,
-};
+use crate::backend::cluster::rpc;
+use crate::backend::cluster::rpc::Operation;
+use crate::backend::cluster::NodeContext;
+use crate::backend::db;
+use crate::backend::git;
+use crate::backend::git::repository::process;
+use crate::backend::repositories::protection::WriteVia;
+use codeyard_db_core::models::Repository;
 use std::{collections::HashMap, path::Path, time::Instant};
 
 pub(crate) use crate::backend::git::validate_merge_revision;
@@ -94,7 +93,7 @@ pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore
 
 impl RepoStore {
     pub(crate) async fn recover_term(
-        pool: &crate::backend::db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repository: i64,
         node: i64,
         root: &Path,
@@ -230,7 +229,7 @@ impl RepoStore {
 
     pub async fn update_reference_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: impl Into<db::credentials::Actor>,
         reference: &str,
@@ -263,7 +262,7 @@ impl RepoStore {
     /// Writes an unattached Git object after checking live write authority on its storage node.
     pub async fn write_git_object_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         token: Option<i64>,
@@ -286,7 +285,7 @@ impl RepoStore {
 
     pub async fn lock_migration_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
         actor: i64,
         migration: i64,
@@ -303,7 +302,7 @@ impl RepoStore {
 
     pub async fn gist_snapshot(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         id: i64,
         revision: Option<&str>,
     ) -> Result<GistSnapshot, RepoError> {
@@ -323,7 +322,7 @@ impl RepoStore {
     }
     pub async fn gist_history(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         id: i64,
         revision: Option<&str>,
         offset: usize,
@@ -347,7 +346,7 @@ impl RepoStore {
     }
     pub async fn gist_write(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         id: i64,
         actor: i64,
         credential: GistCredential,
@@ -367,7 +366,7 @@ impl RepoStore {
 
     pub async fn migration_archive_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo: i64,
         actor: i64,
     ) -> Result<Vec<u8>, RepoError> {
@@ -379,7 +378,7 @@ impl RepoStore {
 
     pub async fn import_git_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         import: crate::backend::repositories::imports::GitImport,
@@ -404,7 +403,7 @@ impl RepoStore {
 
     pub async fn cancel_import_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
     ) -> Result<(), RepoError> {
@@ -470,7 +469,7 @@ impl RepoStore {
     /// Copies privately, then checks live source read and destination write authority before publication.
     pub async fn initialize_copy(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         source_repo_id: i64,
         actor: impl Into<db::credentials::Actor>,
@@ -542,7 +541,7 @@ impl RepoStore {
     }
 
     /// Accepted primary writes share one coalesced accounting owner with file mutations.
-    pub(crate) fn refresh_storage_size(&self, pool: db::DbPool, repo_id: i64) {
+    pub(crate) fn refresh_storage_size(&self, pool: codeyard_db_core::DbPool, repo_id: i64) {
         if let Backend::Local(store) = &self.0 {
             local::refresh_storage_size(pool, repo_id, store.clone());
         }
@@ -551,7 +550,7 @@ impl RepoStore {
     /// Wait for this request's coalesced scan to be published, including on a remote primary.
     pub(crate) async fn refresh_storage_size_now(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
     ) -> Result<i64, RepoError> {
         match &self.0 {
@@ -1613,7 +1612,7 @@ impl RepoStore {
     )]
     pub async fn fetch_pull_head(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         source_repo_id: i64,
         actor: impl Into<PullHeadActor>,
@@ -1660,7 +1659,7 @@ impl RepoStore {
     /// Renames a branch and follows it in protection and default-branch metadata.
     pub async fn rename_branch_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: impl Into<db::credentials::Actor>,
         old: &str,
@@ -1691,7 +1690,7 @@ impl RepoStore {
     /// Syncs a fork branch from its direct parent without discarding local commits.
     pub async fn merge_upstream_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         source: (i64, &RepoStore),
@@ -1726,7 +1725,7 @@ impl RepoStore {
     /// Creates a branch at the commit `sha`; returns that commit's ID.
     pub async fn create_branch_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: impl Into<db::credentials::Actor>,
         name: &str,
@@ -1755,11 +1754,11 @@ impl RepoStore {
 
     pub async fn transfer_repository_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: impl Into<db::credentials::Actor>,
         new_owner: &str,
-    ) -> Result<db::models::Repository, RepoError> {
+    ) -> Result<codeyard_db_core::models::Repository, RepoError> {
         let actor = actor.into();
         match &self.0 {
             Backend::Local(local) => {
@@ -1787,7 +1786,7 @@ impl RepoStore {
     )]
     pub(crate) async fn configure_dependency_security_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         credential: db::users::accounts::OwnedAccountCredential,
@@ -1829,12 +1828,12 @@ impl RepoStore {
     /// Publishes release metadata/proof while its tag is pinned by the primary Git lock.
     pub(crate) async fn mutate_release_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         mutation: crate::backend::repositories::releases::immutable::Mutation,
         attestation: Option<crate::backend::repositories::releases::integrity::Attestation>,
-    ) -> Result<(db::models::Release, bool), RepoError> {
+    ) -> Result<(codeyard_db_core::models::Release, bool), RepoError> {
         match &self.0 {
             Backend::Local(local) => {
                 local
@@ -1859,12 +1858,12 @@ impl RepoStore {
     /// Changes the default and metadata under one Git lock and one guarded SQL transaction.
     pub async fn patch_repository_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: impl Into<db::credentials::Actor>,
         name: &str,
         changes: &db::repositories::records::RepositoryChanges<&str>,
-    ) -> Result<db::models::Repository, RepoError> {
+    ) -> Result<codeyard_db_core::models::Repository, RepoError> {
         if git::branch_ref(name).is_none() {
             return Err(invalid_ref("branch"));
         }
@@ -1894,7 +1893,7 @@ impl RepoStore {
     /// Makes `name` the default branch: HEAD follows it, so clones made afterwards get it too.
     pub async fn set_default_branch_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: impl Into<db::credentials::Actor>,
         name: &str,
@@ -1922,7 +1921,7 @@ impl RepoStore {
     /// Deletes a branch. The default branch cannot be deleted.
     pub async fn delete_branch_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: impl Into<db::credentials::Actor>,
         name: &str,
@@ -1955,7 +1954,7 @@ impl RepoStore {
     )]
     pub async fn create_tag_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: impl Into<db::credentials::Actor>,
         name: &str,
@@ -2004,7 +2003,7 @@ impl RepoStore {
     /// Deletes a tag.
     pub async fn delete_tag_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: impl Into<db::credentials::Actor>,
         name: &str,
@@ -2087,7 +2086,7 @@ impl RepoStore {
     )]
     pub async fn save_file_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         write: &FileWrite,
@@ -2148,7 +2147,7 @@ impl RepoStore {
     /// Moves the branch to a prepared file commit after rechecking current authority.
     pub async fn publish_file_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         prepared: &PreparedFile,
@@ -2175,7 +2174,7 @@ impl RepoStore {
 
     pub(crate) async fn publish_dependency_update_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         prepared: &PreparedFile,
@@ -2220,7 +2219,7 @@ impl RepoStore {
     /// Updates a pull head from a readable base, enforcing direct-push protection and head CAS.
     pub async fn update_pull_branch_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         source: (i64, &RepoStore),
@@ -2289,7 +2288,7 @@ impl RepoStore {
     /// Rechecks the durable request and original token under the owning repository lock.
     pub async fn publish_async_merge_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         request: &AsyncMergePublication,
@@ -2318,7 +2317,7 @@ impl RepoStore {
     /// cannot stand in for an approved pull request, even when its object has two parents.
     pub async fn publish_branch_merge_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
         publication: &BranchMergePublication,
@@ -2370,7 +2369,7 @@ impl RepoStore {
     )]
     pub async fn publish_merge_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: impl Into<db::credentials::Actor>,
         head_branch: &str,
@@ -2433,7 +2432,7 @@ impl RepoStore {
     )]
     pub async fn publish_stacked_merge_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: impl Into<db::credentials::Actor>,
         heads: &[(String, String)],
@@ -2525,7 +2524,7 @@ impl RepoStore {
     )]
     pub async fn publish_restack_as(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: impl Into<db::credentials::Actor>,
         stack_id: i64,
@@ -2603,7 +2602,7 @@ impl RepoStore {
         &self,
         session: GitSession,
         receive: Option<(
-            crate::backend::db::DbPool,
+            codeyard_db_core::DbPool,
             std::sync::Arc<crate::backend::ci::CiRuns>,
         )>,
         streams: GitStreams<'_>,

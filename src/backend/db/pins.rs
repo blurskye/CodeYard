@@ -1,7 +1,9 @@
 //! One pinned conversation comment per discussion, shared by native forms and REST.
-use super::{assignees::AssignedItem, DbPool};
+use super::assignees::AssignedItem;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Pin {
     pub comment_id: i64,

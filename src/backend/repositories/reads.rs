@@ -9,9 +9,9 @@ use std::collections::HashMap;
 /// Accounts associated with Git email metadata, including Codeyard's generated noreply addresses.
 /// Association is not signature verification and grants no repository authority.
 pub async fn commit_authors(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     emails: &[String],
-) -> anyhow::Result<HashMap<String, db::models::User>> {
+) -> anyhow::Result<HashMap<String, codeyard_db_core::models::User>> {
     anyhow::ensure!(emails.len() <= 512, "Too many commit email addresses");
     Ok(db::users::accounts::commit_authors(pool, emails)
         .await?
@@ -46,7 +46,7 @@ pub fn preferred_branch<'a>(branches: impl IntoIterator<Item = &'a str>) -> Opti
 }
 
 pub async fn refs_and_default(
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     cluster: Option<&NodeContext>,
 ) -> Result<(HashMap<String, String>, String), RepoError> {
     repo_store(repository, cluster).refs_and_default().await
@@ -54,11 +54,14 @@ pub async fn refs_and_default(
 
 /// Repositories in one fork network may be compared, including sibling and nested forks.
 pub async fn same_fork_network(
-    pool: &db::DbPool,
-    left: &db::models::Repository,
-    right: &db::models::Repository,
+    pool: &codeyard_db_core::DbPool,
+    left: &codeyard_db_core::models::Repository,
+    right: &codeyard_db_core::models::Repository,
 ) -> anyhow::Result<bool> {
-    async fn root(pool: &db::DbPool, repository: &db::models::Repository) -> anyhow::Result<i64> {
+    async fn root(
+        pool: &codeyard_db_core::DbPool,
+        repository: &codeyard_db_core::models::Repository,
+    ) -> anyhow::Result<i64> {
         let mut current = repository.clone();
         let mut seen = std::collections::HashSet::new();
         for _ in 0..100 {

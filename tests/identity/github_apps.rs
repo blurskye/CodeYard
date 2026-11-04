@@ -436,7 +436,7 @@ async fn contract(pg: bool) {
             alice,
             org.id,
             bob,
-            db::models::OrgRole::Member
+            codeyard_db_core::models::OrgRole::Member
         )
         .await
         .unwrap(),

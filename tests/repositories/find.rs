@@ -18,7 +18,7 @@ use database::Database;
 
 /// Commits `bytes` as a new file at `path` on `main`, after `tip`, and returns the new tip.
 async fn save(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     actor: i64,
     store: &RepoStore,

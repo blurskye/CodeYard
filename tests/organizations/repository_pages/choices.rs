@@ -1,9 +1,9 @@
 use super::fixture::{applied, Fixture};
 use axum::http::StatusCode;
-use codeyard::backend::db::{
-    models::OrgRole,
-    organizations::{self as orgs, OrganizationOutcome, OrganizationPage},
-};
+use codeyard::backend::db::organizations as orgs;
+use codeyard::backend::db::organizations::OrganizationOutcome;
+use codeyard::backend::db::organizations::OrganizationPage;
+use codeyard_db_core::models::OrgRole;
 
 pub async fn contracts(f: &Fixture) {
     let pool = f.database.pool();
@@ -33,10 +33,26 @@ pub async fn contracts(f: &Fixture) {
     let malformed = Fixture::organization(pool, f.owner.id, "malformed_role_org").await;
     let allowed = Fixture::organization(pool, f.owner.id, "later_allowed_org").await;
     for (owner, org, role) in [
-        (f.outsider.id, member_org, OrgRole::Member),
-        (f.outsider.id, suspended, OrgRole::Admin),
-        (f.owner.id, malformed, OrgRole::Member),
-        (f.owner.id, allowed, OrgRole::Admin),
+        (
+            f.outsider.id,
+            member_org,
+            codeyard_db_core::models::OrgRole::Member,
+        ),
+        (
+            f.outsider.id,
+            suspended,
+            codeyard_db_core::models::OrgRole::Admin,
+        ),
+        (
+            f.owner.id,
+            malformed,
+            codeyard_db_core::models::OrgRole::Member,
+        ),
+        (
+            f.owner.id,
+            allowed,
+            codeyard_db_core::models::OrgRole::Admin,
+        ),
     ] {
         applied(
             orgs::add_organization_member(pool, owner, org, f.admin.id, role)

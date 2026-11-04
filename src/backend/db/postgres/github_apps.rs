@@ -1,8 +1,11 @@
-use crate::backend::db::{
-    github_apps::{App, Installation, InstallationFilter, RepositoryChange, Token},
-    models::{PersonalAccessToken, Repository},
-};
+use crate::backend::db::github_apps::App;
+use crate::backend::db::github_apps::Installation;
+use crate::backend::db::github_apps::InstallationFilter;
+use crate::backend::db::github_apps::RepositoryChange;
+use crate::backend::db::github_apps::Token;
 use anyhow::Result;
+use codeyard_db_core::models::PersonalAccessToken;
+use codeyard_db_core::models::Repository;
 use sqlx::{PgConnection, PgPool};
 
 async fn lock_app_accounts(

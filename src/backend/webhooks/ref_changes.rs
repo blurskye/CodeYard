@@ -1,8 +1,8 @@
 //! Webhook events for published branch and tag changes: `create`, `delete` and `push`.
 use super::payloads::{self, Scope};
 use super::{emit, events};
-use crate::backend::db::models::Repository;
-use crate::backend::db::DbPool;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::DbPool;
 use std::path::Path;
 
 /// One ref a push moved: `(reference, old, new)`, where an all-zero id means none.

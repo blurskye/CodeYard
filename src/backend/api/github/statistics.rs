@@ -1,13 +1,12 @@
 //! Statistics share one bounded, ref-cached history scan on local and remote storage.
 use super::{contents::store_error, pagination::Pagination, repository, Error, Result};
-use crate::backend::{
-    api::repos::code::contributors::contributor_accounts,
-    app::AppState,
-    db::models::User,
-    git::{AuthorWeek, CommitStatistics, ContributorInfo},
-    repositories::store::repo_store,
-    webhooks::payloads,
-};
+use crate::backend::api::repos::code::contributors::contributor_accounts;
+use crate::backend::app::AppState;
+use crate::backend::git::AuthorWeek;
+use crate::backend::git::CommitStatistics;
+use crate::backend::git::ContributorInfo;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -16,6 +15,7 @@ use axum::{
     Json,
 };
 use chrono::Datelike;
+use codeyard_db_core::models::User;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};

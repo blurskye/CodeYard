@@ -67,7 +67,7 @@ fn project<T>(
         _ => Err(organization::unavailable(ctx)),
     }
 }
-fn team_view(team: crate::backend::db::models::Team) -> view::RoleTeam {
+fn team_view(team: codeyard_db_core::models::Team) -> view::RoleTeam {
     view::RoleTeam {
         id: team.id,
         name: team.name,

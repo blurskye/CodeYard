@@ -1,17 +1,15 @@
 use super::{time, user};
-use crate::backend::{
-    api::{
-        github::{api_url, node_id},
-        http::config::{http_clone_base, link_origin},
-    },
-    db::{
-        gists::{Comment, Gist},
-        models::User,
-    },
-    git::objects::TreeObjectEntry,
-    repositories::store::{GistRevision, RepoError},
-};
+use crate::backend::api::github::api_url;
+use crate::backend::api::github::node_id;
+use crate::backend::api::http::config::http_clone_base;
+use crate::backend::api::http::config::link_origin;
+use crate::backend::db::gists::Comment;
+use crate::backend::db::gists::Gist;
+use crate::backend::git::objects::TreeObjectEntry;
+use crate::backend::repositories::store::GistRevision;
+use crate::backend::repositories::store::RepoError;
 use base64::{engine::general_purpose::STANDARD, Engine};
+use codeyard_db_core::models::User;
 use serde_json::{json, Value};
 
 pub fn gist(gist: &Gist, owner: &User, files: Value) -> Value {

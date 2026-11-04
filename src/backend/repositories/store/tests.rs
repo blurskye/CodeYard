@@ -90,7 +90,7 @@ struct Fixture {
 
 struct Authority {
     _root: tempfile::TempDir,
-    pool: db::DbPool,
+    pool: codeyard_db_core::DbPool,
     repo_id: i64,
     actor: i64,
 }
@@ -101,8 +101,8 @@ async fn authority(fixture: &Fixture) -> Authority {
         "sqlite://{}",
         root.path().join("authority.sqlite").display()
     );
-    let pool = db::init_db(&url).await.unwrap();
-    db::run_migrations(&pool).await.unwrap();
+    let pool = codeyard_db_core::init_db(&url).await.unwrap();
+    codeyard_db_core::run_migrations(&pool).await.unwrap();
     let actor = db::users::accounts::create_user(&pool, "store_actor", None)
         .await
         .unwrap();
@@ -128,7 +128,7 @@ async fn authority(fixture: &Fixture) -> Authority {
 async fn web_publication_updates_storage_and_keeps_deleted_branch_runs_admissible() {
     let f = fixture().await;
     let a = authority(&f).await;
-    let db::DbPool::Sqlite(native) = &a.pool else {
+    let codeyard_db_core::DbPool::Sqlite(native) = &a.pool else {
         unreachable!()
     };
     sqlx::query("UPDATE repositories SET updated_at='2000-01-01T00:00:00Z' WHERE id=?")
@@ -771,7 +771,7 @@ async fn revoked_private_fetch_never_exposes_quarantined_objects() {
         &authority.pool,
         authority.actor,
         source_record.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -821,7 +821,7 @@ async fn revoked_destination_read_denies_pull_head_publication() {
     let other = db::users::accounts::create_user(&a.pool, "other_owner", None)
         .await
         .unwrap();
-    let db::DbPool::Sqlite(native) = &a.pool else {
+    let codeyard_db_core::DbPool::Sqlite(native) = &a.pool else {
         unreachable!()
     };
     sqlx::query("UPDATE repositories SET owner_user_id=?, is_private=TRUE WHERE id=?")
@@ -834,7 +834,7 @@ async fn revoked_destination_read_denies_pull_head_publication() {
         &a.pool,
         a.actor,
         a.repo_id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -3070,7 +3070,7 @@ async fn every_ref_change_moves_the_write_version() {
 }
 
 /// A storage node registered in the database, to place or copy a repository on.
-async fn storage_node(pool: &db::DbPool, name: &str) -> i64 {
+async fn storage_node(pool: &codeyard_db_core::DbPool, name: &str) -> i64 {
     let key = crate::backend::cluster::NodeKey::generate().public_hex();
     let id = db::cluster::register_own_node(pool, &key, name, &["storage".to_owned()], "test")
         .await

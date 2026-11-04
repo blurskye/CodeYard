@@ -1,7 +1,8 @@
 //! The rows backups, restores and repository checks read and repair.
-use crate::backend::db::models::Repository;
-use crate::backend::db::DbPool;
 use anyhow::{bail, Result};
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// The recorded revisions of one pull request.
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -55,17 +56,21 @@ pub async fn postgres_snapshot(
     Vec<Repository>,
 )> {
     match pool {
-        DbPool::Postgres(pool) => super::postgres::backups::export_snapshot(pool).await,
-        DbPool::Sqlite(_) => bail!("only PostgreSQL exports snapshots"),
+        codeyard_db_core::DbPool::Postgres(pool) => {
+            super::postgres::backups::export_snapshot(pool).await
+        }
+        codeyard_db_core::DbPool::Sqlite(_) => bail!("only PostgreSQL exports snapshots"),
     }
 }
 
 /// Writes a consistent copy of a SQLite database to `path` while the server runs.
 pub async fn copy_sqlite(pool: &DbPool, path: &str) -> Result<()> {
     match pool {
-        DbPool::Sqlite(native) => {
+        codeyard_db_core::DbPool::Sqlite(native) => {
             crate::backend::db::sqlite::backups::vacuum_into(native, path).await
         }
-        DbPool::Postgres(_) => bail!("a PostgreSQL database is copied with pg_dump"),
+        codeyard_db_core::DbPool::Postgres(_) => {
+            bail!("a PostgreSQL database is copied with pg_dump")
+        }
     }
 }

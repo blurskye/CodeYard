@@ -1,6 +1,9 @@
 //! Pull request quotas are checked under the same transaction as creation, reopening and readiness.
-use super::{models::User, users::accounts::AccountCredential, DbPool};
+use super::users::accounts::AccountCredential;
 use anyhow::Result;
+use codeyard_db_core::models::User;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Clone, Copy, Debug)]
 pub enum PullCapScope {

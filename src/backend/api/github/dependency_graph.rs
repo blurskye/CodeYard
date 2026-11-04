@@ -44,7 +44,10 @@ async fn readable(
     headers: &HeaderMap,
     owner: &str,
     name: &str,
-) -> Result<(db::models::Repository, db::dependency_graph::Reader)> {
+) -> Result<(
+    codeyard_db_core::models::Repository,
+    db::dependency_graph::Reader,
+)> {
     let (repo, authentication) = repository(state, headers, owner, name, false).await?;
     let actor = authentication.as_ref().map(|auth| auth.database_actor());
     Ok((repo, db::dependency_graph::Reader::Viewer(actor)))
@@ -216,7 +219,7 @@ async fn compare(
 async fn current(
     state: &AppState,
     reader: &db::dependency_graph::Reader,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
 ) -> Result<Value> {
     db::dependency_graph::check_read(&state.pool, reader, repo.id)

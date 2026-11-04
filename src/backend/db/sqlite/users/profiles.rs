@@ -1,11 +1,9 @@
-use crate::backend::db::{
-    models::User,
-    users::{
-        accounts::AccountCredential,
-        profiles::{InvalidPublicEmail, ProfilePatch, ProfileSettings},
-    },
-};
+use crate::backend::db::users::accounts::AccountCredential;
+use crate::backend::db::users::profiles::InvalidPublicEmail;
+use crate::backend::db::users::profiles::ProfilePatch;
+use crate::backend::db::users::profiles::ProfileSettings;
 use anyhow::Result;
+use codeyard_db_core::models::User;
 use sqlx::SqlitePool;
 
 pub async fn account_statistics(

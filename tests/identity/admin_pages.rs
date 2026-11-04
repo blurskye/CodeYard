@@ -11,7 +11,7 @@ use codeyard::backend::{db, identity::passwords};
 use codeyard_webui::{app::Page, pages::account};
 use db::users::signup_requests as requests;
 
-async fn user(f: &Database, name: &str) -> db::models::User {
+async fn user(f: &Database, name: &str) -> codeyard_db_core::models::User {
     db::users::accounts::get_user_by_username(f.pool(), name)
         .await
         .unwrap()

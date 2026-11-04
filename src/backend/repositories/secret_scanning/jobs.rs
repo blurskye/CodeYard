@@ -30,7 +30,7 @@ pub async fn document(
 
 /// Page enrichment has one bounded database read per related record kind.
 pub struct Documents {
-    users: HashMap<i64, db::models::User>,
+    users: HashMap<i64, codeyard_db_core::models::User>,
     bypasses: HashMap<(i64, String), records::Bypass>,
 }
 impl Documents {
@@ -107,7 +107,7 @@ impl Documents {
 
 pub async fn emit_alert(
     state: &AppState,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     alert: &records::Alert,
     action: &'static str,
     actor: impl Into<Option<i64>>,

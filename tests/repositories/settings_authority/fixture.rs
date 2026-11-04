@@ -15,7 +15,7 @@ pub struct Fixture {
 #[derive(sqlx::FromRow, Serialize)]
 struct RepositorySnapshot {
     #[sqlx(flatten)]
-    repository: db::models::Repository,
+    repository: codeyard_db_core::models::Repository,
     visibility_locked: bool,
 }
 

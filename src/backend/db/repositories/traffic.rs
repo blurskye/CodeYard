@@ -1,7 +1,8 @@
 //! Retained, pseudonymous observations. Raw client addresses/account IDs never enter SQL.
-use crate::backend::db::DbPool;
 use anyhow::{ensure, Result};
 use chrono::{NaiveDate, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use sha2::{Digest, Sha256};
 use std::net::IpAddr;
 #[cfg(test)]

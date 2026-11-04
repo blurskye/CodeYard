@@ -1,8 +1,8 @@
 use crate::backend::db;
-use crate::backend::db::models::AccessLevel;
-use crate::backend::db::DbPool;
 use crate::backend::repositories::store::repo_store;
 use anyhow::Result;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::DbPool;
 
 /// Keep untrusted fields on one terminal line without interpreting control bytes.
 fn terminal_text(value: &str) -> String {
@@ -19,7 +19,7 @@ fn terminal_text(value: &str) -> String {
 
 /// Where a repository lives. One stored on another node has no path on this machine.
 fn storage_location(
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     context: Option<&crate::backend::cluster::NodeContext>,
     location: &str,
 ) -> String {
@@ -284,9 +284,9 @@ pub async fn grant_access_cmd(
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", username))?;
 
     let access_level = match level.to_lowercase().as_str() {
-        "read" => AccessLevel::Read,
-        "write" => AccessLevel::Write,
-        "admin" => AccessLevel::Admin,
+        "read" => codeyard_db_core::models::AccessLevel::Read,
+        "write" => codeyard_db_core::models::AccessLevel::Write,
+        "admin" => codeyard_db_core::models::AccessLevel::Admin,
         _ => {
             return Err(anyhow::anyhow!(
                 "Invalid access level: {}. Use: read, write, admin",

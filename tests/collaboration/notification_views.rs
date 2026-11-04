@@ -8,7 +8,8 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::db::{self, models::repositories::AccessLevel};
+use codeyard::backend::db;
+use codeyard_db_core::models::repositories::AccessLevel;
 use database::Database;
 use pulls::Client;
 use serde_json::json;
@@ -643,7 +644,7 @@ async fn other_users_and_hidden_history_are_untouched(pg: bool) {
         w.database.pool(),
         w.bob_id,
         w.vault,
-        AccessLevel::Read,
+        codeyard_db_core::models::repositories::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -700,7 +701,7 @@ async fn other_users_and_hidden_history_are_untouched(pg: bool) {
         w.database.pool(),
         w.bob_id,
         w.vault,
-        AccessLevel::Read,
+        codeyard_db_core::models::repositories::AccessLevel::Read,
     )
     .await
     .unwrap();

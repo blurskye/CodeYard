@@ -31,7 +31,7 @@ async fn document(
     state: &AppState,
     owner: &str,
     name: &str,
-    key: &db::models::DeployKey,
+    key: &codeyard_db_core::models::DeployKey,
 ) -> Result<Value> {
     let added_by = match key.created_by_id {
         Some(id) => db::users::accounts::get_user_by_id(&state.pool, id)

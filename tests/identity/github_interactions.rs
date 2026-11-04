@@ -3,15 +3,16 @@ use crate::support::{
     database::{wait_until_blocked, Database},
     http_client::Client,
 };
-use codeyard::backend::db::{
-    self,
-    interactions::{
-        InteractionExpiry, InteractionGroup, InteractionRefusal, InteractionScope, NewRestriction,
-    },
-    models::AccessLevel,
-    users::accounts::{AccountCredential, AccountRestricted},
-};
+use codeyard::backend::db;
+use codeyard::backend::db::interactions::InteractionExpiry;
+use codeyard::backend::db::interactions::InteractionGroup;
+use codeyard::backend::db::interactions::InteractionRefusal;
+use codeyard::backend::db::interactions::InteractionScope;
+use codeyard::backend::db::interactions::NewRestriction;
+use codeyard::backend::db::users::accounts::AccountCredential;
+use codeyard::backend::db::users::accounts::AccountRestricted;
 use codeyard::backend::identity::tokens::{self, TokenInput};
+use codeyard_db_core::models::AccessLevel;
 use serde_json::json;
 
 async fn contract(pg: bool) {
@@ -64,12 +65,22 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    db::repositories::access::grant_repo_access(f.pool(), bob, private.id, AccessLevel::Read)
-        .await
-        .unwrap();
-    db::repositories::access::grant_repo_access(f.pool(), bob, project.id, AccessLevel::Write)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        bob,
+        private.id,
+        codeyard_db_core::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        bob,
+        project.id,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
     request(
         &router,
         "repos/create-or-update-file-contents",
@@ -145,9 +156,14 @@ async fn contract(pg: bool) {
     db::issues::create_issue(f.pool(), project.id, alice, "Owner allowed", "Body")
         .await
         .unwrap();
-    db::repositories::access::grant_repo_access(f.pool(), carol, project.id, AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        carol,
+        project.id,
+        codeyard_db_core::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     assert!(db::issues::create_issue(
         f.pool(),
         project.id,
@@ -157,9 +173,14 @@ async fn contract(pg: bool) {
     )
     .await
     .is_err());
-    db::repositories::access::grant_repo_access(f.pool(), carol, project.id, AccessLevel::Write)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        carol,
+        project.id,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
     db::issues::create_issue(f.pool(), project.id, carol, "Collaborator allowed", "Body")
         .await
         .unwrap();

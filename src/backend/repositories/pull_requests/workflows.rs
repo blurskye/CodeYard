@@ -8,11 +8,11 @@ use crate::backend::ci::workflows::WorkflowMatchBudget;
 use crate::backend::ci::CiRunRequest;
 use crate::backend::ci::CiRuns;
 use crate::backend::db;
-use crate::backend::db::models::PullRequest;
-use crate::backend::db::models::Repository;
-use crate::backend::db::DbPool;
 use crate::backend::repositories::store::repo_store;
 use anyhow::Context;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::DbPool;
 /// Queues the workflows that `pulls` now need on their new base.
 /// Let admission finish: cancelling it after a saved revision would lose these runs.
 pub async fn queue_moved_pull_requests_ci(
@@ -30,7 +30,7 @@ pub async fn queue_moved_pull_requests_ci(
             pull,
             actor_id,
             false,
-            crate::backend::db::models::AccessLevel::Owner,
+            codeyard_db_core::models::AccessLevel::Owner,
         )
         .await;
     }
@@ -48,7 +48,7 @@ pub async fn queue_pull_request_ci(
     pull: &PullRequest,
     actor_id: i64,
     manual: bool,
-    access: db::models::AccessLevel,
+    access: codeyard_db_core::models::AccessLevel,
 ) -> Result<(), AdmissionError> {
     if pull.state != "open" || pull.is_draft {
         return Ok(());
@@ -95,7 +95,7 @@ pub(crate) async fn queue_pull_request_event_ci(
     repository: &Repository,
     pull: &PullRequest,
     actor_id: i64,
-    access: db::models::AccessLevel,
+    access: codeyard_db_core::models::AccessLevel,
     payload: &serde_json::Value,
 ) {
     if payload.is_null() {
@@ -123,7 +123,7 @@ async fn queue_pull_request_workflow_event(
     pull: &PullRequest,
     actor_id: i64,
     manual: bool,
-    access: db::models::AccessLevel,
+    access: codeyard_db_core::models::AccessLevel,
     event: &str,
     payload: &serde_json::Value,
 ) -> Result<(), AdmissionError> {
@@ -369,13 +369,13 @@ pub struct RunWorkflowsRequest {
 }
 
 pub async fn run_pull_request_workflows(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     actor_id: i64,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     number: i32,
     request: RunWorkflowsRequest,
-) -> Result<db::models::PullRequest, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
     // The caller resolved and authorized this repository; a rename must not switch it.
     let user = super::actor(pool, actor_id).await?;
     super::require_write(pool, &user, repository).await?;
@@ -440,7 +440,7 @@ pub async fn run_pull_request_workflows(
         &pull,
         user.id,
         true,
-        crate::backend::db::models::AccessLevel::Owner,
+        codeyard_db_core::models::AccessLevel::Owner,
     )
     .await;
     let released = release_awaiting_runs(pool, ci, repository, &pull, user.id).await;
@@ -488,7 +488,7 @@ async fn release_awaiting_runs(
             pull,
             actor_id,
             true,
-            db::models::AccessLevel::Owner,
+            codeyard_db_core::models::AccessLevel::Owner,
             "pull_request",
             &payload,
         )

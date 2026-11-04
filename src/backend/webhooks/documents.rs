@@ -1,15 +1,15 @@
 //! Stored state that GitHub sends with webhook objects: topics, labels, assignees, milestones,
 //! counts and reactions. The payload builders run without the database, so `complete` reads
 //! these fields before a delivery is recorded and sent.
-use crate::backend::db::{
-    self,
-    assignees::AssignedItem,
-    models::{Release, ReleaseAsset, Repository},
-    reactions::Subject,
-    DbPool,
-};
+use crate::backend::db;
+use crate::backend::db::assignees::AssignedItem;
+use crate::backend::db::reactions::Subject;
 use crate::backend::repositories::access;
 use crate::backend::webhooks::payloads;
+use codeyard_db_core::models::Release;
+use codeyard_db_core::models::ReleaseAsset;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::DbPool;
 use serde_json::{json, Value};
 
 /// Fills what it can. A field that cannot be read is left as the builder made it.

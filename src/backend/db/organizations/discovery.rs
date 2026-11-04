@@ -1,10 +1,10 @@
 //! Public organization discovery and membership visibility for REST and profile pages.
 use super::OrganizationOutcome;
-use crate::backend::db::{
-    models::{Organization, User},
-    DbPool,
-};
 use anyhow::Result;
+use codeyard_db_core::models::Organization;
+use codeyard_db_core::models::User;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use sqlx::FromRow;
 
 #[derive(Debug, Clone, FromRow)]

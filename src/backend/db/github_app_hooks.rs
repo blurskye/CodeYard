@@ -1,10 +1,12 @@
 //! App-owned webhook settings and delivery history; native repo/org hooks remain unchanged.
-use crate::backend::db::{
-    models::{Webhook, WebhookDelivery},
-    webhooks::{NewDelivery, SealedSecret, WebhookPatch},
-    DbPool,
-};
+use crate::backend::db::webhooks::NewDelivery;
+use crate::backend::db::webhooks::SealedSecret;
+use crate::backend::db::webhooks::WebhookPatch;
 use anyhow::Result;
+use codeyard_db_core::models::Webhook;
+use codeyard_db_core::models::WebhookDelivery;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 #[derive(Debug, sqlx::FromRow)]
 pub struct Delivery {
     #[sqlx(flatten)]

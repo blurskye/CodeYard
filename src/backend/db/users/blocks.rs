@@ -1,7 +1,9 @@
 //! Blocking is private account policy, enforced at interaction effects as well as in REST.
 use super::accounts::AccountCredential;
-use crate::backend::db::{models::User, DbPool};
 use anyhow::Result;
+use codeyard_db_core::models::User;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Debug, thiserror::Error)]
 #[error("Interactions with this account are restricted")]

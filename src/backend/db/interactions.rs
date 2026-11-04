@@ -1,7 +1,9 @@
 //! Interaction policy and Git-derived contributor proofs. A proof is never a write permit.
-use super::{users::accounts::AccountCredential, DbPool};
+use super::users::accounts::AccountCredential;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use sha2::{Digest, Sha256};
 
 #[derive(Clone, Debug, sqlx::FromRow)]

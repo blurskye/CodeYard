@@ -1,8 +1,9 @@
 //! Repository topics and the website in the About panel. A save replaces the whole topic set in
 //! one transaction, so a refused or failed save leaves the previous About text in place.
 use crate::backend::db::repositories::records::RepositorySettingsRefusal;
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use std::collections::BTreeMap;
 
 /// Most topics one repository carries.

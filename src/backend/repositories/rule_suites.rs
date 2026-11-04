@@ -11,19 +11,27 @@ use super::{
     },
     protection::History,
 };
-use crate::backend::{
-    ci::workflows::WorkflowMatchBudget,
-    db::{
-        self,
-        models::{AccessLevel, OrgRole, Repository, User},
-        organizations::OrganizationOutcome,
-        rulesets::{
-            ActorType, BypassMode, Enforcement, Evaluation, Owner, Rule, RuleResult, RuleSource,
-            Ruleset, SourceType, Suite, SuiteEnforcement, SuiteResult,
-        },
-    },
-};
+use crate::backend::ci::workflows::WorkflowMatchBudget;
+use crate::backend::db;
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::rulesets::ActorType;
+use crate::backend::db::rulesets::BypassMode;
+use crate::backend::db::rulesets::Enforcement;
+use crate::backend::db::rulesets::Evaluation;
+use crate::backend::db::rulesets::Owner;
+use crate::backend::db::rulesets::Rule;
+use crate::backend::db::rulesets::RuleResult;
+use crate::backend::db::rulesets::RuleSource;
+use crate::backend::db::rulesets::Ruleset;
+use crate::backend::db::rulesets::SourceType;
+use crate::backend::db::rulesets::Suite;
+use crate::backend::db::rulesets::SuiteEnforcement;
+use crate::backend::db::rulesets::SuiteResult;
 use anyhow::Result;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
 use std::collections::HashSet;
 
 #[derive(Clone, Copy)]
@@ -41,7 +49,7 @@ struct HistoryChecks {
 }
 
 async fn exempted(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
     actor: &User,
     credential: Option<ReceiveCredential>,
@@ -60,13 +68,16 @@ async fn exempted(
     let role = if has(ActorType::RepositoryRole) {
         super::access::user_access(pool, actor, repository).await?
     } else {
-        AccessLevel::None
+        codeyard_db_core::models::AccessLevel::None
     };
     let org_admin = if has(ActorType::OrganizationAdmin) && repository.owner_kind == "org" {
         if let Some(org) = repository.owner_org_id {
             matches!(
                 db::organizations::membership::get_organization_role(pool, actor.id, org).await?,
-                OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin)
+                OrganizationOutcome::Applied(
+                    codeyard_db_core::models::OrgRole::Owner
+                        | codeyard_db_core::models::OrgRole::Admin
+                )
             )
         } else {
             false
@@ -199,7 +210,7 @@ async fn evaluate_uncached(
 
 /// Records one rule suite for each pushed ref that an evaluate-mode ruleset targets.
 pub(crate) async fn record_push(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
     actor: &User,
     updates: &[RefUpdate],

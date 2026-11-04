@@ -38,14 +38,14 @@ fn lock_reason(value: Option<&str>) -> Option<&str> {
     })
 }
 
-pub(super) fn object(issue: &db::models::Issue) -> Value {
+pub(super) fn object(issue: &codeyard_db_core::models::Issue) -> Value {
     json!({"__typename":"Issue","id":node_id::encode("I",issue.id),"databaseId":issue.id,
         "_repo":issue.repo_id,"_author":issue.author_id,"_milestone":issue.milestone_id,"number":issue.number,"title":issue.title,
         "updatedAt":issue.updated_at,"closed":issue.state=="closed","locked":issue.locked,"activeLockReason":lock_reason(issue.lock_reason.as_deref()),"stateReason":issue.state_reason.as_ref().map(|s|s.to_uppercase()),
         "body":issue.body,"state":issue.state.to_uppercase(),"createdAt":issue.created_at,"closedAt":issue.closed_at})
 }
 
-pub(super) fn pull_object(pull: &db::models::PullRequest) -> Value {
+pub(super) fn pull_object(pull: &codeyard_db_core::models::PullRequest) -> Value {
     json!({"__typename":"PullRequest","id":node_id::encode("PR",pull.id),"databaseId":pull.id,
         "_repo":pull.repo_id,"_author":pull.author_id,"_milestone":pull.milestone_id,"number":pull.number,"title":pull.title,
         "updatedAt":pull.updated_at,"maintainerCanModify":pull.maintainer_can_modify,"closed":pull.state!="open","locked":pull.locked,"activeLockReason":lock_reason(pull.lock_reason.as_deref()),
@@ -176,7 +176,7 @@ pub(super) async fn resolve(
 }
 
 pub(super) async fn comment(
-    comment: &db::models::IssueComment,
+    comment: &codeyard_db_core::models::IssueComment,
     request: &RequestContext,
 ) -> Result<Value> {
     let issue = db::issues::get_issue_by_id(&request.state.pool, comment.issue_id)
@@ -194,7 +194,7 @@ pub(super) async fn comment(
 }
 
 pub(super) async fn pull_comment(
-    comment: &db::models::PullRequestComment,
+    comment: &codeyard_db_core::models::PullRequestComment,
     request: &RequestContext,
 ) -> Result<Value> {
     let pull = db::pull_requests::records::get_pull_request_by_id(

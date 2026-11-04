@@ -1,15 +1,13 @@
 use super::{
     auth, contents::store_error, pagination::Pagination, repo_url, repository, Error, Result,
 };
-use crate::backend::{
-    app::AppState,
-    db::{models::Repository, repositories::commit_comments as records},
-    repositories::{
-        commit_comments::{self as comments, CommentDetails, CommentError},
-        store::repo_store,
-    },
-    webhooks::payloads,
-};
+use crate::backend::app::AppState;
+use crate::backend::db::repositories::commit_comments as records;
+use crate::backend::repositories::commit_comments as comments;
+use crate::backend::repositories::commit_comments::CommentDetails;
+use crate::backend::repositories::commit_comments::CommentError;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{FromRequest, OriginalUri, Path, Query, Request, State},
     http::{header, HeaderMap, Method, StatusCode},
@@ -17,6 +15,7 @@ use axum::{
     routing::{get, MethodRouter},
     Json,
 };
+use codeyard_db_core::models::Repository;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
@@ -55,7 +54,7 @@ fn document(
     )
 }
 async fn document_one(
-    pool: &crate::backend::db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     entry: &CommentDetails,
     repo: &Repository,
     owner: &str,

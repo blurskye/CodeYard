@@ -9,7 +9,8 @@ use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
 use std::net::IpAddr;
 use uuid::Uuid;
 
-use super::models::{File, FileReasonLimit};
+use codeyard_db_core::models::File;
+use codeyard_db_core::models::FileReasonLimit;
 
 /// Locks the active uploader and reads the limits for `reason`. BEGIN IMMEDIATE serializes concurrent uploads, so they cannot overrun the quota.
 async fn admit(
@@ -599,7 +600,7 @@ pub async fn get_user_total_storage(pool: &SqlitePool, user_id: i64) -> Result<i
 pub async fn get_user_file_stats(
     pool: &SqlitePool,
     user_id: i64,
-) -> Result<Option<super::models::UserFileStats>, sqlx::Error> {
+) -> Result<Option<codeyard_db_core::models::UserFileStats>, sqlx::Error> {
     // Aggregate each relation separately. Joining the relations first would multiply
     // the storage and upload sums by the join counts.
     sqlx::query_as(r#"WITH active_files AS (

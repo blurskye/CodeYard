@@ -98,7 +98,7 @@ async fn start(
             &state.ci_runs,
             auth.user.id,
             pull.id,
-            Some(db::models::AccessLevel::Owner),
+            Some(codeyard_db_core::models::AccessLevel::Owner),
         )
         .await
         .map_err(Error::unavailable)?;

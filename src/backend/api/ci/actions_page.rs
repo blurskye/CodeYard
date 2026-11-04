@@ -116,7 +116,7 @@ fn bounded_limit(
 /// means the steps appear as their logs arrive.
 async fn planned_jobs(
     ctx: &PageContext,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     sha: Option<&str>,
     paths: &str,
 ) -> Vec<view_actions::PlannedJob> {

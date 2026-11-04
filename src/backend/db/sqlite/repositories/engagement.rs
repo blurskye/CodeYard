@@ -1,9 +1,12 @@
 use super::access::{lock_readable_repository_in_transaction, readable_condition};
-use crate::backend::db::models::{Repository, Star, User, Watch};
 use crate::backend::db::repositories::engagement::StarSort;
 use crate::backend::db::sqlite::search::contains;
 use crate::backend::db::users::blocks::InteractionBlocked;
 use anyhow::Result;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::Star;
+use codeyard_db_core::models::User;
+use codeyard_db_core::models::Watch;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
 /// Checks that the user can still read the repository. The caller's earlier check may be stale

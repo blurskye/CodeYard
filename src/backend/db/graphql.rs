@@ -1,7 +1,8 @@
 //! GraphQL admission is shared by all web nodes using the database.
-use super::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 pub const QUERY_LIMIT: i32 = 5000;
 
@@ -51,7 +52,7 @@ native_operation!(crate::backend::db::postgres::graphql::reaction,
     fn reaction(pool: &DbPool, id: i64) -> Result<Option<super::reactions::Reaction>>);
 native_operation!(crate::backend::db::postgres::graphql::status,
     crate::backend::db::sqlite::graphql::status,
-    fn status(pool: &DbPool, id: i64) -> Result<Option<super::models::CommitStatus>>);
+    fn status(pool: &DbPool, id: i64) -> Result<Option<codeyard_db_core::models::CommitStatus>>);
 
 native_operation!(crate::backend::db::postgres::graphql::admit_query,
     crate::backend::db::sqlite::graphql::admit_query,

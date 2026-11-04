@@ -1,7 +1,8 @@
 //! Which copies a repository should have. The primary is not a copy: with `Copies(n)`
 //! the repository has n-1 copies, fewer when fewer storage nodes exist, and with `All`
 //! it has one on every other storage node.
-use crate::backend::db::models::{ClusterNode, ReplicaSetting};
+use codeyard_db_core::models::ClusterNode;
+use codeyard_db_core::models::ReplicaSetting;
 
 /// A holder's readiness and allocation history. Negative versions cannot serve reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,8 +34,10 @@ pub fn plan(
 ) -> Plan {
     let others = storage.iter().filter(|node| node.id != primary).count();
     let wanted = match setting {
-        ReplicaSetting::Copies(count) => usize::from(count).saturating_sub(1).min(others),
-        ReplicaSetting::All => others,
+        codeyard_db_core::models::ReplicaSetting::Copies(count) => {
+            usize::from(count).saturating_sub(1).min(others)
+        }
+        codeyard_db_core::models::ReplicaSetting::All => others,
     };
     let online = |id: i64| storage.iter().any(|node| node.id == id && node.is_online());
     let version = |id: i64| {
@@ -61,7 +64,7 @@ pub fn plan(
         .collect();
     let mut missing = wanted.saturating_sub(kept.iter().filter(|&&id| online(id)).count());
     let mut add = Vec::new();
-    for node in ClusterNode::ranked_storage(storage) {
+    for node in codeyard_db_core::models::ClusterNode::ranked_storage(storage) {
         if missing == 0 {
             break;
         }
@@ -200,7 +203,7 @@ pub(crate) fn family_plan(
                     common_ready
                         || !storage.iter().any(|candidate| candidate.id == *node)
                         || *node == primary
-                        || matches!(setting, ReplicaSetting::Copies(1))
+                        || matches!(setting, codeyard_db_core::models::ReplicaSetting::Copies(1))
                 })
                 .collect();
             (*repository, Plan { add, remove })
@@ -227,7 +230,7 @@ mod tests {
         let storage = [node(1, 10, true), node(2, 0, true), node(3, 30, true)];
         assert_eq!(
             super::plan(
-                ReplicaSetting::Copies(2),
+                codeyard_db_core::models::ReplicaSetting::Copies(2),
                 1,
                 &storage,
                 &[holder(2, false)],
@@ -240,7 +243,7 @@ mod tests {
         );
         assert_eq!(
             super::plan(
-                ReplicaSetting::Copies(2),
+                codeyard_db_core::models::ReplicaSetting::Copies(2),
                 1,
                 &storage,
                 &[holder(2, true)],
@@ -281,7 +284,7 @@ mod tests {
         let storage = [node(1, 10, true), node(2, 20, true), node(3, 30, true)];
         assert_eq!(
             plan(
-                ReplicaSetting::Copies(1),
+                codeyard_db_core::models::ReplicaSetting::Copies(1),
                 1,
                 &storage,
                 &[holder(2, true), holder(3, true)]
@@ -293,7 +296,13 @@ mod tests {
         );
         // The primary never holds a copy of its own repository.
         assert_eq!(
-            plan(ReplicaSetting::Copies(1), 1, &storage, &[holder(1, true)]).remove,
+            plan(
+                codeyard_db_core::models::ReplicaSetting::Copies(1),
+                1,
+                &storage,
+                &[holder(1, true)]
+            )
+            .remove,
             vec![1]
         );
     }
@@ -302,14 +311,24 @@ mod tests {
     fn a_count_adds_the_online_node_with_the_most_free_space() {
         let storage = [node(1, 10, true), node(2, 20, true), node(3, 30, true)];
         assert_eq!(
-            plan(ReplicaSetting::Copies(2), 1, &storage, &[]),
+            plan(
+                codeyard_db_core::models::ReplicaSetting::Copies(2),
+                1,
+                &storage,
+                &[]
+            ),
             Plan {
                 add: vec![3],
                 remove: vec![]
             }
         );
         assert_eq!(
-            plan(ReplicaSetting::Copies(3), 1, &storage, &[holder(3, true)]),
+            plan(
+                codeyard_db_core::models::ReplicaSetting::Copies(3),
+                1,
+                &storage,
+                &[holder(3, true)]
+            ),
             Plan {
                 add: vec![2],
                 remove: vec![]
@@ -322,7 +341,12 @@ mod tests {
         let storage = [node(1, 10, true), node(2, 90, false), node(3, 30, true)];
         // The replacement is added, and the offline copy waits until it has data.
         assert_eq!(
-            plan(ReplicaSetting::Copies(2), 1, &storage, &[holder(2, true)]),
+            plan(
+                codeyard_db_core::models::ReplicaSetting::Copies(2),
+                1,
+                &storage,
+                &[holder(2, true)]
+            ),
             Plan {
                 add: vec![3],
                 remove: vec![]
@@ -332,7 +356,7 @@ mod tests {
         let none_online = [node(1, 10, true), node(2, 90, false)];
         assert_eq!(
             plan(
-                ReplicaSetting::Copies(2),
+                codeyard_db_core::models::ReplicaSetting::Copies(2),
                 1,
                 &none_online,
                 &[holder(2, true)]
@@ -346,7 +370,12 @@ mod tests {
         let storage = [node(1, 10, true), node(2, 90, false), node(3, 30, true)];
         // Node 3 is new: it is added, and nothing is removed.
         assert_eq!(
-            plan(ReplicaSetting::Copies(2), 1, &storage, &[holder(2, true)]),
+            plan(
+                codeyard_db_core::models::ReplicaSetting::Copies(2),
+                1,
+                &storage,
+                &[holder(2, true)]
+            ),
             Plan {
                 add: vec![3],
                 remove: vec![]
@@ -355,7 +384,7 @@ mod tests {
         // Node 3 has its row but has not applied a version, so node 2 still stays.
         assert_eq!(
             plan(
-                ReplicaSetting::Copies(2),
+                codeyard_db_core::models::ReplicaSetting::Copies(2),
                 1,
                 &storage,
                 &[holder(2, true), holder(3, false)]
@@ -369,7 +398,7 @@ mod tests {
         let storage = [node(1, 10, true), node(2, 90, false), node(3, 30, true)];
         assert_eq!(
             plan(
-                ReplicaSetting::Copies(2),
+                codeyard_db_core::models::ReplicaSetting::Copies(2),
                 1,
                 &storage,
                 &[holder(2, true), holder(3, true)]
@@ -397,12 +426,23 @@ mod tests {
                     completed: true,
                 },
             ];
-            assert!(plan(ReplicaSetting::Copies(2), 1, &storage, &copies)
-                .remove
-                .is_empty());
+            assert!(plan(
+                codeyard_db_core::models::ReplicaSetting::Copies(2),
+                1,
+                &storage,
+                &copies
+            )
+            .remove
+            .is_empty());
             copies[1].version = 10;
             assert_eq!(
-                plan(ReplicaSetting::Copies(2), 1, &storage, &copies).remove,
+                plan(
+                    codeyard_db_core::models::ReplicaSetting::Copies(2),
+                    1,
+                    &storage,
+                    &copies
+                )
+                .remove,
                 vec![2]
             );
         }
@@ -412,7 +452,12 @@ mod tests {
     fn an_online_copy_that_has_applied_needs_no_replacement() {
         let storage = [node(1, 10, true), node(2, 20, true), node(3, 30, true)];
         assert_eq!(
-            plan(ReplicaSetting::Copies(2), 1, &storage, &[holder(2, true)]),
+            plan(
+                codeyard_db_core::models::ReplicaSetting::Copies(2),
+                1,
+                &storage,
+                &[holder(2, true)]
+            ),
             Plan::default()
         );
     }
@@ -423,7 +468,7 @@ mod tests {
         // Node 2 was offline and is back with its data, while node 3 has not applied yet.
         assert_eq!(
             plan(
-                ReplicaSetting::Copies(2),
+                codeyard_db_core::models::ReplicaSetting::Copies(2),
                 1,
                 &storage,
                 &[holder(2, true), holder(3, false)]
@@ -439,7 +484,12 @@ mod tests {
     fn all_puts_a_copy_on_every_online_storage_node() {
         let storage = [node(1, 10, true), node(2, 20, true), node(3, 30, false)];
         assert_eq!(
-            plan(ReplicaSetting::All, 1, &storage, &[]),
+            plan(
+                codeyard_db_core::models::ReplicaSetting::All,
+                1,
+                &storage,
+                &[]
+            ),
             Plan {
                 add: vec![2],
                 remove: vec![]
@@ -447,7 +497,12 @@ mod tests {
         );
         let storage = [node(1, 10, true), node(2, 20, true), node(3, 30, true)];
         assert_eq!(
-            plan(ReplicaSetting::All, 1, &storage, &[holder(2, true)]),
+            plan(
+                codeyard_db_core::models::ReplicaSetting::All,
+                1,
+                &storage,
+                &[holder(2, true)]
+            ),
             Plan {
                 add: vec![3],
                 remove: vec![]
@@ -460,7 +515,7 @@ mod tests {
         let storage = [node(1, 10, true), node(2, 20, true), node(3, 30, false)];
         assert_eq!(
             plan(
-                ReplicaSetting::Copies(2),
+                codeyard_db_core::models::ReplicaSetting::Copies(2),
                 1,
                 &storage,
                 &[holder(2, true), holder(3, true)]
@@ -477,7 +532,7 @@ mod tests {
         let storage = [node(1, 10, true), node(2, 20, true)];
         assert_eq!(
             plan(
-                ReplicaSetting::Copies(2),
+                codeyard_db_core::models::ReplicaSetting::Copies(2),
                 1,
                 &storage,
                 &[holder(2, true), holder(9, true)]

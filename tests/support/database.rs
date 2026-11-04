@@ -22,7 +22,7 @@ impl Database {
             Self::Sqlite(native::NativeDatabase::new().await)
         }
     }
-    pub fn pool(&self) -> &db::DbPool {
+    pub fn pool(&self) -> &codeyard_db_core::DbPool {
         match self {
             Self::Postgres(f) => &f.pool,
             Self::Sqlite(f) => &f.pool,
@@ -108,7 +108,7 @@ impl Database {
     pub async fn count(&self) -> i64 {
         self.scalar("SELECT COUNT(*) FROM repositories", &[]).await
     }
-    pub async fn repository(&self, id: i64) -> db::models::Repository {
+    pub async fn repository(&self, id: i64) -> codeyard_db_core::models::Repository {
         let sql = "SELECT * FROM repositories WHERE id=$1";
         match self {
             Self::Postgres(f) => sqlx::query_as(sql)
@@ -136,7 +136,7 @@ impl Database {
 }
 
 /// The application router over `pool`, with repositories and objects under `root`.
-pub async fn router(pool: &db::DbPool, root: &Path) -> Router {
+pub async fn router(pool: &codeyard_db_core::DbPool, root: &Path) -> Router {
     create_router(AppState::new(
         pool.clone(),
         root.to_owned(),

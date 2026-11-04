@@ -2,11 +2,15 @@
 //! actions. Every action checks the actor before it reads or changes a hook.
 use super::{enqueue, events, outbound, outgoing, payloads};
 use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db::models::{OrgRole, Repository, User, Webhook};
+use crate::backend::db;
 use crate::backend::db::organizations::OrganizationOutcome;
 use crate::backend::db::webhooks::{self as hooks, HookOwner, SealedSecret, WebhookFields};
-use crate::backend::db::{self, DbPool};
 use crate::backend::repositories::access;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
+use codeyard_db_core::models::Webhook;
+use codeyard_db_core::DbPool;
 use serde_json::{json, Value};
 
 pub const JSON_CONTENT_TYPE: &str = "application/json";
@@ -92,7 +96,7 @@ pub async fn authorize(pool: &DbPool, actor: &User, owner: HookOwner) -> Result<
             db::organizations::membership::get_organization_role(pool, actor.id, org)
                 .await
                 .map_err(unavailable)?,
-            OrganizationOutcome::Applied(OrgRole::Owner)
+            OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Owner)
         ),
     };
     if allowed {

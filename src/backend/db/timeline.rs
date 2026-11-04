@@ -1,7 +1,8 @@
 //! What changed on an issue or pull request: state, title, labels, assignees and milestone.
-use crate::backend::db::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// Most events one page loads for an issue or pull request.
 pub const EVENT_LIMIT: i64 = 200;

@@ -1,7 +1,9 @@
 //! GitHub App public-key credentials and explicit repository permission bounds.
-use crate::backend::db::{self, github_apps::App, DbPool};
+use crate::backend::db;
+use crate::backend::db::github_apps::App;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::Utc;
+use codeyard_db_core::DbPool;
 use rsa::{
     pkcs1v15::{Signature, VerifyingKey},
     pkcs8::DecodePublicKey,

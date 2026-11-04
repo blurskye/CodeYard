@@ -1,7 +1,8 @@
 //! Confidential repository advisories. Publication is explicit; CVE requests never mint an ID.
-use super::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[derive(Debug, thiserror::Error)]

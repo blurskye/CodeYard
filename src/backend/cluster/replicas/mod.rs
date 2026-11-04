@@ -12,15 +12,14 @@ pub use promote::{
 };
 
 use super::{rpc, NodeContext};
-use crate::backend::db::{
-    self,
-    models::{HeldReplica, ReplicaSetting},
-    DbPool,
-};
+use crate::backend::db;
 use crate::backend::git::{locks, maintenance, mirror};
 use crate::backend::repositories::store::RepoError;
 use crate::backend::storage::local::{remove_stale_temporaries, STALE_AFTER};
 use anyhow::{Context, Result};
+use codeyard_db_core::models::HeldReplica;
+use codeyard_db_core::models::ReplicaSetting;
+use codeyard_db_core::DbPool;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
@@ -97,13 +96,13 @@ mod tests {
     #[tokio::test]
     async fn pending_replica_assignments_reserve_disk_space_across_repositories() {
         let root = tempfile::tempdir().unwrap();
-        let pool = db::init_db(&format!(
+        let pool = codeyard_db_core::init_db(&format!(
             "sqlite://{}",
             root.path().join("test.db").display()
         ))
         .await
         .unwrap();
-        db::run_migrations(&pool).await.unwrap();
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let mut nodes = Vec::new();
         const GIB: i64 = 1024 * 1024 * 1024;
         for (name, free) in [("a", 100 * GIB), ("b", 12 * GIB), ("c", 11 * GIB)] {
@@ -125,7 +124,7 @@ mod tests {
         let owner = db::users::accounts::create_user(&pool, "owner", None)
             .await
             .unwrap();
-        let DbPool::Sqlite(raw) = &pool else {
+        let codeyard_db_core::DbPool::Sqlite(raw) = &pool else {
             unreachable!()
         };
         for index in 0..20 {
@@ -152,9 +151,14 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        assign(&pool, nodes[0], ReplicaSetting::Copies(2), &primaries)
-            .await
-            .unwrap();
+        assign(
+            &pool,
+            nodes[0],
+            codeyard_db_core::models::ReplicaSetting::Copies(2),
+            &primaries,
+        )
+        .await
+        .unwrap();
         let allocations = db::cluster::pending_replica_bytes(&pool).await.unwrap();
         assert_eq!(allocations.iter().map(|row| row.1).sum::<i64>(), 22 * GIB);
         assert!(allocations
@@ -267,7 +271,9 @@ async fn step(
     let pool = context.database()?;
     let node = context.node_id;
     take_over(pool, node, &context.repos_path, silent, TAKE_OVER_AFTER).await?;
-    let setting = ReplicaSetting::from_str(&db::cluster::get_replicas(pool).await?)?;
+    let setting = codeyard_db_core::models::ReplicaSetting::from_str(
+        &db::cluster::get_replicas(pool).await?,
+    )?;
     let primaries = group_primaries(db::cluster::list_primary_repositories(pool, node).await?);
     assign(pool, node, setting, &primaries).await?;
     place_and_start(context, &primaries, retry, copying).await?;

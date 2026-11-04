@@ -1,7 +1,8 @@
 //! Durable OSV data and leases for lockfile snapshot scans.
-use super::DbPool;
 use crate::backend::{dependency_graph::Snapshot, vulnerabilities::PreparedAdvisory};
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {

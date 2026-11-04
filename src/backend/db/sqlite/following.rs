@@ -1,5 +1,5 @@
-use crate::backend::db::models::Follow;
 use anyhow::Result;
+use codeyard_db_core::models::Follow;
 use sqlx::SqlitePool;
 
 pub async fn list_connections(
@@ -8,7 +8,7 @@ pub async fn list_connections(
     followers: bool,
     limit: i64,
     offset: i64,
-) -> Result<Vec<crate::backend::db::models::User>> {
+) -> Result<Vec<codeyard_db_core::models::User>> {
     Ok(
         sqlx::query_as(crate::backend::db::following::connections_sql(followers))
             .bind(user_id)

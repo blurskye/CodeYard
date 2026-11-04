@@ -1,9 +1,15 @@
 use crate::support::{database::Database, organizations::applied};
-use codeyard::backend::db::{
-    models::OrgRole,
-    organizations::{self, NewOrganization, OrganizationOutcome, OrganizationProfile},
-    rulesets::{self, Definition, ListFilter, Owner, Page, SuiteFilter},
-};
+use codeyard::backend::db::organizations;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::OrganizationOutcome;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::db::rulesets;
+use codeyard::backend::db::rulesets::Definition;
+use codeyard::backend::db::rulesets::ListFilter;
+use codeyard::backend::db::rulesets::Owner;
+use codeyard::backend::db::rulesets::Page;
+use codeyard::backend::db::rulesets::SuiteFilter;
+use codeyard_db_core::models::OrgRole;
 use serde_json::json;
 
 async fn contract(pg: bool) {
@@ -22,9 +28,15 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        organizations::add_organization_member(f.pool(), owner, org.id, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        organizations::add_organization_member(
+            f.pool(),
+            owner,
+            org.id,
+            member,
+            codeyard_db_core::models::OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let scope = Owner::Organization(org.id);
     let input = Definition::parse(&json!({"name":"Release policy","enforcement":"active","bypass_actors":[{"actor_type":"OrganizationAdmin"}],"rules":[{"type":"non_fast_forward"}]})).unwrap();

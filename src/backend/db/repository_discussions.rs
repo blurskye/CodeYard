@@ -1,10 +1,11 @@
 //! Repository discussions use the issue/PR number allocator and live repository authority.
-use super::{
-    discussion_search::{self, Expr, Statement},
-    DbPool,
-};
+use super::discussion_search;
+use super::discussion_search::Expr;
+use super::discussion_search::Statement;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 pub(crate) const DEFAULT_CATEGORIES: &[(&str, &str, &str, &str, bool)] = &[
     (
@@ -283,7 +284,7 @@ native_operation!(super::postgres::repository_discussions::comment, super::sqlit
 native_operation!(super::postgres::repository_discussions::comments, super::sqlite::repository_discussions::comments,
     fn comments(pool: &DbPool, discussion: i64, reply: Option<i64>, offset: i64, limit: i64) -> Result<(i64, Vec<Comment>)>);
 native_operation!(super::postgres::repository_discussions::labels, super::sqlite::repository_discussions::labels,
-    fn labels(pool: &DbPool, discussion: i64) -> Result<Vec<super::models::Label>>);
+    fn labels(pool: &DbPool, discussion: i64) -> Result<Vec<codeyard_db_core::models::Label>>);
 native_operation!(super::postgres::repository_discussions::list, super::sqlite::repository_discussions::list,
     fn list_counted(pool: &DbPool, viewer: i64, credential: &super::users::accounts::AccountCredential<'_>, filter: &Filter, offset: i64, limit: i64, count: bool) -> Result<(i64, Vec<Discussion>)>);
 pub async fn list(

@@ -4,8 +4,8 @@
 //! branch names.
 
 use crate::backend::db;
-use crate::backend::db::models::PullRequest;
-use crate::backend::db::DbPool;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::DbPool;
 use std::collections::HashSet;
 
 /// A stack in the order a reader sees it: merged layers first, then the open layers from the

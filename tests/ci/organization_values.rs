@@ -3,20 +3,19 @@ use crate::support::{
     database::Database, fake_webui_bundle, http_client::Client, organizations::applied,
 };
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    crypto::SecretEncryptor,
-    db::{
-        self,
-        models::OrgRole,
-        organizations::{self as orgs, NewOrganization, OrganizationProfile},
-        repositories::creation::{RepositoryCreationOwner, RepositoryTarget},
-    },
-    repositories::lifecycle,
-    storage::ObjectStore,
-};
+use codeyard::backend::api::create_router;
+use codeyard::backend::app::AppState;
+use codeyard::backend::ci::CiConfig;
+use codeyard::backend::crypto::SecretEncryptor;
+use codeyard::backend::db;
+use codeyard::backend::db::organizations as orgs;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
+use codeyard::backend::db::repositories::creation::RepositoryTarget;
+use codeyard::backend::repositories::lifecycle;
+use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -51,9 +50,15 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        orgs::add_organization_member(f.pool(), owner, org.id, manager, OrgRole::Admin)
-            .await
-            .unwrap(),
+        orgs::add_organization_member(
+            f.pool(),
+            owner,
+            org.id,
+            manager,
+            codeyard_db_core::models::OrgRole::Admin,
+        )
+        .await
+        .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let mut repos = Vec::new();
@@ -621,9 +626,15 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
     applied(
-        orgs::update_organization_member_role(f.pool(), owner, org.id, manager, OrgRole::Member)
-            .await
-            .unwrap(),
+        orgs::update_organization_member_role(
+            f.pool(),
+            owner,
+            org.id,
+            manager,
+            codeyard_db_core::models::OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     request(
         &router,

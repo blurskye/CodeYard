@@ -5,13 +5,12 @@ use axum::{
     http::Request,
     Router,
 };
-use codeyard::backend::{
-    db::{
-        models::OrgRole,
-        organizations::{self, NewOrganization, OrganizationProfile},
-    },
-    identity::tokens::{self, TokenInput},
-};
+use codeyard::backend::db::organizations;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::identity::tokens;
+use codeyard::backend::identity::tokens::TokenInput;
+use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -62,9 +61,15 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        organizations::add_organization_member(f.pool(), owner, org.id, admin, OrgRole::Member)
-            .await
-            .unwrap(),
+        organizations::add_organization_member(
+            f.pool(),
+            owner,
+            org.id,
+            admin,
+            codeyard_db_core::models::OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;

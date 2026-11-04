@@ -536,8 +536,8 @@ mod tests {
 
     #[tokio::test]
     async fn binary_json_previews_hold_download_slots_until_consumed_or_timed_out() {
-        let pool = db::init_db("sqlite::memory:").await.unwrap();
-        db::run_migrations(&pool).await.unwrap();
+        let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let root = tempfile::tempdir().unwrap();
         let user = db::users::accounts::create_user(&pool, "alice", None)
             .await

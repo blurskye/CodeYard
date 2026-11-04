@@ -15,8 +15,8 @@ static PROOF_WORK: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4)
 
 pub async fn prepare(
     state: &AppState,
-    actor: &db::models::User,
-    repository: &db::models::Repository,
+    actor: &codeyard_db_core::models::User,
+    repository: &codeyard_db_core::models::Repository,
 ) -> Result<()> {
     if !interactions::proof_required(&state.pool, actor.id, repository.id).await? {
         return Ok(());

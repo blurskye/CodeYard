@@ -1,7 +1,8 @@
 //! Actions variables are plain text; repository collaborators may inspect their values.
-use super::DbPool;
 use chrono::{DateTime, Utc};
 use codeyard_actions::values::MAX_VARIABLE_BYTES;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct Variable {

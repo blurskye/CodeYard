@@ -1,27 +1,28 @@
 //! Discussions anchored to immutable commits, shared by REST and native forms.
-use crate::backend::{
-    cluster::NodeContext,
-    db::{
-        self,
-        models::{CommitComment, Repository, User},
-        repositories::commit_comments::{
-            self as records, CommentCreate, CommentEdit, CommentRefusal,
-        },
-    },
-    notifications::{
-        create::{create_and_broadcast_notification, NotificationRequest},
-        mentions::{notify_mentions, MentionComment, MentionSource},
-        NotificationBroadcaster,
-    },
-    repositories::{
-        access,
-        store::{repo_store, ErrorKind, RepoError},
-    },
-    webhooks::{
-        self, events,
-        payloads::{self, Person, Scope},
-    },
-};
+use crate::backend::cluster::NodeContext;
+use crate::backend::db;
+use crate::backend::db::repositories::commit_comments as records;
+use crate::backend::db::repositories::commit_comments::CommentCreate;
+use crate::backend::db::repositories::commit_comments::CommentEdit;
+use crate::backend::db::repositories::commit_comments::CommentRefusal;
+use crate::backend::notifications::create::create_and_broadcast_notification;
+use crate::backend::notifications::create::NotificationRequest;
+use crate::backend::notifications::mentions::notify_mentions;
+use crate::backend::notifications::mentions::MentionComment;
+use crate::backend::notifications::mentions::MentionSource;
+use crate::backend::notifications::NotificationBroadcaster;
+use crate::backend::repositories::access;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::ErrorKind;
+use crate::backend::repositories::store::RepoError;
+use crate::backend::webhooks;
+use crate::backend::webhooks::events;
+use crate::backend::webhooks::payloads;
+use crate::backend::webhooks::payloads::Person;
+use crate::backend::webhooks::payloads::Scope;
+use codeyard_db_core::models::CommitComment;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -82,7 +83,7 @@ struct Author {
 }
 
 async fn authors(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     repo: &Repository,
     ids: &[i64],
@@ -137,7 +138,7 @@ async fn authors(
 /// Shared repository-discussion associations, including read collaborators and Git contributors.
 /// The repository has already passed the caller's read check; no comment row is required.
 pub async fn author_associations(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     repo: &Repository,
     ids: &[i64],
@@ -160,7 +161,7 @@ fn details(comment: CommitComment, authors: &HashMap<i64, Author>) -> CommentDet
 
 /// The repository has already passed the caller's read check. Missing accounts stay null.
 pub async fn comment_details(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     repo: &Repository,
     comments: Vec<CommitComment>,
@@ -176,7 +177,11 @@ pub async fn comment_details(
         .collect())
 }
 
-async fn writable(pool: &db::DbPool, actor: i64, repo: i64) -> Result<(User, Repository, String)> {
+async fn writable(
+    pool: &codeyard_db_core::DbPool,
+    actor: i64,
+    repo: i64,
+) -> Result<(User, Repository, String)> {
     let user = db::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| CommentError::Unavailable)?
@@ -215,7 +220,7 @@ pub fn comment_link(owner: &str, name: &str, comment: &CommitComment) -> String 
 }
 
 async fn emit(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: &Repository,
     actor: i64,
     action: &'static str,
@@ -256,7 +261,7 @@ async fn emit(
     reason = "A comment notice needs the storage, actor, repository and saved text snapshots."
 )]
 async fn notify(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     user: &User,
@@ -353,7 +358,7 @@ async fn notify(
 }
 
 pub async fn create(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor: impl Into<db::credentials::Actor>,
@@ -464,7 +469,7 @@ pub async fn create(
 }
 
 pub async fn edit(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     input: CommentEdit<'_>,
@@ -501,7 +506,7 @@ pub async fn edit(
 }
 
 pub async fn delete(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: impl Into<db::credentials::Actor>,
     repo: i64,
     id: i64,

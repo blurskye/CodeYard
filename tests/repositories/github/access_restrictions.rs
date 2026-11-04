@@ -273,7 +273,7 @@ async fn app_contract(pg: bool) {
 
 pub(super) async fn run(
     router: &Router,
-    resource: (&db::DbPool, i64, i64, i64),
+    resource: (&codeyard_db_core::DbPool, i64, i64, i64),
     base: &str,
     tokens: (&str, &str, &str),
     sha: &str,
@@ -388,7 +388,7 @@ pub(super) async fn run(
         alice,
         repo,
         "bob",
-        Some(db::models::AccessLevel::Write),
+        Some(codeyard_db_core::models::AccessLevel::Write),
     )
     .await
     .unwrap();

@@ -135,9 +135,9 @@ mod tests {
 
     #[tokio::test]
     async fn checks_keep_the_item_snapshot_after_a_push() {
-        let pool = db::init_db("sqlite::memory:").await.unwrap();
-        db::run_migrations(&pool).await.unwrap();
-        let db::DbPool::Sqlite(sqlite) = &pool else {
+        let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
+        let codeyard_db_core::DbPool::Sqlite(sqlite) = &pool else {
             unreachable!()
         };
         sqlx::query("INSERT INTO node_configuration(id, setup_completed) VALUES(1, TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(sqlite).await.unwrap();

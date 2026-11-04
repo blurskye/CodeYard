@@ -1,13 +1,13 @@
-use crate::backend::db::{
-    interactions::ContributorSource,
-    interactions::{
-        email_digest, InteractionRefusal, InteractionScope, NewRestriction, Restriction,
-    },
-    models::OrgRole,
-    organizations::OrganizationOutcome,
-    users::accounts::AccountCredential,
-};
+use crate::backend::db::interactions::email_digest;
+use crate::backend::db::interactions::ContributorSource;
+use crate::backend::db::interactions::InteractionRefusal;
+use crate::backend::db::interactions::InteractionScope;
+use crate::backend::db::interactions::NewRestriction;
+use crate::backend::db::interactions::Restriction;
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::users::accounts::AccountCredential;
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
 use sqlx::{PgConnection, PgPool};
 
 const FIELDS: &str = "restriction AS \"limit\",CASE WHEN user_id IS NOT NULL THEN 'user' WHEN org_id IS NOT NULL THEN 'organization' ELSE 'repository' END AS origin,expires_at";
@@ -52,7 +52,7 @@ async fn authorize(
     }
     let allowed = match scope {
         InteractionScope::User(user) => user==actor && sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)").bind(actor).fetch_one(&mut *connection).await?,
-        InteractionScope::Organization(org) => match super::organizations::authority::authority(&mut *connection,actor,org).await? {OrganizationOutcome::Applied(OrgRole::Owner)=>true,OrganizationOutcome::Applied(OrgRole::Admin)=>!write,_=>false},
+        InteractionScope::Organization(org) => match super::organizations::authority::authority(&mut *connection,actor,org).await? {OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Owner)=>true,OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Admin)=>!write,_=>false},
         InteractionScope::Repository(repo) => super::repositories::access::lock_user_repo_access_in_transaction(&mut *connection,actor,repo,super::repositories::access::RepositoryRowLock::Exclusive,true).await?.is_some_and(|authority|(!authority.organization || authority.organization_usable) && (authority.access.can_admin() || (!authority.organization && (authority.is_admin || authority.owner_user_id==Some(actor))))),
     };
     anyhow::ensure!(allowed, InteractionRefusal::Denied);

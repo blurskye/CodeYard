@@ -1,10 +1,10 @@
 //! Notification hints cross web nodes through a bounded database cursor.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database::Database;
-use codeyard::backend::{
-    db::DbPool,
-    notifications::{broadcast::MAX_SOCKETS_PER_USER, NotificationBroadcaster, NotificationEvent},
-};
+use codeyard::backend::notifications::broadcast::MAX_SOCKETS_PER_USER;
+use codeyard::backend::notifications::NotificationBroadcaster;
+use codeyard::backend::notifications::NotificationEvent;
+use codeyard_db_core::DbPool;
 use std::time::Duration;
 use tokio::sync::broadcast;
 
@@ -122,7 +122,8 @@ async fn sqlite_local_delivery_and_poller_shutdown() {
 
 #[tokio::test]
 async fn an_account_holds_a_bounded_number_of_sockets() {
-    let pool = DbPool::from(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
+    let pool =
+        codeyard_db_core::DbPool::from(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
     let broadcaster = NotificationBroadcaster::new(&pool);
     let slots: Vec<_> = (0..MAX_SOCKETS_PER_USER)
         .map(|_| broadcaster.open_socket(42).expect("a slot below the limit"))

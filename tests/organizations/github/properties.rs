@@ -1,18 +1,18 @@
 use super::request;
 use crate::support::{database::Database, http_client::Client, organizations::applied};
-use codeyard::backend::{
-    db::{
-        self,
-        models::OrgRole,
-        organizations::{
-            self,
-            properties::{self, PropertyValue, ValueInput},
-            NewOrganization, OrganizationProfile,
-        },
-        repositories::creation::{NewRepository, RepositoryCreationOwner, RepositoryTarget},
-    },
-    identity::tokens::{self, TokenInput},
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations;
+use codeyard::backend::db::organizations::properties;
+use codeyard::backend::db::organizations::properties::PropertyValue;
+use codeyard::backend::db::organizations::properties::ValueInput;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::db::repositories::creation::NewRepository;
+use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
+use codeyard::backend::db::repositories::creation::RepositoryTarget;
+use codeyard::backend::identity::tokens;
+use codeyard::backend::identity::tokens::TokenInput;
+use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
 mod lifecycle;
 mod native;
@@ -30,7 +30,7 @@ async fn repository(
     owner: i64,
     org: i64,
     name: &str,
-) -> db::models::Repository {
+) -> codeyard_db_core::models::Repository {
     let disk = uuid::Uuid::new_v4().to_string();
     let git = git2::Repository::init_bare(root.join(&disk)).unwrap();
     git.set_head("refs/heads/main").unwrap();
@@ -80,7 +80,10 @@ async fn contract(pg: bool) {
         .await
         .unwrap(),
     );
-    for (user, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
+    for (user, role) in [
+        (member, codeyard_db_core::models::OrgRole::Member),
+        (delegated, codeyard_db_core::models::OrgRole::Admin),
+    ] {
         applied(
             organizations::add_organization_member(f.pool(), owner, org.id, user, role)
                 .await

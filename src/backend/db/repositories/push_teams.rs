@@ -1,8 +1,10 @@
 //! Team identities used by branch push restrictions. Repository authority is checked by callers;
 //! these reads never grant access, and membership is evaluated again for each publication.
 use super::protection::ProtectionWriteRefusal;
-use crate::backend::db::{models::Team, DbPool};
 use anyhow::Result;
+use codeyard_db_core::models::Team;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 pub(crate) fn validate_count(len: usize) -> Result<()> {
     anyhow::ensure!(

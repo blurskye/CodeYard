@@ -1,15 +1,10 @@
 //! Secondary addresses require their own confirmation and never authorize a password reset.
-use crate::backend::{
-    db::{
-        self,
-        users::{
-            accounts::{AccountCredential, AccountRestricted},
-            emails::EmailRefusal,
-        },
-        DbPool,
-    },
-    email::links,
-};
+use crate::backend::db;
+use crate::backend::db::users::accounts::AccountCredential;
+use crate::backend::db::users::accounts::AccountRestricted;
+use crate::backend::db::users::emails::EmailRefusal;
+use crate::backend::email::links;
+use codeyard_db_core::DbPool;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum EmailError {

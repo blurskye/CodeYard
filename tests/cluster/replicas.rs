@@ -4,29 +4,38 @@
 use crate::support::http_client as http;
 use crate::support::native_database as native;
 
+use codeyard::backend::api::create_router;
+use codeyard::backend::app::AppState;
+use codeyard::backend::ci::CiConfig;
 use codeyard::backend::cli::cluster::{self as cluster_cli, Command};
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    cluster::{
-        self,
-        replicas::{self, Copying, Promotion, Retry, Silent},
-        rpc::{self, Failure, Operation, Request},
-        NodeKey,
-    },
-    db::{
-        self,
-        cluster::{FamilyOutcome, PromoteOutcome},
-        models::{NodeReplicaCounts, ReplicaSetting, Repository},
-        DbPool,
-    },
-    repositories::store::{
-        begin_ref_change, repo_store, ErrorKind, FileWrite, GitService, GitSession, GitStreams,
-        RepoError, RepoStore,
-    },
-    storage::ObjectStore,
-};
+use codeyard::backend::cluster;
+use codeyard::backend::cluster::replicas;
+use codeyard::backend::cluster::replicas::Copying;
+use codeyard::backend::cluster::replicas::Promotion;
+use codeyard::backend::cluster::replicas::Retry;
+use codeyard::backend::cluster::replicas::Silent;
+use codeyard::backend::cluster::rpc;
+use codeyard::backend::cluster::rpc::Failure;
+use codeyard::backend::cluster::rpc::Operation;
+use codeyard::backend::cluster::rpc::Request;
+use codeyard::backend::cluster::NodeKey;
+use codeyard::backend::db;
+use codeyard::backend::db::cluster::FamilyOutcome;
+use codeyard::backend::db::cluster::PromoteOutcome;
+use codeyard::backend::repositories::store::begin_ref_change;
+use codeyard::backend::repositories::store::repo_store;
+use codeyard::backend::repositories::store::ErrorKind;
+use codeyard::backend::repositories::store::FileWrite;
+use codeyard::backend::repositories::store::GitService;
+use codeyard::backend::repositories::store::GitSession;
+use codeyard::backend::repositories::store::GitStreams;
+use codeyard::backend::repositories::store::RepoError;
+use codeyard::backend::repositories::store::RepoStore;
+use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::NodeReplicaCounts;
+use codeyard_db_core::models::ReplicaSetting;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::DbPool;
 use rand::RngCore;
 use std::{
     collections::HashMap,
@@ -41,16 +50,23 @@ use uuid::Uuid;
 #[test]
 fn replica_setting_accepts_counts_and_all_and_nothing_else() {
     for (text, setting) in [
-        ("1", ReplicaSetting::Copies(1)),
-        ("2", ReplicaSetting::Copies(2)),
-        ("999", ReplicaSetting::Copies(999)),
-        ("all", ReplicaSetting::All),
+        ("1", codeyard_db_core::models::ReplicaSetting::Copies(1)),
+        ("2", codeyard_db_core::models::ReplicaSetting::Copies(2)),
+        ("999", codeyard_db_core::models::ReplicaSetting::Copies(999)),
+        ("all", codeyard_db_core::models::ReplicaSetting::All),
     ] {
-        assert_eq!(ReplicaSetting::from_str(text).unwrap(), setting, "{text}");
+        assert_eq!(
+            codeyard_db_core::models::ReplicaSetting::from_str(text).unwrap(),
+            setting,
+            "{text}"
+        );
         assert_eq!(setting.to_string(), text);
     }
     for text in ["", "0", "01", "1000", "-1", "two", "ALL", " 2", "2 "] {
-        assert!(ReplicaSetting::from_str(text).is_err(), "{text:?}");
+        assert!(
+            codeyard_db_core::models::ReplicaSetting::from_str(text).is_err(),
+            "{text:?}"
+        );
     }
 }
 
@@ -2026,7 +2042,7 @@ async fn family_member(pool: &DbPool, name: &str, primary: i64, source: Option<i
 /// before families moved together.
 async fn move_primary(pool: &DbPool, repository: i64, node: i64) {
     let changed = match pool {
-        DbPool::Postgres(raw) => {
+        codeyard_db_core::DbPool::Postgres(raw) => {
             sqlx::query("UPDATE repositories SET storage_node_id = $1 WHERE id = $2")
                 .bind(node)
                 .bind(repository)
@@ -2035,7 +2051,7 @@ async fn move_primary(pool: &DbPool, repository: i64, node: i64) {
                 .unwrap()
                 .rows_affected()
         }
-        DbPool::Sqlite(raw) => {
+        codeyard_db_core::DbPool::Sqlite(raw) => {
             sqlx::query("UPDATE repositories SET storage_node_id = ?1 WHERE id = ?2")
                 .bind(node)
                 .bind(repository)
@@ -2600,7 +2616,7 @@ async fn manual_promotion_reports_a_fork_inserted_after_its_family_snapshot() {
     let owner = db::users::accounts::create_user(pool, "late-fork-owner", None)
         .await
         .unwrap();
-    let DbPool::Postgres(raw) = pool else {
+    let codeyard_db_core::DbPool::Postgres(raw) = pool else {
         unreachable!()
     };
     let mut lock = raw.begin().await.unwrap();
@@ -3373,7 +3389,7 @@ async fn a_pull_request_refresh_does_not_read_heads_from_a_lagging_copy() {
         &ci,
         repo.actor,
         pull.id,
-        Some(codeyard::backend::db::models::AccessLevel::Owner),
+        Some(codeyard_db_core::models::AccessLevel::Owner),
     )
     .await;
     assert!(matches!(

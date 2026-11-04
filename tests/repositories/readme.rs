@@ -29,7 +29,7 @@ use tower::ServiceExt;
     reason = "The fixture keeps publication authority explicit."
 )]
 async fn save(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     actor: i64,
     store: &RepoStore,
@@ -622,7 +622,7 @@ async fn browse_fixture(
 ) -> (
     Database,
     tempfile::TempDir,
-    db::models::Repository,
+    codeyard_db_core::models::Repository,
     http::Client,
 ) {
     bundle::install();

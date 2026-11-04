@@ -1,22 +1,21 @@
 //! Gists reuse repository placement, Git objects and transport. SQL admission precedes the ref
 //! publication; durable pending writes reconcile lost responses without claiming cross-store rollback.
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        gists::{Gist, GistRefusal},
-        models::Repository,
-        repositories::creation::{RepositoryCreationOwner, RepositoryTarget},
-    },
-    repositories::{
-        lifecycle,
-        store::{
-            repo_store, GistCredential, GistEdit, GistFileChange, GistSnapshot, RepoError,
-            MAX_GIST_FILES,
-        },
-    },
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::gists::Gist;
+use crate::backend::db::gists::GistRefusal;
+use crate::backend::db::repositories::creation::RepositoryCreationOwner;
+use crate::backend::db::repositories::creation::RepositoryTarget;
+use crate::backend::repositories::lifecycle;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::GistCredential;
+use crate::backend::repositories::store::GistEdit;
+use crate::backend::repositories::store::GistFileChange;
+use crate::backend::repositories::store::GistSnapshot;
+use crate::backend::repositories::store::RepoError;
+use crate::backend::repositories::store::MAX_GIST_FILES;
 use anyhow::{ensure, Result};
+use codeyard_db_core::models::Repository;
 use std::{collections::BTreeMap, future::Future, sync::Arc};
 
 static GIST_WORK: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
@@ -52,7 +51,7 @@ pub fn text_preview(bytes: &[u8], limit: usize) -> Option<&str> {
 }
 
 /// Database-only operations need a published gist, not an available Git storage node.
-pub async fn metadata(pool: &db::DbPool, id: &str) -> Result<db::gists::Gist> {
+pub async fn metadata(pool: &codeyard_db_core::DbPool, id: &str) -> Result<db::gists::Gist> {
     db::gists::get(pool, id)
         .await?
         .filter(|gist| gist.ready)

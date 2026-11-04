@@ -5,8 +5,8 @@ use codeyard_model::repositories::MAX_REVIEWERS;
 use crate::backend::ci::workflows::{code_owner_glob_matches_bounded, WorkflowMatchBudget};
 use crate::backend::cluster::NodeContext;
 use crate::backend::db;
-use crate::backend::db::models::Repository;
 use crate::backend::repositories::store::{repo_store, BlobRange, ErrorKind, RepoError};
+use codeyard_db_core::models::Repository;
 use std::collections::{HashMap, HashSet};
 
 mod diagnostics;
@@ -297,7 +297,7 @@ pub async fn load_rules(
 /// `@org/team` names the team's members, `@user` one user, and an email the user it belongs to.
 /// An owner who names nobody, or nobody who can write, maps to an empty list.
 pub async fn resolve_owners<'a>(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
     owners: impl IntoIterator<Item = &'a str>,
 ) -> anyhow::Result<HashMap<String, Vec<i64>>> {

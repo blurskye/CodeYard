@@ -630,7 +630,7 @@ async fn create_selection(
     files: InitialFiles,
     properties: &[db::organizations::properties::ValueInput],
     authority: &db::credentials::Actor,
-) -> Result<db::models::Repository, lifecycle::StorageError> {
+) -> Result<codeyard_db_core::models::Repository, lifecycle::StorageError> {
     let description = Some(values.description.as_str()).filter(|value| !value.is_empty());
     let source = source_name(&values.source).map_err(|(_, message)| lifecycle::StorageError {
         kind: lifecycle::LifecycleFailure::Invalid,

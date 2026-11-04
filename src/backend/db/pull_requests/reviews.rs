@@ -1,8 +1,11 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::models::{PullRequestComment, PullRequestReview, User};
-use crate::backend::db::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::PullRequestComment;
+use codeyard_db_core::models::PullRequestReview;
+use codeyard_db_core::models::User;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 pub const MAX_COMMENT_PATH_BYTES: usize = 4 * 1024;
 
@@ -394,7 +397,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::request_
 // Internal callers supply owners derived from the recorded base's CODEOWNERS, never user input.
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::request_code_owner_reviews,
     crate::backend::db::sqlite::pull_requests::reviews::request_code_owner_reviews,
-    fn request_code_owner_reviews(pool: &DbPool, pull: &crate::backend::db::models::PullRequest, actor_id: i64, owners: &[i64]) -> Result<Vec<User>>);
+    fn request_code_owner_reviews(pool: &DbPool, pull: &codeyard_db_core::models::PullRequest, actor_id: i64, owners: &[i64]) -> Result<Vec<User>>);
 
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::remove_pull_request_reviewer,
     crate::backend::db::sqlite::pull_requests::reviews::remove_pull_request_reviewer,

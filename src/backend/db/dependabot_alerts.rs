@@ -1,11 +1,13 @@
 //! Local advisories and snapshot matches. No advisory read contacts an external feed.
-use super::{
-    advisories::{self, Advisory, Data, Refusal},
-    DbPool,
-};
+use super::advisories;
+use super::advisories::Advisory;
+use super::advisories::Data;
+use super::advisories::Refusal;
 use crate::backend::dependency_graph::{self, Package, Snapshot};
 use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 

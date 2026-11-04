@@ -32,7 +32,7 @@ async fn metadata(
 async fn document(
     state: &AppState,
     headers: &HeaderMap,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     meta: &db::pull_requests::records::StackMetadata,
     detail: bool,

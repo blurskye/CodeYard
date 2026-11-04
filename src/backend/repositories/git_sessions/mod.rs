@@ -1,7 +1,7 @@
 //! Shared Git sessions and live receive-hook authority for every transport.
 use crate::backend::ci::CiRuns;
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::DbPool;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -132,11 +132,11 @@ impl ReceiveCredential {
     pub(crate) async fn authorize(
         self,
         pool: &DbPool,
-        repo: &crate::backend::db::models::Repository,
+        repo: &codeyard_db_core::models::Repository,
         write: bool,
     ) -> Result<(
-        crate::backend::db::models::User,
-        crate::backend::db::models::AccessLevel,
+        codeyard_db_core::models::User,
+        codeyard_db_core::models::AccessLevel,
     )> {
         use crate::backend::{db, repositories::deploy_keys};
         anyhow::ensure!(

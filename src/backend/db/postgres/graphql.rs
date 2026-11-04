@@ -59,7 +59,7 @@ pub async fn reaction(
 pub async fn status(
     pool: &PgPool,
     id: i64,
-) -> Result<Option<crate::backend::db::models::CommitStatus>> {
+) -> Result<Option<codeyard_db_core::models::CommitStatus>> {
     Ok(sqlx::query_as("SELECT id,repo_id,sha,context,state,description,target_url,creator_id,created_at,created_at AS updated_at FROM commit_status_history WHERE id=$1")
         .bind(id)
         .fetch_optional(pool)

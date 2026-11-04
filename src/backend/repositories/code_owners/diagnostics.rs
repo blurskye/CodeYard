@@ -48,7 +48,7 @@ fn push(
 }
 
 pub async fn diagnose(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
     path: &str,
     text: &str,
@@ -130,7 +130,7 @@ pub async fn diagnose(
 }
 
 pub async fn load_diagnostics(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
     cluster: Option<&NodeContext>,
     commit: &str,

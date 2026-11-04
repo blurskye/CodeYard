@@ -6,12 +6,11 @@ use crate::support::{
     http_client::Client,
 };
 use axum::http::StatusCode;
-use codeyard::backend::db::{
-    self,
-    models::{OrgRole, Repository},
-    organizations::*,
-    repositories::creation::*,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations::*;
+use codeyard::backend::db::repositories::creation::*;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Repository;
 use codeyard_webui::{app::Page, pages::discovery};
 
 async fn org(f: &Database, owner: i64, name: &str) -> i64 {
@@ -55,9 +54,15 @@ async fn discovery_and_deletion(pg: bool) {
     let first_org = org(&f, owner, "first_org").await;
     let second_org = org(&f, owner, "second_org").await;
     applied(
-        add_organization_member(f.pool(), owner, first_org, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        add_organization_member(
+            f.pool(),
+            owner,
+            first_org,
+            member,
+            codeyard_db_core::models::OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let mut repositories = Vec::new();
     for number in 0..31 {
@@ -185,7 +190,7 @@ async fn discovery_and_deletion(pg: bool) {
             db::repositories::access::get_user_repo_access(f.pool(), member, repositories[0].id)
                 .await
                 .unwrap(),
-            db::models::AccessLevel::None
+            codeyard_db_core::models::AccessLevel::None
         );
         assert_eq!(
             count_organization_profile_repositories(f.pool(), first_org, Some(member))
@@ -293,7 +298,7 @@ async fn release_upload_cleanup(pg: bool) {
     let key = format!("uploads/{id}");
     let insert = "INSERT INTO files(id,user_id,filename,original_name,content_type,file_size,sha256_hex,object_key,reason,visibility,is_active,confirmed_at,upload_expires_at) VALUES($1,$2,'asset.bin','asset.bin','application/octet-stream',12,$3,$4,'release_asset','owner',FALSE,'2026-01-01T00:00:00.000000Z','2099-01-01T00:00:00.000000Z')";
     match f.pool() {
-        db::DbPool::Postgres(raw) => {
+        codeyard_db_core::DbPool::Postgres(raw) => {
             sqlx::query(insert)
                 .bind(id)
                 .bind(owner)
@@ -303,7 +308,7 @@ async fn release_upload_cleanup(pg: bool) {
                 .await
                 .unwrap();
         }
-        db::DbPool::Sqlite(raw) => {
+        codeyard_db_core::DbPool::Sqlite(raw) => {
             sqlx::query(insert)
                 .bind(id)
                 .bind(owner)
@@ -357,13 +362,13 @@ async fn release_upload_cleanup(pg: bool) {
     );
     let check = "SELECT (SELECT COUNT(*) FROM files WHERE id=$1), (SELECT COUNT(*) FROM pending_object_deletions WHERE object_key=$2)";
     let counts: (i64, i64) = match f.pool() {
-        db::DbPool::Postgres(raw) => sqlx::query_as(check)
+        codeyard_db_core::DbPool::Postgres(raw) => sqlx::query_as(check)
             .bind(id)
             .bind(&key)
             .fetch_one(raw)
             .await
             .unwrap(),
-        db::DbPool::Sqlite(raw) => sqlx::query_as(check)
+        codeyard_db_core::DbPool::Sqlite(raw) => sqlx::query_as(check)
             .bind(id)
             .bind(&key)
             .fetch_one(raw)
@@ -389,9 +394,15 @@ async fn postgres_accept_and_decline_have_one_winner() {
     let member = f.actor("invite_member").await;
     let organization = org(&f, owner, "invite_org").await;
     applied(
-        invite_organization_member(f.pool(), owner, organization, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        invite_organization_member(
+            f.pool(),
+            owner,
+            organization,
+            member,
+            codeyard_db_core::models::OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let raw = f.pg();
     let mut gate = raw.begin().await.unwrap();
@@ -434,9 +445,15 @@ async fn answers_use_the_chosen_offer(pg: bool) {
     let organization = org(&f, owner, "offer_org").await;
     let mut offers = Vec::new();
     for (email, role) in [
-        ("first@offer.test", OrgRole::Member),
-        ("second@offer.test", OrgRole::Member),
-        ("third@offer.test", OrgRole::Admin),
+        (
+            "first@offer.test",
+            codeyard_db_core::models::OrgRole::Member,
+        ),
+        (
+            "second@offer.test",
+            codeyard_db_core::models::OrgRole::Member,
+        ),
+        ("third@offer.test", codeyard_db_core::models::OrgRole::Admin),
     ] {
         let input = NewInvitation {
             user_id: None,

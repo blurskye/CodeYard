@@ -158,7 +158,7 @@ async fn configuration(
 }
 
 pub async fn generate_notes(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     actor: i64,
     repository_id: i64,

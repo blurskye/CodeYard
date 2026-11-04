@@ -3,14 +3,15 @@ use super::{
     roles::{repo, run},
 };
 use crate::support::{database::Database, http_client::Client, organizations::applied};
-use codeyard::backend::{
-    db::{
-        self,
-        models::{AccessLevel, OrgRole},
-        organizations::{self, settings as data, NewOrganization, OrganizationProfile},
-    },
-    identity::tokens::{self, TokenInput},
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations;
+use codeyard::backend::db::organizations::settings as data;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::identity::tokens;
+use codeyard::backend::identity::tokens::TokenInput;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
 const UPDATE: &str = "orgs/update";
 const GET: &str = "orgs/get";
@@ -36,7 +37,10 @@ async fn contract(pg: bool) {
             .unwrap(),
         ));
     }
-    for (user, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
+    for (user, role) in [
+        (member, codeyard_db_core::models::OrgRole::Member),
+        (delegated, codeyard_db_core::models::OrgRole::Admin),
+    ] {
         applied(
             organizations::add_organization_member(f.pool(), owner, orgs[0].id, user, role)
                 .await
@@ -49,7 +53,7 @@ async fn contract(pg: bool) {
             owner,
             orgs[1].id,
             member,
-            OrgRole::Member,
+            codeyard_db_core::models::OrgRole::Member,
         )
         .await
         .unwrap(),
@@ -188,19 +192,19 @@ async fn contract(pg: bool) {
         db::repositories::access::get_user_repo_access(f.pool(), member, second.id)
             .await
             .unwrap(),
-        AccessLevel::Read
+        codeyard_db_core::models::AccessLevel::Read
     );
     assert_eq!(
         db::repositories::access::get_user_repo_access(f.pool(), outsider, second.id)
             .await
             .unwrap(),
-        AccessLevel::None
+        codeyard_db_core::models::AccessLevel::None
     );
     assert_eq!(
         db::repositories::access::get_user_repo_access(f.pool(), member, foreign.id)
             .await
             .unwrap(),
-        AccessLevel::None
+        codeyard_db_core::models::AccessLevel::None
     );
     let (_, visible) = request(
         &router,
@@ -275,7 +279,7 @@ async fn contract(pg: bool) {
         db::repositories::access::get_user_repo_access(f.pool(), member, second.id)
             .await
             .unwrap(),
-        AccessLevel::Admin
+        codeyard_db_core::models::AccessLevel::Admin
     );
     request(
         &router,
@@ -316,7 +320,7 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap(),
-        AccessLevel::Admin
+        codeyard_db_core::models::AccessLevel::Admin
     );
     assert!(
         db::repositories::records::transfer_repository(
@@ -355,7 +359,7 @@ async fn contract(pg: bool) {
         db::repositories::access::get_user_repo_access(f.pool(), member, child.id)
             .await
             .unwrap(),
-        AccessLevel::Admin
+        codeyard_db_core::models::AccessLevel::Admin
     );
     let project = db::projects::create(
         f.pool(),

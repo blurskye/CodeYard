@@ -28,12 +28,12 @@ struct World {
     database: Database,
     _root: tempfile::TempDir,
     alice: Client,
-    repository: db::models::Repository,
+    repository: codeyard_db_core::models::Repository,
     alice_id: i64,
     bob_id: i64,
     base: String,
     head: String,
-    pull: db::models::PullRequest,
+    pull: codeyard_db_core::models::PullRequest,
 }
 
 impl World {
@@ -59,7 +59,7 @@ impl World {
             database.pool(),
             bob_id,
             repository.id,
-            db::models::AccessLevel::Write,
+            codeyard_db_core::models::AccessLevel::Write,
         )
         .await
         .unwrap();

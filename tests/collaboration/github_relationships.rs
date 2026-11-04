@@ -37,7 +37,7 @@ async fn relationships(pg: bool) {
         f.pool(),
         alice,
         repos[2].id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();

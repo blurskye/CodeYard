@@ -69,7 +69,7 @@ pub struct UpdatePullRequestRequest {
 fn validate_maintainer_edit(
     actor: i64,
     base: i64,
-    head: &db::models::Repository,
+    head: &codeyard_db_core::models::Repository,
     enabled: bool,
 ) -> Result<(), OperationError> {
     if enabled && !db::pull_requests::records::can_grant_maintainer_edit(actor, base, head) {
@@ -101,12 +101,12 @@ fn head_publish_error(number: i32, error: RepoError) -> OperationError {
 
 /// Repair a committed creation without borrowing its historical author's credentials.
 pub(crate) async fn repair_open_pull(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    repository: &db::models::Repository,
-    head_repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
+    head_repository: &codeyard_db_core::models::Repository,
     credential: crate::backend::repositories::store::PullHeadActor,
-    existing: &db::models::PullRequest,
+    existing: &codeyard_db_core::models::PullRequest,
     suppress_ci: bool,
 ) -> Result<(), OperationError> {
     let actor_id = credential.user;
@@ -131,7 +131,7 @@ pub(crate) async fn repair_open_pull(
         ci,
         actor_id,
         existing.id,
-        (!suppress_ci).then_some(db::models::AccessLevel::Owner),
+        (!suppress_ci).then_some(codeyard_db_core::models::AccessLevel::Owner),
     )
     .await
     .map_err(|_| OperationError::Opened { number })?;
@@ -147,7 +147,7 @@ pub(crate) async fn repair_open_pull(
             &current,
             actor_id,
             false,
-            db::models::AccessLevel::Owner,
+            codeyard_db_core::models::AccessLevel::Owner,
         )
         .await;
     }
@@ -156,14 +156,14 @@ pub(crate) async fn repair_open_pull(
 }
 
 pub async fn create_pull_request(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     actor_id: impl Into<crate::backend::repositories::store::PullHeadActor>,
     owner: String,
     repo: String,
     req: CreatePullRequestRequest,
-) -> Result<db::models::PullRequest, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
     let credential = actor_id.into();
     let actor_id = credential.user;
     let user = super::actor(pool, actor_id).await?;
@@ -443,7 +443,7 @@ pub async fn create_pull_request(
         ci,
         user.id,
         pull_request.id,
-        (!req.suppress_ci).then_some(crate::backend::db::models::AccessLevel::Owner),
+        (!req.suppress_ci).then_some(codeyard_db_core::models::AccessLevel::Owner),
     )
     .await
     .map_err(|_| OperationError::Opened {
@@ -553,7 +553,7 @@ pub async fn create_pull_request(
             &repository,
             &pull_request,
             user.id,
-            db::models::AccessLevel::Owner,
+            codeyard_db_core::models::AccessLevel::Owner,
             &payload,
         )
         .await;
@@ -563,13 +563,13 @@ pub async fn create_pull_request(
 }
 
 pub async fn update_pull_request(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     (repository_id, number): (i64, i32),
     req: UpdatePullRequestRequest,
-) -> Result<db::models::PullRequest, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
     let (repository, owner) = super::repository(pool, repository_id).await?;
     let repo = repository.name.clone();
 
@@ -763,7 +763,7 @@ pub async fn update_pull_request(
             ci,
             user.id,
             pull_request.id,
-            Some(crate::backend::db::models::AccessLevel::Owner),
+            Some(codeyard_db_core::models::AccessLevel::Owner),
         )
         .await
         .map_err(|_| OperationError::Updated { number })?;
@@ -823,7 +823,7 @@ pub async fn update_pull_request(
         &repository,
         &pull_request,
         user.id,
-        db::models::AccessLevel::Owner,
+        codeyard_db_core::models::AccessLevel::Owner,
         &payload,
     )
     .await;
@@ -833,8 +833,8 @@ pub async fn update_pull_request(
 
 /// The `changes` document of an `edited` event: the earlier value of each field that changed.
 fn edited_changes(
-    before: &db::models::PullRequest,
-    after: &db::models::PullRequest,
+    before: &codeyard_db_core::models::PullRequest,
+    after: &codeyard_db_core::models::PullRequest,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut changes = serde_json::Map::new();
     if before.title != after.title {
@@ -856,13 +856,13 @@ fn edited_changes(
 /// state and time it just read. A concurrent change, such as gh adding labels while it saves the
 /// title, moves that time, so read the pull request again and retry instead of refusing.
 pub async fn update_pull_request_latest(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     target: (i64, i32),
     mut req: UpdatePullRequestRequest,
-) -> Result<db::models::PullRequest, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
     for _ in 0..3 {
         let refused =
             match update_pull_request(pool, ci, broadcaster, actor_id, target, req.clone()).await {
@@ -890,8 +890,8 @@ pub async fn update_pull_request_latest(
 /// can change its base, and only to a branch of this repository other than its own head branch.
 async fn base_branch_commit(
     ci: &CiRuns,
-    repository: &db::models::Repository,
-    pull_request: &db::models::PullRequest,
+    repository: &codeyard_db_core::models::Repository,
+    pull_request: &codeyard_db_core::models::PullRequest,
     branch: &str,
 ) -> Result<String, OperationError> {
     if pull_request.state != "open" {
@@ -925,16 +925,16 @@ async fn base_branch_commit(
 /// The repository, the actor and the pull request a stack change works on. Only people who can
 /// write may change stacks, and a missing pull request is refused before anything changes.
 async fn stack_change_target(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor_id: i64,
     owner: &str,
     repo: &str,
     number: i32,
 ) -> Result<
     (
-        db::models::Repository,
-        db::models::User,
-        db::models::PullRequest,
+        codeyard_db_core::models::Repository,
+        codeyard_db_core::models::User,
+        codeyard_db_core::models::PullRequest,
     ),
     OperationError,
 > {
@@ -961,13 +961,13 @@ async fn stack_change_target(
 /// base branch, and merged pull requests keep the stack. A pull request in no stack is returned
 /// unchanged. The database reads the stack when it writes, not from an earlier read.
 pub async fn unstack_pull_request(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     actor_id: i64,
     owner: String,
     repo: String,
     number: i32,
-) -> Result<db::models::PullRequest, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
     let (repository, user, existing) =
         stack_change_target(pool, actor_id, &owner, &repo, number).await?;
     let unstacked = db::pull_requests::records::unstack_pull_requests(pool, user.id, existing.id)
@@ -1008,7 +1008,7 @@ pub async fn unstack_pull_request(
 /// Adds a pull request to the stack of the open pull request its base branch names, or starts a
 /// stack with that pull request. Nothing else adds a pull request to a stack.
 pub async fn unstack_named_stack(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     actor_id: i64,
     namespace: (String, String),
@@ -1048,7 +1048,7 @@ pub async fn unstack_named_stack(
 }
 
 pub async fn join_stack_batch(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     actor_id: i64,
     namespace: (String, String),
@@ -1107,13 +1107,13 @@ pub async fn join_stack_batch(
 }
 
 pub async fn join_stack(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     actor_id: i64,
     owner: String,
     repo: String,
     number: i32,
-) -> Result<db::models::PullRequest, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
     let (repository, user, existing) =
         stack_change_target(pool, actor_id, &owner, &repo, number).await?;
     let joined = db::pull_requests::records::join_pull_request_stack(pool, user.id, existing.id)
@@ -1197,25 +1197,25 @@ fn join_refusal(reason: db::pull_requests::records::StackRefusal) -> OperationEr
 }
 
 pub async fn mark_pull_request_ready(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     actor_id: i64,
     owner: String,
     repo: String,
     number: i32,
     expected: Option<&str>,
-) -> Result<db::models::PullRequest, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
     set_pull_request_draft(pool, ci, actor_id, (owner, repo, number), expected, false).await
 }
 
 pub async fn set_pull_request_draft(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     actor_id: i64,
     (owner, repo, number): (String, String, i32),
     expected: Option<&str>,
     is_draft: bool,
-) -> Result<db::models::PullRequest, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
     let user = super::actor(pool, actor_id).await?;
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -1290,7 +1290,7 @@ pub async fn set_pull_request_draft(
             &repository,
             &pull_request,
             user.id,
-            db::models::AccessLevel::Owner,
+            codeyard_db_core::models::AccessLevel::Owner,
             &payload,
         )
         .await;
@@ -1306,7 +1306,7 @@ pub async fn set_pull_request_draft(
         ci,
         user.id,
         pull_request.id,
-        Some(crate::backend::db::models::AccessLevel::Owner),
+        Some(codeyard_db_core::models::AccessLevel::Owner),
     )
     .await;
     if let Err(error) = &refreshed {
@@ -1337,7 +1337,7 @@ pub async fn set_pull_request_draft(
         &repository,
         &pull_request,
         user.id,
-        db::models::AccessLevel::Owner,
+        codeyard_db_core::models::AccessLevel::Owner,
         &payload,
     )
     .await;

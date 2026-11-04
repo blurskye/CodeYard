@@ -1,7 +1,8 @@
 //! Persisted repository activity, independent of webhook subscriptions.
-use super::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde_json::Value;
 use sqlx::FromRow;
 
@@ -22,7 +23,7 @@ pub struct EventEntry {
     #[sqlx(flatten)]
     pub event: Event,
     #[sqlx(flatten)]
-    pub repository: super::models::Repository,
+    pub repository: codeyard_db_core::models::Repository,
     pub owner: String,
 }
 /// The originating credential remains part of private activity selection.

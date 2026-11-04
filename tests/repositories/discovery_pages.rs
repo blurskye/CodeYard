@@ -57,7 +57,7 @@ async fn repo(
     name: &str,
     description: &str,
     private: bool,
-) -> db::models::Repository {
+) -> codeyard_db_core::models::Repository {
     lifecycle::provision(
         (site.database.pool(), None),
         site.root.path(),

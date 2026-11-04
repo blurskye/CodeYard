@@ -10,12 +10,13 @@ pub mod send;
 
 use crate::backend::api::http::config::public_origin;
 use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db::{self, DbPool};
+use crate::backend::db;
+use codeyard_db_core::DbPool;
 use tracing::warn;
 
 /// Mails a notification to its recipient, if the site has a mail server and the recipient has a
 /// verified address and wants email.
-pub async fn notify_user(pool: &DbPool, notification: &db::models::Notification) {
+pub async fn notify_user(pool: &DbPool, notification: &codeyard_db_core::models::Notification) {
     if !config::is_configured(pool).await {
         return;
     }
@@ -108,17 +109,17 @@ mod tests {
 
     async fn fixture() -> Fixture {
         let directory = tempfile::tempdir().unwrap();
-        let pool = db::init_db(&format!(
+        let pool = codeyard_db_core::init_db(&format!(
             "sqlite://{}",
             directory.path().join("test.db").display()
         ))
         .await
         .unwrap();
-        db::run_migrations(&pool).await.unwrap();
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let admin = db::users::accounts::create_user(&pool, "admin", Some("admin@example.com"))
             .await
             .unwrap();
-        let DbPool::Sqlite(raw) = &pool else {
+        let codeyard_db_core::DbPool::Sqlite(raw) = &pool else {
             unreachable!()
         };
         sqlx::query("UPDATE users SET is_admin=1, email_verified=1 WHERE id=?1")
@@ -361,7 +362,7 @@ mod tests {
     #[tokio::test]
     async fn the_outbox_claims_retries_gives_up_and_prunes() {
         let f = fixture().await;
-        let DbPool::Sqlite(raw) = &f.pool else {
+        let codeyard_db_core::DbPool::Sqlite(raw) = &f.pool else {
             unreachable!()
         };
         db::email::enqueue_email(&f.pool, "a@example.com", "One", "Body")

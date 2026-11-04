@@ -1,11 +1,11 @@
-use crate::backend::db::{
-    action_settings::Refusal,
-    deployment_reviews::{Input, Pending, Review},
-    deployments::Deployment,
-    environments::Reviewer,
-    models::CiRun,
-};
+use crate::backend::db::action_settings::Refusal;
+use crate::backend::db::deployment_reviews::Input;
+use crate::backend::db::deployment_reviews::Pending;
+use crate::backend::db::deployment_reviews::Review;
+use crate::backend::db::deployments::Deployment;
+use crate::backend::db::environments::Reviewer;
 use anyhow::{ensure, Result};
+use codeyard_db_core::models::CiRun;
 use sqlx::{SqliteConnection, SqlitePool};
 
 async fn can_review(

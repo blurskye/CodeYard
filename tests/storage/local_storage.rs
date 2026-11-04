@@ -7,20 +7,28 @@ use axum::{
     response::Response,
     Router,
 };
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    db::{
-        self, files as files_db,
-        models::{FileReason, FileVisibility},
-    },
-    files::{
-        self, ConfirmationError, DeleteError, DownloadCapability, DownloadError, DownloadTransport,
-        LocalUploadError, UploadCapability, UploadDeclaration, UploadError,
-    },
-    identity::avatars::{self, AvatarError},
-    storage::{local::LocalStore, s3::S3Config, ObjectStore, Upload},
-};
+use codeyard::backend::api::create_router;
+use codeyard::backend::app::AppState;
+use codeyard::backend::db;
+use codeyard::backend::db::files as files_db;
+use codeyard::backend::files;
+use codeyard::backend::files::ConfirmationError;
+use codeyard::backend::files::DeleteError;
+use codeyard::backend::files::DownloadCapability;
+use codeyard::backend::files::DownloadError;
+use codeyard::backend::files::DownloadTransport;
+use codeyard::backend::files::LocalUploadError;
+use codeyard::backend::files::UploadCapability;
+use codeyard::backend::files::UploadDeclaration;
+use codeyard::backend::files::UploadError;
+use codeyard::backend::identity::avatars;
+use codeyard::backend::identity::avatars::AvatarError;
+use codeyard::backend::storage::local::LocalStore;
+use codeyard::backend::storage::s3::S3Config;
+use codeyard::backend::storage::ObjectStore;
+use codeyard::backend::storage::Upload;
+use codeyard_db_core::models::FileReason;
+use codeyard_db_core::models::FileVisibility;
 use codeyard_webui::{
     app::{Page, PageEnvelope},
     pages::admin::storage as storage_view,
@@ -161,8 +169,8 @@ async fn confirmations_refuse_a_busy_file_instead_of_queueing_behind_a_put() {
         .reserve(
             b"hello",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     let file = files_db::get_file_by_id(&f.pool, reservation.file_id)
@@ -186,8 +194,8 @@ async fn put_waiters_on_one_file_leave_the_io_slots_free() {
         .reserve(
             b"hello",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     let file = files_db::get_file_by_id(&f.pool, reservation.file_id)
@@ -239,7 +247,12 @@ struct Login {
     csrf: String,
 }
 
-async fn login(pool: &db::DbPool, user: i64, session_fill: char, csrf_fill: char) -> Login {
+async fn login(
+    pool: &codeyard_db_core::DbPool,
+    user: i64,
+    session_fill: char,
+    csrf_fill: char,
+) -> Login {
     let session = session_fill.to_string().repeat(64);
     let csrf = csrf_fill.to_string().repeat(64);
     db::users::sessions::create_session(
@@ -264,7 +277,7 @@ async fn login(pool: &db::DbPool, user: i64, session_fill: char, csrf_fill: char
 struct Fixture {
     temporary: tempfile::TempDir,
     raw: sqlx::SqlitePool,
-    pool: db::DbPool,
+    pool: codeyard_db_core::DbPool,
     storage: Arc<ObjectStore>,
     owner: i64,
     stranger: i64,
@@ -287,8 +300,8 @@ impl Fixture {
             )
             .await
             .unwrap();
-        let pool: db::DbPool = raw.clone().into();
-        db::run_migrations(&pool)
+        let pool: codeyard_db_core::DbPool = raw.clone().into();
+        codeyard_db_core::run_migrations(&pool)
             .await
             .expect("native SQLite migrations are required, not success-skipped");
         let owner =
@@ -432,8 +445,8 @@ impl Fixture {
         self.store(
             bytes,
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await
     }
@@ -561,8 +574,8 @@ async fn stream_confirm_download_delete_and_reopen() {
         .reserve(
             &bytes,
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     let id = reservation.file_id;
@@ -731,8 +744,8 @@ async fn rejected_uploads_leave_nothing_behind_and_keep_the_reservation() {
         .reserve(
             b"goodgood",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     let id = reservation.file_id;
@@ -778,8 +791,8 @@ async fn rejected_uploads_leave_nothing_behind_and_keep_the_reservation() {
         .reserve(
             b"notimage",
             "image/png",
-            FileReason::Avatar,
-            FileVisibility::Public,
+            codeyard_db_core::models::FileReason::Avatar,
+            codeyard_db_core::models::FileVisibility::Public,
         )
         .await;
     assert_eq!(
@@ -832,8 +845,8 @@ async fn declarations_the_policy_refuses_are_never_recorded() {
         filename: "owned.bin",
         content_type: "text/plain",
         file_size: 1,
-        reason: FileReason::Other,
-        visibility: FileVisibility::Owner,
+        reason: codeyard_db_core::models::FileReason::Other,
+        visibility: codeyard_db_core::models::FileVisibility::Owner,
         sha256_hex: &sha,
     };
     // The limit for "other" is 10 MiB: exactly that is fine.
@@ -918,14 +931,14 @@ async fn declarations_the_policy_refuses_are_never_recorded() {
         (
             "public file that is not an avatar",
             UploadDeclaration {
-                visibility: FileVisibility::Public,
+                visibility: codeyard_db_core::models::FileVisibility::Public,
                 ..declaration()
             },
         ),
         (
             "avatar that is not an image",
             UploadDeclaration {
-                reason: FileReason::Avatar,
+                reason: codeyard_db_core::models::FileReason::Avatar,
                 ..declaration()
             },
         ),
@@ -957,8 +970,8 @@ async fn upload_quotas_count_reservations_and_reset_with_time() {
         fixture.try_reserve(
             bytes,
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
     };
     let first = reserve(b"four").await.unwrap();
@@ -975,7 +988,12 @@ async fn upload_quotas_count_reservations_and_reset_with_time() {
 
     // Each reason and each user has a separate budget.
     fixture
-        .reserve(PNG, "image/png", FileReason::Avatar, FileVisibility::Public)
+        .reserve(
+            PNG,
+            "image/png",
+            codeyard_db_core::models::FileReason::Avatar,
+            codeyard_db_core::models::FileVisibility::Public,
+        )
         .await;
     files::reserve_and_sign_upload(
         &fixture.pool,
@@ -985,8 +1003,8 @@ async fn upload_quotas_count_reservations_and_reset_with_time() {
             filename: "theirs.bin",
             content_type: "text/plain",
             file_size: 1,
-            reason: FileReason::Other,
-            visibility: FileVisibility::Owner,
+            reason: codeyard_db_core::models::FileReason::Other,
+            visibility: codeyard_db_core::models::FileVisibility::Owner,
             sha256_hex: &digest(b"x"),
         },
     )
@@ -1033,7 +1051,12 @@ async fn reservations_recheck_account_state_and_policy() {
             .unwrap();
         assert_eq!(
             fixture
-                .try_reserve(b"x", "text/plain", FileReason::Other, FileVisibility::Owner)
+                .try_reserve(
+                    b"x",
+                    "text/plain",
+                    codeyard_db_core::models::FileReason::Other,
+                    codeyard_db_core::models::FileVisibility::Owner
+                )
                 .await
                 .unwrap_err(),
             UploadError::Invalid
@@ -1060,7 +1083,12 @@ async fn reservations_recheck_account_state_and_policy() {
         .unwrap();
     assert_eq!(
         fixture
-            .try_reserve(b"x", "text/plain", FileReason::Other, FileVisibility::Owner)
+            .try_reserve(
+                b"x",
+                "text/plain",
+                codeyard_db_core::models::FileReason::Other,
+                codeyard_db_core::models::FileVisibility::Owner
+            )
             .await
             .unwrap_err(),
         UploadError::AdmissionUnavailable
@@ -1075,8 +1103,8 @@ async fn concurrent_uploads_and_confirmations_leave_one_correct_active_file() {
             .reserve(
                 b"immutable",
                 "text/plain",
-                FileReason::Other,
-                FileVisibility::Owner,
+                codeyard_db_core::models::FileReason::Other,
+                codeyard_db_core::models::FileVisibility::Owner,
             )
             .await,
     );
@@ -1155,8 +1183,8 @@ async fn paused_http_put_serializes_delete_confirm_and_expiry_per_file() {
         .reserve(
             b"paused!",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     let (send, receive) = tokio::sync::mpsc::channel::<Result<bytes::Bytes, std::io::Error>>(2);
@@ -1215,8 +1243,8 @@ async fn paused_http_put_serializes_delete_confirm_and_expiry_per_file() {
         .reserve(
             b"confirm",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     // The deleted file's bytes are still kept, so wait for this PUT's own file.
@@ -1267,8 +1295,8 @@ async fn paused_http_put_serializes_delete_confirm_and_expiry_per_file() {
         .reserve(
             b"expired",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     let stored_before = fixture.stored_names().len();
@@ -1311,8 +1339,8 @@ async fn expired_reservations_are_refused_and_swept_with_their_bytes() {
         .reserve(
             b"stale",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     fixture.put(&stale, b"stale", "text/plain").await.unwrap();
@@ -1320,16 +1348,16 @@ async fn expired_reservations_are_refused_and_swept_with_their_bytes() {
         .reserve(
             b"unsent",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     let live = fixture
         .reserve(
             b"live",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     let active = fixture.activate(b"keeper").await;
@@ -1397,7 +1425,12 @@ async fn the_expiry_sweep_works_through_a_backlog_in_batches() {
     let fixture = Fixture::open().await;
     for _ in 0..101 {
         fixture
-            .reserve(b"x", "text/plain", FileReason::Other, FileVisibility::Owner)
+            .reserve(
+                b"x",
+                "text/plain",
+                codeyard_db_core::models::FileReason::Other,
+                codeyard_db_core::models::FileVisibility::Owner,
+            )
             .await;
     }
     sqlx::query("UPDATE files SET upload_expires_at=?1")
@@ -1437,7 +1470,12 @@ async fn due_object_cleanup_progresses_during_a_full_expired_batch() {
 
     for _ in 0..100 {
         fixture
-            .reserve(b"x", "text/plain", FileReason::Other, FileVisibility::Owner)
+            .reserve(
+                b"x",
+                "text/plain",
+                codeyard_db_core::models::FileReason::Other,
+                codeyard_db_core::models::FileVisibility::Owner,
+            )
             .await;
     }
     sqlx::query("UPDATE files SET upload_expires_at=?1")
@@ -1493,8 +1531,8 @@ async fn private_files_stay_with_their_owner_and_only_avatars_are_public() {
             .try_reserve(
                 b"x",
                 "text/plain",
-                FileReason::Other,
-                FileVisibility::Public
+                codeyard_db_core::models::FileReason::Other,
+                codeyard_db_core::models::FileVisibility::Public
             )
             .await
             .unwrap_err(),
@@ -1503,7 +1541,12 @@ async fn private_files_stay_with_their_owner_and_only_avatars_are_public() {
 
     // An avatar declared public can be fetched by anyone, logged in or not.
     let avatar = fixture
-        .store(PNG, "image/png", FileReason::Avatar, FileVisibility::Public)
+        .store(
+            PNG,
+            "image/png",
+            codeyard_db_core::models::FileReason::Avatar,
+            codeyard_db_core::models::FileVisibility::Public,
+        )
         .await;
     for actor in [None, Some(fixture.stranger), Some(fixture.owner)] {
         assert_eq!(fixture.bytes(avatar, actor).await.unwrap(), PNG);
@@ -1524,14 +1567,19 @@ async fn private_files_stay_with_their_owner_and_only_avatars_are_public() {
 
     // A user avatar or organization avatar in use is public too.
     let quiet = fixture
-        .store(PNG, "image/png", FileReason::Avatar, FileVisibility::Owner)
+        .store(
+            PNG,
+            "image/png",
+            codeyard_db_core::models::FileReason::Avatar,
+            codeyard_db_core::models::FileVisibility::Owner,
+        )
         .await;
     let organization = fixture
         .store(
             PNG,
             "image/png",
-            FileReason::OrgAvatar,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::OrgAvatar,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     for file in [quiet, organization] {
@@ -1605,8 +1653,8 @@ async fn object_names_cannot_leave_the_object_directory() {
         .reserve(
             b"payload",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     let path = fixture.object_path(reservation.file_id);
@@ -1670,8 +1718,8 @@ async fn busy_downloads_are_refused_and_never_block_uploads() {
         .reserve(
             b"retry",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     fixture
@@ -1710,8 +1758,8 @@ async fn busy_downloads_are_refused_and_never_block_uploads() {
         .reserve(
             b"other",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     files::delete_owned_file(
@@ -1796,8 +1844,8 @@ async fn uploads_and_confirmations_are_refused_as_busy_while_every_storage_slot_
         .reserve(
             b"queued",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     let slots = take_storage_slots(&fixture.storage);
@@ -1839,8 +1887,8 @@ async fn a_stalled_upload_is_cut_off_when_its_window_ends() {
         .reserve(
             b"stalled!",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     // Two seconds of the window are left.
@@ -1893,8 +1941,8 @@ async fn upload_route_needs_a_session_a_csrf_token_and_the_owner() {
         .reserve(
             b"endpoint",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     let owner = &fixture.login;
@@ -2035,8 +2083,8 @@ async fn a_form_content_type_does_not_limit_a_streamed_upload() {
         .reserve(
             &bytes,
             "application/x-www-form-urlencoded",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     let mut upload = put_content(
@@ -2382,8 +2430,8 @@ async fn uploaded_files_download_as_attachments_except_public_avatar_images() {
             filename: "../../evil\"name\r\n.html",
             content_type: "text/html",
             file_size: page.len() as i64,
-            reason: FileReason::Other,
-            visibility: FileVisibility::Owner,
+            reason: codeyard_db_core::models::FileReason::Other,
+            visibility: codeyard_db_core::models::FileVisibility::Owner,
             sha256_hex: &digest(page),
         },
     )
@@ -2431,7 +2479,12 @@ async fn uploaded_files_download_as_attachments_except_public_avatar_images() {
 
     // A public avatar is the one thing shown inline, to anyone.
     let avatar = fixture
-        .store(PNG, "image/png", FileReason::Avatar, FileVisibility::Public)
+        .store(
+            PNG,
+            "image/png",
+            codeyard_db_core::models::FileReason::Avatar,
+            codeyard_db_core::models::FileVisibility::Public,
+        )
         .await;
     let public = call(
         &router,
@@ -2597,8 +2650,8 @@ async fn local_storage_io_failures_are_retryable_and_public_errors_are_sanitized
         .reserve(
             b"retry",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     let parent = fixture
@@ -2710,8 +2763,8 @@ async fn expiry_failure_keeps_the_row_and_object_for_retry() {
         .reserve(
             b"stale",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     fixture
@@ -2824,8 +2877,8 @@ async fn bytes_that_land_after_their_upload_deadline_stay_queued_for_the_grace_p
         .reserve(
             b"late",
             "text/plain",
-            FileReason::Other,
-            FileVisibility::Owner,
+            codeyard_db_core::models::FileReason::Other,
+            codeyard_db_core::models::FileVisibility::Owner,
         )
         .await;
     let key = format!("uploads/{}", stale.file_id);
@@ -2954,10 +3007,20 @@ async fn object_removal_is_refused_while_every_storage_slot_is_busy() {
 async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
     let fixture = Fixture::open().await;
     let old = fixture
-        .store(PNG, "image/png", FileReason::Avatar, FileVisibility::Public)
+        .store(
+            PNG,
+            "image/png",
+            codeyard_db_core::models::FileReason::Avatar,
+            codeyard_db_core::models::FileVisibility::Public,
+        )
         .await;
     let new = fixture
-        .store(PNG, "image/png", FileReason::Avatar, FileVisibility::Public)
+        .store(
+            PNG,
+            "image/png",
+            codeyard_db_core::models::FileReason::Avatar,
+            codeyard_db_core::models::FileVisibility::Public,
+        )
         .await;
     assert_eq!(
         db::users::accounts::set_user_avatar(
@@ -3028,10 +3091,20 @@ async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
 async fn a_banned_account_keeps_its_picture() {
     let fixture = Fixture::open().await;
     let old = fixture
-        .store(PNG, "image/png", FileReason::Avatar, FileVisibility::Public)
+        .store(
+            PNG,
+            "image/png",
+            codeyard_db_core::models::FileReason::Avatar,
+            codeyard_db_core::models::FileVisibility::Public,
+        )
         .await;
     let new = fixture
-        .store(PNG, "image/png", FileReason::Avatar, FileVisibility::Public)
+        .store(
+            PNG,
+            "image/png",
+            codeyard_db_core::models::FileReason::Avatar,
+            codeyard_db_core::models::FileVisibility::Public,
+        )
         .await;
     // The request was authenticated before the ban, so it still holds the account as it was.
     let user = db::users::accounts::get_user_by_id(&fixture.pool, fixture.owner)

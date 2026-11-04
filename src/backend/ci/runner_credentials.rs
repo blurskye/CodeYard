@@ -108,7 +108,10 @@ pub fn remove_hash(token: &str) -> String {
     hash.update(token.as_bytes());
     hex::encode(hash.finalize())
 }
-pub async fn ticket(pool: &db::DbPool, context: Option<&NodeContext>) -> Result<JoinTicket> {
+pub async fn ticket(
+    pool: &codeyard_db_core::DbPool,
+    context: Option<&NodeContext>,
+) -> Result<JoinTicket> {
     let core = context.context("runner registration requires a serving PostgreSQL cluster core")?;
     let node = db::cluster::get_node_by_id(pool, core.node_id)
         .await?

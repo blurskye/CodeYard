@@ -56,7 +56,11 @@ fn item_key(item: AssignedItem) -> (bool, i64) {
     }
 }
 
-pub(super) async fn find(pool: &db::DbPool, repo_id: i64, id: i64) -> Result<Comment> {
+pub(super) async fn find(
+    pool: &codeyard_db_core::DbPool,
+    repo_id: i64,
+    id: i64,
+) -> Result<Comment> {
     if id < 2 {
         return Err(Error::missing());
     }
@@ -105,8 +109,8 @@ pub(super) async fn find(pool: &db::DbPool, repo_id: i64, id: i64) -> Result<Com
 }
 
 pub(super) async fn document(
-    pool: &db::DbPool,
-    repo: &db::models::Repository,
+    pool: &codeyard_db_core::DbPool,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     comment: &Comment,
 ) -> Result<Value> {
@@ -117,8 +121,8 @@ pub(super) async fn document(
 }
 
 async fn documents(
-    pool: &db::DbPool,
-    repo: &db::models::Repository,
+    pool: &codeyard_db_core::DbPool,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     comments: &[Comment],
 ) -> Result<Vec<Value>> {
@@ -243,7 +247,7 @@ fn representation(headers: &HeaderMap) -> Representation {
 async fn represent(
     state: &AppState,
     headers: &HeaderMap,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     mut values: Vec<Value>,
 ) -> Result<Vec<Value>> {
@@ -315,7 +319,7 @@ async fn represent(
 async fn response_document(
     state: &AppState,
     headers: &HeaderMap,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     comment: &Comment,
 ) -> Result<Value> {

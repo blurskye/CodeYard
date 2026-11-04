@@ -3,7 +3,8 @@ use super::{
     wire::*,
     RpcHandler,
 };
-use crate::backend::db::{self, cluster::writes as journal, models::WriteRecord};
+use crate::backend::db;
+use crate::backend::db::cluster::writes as journal;
 use crate::backend::{
     ci::{CiConfig, CiRuns},
     cluster::{link::Link, transport, NodeContext},
@@ -11,6 +12,7 @@ use crate::backend::{
     repositories::store::{GitService, GitStreams, RepoError, RepoStore},
 };
 use anyhow::{ensure, Context, Result};
+use codeyard_db_core::models::WriteRecord;
 use serde_json::Value;
 use std::sync::Arc;
 use std::{
@@ -214,7 +216,7 @@ pub(super) struct WriteLimits {
 }
 
 impl WriteLimits {
-    pub(super) async fn load(pool: &db::DbPool) -> Result<Self> {
+    pub(super) async fn load(pool: &codeyard_db_core::DbPool) -> Result<Self> {
         let settings =
             tokio::time::timeout(Duration::from_secs(5), journal::write_settings(pool)).await??;
         ensure!(settings.write_quorum.is_some(), "write quorum is disabled");

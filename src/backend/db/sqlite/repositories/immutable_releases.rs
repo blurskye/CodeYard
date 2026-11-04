@@ -1,12 +1,10 @@
-use crate::backend::{
-    db::{
-        models::Release,
-        releases::ReleaseRefusal,
-        repositories::immutable_releases::{Publication, Refusal, Reservation},
-    },
-    repositories::releases::integrity::Artifact,
-};
+use crate::backend::db::releases::ReleaseRefusal;
+use crate::backend::db::repositories::immutable_releases::Publication;
+use crate::backend::db::repositories::immutable_releases::Refusal;
+use crate::backend::db::repositories::immutable_releases::Reservation;
+use crate::backend::repositories::releases::integrity::Artifact;
 use anyhow::{ensure, Result};
+use codeyard_db_core::models::Release;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 // Enforced when the repository opts in or its organization enforces it for all or selected
 // repositories. A repository setting never removes an organization's enforcement.

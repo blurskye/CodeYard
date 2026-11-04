@@ -215,7 +215,7 @@ async fn account_writes(pg: bool) {
         db::cluster::set_node_status(f.pool(), authority(), "test-node", "revoked")
             .await
             .unwrap(),
-        db::models::NodeStatusChange::Changed { .. }
+        codeyard_db_core::models::NodeStatusChange::Changed { .. }
     ));
     db::users::sessions::delete_session(f.pool(), &signed_in.session_id)
         .await
@@ -229,7 +229,7 @@ async fn account_writes(pg: bool) {
         db::cluster::set_node_status(f.pool(), authority(), "test-node", "active")
             .await
             .unwrap(),
-        db::models::NodeStatusChange::Denied
+        codeyard_db_core::models::NodeStatusChange::Denied
     );
     f.execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[actor])
         .await;

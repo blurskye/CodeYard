@@ -1,23 +1,21 @@
 //! Commit association reads share the native ancestry query and saved discussion metadata.
 use super::{contents::store_error, pagination::Pagination, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        models::{PullRequest, Repository, User},
-    },
-    repositories::{
-        access,
-        commit_pulls::{self, AssociationError, CommitPullQuery},
-    },
-    webhooks::payloads,
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::repositories::access;
+use crate::backend::repositories::commit_pulls;
+use crate::backend::repositories::commit_pulls::AssociationError;
+use crate::backend::repositories::commit_pulls::CommitPullQuery;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::HeaderMap,
     response::Response,
     routing::{get, MethodRouter},
 };
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 

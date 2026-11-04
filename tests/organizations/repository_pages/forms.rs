@@ -1,11 +1,10 @@
 use super::fixture::{applied, Actor, Fixture, Reply};
 use axum::http::StatusCode;
 use codeyard::backend::cluster::NodeKey;
-use codeyard::backend::db::{
-    self,
-    models::{AccessLevel, OrgRole},
-    organizations as orgs,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations as orgs;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
 use codeyard_webui::{
     app::{Page, PageEnvelope},
     bootstrap::{Bootstrap, BOOTSTRAP_ID},
@@ -83,7 +82,7 @@ pub async fn contracts(f: &Fixture) {
                 f.database.pool(),
                 f.writer.id,
                 repo.id,
-                AccessLevel::Write,
+                codeyard_db_core::models::AccessLevel::Write,
             )
             .await
             .unwrap();
@@ -353,15 +352,27 @@ pub async fn revocation(f: &Fixture) {
         f.org
     );
     applied(
-        orgs::update_organization_member_role(pool, f.owner.id, f.org, f.admin.id, OrgRole::Member)
-            .await
-            .unwrap(),
+        orgs::update_organization_member_role(
+            pool,
+            f.owner.id,
+            f.org,
+            f.admin.id,
+            codeyard_db_core::models::OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     stale_refusal(f, &f.admin, "after_demotion").await;
     applied(
-        orgs::update_organization_member_role(pool, f.owner.id, f.org, f.admin.id, OrgRole::Admin)
-            .await
-            .unwrap(),
+        orgs::update_organization_member_role(
+            pool,
+            f.owner.id,
+            f.org,
+            f.admin.id,
+            codeyard_db_core::models::OrgRole::Admin,
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(
         f.get(&f.admin, "/new", true)
@@ -379,9 +390,15 @@ pub async fn revocation(f: &Fixture) {
     );
     stale_refusal(f, &f.admin, "after_removal").await;
     applied(
-        orgs::add_organization_member(pool, f.owner.id, f.org, f.admin.id, OrgRole::Admin)
-            .await
-            .unwrap(),
+        orgs::add_organization_member(
+            pool,
+            f.owner.id,
+            f.org,
+            f.admin.id,
+            codeyard_db_core::models::OrgRole::Admin,
+        )
+        .await
+        .unwrap(),
     );
     for column in ["is_banned", "must_change_password"] {
         assert_eq!(
@@ -535,9 +552,14 @@ pub async fn stale_settings_forms(f: &Fixture) {
         .created("personal_owner", "settings_old", f.owner.id, None, false)
         .await;
     let id = original.id.to_string();
-    db::repositories::access::grant_repo_access(pool, f.member.id, original.id, AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        pool,
+        f.member.id,
+        original.id,
+        codeyard_db_core::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     let hidden = format!("name=\"repository_id\" value=\"{id}\"");
     // General settings, merge methods, rename, delete, both collaborator forms and the branch
     // protection add form carry the ID, spread over the settings sections. The transfer form
@@ -575,7 +597,7 @@ pub async fn stale_settings_forms(f: &Fixture) {
         pool,
         f.member.id,
         replacement.id,
-        AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -659,7 +681,10 @@ pub async fn stale_settings_forms(f: &Fixture) {
             .unwrap();
         assert_eq!(collaborators.len(), 1);
         assert_eq!(collaborators[0].user_id, f.member.id);
-        assert_eq!(collaborators[0].level(), AccessLevel::Read);
+        assert_eq!(
+            collaborators[0].level(),
+            codeyard_db_core::models::AccessLevel::Read
+        );
     }
     // Fresh forms still grant and remove access to the repository whose ID they carry.
     let fresh_id = replacement.id.to_string();
@@ -678,7 +703,7 @@ pub async fn stale_settings_forms(f: &Fixture) {
         db::repositories::access::get_user_repo_access(pool, f.admin.id, replacement.id)
             .await
             .unwrap(),
-        AccessLevel::Write
+        codeyard_db_core::models::AccessLevel::Write
     );
     owner_post(
         f,
@@ -695,7 +720,7 @@ pub async fn stale_settings_forms(f: &Fixture) {
         db::repositories::access::get_user_repo_access(pool, f.admin.id, replacement.id)
             .await
             .unwrap(),
-        AccessLevel::None
+        codeyard_db_core::models::AccessLevel::None
     );
     let renamed = db::repositories::records::get_repository_by_id(pool, original.id)
         .await
@@ -896,9 +921,14 @@ pub async fn repository_pages(f: &Fixture) {
         &[],
     )
     .unwrap();
-    db::repositories::access::grant_repo_access(pool, f.member.id, source.id, AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        pool,
+        f.member.id,
+        source.id,
+        codeyard_db_core::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     let issues = "/personal_owner/fork_private/issues";
     let fork_path = "/personal_owner/fork_private/_forms/fork";
     let fork_form = "action=\"/personal_owner/fork_private/_forms/fork\"";

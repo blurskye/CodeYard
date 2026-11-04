@@ -266,16 +266,16 @@ async fn client(key: &cluster::NodeKey) -> NodeContext {
 }
 
 // Worker transport and lifecycle tests below use an act CLI test executable.
-async fn act_engine(pool: &db::DbPool, repo: i64) {
+async fn act_engine(pool: &codeyard_db_core::DbPool, repo: i64) {
     match pool {
-        db::DbPool::Postgres(raw) => {
+        codeyard_db_core::DbPool::Postgres(raw) => {
             sqlx::query("UPDATE repositories SET actions_engine='act' WHERE id=$1")
                 .bind(repo)
                 .execute(raw)
                 .await
                 .unwrap();
         }
-        db::DbPool::Sqlite(raw) => {
+        codeyard_db_core::DbPool::Sqlite(raw) => {
             sqlx::query("UPDATE repositories SET actions_engine='act' WHERE id=$1")
                 .bind(repo)
                 .execute(raw)
@@ -286,12 +286,12 @@ async fn act_engine(pool: &db::DbPool, repo: i64) {
 }
 
 async fn enqueue(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: i64,
     owner: i64,
     sha: &str,
     blob: &str,
-) -> db::models::CiRun {
+) -> codeyard_db_core::models::CiRun {
     act_engine(pool, repo).await;
     db::ci::enqueue_ci_run(
         pool,
@@ -1078,7 +1078,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     .await
     .unwrap();
     let fork = enqueue(pool, repo.id, owner.id, &revision.sha, &blob).await;
-    if let db::DbPool::Postgres(pg) = pool {
+    if let codeyard_db_core::DbPool::Postgres(pg) = pool {
         sqlx::query("UPDATE ci_runs SET is_fork = TRUE WHERE id = $1")
             .bind(fork.id)
             .execute(pg)
@@ -1433,7 +1433,7 @@ async fn the_servers_own_workers_take_self_hosted_jobs_in_local_mode() {
         // What admission stores for `runs-on: self-hosted`.
         let labels = r#"["self-hosted"]"#;
         match pool {
-            db::DbPool::Postgres(raw) => {
+            codeyard_db_core::DbPool::Postgres(raw) => {
                 sqlx::query("UPDATE ci_runs SET runner_labels=$1 WHERE id=$2")
                     .bind(labels)
                     .bind(run.id)
@@ -1441,7 +1441,7 @@ async fn the_servers_own_workers_take_self_hosted_jobs_in_local_mode() {
                     .await
                     .unwrap();
             }
-            db::DbPool::Sqlite(raw) => {
+            codeyard_db_core::DbPool::Sqlite(raw) => {
                 sqlx::query("UPDATE ci_runs SET runner_labels=$1 WHERE id=$2")
                     .bind(labels)
                     .bind(run.id)
@@ -1760,13 +1760,13 @@ fn nonworker_roles_without_database_are_refused_before_creating_state() {
 }
 
 async fn http_ci(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     config: CiConfig,
 ) -> (
     tempfile::TempDir,
     codeyard::backend::app::AppState,
-    db::models::User,
-    db::models::Repository,
+    codeyard_db_core::models::User,
+    codeyard_db_core::models::Repository,
 ) {
     let db::users::transitions::SetupClaim::Completed(owner) =
         db::users::transitions::complete_setup(
@@ -2008,7 +2008,7 @@ async fn automatic_deployments_use_yaml_environments_and_explicit_targets_still_
             &pull,
             owner.id,
             false,
-            codeyard::backend::db::models::AccessLevel::Owner,
+            codeyard_db_core::models::AccessLevel::Owner,
         )
         .await
         .unwrap();
@@ -2117,7 +2117,7 @@ async fn merge_fixture_pull(client: &pulls::Client, number: i64) {
 
 /// The queued pull request runs for pull request `pull_id`, on `branch`, for the commit `head`.
 async fn queued_pull_request_runs(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     pull_id: i64,
     branch: &str,
@@ -2139,7 +2139,7 @@ async fn queued_pull_request_runs(
 
 /// A stacked pull request moves onto the base its bottom layer merged into. The workflows that run
 /// on that base are then queued for its head, which did not change.
-async fn retarget_queues_pull_request_workflows(pool: &db::DbPool) {
+async fn retarget_queues_pull_request_workflows(pool: &codeyard_db_core::DbPool) {
     let (_root, state, owner, repo) = http_ci(pool, CiConfig::default()).await;
     let router = codeyard::backend::api::create_router(state);
     let client = pulls::Client::login(&router, pool, owner.id).await;
@@ -2184,7 +2184,7 @@ async fn retarget_queues_pull_request_workflows(pool: &db::DbPool) {
 
 /// An explicit base change queues the workflows that run on the new base for the unchanged head.
 /// A base that no workflow lists queues nothing.
-async fn base_change_queues_pull_request_workflows(pool: &db::DbPool) {
+async fn base_change_queues_pull_request_workflows(pool: &codeyard_db_core::DbPool) {
     let (_root, state, owner, repo) = http_ci(pool, CiConfig::default()).await;
     let router = codeyard::backend::api::create_router(state);
     let client = pulls::Client::login(&router, pool, owner.id).await;
@@ -2254,7 +2254,7 @@ async fn postgres_retarget_queues_pull_request_workflows() {
 /// A layer of a stack can be dispatched by hand on the trunk its workflow declares. The dispatch
 /// names the layer by its head commit, as the queueing does. The workflow applies to `main` only, so
 /// the layer's own base is refused.
-async fn manual_dispatch_upper_layer_contract(pool: &db::DbPool) {
+async fn manual_dispatch_upper_layer_contract(pool: &codeyard_db_core::DbPool) {
     let (_root, state, owner, repo) = http_ci(pool, CiConfig::default()).await;
     let router = codeyard::backend::api::create_router(state);
     let client = pulls::Client::login(&router, pool, owner.id).await;
@@ -2386,7 +2386,7 @@ async fn actions_history_survives_a_stalled_git_preflight() {
     )
     .await
     .unwrap();
-    let db::DbPool::Postgres(pg) = fixture.pool() else {
+    let codeyard_db_core::DbPool::Postgres(pg) = fixture.pool() else {
         unreachable!()
     };
     sqlx::query("UPDATE repositories SET storage_node_id=$1 WHERE id=$2")
@@ -2629,7 +2629,7 @@ fn worker_shutdown_waits_for_descendant_and_workspace_cleanup() {
         });
 }
 
-async fn shutdown_with_blocked_workspace_cleanup(pool: &db::DbPool) {
+async fn shutdown_with_blocked_workspace_cleanup(pool: &codeyard_db_core::DbPool) {
     let owner = db::users::accounts::create_user(pool, "shutdown_owner", None)
         .await
         .unwrap();
@@ -2748,7 +2748,7 @@ async fn shutdown_with_blocked_workspace_cleanup(pool: &db::DbPool) {
     .unwrap();
     assert!(workspace.join("home/dependencies/artifact").exists());
     assert!(!stopping.is_finished());
-    if matches!(pool, db::DbPool::Sqlite(_)) {
+    if matches!(pool, codeyard_db_core::DbPool::Sqlite(_)) {
         let error = tokio::time::timeout(Duration::from_secs(35), &mut stopping)
             .await
             .unwrap()
@@ -2917,7 +2917,7 @@ async fn database_workers_recheck_membership_before_consuming_runs() {
             } else if state == "key-changed" {
                 let replacement = cluster::NodeKey::generate().public_hex();
                 match pool {
-                    db::DbPool::Postgres(pg) => {
+                    codeyard_db_core::DbPool::Postgres(pg) => {
                         sqlx::query("UPDATE nodes SET public_key = $1 WHERE id = $2")
                             .bind(&replacement)
                             .bind(node.id)
@@ -2925,7 +2925,7 @@ async fn database_workers_recheck_membership_before_consuming_runs() {
                             .await
                             .unwrap();
                     }
-                    db::DbPool::Sqlite(lite) => {
+                    codeyard_db_core::DbPool::Sqlite(lite) => {
                         sqlx::query("UPDATE nodes SET public_key = ?1 WHERE id = ?2")
                             .bind(&replacement)
                             .bind(node.id)
@@ -2952,7 +2952,7 @@ async fn database_workers_recheck_membership_before_consuming_runs() {
                 .unwrap_err();
                 if state == "key-changed" {
                     match pool {
-                        db::DbPool::Postgres(pg) => {
+                        codeyard_db_core::DbPool::Postgres(pg) => {
                             sqlx::query("UPDATE nodes SET public_key = $1 WHERE id = $2")
                                 .bind(key.public_hex())
                                 .bind(node.id)
@@ -2960,7 +2960,7 @@ async fn database_workers_recheck_membership_before_consuming_runs() {
                                 .await
                                 .unwrap();
                         }
-                        db::DbPool::Sqlite(lite) => {
+                        codeyard_db_core::DbPool::Sqlite(lite) => {
                             sqlx::query("UPDATE nodes SET public_key = ?1 WHERE id = ?2")
                                 .bind(key.public_hex())
                                 .bind(node.id)
@@ -3167,7 +3167,7 @@ async fn cleanup_keeps_heartbeating_and_a_recovered_slot_claims_more_work() {
             .unwrap(),
         Some(1)
     );
-    let db::DbPool::Postgres(pg) = fixture.pool() else {
+    let codeyard_db_core::DbPool::Postgres(pg) = fixture.pool() else {
         unreachable!()
     };
     sqlx::query("UPDATE ci_runs SET heartbeat_at = NOW() - INTERVAL '1 hour' WHERE id=$1")
@@ -3432,9 +3432,9 @@ async fn a_run_whose_commit_is_missing_fails_and_frees_its_slot() {
 
 /// Sets a run's stored log totals directly, so a test can start a run near its limit
 /// without writing the limit's worth of lines.
-async fn set_log_totals(pool: &db::DbPool, run: i64, lines: i64, bytes: i64) {
+async fn set_log_totals(pool: &codeyard_db_core::DbPool, run: i64, lines: i64, bytes: i64) {
     match pool {
-        db::DbPool::Postgres(native) => {
+        codeyard_db_core::DbPool::Postgres(native) => {
             sqlx::query("UPDATE ci_runs SET log_lines = $2, log_bytes = $3 WHERE id = $1")
                 .bind(run)
                 .bind(lines)
@@ -3443,7 +3443,7 @@ async fn set_log_totals(pool: &db::DbPool, run: i64, lines: i64, bytes: i64) {
                 .await
                 .unwrap();
         }
-        db::DbPool::Sqlite(native) => {
+        codeyard_db_core::DbPool::Sqlite(native) => {
             sqlx::query("UPDATE ci_runs SET log_lines = ?2, log_bytes = ?3 WHERE id = ?1")
                 .bind(run)
                 .bind(lines)
@@ -3516,14 +3516,14 @@ async fn binary_logs_are_printable_and_counted_before_limits_on_both_engines() {
             .map(|line| (line.stage.len() + line.line.len()) as i64)
             .sum();
         let totals: (i64, i64) = match pool {
-            db::DbPool::Postgres(raw) => {
+            codeyard_db_core::DbPool::Postgres(raw) => {
                 sqlx::query_as("SELECT log_lines,log_bytes FROM ci_runs WHERE id=$1")
                     .bind(run.id)
                     .fetch_one(raw)
                     .await
                     .unwrap()
             }
-            db::DbPool::Sqlite(raw) => {
+            codeyard_db_core::DbPool::Sqlite(raw) => {
                 sqlx::query_as("SELECT log_lines,log_bytes FROM ci_runs WHERE id=?1")
                     .bind(run.id)
                     .fetch_one(raw)
@@ -3716,10 +3716,15 @@ async fn log_totals_close_a_run_at_its_limit_with_one_truncation_line() {
 }
 
 async fn secrets_repository(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     owner: i64,
     name: &str,
-) -> (tempfile::TempDir, db::models::Repository, String, String) {
+) -> (
+    tempfile::TempDir,
+    codeyard_db_core::models::Repository,
+    String,
+    String,
+) {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join(format!("{}.git", Uuid::new_v4()));
     let git = git2::Repository::init_bare(&path).unwrap();
@@ -3859,14 +3864,14 @@ async fn fork_claims_receive_variables_but_no_repository_or_organization_secrets
         };
         let run = enqueue(pool, repo.id, owner.id, &sha, &blob).await;
         match pool {
-            db::DbPool::Postgres(pool) => {
+            codeyard_db_core::DbPool::Postgres(pool) => {
                 sqlx::query("UPDATE ci_runs SET is_fork=true WHERE id=$1")
                     .bind(run.id)
                     .execute(pool)
                     .await
                     .unwrap();
             }
-            db::DbPool::Sqlite(pool) => {
+            codeyard_db_core::DbPool::Sqlite(pool) => {
                 sqlx::query("UPDATE ci_runs SET is_fork=true WHERE id=$1")
                     .bind(run.id)
                     .execute(pool)
@@ -4084,7 +4089,7 @@ async fn claims_refuse_secret_sets_too_large_for_one_claim() {
         // refused by the claim itself.
         let (encrypted, nonce) = encryptor.encrypt(value.as_bytes()).unwrap();
         match pool {
-            db::DbPool::Postgres(pg) => {
+            codeyard_db_core::DbPool::Postgres(pg) => {
                 sqlx::query(
                     "INSERT INTO repo_secrets (repo_id, name, encrypted_value, nonce, created_by_id) \
                      VALUES ($1, $2, $3, $4, $5)",
@@ -4098,7 +4103,7 @@ async fn claims_refuse_secret_sets_too_large_for_one_claim() {
                 .await
                 .unwrap();
             }
-            db::DbPool::Sqlite(lite) => {
+            codeyard_db_core::DbPool::Sqlite(lite) => {
                 sqlx::query(
                     "INSERT INTO repo_secrets (repo_id, name, encrypted_value, nonce, created_by_id) \
                      VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -4187,7 +4192,7 @@ struct CiFixture {
 }
 
 impl CiFixture {
-    fn pool(&self) -> &db::DbPool {
+    fn pool(&self) -> &codeyard_db_core::DbPool {
         &self.database.pool
     }
 
@@ -4199,7 +4204,7 @@ impl CiFixture {
         }
     }
 
-    async fn queue_run(&self) -> db::models::CiRun {
+    async fn queue_run(&self) -> codeyard_db_core::models::CiRun {
         enqueue(self.pool(), self.repo, self.owner, &self.sha, &self.blob).await
     }
 
@@ -4711,7 +4716,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         &pull,
         fixture.owner,
         false,
-        codeyard::backend::db::models::AccessLevel::Owner,
+        codeyard_db_core::models::AccessLevel::Owner,
     )
     .await
     .unwrap();
@@ -5130,7 +5135,7 @@ async fn stalled_database_logs_do_not_block_timed_out_container_cleanup() {
     })
     .await
     .unwrap();
-    let db::DbPool::Postgres(pg) = fixture.pool() else {
+    let codeyard_db_core::DbPool::Postgres(pg) = fixture.pool() else {
         unreachable!()
     };
     let mut tx = pg.begin().await.unwrap();

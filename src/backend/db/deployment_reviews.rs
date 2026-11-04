@@ -1,7 +1,10 @@
 //! Reviews reference the run's pending deployment and its configured environment protections.
-use super::{deployments::Deployment, environments::Environment, DbPool};
+use super::deployments::Deployment;
+use super::environments::Environment;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::Deserialize;
 
 #[derive(sqlx::FromRow)]

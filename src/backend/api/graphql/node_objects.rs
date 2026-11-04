@@ -7,7 +7,7 @@ use crate::backend::repositories::access;
 use serde_json::json;
 
 pub(super) async fn review(
-    row: &db::models::PullRequestReview,
+    row: &codeyard_db_core::models::PullRequestReview,
     request: &RequestContext,
 ) -> Result<Value> {
     let pull = db::pull_requests::records::get_pull_request_by_id(
@@ -35,7 +35,7 @@ pub(super) async fn review(
 }
 
 pub(super) async fn review_comment(
-    row: &db::models::PullRequestComment,
+    row: &codeyard_db_core::models::PullRequestComment,
     request: &RequestContext,
 ) -> Result<Value> {
     let pull = db::pull_requests::records::get_pull_request_by_id(
@@ -69,7 +69,10 @@ pub(super) async fn review_comment(
     )
 }
 
-pub(super) async fn release(row: &db::models::Release, request: &RequestContext) -> Result<Value> {
+pub(super) async fn release(
+    row: &codeyard_db_core::models::Release,
+    request: &RequestContext,
+) -> Result<Value> {
     let repo = repository::by_id(row.repo_id, request).await?;
     request.authorize(repo.id, "contents", false).await?;
     if row.is_draft && !super::release::drafts_visible(&repo, request).await? {
@@ -85,7 +88,7 @@ pub(super) async fn release(row: &db::models::Release, request: &RequestContext)
 
 pub(super) async fn asset(
     repo: i64,
-    row: &db::models::ReleaseAsset,
+    row: &codeyard_db_core::models::ReleaseAsset,
     request: &RequestContext,
 ) -> Result<Value> {
     let repo = repository::by_id(repo, request).await?;

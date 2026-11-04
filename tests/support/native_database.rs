@@ -9,7 +9,7 @@ use std::{str::FromStr, time::Duration};
 use uuid::Uuid;
 
 pub struct NativeDatabase {
-    pub pool: db::DbPool,
+    pub pool: codeyard_db_core::DbPool,
     pub raw: sqlx::SqlitePool,
     pub url: String,
     _directory: tempfile::TempDir,
@@ -21,7 +21,7 @@ impl NativeDatabase {
     }
     pub async fn new() -> Self {
         let fixture = Self::unmigrated().await;
-        db::run_migrations(&fixture.pool)
+        codeyard_db_core::run_migrations(&fixture.pool)
             .await
             .expect("native SQLite migration");
         fixture
@@ -33,7 +33,9 @@ impl NativeDatabase {
             "sqlite://{}",
             directory.path().join("application.sqlite").display()
         );
-        let pool = db::init_db(&url).await.expect("native SQLite open");
+        let pool = codeyard_db_core::init_db(&url)
+            .await
+            .expect("native SQLite open");
         let options = SqliteConnectOptions::from_str(&url)
             .unwrap()
             .with_regexp()
@@ -54,8 +56,8 @@ impl NativeDatabase {
         }
     }
 
-    pub async fn second_handle(&self) -> db::DbPool {
-        db::init_db(&self.url)
+    pub async fn second_handle(&self) -> codeyard_db_core::DbPool {
+        codeyard_db_core::init_db(&self.url)
             .await
             .expect("independent selected database handle")
     }
@@ -63,10 +65,10 @@ impl NativeDatabase {
     pub async fn reopen(&mut self) {
         self.pool.close().await;
         self.raw.close().await;
-        self.pool = db::init_db(&self.url)
+        self.pool = codeyard_db_core::init_db(&self.url)
             .await
             .expect("reopen persistent application database");
-        db::run_migrations(&self.pool)
+        codeyard_db_core::run_migrations(&self.pool)
             .await
             .expect("verify independent SQLite history");
         self.raw = SqlitePoolOptions::new()
@@ -89,7 +91,7 @@ impl NativeDatabase {
 }
 
 pub struct PostgresDatabase {
-    pub pool: db::DbPool,
+    pub pool: codeyard_db_core::DbPool,
     pub raw: sqlx::PgPool,
     pub url: String,
     pub schema: String,
@@ -109,7 +111,7 @@ impl PostgresDatabase {
 
     pub async fn new() -> Self {
         let fixture = Self::unmigrated().await;
-        db::run_migrations(&fixture.pool)
+        codeyard_db_core::run_migrations(&fixture.pool)
             .await
             .expect("native PostgreSQL migration");
         fixture

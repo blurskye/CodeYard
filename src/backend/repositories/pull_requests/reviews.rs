@@ -43,14 +43,14 @@ pub struct RequestReviewerResult {
 /// Edit a review through the same author check, native transaction and edited webhook as REST.
 /// Names that the edit adds to a published review are notified.
 pub async fn edit_review(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    repo: &db::models::Repository,
-    pull: &db::models::PullRequest,
+    repo: &codeyard_db_core::models::Repository,
+    pull: &codeyard_db_core::models::PullRequest,
     id: i64,
     body: &str,
-) -> Result<db::models::PullRequestReview, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
     let actor = super::actor(pool, actor_id).await?;
     super::require_read(pool, &actor, repo).await?;
     if pull.repo_id != repo.id {
@@ -123,10 +123,10 @@ pub async fn edit_review(
 
 /// Sends one `pull_request_review` webhook about `review`.
 async fn emit_review_webhook(
-    pool: &db::DbPool,
-    repository: &db::models::Repository,
-    pull: &db::models::PullRequest,
-    review: &db::models::PullRequestReview,
+    pool: &codeyard_db_core::DbPool,
+    repository: &codeyard_db_core::models::Repository,
+    pull: &codeyard_db_core::models::PullRequest,
+    review: &codeyard_db_core::models::PullRequestReview,
     action: &'static str,
     sender_id: i64,
 ) {
@@ -159,8 +159,8 @@ async fn emit_review_webhook(
 #[derive(serde::Serialize)]
 #[serde(untagged)]
 pub enum ReviewerTarget {
-    User(db::models::User),
-    Team(db::models::Team),
+    User(codeyard_db_core::models::User),
+    Team(codeyard_db_core::models::Team),
 }
 
 /// Review bodies and dismissal reasons use the discussion text limit. Leaving one
@@ -194,14 +194,14 @@ impl From<(String, String, i32)> for ReviewTarget {
 }
 
 pub async fn create_pull_request_review(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     credential: &db::users::accounts::AccountCredential<'_>,
     target: impl Into<ReviewTarget>,
     req: CreatePullRequestReviewRequest,
-) -> Result<db::models::PullRequestReview, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
     create_review(
         pool,
         cluster,
@@ -216,14 +216,14 @@ pub async fn create_pull_request_review(
 }
 
 pub async fn create_pull_request_review_batch(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     credential: &db::users::accounts::AccountCredential<'_>,
     target: impl Into<ReviewTarget>,
     batch: CreatePullRequestReviewBatchRequest,
-) -> Result<db::models::PullRequestReview, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
     create_review(
         pool,
         cluster,
@@ -242,7 +242,7 @@ pub async fn create_pull_request_review_batch(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 async fn create_review(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
@@ -250,7 +250,7 @@ async fn create_review(
     target: ReviewTarget,
     req: CreatePullRequestReviewRequest,
     batch: Option<Vec<super::comments::CreatePullRequestCommentRequest>>,
-) -> Result<db::models::PullRequestReview, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
     let ReviewTarget {
         owner,
         name: repo,
@@ -567,14 +567,14 @@ async fn create_review(
 }
 
 pub async fn dismiss_pull_request_review(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor_id: i64,
     owner: String,
     repo: String,
     number: i32,
     review_id: i64,
     req: DismissPullRequestReviewRequest,
-) -> Result<db::models::PullRequestReview, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
     let actor = super::actor(pool, actor_id).await?;
 
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
@@ -650,7 +650,7 @@ pub async fn dismiss_pull_request_review(
 }
 
 pub async fn request_reviewer(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     owner: String,
@@ -670,7 +670,7 @@ pub async fn request_reviewer(
 }
 
 pub async fn request_reviewer_bound(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     (owner, repo, number): (String, String, i32),
@@ -768,13 +768,13 @@ pub async fn request_reviewer_bound(
 /// Records that `target` is asked to review `pull`, and tells them unless they asked themselves.
 /// Returns whether the request is new. Manually chosen reviewers require writer authority.
 pub(super) async fn add_review_request(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
-    requester: &db::models::User,
+    requester: &codeyard_db_core::models::User,
     owner: &str,
-    repository: &db::models::Repository,
-    pull_request: &db::models::PullRequest,
-    target: &db::models::User,
+    repository: &codeyard_db_core::models::Repository,
+    pull_request: &codeyard_db_core::models::PullRequest,
+    target: &codeyard_db_core::models::User,
 ) -> Result<bool, OperationError> {
     let created = db::pull_requests::reviews::request_pull_request_reviewer(
         pool,
@@ -812,13 +812,13 @@ pub(super) async fn add_review_request(
 
 /// Sends the `pull_request` event for a review request to `target`, or its removal.
 pub(super) async fn emit_reviewer_event(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
-    repository: &db::models::Repository,
-    pull_request: &db::models::PullRequest,
+    repository: &codeyard_db_core::models::Repository,
+    pull_request: &codeyard_db_core::models::PullRequest,
     action: &'static str,
     sender_id: i64,
-    target: &db::models::User,
+    target: &codeyard_db_core::models::User,
 ) {
     let mut extra = serde_json::Map::new();
     extra.insert("requested_reviewer".into(), payloads::user(target));
@@ -835,13 +835,13 @@ pub(super) async fn emit_reviewer_event(
 }
 
 pub(super) async fn notify_review_request(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
-    requester: &db::models::User,
+    requester: &codeyard_db_core::models::User,
     owner: &str,
-    repository: &db::models::Repository,
-    pull_request: &db::models::PullRequest,
-    target: &db::models::User,
+    repository: &codeyard_db_core::models::Repository,
+    pull_request: &codeyard_db_core::models::PullRequest,
+    target: &codeyard_db_core::models::User,
 ) {
     if target.id != requester.id {
         let title = format!(
@@ -886,7 +886,7 @@ fn check_repository_binding(expected: Option<i64>, actual: i64) -> Result<(), Op
 }
 
 pub async fn remove_requested_reviewer(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor_id: i64,
     owner: String,
     repo: String,
@@ -897,7 +897,7 @@ pub async fn remove_requested_reviewer(
 }
 
 pub async fn remove_requested_reviewer_bound(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor_id: i64,
     (owner, repo, number): (String, String, i32),
     username: String,
@@ -994,7 +994,7 @@ pub async fn remove_requested_reviewer_bound(
 /// Deletes the viewer's pending review and the comments it holds. Nobody else has seen them.
 /// Discards the actor's pending review; with `review`, only when that is still the pending one.
 pub async fn discard_pending_review(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor_id: i64,
     owner: String,
     repo: String,

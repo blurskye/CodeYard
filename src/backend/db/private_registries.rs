@@ -1,7 +1,9 @@
 //! Organization registry metadata is readable separately from its encrypted credential.
-use super::{secrets::SecretsError, DbPool};
+use super::secrets::SecretsError;
 use crate::backend::crypto::SecretEncryptor;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

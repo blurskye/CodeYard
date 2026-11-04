@@ -1,5 +1,4 @@
 pub(crate) mod management;
-use super::models::{Issue, IssueComment};
 use crate::backend::db::assignees::AssignedItem;
 use crate::backend::db::discussions::{DiscussionWriteRefusal, ListFilter, StateCounts};
 use crate::backend::db::issues::IssueCommentEntry;
@@ -9,6 +8,8 @@ use crate::backend::db::issues::{IssueRelation, ViewerIssueEntry};
 use crate::backend::db::labels::LabelTarget;
 use crate::backend::db::relationships::{Kind, Mutation};
 use anyhow::Result;
+use codeyard_db_core::models::Issue;
+use codeyard_db_core::models::IssueComment;
 
 pub async fn issue_repositories(pool: &SqlitePool, ids: &[i64]) -> Result<Vec<(i64, i64)>> {
     anyhow::ensure!(ids.len() <= 101, "Issue page exceeds its limit");
@@ -620,7 +621,8 @@ pub async fn list_viewer_issues(
     .await?;
     let ids = issues.iter().map(|issue| issue.id).collect::<Vec<_>>();
     if !ids.is_empty() {
-        let mut labels = std::collections::BTreeMap::<i64, Vec<super::models::Label>>::new();
+        let mut labels =
+            std::collections::BTreeMap::<i64, Vec<codeyard_db_core::models::Label>>::new();
         for row in crate::backend::db::sqlite::labels::get_items_labels(
             &mut tx,
             LabelTarget::Issue,
@@ -665,7 +667,7 @@ pub async fn count_viewer_issues(
 impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for IssueListEntry {
     fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
         Ok(Self {
-            issue: Issue::from_row(row)?,
+            issue: codeyard_db_core::models::Issue::from_row(row)?,
             author: crate::backend::db::sqlite::users::accounts::author_display(row)?,
         })
     }
@@ -674,7 +676,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for IssueListEntry {
 impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for IssueCommentEntry {
     fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
         Ok(Self {
-            comment: IssueComment::from_row(row)?,
+            comment: codeyard_db_core::models::IssueComment::from_row(row)?,
             author: crate::backend::db::sqlite::users::accounts::author_display(row)?,
         })
     }

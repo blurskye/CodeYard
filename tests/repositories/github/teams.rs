@@ -31,7 +31,7 @@ async fn teams_contract(pg: bool) {
             alice,
             org.id,
             bob,
-            db::models::OrgRole::Member
+            codeyard_db_core::models::OrgRole::Member
         )
         .await
         .unwrap(),
@@ -81,7 +81,7 @@ async fn teams_contract(pg: bool) {
             f.pool(),
             user,
             id,
-            db::models::AccessLevel::Admin,
+            codeyard_db_core::models::AccessLevel::Admin,
         )
         .await
         .unwrap();

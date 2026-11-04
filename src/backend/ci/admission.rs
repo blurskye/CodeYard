@@ -86,7 +86,10 @@ pub fn is_supported_event(event: &str) -> bool {
 }
 
 /// An instance admin acts as the owner of personal repositories only, not of organization ones.
-pub(super) fn is_personal_admin(actor: &db::models::User, repo: &db::models::Repository) -> bool {
+pub(super) fn is_personal_admin(
+    actor: &codeyard_db_core::models::User,
+    repo: &codeyard_db_core::models::Repository,
+) -> bool {
     actor.is_admin
         && repo.owner_kind == "user"
         && repo.owner_user_id.is_some()
@@ -97,9 +100,9 @@ pub(super) fn is_personal_admin(actor: &db::models::User, repo: &db::models::Rep
 /// read and again when a run is admitted.
 pub(super) fn check_actor(
     config: &CiConfig,
-    actor: &db::models::User,
-    repo: &db::models::Repository,
-    access: db::models::AccessLevel,
+    actor: &codeyard_db_core::models::User,
+    repo: &codeyard_db_core::models::Repository,
+    access: codeyard_db_core::models::AccessLevel,
 ) -> Result<(), AdmissionError> {
     if actor.is_banned || actor.must_change_password {
         return Err(AdmissionError::Denied("CI actor is restricted"));
@@ -121,7 +124,7 @@ pub(super) fn check_actor(
 }
 
 pub(crate) async fn fork_approval_required(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     request: &CiRunRequest,
 ) -> Result<bool, AdmissionError> {
     if request.event != "pull_request" || request.manual {
@@ -143,7 +146,7 @@ pub(crate) async fn fork_approval_required(
 }
 
 pub(super) async fn resolve(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     config: &CiConfig,
     context: Option<&crate::backend::cluster::NodeContext>,
     mut request: CiRunRequest,

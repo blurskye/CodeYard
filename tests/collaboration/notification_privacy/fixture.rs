@@ -216,7 +216,7 @@ impl Fixture {
                     .await
                     .unwrap();
                 f.pool = f.raw.clone().into();
-                db::run_migrations(&f.pool)
+                codeyard_db_core::run_migrations(&f.pool)
                     .await
                     .expect("verify reopened PostgreSQL history");
             }

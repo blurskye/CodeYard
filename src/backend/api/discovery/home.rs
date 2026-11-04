@@ -1,11 +1,11 @@
 use super::{dashboard_cards, unavailable};
-use crate::backend::db::models::AccessLevel;
 use crate::backend::{api::http::context::PageContext, app::AppState, db};
 use axum::{
     extract::State,
     http::{HeaderMap, Uri},
     response::Response,
 };
+use codeyard_db_core::models::AccessLevel;
 use codeyard_webui::app::Page as AppPage;
 use codeyard_webui::pages::discovery::{self as view, HomeModel, SharedRepositoryCard};
 use std::sync::Arc;
@@ -124,13 +124,13 @@ pub(super) async fn home(
 
 /// The name of a collaborator level, as the repository settings name it.
 fn role_name(level: i16) -> &'static str {
-    match AccessLevel::from(level) {
-        AccessLevel::None => "None",
-        AccessLevel::Read => "Read",
-        AccessLevel::Triage => "Triage",
-        AccessLevel::Write => "Write",
-        AccessLevel::Maintain => "Maintain",
-        AccessLevel::Admin => "Admin",
-        AccessLevel::Owner => "Owner",
+    match codeyard_db_core::models::AccessLevel::from(level) {
+        codeyard_db_core::models::AccessLevel::None => "None",
+        codeyard_db_core::models::AccessLevel::Read => "Read",
+        codeyard_db_core::models::AccessLevel::Triage => "Triage",
+        codeyard_db_core::models::AccessLevel::Write => "Write",
+        codeyard_db_core::models::AccessLevel::Maintain => "Maintain",
+        codeyard_db_core::models::AccessLevel::Admin => "Admin",
+        codeyard_db_core::models::AccessLevel::Owner => "Owner",
     }
 }

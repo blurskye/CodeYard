@@ -231,8 +231,8 @@ impl IntoResponse for Error {
 /// A pull request's diff or patch as plain text, for the `/pull/N.diff` and `.patch` pages.
 pub(crate) async fn pull_diff_text(
     state: &AppState,
-    repo: &db::models::Repository,
-    pull: &db::models::PullRequest,
+    repo: &codeyard_db_core::models::Repository,
+    pull: &codeyard_db_core::models::PullRequest,
     patch: bool,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
@@ -263,7 +263,7 @@ pub(crate) fn repo_url(owner: &str, repo: &str) -> String {
 pub(crate) async fn interaction_actor(
     state: &AppState,
     headers: &HeaderMap,
-) -> Option<db::models::User> {
+) -> Option<codeyard_db_core::models::User> {
     let credential = auth::credential(headers)?;
     let token = db::users::tokens::find_token(
         &state.pool,
@@ -282,7 +282,10 @@ pub(super) async fn repository(
     owner: &str,
     name: &str,
     write: bool,
-) -> Result<(db::models::Repository, Option<auth::Authentication>)> {
+) -> Result<(
+    codeyard_db_core::models::Repository,
+    Option<auth::Authentication>,
+)> {
     let auth = auth::authenticate(state, headers, write).await?;
     if write {
         auth.as_ref().ok_or_else(auth::required)?.require_write()?;

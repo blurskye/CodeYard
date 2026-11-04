@@ -75,7 +75,7 @@ pub async fn comments(
 pub async fn labels(
     pool: &SqlitePool,
     discussion: i64,
-) -> Result<Vec<crate::backend::db::models::Label>> {
+) -> Result<Vec<codeyard_db_core::models::Label>> {
     Ok(sqlx::query_as("SELECT l.* FROM labels l JOIN discussion_labels a ON a.label_id=l.id WHERE a.discussion_id=?1 ORDER BY l.name,l.id").bind(discussion).fetch_all(pool).await?)
 }
 pub async fn list(

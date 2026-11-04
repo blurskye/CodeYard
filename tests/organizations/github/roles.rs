@@ -1,24 +1,28 @@
 use super::request;
 use crate::support::{database::Database, http_client::Client, organizations::applied};
 use axum::http::StatusCode;
-use codeyard::backend::{
-    db::{
-        self,
-        models::{AccessLevel, OrgRole},
-        organizations::{
-            self, NewOrganization, NewTeam, OrganizationProfile, TeamPrivacy, TeamProfile, TeamRole,
-        },
-        repositories::creation::{NewRepository, RepositoryCreationOwner, RepositoryTarget},
-    },
-    identity::tokens::{self, TokenInput},
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::NewTeam;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::db::organizations::TeamPrivacy;
+use codeyard::backend::db::organizations::TeamProfile;
+use codeyard::backend::db::organizations::TeamRole;
+use codeyard::backend::db::repositories::creation::NewRepository;
+use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
+use codeyard::backend::db::repositories::creation::RepositoryTarget;
+use codeyard::backend::identity::tokens;
+use codeyard::backend::identity::tokens::TokenInput;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
 
 pub(super) async fn run(f: &Database, repo: i64, actor: i64, status: &str) {
     let sql="INSERT INTO ci_runs(run_id,repo_id,triggered_by_id,mode,pipeline,event,branch,workflow_path,status) VALUES($1,$2,$3,'local','ci','workflow_dispatch','main','.github/workflows/ci.yml',$4)";
     let id = uuid::Uuid::new_v4();
     match f.pool() {
-        db::DbPool::Sqlite(pool) => {
+        codeyard_db_core::DbPool::Sqlite(pool) => {
             sqlx::query(sql)
                 .bind(id)
                 .bind(repo)
@@ -28,7 +32,7 @@ pub(super) async fn run(f: &Database, repo: i64, actor: i64, status: &str) {
                 .await
                 .unwrap();
         }
-        db::DbPool::Postgres(pool) => {
+        codeyard_db_core::DbPool::Postgres(pool) => {
             sqlx::query(sql)
                 .bind(id)
                 .bind(repo)
@@ -46,7 +50,7 @@ pub(super) async fn repo(
     owner: i64,
     org: i64,
     name: &str,
-) -> db::models::Repository {
+) -> codeyard_db_core::models::Repository {
     let disk = root
         .join(format!("{}.git", uuid::Uuid::new_v4()))
         .to_string_lossy()
@@ -94,9 +98,9 @@ async fn contract(pg: bool) {
         ));
     }
     for (id, role) in [
-        (member, OrgRole::Member),
-        (other, OrgRole::Member),
-        (delegated, OrgRole::Admin),
+        (member, codeyard_db_core::models::OrgRole::Member),
+        (other, codeyard_db_core::models::OrgRole::Member),
+        (delegated, codeyard_db_core::models::OrgRole::Admin),
     ] {
         applied(
             organizations::add_organization_member(f.pool(), owner, orgs[0].id, id, role)
@@ -110,7 +114,7 @@ async fn contract(pg: bool) {
             owner,
             orgs[1].id,
             member,
-            OrgRole::Member,
+            codeyard_db_core::models::OrgRole::Member,
         )
         .await
         .unwrap(),
@@ -502,7 +506,7 @@ async fn contract(pg: bool) {
         organizations::get_organization_repo_access(f.pool(), member, &first)
             .await
             .unwrap(),
-        AccessLevel::Read
+        codeyard_db_core::models::AccessLevel::Read
     );
     request(
         &router,
@@ -520,7 +524,7 @@ async fn contract(pg: bool) {
                 .await
                 .unwrap()
         ),
-        OrgRole::Member
+        codeyard_db_core::models::OrgRole::Member
     );
     let (_, issue) = request(
         &router,
@@ -875,7 +879,7 @@ async fn contract(pg: bool) {
             owner,
             orgs[0].id,
             member,
-            OrgRole::Member,
+            codeyard_db_core::models::OrgRole::Member,
         )
         .await
         .unwrap(),
@@ -1092,7 +1096,7 @@ async fn contract(pg: bool) {
             owner,
             orgs[0].id,
             nested,
-            OrgRole::Member,
+            codeyard_db_core::models::OrgRole::Member,
         )
         .await
         .unwrap(),
@@ -1180,7 +1184,7 @@ async fn contract(pg: bool) {
         organizations::get_organization_repo_access(f.pool(), nested, &first)
             .await
             .unwrap(),
-        AccessLevel::Write
+        codeyard_db_core::models::AccessLevel::Write
     );
     let (_, users) = request(
         &router,

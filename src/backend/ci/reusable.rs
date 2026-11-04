@@ -9,10 +9,10 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) async fn authorize(
-    pool: &db::DbPool,
-    caller: &db::models::Repository,
+    pool: &codeyard_db_core::DbPool,
+    caller: &codeyard_db_core::models::Repository,
     actor: i64,
-    called: &db::models::Repository,
+    called: &codeyard_db_core::models::Repository,
 ) -> Result<(), AdmissionError> {
     if caller.id == called.id || !called.is_private {
         return Ok(());
@@ -46,9 +46,9 @@ pub(super) async fn authorize(
 }
 
 pub(super) struct Resolver<'a> {
-    pub pool: &'a db::DbPool,
+    pub pool: &'a codeyard_db_core::DbPool,
     pub context: Option<&'a crate::backend::cluster::NodeContext>,
-    pub caller: &'a db::models::Repository,
+    pub caller: &'a codeyard_db_core::models::Repository,
     pub actor: i64,
     pub files: BTreeMap<String, serde_json::Value>,
     pub environment: Option<String>,
@@ -95,9 +95,9 @@ pub(super) fn pinned_commits(
 
 impl<'a> Resolver<'a> {
     pub fn new(
-        pool: &'a db::DbPool,
+        pool: &'a codeyard_db_core::DbPool,
         context: Option<&'a crate::backend::cluster::NodeContext>,
-        caller: &'a db::models::Repository,
+        caller: &'a codeyard_db_core::models::Repository,
         actor: i64,
         environment: Option<String>,
         pinned: BTreeMap<(i64, String, String), (String, String)>,
@@ -125,7 +125,7 @@ impl<'a> Resolver<'a> {
     )]
     pub fn snapshot<'b>(
         &'b mut self,
-        repository: db::models::Repository,
+        repository: codeyard_db_core::models::Repository,
         sha: String,
         path: String,
         content: String,

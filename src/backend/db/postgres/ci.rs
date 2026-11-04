@@ -1,9 +1,11 @@
 //! CI runs as a job queue: triggers enqueue, worker nodes claim, heartbeat and
 //! finish runs.
-use super::models::{CiDeployment, CiLogLine, CiRun};
 use crate::backend::db::action_settings::{organization_allows, Setting};
 use crate::backend::db::ci::{CiAdmissionRefusal, NewCiRun, ACCESS_LOST_MESSAGE};
 use anyhow::{bail, ensure, Result};
+use codeyard_db_core::models::CiDeployment;
+use codeyard_db_core::models::CiLogLine;
+use codeyard_db_core::models::CiRun;
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
@@ -1076,11 +1078,12 @@ async fn request_cancellation(
 ) -> Result<crate::backend::db::ci::Cancellation> {
     let mut tx = pool.begin().await?;
     super::users::transitions::lock_accounts_shared(&mut tx, &[actor_id]).await?;
-    let user = sqlx::query_as::<_, super::models::User>("SELECT * FROM users WHERE id = $1")
-        .bind(actor_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or(CiAdmissionRefusal::Missing("CI actor unavailable"))?;
+    let user =
+        sqlx::query_as::<_, codeyard_db_core::models::User>("SELECT * FROM users WHERE id = $1")
+            .bind(actor_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(CiAdmissionRefusal::Missing("CI actor unavailable"))?;
     ensure!(
         !user.is_banned && !user.must_change_password,
         CiAdmissionRefusal::Denied("CI actor is restricted")

@@ -2,14 +2,13 @@
 //! engines.
 use super::request;
 use crate::support::{database::Database, http_client::Client, organizations::applied};
-use codeyard::backend::{
-    db::{
-        self,
-        models::OrgRole,
-        organizations::{self, NewOrganization, OrganizationProfile},
-    },
-    identity::tokens::{self, TokenInput},
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::identity::tokens;
+use codeyard::backend::identity::tokens::TokenInput;
+use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
 
 async fn contract(pg: bool) {
@@ -32,7 +31,10 @@ async fn contract(pg: bool) {
             .unwrap(),
         ));
     }
-    for (user, role) in [(member, OrgRole::Member), (admin, OrgRole::Admin)] {
+    for (user, role) in [
+        (member, codeyard_db_core::models::OrgRole::Member),
+        (admin, codeyard_db_core::models::OrgRole::Admin),
+    ] {
         applied(
             organizations::add_organization_member(f.pool(), owner, orgs[0].id, user, role)
                 .await
@@ -328,7 +330,7 @@ async fn contract(pg: bool) {
             owner,
             orgs[0].id,
             successor,
-            OrgRole::Owner,
+            codeyard_db_core::models::OrgRole::Owner,
         )
         .await
         .unwrap(),

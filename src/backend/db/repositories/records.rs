@@ -1,7 +1,9 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::models::{Repository, SharedRepository};
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::SharedRepository;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// Forks in the whole network, as GitHub's GraphQL `forkCount` reports it. Only public forks
 /// count, so the number reveals no private repository to any audience.
@@ -495,13 +497,13 @@ pub async fn repository_owner_names(
     let mut owners = std::collections::BTreeMap::new();
     for chunk in ids.chunks(500) {
         let rows = match pool {
-            DbPool::Postgres(pool) => {
+            codeyard_db_core::DbPool::Postgres(pool) => {
                 crate::backend::db::postgres::repositories::records::repository_owner_names(
                     pool, chunk,
                 )
                 .await?
             }
-            DbPool::Sqlite(pool) => {
+            codeyard_db_core::DbPool::Sqlite(pool) => {
                 crate::backend::db::sqlite::repositories::records::repository_owner_names(
                     pool, chunk,
                 )

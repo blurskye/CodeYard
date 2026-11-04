@@ -3,9 +3,11 @@
 //! Only its hash is stored. A token works once, until it expires.
 use super::{config, messages};
 use crate::backend::api::http::config::public_origin;
-use crate::backend::db::{self, models::User, DbPool};
+use crate::backend::db;
 use crate::backend::identity::admission::{self, AdmissionError};
 use crate::backend::identity::tokens::token_hash as hash;
+use codeyard_db_core::models::User;
+use codeyard_db_core::DbPool;
 use tracing::warn;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

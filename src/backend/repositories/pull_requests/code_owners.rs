@@ -4,9 +4,10 @@
 use super::reviews::{emit_reviewer_event, notify_review_request};
 use crate::backend::ci::CiRuns;
 use crate::backend::db;
-use crate::backend::db::models::{PullRequest, Repository};
 use crate::backend::repositories::code_owners::{load_rules, resolve_owners};
 use crate::backend::repositories::store::repo_store;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::Repository;
 
 /// A changed file with review requirements. Unresolved emails still require approval;
 /// changing an account's email must not remove that requirement. Self-review is excluded separately.
@@ -18,7 +19,7 @@ struct OwnedFile {
 }
 
 async fn owned_files(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     repository: &Repository,
     base_sha: &str,
@@ -90,7 +91,7 @@ async fn owned_files(
 /// gets a new head. An owner who already reviewed is not asked again, and an open request stays
 /// as it is. Failures are logged; the next head move asks again.
 pub async fn request_code_owner_reviews(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     repository: &Repository,
     pull: &PullRequest,
@@ -220,7 +221,7 @@ pub async fn request_code_owner_reviews(
 /// from one of them. `approvers` are the users whose approvals count for this head. Returns the
 /// owners as written, each once, in file order.
 pub(super) async fn missing_owner_approvals(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     repository: &Repository,
     base_sha: &str,

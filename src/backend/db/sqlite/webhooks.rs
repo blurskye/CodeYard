@@ -1,4 +1,3 @@
-use crate::backend::db::models::{OrgRole, Webhook, WebhookDelivery};
 use crate::backend::db::organizations::OrganizationOutcome;
 use crate::backend::db::sqlite::discussions::lock_policy_authority;
 use crate::backend::db::sqlite::organizations::authority::authority;
@@ -6,6 +5,9 @@ use crate::backend::db::webhooks::{
     DeliveryWindow, HookOwner, NewDelivery, SealedSecret, WebhookFields, WebhookPatch,
 };
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Webhook;
+use codeyard_db_core::models::WebhookDelivery;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
 const COLUMNS: &str = "id, repo_id, org_id, payload_url, content_type, encrypted_secret, secret_nonce, events, active, ssl_verify, created_by_id, created_at, updated_at, username, encrypted_password, password_nonce";
@@ -151,7 +153,7 @@ async fn account_manages_hooks(
         }
         HookOwner::Organization(org) => matches!(
             authority(tx, actor_id, org).await?,
-            OrganizationOutcome::Applied(OrgRole::Owner)
+            OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Owner)
         ),
     })
 }

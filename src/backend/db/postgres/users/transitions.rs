@@ -3,8 +3,9 @@ use crate::backend::db::users::transitions::{
 };
 use sqlx::PgPool;
 // Atomic identity transitions. No provider, filesystem or KDF work under locks.
-use crate::backend::db::models::{NodeConfiguration, User};
 use anyhow::Result;
+use codeyard_db_core::models::NodeConfiguration;
+use codeyard_db_core::models::User;
 use sqlx::{PgConnection, Postgres, Transaction};
 
 /// Take the complete account set before namespace or row locks. Account restrictions

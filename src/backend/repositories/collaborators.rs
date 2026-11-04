@@ -1,6 +1,8 @@
 //! Collaborator invitations keep admission separate from permission grants.
 use super::access::{self, AccessError};
-use crate::backend::db::{self, models::AccessLevel, repositories::collaborators as records};
+use crate::backend::db;
+use crate::backend::db::repositories::collaborators as records;
+use codeyard_db_core::models::AccessLevel;
 pub use records::{Added, Collaborator, CollaboratorQuery, Invitation, InvitationSummary};
 
 #[derive(Debug)]
@@ -29,17 +31,17 @@ fn access_error(error: AccessError) -> Error {
 
 pub fn permission(value: &str) -> Option<AccessLevel> {
     match value {
-        "read" | "pull" => Some(AccessLevel::Read),
-        "triage" => Some(AccessLevel::Triage),
-        "write" | "push" => Some(AccessLevel::Write),
-        "maintain" => Some(AccessLevel::Maintain),
-        "admin" => Some(AccessLevel::Admin),
+        "read" | "pull" => Some(codeyard_db_core::models::AccessLevel::Read),
+        "triage" => Some(codeyard_db_core::models::AccessLevel::Triage),
+        "write" | "push" => Some(codeyard_db_core::models::AccessLevel::Write),
+        "maintain" => Some(codeyard_db_core::models::AccessLevel::Maintain),
+        "admin" => Some(codeyard_db_core::models::AccessLevel::Admin),
         _ => None,
     }
 }
 
 pub async fn list(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     repo_id: i64,
     query: &CollaboratorQuery<'_>,
@@ -80,7 +82,7 @@ pub async fn list(
         .map_err(database_error)
 }
 pub async fn add(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     repo_id: i64,
     username: &str,
@@ -91,7 +93,7 @@ pub async fn add(
         .map_err(database_error)
 }
 pub async fn remove(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     repo_id: i64,
     username: &str,
@@ -101,7 +103,7 @@ pub async fn remove(
         .map_err(database_error)
 }
 pub async fn invitations(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     repo_id: Option<i64>,
     offset: i64,
@@ -117,7 +119,7 @@ pub async fn invitations(
         .map_err(database_error)
 }
 pub async fn recipient_invitations(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     session: &str,
     offset: i64,
@@ -129,7 +131,7 @@ pub async fn recipient_invitations(
 }
 
 pub async fn update_invitation(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     repo_id: i64,
     id: i64,
@@ -140,7 +142,7 @@ pub async fn update_invitation(
         .map_err(database_error)
 }
 pub async fn respond(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: impl Into<db::credentials::Actor>,
     id: i64,
     accept: bool,

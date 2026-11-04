@@ -1,12 +1,12 @@
 //! Git source imports retain no source credentials and publish only into empty repositories.
 pub mod archive;
 pub mod forge;
-use crate::backend::{
-    app::AppState,
-    db::{self, models::Repository, source_imports::SourceImport},
-    repositories::store::repo_store,
-    webhooks::outbound,
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::source_imports::SourceImport;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::webhooks::outbound;
+use codeyard_db_core::models::Repository;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
@@ -33,7 +33,10 @@ impl std::fmt::Debug for ImportCredential {
 }
 
 impl ImportCredential {
-    pub(crate) async fn user(&self, pool: &db::DbPool) -> anyhow::Result<Option<db::models::User>> {
+    pub(crate) async fn user(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+    ) -> anyhow::Result<Option<codeyard_db_core::models::User>> {
         match self {
             Self::Token(id) => db::users::tokens::token_user(pool, *id, true).await,
             Self::Session(id) => db::users::sessions::get_session_user(pool, id).await,
@@ -145,7 +148,7 @@ pub fn source_url(text: &str) -> anyhow::Result<url::Url> {
     Ok(url)
 }
 
-async fn cancelled(pool: &db::DbPool, import: &SourceImport) -> anyhow::Result<()> {
+async fn cancelled(pool: &codeyard_db_core::DbPool, import: &SourceImport) -> anyhow::Result<()> {
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
         if !db::source_imports::get(pool, import.repo_id)

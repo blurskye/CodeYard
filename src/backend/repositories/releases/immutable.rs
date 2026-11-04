@@ -3,21 +3,20 @@ use super::{
     integrity::{Attestation, Statement},
     ReleaseChanges, ReleaseError, ReleaseFields,
 };
-use crate::backend::{
-    api::http::config::link_origin,
-    cluster::NodeContext,
-    db::{
-        self,
-        models::{Repository, User},
-        repositories::immutable_releases::{self as records, Refusal},
-    },
-    repositories::{
-        access,
-        git_sessions::validation::{RefUpdate, ZERO_SHA},
-        store::{repo_store, ErrorKind, RepoError},
-    },
-};
+use crate::backend::api::http::config::link_origin;
+use crate::backend::cluster::NodeContext;
+use crate::backend::db;
+use crate::backend::db::repositories::immutable_releases as records;
+use crate::backend::db::repositories::immutable_releases::Refusal;
+use crate::backend::repositories::access;
+use crate::backend::repositories::git_sessions::validation::RefUpdate;
+use crate::backend::repositories::git_sessions::validation::ZERO_SHA;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::ErrorKind;
+use crate::backend::repositories::store::RepoError;
 use anyhow::{ensure, Result};
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
 use serde::{Deserialize, Serialize};
 
 pub const TAG_PROTECTED: &str = "This tag name is protected by an immutable release";
@@ -54,7 +53,7 @@ impl Mutation {
     }
 }
 pub async fn enabled(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     viewer: Option<&User>,
     repository: &Repository,
 ) -> Result<bool> {
@@ -72,7 +71,7 @@ pub async fn enabled(
     records::enabled(pool, repository.id).await
 }
 pub async fn set_enabled(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: impl Into<db::credentials::Actor>,
     repo: i64,
     enabled: bool,
@@ -82,7 +81,7 @@ pub async fn set_enabled(
 
 /// Also used with a proposed namespace before renaming/transferring/copy publication.
 pub(crate) async fn check_tag_updates(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: &Repository,
     owner: &str,
     name: &str,
@@ -117,7 +116,7 @@ pub(crate) async fn check_tag_updates(
     Ok(())
 }
 pub(crate) async fn check_current_tag_updates(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: &Repository,
     updates: &[RefUpdate],
 ) -> Result<(), RepoError> {
@@ -137,7 +136,7 @@ pub(crate) async fn check_current_tag_updates(
 /// Namespace changes preserve existing tags; only reservations belonging to another
 /// repository can conflict. Retired tags of this same repository are not recreated.
 pub(crate) async fn check_namespace(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: &Repository,
     owner: &str,
     name: &str,
@@ -237,7 +236,7 @@ pub(crate) fn namespace_url(owner: &str, name: &str) -> String {
 }
 
 pub(crate) async fn candidate(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     repository: &Repository,
     tag: &str,

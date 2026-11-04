@@ -3,10 +3,10 @@ use super::{
     dependencies::npm::Lockfile,
     store::{repo_store, ErrorKind, RepoError},
 };
-use crate::backend::{
-    app::AppState,
-    db::{self, dependency_graph::Reader, models::Repository},
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::dependency_graph::Reader;
+use codeyard_db_core::models::Repository;
 use codeyard_model::repositories::Package;
 use std::collections::{BTreeMap, HashSet};
 

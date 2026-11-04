@@ -19,7 +19,7 @@ use std::{collections::HashMap, sync::Arc};
 
 async fn document(
     state: &AppState,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     job: &jobs::Job,
 ) -> Result<Value> {

@@ -1,11 +1,16 @@
 //! PostgreSQL is the arbiter; no transaction here spans Git or network work.
-use crate::backend::db::{
-    cluster::writes::{self as rules, MAX_FAMILY, MAX_REFS, MAX_VOTERS},
-    models::{
-        RecoveryView, RefChange, RefValue, WriteRecord, WriteSettings, WriteVote, WriteVoter,
-    },
-};
+use crate::backend::db::cluster::writes as rules;
+use crate::backend::db::cluster::writes::MAX_FAMILY;
+use crate::backend::db::cluster::writes::MAX_REFS;
+use crate::backend::db::cluster::writes::MAX_VOTERS;
 use anyhow::{ensure, Context, Result};
+use codeyard_db_core::models::RecoveryView;
+use codeyard_db_core::models::RefChange;
+use codeyard_db_core::models::RefValue;
+use codeyard_db_core::models::WriteRecord;
+use codeyard_db_core::models::WriteSettings;
+use codeyard_db_core::models::WriteVote;
+use codeyard_db_core::models::WriteVoter;
 use sqlx::{FromRow, PgConnection, PgPool};
 
 #[derive(FromRow)]

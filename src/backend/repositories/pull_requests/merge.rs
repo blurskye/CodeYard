@@ -49,7 +49,10 @@ pub struct MergeRequest {
 }
 
 /// The default merge headline and body, also offered to clients editing the message.
-pub fn default_merge_text(pull: &db::models::PullRequest, method: MergeMethod) -> (String, String) {
+pub fn default_merge_text(
+    pull: &codeyard_db_core::models::PullRequest,
+    method: MergeMethod,
+) -> (String, String) {
     match method {
         MergeMethod::Merge => (
             format!(
@@ -137,9 +140,9 @@ fn count_effective_approvals(
 /// Each reviewer's decision that counts toward protection rules: from users other
 /// than the PR author who currently have write access.
 async fn eligible_reviews(
-    pool: &db::DbPool,
-    pull_request: &db::models::PullRequest,
-    repository: &db::models::Repository,
+    pool: &codeyard_db_core::DbPool,
+    pull_request: &codeyard_db_core::models::PullRequest,
+    repository: &codeyard_db_core::models::Repository,
 ) -> anyhow::Result<Vec<db::pull_requests::reviews::PullRequestReviewDecision>> {
     let decisions =
         db::pull_requests::reviews::list_pull_request_review_decisions(pool, pull_request.id)
@@ -160,9 +163,9 @@ async fn eligible_reviews(
 /// For `require_last_push_approval`: someone other than whoever pushed the head approved that
 /// head. Missing or mismatched publication provenance cannot authorize a merge.
 async fn last_push_approved(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    pull: &db::models::PullRequest,
+    pull: &codeyard_db_core::models::PullRequest,
     decisions: &[db::pull_requests::reviews::PullRequestReviewDecision],
 ) -> anyhow::Result<bool> {
     let Some(repository) = db::repositories::records::get_repository_by_id(
@@ -199,10 +202,10 @@ pub enum ReviewDecision {
 
 /// The same eligible latest decisions, stale-head rule and code owners used by the merge gate.
 pub async fn review_decision(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    repository: &db::models::Repository,
-    pull: &db::models::PullRequest,
+    repository: &codeyard_db_core::models::Repository,
+    pull: &codeyard_db_core::models::PullRequest,
 ) -> anyhow::Result<Option<ReviewDecision>> {
     let target = super::stacks::merge_target(pool, pull).await?;
     let rules =
@@ -268,8 +271,8 @@ fn check_run_state(run: &db::checks::Run) -> &'static str {
 fn required_status_check_failures(
     head_sha: &str,
     required_checks: &[String],
-    statuses: &[db::models::CommitStatus],
-    ci_runs: &[db::models::CiRun],
+    statuses: &[codeyard_db_core::models::CommitStatus],
+    ci_runs: &[codeyard_db_core::models::CiRun],
     // The newest check run of each required name, from its bound app when the context has one.
     check_runs: &[&db::checks::Run],
     // None stands for a bound app that no longer exists, so nothing meets its context.
@@ -287,7 +290,7 @@ fn required_status_check_failures(
         }
     }
 
-    let mut ci_by_context: HashMap<String, Vec<&db::models::CiRun>> = HashMap::new();
+    let mut ci_by_context: HashMap<String, Vec<&codeyard_db_core::models::CiRun>> = HashMap::new();
     for run in ci_runs
         .iter()
         .filter(|run| run.head_sha.as_deref() == Some(head_sha))
@@ -356,11 +359,11 @@ fn required_status_check_failures(
 /// merge checks them. The merge refuses with the first one, and the pull request page lists them
 /// all. A storage failure is not a refusal: it ends the check with an error.
 async fn merge_blockers(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    repository: &db::models::Repository,
-    user: &db::models::User,
-    pull_request: &db::models::PullRequest,
+    repository: &codeyard_db_core::models::Repository,
+    user: &codeyard_db_core::models::User,
+    pull_request: &codeyard_db_core::models::PullRequest,
     target: (&str, &str),
     method: MergeMethod,
 ) -> Result<Vec<OperationError>, OperationError> {
@@ -389,8 +392,8 @@ async fn merge_blockers(
     let mut reviews = None;
     // Every rule also judges the same head, so its statuses, CI runs, app bindings and newest
     // check runs are read once, when a rule first needs them, and shared between the rules.
-    let mut statuses: Option<Vec<db::models::CommitStatus>> = None;
-    let mut ci_runs: Option<Vec<db::models::CiRun>> = None;
+    let mut statuses: Option<Vec<codeyard_db_core::models::CommitStatus>> = None;
+    let mut ci_runs: Option<Vec<codeyard_db_core::models::CiRun>> = None;
     let mut app_clients: HashMap<i64, Option<i64>> = HashMap::new();
     let mut latest_runs: HashMap<(String, Option<i64>), Option<db::checks::Run>> = HashMap::new();
     let mut changes_requested_reported = false;
@@ -657,11 +660,11 @@ async fn merge_blockers(
 /// Applies the protection rules of `target` (the branch and its tip) to one layer that a merge
 /// brings in. The layer's own approvals, checks and conversations are judged at its head.
 async fn check_merge_policy(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    repository: &db::models::Repository,
-    user: &db::models::User,
-    pull_request: &db::models::PullRequest,
+    repository: &codeyard_db_core::models::Repository,
+    user: &codeyard_db_core::models::User,
+    pull_request: &codeyard_db_core::models::PullRequest,
     target: (&str, &str),
     method: MergeMethod,
 ) -> Result<(), OperationError> {
@@ -673,11 +676,11 @@ async fn check_merge_policy(
 /// the merge button. `method` is the one the merge form preselects. The list is advisory: the merge
 /// repeats every check, and a failed read is logged and lists nothing instead of failing the page.
 pub async fn page_blockers(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    repository: &db::models::Repository,
-    viewer: &db::models::User,
-    pull_request: &db::models::PullRequest,
+    repository: &codeyard_db_core::models::Repository,
+    viewer: &codeyard_db_core::models::User,
+    pull_request: &codeyard_db_core::models::PullRequest,
     method: MergeMethod,
 ) -> Vec<String> {
     match page_blocker_messages(pool, ci, repository, viewer, pull_request, method).await {
@@ -690,11 +693,11 @@ pub async fn page_blockers(
 }
 
 pub async fn page_blocker_messages(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    repository: &db::models::Repository,
-    viewer: &db::models::User,
-    pull_request: &db::models::PullRequest,
+    repository: &codeyard_db_core::models::Repository,
+    viewer: &codeyard_db_core::models::User,
+    pull_request: &codeyard_db_core::models::PullRequest,
     method: MergeMethod,
 ) -> Result<Vec<String>, OperationError> {
     if pull_request.state != "open" {
@@ -756,9 +759,9 @@ pub async fn page_blocker_messages(
 /// The open layers from the bottom of the stack of `pull_request` up to it, bottom first. A closed
 /// or cyclic layer below it refuses the chain.
 pub(super) async fn open_chain(
-    pool: &db::DbPool,
-    pull_request: &db::models::PullRequest,
-) -> Result<Vec<db::models::PullRequest>, OperationError> {
+    pool: &codeyard_db_core::DbPool,
+    pull_request: &codeyard_db_core::models::PullRequest,
+) -> Result<Vec<codeyard_db_core::models::PullRequest>, OperationError> {
     let chain = pull_requests::stacks::chain_below(pool, pull_request)
         .await
         .map_err(database_error)?;
@@ -783,10 +786,10 @@ pub(super) async fn open_chain(
 /// last. Squash and rebase carry only one pull request, so a pull request with open layers below
 /// it can only be merged with a merge commit.
 async fn stack_chain(
-    pool: &db::DbPool,
-    pull_request: &db::models::PullRequest,
+    pool: &codeyard_db_core::DbPool,
+    pull_request: &codeyard_db_core::models::PullRequest,
     method: MergeMethod,
-) -> Result<Vec<db::models::PullRequest>, OperationError> {
+) -> Result<Vec<codeyard_db_core::models::PullRequest>, OperationError> {
     let layers = open_chain(pool, pull_request).await?;
     if layers.len() > 1 && method != MergeMethod::Merge {
         return Err(OperationError::Conflict {
@@ -808,13 +811,13 @@ fn stale_revision() -> OperationError {
 /// Brings the layers of a chain up to their branches, as a merge of one pull request does, and
 /// returns them as they now stand. The chosen layer was refreshed before the chain was read.
 async fn refresh_chain(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     user_id: i64,
     chosen: i64,
-    chain: Vec<db::models::PullRequest>,
-) -> Result<Vec<db::models::PullRequest>, OperationError> {
+    chain: Vec<codeyard_db_core::models::PullRequest>,
+) -> Result<Vec<codeyard_db_core::models::PullRequest>, OperationError> {
     let mut layers = Vec::with_capacity(chain.len());
     for layer in chain {
         if layer.id == chosen {
@@ -827,7 +830,7 @@ async fn refresh_chain(
             ci,
             user_id,
             layer.id,
-            Some(crate::backend::db::models::AccessLevel::Owner),
+            Some(codeyard_db_core::models::AccessLevel::Owner),
         )
         .await
         .map_err(|_| OperationError::Unavailable {
@@ -848,7 +851,10 @@ async fn refresh_chain(
 
 /// The ref that a merge verifies for a layer: its head branch, or the pull ref when its head is in
 /// a fork.
-fn head_ref(repository: &db::models::Repository, pull_request: &db::models::PullRequest) -> String {
+fn head_ref(
+    repository: &codeyard_db_core::models::Repository,
+    pull_request: &codeyard_db_core::models::PullRequest,
+) -> String {
     if pull_request.head_repo_id == Some(repository.id) {
         format!("refs/heads/{}", pull_request.head_branch)
     } else {
@@ -858,11 +864,11 @@ fn head_ref(repository: &db::models::Repository, pull_request: &db::models::Pull
 
 /// Whether the head branch of a layer still exists, in this repository or in its fork.
 async fn head_branch_exists(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     branches: &HashMap<String, String>,
-    pull_request: &db::models::PullRequest,
+    pull_request: &codeyard_db_core::models::PullRequest,
 ) -> Result<bool, OperationError> {
     let reference = format!("refs/heads/{}", pull_request.head_branch);
     if pull_request.head_repo_id == Some(repository.id) {
@@ -892,10 +898,10 @@ async fn head_branch_exists(
 /// leaves the layers above it stale. The bottom layer must also not sit on a squashed or rebased
 /// layer below it. Either way, the stack must be rebased before any of it merges.
 async fn check_restacked(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    repository: &db::models::Repository,
-    layers: &[db::models::PullRequest],
+    repository: &codeyard_db_core::models::Repository,
+    layers: &[codeyard_db_core::models::PullRequest],
     branches: &HashMap<String, String>,
 ) -> Result<(), OperationError> {
     let store = repo_store(repository, ci.cluster.as_ref());
@@ -929,11 +935,11 @@ fn needs_restack() -> OperationError {
 /// Applies the protection rules of the trunk, which the bottom layer is based on, to every layer.
 /// A refusal names the layer it is about.
 async fn check_chain_policy(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    repository: &db::models::Repository,
-    user: &db::models::User,
-    layers: &[db::models::PullRequest],
+    repository: &codeyard_db_core::models::Repository,
+    user: &codeyard_db_core::models::User,
+    layers: &[codeyard_db_core::models::PullRequest],
     method: MergeMethod,
 ) -> Result<(), OperationError> {
     let Some(bottom) = layers.first() else {
@@ -993,7 +999,10 @@ fn named_layer(number: i32, error: OperationError) -> OperationError {
 
 /// Whether `now` still has the branches, commits and state that a prepared merge was checked
 /// against.
-fn same_revision(now: &db::models::PullRequest, prepared: &db::models::PullRequest) -> bool {
+fn same_revision(
+    now: &codeyard_db_core::models::PullRequest,
+    prepared: &codeyard_db_core::models::PullRequest,
+) -> bool {
     now.id == prepared.id
         && now.repo_id == prepared.repo_id
         && now.number == prepared.number
@@ -1011,11 +1020,11 @@ pub struct PreparedMerge {
     authority: db::credentials::Actor,
     owner: String,
     repo: String,
-    repository: db::models::Repository,
+    repository: codeyard_db_core::models::Repository,
     /// The pull request that was asked to merge. It is the last of `layers`.
-    pull_request: db::models::PullRequest,
+    pull_request: codeyard_db_core::models::PullRequest,
     /// The open layers the merge brings in, bottom first.
-    layers: Vec<db::models::PullRequest>,
+    layers: Vec<codeyard_db_core::models::PullRequest>,
     merge: StoreMerge,
     merge_sha: String,
     async_request: Option<(String, i64)>,
@@ -1038,7 +1047,7 @@ impl PreparedMerge {
 }
 
 pub async fn prepare_pull_request_merge(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     actor: impl Into<db::credentials::Actor>,
     repository: (String, String, i32),
@@ -1047,7 +1056,7 @@ pub async fn prepare_pull_request_merge(
     prepare_pull_request_merge_checked(pool, ci, actor.into(), repository, request, None).await
 }
 async fn prepare_pull_request_merge_checked(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     authority: db::credentials::Actor,
     (owner, repo, number): (String, String, i32),
@@ -1090,7 +1099,7 @@ async fn prepare_pull_request_merge_checked(
         ci,
         user.id,
         pull_request.id,
-        Some(crate::backend::db::models::AccessLevel::Owner),
+        Some(codeyard_db_core::models::AccessLevel::Owner),
     )
     .await
     .map_err(|_| OperationError::Unavailable {
@@ -1227,7 +1236,7 @@ async fn prepare_pull_request_merge_checked(
 }
 
 pub(super) fn merge_message(
-    pull: &db::models::PullRequest,
+    pull: &codeyard_db_core::models::PullRequest,
     method: MergeMethod,
     title: Option<&str>,
     body: Option<&str>,
@@ -1335,7 +1344,7 @@ fn publish_failure(error: RepoError, method: MergeMethod) -> OperationError {
 }
 
 pub async fn publish_prepared_merge(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     broadcaster: &std::sync::Arc<NotificationBroadcaster>,
     prepared: PreparedMerge,
@@ -1352,7 +1361,7 @@ pub async fn publish_prepared_merge(
     })?
 }
 async fn publish_prepared_merge_owned(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     prepared: PreparedMerge,
@@ -1517,7 +1526,7 @@ async fn publish_prepared_merge_owned(
         Some(&[&merge.base_branch]),
         ci,
         user.id,
-        crate::backend::db::models::AccessLevel::Owner,
+        codeyard_db_core::models::AccessLevel::Owner,
     )
     .await
     {
@@ -1569,7 +1578,7 @@ async fn publish_prepared_merge_owned(
             .await;
             // Workflows that listen for a closed pull request run for the merged one too. A
             // layer landed on the merge's base, not on the layer below it.
-            let landed = db::models::PullRequest {
+            let landed = codeyard_db_core::models::PullRequest {
                 base_branch: merge.base_branch.clone(),
                 base_sha: merge.base.clone(),
                 ..merged
@@ -1580,7 +1589,7 @@ async fn publish_prepared_merge_owned(
                 &repository,
                 &landed,
                 user.id,
-                crate::backend::db::models::AccessLevel::Owner,
+                codeyard_db_core::models::AccessLevel::Owner,
                 &payload,
             )
             .await;
@@ -1641,12 +1650,12 @@ const MAX_CLOSED_ISSUES: usize = 50;
 /// sends the usual notifications and webhooks. The merge is already published, so a failure
 /// is logged and does not undo it.
 async fn close_linked_issues(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    repository: &db::models::Repository,
+    repository: &codeyard_db_core::models::Repository,
     owner: &str,
-    layers: &[db::models::PullRequest],
+    layers: &[codeyard_db_core::models::PullRequest],
 ) {
     let base = crate::backend::api::http::config::link_origin();
     let mut seen = HashSet::new();
@@ -1858,7 +1867,7 @@ mod tests {
 
     #[test]
     fn statuses_for_another_revision_never_satisfy_the_gate() {
-        let status = db::models::CommitStatus {
+        let status = codeyard_db_core::models::CommitStatus {
             id: 1,
             repo_id: 1,
             sha: "H1".into(),
@@ -1903,7 +1912,7 @@ mod tests {
         let required = vec!["lint".to_string()];
         let none = HashMap::new();
         let failures = |runs: &[db::checks::Run],
-                        statuses: &[db::models::CommitStatus],
+                        statuses: &[codeyard_db_core::models::CommitStatus],
                         bound: &HashMap<&str, Option<i64>>| {
             let runs: Vec<&db::checks::Run> = runs.iter().collect();
             required_status_check_failures("H1", &required, statuses, &[], &runs, bound)
@@ -1917,7 +1926,7 @@ mod tests {
         let running = [run("in_progress", None)];
         assert_eq!(failures(&running, &[], &none), vec!["lint (pending)"]);
         // A passing check run does not hide a failing status of the same name.
-        let status = db::models::CommitStatus {
+        let status = codeyard_db_core::models::CommitStatus {
             id: 1,
             repo_id: 1,
             sha: "H1".into(),

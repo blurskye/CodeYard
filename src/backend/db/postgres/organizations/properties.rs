@@ -1,9 +1,10 @@
 use super::authority::*;
-use crate::backend::db::{
-    models::{AccessLevel, OrgRole, Repository},
-    organizations::{properties::*, OrganizationOutcome},
-};
+use crate::backend::db::organizations::properties::*;
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::{ensure, Result};
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Repository;
 use sqlx::{PgConnection, PgPool};
 use std::collections::HashSet;
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing};
@@ -95,7 +96,7 @@ pub async fn define(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner {
+    if require_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
         return Ok(Denied);
     }
     if !credential(&mut tx, &grant, org, "organization_custom_properties").await? {
@@ -130,7 +131,7 @@ pub async fn remove(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner {
+    if require_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
         return Ok(Denied);
     }
     if !credential(&mut tx, &grant, org, "organization_custom_properties").await? {
@@ -167,7 +168,7 @@ pub(crate) async fn creation_values_on(
     let definitions = definitions_on(c, org).await?;
     let owner = matches!(
         read_authority(c, actor, org).await?,
-        Applied(OrgRole::Owner)
+        Applied(codeyard_db_core::models::OrgRole::Owner)
     );
     for input in inputs {
         let definition = definitions
@@ -210,7 +211,7 @@ pub async fn set_values(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner {
+    if require_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
         return Ok(Denied);
     }
     if !credential(&mut tx, &grant, org, "organization_custom_properties").await? {
@@ -283,7 +284,7 @@ pub async fn repository(
         super::super::repositories::access::user_repo_access_in_transaction(&mut tx, viewer, repo)
             .await?
     } else {
-        AccessLevel::None
+        codeyard_db_core::models::AccessLevel::None
     };
     if repository.is_private && !access.can_read() {
         return Ok(None);
@@ -295,7 +296,7 @@ pub async fn repository(
         access.can_admin()
             && matches!(
                 read_authority(&mut tx, viewer, org).await?,
-                Applied(OrgRole::Owner)
+                Applied(codeyard_db_core::models::OrgRole::Owner)
             )
     } else {
         false
@@ -356,7 +357,7 @@ async fn change_repository_values(
     // Archive authority already pins membership and tenant policy; never upgrade its shared row locks.
     let mut owner = matches!(
         read_authority(&mut tx, actor, org).await?,
-        Applied(OrgRole::Owner)
+        Applied(codeyard_db_core::models::OrgRole::Owner)
     );
     ensure!(
         super::super::credentials::writes(&mut tx, &grant, Some(repo), None, "administration")

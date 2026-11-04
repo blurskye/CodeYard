@@ -1,7 +1,8 @@
 //! Regression contracts for database effects and their current authority on both engines.
 use crate::support::database::Database;
 use codeyard::backend::{db, identity, notifications};
-use db::models::{AccessLevel, Repository};
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::Repository;
 use db::notifications::{NewNotification, NotificationFilter, NotificationInboxAction};
 use db::repositories::{creation::RepositoryTarget, records};
 use std::time::Duration;
@@ -43,11 +44,11 @@ async fn org_repo(f: &Database, owner: i64, org: i64, name: &str) -> Repository 
 }
 
 async fn notice(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     user: i64,
     repository: Option<i64>,
     title: &str,
-) -> db::models::Notification {
+) -> codeyard_db_core::models::Notification {
     db::notifications::records::create_notification(
         pool,
         NewNotification {
@@ -65,7 +66,7 @@ async fn notice(
     .unwrap()
 }
 
-async fn session(pool: &db::DbPool, user: i64) -> String {
+async fn session(pool: &codeyard_db_core::DbPool, user: i64) -> String {
     let id = uuid::Uuid::new_v4().simple().to_string();
     db::users::sessions::create_session(
         pool,
@@ -87,9 +88,14 @@ async fn archive_writes_recheck_personal_and_organization_authority() {
         let owner = f.actor("archive_owner").await;
         let admin = f.actor("archive_admin").await;
         let r = repo(&f, owner, "archive").await;
-        db::repositories::access::grant_repo_access(f.pool(), admin, r.id, AccessLevel::Admin)
-            .await
-            .unwrap();
+        db::repositories::access::grant_repo_access(
+            f.pool(),
+            admin,
+            r.id,
+            codeyard_db_core::models::AccessLevel::Admin,
+        )
+        .await
+        .unwrap();
         assert!(
             records::set_repository_archived(f.pool(), admin, r.id, true)
                 .await
@@ -283,13 +289,18 @@ async fn shared_selectors_include_scoped_inherited_grants_once() {
             &[foreign.id],
         )
         .await;
-        db::repositories::access::grant_repo_access(f.pool(), writer, r.id, AccessLevel::Read)
-            .await
-            .unwrap();
+        db::repositories::access::grant_repo_access(
+            f.pool(),
+            writer,
+            r.id,
+            codeyard_db_core::models::AccessLevel::Read,
+        )
+        .await
+        .unwrap();
         for (actor, level) in [
-            (owner, AccessLevel::Owner),
-            (admin, AccessLevel::Admin),
-            (writer, AccessLevel::Write),
+            (owner, codeyard_db_core::models::AccessLevel::Owner),
+            (admin, codeyard_db_core::models::AccessLevel::Admin),
+            (writer, codeyard_db_core::models::AccessLevel::Write),
         ] {
             let rows = records::list_shared_repositories(f.pool(), actor)
                 .await
@@ -382,8 +393,8 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
                 filename: "asset.zip",
                 content_type: "application/zip",
                 file_size: 100,
-                reason: db::models::FileReason::ReleaseAsset,
-                visibility: db::models::FileVisibility::Owner,
+                reason: codeyard_db_core::models::FileReason::ReleaseAsset,
+                visibility: codeyard_db_core::models::FileVisibility::Owner,
                 sha256_hex: &"a".repeat(64),
             },
         )
@@ -435,7 +446,7 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
                 // Existing data can share a file even though new attachments may not.
                 let sql = "INSERT INTO release_assets(release_id,file_id,name,content_type,size) VALUES($1,$2,'asset.zip','application/zip',100)";
                 match f.pool() {
-                    db::DbPool::Postgres(pool) => {
+                    codeyard_db_core::DbPool::Postgres(pool) => {
                         sqlx::query(sql)
                             .bind(release.id)
                             .bind(file.id)
@@ -443,7 +454,7 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
                             .await
                             .unwrap();
                     }
-                    db::DbPool::Sqlite(pool) => {
+                    codeyard_db_core::DbPool::Sqlite(pool) => {
                         sqlx::query(sql)
                             .bind(release.id)
                             .bind(file.id)
@@ -503,9 +514,14 @@ async fn transfers_drop_unmanageable_grants_and_stop_old_ci_authority() {
         )
         .await;
         let r = repo(&f, owner, "transfer").await;
-        db::repositories::access::grant_repo_access(f.pool(), outsider, r.id, AccessLevel::Admin)
-            .await
-            .unwrap();
+        db::repositories::access::grant_repo_access(
+            f.pool(),
+            outsider,
+            r.id,
+            codeyard_db_core::models::AccessLevel::Admin,
+        )
+        .await
+        .unwrap();
         f.execute(
             "INSERT INTO teams(id,org_id,name,slug) VALUES(2001,1001,'writers','writers')",
             &[],
@@ -563,7 +579,7 @@ async fn transfers_drop_unmanageable_grants_and_stop_old_ci_authority() {
             db::repositories::access::get_user_repo_access(f.pool(), owner, r.id)
                 .await
                 .unwrap(),
-            AccessLevel::None
+            codeyard_db_core::models::AccessLevel::None
         );
         let running = db::ci::get_ci_run_by_run_id(f.pool(), run_ids[0])
             .await

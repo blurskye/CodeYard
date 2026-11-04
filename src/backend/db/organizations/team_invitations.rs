@@ -1,7 +1,9 @@
 //! A team invitation joins the organization's existing acceptance and cancellation flow.
 use super::{OrganizationOutcome, OrganizationPage, TeamRole};
-use crate::backend::db::{models::OrgInvitation, DbPool};
 use anyhow::Result;
+use codeyard_db_core::models::OrgInvitation;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct TeamInvitation {

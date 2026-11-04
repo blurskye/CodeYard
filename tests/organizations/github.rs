@@ -26,17 +26,16 @@ use axum::{
     http::{HeaderMap, Request},
     Router,
 };
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db::{
-        models::OrgRole,
-        organizations::{self, NewOrganization, OrganizationProfile},
-    },
-    identity::tokens::{self, TokenInput},
-    storage::ObjectStore,
-};
+use codeyard::backend::api::create_router;
+use codeyard::backend::app::AppState;
+use codeyard::backend::ci::CiConfig;
+use codeyard::backend::db::organizations;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::identity::tokens;
+use codeyard::backend::identity::tokens::TokenInput;
+use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -104,9 +103,15 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        organizations::add_organization_member(f.pool(), owner, org.id, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        organizations::add_organization_member(
+            f.pool(),
+            owner,
+            org.id,
+            member,
+            codeyard_db_core::models::OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     applied(
         organizations::invite_organization_member(
@@ -114,7 +119,7 @@ async fn contract(pg: bool) {
             owner,
             org.id,
             outsider,
-            OrgRole::Member,
+            codeyard_db_core::models::OrgRole::Member,
         )
         .await
         .unwrap(),
@@ -563,7 +568,7 @@ async fn contract(pg: bool) {
             owner,
             org.id,
             member,
-            OrgRole::Admin,
+            codeyard_db_core::models::OrgRole::Admin,
         )
         .await
         .unwrap(),
@@ -594,7 +599,7 @@ async fn contract(pg: bool) {
             owner,
             org.id,
             member,
-            OrgRole::Member,
+            codeyard_db_core::models::OrgRole::Member,
         )
         .await
         .unwrap(),

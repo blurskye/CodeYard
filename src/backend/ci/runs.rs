@@ -5,11 +5,10 @@ use super::{
     config::{CiConfig, CiPipelineKind},
     push::branch_name,
 };
-use crate::backend::{
-    db::{self, DbPool},
-    notifications::NotificationBroadcaster,
-};
+use crate::backend::db;
+use crate::backend::notifications::NotificationBroadcaster;
 use anyhow::Result;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -107,7 +106,7 @@ impl CiRuns {
         actor_id: i64,
         request: DispatchRequest,
         credential: Option<db::ci::CiCredential>,
-    ) -> Result<db::models::CiRun, AdmissionError> {
+    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         use super::admission::{is_safe_owner, is_safe_ref, is_safe_workflow_path};
         use crate::backend::git::is_full_commit_id;
         if !is_safe_owner(&request.repo_owner)
@@ -214,7 +213,7 @@ impl CiRuns {
                 manual: true,
             },
             false,
-            db::models::AccessLevel::Owner,
+            codeyard_db_core::models::AccessLevel::Owner,
             None,
             None,
             None,
@@ -229,7 +228,7 @@ impl CiRuns {
         run_id: Uuid,
         actor_id: i64,
         credential: Option<db::ci::CiCredential>,
-    ) -> Result<db::models::CiRun, AdmissionError> {
+    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         self.rerun_run_options(
             run_id,
             actor_id,
@@ -249,7 +248,7 @@ impl CiRuns {
         actor: i64,
         debug: bool,
         credential: Option<db::ci::CiCredential>,
-    ) -> Result<db::models::CiRun, AdmissionError> {
+    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         self.rerun_selected_workflow(
             repo,
             id,
@@ -267,7 +266,7 @@ impl CiRuns {
         actor: i64,
         debug: bool,
         credential: Option<db::ci::CiCredential>,
-    ) -> Result<db::models::CiRun, AdmissionError> {
+    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         self.rerun_selected_workflow(
             repo,
             id,
@@ -285,7 +284,7 @@ impl CiRuns {
         actor: i64,
         debug: bool,
         credential: Option<db::ci::CiCredential>,
-    ) -> Result<db::models::CiRun, AdmissionError> {
+    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         let job = db::action_jobs::get(&self.pool, repo, id, false)
             .await?
             .ok_or(AdmissionError::Missing("Job not found"))?;
@@ -310,7 +309,7 @@ impl CiRuns {
         debug: bool,
         credential: Option<db::ci::CiCredential>,
         selection: db::ci::CiReplaySelection,
-    ) -> Result<db::models::CiRun, AdmissionError> {
+    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         let source = db::action_runs::get(&self.pool, repo, id, None)
             .await?
             .ok_or(AdmissionError::Missing("Run not found"))?;
@@ -331,7 +330,7 @@ impl CiRuns {
         selection: db::ci::CiReplaySelection,
         credential: Option<db::ci::CiCredential>,
         allow_active: bool,
-    ) -> Result<db::models::CiRun, AdmissionError> {
+    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         let run = db::ci::get_ci_run_by_run_id(&self.pool, run_id)
             .await?
             .ok_or(AdmissionError::Missing("Run not found"))?;
@@ -372,7 +371,7 @@ impl CiRuns {
                 manual: true,
             },
             true,
-            db::models::AccessLevel::Owner,
+            codeyard_db_core::models::AccessLevel::Owner,
             attempt,
             run.event_payload,
             Some(run.workflow_blobs),
@@ -413,8 +412,8 @@ impl CiRuns {
     pub async fn trigger_run(
         &self,
         request: CiRunRequest,
-    ) -> Result<db::models::CiRun, AdmissionError> {
-        self.trigger_run_with_access(request, db::models::AccessLevel::Owner)
+    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
+        self.trigger_run_with_access(request, codeyard_db_core::models::AccessLevel::Owner)
             .await
     }
 
@@ -422,8 +421,8 @@ impl CiRuns {
     pub(crate) async fn trigger_run_with_access(
         &self,
         request: CiRunRequest,
-        access: db::models::AccessLevel,
-    ) -> Result<db::models::CiRun, AdmissionError> {
+        access: codeyard_db_core::models::AccessLevel,
+    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         self.enqueue_run(request, false, access, None, None, None, None)
             .await
     }
@@ -431,10 +430,10 @@ impl CiRuns {
     pub(crate) async fn trigger_event_run(
         &self,
         request: CiRunRequest,
-        access: db::models::AccessLevel,
+        access: codeyard_db_core::models::AccessLevel,
         payload: serde_json::Value,
         credential: Option<db::ci::CiCredential>,
-    ) -> Result<db::models::CiRun, AdmissionError> {
+    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         self.enqueue_run(
             request,
             false,
@@ -455,12 +454,12 @@ impl CiRuns {
         &self,
         request: CiRunRequest,
         rerun: bool,
-        access: db::models::AccessLevel,
+        access: codeyard_db_core::models::AccessLevel,
         mut attempt: Option<db::ci::NewCiAttempt>,
         event_payload: Option<serde_json::Value>,
         source_blobs: Option<serde_json::Value>,
         credential: Option<db::ci::CiCredential>,
-    ) -> Result<db::models::CiRun, AdmissionError> {
+    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         let revision = admission::resolve(
             &self.pool,
             &self.config,
@@ -616,8 +615,8 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        let pool = DbPool::from(native.clone());
-        db::run_migrations(&pool).await.unwrap();
+        let pool = codeyard_db_core::DbPool::from(native.clone());
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let owner = db::users::accounts::create_user(&pool, "preflight_owner", None)
             .await
             .unwrap();
@@ -652,7 +651,7 @@ mod tests {
             &pool,
             actor.id,
             repository.id,
-            db::models::AccessLevel::Write,
+            codeyard_db_core::models::AccessLevel::Write,
         )
         .await
         .unwrap();

@@ -1,14 +1,12 @@
 //! Invitations remain offers until a verified recipient accepts through REST or native settings.
 use super::{auth, outcome, target, AppState, Error, Result};
-use crate::backend::{
-    api::github::pagination::Pagination,
-    db::{
-        self,
-        models::{OrgInvitation, OrgRole, Organization},
-        organizations::{self, InvitationFilter, InvitationTeams, NewInvitation},
-    },
-    webhooks::payloads,
-};
+use crate::backend::api::github::pagination::Pagination;
+use crate::backend::db;
+use crate::backend::db::organizations;
+use crate::backend::db::organizations::InvitationFilter;
+use crate::backend::db::organizations::InvitationTeams;
+use crate::backend::db::organizations::NewInvitation;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -16,6 +14,9 @@ use axum::{
     routing::{delete, get, post, MethodRouter},
     Json,
 };
+use codeyard_db_core::models::OrgInvitation;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Organization;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
@@ -95,8 +96,8 @@ async fn create(
     let (org, actor) = context(&state, &headers, &name, true).await?;
     let Json(input) = body.map_err(super::super::json_error)?;
     let role = match input.role.as_deref().unwrap_or("direct_member") {
-        "admin" => OrgRole::Owner,
-        "direct_member" | "reinstate" => OrgRole::Member,
+        "admin" => codeyard_db_core::models::OrgRole::Owner,
+        "direct_member" | "reinstate" => codeyard_db_core::models::OrgRole::Member,
         "billing_manager" => return Err(Error::invalid("Billing manager invitations require a billing service, which Codeyard does not provide")),
         _ => return Err(Error::validation("OrganizationInvitation", "role", "invalid")),
     };
@@ -182,8 +183,8 @@ async fn pending(
     };
     match query.role.as_deref().unwrap_or("all") {
         "all" => {}
-        "admin" => filter.role = Some(OrgRole::Owner),
-        "direct_member" => filter.role = Some(OrgRole::Member),
+        "admin" => filter.role = Some(codeyard_db_core::models::OrgRole::Owner),
+        "direct_member" => filter.role = Some(codeyard_db_core::models::OrgRole::Member),
         "billing_manager" | "hiring_manager" => filter.empty = true,
         _ => {
             return Err(Error::validation(

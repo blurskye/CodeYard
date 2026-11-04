@@ -4,7 +4,6 @@ use super::INDEX;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::app::AppState;
 use crate::backend::db::interactions::InteractionScope;
-use crate::backend::db::models::OrgRole;
 use crate::backend::db::organizations;
 use crate::backend::db::organizations::OrganizationOutcome::*;
 use crate::backend::db::organizations::*;
@@ -14,6 +13,7 @@ use axum::extract::rejection::FormRejection;
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_db_core::models::OrgRole;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::orgs as view;
 use std::collections::HashMap;
@@ -226,7 +226,7 @@ pub(super) fn not_found(ctx: &PageContext) -> Response {
     ctx.error(StatusCode::NOT_FOUND, "Organization not found.")
 }
 /// The header of an organization's public pages, with its picture.
-pub(super) fn public_view(org: crate::backend::db::models::Organization) -> view::Organization {
+pub(super) fn public_view(org: codeyard_db_core::models::Organization) -> view::Organization {
     view::Organization {
         id: org.id,
         name: org.name,
@@ -240,7 +240,7 @@ pub(super) fn public_view(org: crate::backend::db::models::Organization) -> view
 }
 
 /// A team with its member count, as the organization pages list it.
-pub(super) fn team_view(team: crate::backend::db::models::Team, member_count: i64) -> view::Team {
+pub(super) fn team_view(team: codeyard_db_core::models::Team, member_count: i64) -> view::Team {
     view::Team {
         id: team.id,
         name: team.name,
@@ -347,7 +347,10 @@ pub(super) async fn respond_with_hook_draft(
     let (can_manage, is_owner) = match org {
         Some(org) => {
             match organizations::get_organization_role(&ctx.state.pool, actor, org).await {
-                Ok(Applied(role)) => (administers(role), role == OrgRole::Owner),
+                Ok(Applied(role)) => (
+                    administers(role),
+                    role == codeyard_db_core::models::OrgRole::Owner,
+                ),
                 Ok(_) => return not_found(ctx),
                 Err(_) => return unavailable(ctx),
             }

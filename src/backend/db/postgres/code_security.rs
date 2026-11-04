@@ -1,9 +1,8 @@
-use crate::backend::db::{
-    code_security::*,
-    models::{OrgRole, Repository},
-    organizations::OrganizationOutcome,
-};
+use crate::backend::db::code_security::*;
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::{ensure, Result};
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Repository;
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 
 async fn write<'a>(
@@ -13,8 +12,10 @@ async fn write<'a>(
 ) -> Result<Transaction<'a, Postgres>> {
     let mut tx = pool.begin().await?;
     match super::organizations::authority::authority(&mut tx, actor.user_id, org).await? {
-        OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {}
-        OrganizationOutcome::Applied(OrgRole::Member)
+        OrganizationOutcome::Applied(
+            codeyard_db_core::models::OrgRole::Owner | codeyard_db_core::models::OrgRole::Admin,
+        ) => {}
+        OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Member)
             if super::organizations::roles::manages_security(&mut tx, actor.user_id, org)
                 .await? => {}
         OrganizationOutcome::Missing => return Err(Refusal::Missing.into()),
@@ -29,8 +30,10 @@ async fn write<'a>(
 }
 async fn readable(connection: &mut PgConnection, actor: i64, org: i64) -> Result<()> {
     match super::organizations::authority::read_authority(connection, actor, org).await? {
-        OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => Ok(()),
-        OrganizationOutcome::Applied(OrgRole::Member)
+        OrganizationOutcome::Applied(
+            codeyard_db_core::models::OrgRole::Owner | codeyard_db_core::models::OrgRole::Admin,
+        ) => Ok(()),
+        OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Member)
             if super::organizations::roles::holds_security_role(connection, actor, org).await? =>
         {
             Ok(())

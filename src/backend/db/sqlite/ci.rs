@@ -1,9 +1,11 @@
 //! CI runs as a job queue: triggers enqueue, worker nodes claim, heartbeat and
 //! finish runs.
-use super::models::{CiDeployment, CiLogLine, CiRun};
 use crate::backend::db::action_settings::{organization_allows, Setting};
 use crate::backend::db::ci::{CiAdmissionRefusal, NewCiRun, ACCESS_LOST_MESSAGE};
 use anyhow::{bail, ensure, Result};
+use codeyard_db_core::models::CiDeployment;
+use codeyard_db_core::models::CiLogLine;
+use codeyard_db_core::models::CiRun;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use uuid::Uuid;
 
@@ -21,10 +23,11 @@ async fn ci_actor_has_permission(
     cd: bool,
     trusted_ids: &[i64],
 ) -> Result<bool> {
-    let user = sqlx::query_as::<_, super::models::User>("SELECT * FROM users WHERE id = ?1")
-        .bind(actor)
-        .fetch_optional(&mut **tx)
-        .await?;
+    let user =
+        sqlx::query_as::<_, codeyard_db_core::models::User>("SELECT * FROM users WHERE id = ?1")
+            .bind(actor)
+            .fetch_optional(&mut **tx)
+            .await?;
     let Some(user) = user else { return Ok(false) };
     if user.is_banned
         || user.must_change_password
@@ -32,11 +35,12 @@ async fn ci_actor_has_permission(
     {
         return Ok(false);
     }
-    let repo =
-        sqlx::query_as::<_, super::models::Repository>("SELECT * FROM repositories WHERE id = ?1")
-            .bind(repo_id)
-            .fetch_optional(&mut **tx)
-            .await?;
+    let repo = sqlx::query_as::<_, codeyard_db_core::models::Repository>(
+        "SELECT * FROM repositories WHERE id = ?1",
+    )
+    .bind(repo_id)
+    .fetch_optional(&mut **tx)
+    .await?;
     let Some(repo) = repo else { return Ok(false) };
     if repo.is_archived {
         return Ok(false);
@@ -971,11 +975,12 @@ async fn request_cancellation(
     credential: Option<&crate::backend::db::ci::CiCredential>,
 ) -> Result<crate::backend::db::ci::Cancellation> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let user = sqlx::query_as::<_, super::models::User>("SELECT * FROM users WHERE id = ?1")
-        .bind(actor_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or(CiAdmissionRefusal::Missing("CI actor unavailable"))?;
+    let user =
+        sqlx::query_as::<_, codeyard_db_core::models::User>("SELECT * FROM users WHERE id = ?1")
+            .bind(actor_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(CiAdmissionRefusal::Missing("CI actor unavailable"))?;
     ensure!(
         !user.is_banned && !user.must_change_password,
         CiAdmissionRefusal::Denied("CI actor is restricted")
@@ -985,11 +990,12 @@ async fn request_cancellation(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(CiAdmissionRefusal::Missing("CI run unavailable"))?;
-    let repo =
-        sqlx::query_as::<_, super::models::Repository>("SELECT * FROM repositories WHERE id = ?1")
-            .bind(run.repo_id)
-            .fetch_one(&mut *tx)
-            .await?;
+    let repo = sqlx::query_as::<_, codeyard_db_core::models::Repository>(
+        "SELECT * FROM repositories WHERE id = ?1",
+    )
+    .bind(run.repo_id)
+    .fetch_one(&mut *tx)
+    .await?;
     let access =
         super::repositories::access::user_repo_access_in_transaction(&mut tx, actor_id, repo.id)
             .await?;

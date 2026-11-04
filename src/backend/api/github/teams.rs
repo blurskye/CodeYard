@@ -4,15 +4,10 @@ use super::{
     pagination::{next_after, Pagination},
     repos, Error, Result,
 };
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        models::{Organization, Team, User},
-        organizations as orgs,
-    },
-    webhooks::payloads,
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::organizations as orgs;
+use crate::backend::webhooks::payloads;
 use axum::{
     body::to_bytes,
     extract::{OriginalUri, Path, Query, Request, State},
@@ -21,6 +16,9 @@ use axum::{
     routing::{delete, get, patch, post, put, MethodRouter},
     Json,
 };
+use codeyard_db_core::models::Organization;
+use codeyard_db_core::models::Team;
+use codeyard_db_core::models::User;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -727,7 +725,7 @@ async fn team_member(
             .into_response());
         };
         // Organization owners maintain every team they are on.
-        if matches!(target_role, db::models::OrgRole::Owner) {
+        if matches!(target_role, codeyard_db_core::models::OrgRole::Owner) {
             role = orgs::TeamRole::Maintainer;
         }
         let row = outcome(

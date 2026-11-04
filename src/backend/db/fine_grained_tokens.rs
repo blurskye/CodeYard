@@ -1,7 +1,8 @@
 //! Fine-grained personal access tokens, their repository selections and organization policies.
-use crate::backend::db::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct Token {

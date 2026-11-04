@@ -511,7 +511,7 @@ async fn session_enrollment_contract(pg: bool) {
     let enrollment = ssh_keys::add_ssh_key_for_session(&pool, user_id, &session, "Queued", PUBLIC);
     tokio::pin!(enrollment);
     match f.pool() {
-        db::DbPool::Postgres(raw) => {
+        codeyard_db_core::DbPool::Postgres(raw) => {
             let mut change = raw.begin().await.unwrap();
             sqlx::query("UPDATE users SET password_hash='third-hash' WHERE id=$1")
                 .bind(user.id)
@@ -533,7 +533,7 @@ async fn session_enrollment_contract(pg: bool) {
                 .unwrap();
             change.commit().await.unwrap();
         }
-        db::DbPool::Sqlite(raw) => {
+        codeyard_db_core::DbPool::Sqlite(raw) => {
             let mut change = raw.begin_with("BEGIN IMMEDIATE").await.unwrap();
             sqlx::query("UPDATE users SET password_hash='third-hash' WHERE id=?1")
                 .bind(user.id)

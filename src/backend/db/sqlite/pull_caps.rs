@@ -1,10 +1,13 @@
-use crate::backend::db::{
-    models::{OrgRole, User},
-    organizations::OrganizationOutcome,
-    pull_caps::{CapUpdate, PullCap, PullCapReached, PullCapRefusal, PullCapScope},
-    users::accounts::AccountCredential,
-};
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::pull_caps::CapUpdate;
+use crate::backend::db::pull_caps::PullCap;
+use crate::backend::db::pull_caps::PullCapReached;
+use crate::backend::db::pull_caps::PullCapRefusal;
+use crate::backend::db::pull_caps::PullCapScope;
+use crate::backend::db::users::accounts::AccountCredential;
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::User;
 use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
 
 async fn authorize(
@@ -25,7 +28,9 @@ async fn authorize(
     let allowed = match scope {
         PullCapScope::Organization(org) => matches!(
             super::organizations::authority::authority(tx, actor, org).await?,
-            OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin)
+            OrganizationOutcome::Applied(
+                codeyard_db_core::models::OrgRole::Owner | codeyard_db_core::models::OrgRole::Admin
+            )
         ),
         PullCapScope::Repository(repo) => {
             super::discussions::lock_policy_authority(tx, actor, repo, maintain).await?

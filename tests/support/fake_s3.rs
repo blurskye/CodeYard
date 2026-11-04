@@ -21,7 +21,7 @@ pub struct FakeS3 {
 }
 
 impl FakeS3 {
-    pub async fn for_database(pool: &db::DbPool) -> Option<Self> {
+    pub async fn for_database(pool: &codeyard_db_core::DbPool) -> Option<Self> {
         if db::cluster::cluster_enabled(pool).await.unwrap() {
             Some(Self::start().await)
         } else {

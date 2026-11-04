@@ -152,7 +152,7 @@ pub async fn repositories(
     setting: Setting,
     change: Option<&crate::backend::db::action_settings::SelectionChange>,
     window: (i64, i64),
-) -> Result<(i64, Vec<crate::backend::db::models::Repository>)> {
+) -> Result<(i64, Vec<codeyard_db_core::models::Repository>)> {
     let (offset, limit) = window;
     ensure!(
         matches!(scope, Scope::Organization(_)) && offset >= 0 && (1..=100).contains(&limit),
@@ -217,7 +217,7 @@ pub async fn policies_page(
         authority(&mut tx, &actor, scope, false, "organization_administration").await?;
     let repository = if let Scope::Repository(repo) = scope {
         if has_parents {
-            sqlx::query_as::<_, crate::backend::db::models::Repository>("SELECT r.* FROM repositories r WHERE r.id=?1 AND r.owner_kind='org' AND EXISTS(SELECT 1 FROM actions_policies p WHERE p.org_id=r.owner_org_id)").bind(repo).fetch_optional(&mut *tx).await?
+            sqlx::query_as::<_, codeyard_db_core::models::Repository>("SELECT r.* FROM repositories r WHERE r.id=?1 AND r.owner_kind='org' AND EXISTS(SELECT 1 FROM actions_policies p WHERE p.org_id=r.owner_org_id)").bind(repo).fetch_optional(&mut *tx).await?
         } else {
             None
         }

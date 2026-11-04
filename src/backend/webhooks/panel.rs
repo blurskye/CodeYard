@@ -3,9 +3,11 @@
 use super::events;
 use super::settings::{self, HookError, HookForm, JSON_CONTENT_TYPE};
 use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db::models::{User, Webhook, WebhookDelivery};
 use crate::backend::db::webhooks::{self as hooks, HookOwner};
-use crate::backend::db::DbPool;
+use codeyard_db_core::models::User;
+use codeyard_db_core::models::Webhook;
+use codeyard_db_core::models::WebhookDelivery;
+use codeyard_db_core::DbPool;
 use codeyard_webui::components::webhooks::{
     DeliveryDetail, DeliveryRow, HookDetail, HookDraft, HookRow, WebhookPanel,
 };

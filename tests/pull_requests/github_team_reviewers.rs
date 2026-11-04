@@ -61,9 +61,15 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        orgs::add_organization_member(f.pool(), alice, org.id, bob, db::models::OrgRole::Member)
-            .await
-            .unwrap(),
+        orgs::add_organization_member(
+            f.pool(),
+            alice,
+            org.id,
+            bob,
+            codeyard_db_core::models::OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let repo = codeyard::backend::repositories::lifecycle::provision(
@@ -84,7 +90,7 @@ async fn contract(pg: bool) {
         f.pool(),
         eve,
         repo.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();

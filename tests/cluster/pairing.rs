@@ -5,19 +5,25 @@ use crate::support::native_database as support;
 
 use chrono::{Duration as Age, Utc};
 use codeyard::backend::cli::cluster::Command;
-use codeyard::backend::{
-    cluster::{
-        self, InviteOptions, JoinTicket, Listen, NodeAddress, NodeKey, Relay, Settings, ALPN_PAIR,
-        ALPN_RPC,
-    },
-    db::{
-        self,
-        cluster::{Authority, DeclaredMember, JoinRequest, NewJoinToken},
-        models::{JoinOutcome, NodeStatusChange},
-        DbPool,
-    },
-    node::NodeRoles,
-};
+use codeyard::backend::cluster;
+use codeyard::backend::cluster::InviteOptions;
+use codeyard::backend::cluster::JoinTicket;
+use codeyard::backend::cluster::Listen;
+use codeyard::backend::cluster::NodeAddress;
+use codeyard::backend::cluster::NodeKey;
+use codeyard::backend::cluster::Relay;
+use codeyard::backend::cluster::Settings;
+use codeyard::backend::cluster::ALPN_PAIR;
+use codeyard::backend::cluster::ALPN_RPC;
+use codeyard::backend::db;
+use codeyard::backend::db::cluster::Authority;
+use codeyard::backend::db::cluster::DeclaredMember;
+use codeyard::backend::db::cluster::JoinRequest;
+use codeyard::backend::db::cluster::NewJoinToken;
+use codeyard::backend::node::NodeRoles;
+use codeyard_db_core::models::JoinOutcome;
+use codeyard_db_core::models::NodeStatusChange;
+use codeyard_db_core::DbPool;
 use iroh::{
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
@@ -32,8 +38,8 @@ fn roles(text: &str) -> NodeRoles {
 
 fn pg(pool: &DbPool) -> &sqlx::PgPool {
     match pool {
-        DbPool::Postgres(pool) => pool,
-        DbPool::Sqlite(_) => panic!("this test needs the PostgreSQL fixture"),
+        codeyard_db_core::DbPool::Postgres(pool) => pool,
+        codeyard_db_core::DbPool::Sqlite(_) => panic!("this test needs the PostgreSQL fixture"),
     }
 }
 
@@ -430,7 +436,7 @@ async fn a_node_that_needs_approval_waits_as_pending_until_approved() {
     // Pending is not membership.
     assert_refused(try_echo(&worker, &core.address).await);
 
-    let NodeStatusChange::Changed { before, node } =
+    let codeyard_db_core::models::NodeStatusChange::Changed { before, node } =
         cluster::approve(&db.pool, Authority::Operator, "CI-1")
             .await
             .unwrap()
@@ -446,7 +452,7 @@ async fn a_node_that_needs_approval_waits_as_pending_until_approved() {
         cluster::approve(&db.pool, Authority::Operator, "nobody")
             .await
             .unwrap(),
-        NodeStatusChange::Missing
+        codeyard_db_core::models::NodeStatusChange::Missing
     );
     core.stop().await;
 }
@@ -463,7 +469,7 @@ async fn revoking_a_node_refuses_its_next_connection() {
     join(&ticket, &worker, "store-1", None).await.unwrap();
     assert_eq!(try_echo(&worker, &core.address).await.unwrap(), b"hello");
 
-    let NodeStatusChange::Changed { before, node } =
+    let codeyard_db_core::models::NodeStatusChange::Changed { before, node } =
         cluster::revoke(&db.pool, Authority::Operator, "store-1")
             .await
             .unwrap()
@@ -490,7 +496,7 @@ async fn revoking_a_node_refuses_its_next_connection() {
         cluster::revoke(&db.pool, Authority::Operator, "nobody")
             .await
             .unwrap(),
-        NodeStatusChange::Missing
+        codeyard_db_core::models::NodeStatusChange::Missing
     );
     core.stop().await;
 }
@@ -1099,7 +1105,9 @@ async fn membership_contract(pool: &DbPool) {
         }
     };
     let (key_a, key_b, key_c) = (key(1), key(2), key(3));
-    let JoinOutcome::Joined(node) = request(&hash(1), &key_a, "a", None).await else {
+    let codeyard_db_core::models::JoinOutcome::Joined(node) =
+        request(&hash(1), &key_a, "a", None).await
+    else {
         panic!("the first join should succeed");
     };
     assert_eq!((node.name.as_str(), node.status.as_str()), ("a", "active"));
@@ -1108,13 +1116,15 @@ async fn membership_contract(pool: &DbPool) {
     assert!(node.last_seen.is_none() && node.addr_hint.is_none() && node.disk_free.is_none());
     assert_eq!(
         request(&hash(1), &key_b, "b", None).await,
-        JoinOutcome::InvalidToken
+        codeyard_db_core::models::JoinOutcome::InvalidToken
     );
     assert_eq!(
         request(&hash(9), &key_b, "b", None).await,
-        JoinOutcome::InvalidToken
+        codeyard_db_core::models::JoinOutcome::InvalidToken
     );
-    let JoinOutcome::AlreadyMember(known) = request(&hash(1), &key_a, "other", None).await else {
+    let codeyard_db_core::models::JoinOutcome::AlreadyMember(known) =
+        request(&hash(1), &key_a, "other", None).await
+    else {
         panic!("a known key keeps its standing");
     };
     assert_eq!(known.name, "a");
@@ -1130,7 +1140,9 @@ async fn membership_contract(pool: &DbPool) {
     .await
     .unwrap();
     let wanted = ["ssh".to_owned()];
-    let JoinOutcome::Joined(pending) = request(&hash(2), &key_b, "b", Some(&wanted)).await else {
+    let codeyard_db_core::models::JoinOutcome::Joined(pending) =
+        request(&hash(2), &key_b, "b", Some(&wanted)).await
+    else {
         panic!("reusable join");
     };
     assert_eq!(
@@ -1139,14 +1151,18 @@ async fn membership_contract(pool: &DbPool) {
     );
     let outside = ["storage".to_owned()];
     match request(&hash(2), &key_c, "c", Some(&outside)).await {
-        JoinOutcome::RolesNotAllowed { allowed } => assert_eq!(allowed, ["web", "ssh"]),
+        codeyard_db_core::models::JoinOutcome::RolesNotAllowed { allowed } => {
+            assert_eq!(allowed, ["web", "ssh"])
+        }
         other => panic!("{other:?}"),
     }
     assert_eq!(
         request(&hash(2), &key_c, "a", None).await,
-        JoinOutcome::NameTaken
+        codeyard_db_core::models::JoinOutcome::NameTaken
     );
-    let JoinOutcome::Joined(_) = request(&hash(2), &key_c, "c", None).await else {
+    let codeyard_db_core::models::JoinOutcome::Joined(_) =
+        request(&hash(2), &key_c, "c", None).await
+    else {
         panic!("a refused request must not have used the token");
     };
     token(
@@ -1160,7 +1176,7 @@ async fn membership_contract(pool: &DbPool) {
     .unwrap();
     assert_eq!(
         request(&hash(3), &key(4), "d", None).await,
-        JoinOutcome::InvalidToken
+        codeyard_db_core::models::JoinOutcome::InvalidToken
     );
 
     // Lookups, the member check, approve and revoke.
@@ -1203,7 +1219,7 @@ async fn membership_contract(pool: &DbPool) {
         )
         .await
         .unwrap(),
-        NodeStatusChange::Denied
+        codeyard_db_core::models::NodeStatusChange::Denied
     );
     assert!(!db::cluster::is_active_node(pool, &key_b).await.unwrap());
     let admin = db::users::accounts::create_user_with_password_and_flags(
@@ -1254,7 +1270,7 @@ async fn membership_contract(pool: &DbPool) {
         )
         .await
         .unwrap(),
-        NodeStatusChange::Denied
+        codeyard_db_core::models::NodeStatusChange::Denied
     );
     assert!(!db::cluster::is_active_node(pool, &key_b).await.unwrap());
 
@@ -1269,7 +1285,7 @@ async fn membership_contract(pool: &DbPool) {
     )
     .await
     .unwrap();
-    let NodeStatusChange::Changed {
+    let codeyard_db_core::models::NodeStatusChange::Changed {
         before,
         node: approved,
     } = db::cluster::set_node_status(
@@ -1291,7 +1307,7 @@ async fn membership_contract(pool: &DbPool) {
         ("pending", "active")
     );
     assert!(db::cluster::is_active_node(pool, &key_b).await.unwrap());
-    let NodeStatusChange::Changed { node: revoked, .. } =
+    let codeyard_db_core::models::NodeStatusChange::Changed { node: revoked, .. } =
         db::cluster::set_node_status(pool, Authority::Operator, "b", "revoked")
             .await
             .unwrap()
@@ -1304,7 +1320,7 @@ async fn membership_contract(pool: &DbPool) {
         db::cluster::set_node_status(pool, Authority::Operator, "missing", "active")
             .await
             .unwrap(),
-        NodeStatusChange::Missing
+        codeyard_db_core::models::NodeStatusChange::Missing
     );
     let names: Vec<String> = db::cluster::list_nodes(pool)
         .await

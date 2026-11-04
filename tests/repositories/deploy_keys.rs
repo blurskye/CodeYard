@@ -80,7 +80,7 @@ async fn stale_admin_native_mutations(pg: bool) {
         database.pool(),
         bob.id,
         repo,
-        db::models::AccessLevel::Admin,
+        codeyard_db_core::models::AccessLevel::Admin,
     )
     .await
     .unwrap();
@@ -100,7 +100,7 @@ async fn stale_admin_native_mutations(pg: bool) {
         database.pool(),
         bob.id,
         repo,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -344,7 +344,8 @@ async fn keys_api_and_forms(pg: bool) {
 }
 
 async fn live_authority(pg: bool) {
-    use codeyard::backend::{db::models::AccessLevel, repositories::deploy_keys as keys};
+    use codeyard::backend::repositories::deploy_keys as keys;
+    use codeyard_db_core::models::AccessLevel;
     let (mut database, _root, alice, bob) = setup(pg).await;
     let pool = database.pool();
     let repository = db::repositories::records::get_repository(pool, "alice", "proj")
@@ -389,7 +390,7 @@ async fn live_authority(pg: bool) {
         let (_, access) = keys::authorize(pool, key.id, &repository, write)
             .await
             .unwrap();
-        assert_eq!(access, AccessLevel::Write);
+        assert_eq!(access, codeyard_db_core::models::AccessLevel::Write);
     }
     db::users::sessions::delete_session(pool, &alice.session)
         .await

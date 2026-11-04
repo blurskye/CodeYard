@@ -4,17 +4,16 @@
 
 use crate::support::database::Database;
 use chrono::{Duration, Utc};
-use codeyard::backend::{
-    db::{
-        self,
-        models::OrgRole,
-        organizations::{
-            NewOrganization, OrganizationOutcome, OrganizationPage, OrganizationProfile,
-        },
-        users::transitions::{BanChange, RoleChange},
-    },
-    identity::{self, accounts::EmailChangeError},
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::OrganizationOutcome;
+use codeyard::backend::db::organizations::OrganizationPage;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::db::users::transitions::BanChange;
+use codeyard::backend::db::users::transitions::RoleChange;
+use codeyard::backend::identity;
+use codeyard::backend::identity::accounts::EmailChangeError;
+use codeyard_db_core::models::OrgRole;
 
 async fn make_administrator(f: &Database, id: i64) {
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[id])
@@ -502,7 +501,7 @@ async fn invitations(pg: bool) {
             owner,
             org.id,
             invitee,
-            OrgRole::Member
+            codeyard_db_core::models::OrgRole::Member
         )
         .await
         .unwrap(),
@@ -521,16 +520,22 @@ async fn invitations(pg: bool) {
             owner,
             org.id,
             invitee,
-            OrgRole::Member
+            codeyard_db_core::models::OrgRole::Member
         )
         .await
         .unwrap(),
         OrganizationOutcome::Conflict
     ));
     assert!(matches!(
-        db::organizations::invite_organization_member(pool, owner, org.id, owner, OrgRole::Member)
-            .await
-            .unwrap(),
+        db::organizations::invite_organization_member(
+            pool,
+            owner,
+            org.id,
+            owner,
+            codeyard_db_core::models::OrgRole::Member
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Conflict
     ));
     // The owner sees the pending invitation; the invitee sees it on their own list.
@@ -566,9 +571,15 @@ async fn invitations(pg: bool) {
     ));
 
     // Cancelling withdraws the offer; only an owner or admin can do it.
-    db::organizations::invite_organization_member(pool, owner, org.id, invitee, OrgRole::Member)
-        .await
-        .unwrap();
+    db::organizations::invite_organization_member(
+        pool,
+        owner,
+        org.id,
+        invitee,
+        codeyard_db_core::models::OrgRole::Member,
+    )
+    .await
+    .unwrap();
     assert!(matches!(
         db::organizations::cancel_organization_invitation(pool, invitee, org.id, invitee)
             .await
@@ -589,9 +600,15 @@ async fn invitations(pg: bool) {
     ));
 
     // Accepting makes the member, once.
-    db::organizations::invite_organization_member(pool, owner, org.id, invitee, OrgRole::Member)
-        .await
-        .unwrap();
+    db::organizations::invite_organization_member(
+        pool,
+        owner,
+        org.id,
+        invitee,
+        codeyard_db_core::models::OrgRole::Member,
+    )
+    .await
+    .unwrap();
     assert!(matches!(
         db::organizations::accept_organization_invitation(pool, invitee, org.id, None)
             .await
@@ -602,7 +619,7 @@ async fn invitations(pg: bool) {
         db::organizations::get_organization_role(pool, invitee, org.id)
             .await
             .unwrap(),
-        OrganizationOutcome::Applied(OrgRole::Member)
+        OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Member)
     ));
     assert!(matches!(
         db::organizations::accept_organization_invitation(pool, invitee, org.id, None)
@@ -612,9 +629,15 @@ async fn invitations(pg: bool) {
     ));
 
     // An administrator may invite only plain members, not another administrator.
-    db::organizations::invite_organization_member(pool, owner, org.id, org_admin, OrgRole::Admin)
-        .await
-        .unwrap();
+    db::organizations::invite_organization_member(
+        pool,
+        owner,
+        org.id,
+        org_admin,
+        codeyard_db_core::models::OrgRole::Admin,
+    )
+    .await
+    .unwrap();
     db::organizations::accept_organization_invitation(pool, org_admin, org.id, None)
         .await
         .unwrap();
@@ -624,7 +647,7 @@ async fn invitations(pg: bool) {
             org_admin,
             org.id,
             invitee,
-            OrgRole::Admin
+            codeyard_db_core::models::OrgRole::Admin
         )
         .await
         .unwrap(),

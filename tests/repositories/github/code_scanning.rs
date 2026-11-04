@@ -671,7 +671,7 @@ async fn contract(pg: bool) {
 
 async fn workflow_tokens(
     router: &Router,
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: i64,
     actor: i64,
     sha: &str,

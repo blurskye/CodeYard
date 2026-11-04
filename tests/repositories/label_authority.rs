@@ -38,7 +38,7 @@ const MUTATIONS: [Mutation; 7] = [
 ];
 
 async fn mutate(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: impl Into<db::credentials::Actor>,
     repo: i64,
     issue: i64,
@@ -85,7 +85,7 @@ fn refusal<T: std::fmt::Debug>(result: anyhow::Result<T>, expected: LabelWriteRe
     );
 }
 
-async fn snapshot(pool: &db::DbPool, repos: &[i64]) -> Value {
+async fn snapshot(pool: &codeyard_db_core::DbPool, repos: &[i64]) -> Value {
     let mut rows = Vec::new();
     for repo in repos {
         let issue = db::issues::get_issue(pool, *repo, 1)
@@ -111,7 +111,7 @@ async fn snapshot(pool: &db::DbPool, repos: &[i64]) -> Value {
     json!(rows)
 }
 
-async fn seed(pool: &db::DbPool, owner: i64, repo: i64) -> (i64, i64) {
+async fn seed(pool: &codeyard_db_core::DbPool, owner: i64, repo: i64) -> (i64, i64) {
     let issue = db::issues::create_issue(pool, repo, owner, "Labels", "Fixture")
         .await
         .unwrap();
@@ -226,7 +226,7 @@ async fn authority_matrix(pg: bool) {
             f.pool(),
             direct_admin,
             target,
-            db::models::repositories::AccessLevel::Admin,
+            codeyard_db_core::models::repositories::AccessLevel::Admin,
         )
         .await
         .unwrap();
@@ -234,7 +234,7 @@ async fn authority_matrix(pg: bool) {
             f.pool(),
             writer,
             target,
-            db::models::repositories::AccessLevel::Write,
+            codeyard_db_core::models::repositories::AccessLevel::Write,
         )
         .await
         .unwrap();
@@ -244,7 +244,7 @@ async fn authority_matrix(pg: bool) {
         f.pool(),
         member,
         repo,
-        db::models::repositories::AccessLevel::Read,
+        codeyard_db_core::models::repositories::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -308,7 +308,7 @@ async fn authority_matrix(pg: bool) {
         f.pool(),
         direct_admin,
         repo,
-        db::models::repositories::AccessLevel::Admin,
+        codeyard_db_core::models::repositories::AccessLevel::Admin,
     )
     .await
     .unwrap();
@@ -486,7 +486,7 @@ async fn scope_and_batches(pg: bool) {
         f.pool(),
         owner,
         foreign,
-        db::models::repositories::AccessLevel::Admin,
+        codeyard_db_core::models::repositories::AccessLevel::Admin,
     )
     .await
     .unwrap();

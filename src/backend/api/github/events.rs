@@ -16,7 +16,7 @@ type Params = HashMap<String, String>;
 async fn event_document(
     state: &AppState,
     auth: Option<&super::auth::Authentication>,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     id: i64,
     include_issue: bool,
@@ -99,7 +99,7 @@ async fn read(
 
 async fn review_document(
     state: &AppState,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     id: i64,
 ) -> Result<Value> {

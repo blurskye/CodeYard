@@ -15,8 +15,8 @@ pub struct ApprovedBypass {
 /// push protection blocks. Returns the hashes of the secrets that the actor's bypass allows. The
 /// caller records their use once the publication has succeeded.
 pub async fn refuse_blocked_secrets(
-    pool: &db::DbPool,
-    repo: &db::models::Repository,
+    pool: &codeyard_db_core::DbPool,
+    repo: &codeyard_db_core::models::Repository,
     actor: i64,
     path: &Path,
     quarantine: Option<&Path>,

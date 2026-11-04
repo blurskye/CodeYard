@@ -10,13 +10,12 @@ use super::{
     sessions::{self, AccountAuthorityError},
 };
 use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db::{
-    self,
-    models::User,
-    users::two_factor::{FactorAuthority, StoredTwoFactor},
-    DbPool,
-};
+use crate::backend::db;
+use crate::backend::db::users::two_factor::FactorAuthority;
+use crate::backend::db::users::two_factor::StoredTwoFactor;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use codeyard_db_core::models::User;
+use codeyard_db_core::DbPool;
 use data_encoding::BASE32_NOPAD;
 use hmac::{Hmac, Mac};
 use rand::{seq::SliceRandom, RngCore};

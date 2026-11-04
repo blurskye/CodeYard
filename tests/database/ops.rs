@@ -1,5 +1,6 @@
 use crate::support::native_database::{NativeDatabase, PostgresDatabase};
-use codeyard::backend::db::{self, DbPool};
+use codeyard::backend::db;
+use codeyard_db_core::DbPool;
 
 async fn long_branch_activity(pool: &DbPool) {
     let user = db::users::accounts::create_user(pool, "branch-owner", None)

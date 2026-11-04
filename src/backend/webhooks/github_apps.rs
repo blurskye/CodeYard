@@ -3,14 +3,11 @@ use super::{
     delivery::{self, Outgoing},
     enqueue, events, outgoing,
 };
-use crate::backend::{
-    db::{
-        self,
-        models::{Repository, Webhook},
-        DbPool,
-    },
-    identity::github_apps as apps,
-};
+use crate::backend::db;
+use crate::backend::identity::github_apps as apps;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::Webhook;
+use codeyard_db_core::DbPool;
 use serde_json::{json, Value};
 
 fn targets_app(event: &str, action: Option<&str>) -> bool {

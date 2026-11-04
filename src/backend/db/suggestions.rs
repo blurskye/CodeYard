@@ -1,7 +1,8 @@
 //! Persisted, reviewable issue-change proposals. Resolution and the proposed effect commit together.
-use super::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde_json::Value;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -114,10 +115,10 @@ pub fn valid_state(state: &str) -> bool {
     )
 }
 pub struct Resolution {
-    pub issue: super::models::Issue,
+    pub issue: codeyard_db_core::models::Issue,
     pub suggestion: Suggestion,
     pub assignment: Option<i64>,
-    pub closed_issue: Option<super::models::Issue>,
+    pub closed_issue: Option<codeyard_db_core::models::Issue>,
     pub invalidated: bool,
 }
 #[derive(Clone, Copy, Debug, thiserror::Error)]

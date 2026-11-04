@@ -1,6 +1,8 @@
 //! SSH key management shared by browser forms, JSON and operator commands.
 
-use crate::backend::db::{models::SshKey, users::ssh_keys, DbPool};
+use crate::backend::db::users::ssh_keys;
+use codeyard_db_core::models::SshKey;
+use codeyard_db_core::DbPool;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum KeyError {

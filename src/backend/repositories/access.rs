@@ -1,14 +1,13 @@
 //! Current repository read, write and administration decisions.
-use crate::backend::db::{
-    self,
-    models::{Repository, User},
-    repositories::access::CollaboratorChange,
-};
+use crate::backend::db;
+use crate::backend::db::repositories::access::CollaboratorChange;
 use anyhow::Result;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
 
 /// Retained account identity, without substituting Git permissions for a metadata operation.
 pub(crate) async fn credential_user(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: &db::credentials::Actor,
     write: bool,
 ) -> Result<User> {
@@ -32,7 +31,7 @@ pub(crate) async fn credential_user(
 
 /// Recheck the credential retained by a native publication, after preparation and lock waits.
 pub(crate) async fn check_publication_actor(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: &db::credentials::Actor,
     repository: &Repository,
 ) -> Result<()> {
@@ -62,42 +61,42 @@ pub(crate) async fn check_publication_actor(
 
 /// The access projection with the personal-repository administrator policy applied.
 pub async fn user_access(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     user: &User,
     repository: &Repository,
-) -> Result<db::models::AccessLevel> {
+) -> Result<codeyard_db_core::models::AccessLevel> {
     if repository.is_gist || user.is_banned || user.must_change_password {
-        return Ok(db::models::AccessLevel::None);
+        return Ok(codeyard_db_core::models::AccessLevel::None);
     }
     if repository.owner_kind == "user" && user.is_admin {
-        return Ok(db::models::AccessLevel::Owner);
+        return Ok(codeyard_db_core::models::AccessLevel::Owner);
     }
     db::repositories::access::get_user_repo_access(pool, user.id, repository.id).await
 }
 
 /// Gists use a distinct clone namespace and never grant ordinary repository access.
 pub async fn user_git_access(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     user: &User,
     repository: &Repository,
-) -> Result<db::models::AccessLevel> {
+) -> Result<codeyard_db_core::models::AccessLevel> {
     if !repository.is_gist {
         return user_access(pool, user, repository).await;
     }
     if user.is_banned || user.must_change_password {
-        return Ok(db::models::AccessLevel::None);
+        return Ok(codeyard_db_core::models::AccessLevel::None);
     }
     let gist = db::gists::by_repository(pool, repository.id)
         .await?
         .filter(|gist| gist.ready && Some(gist.owner_id) == repository.owner_user_id);
     Ok(match gist {
-        Some(gist) if gist.owner_id == user.id => db::models::AccessLevel::Owner,
-        Some(_) => db::models::AccessLevel::Read,
-        None => db::models::AccessLevel::None,
+        Some(gist) if gist.owner_id == user.id => codeyard_db_core::models::AccessLevel::Owner,
+        Some(_) => codeyard_db_core::models::AccessLevel::Read,
+        None => codeyard_db_core::models::AccessLevel::None,
     })
 }
 pub async fn can_read_git(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     user: Option<&User>,
     repository: &Repository,
 ) -> Result<bool> {
@@ -113,7 +112,7 @@ pub async fn can_read_git(
 }
 
 pub async fn can_read(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     user: Option<&User>,
     repository: &Repository,
 ) -> Result<bool> {
@@ -141,7 +140,7 @@ pub async fn can_read(
 
 /// The author's current relationship to a repository, shared by API presentations.
 pub async fn author_association(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
     user_id: i64,
 ) -> Result<&'static str> {
@@ -155,7 +154,7 @@ pub async fn author_association(
 }
 
 pub async fn author_associations(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
     users: &[i64],
 ) -> Result<std::collections::HashMap<i64, String>> {
@@ -167,7 +166,11 @@ pub async fn author_associations(
     )
 }
 
-pub async fn can_admin(pool: &db::DbPool, user: &User, repository: &Repository) -> Result<bool> {
+pub async fn can_admin(
+    pool: &codeyard_db_core::DbPool,
+    user: &User,
+    repository: &Repository,
+) -> Result<bool> {
     if repository.is_gist || user.is_banned || user.must_change_password {
         return Ok(false);
     }
@@ -183,7 +186,11 @@ pub async fn can_admin(pool: &db::DbPool, user: &User, repository: &Repository) 
 
 /// Write permission for code and metadata: owners and site admins of personal
 /// repositories, plus collaborators/teams with write access.
-pub async fn can_write(pool: &db::DbPool, user: &User, repository: &Repository) -> Result<bool> {
+pub async fn can_write(
+    pool: &codeyard_db_core::DbPool,
+    user: &User,
+    repository: &Repository,
+) -> Result<bool> {
     if repository.is_gist
         || repository.is_archived
         || user.is_banned
@@ -203,7 +210,11 @@ pub async fn can_write(pool: &db::DbPool, user: &User, repository: &Repository) 
 }
 
 /// Triage sets labels, assignees and milestones on issues and pull requests; it cannot edit the repository.
-pub async fn can_triage(pool: &db::DbPool, user: &User, repository: &Repository) -> Result<bool> {
+pub async fn can_triage(
+    pool: &codeyard_db_core::DbPool,
+    user: &User,
+    repository: &Repository,
+) -> Result<bool> {
     if repository.is_gist
         || repository.is_archived
         || user.is_banned
@@ -224,7 +235,11 @@ pub async fn can_triage(pool: &db::DbPool, user: &User, repository: &Repository)
 
 /// Moderation of other people's comments: maintainers, owners and site administrators of personal
 /// repositories. Archived repositories take no moderation.
-pub async fn can_maintain(pool: &db::DbPool, user: &User, repository: &Repository) -> Result<bool> {
+pub async fn can_maintain(
+    pool: &codeyard_db_core::DbPool,
+    user: &User,
+    repository: &Repository,
+) -> Result<bool> {
     if repository.is_gist
         || repository.is_archived
         || user.is_banned
@@ -253,7 +268,7 @@ pub enum AccessError {
 }
 
 pub async fn current_repository(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     id: i64,
 ) -> std::result::Result<Repository, AccessError> {
     db::repositories::records::get_repository_by_id(pool, id)
@@ -265,7 +280,7 @@ pub async fn current_repository(
 /// A repository that a caller already resolved and authorized, read again by ID so that a
 /// rename in between cannot switch it, with its owner's current name for links.
 pub async fn current_repository_with_owner(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     id: i64,
 ) -> std::result::Result<(Repository, String), AccessError> {
     let repository = current_repository(pool, id).await?;
@@ -277,7 +292,7 @@ pub async fn current_repository_with_owner(
 }
 
 pub async fn check_read(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     actor: Option<i64>,
 ) -> std::result::Result<Repository, AccessError> {
@@ -304,7 +319,7 @@ pub async fn check_read(
 }
 
 pub async fn check_admin(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     actor: i64,
 ) -> std::result::Result<Repository, AccessError> {
@@ -327,7 +342,7 @@ pub async fn check_admin(
 }
 
 pub async fn check_write(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     actor: i64,
 ) -> std::result::Result<(Repository, User), AccessError> {
@@ -356,11 +371,11 @@ pub async fn check_write(
 
 /// Personal repository owners retain the existing collaborator policy.
 pub async fn change_collaborator(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
     username: &str,
-    permission: Option<db::models::AccessLevel>,
+    permission: Option<codeyard_db_core::models::AccessLevel>,
 ) -> std::result::Result<User, AccessError> {
     let change = db::repositories::access::change_personal_repository_collaborator(
         pool, actor, repo_id, username, permission,

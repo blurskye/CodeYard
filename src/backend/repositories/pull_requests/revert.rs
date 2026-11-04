@@ -17,13 +17,13 @@ pub struct RevertRequest {
 }
 
 pub async fn revert_pull_request(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     actor: i64,
     (owner, name, number): (String, String, i32),
     request: RevertRequest,
-) -> Result<db::models::PullRequest, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
     let user = super::actor(pool, actor).await?;
     let repo = db::repositories::records::get_repository(pool, &owner, &name)
         .await

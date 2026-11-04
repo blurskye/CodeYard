@@ -1,11 +1,10 @@
 use super::authority::*;
 use super::invitations::{LIVE, RECIPIENT};
 use crate::backend::db::organizations::invitations::InvitationOffer;
-use crate::backend::db::{
-    models::{OrgInvitation, OrgRole},
-    organizations::*,
-};
+use crate::backend::db::organizations::*;
 use anyhow::Result;
+use codeyard_db_core::models::OrgInvitation;
+use codeyard_db_core::models::OrgRole;
 use sqlx::SqlitePool;
 use OrganizationOutcome::{Applied, Denied, Missing};
 
@@ -31,7 +30,7 @@ pub async fn invite_team_member(
         &mut tx,
         grant,
         org,
-        &NewInvitation::user(target, OrgRole::Member),
+        &NewInvitation::user(target, codeyard_db_core::models::OrgRole::Member),
         false,
         InvitationOffer::Retain,
     )

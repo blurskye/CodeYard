@@ -190,7 +190,7 @@ async fn insert_suite(
 }
 pub async fn automatic_suites(
     pool: &SqlitePool,
-    repo: &crate::backend::db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     sha: &str,
     branch: &str,
     after: i64,
@@ -201,7 +201,7 @@ pub async fn automatic_suites(
         ..Default::default()
     };
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let current: Option<crate::backend::db::models::Repository> = sqlx::query_as(
+    let current: Option<codeyard_db_core::models::Repository> = sqlx::query_as(
         "SELECT * FROM repositories WHERE id=?1 AND NOT is_archived AND NOT is_gist",
     )
     .bind(repo.id)
@@ -245,7 +245,7 @@ pub async fn automatic_suites(
 /// as on GitHub; its publisher names the run, so no credential can write to it.
 pub(super) async fn insert_workflow_suite(
     connection: &mut sqlx::SqliteConnection,
-    run: &crate::backend::db::models::CiRun,
+    run: &codeyard_db_core::models::CiRun,
 ) -> Result<()> {
     let Some(sha) = run.head_sha.as_deref() else {
         return Ok(());

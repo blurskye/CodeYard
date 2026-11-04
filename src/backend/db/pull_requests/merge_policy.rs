@@ -1,7 +1,8 @@
 //! A checked merge confirms, right before Git publication, that its policy epoch and auto-merge
 //! consent are still the ones it was judged under.
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,19 +1,6 @@
 //! Database access. Each operation is a named function with a PostgreSQL and a
 //! SQLite implementation; `native_operation!` dispatches on the pool type.
 
-macro_rules! native_operation {
-    ($postgres:path, $sqlite:path, $(#[$attr:meta])* fn $name:ident($pool:ident: &DbPool $(, $arg:ident: $ty:ty)* $(,)?) -> $result:ty) => {
-        #[allow(clippy::too_many_arguments, reason = "The dispatcher repeats its engine functions' signature, and they give the reason.")]
-        $(#[$attr])*
-        pub async fn $name($pool: &DbPool, $($arg: $ty),*) -> $result {
-            match $pool {
-                crate::backend::db::DbPool::Postgres(native) => $postgres(native, $($arg),*).await,
-                crate::backend::db::DbPool::Sqlite(native) => $sqlite(native, $($arg),*).await,
-            }
-        }
-    };
-}
-
 mod postgres;
 mod sqlite;
 
@@ -43,7 +30,6 @@ pub mod cluster;
 pub mod code_scanning;
 pub mod code_security;
 pub mod codeql;
-mod connection;
 pub mod copy;
 pub mod credentials;
 pub mod dependabot;
@@ -74,9 +60,7 @@ pub mod issue_attributes;
 pub mod issues;
 pub mod labels;
 pub mod metrics;
-mod migrations;
 pub mod milestones;
-pub mod models;
 pub mod node_config;
 pub mod notifications;
 pub mod oauth_apps;
@@ -109,6 +93,3 @@ pub mod users;
 pub mod variables;
 pub mod vulnerabilities;
 pub mod webhooks;
-
-pub use connection::{init_db, sqlite_file, DbPool};
-pub use migrations::run_migrations;

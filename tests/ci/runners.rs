@@ -9,15 +9,23 @@ use axum::{
     Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::{runner_credentials::JitConfig, CiConfig, CiExecutionMode},
-    cluster::{self, Listen, NodeAddress, NodeContext, NodeKey, Relay},
-    db::{self, models::OrgRole, organizations as orgs},
-    identity::tokens::{self, TokenInput},
-    storage::ObjectStore,
-};
+use codeyard::backend::api::create_router;
+use codeyard::backend::app::AppState;
+use codeyard::backend::ci::runner_credentials::JitConfig;
+use codeyard::backend::ci::CiConfig;
+use codeyard::backend::ci::CiExecutionMode;
+use codeyard::backend::cluster;
+use codeyard::backend::cluster::Listen;
+use codeyard::backend::cluster::NodeAddress;
+use codeyard::backend::cluster::NodeContext;
+use codeyard::backend::cluster::NodeKey;
+use codeyard::backend::cluster::Relay;
+use codeyard::backend::db;
+use codeyard::backend::db::organizations as orgs;
+use codeyard::backend::identity::tokens;
+use codeyard::backend::identity::tokens::TokenInput;
+use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, sync::Arc};
 use tower::ServiceExt;
@@ -63,7 +71,12 @@ async fn call(
     }
     body
 }
-async fn token(router: &Router, pool: &db::DbPool, actor: i64, scope: &str) -> String {
+async fn token(
+    router: &Router,
+    pool: &codeyard_db_core::DbPool,
+    actor: i64,
+    scope: &str,
+) -> String {
     let session = Client::login(router, pool, actor).await;
     format!(
         "Bearer {}",
@@ -110,9 +123,15 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        orgs::add_organization_member(f.pool(), alice, org.id, bob, OrgRole::Member)
-            .await
-            .unwrap(),
+        orgs::add_organization_member(
+            f.pool(),
+            alice,
+            org.id,
+            bob,
+            codeyard_db_core::models::OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let key = NodeKey::generate();

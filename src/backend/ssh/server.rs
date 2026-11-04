@@ -1,8 +1,8 @@
 use crate::backend::ci::CiRuns;
-use crate::backend::db::DbPool;
 use crate::backend::ssh::handler::{AuthOutcome, GitSshHandler};
 use crate::backend::ssh::rate_limit::{client_key, RateLimiter};
 use anyhow::{Context, Result};
+use codeyard_db_core::DbPool;
 use rand::{rngs::OsRng, RngCore};
 use russh::keys::ssh_key::private::Ed25519Keypair;
 use russh::keys::PrivateKey;
@@ -675,8 +675,8 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        let pool = DbPool::from(native);
-        crate::backend::db::run_migrations(&pool).await.unwrap();
+        let pool = codeyard_db_core::DbPool::from(native);
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let ci = Arc::new(CiRuns::new(
             pool.clone(),
             Arc::new(crate::backend::ci::CiConfig::default()),

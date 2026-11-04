@@ -3,16 +3,16 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 
-use codeyard::backend::{
-    db::{
-        self,
-        assignees::{AssignedItem, AssignmentRefusal},
-        discussions::{DiscussionEdit, ListFilter, ListSort, Pick},
-        milestones::MilestoneWriteRefusal,
-        models::AccessLevel,
-    },
-    repositories::lifecycle,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::assignees::AssignedItem;
+use codeyard::backend::db::assignees::AssignmentRefusal;
+use codeyard::backend::db::discussions::DiscussionEdit;
+use codeyard::backend::db::discussions::ListFilter;
+use codeyard::backend::db::discussions::ListSort;
+use codeyard::backend::db::discussions::Pick;
+use codeyard::backend::db::milestones::MilestoneWriteRefusal;
+use codeyard::backend::repositories::lifecycle;
+use codeyard_db_core::models::AccessLevel;
 use database::Database;
 
 fn assignment_refusal(error: anyhow::Error) -> AssignmentRefusal {
@@ -28,7 +28,11 @@ fn milestone_refusal(error: anyhow::Error) -> MilestoneWriteRefusal {
 }
 
 /// The numbers a filter lists, in the order the list gives them.
-async fn issue_numbers(pool: &db::DbPool, repo: i64, filter: ListFilter<'_>) -> Vec<i32> {
+async fn issue_numbers(
+    pool: &codeyard_db_core::DbPool,
+    repo: i64,
+    filter: ListFilter<'_>,
+) -> Vec<i32> {
     db::issues::list_repo_issues(pool, repo, &filter, 100)
         .await
         .unwrap()
@@ -38,7 +42,7 @@ async fn issue_numbers(pool: &db::DbPool, repo: i64, filter: ListFilter<'_>) -> 
 }
 
 /// The numbers a filter lists, sorted, for a set comparison.
-async fn issue_set(pool: &db::DbPool, repo: i64, filter: ListFilter<'_>) -> Vec<i32> {
+async fn issue_set(pool: &codeyard_db_core::DbPool, repo: i64, filter: ListFilter<'_>) -> Vec<i32> {
     let mut numbers = issue_numbers(pool, repo, filter).await;
     numbers.sort_unstable();
     numbers
@@ -65,12 +69,22 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .id;
-    db::repositories::access::grant_repo_access(pool, reader, repo, AccessLevel::Read)
-        .await
-        .unwrap();
-    db::repositories::access::grant_repo_access(pool, writer, repo, AccessLevel::Write)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        pool,
+        reader,
+        repo,
+        codeyard_db_core::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
+    db::repositories::access::grant_repo_access(
+        pool,
+        writer,
+        repo,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
 
     let first = db::issues::create_issue(pool, repo, owner, "First", "")
         .await
@@ -121,17 +135,27 @@ async fn contract(pg: bool) {
     // At most ten assignees per issue.
     for index in 0..8 {
         let member = f.actor(&format!("member{index}")).await;
-        db::repositories::access::grant_repo_access(pool, member, repo, AccessLevel::Read)
-            .await
-            .unwrap();
+        db::repositories::access::grant_repo_access(
+            pool,
+            member,
+            repo,
+            codeyard_db_core::models::AccessLevel::Read,
+        )
+        .await
+        .unwrap();
         db::assignees::assign_user(pool, owner, repo, on_first, member)
             .await
             .unwrap();
     }
     let extra = f.actor("member8").await;
-    db::repositories::access::grant_repo_access(pool, extra, repo, AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        pool,
+        extra,
+        repo,
+        codeyard_db_core::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         assignment_refusal(
             db::assignees::assign_user(pool, owner, repo, on_first, extra)
@@ -597,9 +621,14 @@ async fn postgres_concurrent_assignments_stop_at_the_limit() {
     let mut members = Vec::new();
     for index in 0..17 {
         let member = f.actor(&format!("racer{index}")).await;
-        db::repositories::access::grant_repo_access(&pool, member, repo, AccessLevel::Read)
-            .await
-            .unwrap();
+        db::repositories::access::grant_repo_access(
+            &pool,
+            member,
+            repo,
+            codeyard_db_core::models::AccessLevel::Read,
+        )
+        .await
+        .unwrap();
         members.push(member);
     }
     for &member in &members[..9] {

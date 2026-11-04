@@ -2,9 +2,11 @@
 use crate::backend::ci::workflows::{
     github_glob_matches_bounded, WorkflowMatchBudget, WorkflowMatchLimit,
 };
-use crate::backend::db::models::{BranchProtectionRule, CommitStatus};
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::BranchProtectionRule;
+use codeyard_db_core::models::CommitStatus;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ProtectionWriteRefusal {
@@ -118,7 +120,7 @@ pub struct BranchProtectionRuleUpsert<'a> {
     pub enforce_admins: bool,
     pub require_conversation_resolution: bool,
     pub require_code_owner_review: bool,
-    pub github_settings: Option<crate::backend::db::models::BranchProtectionSettings>,
+    pub github_settings: Option<codeyard_db_core::models::BranchProtectionSettings>,
 }
 
 impl Default for BranchProtectionRuleUpsert<'_> {
@@ -260,7 +262,7 @@ impl ProtectionUpdate {
 }
 
 pub(crate) fn prune_check_bindings(
-    settings: &mut crate::backend::db::models::BranchProtectionSettings,
+    settings: &mut codeyard_db_core::models::BranchProtectionSettings,
     enabled: bool,
     contexts: &[String],
 ) {

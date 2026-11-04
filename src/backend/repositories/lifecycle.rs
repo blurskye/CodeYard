@@ -1,14 +1,18 @@
 //! Creating repositories: the authorized database row, then its Git storage.
+use crate::backend::cluster::placement;
+use crate::backend::cluster::NodeContext;
+use crate::backend::db;
+use crate::backend::db::repositories::creation as repo_lifecycle;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::ErrorKind;
+use crate::backend::repositories::store::RepoError;
+use crate::backend::repositories::store::UploadFile;
+use crate::backend::repositories::store::UploadWrite;
+use crate::backend::repositories::templates;
+use crate::backend::repositories::templates::Template;
 use crate::backend::webhooks::{self, events, payloads};
-use crate::backend::{
-    cluster::{placement, NodeContext},
-    db::{self, models::Repository, repositories::creation as repo_lifecycle},
-    repositories::{
-        store::{repo_store, ErrorKind, RepoError, UploadFile, UploadWrite},
-        templates::{self, Template},
-    },
-};
 use chrono::{Datelike, Utc};
+use codeyard_db_core::models::Repository;
 use std::path::Path;
 use tracing::instrument::{Instrument, WithSubscriber};
 use uuid::Uuid;
@@ -164,7 +168,7 @@ fn git_storage_error(error: RepoError) -> StorageError {
 }
 
 async fn cleanup_failed_initialization(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     context: Option<&NodeContext>,
     repository: &Repository,
 ) -> (bool, bool) {
@@ -219,7 +223,7 @@ pub struct CreationInput<'a> {
 
 /// UUID directory names never change on a rename or ownership transfer.
 pub async fn provision(
-    node: (&db::DbPool, Option<&NodeContext>),
+    node: (&codeyard_db_core::DbPool, Option<&NodeContext>),
     repos_path: &Path,
     owner: repo_lifecycle::RepositoryCreationOwner,
     name: &str,
@@ -243,7 +247,7 @@ pub async fn provision(
     .await
 }
 pub async fn provision_with_properties(
-    node: (&db::DbPool, Option<&NodeContext>),
+    node: (&codeyard_db_core::DbPool, Option<&NodeContext>),
     repos_path: &Path,
     input: CreationInput<'_>,
     name: &str,
@@ -269,7 +273,7 @@ pub async fn provision_with_properties(
     .await
 }
 pub async fn provision_gist(
-    node: (&db::DbPool, Option<&NodeContext>),
+    node: (&codeyard_db_core::DbPool, Option<&NodeContext>),
     repos_path: &Path,
     owner: repo_lifecycle::RepositoryCreationOwner,
     name: &str,
@@ -320,7 +324,7 @@ impl<'a> CreationSource<'a> {
     reason = "Provisioning takes the owner, the form's choices and the creating authority separately."
 )]
 async fn provision_from(
-    node: (&db::DbPool, Option<&NodeContext>),
+    node: (&codeyard_db_core::DbPool, Option<&NodeContext>),
     repos_path: &Path,
     owner: repo_lifecycle::RepositoryCreationOwner,
     name: &str,
@@ -360,7 +364,7 @@ async fn provision_from(
 /// A copy made inside the source's organization keeps the property values its creator may set.
 /// Another owner has its own definitions, so the copy starts from that owner's defaults.
 async fn inherited_properties(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     owner: repo_lifecycle::RepositoryCreationOwner,
     source: Option<CreationSource<'_>>,
 ) -> Result<Vec<db::organizations::properties::ValueInput>, StorageError> {
@@ -407,7 +411,7 @@ struct ProvisionOptions<'a> {
     gist: bool,
 }
 async fn provision_stored(
-    node: (&db::DbPool, Option<&NodeContext>),
+    node: (&codeyard_db_core::DbPool, Option<&NodeContext>),
     repos_path: &Path,
     creation: CreationInput<'_>,
     name: &str,
@@ -488,7 +492,7 @@ async fn provision_stored(
 }
 
 async fn provision_stored_owned(
-    node: (&db::DbPool, Option<&NodeContext>),
+    node: (&codeyard_db_core::DbPool, Option<&NodeContext>),
     repos_path: &Path,
     creation: CreationInput<'_>,
     name: &str,
@@ -664,7 +668,7 @@ impl InitialFiles {
 /// Creates a repository as [`provision`] does and, when `files` asks for any, commits them as
 /// the first commit on the default branch. Once storage is published, later failures leave it intact.
 pub async fn provision_with_initial_files(
-    node: (&db::DbPool, Option<&NodeContext>),
+    node: (&codeyard_db_core::DbPool, Option<&NodeContext>),
     repos_path: &Path,
     owner: repo_lifecycle::RepositoryCreationOwner,
     name: &str,
@@ -688,7 +692,7 @@ pub async fn provision_with_initial_files(
     .await
 }
 pub async fn provision_with_initial_properties(
-    node: (&db::DbPool, Option<&NodeContext>),
+    node: (&codeyard_db_core::DbPool, Option<&NodeContext>),
     repos_path: &Path,
     input: CreationInput<'_>,
     name: &str,
@@ -725,7 +729,7 @@ pub async fn provision_with_initial_properties(
 }
 
 async fn commit_initial_files(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     context: Option<&NodeContext>,
     authority: db::credentials::Actor,
     repository: &Repository,
@@ -791,7 +795,7 @@ async fn commit_initial_files(
 /// is incomplete, that failure is reported instead, because the repository may still exist. A
 /// repository that has accepted writes is kept and reported this way.
 async fn abandon_repository(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     context: Option<&NodeContext>,
     repository: &Repository,
     error: StorageError,
@@ -817,7 +821,7 @@ async fn abandon_repository(
 }
 
 pub async fn visibility_locked(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
 ) -> Result<bool, StorageError> {
     repo_lifecycle::repository_visibility_locked(pool, repository.id)
@@ -851,7 +855,7 @@ pub fn validate_description(description: &str) -> Result<(), StorageError> {
 }
 
 pub async fn delete(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
@@ -896,7 +900,7 @@ pub(crate) async fn remove_deleted_repository(
 /// URL and web path change. The database checks admin rights on the repository and create
 /// rights on the target.
 pub async fn transfer(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
@@ -930,7 +934,7 @@ pub async fn transfer(
 }
 
 pub(crate) async fn transfer_target(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     handle: &str,
 ) -> Result<(repo_lifecycle::RepositoryTarget, String), StorageError> {
     if let Some(user) = db::users::accounts::get_user_by_username(pool, handle)
@@ -972,7 +976,7 @@ pub fn fork_refusal(source: &Repository, actor: i64) -> Option<StorageError> {
 }
 
 pub async fn fork(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     context: Option<&NodeContext>,
     repos_path: &Path,
     broadcaster: &crate::backend::notifications::NotificationBroadcaster,
@@ -1010,7 +1014,7 @@ pub struct ForkOptions<'a> {
 }
 
 pub async fn fork_into(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     context: Option<&NodeContext>,
     repos_path: &Path,
     broadcaster: &crate::backend::notifications::NotificationBroadcaster,
@@ -1185,7 +1189,7 @@ pub async fn fork_into(
 }
 
 async fn live_creation_actor(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     authority: Option<&db::credentials::Actor>,
 ) -> Result<(), StorageError> {
@@ -1201,7 +1205,7 @@ async fn live_creation_actor(
 }
 
 async fn existing_fork(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     owner: repo_lifecycle::RepositoryTarget,
     source: i64,
@@ -1246,7 +1250,7 @@ pub struct TemplateOptions<'a> {
 }
 
 pub async fn generate(
-    node: (&db::DbPool, Option<&NodeContext>),
+    node: (&codeyard_db_core::DbPool, Option<&NodeContext>),
     repos_path: &Path,
     owner: repo_lifecycle::RepositoryCreationOwner,
     source_id: i64,

@@ -3,7 +3,7 @@ use super::{
 };
 use serde_json::json;
 
-pub(super) fn object(user: &db::models::User, viewer: i64) -> Value {
+pub(super) fn object(user: &codeyard_db_core::models::User, viewer: i64) -> Value {
     json!({"__typename":"User","id":node_id::encode("U",user.id),"databaseId":user.id,
         "login":user.username,"name":user.display_name,
         "url":url(&codeyard_webui::profile_path(&user.username)),"avatarUrl":url(&format!("/avatars/{}",user.username)),"createdAt":user.created_at,
@@ -11,7 +11,7 @@ pub(super) fn object(user: &db::models::User, viewer: i64) -> Value {
         "isViewer":viewer==user.id})
 }
 
-pub(super) fn organization(org: &db::models::Organization) -> Value {
+pub(super) fn organization(org: &codeyard_db_core::models::Organization) -> Value {
     json!({"__typename":"Organization","id":node_id::encode("O",org.id),"databaseId":org.id,
         "login":org.name,"name":org.display_name,"email":null,"url":url(&codeyard_webui::profile_path(&org.name)),
         "avatarUrl":url(&format!("/avatars/{}",org.name)),"createdAt":org.created_at,
@@ -36,7 +36,7 @@ fn actor_value(mut value: Value) -> Value {
     }
     value
 }
-pub(super) fn actor_object(user: &db::models::User, viewer: i64) -> Value {
+pub(super) fn actor_object(user: &codeyard_db_core::models::User, viewer: i64) -> Value {
     actor_value(object(user, viewer))
 }
 pub(super) async fn actor_by_id(id: i64, request: &RequestContext) -> Result<Value> {

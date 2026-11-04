@@ -5,12 +5,12 @@ pub mod providers;
 use crate::backend::db::users::sessions as states;
 use crate::backend::db::users::transitions;
 use crate::backend::db::users::transitions::AccountAdmission;
-use crate::backend::db::DbPool;
 use crate::backend::identity::sessions;
 use crate::backend::identity::sessions::SessionContext;
 use crate::backend::identity::sessions::SessionIssueError;
 use crate::backend::identity::setup;
 use crate::backend::identity::AuthenticatedAccount;
+use codeyard_db_core::DbPool;
 use codeyard_support::crypto::is_hex_token;
 
 #[derive(Debug, PartialEq, Eq)]

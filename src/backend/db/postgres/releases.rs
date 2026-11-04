@@ -1,10 +1,13 @@
 mod notes;
 mod read;
-use crate::backend::db::models::{File, Release, ReleaseAsset, ReleaseRow};
 use crate::backend::db::releases::{
     NewReleaseAsset, ReleaseChanges, ReleaseFields, ReleaseRefusal,
 };
 use anyhow::Result;
+use codeyard_db_core::models::File;
+use codeyard_db_core::models::Release;
+use codeyard_db_core::models::ReleaseAsset;
+use codeyard_db_core::models::ReleaseRow;
 pub use notes::release_note_rows;
 pub use read::read_release_snapshot;
 use sqlx::{PgPool, Postgres, Transaction};

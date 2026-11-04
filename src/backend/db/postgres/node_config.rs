@@ -1,5 +1,5 @@
-use super::models::NodeConfiguration;
 use anyhow::Result;
+use codeyard_db_core::models::NodeConfiguration;
 use sqlx::PgPool;
 
 pub async fn get_node_configuration(pool: &PgPool) -> Result<Option<NodeConfiguration>> {

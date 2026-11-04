@@ -1367,6 +1367,7 @@ dependencies = [
  "chrono",
  "clap",
  "codeyard-actions",
+ "codeyard-db-core",
  "codeyard-github-graphql",
  "codeyard-model",
  "codeyard-support",
@@ -1447,6 +1448,24 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "codeyard-db-core"
+version = "0.1.5"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
 ]
 
 [[package]]

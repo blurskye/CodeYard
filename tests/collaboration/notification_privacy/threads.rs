@@ -24,7 +24,7 @@ async fn notice(
     user: i64,
     repo: i64,
     kind: &str,
-) -> anyhow::Result<db::models::Notification> {
+) -> anyhow::Result<codeyard_db_core::models::Notification> {
     db::notifications::records::create_notification(
         f.pool(),
         db::notifications::NewNotification {

@@ -171,7 +171,7 @@ fn check_destination(dir: &Path, places: &Places<'_>) -> Result<()> {
         reject_symlink(&dir.join(name))?;
     }
     if !places.database_url.is_empty() {
-        if let Some(database) = db::sqlite_file(places.database_url)? {
+        if let Some(database) = codeyard_db_core::sqlite_file(places.database_url)? {
             for suffix in ["", "-wal", "-shm"] {
                 let mut path = database.as_os_str().to_owned();
                 path.push(suffix);
@@ -403,7 +403,11 @@ fn lock_destination(dir: &Path) -> Result<std::fs::File> {
 }
 
 /// Writes a backup of this installation into `dir`.
-pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Result<()> {
+pub async fn backup(
+    pool: &codeyard_db_core::DbPool,
+    places: &Places<'_>,
+    dir: &Path,
+) -> Result<()> {
     ensure!(
         !db::cluster::cluster_enabled(pool).await?,
         "codeyard backup covers a single-node installation; this one is in cluster mode"
@@ -431,8 +435,8 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
     private_dir(dir)?;
     let _lock = lock_destination(dir)?;
     let file = match pool {
-        db::DbPool::Sqlite(_) => SQLITE_FILE,
-        db::DbPool::Postgres(_) => POSTGRES_FILE,
+        codeyard_db_core::DbPool::Sqlite(_) => SQLITE_FILE,
+        codeyard_db_core::DbPool::Postgres(_) => POSTGRES_FILE,
     };
     // The snapshot waits in a partial file until every copy has succeeded, so a failed run
     // leaves the previous complete backup as it was.
@@ -441,12 +445,12 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
         std::fs::remove_file(&partial)?;
     }
     let after = match pool {
-        db::DbPool::Sqlite(_) => {
+        codeyard_db_core::DbPool::Sqlite(_) => {
             let target = partial.to_str().context("backup path is not UTF-8")?;
             db::backups::copy_sqlite(pool, target).await?;
             db::backups::sqlite_snapshot_repositories(&partial).await?
         }
-        db::DbPool::Postgres(_) => {
+        codeyard_db_core::DbPool::Postgres(_) => {
             let (snapshot_tx, snapshot, repositories) =
                 db::backups::postgres_snapshot(pool).await?;
             let snapshot = format!("--snapshot={snapshot}");
@@ -591,7 +595,7 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
 /// Restores a backup into this installation's empty database, repository directory and
 /// state directory, then repairs and rebuilds what the database and Git disagree on.
 /// Returns the open database, migrated to this version.
-pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<db::DbPool> {
+pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core::DbPool> {
     let s3 = crate::backend::storage::s3::S3Config::optional_from_env()?.is_some();
     let _lock = lock_destination(dir)?;
     let key = std::env::var_os("NODE_KEY_FILE")
@@ -646,7 +650,7 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<db::DbPool> {
         "restore needs an empty upload directory; {} is not empty",
         uploads.display()
     );
-    let pool = match db::sqlite_file(places.database_url)? {
+    let pool = match codeyard_db_core::sqlite_file(places.database_url)? {
         Some(path) => {
             let source = dir.join(SQLITE_FILE);
             ensure!(source.is_file(), "{} has no {SQLITE_FILE}", dir.display());
@@ -675,12 +679,12 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<db::DbPool> {
             if let Some(parent) = std::path::absolute(&path)?.parent() {
                 sync_dir(parent)?;
             }
-            db::init_db(places.database_url).await?
+            codeyard_db_core::init_db(places.database_url).await?
         }
         None => {
             let source = dir.join(POSTGRES_FILE);
             ensure!(source.is_file(), "{} has no {POSTGRES_FILE}", dir.display());
-            let pool = db::init_db(places.database_url).await?;
+            let pool = codeyard_db_core::init_db(places.database_url).await?;
             ensure!(
                 db::backups::is_empty(&pool).await?,
                 "restore needs an empty PostgreSQL database; this one has tables"
@@ -701,7 +705,7 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<db::DbPool> {
             pool
         }
     };
-    db::run_migrations(&pool).await?;
+    codeyard_db_core::run_migrations(&pool).await?;
     println!("Database restored.");
 
     let root = std::path::absolute(places.repos_path)?;

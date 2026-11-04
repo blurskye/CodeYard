@@ -1,6 +1,9 @@
-use crate::backend::db::models::{BrowserSession, OAuthState, Session, User};
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
+use codeyard_db_core::models::BrowserSession;
+use codeyard_db_core::models::OAuthState;
+use codeyard_db_core::models::Session;
+use codeyard_db_core::models::User;
 use codeyard_support::crypto::is_hex_token;
 use sqlx::SqlitePool;
 use subtle::ConstantTimeEq;

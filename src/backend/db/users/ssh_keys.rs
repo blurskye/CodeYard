@@ -1,7 +1,9 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::models::{SshKey, UserWithKey};
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::SshKey;
+use codeyard_db_core::models::UserWithKey;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use codeyard_model::identity::SshKeyWriteRefusal;
 use ssh_key::{HashAlg, PublicKey};
 

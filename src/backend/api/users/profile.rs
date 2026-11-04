@@ -235,8 +235,8 @@ pub(crate) async fn profile_response(
 }
 
 pub(crate) async fn profile_repositories(
-    pool: &db::DbPool,
-    repos: Vec<db::models::Repository>,
+    pool: &codeyard_db_core::DbPool,
+    repos: Vec<codeyard_db_core::models::Repository>,
 ) -> anyhow::Result<Vec<users::Repository>> {
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
     let mut counts = db::repositories::discovery::public_fork_counts(pool, &ids).await?;
@@ -250,7 +250,7 @@ pub(crate) async fn profile_repositories(
 }
 
 /// One repository row on a public page. Users and organizations list the same fields.
-fn profile_repository(repo: db::models::Repository, forks: i32) -> users::Repository {
+fn profile_repository(repo: codeyard_db_core::models::Repository, forks: i32) -> users::Repository {
     users::Repository {
         name: repo.name,
         description: repo.description.unwrap_or_default(),

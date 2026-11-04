@@ -1,7 +1,8 @@
 //! The values that cross the store boundary: Git sessions, blob reads, merge requests and
 //! the size limits that apply to them.
-use crate::backend::db::{self, models::Repository};
+use crate::backend::db;
 use crate::backend::git::{MAX_CI_WORKFLOW_BYTES, MAX_WORKFLOW_DIRECTORY_ENTRIES};
+use codeyard_db_core::models::Repository;
 use serde::{Deserialize, Serialize};
 
 /// The initiating reader of a pull head; remote publication retains token bounds.

@@ -32,7 +32,7 @@ fn moved() -> RefError {
 
 /// None means that the base already contains the head; no object or ref is created in that case.
 pub async fn merge_branch(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
     actor: impl Into<db::credentials::Actor>,
@@ -160,7 +160,7 @@ pub async fn merge_branch(
             Some(&[base_name.as_str()]),
             &ci,
             actor,
-            db::models::AccessLevel::Owner,
+            codeyard_db_core::models::AccessLevel::Owner,
         )
         .await
         .is_ok();

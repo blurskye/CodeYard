@@ -1,6 +1,6 @@
 use crate::backend::db::deploy_keys::NewDeployKey;
-use crate::backend::db::models::DeployKey;
 use anyhow::Result;
+use codeyard_db_core::models::DeployKey;
 use codeyard_model::identity::SshKeyWriteRefusal;
 use sqlx::PgPool;
 

@@ -47,7 +47,7 @@ async fn attributes(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -548,7 +548,7 @@ async fn attributes(pg: bool) {
         alice,
         org.id,
         admin,
-        db::models::OrgRole::Admin,
+        codeyard_db_core::models::OrgRole::Admin,
     )
     .await
     .unwrap();

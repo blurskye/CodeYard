@@ -1,7 +1,7 @@
 //! Authoritative organization operations, dispatched while holding DB selection.
 //! Site administrators have NO implicit organization membership/management here.
 //! Ingress must supply a verified actor; IDs never imply user/org equivalence.
-use crate::backend::db::models::OrgRole;
+use codeyard_db_core::models::OrgRole;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OrganizationOutcome<T> {
@@ -54,17 +54,20 @@ impl OrganizationPage {
 pub(crate) const MAX_SCOPED_REPOSITORIES: usize = 1000;
 
 pub(crate) fn administers(role: OrgRole) -> bool {
-    matches!(role, OrgRole::Owner | OrgRole::Admin)
+    matches!(
+        role,
+        codeyard_db_core::models::OrgRole::Owner | codeyard_db_core::models::OrgRole::Admin
+    )
 }
 pub(crate) fn can_change_member(
     actor: OrgRole,
     old: Option<OrgRole>,
     new: Option<OrgRole>,
 ) -> bool {
-    actor == OrgRole::Owner
-        || (actor == OrgRole::Admin
-            && old.is_none_or(|role| role == OrgRole::Member)
-            && new.is_none_or(|role| role == OrgRole::Member))
+    actor == codeyard_db_core::models::OrgRole::Owner
+        || (actor == codeyard_db_core::models::OrgRole::Admin
+            && old.is_none_or(|role| role == codeyard_db_core::models::OrgRole::Member)
+            && new.is_none_or(|role| role == codeyard_db_core::models::OrgRole::Member))
 }
 
 pub mod access;

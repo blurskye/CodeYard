@@ -3,15 +3,12 @@ use super::{
     store::{repo_store, BlobRange},
     templates,
 };
-use crate::backend::{
-    cluster::NodeContext,
-    db::{
-        self,
-        catalog_search::{Options, Search},
-        models::Repository,
-    },
-};
+use crate::backend::cluster::NodeContext;
+use crate::backend::db;
+use crate::backend::db::catalog_search::Options;
+use crate::backend::db::catalog_search::Search;
 use anyhow::Result;
+use codeyard_db_core::models::Repository;
 use serde::Serialize;
 use std::time::Duration;
 use tokio::time::{timeout_at, Instant};
@@ -86,7 +83,7 @@ pub async fn git_facts(
 }
 
 pub async fn prepare(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     viewer: Option<i64>,
     query: Search,

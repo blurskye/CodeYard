@@ -3,13 +3,13 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::{database::Database, http_client::Client, organizations::applied};
 use chrono::{Duration, Utc};
-use codeyard::backend::{
-    db::{
-        models::OrgRole,
-        organizations::{self, NewOrganization, OrganizationProfile},
-    },
-    identity::fine_grained::{self, Access, Owner},
-};
+use codeyard::backend::db::organizations;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::identity::fine_grained;
+use codeyard::backend::identity::fine_grained::Access;
+use codeyard::backend::identity::fine_grained::Owner;
+use codeyard_db_core::models::OrgRole;
 
 async fn contract(pg: bool) {
     crate::support::fake_webui_bundle::install();
@@ -28,9 +28,15 @@ async fn contract(pg: bool) {
     )
     .id;
     applied(
-        organizations::add_organization_member(f.pool(), alice, org, carol, OrgRole::Member)
-            .await
-            .unwrap(),
+        organizations::add_organization_member(
+            f.pool(),
+            alice,
+            org,
+            carol,
+            codeyard_db_core::models::OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;

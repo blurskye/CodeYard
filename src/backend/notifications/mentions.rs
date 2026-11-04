@@ -30,8 +30,8 @@ pub enum MentionComment {
 
 /// One text that may mention users, and the event it belongs to.
 pub struct MentionSource<'a> {
-    pub actor: &'a db::models::User,
-    pub repository: &'a db::models::Repository,
+    pub actor: &'a codeyard_db_core::models::User,
+    pub repository: &'a codeyard_db_core::models::Repository,
     pub owner: &'a str,
     pub repo: &'a str,
     /// The issue or pull request number.
@@ -53,7 +53,7 @@ pub struct MentionSource<'a> {
 /// write has already been saved, so a failure here never fails the request. A failed lookup is
 /// logged; a failed notification is dropped, as the other notification kinds drop theirs.
 pub async fn notify_mentions(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     source: MentionSource<'_>,
 ) -> Vec<i64> {

@@ -107,7 +107,7 @@ async fn topics_save_validate_and_filter(pg: bool) {
         database.pool(),
         bob_id,
         id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();

@@ -242,14 +242,14 @@ jobs:
             .await;
         assert_eq!(tokens, if engine == "act" { 1 } else { 4 });
         let policies: Vec<String> = match f.pool() {
-            db::DbPool::Postgres(pool) => {
+            codeyard_db_core::DbPool::Postgres(pool) => {
                 sqlx::query_scalar("SELECT permissions FROM actions_github_tokens WHERE run_id=$1")
                     .bind(run.id)
                     .fetch_all(pool)
                     .await
                     .unwrap()
             }
-            db::DbPool::Sqlite(pool) => {
+            codeyard_db_core::DbPool::Sqlite(pool) => {
                 sqlx::query_scalar("SELECT permissions FROM actions_github_tokens WHERE run_id=$1")
                     .bind(run.id)
                     .fetch_all(pool)

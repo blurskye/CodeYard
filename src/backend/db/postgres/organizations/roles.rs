@@ -1,12 +1,11 @@
 use super::authority::*;
-use crate::backend::db::{
-    models::{OrgRole, Team},
-    organizations::{
-        roles::{OrganizationRole, RoleTarget, UserAssignment},
-        OrganizationOutcome,
-    },
-};
+use crate::backend::db::organizations::roles::OrganizationRole;
+use crate::backend::db::organizations::roles::RoleTarget;
+use crate::backend::db::organizations::roles::UserAssignment;
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Team;
 use sqlx::{PgConnection, PgPool};
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing};
 
@@ -46,7 +45,7 @@ pub async fn catalog(
     org: i64,
 ) -> Result<OrganizationOutcome<Vec<OrganizationRole>>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
         return Ok(Denied);
     }
     let roles = sqlx::query_as(
@@ -66,7 +65,7 @@ pub async fn users(
     window: (i64, i64),
 ) -> Result<OrganizationOutcome<Vec<UserAssignment>>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
         return Ok(Denied);
     }
     if !role_exists(&mut tx, role).await? {
@@ -95,7 +94,7 @@ pub async fn teams(
     window: (i64, i64),
 ) -> Result<OrganizationOutcome<Vec<Team>>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
         return Ok(Denied);
     }
     if !role_exists(&mut tx, role).await? {
@@ -127,7 +126,7 @@ pub async fn change(
     let accounts: Vec<i64> = [Some(actor), target_user].into_iter().flatten().collect();
     crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &accounts)
         .await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner {
+    if require_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
         return Ok(Denied);
     }
     if !credential(&mut tx, &grant, org, "members").await? {

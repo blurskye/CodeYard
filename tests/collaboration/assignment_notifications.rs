@@ -8,7 +8,8 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::{http::StatusCode, Router};
-use codeyard::backend::db::{self, models::repositories::AccessLevel};
+use codeyard::backend::db;
+use codeyard_db_core::models::repositories::AccessLevel;
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};
@@ -47,9 +48,14 @@ async fn setup(pg: bool) -> World {
     .unwrap()
     .id;
     for user in [bob_id, carol_id] {
-        db::repositories::access::grant_repo_access(database.pool(), user, proj, AccessLevel::Read)
-            .await
-            .unwrap();
+        db::repositories::access::grant_repo_access(
+            database.pool(),
+            user,
+            proj,
+            codeyard_db_core::models::repositories::AccessLevel::Read,
+        )
+        .await
+        .unwrap();
     }
     let router = database.router(root.path()).await;
     let alice = Client::login(&router, database.pool(), alice_id).await;

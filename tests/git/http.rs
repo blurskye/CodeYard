@@ -5,14 +5,16 @@ use crate::support::git_server;
 use crate::support::native_database as native;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use chrono::{Duration, Utc};
-use codeyard::backend::{
-    db::{self, repositories, users::tokens, DbPool},
-    git::{
-        MAX_MIRROR_REFS, MAX_PULL_HEAD_REFS, MAX_PULL_HEAD_REF_BYTES, MAX_REPOSITORY_REFS,
-        MAX_REPOSITORY_REF_BYTES,
-    },
-    repositories::lifecycle,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::repositories;
+use codeyard::backend::db::users::tokens;
+use codeyard::backend::git::MAX_MIRROR_REFS;
+use codeyard::backend::git::MAX_PULL_HEAD_REFS;
+use codeyard::backend::git::MAX_PULL_HEAD_REF_BYTES;
+use codeyard::backend::git::MAX_REPOSITORY_REFS;
+use codeyard::backend::git::MAX_REPOSITORY_REF_BYTES;
+use codeyard::backend::repositories::lifecycle;
+use codeyard_db_core::DbPool;
 use git_server::{git, success, Server};
 use rand::RngCore;
 use reqwest::{Client, StatusCode};
@@ -354,10 +356,10 @@ async fn near_budget_http_clone(root: &Path, disk_path: &str, url: &str) {
 
 async fn update(pool: &DbPool, sql: &str, id: i64) {
     match pool {
-        DbPool::Postgres(raw) => {
+        codeyard_db_core::DbPool::Postgres(raw) => {
             sqlx::query(sql).bind(id).execute(raw).await.unwrap();
         }
-        DbPool::Sqlite(raw) => {
+        codeyard_db_core::DbPool::Sqlite(raw) => {
             sqlx::query(sql).bind(id).execute(raw).await.unwrap();
         }
     };
@@ -417,7 +419,7 @@ async fn buffered_fetch_revalidates(pool: &DbPool, server: &Server, root: &Path)
             pool,
             reader.id,
             repo.id,
-            db::models::AccessLevel::Read,
+            codeyard_db_core::models::AccessLevel::Read,
         )
         .await
         .unwrap();
@@ -711,10 +713,10 @@ async fn signature_push(client: &Client, base: &str, root: &Path, token: &str, e
 async fn exercise(pool: &DbPool, url: &str) {
     bundle::install();
     match pool {
-        DbPool::Postgres(raw) => {
+        codeyard_db_core::DbPool::Postgres(raw) => {
             sqlx::query("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(raw).await.unwrap();
         }
-        DbPool::Sqlite(raw) => {
+        codeyard_db_core::DbPool::Sqlite(raw) => {
             sqlx::query("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(raw).await.unwrap();
         }
     }
@@ -1568,14 +1570,14 @@ async fn exercise(pool: &DbPool, url: &str) {
     .unwrap()
     .unwrap();
     match pool {
-        DbPool::Postgres(raw) => {
+        codeyard_db_core::DbPool::Postgres(raw) => {
             sqlx::query("UPDATE users SET is_banned=TRUE WHERE id=$1")
                 .bind(banned.id)
                 .execute(raw)
                 .await
                 .unwrap();
         }
-        DbPool::Sqlite(raw) => {
+        codeyard_db_core::DbPool::Sqlite(raw) => {
             sqlx::query("UPDATE users SET is_banned=TRUE WHERE id=?1")
                 .bind(banned.id)
                 .execute(raw)
@@ -1648,10 +1650,10 @@ async fn hold_the_session_slot(address: std::net::SocketAddr, repo: &str) -> tok
 async fn push_rechecks_access_after_waiting_for_a_slot(pool: &DbPool, url: &str) {
     bundle::install();
     match pool {
-        DbPool::Postgres(raw) => {
+        codeyard_db_core::DbPool::Postgres(raw) => {
             sqlx::query("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(raw).await.unwrap();
         }
-        DbPool::Sqlite(raw) => {
+        codeyard_db_core::DbPool::Sqlite(raw) => {
             sqlx::query("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(raw).await.unwrap();
         }
     }

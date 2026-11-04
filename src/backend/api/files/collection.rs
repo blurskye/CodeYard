@@ -1,14 +1,16 @@
-use crate::backend::{
-    api::http::session::get_current_user,
-    app::AppState,
-    db::models::{FileReason, FileVisibility},
-    files::{self, UploadCapability, UploadDeclaration, UploadError},
-};
+use crate::backend::api::http::session::get_current_user;
+use crate::backend::app::AppState;
+use crate::backend::files;
+use crate::backend::files::UploadCapability;
+use crate::backend::files::UploadDeclaration;
+use crate::backend::files::UploadError;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
     Json,
 };
+use codeyard_db_core::models::FileReason;
+use codeyard_db_core::models::FileVisibility;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -167,7 +169,10 @@ mod tests {
         let value = serde_json::json!({"filename":"owned.txt", "content_type":"text/plain", "file_size":1,
             "reason":"pr_attachment", "visibility":"owner", "sha256_hex":"00".repeat(32)});
         let decoded: CreateUploadUrlRequest = serde_json::from_value(value.clone()).unwrap();
-        assert_eq!(decoded.reason, FileReason::PullRequestAttachment);
+        assert_eq!(
+            decoded.reason,
+            codeyard_db_core::models::FileReason::PullRequestAttachment
+        );
         for key in ["visibility", "sha256_hex"] {
             let mut incomplete = value.clone();
             incomplete.as_object_mut().unwrap().remove(key);

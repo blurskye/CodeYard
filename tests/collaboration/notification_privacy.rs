@@ -16,21 +16,21 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db::{self, models::repositories::AccessLevel, organizations},
-    notifications::NotificationEvent,
-    storage::ObjectStore,
-};
+use codeyard::backend::api::create_router;
+use codeyard::backend::app::AppState;
+use codeyard::backend::ci::CiConfig;
+use codeyard::backend::db;
+use codeyard::backend::db::organizations;
+use codeyard::backend::notifications::NotificationEvent;
+use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::repositories::AccessLevel;
 use fixture::Fixture;
 use pulls::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
 
-fn ids(rows: &[db::models::Notification]) -> Vec<i64> {
+fn ids(rows: &[codeyard_db_core::models::Notification]) -> Vec<i64> {
     rows.iter().map(|n| n.id).collect()
 }
 
@@ -206,9 +206,14 @@ async fn authority_contract(pg: bool) {
     let direct = f.notify(recipient, Some(personal), "private-direct").await;
     let team_notice = f.notify(recipient, Some(tenant), "private-team").await;
     agrees(&f, recipient, &[account]).await;
-    db::repositories::access::grant_repo_access(f.pool(), recipient, personal, AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        recipient,
+        personal,
+        codeyard_db_core::models::repositories::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     agrees(&f, recipient, &[account, direct]).await;
     assert!(
         db::repositories::access::revoke_repo_access(f.pool(), recipient, personal)
@@ -277,9 +282,14 @@ async fn authority_contract(pg: bool) {
         &[org, recipient],
     )
     .await;
-    db::repositories::access::grant_repo_access(f.pool(), recipient, tenant, AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        recipient,
+        tenant,
+        codeyard_db_core::models::repositories::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     // Real member removal clears direct and team contributions, not notifications.
     assert!(matches!(
         organizations::remove_organization_member(f.pool(), owner, org, recipient)
@@ -311,9 +321,14 @@ async fn authority_contract(pg: bool) {
         &[org, recipient],
     )
     .await;
-    db::repositories::access::grant_repo_access(f.pool(), recipient, tenant, AccessLevel::Admin)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        recipient,
+        tenant,
+        codeyard_db_core::models::repositories::AccessLevel::Admin,
+    )
+    .await
+    .unwrap();
     for restriction in ["is_banned", "must_change_password"] {
         f.execute(
             &format!("UPDATE users SET {restriction}=TRUE WHERE id=$1"),
@@ -324,7 +339,7 @@ async fn authority_contract(pg: bool) {
             db::repositories::access::get_user_repo_access(f.pool(), recipient, tenant)
                 .await
                 .unwrap(),
-            AccessLevel::Read
+            codeyard_db_core::models::repositories::AccessLevel::Read
         );
         agrees(&f, recipient, &[account, team_notice]).await;
         f.execute(
@@ -570,9 +585,14 @@ async fn corrupt_row_privacy(pg: bool) {
     )
     .await;
     agrees(&f, recipient, &[account]).await;
-    db::repositories::access::grant_repo_access(f.pool(), recipient, fork, AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        recipient,
+        fork,
+        codeyard_db_core::models::repositories::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     agrees(&f, recipient, &[account, fork_notice]).await;
     // Already-read hidden rows retain their exact stored read_at bytes.
     f.execute(
@@ -587,9 +607,14 @@ async fn corrupt_row_privacy(pg: bool) {
     let malformed = f.repo(owner, None, "history_malformed").await;
     f.notify(recipient, Some(malformed), "malformed-private")
         .await;
-    db::repositories::access::grant_repo_access(f.pool(), recipient, malformed, AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        recipient,
+        malformed,
+        codeyard_db_core::models::repositories::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     // Owned fixture SQL alone admits invalid ownership and dangling IDs.
     f.corrupt(
         "UPDATE repositories SET owner_kind='unknown' WHERE id=$1",
@@ -640,7 +665,7 @@ async fn corrupt_row_privacy(pg: bool) {
 }
 
 async fn assert_created_event(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     hint: NotificationEvent,
     user_id: i64,
     kind: &str,
@@ -673,7 +698,7 @@ fn assert_no_event(events: &mut tokio::sync::broadcast::Receiver<NotificationEve
     );
 }
 
-async fn notice_count(pool: &db::DbPool, user_id: i64, kind: &str) -> usize {
+async fn notice_count(pool: &codeyard_db_core::DbPool, user_id: i64, kind: &str) -> usize {
     db::notifications::records::list_notifications_for_user(pool, user_id, 100, false)
         .await
         .unwrap()
@@ -694,7 +719,7 @@ async fn idempotent_relationship_notifications(pg: bool) {
         f.pool(),
         author_id,
         repository_id,
-        AccessLevel::Read,
+        codeyard_db_core::models::repositories::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -702,7 +727,7 @@ async fn idempotent_relationship_notifications(pg: bool) {
         f.pool(),
         reviewer_id,
         repository_id,
-        AccessLevel::Write,
+        codeyard_db_core::models::repositories::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -710,7 +735,7 @@ async fn idempotent_relationship_notifications(pg: bool) {
         f.pool(),
         watcher_id,
         repository_id,
-        AccessLevel::Read,
+        codeyard_db_core::models::repositories::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -909,9 +934,14 @@ async fn notification_history_pages(pg: bool) {
     let user = f.actor("history_reader").await;
     let repo = f.repo(owner, None, "history_project").await;
     let hidden = f.repo(owner, None, "history_hidden").await;
-    db::repositories::access::grant_repo_access(f.pool(), user, repo, AccessLevel::Read)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        user,
+        repo,
+        codeyard_db_core::models::repositories::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
     for _ in 0..10 {
         f.notify(user, Some(repo), "REVOKED_HISTORY").await;
     }

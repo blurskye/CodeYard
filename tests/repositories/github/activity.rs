@@ -48,7 +48,7 @@ async fn activity_contract(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();

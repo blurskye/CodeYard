@@ -13,7 +13,7 @@ use codeyard::backend::{
     notifications::{NotificationBroadcaster, NotificationEvent},
 };
 
-async fn session(pool: &db::DbPool, user: i64) -> String {
+async fn session(pool: &codeyard_db_core::DbPool, user: i64) -> String {
     let id = token();
     db::users::sessions::create_session(
         pool,
@@ -486,12 +486,12 @@ async fn audit_changes(pg: bool) {
     }
     let query = "SELECT action,target_id FROM audit_log WHERE actor_id=$1 ORDER BY id";
     let rows: Vec<(String, i64)> = match f.pool() {
-        db::DbPool::Postgres(raw) => sqlx::query_as(query)
+        codeyard_db_core::DbPool::Postgres(raw) => sqlx::query_as(query)
             .bind(actor)
             .fetch_all(raw)
             .await
             .unwrap(),
-        db::DbPool::Sqlite(raw) => sqlx::query_as(query)
+        codeyard_db_core::DbPool::Sqlite(raw) => sqlx::query_as(query)
             .bind(actor)
             .fetch_all(raw)
             .await
@@ -588,7 +588,7 @@ async fn postgres_activity_reports_raw_exhaustion_not_authorized_row_count() {
 #[tokio::test]
 async fn sqlite_activity_and_cleanup_queries_seek_their_indexes() {
     let mut f = Database::new(false).await;
-    let db::DbPool::Sqlite(raw) = f.pool() else {
+    let codeyard_db_core::DbPool::Sqlite(raw) = f.pool() else {
         unreachable!()
     };
     for (query,index) in [

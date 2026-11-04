@@ -1,22 +1,29 @@
+use crate::backend::cluster::adopt_repositories;
+use crate::backend::cluster::approve;
+use crate::backend::cluster::create_invite;
+use crate::backend::cluster::join;
+use crate::backend::cluster::load_existing;
+use crate::backend::cluster::load_or_create;
+use crate::backend::cluster::parse_duration;
+use crate::backend::cluster::replicas;
+use crate::backend::cluster::replicas::Promotion;
+use crate::backend::cluster::require_postgres;
+use crate::backend::cluster::revoke;
+use crate::backend::cluster::InviteOptions;
+use crate::backend::cluster::JoinTicket;
+use crate::backend::cluster::Membership;
+use crate::backend::cluster::NodeAddress;
+use crate::backend::cluster::NodeKey;
+use crate::backend::cluster::Relay;
 use crate::backend::cluster::{hostname, NEEDS_POSTGRES};
-use crate::backend::{
-    cluster::{
-        adopt_repositories, approve, create_invite, join, load_existing, load_or_create,
-        parse_duration,
-        replicas::{self, Promotion},
-        require_postgres, revoke, InviteOptions, JoinTicket, Membership, NodeAddress, NodeKey,
-        Relay,
-    },
-    db::{
-        self,
-        cluster::Authority,
-        models::{NodeStatusChange, ReplicaSetting},
-        DbPool,
-    },
-    node::NodeRoles,
-};
+use crate::backend::db;
+use crate::backend::db::cluster::Authority;
+use crate::backend::node::NodeRoles;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::NodeStatusChange;
+use codeyard_db_core::models::ReplicaSetting;
+use codeyard_db_core::DbPool;
 use std::{path::Path, time::Duration};
 
 /// The address this node last reported while serving, for putting in a ticket.
@@ -265,14 +272,14 @@ pub async fn run(
         }
         // The operator needs no account, so only an unknown name refuses.
         Command::Approve { name } => match approve(pool, Authority::Operator, name).await? {
-            NodeStatusChange::Changed { before, node } => {
+            codeyard_db_core::models::NodeStatusChange::Changed { before, node } => {
                 println!("'{}' was {before}; it is now {}.", node.name, node.status);
                 Ok(())
             }
             _ => bail!("no node is named '{name}'; `codeyard cluster list` shows the names"),
         },
         Command::Revoke { name } => match revoke(pool, Authority::Operator, name).await? {
-            NodeStatusChange::Changed { before, node } => {
+            codeyard_db_core::models::NodeStatusChange::Changed { before, node } => {
                 println!(
                     "'{}' was {before}; it is now {} and can no longer connect.",
                     node.name, node.status
@@ -332,11 +339,13 @@ pub async fn run(
 /// What the replica setting means for a repository.
 fn describe(setting: ReplicaSetting) -> String {
     match setting {
-        ReplicaSetting::Copies(1) => "one copy, on its primary".to_owned(),
-        ReplicaSetting::Copies(count) => {
+        codeyard_db_core::models::ReplicaSetting::Copies(1) => {
+            "one copy, on its primary".to_owned()
+        }
+        codeyard_db_core::models::ReplicaSetting::Copies(count) => {
             format!("{count} copies in all, the primary included")
         }
-        ReplicaSetting::All => "a copy on every storage node".to_owned(),
+        codeyard_db_core::models::ReplicaSetting::All => "a copy on every storage node".to_owned(),
     }
 }
 

@@ -1,11 +1,14 @@
 use super::super::protocol::TransactionPhase;
 use super::*;
-use crate::backend::{
-    cluster::{IrohDialer, NodeAddress, NodeContext, NodeKey, Relay},
-    db::{cluster::writes as journal, models::RefValue},
-    notifications::NotificationBroadcaster,
-};
+use crate::backend::cluster::IrohDialer;
+use crate::backend::cluster::NodeAddress;
+use crate::backend::cluster::NodeContext;
+use crate::backend::cluster::NodeKey;
+use crate::backend::cluster::Relay;
+use crate::backend::db::cluster::writes as journal;
+use crate::backend::notifications::NotificationBroadcaster;
 use base64::Engine;
+use codeyard_db_core::models::RefValue;
 use std::sync::RwLock;
 
 fn commit(repo: &git2::Repository, message: &str) -> String {
@@ -32,7 +35,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
         .await
         .unwrap();
     let pool = DbPool::from(native.clone());
-    db::run_migrations(&pool).await.unwrap();
+    codeyard_db_core::run_migrations(&pool).await.unwrap();
     db::node_config::upsert_node_configuration(&pool, "public", true)
         .await
         .unwrap();

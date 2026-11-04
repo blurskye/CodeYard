@@ -1,11 +1,12 @@
 use super::{
     assert_github_schema, db, json, protection::call, request, Client, Router, StatusCode, Value,
 };
-use codeyard::backend::{db::models::AccessLevel, repositories::access::change_collaborator};
+use codeyard::backend::repositories::access::change_collaborator;
+use codeyard_db_core::models::AccessLevel;
 
 pub(super) async fn run(
     router: &Router,
-    resource: (&db::DbPool, i64, i64, i64),
+    resource: (&codeyard_db_core::DbPool, i64, i64, i64),
     base: &str,
     tokens: (&str, &str, &str),
     sha: &str,
@@ -200,9 +201,15 @@ pub(super) async fn run(
 
     // A private fork is read independently, without importing its objects or weakening
     // permissions merely because both repositories belong to one network.
-    change_collaborator(pool, alice, repo_id, "bob", Some(AccessLevel::Read))
-        .await
-        .unwrap();
+    change_collaborator(
+        pool,
+        alice,
+        repo_id,
+        "bob",
+        Some(codeyard_db_core::models::AccessLevel::Read),
+    )
+    .await
+    .unwrap();
     let forker = Client::login(router, pool, bob).await;
     let native = base.strip_prefix("/api/v3/repos/").unwrap();
     let fork = forker
@@ -217,9 +224,15 @@ pub(super) async fn run(
     change_collaborator(pool, alice, repo_id, "bob", None)
         .await
         .unwrap();
-    change_collaborator(pool, bob, fork_id, "alice", Some(AccessLevel::Read))
-        .await
-        .unwrap();
+    change_collaborator(
+        pool,
+        bob,
+        fork_id,
+        "alice",
+        Some(codeyard_db_core::models::AccessLevel::Read),
+    )
+    .await
+    .unwrap();
     let name = native.split('/').nth(1).unwrap();
     let fork_base = format!("/api/v3/repos/bob/{name}");
     let tree = call(router, "POST", &format!("{fork_base}/git/trees"), outsider,
@@ -317,9 +330,15 @@ pub(super) async fn run(
         ("repos/merge-upstream", 404),
     )
     .await;
-    change_collaborator(pool, alice, repo_id, "bob", Some(AccessLevel::Read))
-        .await
-        .unwrap();
+    change_collaborator(
+        pool,
+        alice,
+        repo_id,
+        "bob",
+        Some(codeyard_db_core::models::AccessLevel::Read),
+    )
+    .await
+    .unwrap();
     for (target, token) in [(base, writer), (&fork_base, outsider)] {
         call(
             router,

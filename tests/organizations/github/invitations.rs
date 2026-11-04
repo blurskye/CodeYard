@@ -1,16 +1,16 @@
 use super::request;
 use crate::support::{database::Database, http_client::Client, organizations::applied};
 use axum::http::StatusCode;
-use codeyard::backend::{
-    db::{
-        self,
-        models::OrgRole,
-        organizations::{
-            self, NewOrganization, NewTeam, OrganizationProfile, TeamPrivacy, TeamProfile,
-        },
-    },
-    identity::tokens::{self, TokenInput},
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations;
+use codeyard::backend::db::organizations::NewOrganization;
+use codeyard::backend::db::organizations::NewTeam;
+use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard::backend::db::organizations::TeamPrivacy;
+use codeyard::backend::db::organizations::TeamProfile;
+use codeyard::backend::identity::tokens;
+use codeyard::backend::identity::tokens::TokenInput;
+use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
 
 async fn contract(pg: bool) {
@@ -46,7 +46,10 @@ async fn contract(pg: bool) {
         .await
         .unwrap(),
     );
-    for (user, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
+    for (user, role) in [
+        (member, codeyard_db_core::models::OrgRole::Member),
+        (delegated, codeyard_db_core::models::OrgRole::Admin),
+    ] {
         applied(
             organizations::add_organization_member(f.pool(), owner, org.id, user, role)
                 .await

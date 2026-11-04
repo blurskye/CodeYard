@@ -1,5 +1,6 @@
-use crate::backend::db::{models::OrgMembership, organizations::*};
+use crate::backend::db::organizations::*;
 use anyhow::Result;
+use codeyard_db_core::models::OrgMembership;
 use sqlx::PgPool;
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing};
 

@@ -1,10 +1,12 @@
 use super::authority::*;
 use crate::backend::db::organizations::invitations::InvitationOffer;
-use crate::backend::db::{
-    models::{OrgInvitation, OrgMembership, OrgRole, ReceivedInvitation, Team},
-    organizations::*,
-};
+use crate::backend::db::organizations::*;
 use anyhow::Result;
+use codeyard_db_core::models::OrgInvitation;
+use codeyard_db_core::models::OrgMembership;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::ReceivedInvitation;
+use codeyard_db_core::models::Team;
 use sqlx::{SqliteConnection, SqlitePool};
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing, Suspended};
 
@@ -92,7 +94,7 @@ pub(super) async fn save_in_transaction(
         return Ok(Denied);
     }
     if !administers(actor_role)
-        || (owner_only && actor_role != OrgRole::Owner)
+        || (owner_only && actor_role != codeyard_db_core::models::OrgRole::Owner)
         || (!input.reinstate && !can_change_member(actor_role, None, Some(input.role)))
     {
         return Ok(Denied);
@@ -293,14 +295,15 @@ pub async fn invitation_page(
 ) -> Result<OrganizationOutcome<Vec<OrgInvitation>>> {
     let mut tx = begin_read(pool).await?;
     let role = require_read_org!(tx, actor, org);
-    if !administers(role) || (filter.owner_only && role != OrgRole::Owner) {
+    if !administers(role) || (filter.owner_only && role != codeyard_db_core::models::OrgRole::Owner)
+    {
         return Ok(Denied);
     }
     if filter.empty {
         return Ok(Applied(Vec::new()));
     }
     let rows = sqlx::query_as("SELECT id,org_id,user_id,email,role,invited_by_id,created_at,expires_at,CASE WHEN failed_at IS NOT NULL THEN failed_at WHEN julianday(expires_at)<=julianday('now') THEN expires_at END AS failed_at,CASE WHEN failed_at IS NOT NULL THEN failed_reason WHEN julianday(expires_at)<=julianday('now') THEN 'Invitation expired' END AS failed_reason FROM organization_invitations WHERE org_id=?1 AND (failed_at IS NOT NULL OR julianday(expires_at)<=julianday('now'))=?2 AND (?3 IS NULL OR role=?3 OR (?3='member' AND role='admin')) AND id>?6 ORDER BY id LIMIT ?4 OFFSET ?5")
-        .bind(org).bind(filter.failed).bind(filter.role.as_ref().map(OrgRole::as_str)).bind(window.1).bind(window.0).bind(filter.after).fetch_all(&mut *tx).await?;
+        .bind(org).bind(filter.failed).bind(filter.role.as_ref().map(codeyard_db_core::models::OrgRole::as_str)).bind(window.1).bind(window.0).bind(filter.after).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Applied(rows))
 }
@@ -312,7 +315,7 @@ pub async fn invitation_teams(
     window: (i64, i64),
 ) -> Result<OrganizationOutcome<Vec<Team>>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
         return Ok(Denied);
     }
     let exists: bool = sqlx::query_scalar(
@@ -379,7 +382,7 @@ async fn cancel(
     let actor_role = require_org!(tx, actor, org);
     if !credential(&mut tx, &grant, org, "members").await?
         || !administers(actor_role)
-        || (owner_only && actor_role != OrgRole::Owner)
+        || (owner_only && actor_role != codeyard_db_core::models::OrgRole::Owner)
     {
         return Ok(Denied);
     }

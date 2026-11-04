@@ -1,12 +1,12 @@
 //! Gateway tests on throwaway databases and real Git repositories.
 //! GITSERV_TEST_OPENSSH_HELPER must point at the built codeyard binary.
 use super::*;
-use crate::backend::db::models::AccessLevel;
 use crate::backend::{
     ci::{queue::RunQueue, CiWorkers},
     notifications::NotificationBroadcaster,
 };
 use base64::Engine;
+use codeyard_db_core::models::AccessLevel;
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Output, Stdio};
 use tokio::process::Command;
@@ -105,7 +105,7 @@ async fn database() -> Database {
         .await
         .unwrap();
     fixture.pool = DbPool::from(fixture.native.clone());
-    db::run_migrations(&fixture.pool)
+    codeyard_db_core::run_migrations(&fixture.pool)
         .await
         .expect("required fixture migration");
     fixture
@@ -715,7 +715,7 @@ async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
         &database.pool,
         reader.id,
         repo.id,
-        AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -758,7 +758,7 @@ async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
         &database.pool,
         reader.id,
         repo.id,
-        AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -1705,13 +1705,13 @@ async fn concurrent_first_pushes(pool: DbPool) {
 
 async fn sqlite_push_database() -> (TempDir, DbPool) {
     let directory = tempfile::tempdir().unwrap();
-    let pool = crate::backend::db::init_db(&format!(
+    let pool = codeyard_db_core::init_db(&format!(
         "sqlite://{}",
         directory.path().join("test.db").display()
     ))
     .await
     .unwrap();
-    db::run_migrations(&pool).await.unwrap();
+    codeyard_db_core::run_migrations(&pool).await.unwrap();
     (directory, pool)
 }
 
@@ -1765,8 +1765,8 @@ async fn host_openssh_refuses_remote_repositories_without_starting_git() {
 
 #[tokio::test]
 async fn host_openssh_refuses_remote_repositories_without_starting_git_sqlite() {
-    let pool = db::init_db("sqlite::memory:").await.unwrap();
-    db::run_migrations(&pool).await.unwrap();
+    let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
+    codeyard_db_core::run_migrations(&pool).await.unwrap();
     remote_repository_authorization(&pool).await;
     pool.close().await;
 }

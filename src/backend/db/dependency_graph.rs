@@ -1,7 +1,8 @@
 //! Snapshot history and completed SBOM reports survive process restarts.
-use super::DbPool;
 use crate::backend::dependency_graph::Snapshot;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// A generated SBOM report can be downloaded for a day, and a repository keeps this many.
 pub(crate) const SBOM_REPORT_LIFETIME_SECONDS: i64 = 24 * 60 * 60;

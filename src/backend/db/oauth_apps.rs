@@ -1,7 +1,9 @@
 //! OAuth applications and single-use device and web authorizations.
-use crate::backend::db::{models::PersonalAccessToken, DbPool};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::PersonalAccessToken;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct Application {

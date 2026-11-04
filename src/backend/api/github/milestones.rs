@@ -1,5 +1,7 @@
 use super::{auth, pagination::Pagination, repository, Error, Result};
-use crate::backend::{app::AppState, db, db::models::MilestoneSummary, webhooks::payloads};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -8,6 +10,7 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::MilestoneSummary;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
@@ -32,7 +35,7 @@ fn write_error(error: anyhow::Error) -> Error {
 }
 
 pub(super) async fn document(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     summary: &MilestoneSummary,
     owner: &str,
     repo: &str,
@@ -46,7 +49,11 @@ pub(super) async fn document(
     Ok(payloads::milestone(summary, creator.as_ref(), owner, repo))
 }
 
-async fn find(pool: &db::DbPool, repo_id: i64, number: &str) -> Result<MilestoneSummary> {
+async fn find(
+    pool: &codeyard_db_core::DbPool,
+    repo_id: i64,
+    number: &str,
+) -> Result<MilestoneSummary> {
     db::milestones::get_milestone(pool, repo_id, number.parse().map_err(|_| Error::missing())?)
         .await
         .map_err(Error::unavailable)?

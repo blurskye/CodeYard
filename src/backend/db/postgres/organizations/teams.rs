@@ -1,11 +1,12 @@
 mod exports;
 use super::super::repositories::access::USER_REPO_ACCESS_SQL;
 use super::invitations::RECIPIENT;
-use crate::backend::db::{
-    models::{OrgRole, Team, TeamMembership, TeamRepoAccess},
-    organizations::*,
-};
+use crate::backend::db::organizations::*;
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Team;
+use codeyard_db_core::models::TeamMembership;
+use codeyard_db_core::models::TeamRepoAccess;
 pub use exports::{
     list_direct_organization_team_members, list_direct_organization_team_repositories,
 };

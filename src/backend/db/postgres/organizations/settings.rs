@@ -1,12 +1,11 @@
 use super::authority::*;
-use crate::backend::db::{
-    models::{OrgRole, Organization},
-    organizations::{
-        settings::{Changes, Settings, Updated},
-        OrganizationOutcome,
-    },
-};
+use crate::backend::db::organizations::settings::Changes;
+use crate::backend::db::organizations::settings::Settings;
+use crate::backend::db::organizations::settings::Updated;
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::{Context, Result};
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::Organization;
 use sqlx::{PgConnection, PgPool};
 use OrganizationOutcome::{Applied, Denied};
 
@@ -26,7 +25,7 @@ pub async fn repository_requires_web_signoff(pool: &PgPool, repo: i64) -> Result
 
 pub async fn owned(pool: &PgPool, actor: i64, org: i64) -> Result<OrganizationOutcome<Updated>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
         return Ok(Denied);
     }
     let settings = get_on(&mut tx, org)
@@ -51,7 +50,7 @@ pub async fn change(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner {
+    if require_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
         return Ok(Denied);
     }
     if !credential(&mut tx, &grant, org, "organization_administration").await? {

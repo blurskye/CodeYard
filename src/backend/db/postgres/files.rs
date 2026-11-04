@@ -9,7 +9,8 @@ use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 use std::net::IpAddr;
 use uuid::Uuid;
 
-use super::models::{File, FileReasonLimit};
+use codeyard_db_core::models::File;
+use codeyard_db_core::models::FileReasonLimit;
 
 /// Locks the active uploader and reads the limits for `reason`. Locking the user row keeps concurrent uploads (on any node) from overrunning the quota.
 async fn admit(
@@ -623,7 +624,7 @@ pub async fn get_user_total_storage(pool: &PgPool, user_id: i64) -> Result<i64, 
 pub async fn get_user_file_stats(
     pool: &PgPool,
     user_id: i64,
-) -> Result<Option<super::models::UserFileStats>, sqlx::Error> {
+) -> Result<Option<codeyard_db_core::models::UserFileStats>, sqlx::Error> {
     // Aggregate each relation separately. Joining the relations first would multiply
     // the storage and upload sums by the join counts.
     sqlx::query_as(r#"SELECT u.id AS user_id, u.username, f.*,

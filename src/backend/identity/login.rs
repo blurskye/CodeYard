@@ -7,7 +7,8 @@ use super::{
     AuthenticatedAccount,
 };
 use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db::{self, DbPool};
+use crate::backend::db;
+use codeyard_db_core::DbPool;
 
 /// The result of the password step. An account with two-factor sign-in gets no session yet:
 /// `pending` is the sealed token the second-factor page sends back with its code.
@@ -127,7 +128,7 @@ pub async fn password_login(
 /// Stores the password again at the current cost. This is best effort: a failure is logged and
 /// the old hash keeps working. If another login stored a new hash first, the session is issued
 /// against that hash, as long as it accepts the same password.
-async fn upgrade_hash(pool: &DbPool, user: &mut db::models::User, password: &str) {
+async fn upgrade_hash(pool: &DbPool, user: &mut codeyard_db_core::models::User, password: &str) {
     let Some(old) = user.password_hash.clone() else {
         return;
     };
@@ -147,7 +148,11 @@ async fn upgrade_hash(pool: &DbPool, user: &mut db::models::User, password: &str
 
 /// Picks up the stored hash after a lost rehash race, but only if it still accepts the password;
 /// a real password change in between keeps the old hash, so the session is refused.
-async fn adopt_current_hash(pool: &DbPool, user: &mut db::models::User, password: &str) {
+async fn adopt_current_hash(
+    pool: &DbPool,
+    user: &mut codeyard_db_core::models::User,
+    password: &str,
+) {
     let Ok(Some(current)) = db::users::accounts::get_user_by_id(pool, user.id).await else {
         return;
     };

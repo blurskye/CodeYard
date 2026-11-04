@@ -7,7 +7,8 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::{http::StatusCode, Router};
-use codeyard::backend::db::{self, models::repositories::AccessLevel};
+use codeyard::backend::db;
+use codeyard_db_core::models::repositories::AccessLevel;
 use database::Database;
 use pulls::Client;
 use serde_json::json;
@@ -169,7 +170,7 @@ async fn badge_skips_repositories_the_reader_cannot_read(pg: bool) {
         w.database.pool(),
         w.bob_id,
         w.vault,
-        AccessLevel::Read,
+        codeyard_db_core::models::repositories::AccessLevel::Read,
     )
     .await
     .unwrap();

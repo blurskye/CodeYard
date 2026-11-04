@@ -125,7 +125,7 @@ async fn administer(
     headers: &HeaderMap,
     params: &Params,
     write: bool,
-) -> Result<(db::models::Repository, auth::Authentication)> {
+) -> Result<(codeyard_db_core::models::Repository, auth::Authentication)> {
     let (repo, auth) = repository(state, headers, &params["owner"], &params["repo"], write).await?;
     let auth = auth.ok_or_else(auth::required)?;
     if !access::can_admin(&state.pool, &auth.user, &repo)

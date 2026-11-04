@@ -114,7 +114,7 @@ async fn read(
 
 pub(super) async fn document(
     state: &AppState,
-    repo: &crate::backend::db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     name: &str,
     branch: &str,

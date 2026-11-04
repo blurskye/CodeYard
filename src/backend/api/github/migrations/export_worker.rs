@@ -135,7 +135,7 @@ async fn metadata(
     state: &AppState,
     headers: &HeaderMap,
     actor: i64,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     archive: &mut MigrationArchive,
 ) -> Result<()> {
@@ -311,7 +311,7 @@ async fn metadata(
 
 async fn issue_comments(
     state: &AppState,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     id: i64,
     archive: &mut MigrationArchive,
@@ -345,9 +345,9 @@ async fn issue_comments(
 
 async fn pull_comments(
     state: &AppState,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
-    pull: &db::models::PullRequest,
+    pull: &codeyard_db_core::models::PullRequest,
     archive: &mut MigrationArchive,
 ) -> Result<()> {
     let mut offset = 0;
@@ -405,7 +405,7 @@ async fn pull_comments(
 
 async fn release_records(
     state: &AppState,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     owner: &str,
     attachments: bool,
     archive: &mut MigrationArchive,

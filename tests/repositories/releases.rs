@@ -1125,8 +1125,8 @@ async fn release_validation_and_atomic_files(pg: bool) {
             filename: "tool.bin",
             content_type: "application/octet-stream",
             file_size: 1,
-            reason: db::models::FileReason::ReleaseAsset,
-            visibility: db::models::FileVisibility::Owner,
+            reason: codeyard_db_core::models::FileReason::ReleaseAsset,
+            visibility: codeyard_db_core::models::FileVisibility::Owner,
             sha256_hex: &"a".repeat(64),
         },
     )
@@ -1212,8 +1212,8 @@ async fn release_validation_and_atomic_files(pg: bool) {
             filename: "second.bin",
             content_type: "application/octet-stream",
             file_size: 1,
-            reason: db::models::FileReason::ReleaseAsset,
-            visibility: db::models::FileVisibility::Owner,
+            reason: codeyard_db_core::models::FileReason::ReleaseAsset,
+            visibility: codeyard_db_core::models::FileVisibility::Owner,
             sha256_hex: &"b".repeat(64),
         },
     )
@@ -1318,14 +1318,14 @@ async fn repository_deletion_removes_asset_uploads(pg: bool) {
         .unwrap()
         .is_none());
     let queued: bool = match world.database.pool() {
-        db::DbPool::Postgres(pool) => sqlx::query_scalar(
+        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM pending_object_deletions WHERE object_key=$1)",
         )
         .bind(&file.object_key)
         .fetch_one(pool)
         .await
         .unwrap(),
-        db::DbPool::Sqlite(pool) => sqlx::query_scalar(
+        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM pending_object_deletions WHERE object_key=?1)",
         )
         .bind(&file.object_key)

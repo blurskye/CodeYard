@@ -1,10 +1,10 @@
 //! GitHub Apps, their account installations and bounded credentials.
-use crate::backend::db::{
-    models::{PersonalAccessToken, Repository},
-    DbPool,
-};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::models::PersonalAccessToken;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct App {

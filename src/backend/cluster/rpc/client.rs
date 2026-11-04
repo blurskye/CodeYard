@@ -17,7 +17,7 @@ impl NodeContext {
         path: &std::path::Path,
         repo: i64,
         term: i64,
-        changes: &[db::models::RefChange],
+        changes: &[codeyard_db_core::models::RefChange],
         authorize: F,
     ) -> anyhow::Result<()>
     where
@@ -72,7 +72,7 @@ impl NodeContext {
         &self,
         repository: Uuid,
         path: &std::path::Path,
-        write: &db::models::WriteRecord,
+        write: &codeyard_db_core::models::WriteRecord,
     ) -> anyhow::Result<()> {
         let limits = super::git_session::WriteLimits::load(self.database()?).await?;
         tokio::time::timeout(limits.timeout, async {
@@ -102,7 +102,7 @@ impl NodeContext {
         &self,
         repository: Uuid,
         path: &std::path::Path,
-        write: &db::models::WriteRecord,
+        write: &codeyard_db_core::models::WriteRecord,
     ) -> anyhow::Result<()> {
         let limits = super::git_session::WriteLimits::load(self.database()?).await?;
         tokio::time::timeout(limits.timeout, async {
@@ -134,7 +134,7 @@ impl NodeContext {
         &self,
         repository: Uuid,
         path: &std::path::Path,
-        write: &db::models::WriteRecord,
+        write: &codeyard_db_core::models::WriteRecord,
     ) -> anyhow::Result<()> {
         let limits = super::git_session::WriteLimits::load(self.database()?).await?;
         tokio::time::timeout(
@@ -164,7 +164,10 @@ impl NodeContext {
         .await?
     }
 
-    async fn write_follower(&self, write: &db::models::WriteRecord) -> anyhow::Result<i64> {
+    async fn write_follower(
+        &self,
+        write: &codeyard_db_core::models::WriteRecord,
+    ) -> anyhow::Result<i64> {
         let view =
             db::cluster::writes::recovery_view(self.database()?, write.repository_id).await?;
         anyhow::ensure!(

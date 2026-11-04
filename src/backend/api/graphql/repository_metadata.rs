@@ -42,7 +42,7 @@ pub(super) async fn resolve(
     field: &str,
     ctx: &Arguments,
     request: &RequestContext,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
 ) -> Result<Value> {
     let pool = &request.state.pool;
     let actor = &request.auth.user;

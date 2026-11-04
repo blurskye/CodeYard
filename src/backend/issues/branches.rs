@@ -8,7 +8,7 @@ use crate::backend::{
     },
 };
 
-pub fn default_name(issue: &db::models::Issue) -> String {
+pub fn default_name(issue: &codeyard_db_core::models::Issue) -> String {
     let title = issue
         .title
         .chars()
@@ -39,8 +39,8 @@ pub fn default_name(issue: &db::models::Issue) -> String {
 pub async fn create(
     state: &AppState,
     actor: impl Into<db::credentials::Actor>,
-    issue: &db::models::Issue,
-    target: &db::models::Repository,
+    issue: &codeyard_db_core::models::Issue,
+    target: &codeyard_db_core::models::Repository,
     name: &str,
     oid: &str,
 ) -> Result<db::issues::management::LinkedBranch, OperationError> {

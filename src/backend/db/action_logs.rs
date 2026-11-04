@@ -1,7 +1,8 @@
 //! Short-lived read capabilities bind real durable logs and their observed file manifest.
-use super::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 
@@ -49,8 +50,8 @@ pub struct Line {
     pub line: String,
     pub created_at: DateTime<Utc>,
 }
-impl From<super::models::CiLogLine> for Line {
-    fn from(line: super::models::CiLogLine) -> Self {
+impl From<codeyard_db_core::models::CiLogLine> for Line {
+    fn from(line: codeyard_db_core::models::CiLogLine) -> Self {
         Self {
             id: line.id,
             job_id: line.job_id,

@@ -1,8 +1,11 @@
 //! The `status` event, sent after a commit status is saved through REST or the native API.
 use super::payloads::{self, Person, Scope};
 use super::{emit, events};
-use crate::backend::db::{self, models::CommitStatus, models::Repository, DbPool};
+use crate::backend::db;
 use crate::backend::repositories::store::{CommitInfo, RepoStore};
+use codeyard_db_core::models::CommitStatus;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::DbPool;
 
 /// GitHub names at most this many branches in a status event.
 const MAX_BRANCHES: usize = 10;

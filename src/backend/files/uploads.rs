@@ -1,11 +1,11 @@
-use crate::backend::{
-    db::{
-        files as files_db,
-        models::{File, FileReason, FileVisibility},
-        DbPool,
-    },
-    storage::{ObjectStore, StorageError, Upload},
-};
+use crate::backend::db::files as files_db;
+use crate::backend::storage::ObjectStore;
+use crate::backend::storage::StorageError;
+use crate::backend::storage::Upload;
+use codeyard_db_core::models::File;
+use codeyard_db_core::models::FileReason;
+use codeyard_db_core::models::FileVisibility;
+use codeyard_db_core::DbPool;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::time::Duration;

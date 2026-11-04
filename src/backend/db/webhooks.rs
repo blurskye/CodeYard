@@ -1,8 +1,11 @@
 //! Webhook rows and their delivery records. Each change checks, in its own transaction, that
 //! the actor may manage the owner's hooks. Settings reads retain that authority too.
-use crate::backend::db::models::{Webhook, WebhookDelivery};
-use crate::backend::db::{users::accounts::AccountCredential, DbPool};
+use crate::backend::db::users::accounts::AccountCredential;
 use anyhow::Result;
+use codeyard_db_core::models::Webhook;
+use codeyard_db_core::models::WebhookDelivery;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// The supported fan-out of one owner's isolated event must fit its delivery queue.
 pub const MAX_HOOKS_PER_OWNER: usize = 16;
@@ -207,7 +210,7 @@ pub struct NewDelivery {
 }
 
 /// Which deliveries by status code a history keeps: successes are 2xx, as in
-/// `WebhookDelivery::succeeded`; everything else, including deliveries without a response, failed.
+/// `codeyard_db_core::models::WebhookDelivery::succeeded`; everything else, including deliveries without a response, failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeliveryOutcome {
     Success,

@@ -1,7 +1,8 @@
 use super::{
     assert_github_schema, db, request, tokens, Client, Database, StatusCode, TokenInput, Value,
 };
-use codeyard::backend::db::{dependabot_alerts as store, DbPool};
+use codeyard::backend::db::dependabot_alerts as store;
+use codeyard_db_core::DbPool;
 use serde_json::json;
 
 fn advisory() -> Value {
@@ -36,14 +37,14 @@ async fn contract(pg: bool) {
     let owner = f.actor("alert-owner").await;
     let other = f.actor("alert-other").await;
     match f.pool() {
-        DbPool::Sqlite(p) => {
+        codeyard_db_core::DbPool::Sqlite(p) => {
             sqlx::query("UPDATE users SET is_admin=true WHERE id=$1")
                 .bind(owner)
                 .execute(p)
                 .await
                 .unwrap();
         }
-        DbPool::Postgres(p) => {
+        codeyard_db_core::DbPool::Postgres(p) => {
             sqlx::query("UPDATE users SET is_admin=true WHERE id=$1")
                 .bind(owner)
                 .execute(p)

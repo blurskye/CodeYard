@@ -1,9 +1,8 @@
 //! Bounded native inventory pages; REST's unpaged contract is intentionally separate.
-use crate::backend::db::{
-    artifact_metadata::{Record, Refusal},
-    DbPool,
-};
+use crate::backend::db::artifact_metadata::Record;
+use crate::backend::db::artifact_metadata::Refusal;
 use anyhow::Result;
+use codeyard_db_core::DbPool;
 
 #[derive(sqlx::FromRow)]
 pub struct PageRecord {
@@ -28,13 +27,13 @@ pub async fn list(
         Refusal::Invalid
     );
     match pool {
-        DbPool::Postgres(pool) => {
+        codeyard_db_core::DbPool::Postgres(pool) => {
             crate::backend::db::postgres::artifact_metadata::pages::list(
                 pool, session, org, digest, kind, after,
             )
             .await
         }
-        DbPool::Sqlite(pool) => {
+        codeyard_db_core::DbPool::Sqlite(pool) => {
             crate::backend::db::sqlite::artifact_metadata::pages::list(
                 pool, session, org, digest, kind, after,
             )

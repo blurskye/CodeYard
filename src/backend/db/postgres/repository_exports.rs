@@ -1,16 +1,16 @@
-use crate::backend::db::{
-    models::OrgRole,
-    organizations::OrganizationOutcome,
-    repository_exports::{ExportOptions, ExportRefusal, RepositoryExport},
-};
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::repository_exports::ExportOptions;
+use crate::backend::db::repository_exports::ExportRefusal;
+use crate::backend::db::repository_exports::RepositoryExport;
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
 use sqlx::{PgConnection, PgPool};
 
 async fn authority(connection: &mut PgConnection, actor: i64, org: Option<i64>) -> Result<bool> {
     if let Some(org) = org {
         return Ok(matches!(
             super::organizations::authority::authority(connection, actor, org).await?,
-            OrganizationOutcome::Applied(OrgRole::Owner)
+            OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Owner)
         ));
     }
     super::users::transitions::lock_accounts_shared(connection, &[actor]).await?;

@@ -1,5 +1,4 @@
 pub(crate) mod threads;
-use crate::backend::db::models::Notification;
 use crate::backend::db::notifications::records::{
     NotificationCounts, NotificationCredential, NotificationCursor, NotificationFilter,
     NotificationMark, NotificationScopes,
@@ -11,6 +10,7 @@ use crate::backend::db::notifications::{
 use crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
 use crate::backend::db::sqlite::search::contains;
 use anyhow::Result;
+use codeyard_db_core::models::Notification;
 use sqlx::SqlitePool;
 
 pub async fn create_notification(

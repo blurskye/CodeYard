@@ -45,7 +45,7 @@ async fn authorized_run(
     state: &AppState,
     headers: &HeaderMap,
     job_id: &str,
-) -> Result<db::models::CiRun, CiReadError> {
+) -> Result<codeyard_db_core::models::CiRun, CiReadError> {
     let user = get_current_user(&state.pool, headers).await?;
     let run = db::ci::get_ci_run_by_run_id(&state.pool, parse_job_id(job_id)?)
         .await
@@ -61,8 +61,8 @@ async fn authorized_run(
 
 pub(super) async fn ensure_repo_read_access(
     state: &AppState,
-    user: &db::models::User,
-    repository: &db::models::Repository,
+    user: &codeyard_db_core::models::User,
+    repository: &codeyard_db_core::models::Repository,
 ) -> Result<(), CiReadError> {
     if crate::backend::repositories::access::can_read(&state.pool, Some(user), repository)
         .await

@@ -1,9 +1,9 @@
 //! Team review requests retain the team identity, never a snapshot of its members.
-use crate::backend::db::{
-    models::{Team, User},
-    DbPool,
-};
 use anyhow::Result;
+use codeyard_db_core::models::Team;
+use codeyard_db_core::models::User;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 #[derive(Debug, thiserror::Error)]
 #[error("Review teams must be visible teams with write access to this repository")]
@@ -60,7 +60,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::team_reviewers::l
     fn list(pool: &DbPool, repo: i64, pull: Option<i64>, viewer: Option<i64>) -> Result<Vec<crate::backend::db::repositories::push_teams::TeamAccess>>);
 native_operation!(crate::backend::db::postgres::pull_requests::team_reviewers::members,
     crate::backend::db::sqlite::pull_requests::team_reviewers::members,
-    fn members(pool: &DbPool, repo: i64, teams: &[i64], after: i64) -> Result<Vec<crate::backend::db::models::User>>);
+    fn members(pool: &DbPool, repo: i64, teams: &[i64], after: i64) -> Result<Vec<codeyard_db_core::models::User>>);
 native_operation!(crate::backend::db::postgres::pull_requests::team_reviewers::change,
     crate::backend::db::sqlite::pull_requests::team_reviewers::change,
-    fn change(pool: &DbPool, actor: i64, pull: i64, slugs: &[String], action: ReviewTeamAction, expected: Option<&crate::backend::db::models::PullRequest>) -> Result<Vec<Team>>);
+    fn change(pool: &DbPool, actor: i64, pull: i64, slugs: &[String], action: ReviewTeamAction, expected: Option<&codeyard_db_core::models::PullRequest>) -> Result<Vec<Team>>);

@@ -1,17 +1,14 @@
 //! Owners set the organization's token policy and review the fine-grained tokens that reach
 //! it. The same rows back the REST personal-access-token endpoints.
 use super::organization::{self, Fields};
-use crate::backend::{
-    api::http::context::PageContext,
-    app::AppState,
-    db::{
-        self,
-        fine_grained_tokens::Policy,
-        models::OrgRole,
-        organizations::{self, OrganizationOutcome},
-    },
-    identity::fine_grained::{catalog, MAX_DAYS},
-};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::fine_grained_tokens::Policy;
+use crate::backend::db::organizations;
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::identity::fine_grained::catalog;
+use crate::backend::identity::fine_grained::MAX_DAYS;
 use axum::{
     extract::{rejection::FormRejection, Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -19,6 +16,7 @@ use axum::{
     routing::post,
     Router,
 };
+use codeyard_db_core::models::OrgRole;
 use codeyard_webui::pages::orgs as view;
 use serde_json::{Map, Value};
 use std::{
@@ -39,7 +37,7 @@ pub(super) fn router() -> Router<Arc<AppState>> {
 )]
 async fn require_owner(ctx: &PageContext, actor: i64, org: i64) -> Result<(), Response> {
     match organizations::get_organization_role(&ctx.state.pool, actor, org).await {
-        Ok(OrganizationOutcome::Applied(OrgRole::Owner)) => Ok(()),
+        Ok(OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Owner)) => Ok(()),
         Ok(OrganizationOutcome::Applied(_)) => Err(ctx.error(
             StatusCode::FORBIDDEN,
             "Only organization owners can manage personal access tokens.",

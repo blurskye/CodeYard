@@ -44,7 +44,10 @@ fn workflow_commit(path: &str, yaml: &str) -> String {
     .to_string()
 }
 
-async fn finished(pool: &db::DbPool, run: uuid::Uuid) -> db::models::CiRun {
+async fn finished(
+    pool: &codeyard_db_core::DbPool,
+    run: uuid::Uuid,
+) -> codeyard_db_core::models::CiRun {
     tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             let run = db::ci::get_ci_run_by_run_id(pool, run)
@@ -100,7 +103,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -389,7 +392,7 @@ async fn partial(
         f.pool(),
         bob,
         repo.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();

@@ -1,9 +1,10 @@
-use crate::backend::db::models::{BranchProtectionRule, CommitStatus};
 use crate::backend::db::repositories::protection::{
     server_owned_status_context, BranchProtectionRuleUpsert, CommitStatusUpsert,
     ProtectionWriteRefusal,
 };
 use anyhow::Result;
+use codeyard_db_core::models::BranchProtectionRule;
+use codeyard_db_core::models::CommitStatus;
 use sqlx::PgPool;
 
 pub async fn read_protection_snapshot(
@@ -126,7 +127,7 @@ pub async fn upsert_branch_protection_rule(
         );
     }
     let previous: Option<String> = sqlx::query_scalar("SELECT github_settings FROM branch_protection_rules WHERE repo_id=$1 AND pattern=$2 FOR UPDATE").bind(input.repo_id).bind(input.pattern).fetch_optional(&mut *tx).await?;
-    let previous: crate::backend::db::models::BranchProtectionSettings = previous
+    let previous: codeyard_db_core::models::BranchProtectionSettings = previous
         .map(|value| serde_json::from_str(&value))
         .transpose()?
         .unwrap_or_default();

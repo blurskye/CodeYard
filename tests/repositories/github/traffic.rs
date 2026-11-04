@@ -102,7 +102,7 @@ async fn traffic_contract(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -320,7 +320,7 @@ async fn traffic_contract(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -520,7 +520,7 @@ async fn traffic_contract(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -599,7 +599,7 @@ async fn traffic_contract(pg: bool) {
             alice,
             org.id,
             bob,
-            db::models::OrgRole::Member
+            codeyard_db_core::models::OrgRole::Member
         )
         .await
         .unwrap(),
@@ -619,7 +619,7 @@ async fn traffic_contract(pg: bool) {
         f.pool(),
         bob,
         org_repo["id"].as_i64().unwrap(),
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();

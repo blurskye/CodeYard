@@ -131,7 +131,10 @@ async fn save(
 }
 
 /// The settings to show. Fields the admin just submitted replace the stored ones.
-async fn current(pool: &db::DbPool, submitted: Option<&Fields>) -> Result<view::Settings, String> {
+async fn current(
+    pool: &codeyard_db_core::DbPool,
+    submitted: Option<&Fields>,
+) -> Result<view::Settings, String> {
     let mut settings = match config::describe(pool).await? {
         Some((config, source, password_set)) => view::Settings {
             source: match source {

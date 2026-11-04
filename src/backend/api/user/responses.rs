@@ -41,8 +41,8 @@ impl PublicUserResponse {
     }
 }
 
-impl From<db::models::User> for PublicUserResponse {
-    fn from(user: db::models::User) -> Self {
+impl From<codeyard_db_core::models::User> for PublicUserResponse {
+    fn from(user: codeyard_db_core::models::User) -> Self {
         Self {
             id: user.id,
             username: user.username.clone(),
@@ -200,7 +200,7 @@ pub(crate) fn account_permission(
 pub(crate) fn require_account(
     ctx: &PageContext,
     admin: bool,
-) -> Result<&db::models::User, Response> {
+) -> Result<&codeyard_db_core::models::User, Response> {
     let user = ctx.require_user()?;
     account_permission(true, user.is_banned, user.is_admin, admin).map_err(|status| {
         let message = if admin {

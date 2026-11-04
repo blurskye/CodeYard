@@ -1,9 +1,9 @@
-use crate::backend::db::{
-    models::OrgRole,
-    organizations::OrganizationOutcome,
-    repository_exports::{ExportOptions, ExportRefusal, RepositoryExport},
-};
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::repository_exports::ExportOptions;
+use crate::backend::db::repository_exports::ExportRefusal;
+use crate::backend::db::repository_exports::RepositoryExport;
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
 use sqlx::{SqliteConnection, SqlitePool};
 
 async fn authority(
@@ -14,7 +14,7 @@ async fn authority(
     if let Some(org) = org {
         return Ok(matches!(
             super::organizations::authority::authority(connection, actor, org).await?,
-            OrganizationOutcome::Applied(OrgRole::Owner)
+            OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Owner)
         ));
     }
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)").bind(actor).fetch_one(connection).await?)

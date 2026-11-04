@@ -4,19 +4,20 @@ use crate::support::database::wait_until_blocked;
 use crate::support::native_database as native;
 use crate::support::organizations::applied;
 
-use codeyard::backend::db::{
-    self,
-    models::{AccessLevel, CiRun, OrgRole},
-    organizations::{self, OrganizationOutcome},
-    users::transitions::BanChange,
-};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations;
+use codeyard::backend::db::organizations::OrganizationOutcome;
+use codeyard::backend::db::users::transitions::BanChange;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::CiRun;
+use codeyard_db_core::models::OrgRole;
 use std::time::Duration;
 use uuid::Uuid;
 
 const WORKER: &str = "access-change-worker";
 const SECOND_WORKER: &str = "access-change-worker-2";
 
-async fn repository_with_writer(pool: &db::DbPool, name: &str) -> (i64, i64, i64) {
+async fn repository_with_writer(pool: &codeyard_db_core::DbPool, name: &str) -> (i64, i64, i64) {
     let owner = db::users::accounts::create_user(pool, &format!("{name}_owner"), None)
         .await
         .unwrap()
@@ -36,14 +37,19 @@ async fn repository_with_writer(pool: &db::DbPool, name: &str) -> (i64, i64, i64
     .await
     .unwrap()
     .id;
-    db::repositories::access::grant_repo_access(pool, writer, repo, AccessLevel::Write)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        pool,
+        writer,
+        repo,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
     (owner, writer, repo)
 }
 
 async fn enqueue(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: i64,
     actor: i64,
     trusted: &[i64],
@@ -71,18 +77,30 @@ async fn enqueue(
     .await
 }
 
-async fn run(pool: &db::DbPool, id: Uuid) -> CiRun {
+async fn run(pool: &codeyard_db_core::DbPool, id: Uuid) -> CiRun {
     db::ci::get_ci_run_by_run_id(pool, id)
         .await
         .unwrap()
         .unwrap()
 }
 
-async fn grant_changes(pool: &db::DbPool) {
+async fn grant_changes(pool: &codeyard_db_core::DbPool) {
     for (name, level, reduced) in [
-        ("downgrade", AccessLevel::Read, true),
-        ("unchanged", AccessLevel::Write, false),
-        ("upgrade", AccessLevel::Admin, false),
+        (
+            "downgrade",
+            codeyard_db_core::models::AccessLevel::Read,
+            true,
+        ),
+        (
+            "unchanged",
+            codeyard_db_core::models::AccessLevel::Write,
+            false,
+        ),
+        (
+            "upgrade",
+            codeyard_db_core::models::AccessLevel::Admin,
+            false,
+        ),
     ] {
         let (owner, writer, repo) = repository_with_writer(pool, name).await;
         let trusted = [owner, writer];
@@ -293,7 +311,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
 /// way revocation and deletion do. Returns the run id, the holding transaction and
 /// its backend id.
 async fn claimed_run_behind_repository_lock(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     raw: &sqlx::PgPool,
     name: &str,
 ) -> (i64, sqlx::Transaction<'static, sqlx::Postgres>, i32) {
@@ -563,7 +581,7 @@ async fn postgres_cancellation_rechecks_admin_after_waiting() {
     }
 }
 
-async fn cancellation_after_access_loss(pool: &db::DbPool) {
+async fn cancellation_after_access_loss(pool: &codeyard_db_core::DbPool) {
     let (owner, writer, repo) = repository_with_writer(pool, "starter_cancel").await;
     let running = enqueue(pool, repo, writer, &[writer]).await.unwrap();
     assert_eq!(
@@ -585,10 +603,10 @@ async fn cancellation_after_access_loss(pool: &db::DbPool) {
         .unwrap();
     let archive = "UPDATE repositories SET is_archived=TRUE WHERE id=$1";
     match pool {
-        db::DbPool::Postgres(raw) => {
+        codeyard_db_core::DbPool::Postgres(raw) => {
             sqlx::query(archive).bind(repo).execute(raw).await.unwrap();
         }
-        db::DbPool::Sqlite(raw) => {
+        codeyard_db_core::DbPool::Sqlite(raw) => {
             sqlx::query(archive).bind(repo).execute(raw).await.unwrap();
         }
     };
@@ -596,7 +614,7 @@ async fn cancellation_after_access_loss(pool: &db::DbPool) {
         db::repositories::access::get_user_repo_access(pool, writer, repo)
             .await
             .unwrap(),
-        AccessLevel::None
+        codeyard_db_core::models::AccessLevel::None
     );
     assert!(
         db::ci::request_ci_cancellation(pool, running.run_id, writer)
@@ -638,7 +656,7 @@ async fn postgres_starter_can_cancel_after_access_loss() {
 /// An organization repository that a team member can write only through the team's
 /// grant. Returns the owner, the member, the organization, the team and the repository.
 async fn team_writer_repository(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     raw: &sqlx::PgPool,
     name: &str,
 ) -> (i64, i64, i64, i64, i64) {
@@ -665,9 +683,15 @@ async fn team_writer_repository(
     )
     .id;
     applied(
-        organizations::add_organization_member(pool, owner, org, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        organizations::add_organization_member(
+            pool,
+            owner,
+            org,
+            member,
+            codeyard_db_core::models::OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let team = applied(
         organizations::create_organization_team(

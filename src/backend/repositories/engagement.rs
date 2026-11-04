@@ -36,7 +36,7 @@ pub enum Engagement {
 /// Saves how the actor watches a repository. `level` is `participating` (the default, no row),
 /// `watching`, `custom` or `ignoring`; `events` lists the kinds a `custom` watch wants.
 pub async fn set_level(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
     level: &str,
@@ -75,7 +75,7 @@ pub async fn set_level(
 
 /// A REST subscription keeps an explicit participating preference and its creation time.
 pub async fn set_subscription(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
@@ -112,7 +112,7 @@ pub async fn set_subscription(
 }
 
 pub async fn change(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: impl Into<db::credentials::Actor>,
     repo_id: i64,

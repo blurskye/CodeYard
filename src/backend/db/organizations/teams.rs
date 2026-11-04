@@ -1,10 +1,11 @@
 use super::profiles::{validate_description, validate_name};
 use super::*;
-use crate::backend::db::{
-    models::{Team, TeamMembership, TeamRepoAccess},
-    DbPool,
-};
 use anyhow::Result;
+use codeyard_db_core::models::Team;
+use codeyard_db_core::models::TeamMembership;
+use codeyard_db_core::models::TeamRepoAccess;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// A lean identity read: credential, organization policy and team visibility share one snapshot.
 pub enum TeamIdentity<'a> {

@@ -51,7 +51,7 @@ pub(super) async fn resolve(
     ctx: &Arguments,
     request: &RequestContext,
     parent: &Value,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     id: i64,
 ) -> Result<Value> {
     let pool = &request.state.pool;
@@ -164,7 +164,7 @@ pub(super) async fn resolve(
 pub(in super::super) async fn repository(
     ctx: &Arguments,
     request: &RequestContext,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
 ) -> Result<Value> {
     connection::validate(ctx)?;
     let rows = db::issue_attributes::catalog(

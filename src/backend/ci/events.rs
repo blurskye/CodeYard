@@ -1,13 +1,10 @@
 //! Repository events use the default branch's workflow and the webhook's unchanged document.
 use super::{admission::AdmissionError, workflows::WorkflowMatchBudget, CiRunRequest, CiRuns};
-use crate::backend::{
-    db::{
-        self,
-        models::{AccessLevel, Repository},
-    },
-    repositories::store::repo_store,
-    webhooks::payloads,
-};
+use crate::backend::db;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::webhooks::payloads;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::Repository;
 use serde_json::Value;
 
 pub(crate) fn is_repository_event(event: &str) -> bool {
@@ -67,7 +64,11 @@ impl CiRuns {
         .await
     }
 
-    pub(crate) async fn emit_workflow_run(&self, run: &db::models::CiRun, action: &str) {
+    pub(crate) async fn emit_workflow_run(
+        &self,
+        run: &codeyard_db_core::models::CiRun,
+        action: &str,
+    ) {
         if action == "requested" && run.workflow_run_attempt.unwrap_or(1) > 1 {
             return;
         }
@@ -78,7 +79,7 @@ impl CiRuns {
 
     async fn workflow_run_event(
         &self,
-        run: &db::models::CiRun,
+        run: &codeyard_db_core::models::CiRun,
         action: &str,
     ) -> anyhow::Result<()> {
         let Some(actor) = run.triggered_by_id else {
@@ -362,7 +363,7 @@ impl CiRuns {
                         triggered_by_id: actor,
                         manual: false,
                     },
-                    AccessLevel::Owner,
+                    codeyard_db_core::models::AccessLevel::Owner,
                     payload.clone(),
                     credential.clone(),
                 )

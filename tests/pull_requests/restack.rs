@@ -31,7 +31,7 @@ struct App {
     alice: Client,
     bob: Client,
     owner: i64,
-    repository: db::models::Repository,
+    repository: codeyard_db_core::models::Repository,
 }
 
 async fn setup(f: &mut Database, root: &Path) -> App {
@@ -54,7 +54,7 @@ async fn setup(f: &mut Database, root: &Path) -> App {
         f.pool(),
         bob_id,
         repository.id,
-        db::models::AccessLevel::Read,
+        codeyard_db_core::models::AccessLevel::Read,
     )
     .await
     .unwrap();

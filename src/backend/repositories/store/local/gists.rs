@@ -22,10 +22,10 @@ fn failure(error: anyhow::Error) -> RepoError {
 impl LocalStore {
     async fn gist_location(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         id: i64,
         read: bool,
-    ) -> Result<db::models::Repository, RepoError> {
+    ) -> Result<codeyard_db_core::models::Repository, RepoError> {
         self.admitted_path(read).await?;
         let repo = db::repositories::records::get_repository_by_id(pool, id)
             .await
@@ -70,7 +70,11 @@ impl LocalStore {
     }
     /// Finishes a write that was admitted but not recorded as done. Readers take the
     /// publication lease only when one is pending, so reads of a settled gist never wait on it.
-    async fn recover_gist(&self, pool: &db::DbPool, id: i64) -> Result<(), RepoError> {
+    async fn recover_gist(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        id: i64,
+    ) -> Result<(), RepoError> {
         if gists::pending(pool, id).await.map_err(failure)?.is_none() {
             return Ok(());
         }
@@ -81,7 +85,11 @@ impl LocalStore {
     }
     /// The caller holds the publication lease, which also covers a git child that outlived a
     /// restart. It is never held across a SQL transaction.
-    async fn finish_pending(&self, pool: &db::DbPool, id: i64) -> Result<(), RepoError> {
+    async fn finish_pending(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        id: i64,
+    ) -> Result<(), RepoError> {
         if let Some(pending) = gists::pending(pool, id).await.map_err(failure)? {
             let head = self.refs().await?.remove("refs/heads/main");
             let published = match head {
@@ -110,7 +118,7 @@ impl LocalStore {
     }
     pub(in crate::backend::repositories::store) async fn gist_snapshot(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         id: i64,
         revision: Option<&str>,
     ) -> Result<GistSnapshot, RepoError> {
@@ -129,7 +137,7 @@ impl LocalStore {
     }
     pub(in crate::backend::repositories::store) async fn gist_history(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         id: i64,
         revision: Option<&str>,
         offset: usize,
@@ -146,7 +154,7 @@ impl LocalStore {
     }
     pub(in crate::backend::repositories::store) async fn gist_write(
         &self,
-        pool: &db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         id: i64,
         actor: i64,
         credential: GistCredential,

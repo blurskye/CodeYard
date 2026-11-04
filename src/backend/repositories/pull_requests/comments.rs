@@ -43,7 +43,7 @@ pub(super) struct PreparedComment {
 impl PreparedComment {
     pub(super) fn input<'a>(
         &'a self,
-        pull: &'a db::models::PullRequest,
+        pull: &'a codeyard_db_core::models::PullRequest,
         author: i64,
     ) -> db::pull_requests::reviews::NewPullRequestComment<'a> {
         let req = &self.request;
@@ -71,8 +71,8 @@ mod tests;
 /// parent, so the chain is followed up to its root. A chain that loops back on itself has no
 /// root and takes no reply.
 async fn thread_root(
-    pool: &db::DbPool,
-    parent: &db::models::PullRequestComment,
+    pool: &codeyard_db_core::DbPool,
+    parent: &codeyard_db_core::models::PullRequestComment,
 ) -> Result<i64, OperationError> {
     let mut visited = HashSet::from([parent.id]);
     let mut root_id = parent.id;
@@ -102,8 +102,8 @@ async fn thread_root(
 pub(crate) fn pull_request_comment_link(
     owner: &str,
     repo: &str,
-    pull_request: &db::models::PullRequest,
-    comment: &db::models::PullRequestComment,
+    pull_request: &codeyard_db_core::models::PullRequest,
+    comment: &codeyard_db_core::models::PullRequestComment,
 ) -> String {
     format!(
         "/{owner}/{repo}/pulls/{}?comment={id}#comment-{id}",
@@ -114,9 +114,9 @@ pub(crate) fn pull_request_comment_link(
 
 /// The page and anchor of a comment where it is now.
 pub(crate) async fn saved_comment_link(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     base: &str,
-    comment: &db::models::PullRequestComment,
+    comment: &codeyard_db_core::models::PullRequestComment,
 ) -> String {
     use db::pull_requests::reviews::{self, DiscussionItem, DiscussionRef};
     let page = discussion_page(
@@ -172,8 +172,8 @@ pub(crate) async fn saved_comment_link(
 /// A review comment is publishable only while its submitted review still exists.
 /// A concurrent discard deletes the review and must never publish the private text.
 async fn in_pending_review(
-    pool: &db::DbPool,
-    comment: &db::models::PullRequestComment,
+    pool: &codeyard_db_core::DbPool,
+    comment: &codeyard_db_core::models::PullRequestComment,
 ) -> Result<bool, OperationError> {
     let Some(review_id) = comment.review_id else {
         return Ok(false);
@@ -188,8 +188,8 @@ async fn in_pending_review(
 /// from the base its diff starts at.
 async fn is_pull_request_commit(
     cluster: Option<&NodeContext>,
-    repository: &db::models::Repository,
-    pull_request: &db::models::PullRequest,
+    repository: &codeyard_db_core::models::Repository,
+    pull_request: &codeyard_db_core::models::PullRequest,
     commit: &str,
 ) -> Result<bool, OperationError> {
     let store = repo_store(repository, cluster);
@@ -218,10 +218,10 @@ async fn is_pull_request_commit(
 /// Sends the webhook for a saved comment. A comment on a file is a review comment. A conversation
 /// comment is sent as an issue comment, which is how GitHub sends those on pull requests.
 pub(super) async fn emit_comment_webhook(
-    pool: &db::DbPool,
-    repository: &db::models::Repository,
-    pull_request: &db::models::PullRequest,
-    comment: &db::models::PullRequestComment,
+    pool: &codeyard_db_core::DbPool,
+    repository: &codeyard_db_core::models::Repository,
+    pull_request: &codeyard_db_core::models::PullRequest,
+    comment: &codeyard_db_core::models::PullRequestComment,
     action: &'static str,
     sender_id: i64,
 ) {
@@ -296,8 +296,8 @@ pub(super) async fn emit_comment_webhook(
 )]
 async fn check_diff_anchor(
     cluster: Option<&NodeContext>,
-    repository: &db::models::Repository,
-    pull_request: &db::models::PullRequest,
+    repository: &codeyard_db_core::models::Repository,
+    pull_request: &codeyard_db_core::models::PullRequest,
     head: &str,
     path: &str,
     line: Option<i32>,
@@ -424,7 +424,7 @@ async fn check_diff_anchor(
     reason = "The database, git, broadcast and actor handles plus the target and request are each needed."
 )]
 pub async fn create_pull_request_comment(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
@@ -432,7 +432,7 @@ pub async fn create_pull_request_comment(
     repo: String,
     number: i32,
     req: CreatePullRequestCommentRequest,
-) -> Result<db::models::PullRequestComment, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequestComment, OperationError> {
     let user = super::actor(pool, actor_id).await?;
 
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
@@ -483,10 +483,10 @@ pub async fn create_pull_request_comment(
 }
 
 pub(super) async fn prepare_comment(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
-    repository: &db::models::Repository,
-    pull_request: &db::models::PullRequest,
+    repository: &codeyard_db_core::models::Repository,
+    pull_request: &codeyard_db_core::models::PullRequest,
     mut req: CreatePullRequestCommentRequest,
     cache: &mut DiffCache,
 ) -> Result<PreparedComment, OperationError> {
@@ -700,14 +700,14 @@ pub(super) async fn prepare_comment(
 }
 
 async fn save_comment(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
-    user: &db::models::User,
-    repository: &db::models::Repository,
-    pull_request: &db::models::PullRequest,
+    user: &codeyard_db_core::models::User,
+    repository: &codeyard_db_core::models::Repository,
+    pull_request: &codeyard_db_core::models::PullRequest,
     location: (String, String),
     prepared: PreparedComment,
-) -> Result<db::models::PullRequestComment, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequestComment, OperationError> {
     let (owner, repo) = location;
     let req = &prepared.request;
     let pending = req.pending;
@@ -792,14 +792,14 @@ async fn save_comment(
 /// Marks a review conversation resolved, or open again. Only a root comment on a file is a
 /// conversation. The pull request's author and anyone with write access may do this.
 pub async fn set_comment_resolved(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor_id: i64,
     owner: &str,
     repo: &str,
     number: i32,
     comment_id: i64,
     resolved: bool,
-) -> Result<db::models::PullRequestComment, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequestComment, OperationError> {
     let user = super::actor(pool, actor_id).await?;
     let repository = db::repositories::records::get_repository(pool, owner, repo)
         .await
@@ -868,17 +868,17 @@ pub async fn set_comment_resolved(
 /// The pull request and the conversation comment on it, when the user may read them. A comment
 /// filed in a review is not a conversation comment and is not found here.
 async fn conversation_comment_on_pull(
-    pool: &db::DbPool,
-    user: &db::models::User,
+    pool: &codeyard_db_core::DbPool,
+    user: &codeyard_db_core::models::User,
     owner: &str,
     repo: &str,
     number: i32,
     comment_id: i64,
 ) -> Result<
     (
-        db::models::Repository,
-        db::models::PullRequest,
-        db::models::PullRequestComment,
+        codeyard_db_core::models::Repository,
+        codeyard_db_core::models::PullRequest,
+        codeyard_db_core::models::PullRequestComment,
     ),
     OperationError,
 > {
@@ -916,13 +916,13 @@ async fn conversation_comment_on_pull(
 
 /// The author or a repository writer may edit a visible comment in a live repository.
 pub async fn edit_pull_request_comment(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     target: CommentTarget,
     body: String,
     expected_body: Option<&str>,
-) -> Result<db::models::PullRequestComment, OperationError> {
+) -> Result<codeyard_db_core::models::PullRequestComment, OperationError> {
     let CommentTarget {
         owner,
         repo,
@@ -1023,7 +1023,7 @@ pub async fn edit_pull_request_comment(
 /// Deletes a conversation comment and the notifications about it. The author may delete their own
 /// comment and a repository writer may delete anyone's visible comment.
 pub async fn delete_pull_request_comment(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor_id: i64,
     target: CommentTarget,
 ) -> Result<(), OperationError> {

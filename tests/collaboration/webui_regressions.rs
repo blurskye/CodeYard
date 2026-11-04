@@ -1,6 +1,8 @@
 use super::templates::setup;
 use axum::http::StatusCode;
-use codeyard::backend::db::{self, assignees::AssignedItem, models::AccessLevel};
+use codeyard::backend::db;
+use codeyard::backend::db::assignees::AssignedItem;
+use codeyard_db_core::models::AccessLevel;
 use codeyard_webui::{app::Page, pages::repos::issues};
 use serde_json::{json, Value};
 
@@ -112,9 +114,9 @@ async fn independent_people_filters(pg: bool) {
         .unwrap()
         .unwrap();
     for (id, level) in [
-        (none, AccessLevel::Read),
-        (bob.id, AccessLevel::Read),
-        (writer, AccessLevel::Write),
+        (none, codeyard_db_core::models::AccessLevel::Read),
+        (bob.id, codeyard_db_core::models::AccessLevel::Read),
+        (writer, codeyard_db_core::models::AccessLevel::Write),
     ] {
         db::repositories::access::grant_repo_access(pool, id, repo.id, level)
             .await

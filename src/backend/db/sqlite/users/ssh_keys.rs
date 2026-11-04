@@ -1,8 +1,10 @@
-use crate::backend::db::models::{SshKey, User, UserWithKey};
 use crate::backend::db::users::accounts::{AccountCredential, AccountRestricted};
 use crate::backend::db::users::ssh_keys::calculate_fingerprint;
 use crate::backend::db::users::ssh_keys::valid_stored_key;
 use anyhow::Result;
+use codeyard_db_core::models::SshKey;
+use codeyard_db_core::models::User;
+use codeyard_db_core::models::UserWithKey;
 use codeyard_model::identity::SshKeyWriteRefusal;
 use sqlx::SqlitePool;
 use tracing::debug;

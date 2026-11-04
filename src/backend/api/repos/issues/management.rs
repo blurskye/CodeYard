@@ -197,7 +197,7 @@ pub(crate) async fn pinned(
 pub(crate) async fn load(
     ctx: &PageContext,
     repo: &RepositoryData,
-    issue: &db::models::Issue,
+    issue: &codeyard_db_core::models::Issue,
 ) -> ResultPage<Box<IssueManagement>> {
     let pool = &ctx.state.pool;
     let mut controls = IssueManagement {
@@ -328,13 +328,13 @@ pub(crate) async fn load(
     Ok(Box::new(controls))
 }
 
-type TargetCache = HashMap<i64, Option<(db::models::Repository, String)>>;
+type TargetCache = HashMap<i64, Option<(codeyard_db_core::models::Repository, String)>>;
 
 async fn cached_target<'a>(
     ctx: &PageContext,
     id: i64,
     targets: &'a mut TargetCache,
-) -> ResultPage<Option<&'a (db::models::Repository, String)>> {
+) -> ResultPage<Option<&'a (codeyard_db_core::models::Repository, String)>> {
     if let std::collections::hash_map::Entry::Vacant(slot) = targets.entry(id) {
         let target = if let Some(target) = readable_target(ctx, id).await? {
             let owner = db::repositories::records::repository_owner_name(&ctx.state.pool, id)
@@ -350,7 +350,10 @@ async fn cached_target<'a>(
     Ok(targets.get(&id).and_then(Option::as_ref))
 }
 
-async fn readable_target(ctx: &PageContext, id: i64) -> ResultPage<Option<db::models::Repository>> {
+async fn readable_target(
+    ctx: &PageContext,
+    id: i64,
+) -> ResultPage<Option<codeyard_db_core::models::Repository>> {
     let target = db::repositories::records::get_repository_by_id(&ctx.state.pool, id)
         .await
         .map_err(|_| unavailable(ctx))?;

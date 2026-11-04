@@ -86,7 +86,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub async fn login(router: &Router, pool: &db::DbPool, user: i64) -> Self {
+    pub async fn login(router: &Router, pool: &codeyard_db_core::DbPool, user: i64) -> Self {
         let session = native::token();
         let csrf = native::token();
         db::users::sessions::create_session(

@@ -5,25 +5,31 @@
 pub(crate) mod immutable;
 pub(crate) mod integrity;
 mod notes;
+use crate::backend::ci::CiRuns;
+use crate::backend::cluster::NodeContext;
+use crate::backend::db;
+use crate::backend::files;
+use crate::backend::files::DownloadError;
+use crate::backend::files::UploadDeclaration;
+use crate::backend::files::UploadError;
+use crate::backend::git;
+use crate::backend::notifications::watchers::notify_watchers;
+use crate::backend::notifications::watchers::WatchEvent;
+use crate::backend::notifications::watchers::WatchedItem;
+use crate::backend::notifications::NotificationBroadcaster;
+use crate::backend::repositories::access;
+use crate::backend::repositories::access::AccessError;
+use crate::backend::repositories::refs;
+use crate::backend::repositories::refs::RefError;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::RepoError;
+use crate::backend::storage::ObjectStore;
 use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
-use crate::backend::{
-    ci::CiRuns,
-    cluster::NodeContext,
-    db::{self, models::Release, models::ReleaseAsset, models::ReleaseRow, models::Repository},
-    files::{self, DownloadError, UploadDeclaration, UploadError},
-    git,
-    notifications::{
-        watchers::{notify_watchers, WatchEvent, WatchedItem},
-        NotificationBroadcaster,
-    },
-    repositories::{
-        access::{self, AccessError},
-        refs::{self, RefError},
-        store::{repo_store, RepoError},
-    },
-    storage::ObjectStore,
-};
 use anyhow::Error;
+use codeyard_db_core::models::Release;
+use codeyard_db_core::models::ReleaseAsset;
+use codeyard_db_core::models::ReleaseRow;
+use codeyard_db_core::models::Repository;
 pub use notes::{generate_notes, NotesInput, ReleaseNotes};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -42,7 +48,7 @@ mod tests {
     #[tokio::test]
     async fn authority_storage_failure_is_not_a_permission_refusal() {
         let raw = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        let pool = db::DbPool::Sqlite(raw);
+        let pool = codeyard_db_core::DbPool::Sqlite(raw);
         pool.close().await;
         assert!(matches!(
             can_write(&pool, Some(1), 1).await,
@@ -130,11 +136,11 @@ pub struct ReleaseSummary {
 }
 
 async fn writable(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     owner: &str,
     name: &str,
-) -> Result<(Repository, db::models::User), ReleaseError> {
+) -> Result<(Repository, codeyard_db_core::models::User), ReleaseError> {
     let repository = db::repositories::records::get_repository(pool, owner, name)
         .await
         .map_err(|_| ReleaseError::Unavailable)?
@@ -143,7 +149,7 @@ async fn writable(
 }
 
 async fn can_write(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     viewer: Option<i64>,
     repo_id: i64,
 ) -> Result<bool, ReleaseError> {
@@ -253,7 +259,7 @@ fn validate_tag(tag: &str) -> Result<(), ReleaseError> {
 
 /// The release list, newest first. Drafts are listed only for writers.
 pub async fn list(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     viewer: Option<i64>,
     repo_id: i64,
     page: i64,
@@ -287,7 +293,7 @@ pub async fn list(
 
 /// One release by its tag. A draft is hidden from everyone but writers.
 pub async fn detail_by_tag(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     viewer: Option<i64>,
     repo_id: i64,
     tag: &str,
@@ -303,7 +309,7 @@ pub async fn detail_by_tag(
 
 /// One release by its number, for the JSON API. A draft is hidden from everyone but writers.
 pub async fn detail_by_id(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     viewer: Option<i64>,
     repo_id: i64,
     release_id: i64,
@@ -318,7 +324,7 @@ pub async fn detail_by_id(
 }
 
 async fn visible_detail(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     viewer: Option<i64>,
     repo_id: i64,
     selection: db::releases::ReleaseSelection<'_>,
@@ -338,7 +344,7 @@ async fn visible_detail(
 
 /// One release for a writer's edit page.
 pub async fn edit_detail(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     owner: &str,
     name: &str,
@@ -362,7 +368,7 @@ pub async fn edit_detail(
 
 /// The tags and branches a writer can pick from on the new-release form.
 pub async fn form_choices(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     actor: i64,
     owner: &str,
@@ -389,7 +395,7 @@ pub async fn form_choices(
 
 /// The release count and the latest release the viewer may see, for the repository home.
 pub async fn summary(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     viewer: Option<i64>,
     repository: &Repository,
 ) -> Result<ReleaseSummary, ReleaseError> {
@@ -410,7 +416,7 @@ pub async fn summary(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn create(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
@@ -522,7 +528,7 @@ fn target_revision(refs: &HashMap<String, String>, target: &str) -> String {
 /// Tells the repository's release webhooks what `actor` did to `release`. `changes` holds the
 /// previous values of an edit.
 async fn emit_release(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
     release: &Release,
     actor: i64,
@@ -568,7 +574,7 @@ async fn emit_release(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn update(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
@@ -700,7 +706,7 @@ pub async fn update(
 
 /// Deletes a release and its assets. The uploaded files go too, unless something else uses them.
 pub async fn delete(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     _store: &ObjectStore,
     actor: i64,
     owner: &str,
@@ -741,7 +747,7 @@ pub async fn delete(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn add_asset(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     store: &ObjectStore,
     actor: i64,
     credential: &db::users::accounts::AccountCredential<'_>,
@@ -784,7 +790,7 @@ pub struct AssetUpload<'a> {
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn upload_asset(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     store: &ObjectStore,
     actor: i64,
     credential: &db::users::accounts::AccountCredential<'_>,
@@ -839,8 +845,8 @@ pub async fn upload_asset(
             filename,
             content_type,
             file_size: size,
-            reason: db::models::FileReason::ReleaseAsset,
-            visibility: db::models::FileVisibility::Owner,
+            reason: codeyard_db_core::models::FileReason::ReleaseAsset,
+            visibility: codeyard_db_core::models::FileVisibility::Owner,
             sha256_hex: &checksum,
         },
         bytes,
@@ -891,7 +897,7 @@ fn validate_asset_fields(filename: &str, label: Option<&str>) -> Result<(), Rele
 }
 
 pub async fn update_asset(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     owner: &str,
     name: &str,
@@ -910,7 +916,7 @@ pub async fn update_asset(
 
 /// Detaches an asset from its release and removes its file.
 pub async fn delete_asset(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     _store: &ObjectStore,
     actor: i64,
     owner: &str,
@@ -928,7 +934,7 @@ pub async fn delete_asset(
 /// Opens an asset for a reader of the repository. Drafts stay hidden from everyone but writers.
 /// Only requests that send the body (`count`) add to the download count.
 pub async fn download(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     store: &ObjectStore,
     viewer: Option<i64>,
     repo_id: i64,
@@ -946,7 +952,7 @@ pub async fn download(
 
 /// Opens the asset with this id, which a later rename cannot point at another file.
 pub async fn download_by_id(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     store: &ObjectStore,
     viewer: Option<i64>,
     repo_id: i64,
@@ -961,7 +967,7 @@ pub async fn download_by_id(
 }
 
 async fn open_asset(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     store: &ObjectStore,
     asset: ReleaseAsset,
     count: bool,
@@ -984,7 +990,7 @@ async fn open_asset(
 }
 
 /// Removes an uploaded file that no release uses any more, as its uploader.
-async fn discard_file(pool: &db::DbPool, store: &ObjectStore, file: Uuid) {
+async fn discard_file(pool: &codeyard_db_core::DbPool, store: &ObjectStore, file: Uuid) {
     let uploader = match db::files::get_file_by_id(pool, file).await {
         Ok(Some(found)) => found.user_id,
         _ => None,
@@ -1002,9 +1008,9 @@ async fn discard_file(pool: &db::DbPool, store: &ObjectStore, file: Uuid) {
 }
 
 async fn notify_published(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
-    actor: &db::models::User,
+    actor: &codeyard_db_core::models::User,
     repository: &Repository,
     owner: &str,
     name: &str,

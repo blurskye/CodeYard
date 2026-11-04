@@ -27,7 +27,7 @@ fn denied() -> OperationError {
     }
 }
 async fn execute(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     broadcaster: &std::sync::Arc<NotificationBroadcaster>,
     uuid: &str,
@@ -177,7 +177,12 @@ pub async fn start(state: &AppState, job: Job) -> Result<Value, OperationError> 
 }
 /// Records the result, retrying a failed write with backoff. The update only changes a pending
 /// row, so repeating it is safe. When every attempt fails, restart recovery settles the row.
-async fn finish_with_retry(pool: &db::DbPool, uuid: &str, status: &str, details: &Value) {
+async fn finish_with_retry(
+    pool: &codeyard_db_core::DbPool,
+    uuid: &str,
+    status: &str,
+    details: &Value,
+) {
     const ATTEMPTS: u32 = 8;
     let mut delay = std::time::Duration::from_millis(250);
     for attempt in 1..=ATTEMPTS {
@@ -196,7 +201,7 @@ async fn finish_with_retry(pool: &db::DbPool, uuid: &str, status: &str, details:
 }
 /// Only this node's abandoned requests fail; starting another web node never cancels live work.
 /// A request whose pull request is already recorded as merged reports that merge instead.
-pub async fn recover(pool: &db::DbPool, node_id: Option<i64>) -> anyhow::Result<u64> {
+pub async fn recover(pool: &codeyard_db_core::DbPool, node_id: Option<i64>) -> anyhow::Result<u64> {
     records::recover(
         pool,
         node_id,

@@ -27,7 +27,7 @@ use std::{collections::HashMap, sync::Arc};
 pub(crate) async fn comparison(
     ctx: &PageContext,
     repo: &RepositoryData,
-    head_repo: &db::models::Repository,
+    head_repo: &codeyard_db_core::models::Repository,
     refs: &HashMap<String, String>,
     draft: &NewDraft,
 ) -> Result<pulls::Diff, Response> {
@@ -75,7 +75,7 @@ async fn comparison_side(
     repo: &RepositoryData,
     owner: &str,
     reference: &str,
-) -> Result<(db::models::Repository, String), Response> {
+) -> Result<(codeyard_db_core::models::Repository, String), Response> {
     let (source_owner, reference) = reference.split_once(':').unwrap_or((owner, reference));
     // Owner names are exact, as in the repository lookup: alice and Alice are two accounts.
     let source = if source_owner == owner {

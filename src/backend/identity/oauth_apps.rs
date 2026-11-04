@@ -1,8 +1,8 @@
 //! OAuth clients authorize through native forms; only hashes of codes, secrets and tokens persist.
-use crate::backend::{
-    db::{self, oauth_apps::Application, DbPool},
-    identity::tokens::token_hash,
-};
+use crate::backend::db;
+use crate::backend::db::oauth_apps::Application;
+use crate::backend::identity::tokens::token_hash;
+use codeyard_db_core::DbPool;
 use codeyard_model::identity::CLI_CLIENT;
 use subtle::ConstantTimeEq;
 

@@ -1,16 +1,16 @@
 //! Browser session decoding and repository authority HTTP responses.
-use crate::backend::{
-    api::{http::error::ApiError, http::session, repos::chrome::ApiResult},
-    db::{
-        self,
-        models::{Repository, User},
-    },
-    repositories::access::{self, AccessError},
-};
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session;
+use crate::backend::api::repos::chrome::ApiResult;
+use crate::backend::db;
+use crate::backend::repositories::access;
+use crate::backend::repositories::access::AccessError;
 use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
 
 pub(crate) fn access_error(error: AccessError) -> (StatusCode, Json<ApiError>) {
     let (status, code, message) = match error {
@@ -39,7 +39,7 @@ pub(crate) fn access_error(error: AccessError) -> (StatusCode, Json<ApiError>) {
     (status, Json(ApiError::new(code, message)))
 }
 
-async fn current_repository(pool: &db::DbPool, id: i64) -> ApiResult<Repository> {
+async fn current_repository(pool: &codeyard_db_core::DbPool, id: i64) -> ApiResult<Repository> {
     access::current_repository(pool, id).await.map_err(|error| {
         if error == AccessError::Unavailable {
             (
@@ -57,7 +57,7 @@ async fn current_repository(pool: &db::DbPool, id: i64) -> ApiResult<Repository>
 
 /// The repository at `owner/repo`: 404 when there is none, 503 when the lookup fails.
 pub(crate) async fn find_repository(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     owner: &str,
     repo: &str,
 ) -> ApiResult<Repository> {
@@ -69,7 +69,7 @@ pub(crate) async fn find_repository(
 
 /// The repository at `owner/repo`, once the caller is known to be allowed to read it.
 pub(crate) async fn readable_repository(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     owner: &str,
     repo: &str,
     headers: &HeaderMap,
@@ -80,7 +80,7 @@ pub(crate) async fn readable_repository(
 }
 
 pub(crate) async fn check_repo_read_access(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
     headers: &HeaderMap,
 ) -> ApiResult<()> {
@@ -89,7 +89,7 @@ pub(crate) async fn check_repo_read_access(
 }
 
 async fn read_access(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
     headers: &HeaderMap,
 ) -> ApiResult<()> {
@@ -110,7 +110,7 @@ async fn read_access(
 
 /// Checks that `user` administers the repository.
 pub(crate) async fn check_repo_admin_access(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
     user: &User,
 ) -> ApiResult<()> {
@@ -130,7 +130,7 @@ pub(crate) async fn check_repo_admin_access(
 
 /// Checks that `user` may write to the repository.
 pub(crate) async fn check_repo_write_access(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repository: &Repository,
     user: &User,
 ) -> ApiResult<()> {

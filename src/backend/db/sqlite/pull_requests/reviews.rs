@@ -1,4 +1,3 @@
-use crate::backend::db::models::{PullRequest, PullRequestComment, PullRequestReview, User};
 use crate::backend::db::pull_requests::reviews::DiscussionItem;
 use crate::backend::db::pull_requests::reviews::DiscussionRef;
 use crate::backend::db::pull_requests::reviews::NewPullRequestComment;
@@ -9,6 +8,10 @@ use crate::backend::db::pull_requests::reviews::PullRequestReviewEntry;
 use crate::backend::db::pull_requests::reviews::MAX_REVIEW_COMMENTS;
 use crate::backend::db::sqlite::discussions::{self, AUTHORITY_DENIED};
 use anyhow::Result;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::PullRequestComment;
+use codeyard_db_core::models::PullRequestReview;
+use codeyard_db_core::models::User;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 
@@ -1318,7 +1321,7 @@ pub async fn converted_issue_comment(
 impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for PullRequestCommentEntry {
     fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
         Ok(Self {
-            comment: PullRequestComment::from_row(row)?,
+            comment: codeyard_db_core::models::PullRequestComment::from_row(row)?,
             author: crate::backend::db::sqlite::users::accounts::author_display(row)?,
         })
     }
@@ -1327,7 +1330,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for PullRequestCommentEntry 
 impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for PullRequestReviewEntry {
     fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
         Ok(Self {
-            review: PullRequestReview::from_row(row)?,
+            review: codeyard_db_core::models::PullRequestReview::from_row(row)?,
             author: crate::backend::db::sqlite::users::accounts::author_display(row)?,
         })
     }

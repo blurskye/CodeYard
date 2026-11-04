@@ -1,18 +1,15 @@
 use super::authority::*;
-use crate::backend::db::{
-    models::OrgRole,
-    organizations::{
-        immutable_releases::{Change, Settings},
-        OrganizationOutcome,
-    },
-};
+use crate::backend::db::organizations::immutable_releases::Change;
+use crate::backend::db::organizations::immutable_releases::Settings;
+use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::Result;
+use codeyard_db_core::models::OrgRole;
 use sqlx::PgPool;
 use OrganizationOutcome::{Applied, Conflict, Denied};
 
 pub async fn get(pool: &PgPool, actor: i64, org: i64) -> Result<OrganizationOutcome<Settings>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
         return Ok(Denied);
     }
     let enforced_repositories = sqlx::query_scalar(
@@ -45,7 +42,7 @@ pub async fn repositories(
         "Invalid repository page"
     );
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
         return Ok(Denied);
     }
     let selection = "FROM organization_immutable_release_repositories s JOIN repositories r ON r.id=s.repo_id JOIN organizations o ON o.id=r.owner_org_id WHERE s.org_id=$1 AND r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL";
@@ -73,7 +70,7 @@ pub async fn change(
     change: &Change,
 ) -> Result<OrganizationOutcome<()>> {
     let mut tx = begin(pool).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner {
+    if require_org!(tx, actor, org) != codeyard_db_core::models::OrgRole::Owner {
         return Ok(Denied);
     }
     // A selection only means something in selected mode, so it is changed only there (or

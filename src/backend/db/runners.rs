@@ -1,6 +1,7 @@
 //! Self-hosted runner administration. Registration uses the existing cluster pairing path.
-use super::DbPool;
 use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,7 +78,7 @@ pub(crate) struct RunnerProjection {
 }
 impl RunnerProjection {
     pub fn into_runner(mut self) -> Runner {
-        self.runner.online = super::models::cluster::heartbeat_online(
+        self.runner.online = codeyard_db_core::models::cluster::heartbeat_online(
             self.node_status.as_deref().unwrap_or(""),
             self.node_last_seen,
             self.observed_at,
@@ -262,7 +263,7 @@ pub(crate) struct Eligibility {
 impl Eligibility {
     pub fn allows(
         &self,
-        run: &super::models::CiRun,
+        run: &codeyard_db_core::models::CiRun,
         mode: &str,
         platforms: &[String],
     ) -> Result<bool> {

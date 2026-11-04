@@ -1,8 +1,9 @@
 //! Shared named operation surface; native transactions stay inside db.
 use crate::backend::db::discussions::{ListFilter, StateCounts};
-use crate::backend::db::models::PullRequest;
-use crate::backend::db::DbPool;
 use anyhow::Result;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 native_operation!(crate::backend::db::postgres::pull_requests::records::commit_association_candidates,
     crate::backend::db::sqlite::pull_requests::records::commit_association_candidates,
@@ -68,7 +69,7 @@ pub struct NewPullRequest<'a> {
 pub fn can_grant_maintainer_edit(
     actor: i64,
     base: i64,
-    head: &crate::backend::db::models::Repository,
+    head: &codeyard_db_core::models::Repository,
 ) -> bool {
     head.id == base || (head.owner_kind == "user" && head.owner_user_id == Some(actor))
 }

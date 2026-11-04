@@ -1,11 +1,10 @@
 //! Shared profile updates; account records never double as public response models.
 
-use crate::backend::db::{
-    models::{Repository, User},
-    repositories,
-    users::accounts,
-    DbPool,
-};
+use crate::backend::db::repositories;
+use crate::backend::db::users::accounts;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
+use codeyard_db_core::DbPool;
 
 pub fn social_account(
     input: &str,

@@ -1,7 +1,8 @@
 //! Shared named operation surface; native transactions stay inside db.
 use crate::backend::crypto::{SecretEncryptor, SecretError};
-use crate::backend::db::models::RepoSecretMeta;
-use crate::backend::db::DbPool;
+use codeyard_db_core::models::RepoSecretMeta;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 // One bounded sample per encryption domain, from one database snapshot.
 pub(crate) const ENCRYPTION_SAMPLES_SQL: &str = "
@@ -213,7 +214,7 @@ pub async fn create_or_update_secret_for(
     let name = &name.to_ascii_uppercase();
     validate_repository_secret(name, value)?;
     match pool {
-        DbPool::Postgres(native) => {
+        codeyard_db_core::DbPool::Postgres(native) => {
             crate::backend::db::postgres::secrets::create_or_update_secret(
                 native,
                 encryptor,
@@ -225,7 +226,7 @@ pub async fn create_or_update_secret_for(
             )
             .await
         }
-        DbPool::Sqlite(native) => {
+        codeyard_db_core::DbPool::Sqlite(native) => {
             crate::backend::db::sqlite::secrets::create_or_update_secret(
                 native,
                 encryptor,

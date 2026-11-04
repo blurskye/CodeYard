@@ -378,7 +378,7 @@ async fn tree(
 
 pub(super) async fn run(
     router: &Router,
-    resource: (&db::DbPool, i64, i64),
+    resource: (&codeyard_db_core::DbPool, i64, i64),
     base: &str,
     tokens: (&str, &str, &str),
     sha: &str,

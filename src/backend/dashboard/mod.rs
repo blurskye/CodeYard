@@ -1,14 +1,14 @@
 //! The signed-in user's own issues and pull requests, across the repositories they can read.
 //! The queries apply the repository visibility rule, so a row the viewer cannot read is never
 //! returned. Each list is capped at `LIST_LIMIT`; the counts are not.
-use crate::backend::db::{
-    self,
-    discussions::StateCounts,
-    issues::{IssueRelation, ViewerIssueEntry},
-    pull_requests::records::{PullRequestRelation, ViewerPullRequestEntry},
-    DbPool,
-};
+use crate::backend::db;
+use crate::backend::db::discussions::StateCounts;
+use crate::backend::db::issues::IssueRelation;
+use crate::backend::db::issues::ViewerIssueEntry;
+use crate::backend::db::pull_requests::records::PullRequestRelation;
+use crate::backend::db::pull_requests::records::ViewerPullRequestEntry;
 use anyhow::Result;
+use codeyard_db_core::DbPool;
 
 pub const LIST_LIMIT: i64 = 100;
 

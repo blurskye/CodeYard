@@ -1,16 +1,18 @@
 //! Leased proposals consume the inventory and alerts maintained by the vulnerability worker.
 use super::{npm, registry::Client};
-use crate::backend::{
-    ci::CiRuns,
-    db::{
-        self,
-        models::Repository,
-        repositories::dependencies::{self as records, Feature, Job, Refusal},
-    },
-    notifications::NotificationBroadcaster,
-    repositories::store::{repo_store, BlobRange, ErrorKind, RepoStore},
-};
+use crate::backend::ci::CiRuns;
+use crate::backend::db;
+use crate::backend::db::repositories::dependencies as records;
+use crate::backend::db::repositories::dependencies::Feature;
+use crate::backend::db::repositories::dependencies::Job;
+use crate::backend::db::repositories::dependencies::Refusal;
+use crate::backend::notifications::NotificationBroadcaster;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::BlobRange;
+use crate::backend::repositories::store::ErrorKind;
+use crate::backend::repositories::store::RepoStore;
 use anyhow::{ensure, Context, Result};
+use codeyard_db_core::models::Repository;
 use std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]
@@ -49,7 +51,7 @@ async fn file(store: &RepoStore, sha: &str, path: &str, limit: usize) -> Result<
     Ok(blob.bytes)
 }
 async fn process(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     client: &Client,
@@ -119,7 +121,7 @@ async fn process(
 }
 /// The production worker entry, also usable with trusted loopback providers in integration tests.
 pub async fn run_once(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     client: &Client,
@@ -162,7 +164,7 @@ pub async fn run_once(
 }
 /// Pinned to the web-server lifetime; no detached scanner or unbounded per-repository task set.
 pub async fn run(
-    pool: db::DbPool,
+    pool: codeyard_db_core::DbPool,
     ci: std::sync::Arc<CiRuns>,
     broadcaster: std::sync::Arc<NotificationBroadcaster>,
     mut stop: tokio::sync::watch::Receiver<bool>,

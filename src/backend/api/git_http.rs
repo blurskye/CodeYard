@@ -1,6 +1,5 @@
 //! Git smart HTTP. Basic auth accepts a personal access token, never a password or session.
 use crate::backend::api::http::session;
-use crate::backend::db::models::Repository;
 use crate::backend::identity::tokens::token_hash;
 use crate::backend::repositories::store::{
     repo_store, GitService, GitSession, GitStreams, RepoError,
@@ -15,6 +14,7 @@ use axum::{
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
+use codeyard_db_core::models::Repository;
 use futures_util::{StreamExt, TryStreamExt};
 use serde::Deserialize;
 use std::{io::Read, sync::Arc};
@@ -57,7 +57,13 @@ fn store_unavailable(error: &RepoError) -> Response {
 async fn authenticate(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<Option<(db::models::PersonalAccessToken, db::models::User)>, Response> {
+) -> Result<
+    Option<(
+        codeyard_db_core::models::PersonalAccessToken,
+        codeyard_db_core::models::User,
+    )>,
+    Response,
+> {
     if !headers.contains_key(header::AUTHORIZATION) {
         return Ok(None);
     }

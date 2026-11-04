@@ -1,13 +1,15 @@
 use super::{call, Client};
 use crate::support::organizations::applied;
 use axum::{http::StatusCode, Router};
-use codeyard::backend::db::{self, models::AccessLevel, organizations as orgs};
+use codeyard::backend::db;
+use codeyard::backend::db::organizations as orgs;
+use codeyard_db_core::models::AccessLevel;
 use serde_json::{json, Value};
 
 pub(super) async fn run(
     router: &Router,
     session: &Client,
-    scope: (&db::DbPool, i64, i64, i64, i64),
+    scope: (&codeyard_db_core::DbPool, i64, i64, i64, i64),
     tokens: (&str, &str, &str),
 ) {
     let (pool, org, alice, charlie, repo) = scope;
@@ -148,13 +150,13 @@ pub(super) async fn run(
         orgs::get_organization_repo_access(pool, charlie, &row)
             .await
             .unwrap(),
-        AccessLevel::Write
+        codeyard_db_core::models::AccessLevel::Write
     );
     assert_eq!(
         db::repositories::access::get_user_repo_access(pool, charlie, repo)
             .await
             .unwrap(),
-        AccessLevel::Write
+        codeyard_db_core::models::AccessLevel::Write
     );
     assert!(
         db::repositories::push_teams::contains_actor(pool, repo, charlie, &[child_id])
@@ -206,7 +208,7 @@ pub(super) async fn run(
         db::repositories::access::get_user_repo_access(pool, charlie, repo)
             .await
             .unwrap(),
-        AccessLevel::Write
+        codeyard_db_core::models::AccessLevel::Write
     );
     for (path, input) in [
         (&child_path, json!({"privacy":"secret"})),
@@ -336,7 +338,7 @@ pub(super) async fn run(
         db::repositories::access::get_user_repo_access(pool, charlie, repo)
             .await
             .unwrap(),
-        AccessLevel::None
+        codeyard_db_core::models::AccessLevel::None
     );
     call(router,"PUT",file_path,member,json!({"message":"Refuse a detached team write","content":"bmVzdGVkCg==","sha":file["content"]["sha"]}),("repos/create-or-update-file-contents",404)).await;
     assert!(
@@ -380,14 +382,17 @@ pub(super) async fn run(
         db::repositories::access::get_user_repo_access(pool, charlie, repo)
             .await
             .unwrap(),
-        AccessLevel::Write
+        codeyard_db_core::models::AccessLevel::Write
     );
     let team_id = child_id.to_string();
     let settings = format!("/settings/organizations/{org}?tab=teams&team={child_id}");
     assert!(session.page_ok(&settings).await.contains("Parent team ID"));
     for (parent, expected) in [
-        ("", AccessLevel::None),
-        (parent_id.as_str(), AccessLevel::Write),
+        ("", codeyard_db_core::models::AccessLevel::None),
+        (
+            parent_id.as_str(),
+            codeyard_db_core::models::AccessLevel::Write,
+        ),
     ] {
         let reply = session
             .form_reply(
@@ -433,7 +438,7 @@ pub(super) async fn run(
         db::repositories::access::get_user_repo_access(pool, charlie, repo)
             .await
             .unwrap(),
-        AccessLevel::None
+        codeyard_db_core::models::AccessLevel::None
     );
     // The sibling went with the parent as well.
     call(

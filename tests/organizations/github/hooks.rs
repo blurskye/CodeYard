@@ -11,7 +11,6 @@ use codeyard::backend::app::AppState;
 use codeyard::backend::ci::CiConfig;
 use codeyard::backend::crypto::SecretEncryptor;
 use codeyard::backend::db;
-use codeyard::backend::db::models::OrgRole;
 use codeyard::backend::db::organizations;
 use codeyard::backend::db::organizations::NewOrganization;
 use codeyard::backend::db::organizations::OrganizationProfile;
@@ -20,11 +19,16 @@ use codeyard::backend::db::webhooks::HookOwner;
 use codeyard::backend::identity::tokens;
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::OrgRole;
 use codeyard_support::crypto::hmac_sha256;
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 
-async fn records(f: &Database, hook: i64, count: usize) -> Vec<db::models::WebhookDelivery> {
+async fn records(
+    f: &Database,
+    hook: i64,
+    count: usize,
+) -> Vec<codeyard_db_core::models::WebhookDelivery> {
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             let rows = webhooks::list_deliveries(f.pool(), hook).await.unwrap();
@@ -53,7 +57,10 @@ async fn contract(pg: bool) {
         .await
         .unwrap(),
     );
-    for (user, role) in [(member, OrgRole::Member), (admin, OrgRole::Admin)] {
+    for (user, role) in [
+        (member, codeyard_db_core::models::OrgRole::Member),
+        (admin, codeyard_db_core::models::OrgRole::Admin),
+    ] {
         applied(
             organizations::add_organization_member(f.pool(), owner, org.id, user, role)
                 .await

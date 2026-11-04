@@ -5,19 +5,16 @@ use super::{
     protection::{document, protected, review_document, write_error},
     repo_url, repository, Error, Result,
 };
-use crate::backend::{
-    app::AppState,
-    db::{
-        self,
-        models::BranchProtectionSettings,
-        repositories::protection::{
-            self, ActorListUpdate, BranchProtectionRuleUpsert, ProtectionUpdate,
-            ReviewProtectionUpdate,
-        },
-    },
-    repositories::{access, store::repo_store},
-    webhooks::payloads,
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::repositories::protection;
+use crate::backend::db::repositories::protection::ActorListUpdate;
+use crate::backend::db::repositories::protection::BranchProtectionRuleUpsert;
+use crate::backend::db::repositories::protection::ProtectionUpdate;
+use crate::backend::db::repositories::protection::ReviewProtectionUpdate;
+use crate::backend::repositories::access;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{FromRequest, Path, Request, State},
     http::{HeaderMap, Method, StatusCode},
@@ -25,6 +22,7 @@ use axum::{
     routing::{delete, get, patch, post, put, MethodRouter},
     Json,
 };
+use codeyard_db_core::models::BranchProtectionSettings;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;

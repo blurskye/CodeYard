@@ -1,8 +1,8 @@
-use crate::backend::db::{
-    models::Repository,
-    repositories::github::{count_sql, list_sql, RepositoryListQuery},
-};
+use crate::backend::db::repositories::github::count_sql;
+use crate::backend::db::repositories::github::list_sql;
+use crate::backend::db::repositories::github::RepositoryListQuery;
 use anyhow::Result;
+use codeyard_db_core::models::Repository;
 use sqlx::PgPool;
 
 pub async fn repository_teams(
@@ -12,10 +12,9 @@ pub async fn repository_teams(
     limit: i64,
     offset: i64,
 ) -> Result<Option<Vec<crate::backend::db::repositories::github::RepositoryTeam>>> {
-    use crate::backend::db::{
-        models::OrgRole, organizations::OrganizationOutcome,
-        repositories::github::REPOSITORY_TEAMS_SQL,
-    };
+    use crate::backend::db::organizations::OrganizationOutcome;
+    use crate::backend::db::repositories::github::REPOSITORY_TEAMS_SQL;
+    use codeyard_db_core::models::OrgRole;
     anyhow::ensure!(
         (1..=101).contains(&limit) && offset >= 0,
         "Invalid team page"
@@ -44,7 +43,10 @@ pub async fn repository_teams(
     else {
         return Ok(None);
     };
-    let privileged = matches!(role, OrgRole::Owner | OrgRole::Admin);
+    let privileged = matches!(
+        role,
+        codeyard_db_core::models::OrgRole::Owner | codeyard_db_core::models::OrgRole::Admin
+    );
     let mut teams: Vec<crate::backend::db::repositories::github::RepositoryTeam> =
         sqlx::query_as(REPOSITORY_TEAMS_SQL)
             .bind(repo_id)
@@ -60,7 +62,7 @@ pub async fn repository_teams(
         .filter(|row| row.team.privacy == "visible")
         .filter_map(|row| row.team.parent_team_id)
         .collect();
-    let parents: Vec<crate::backend::db::models::Team> =
+    let parents: Vec<codeyard_db_core::models::Team> =
         sqlx::query_as("SELECT * FROM teams WHERE id=ANY($1) AND org_id=$2 AND privacy='visible'")
             .bind(parents)
             .bind(org)

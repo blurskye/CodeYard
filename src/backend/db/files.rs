@@ -1,8 +1,11 @@
 //! Uploaded file records, upload quotas and download accounting.
-use crate::backend::db::models::{
-    File, FileReason, FileReasonLimit, FileVisibility, UserFileStats,
-};
-use crate::backend::db::DbPool;
+use codeyard_db_core::models::File;
+use codeyard_db_core::models::FileReason;
+use codeyard_db_core::models::FileReasonLimit;
+use codeyard_db_core::models::FileVisibility;
+use codeyard_db_core::models::UserFileStats;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use std::net::IpAddr;
 use uuid::Uuid;
 
@@ -114,8 +117,8 @@ impl ReserveUpload<'_> {
                 .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
             // Only avatars, of users and of organizations, may be public; other
             // uploads are visible to their owner.
-            && (self.visibility != FileVisibility::Public
-                || matches!(self.reason, FileReason::Avatar | FileReason::OrgAvatar))
+            && (self.visibility != codeyard_db_core::models::FileVisibility::Public
+                || matches!(self.reason, codeyard_db_core::models::FileReason::Avatar | codeyard_db_core::models::FileReason::OrgAvatar))
     }
 
     /// Size and content type rules configured for this upload reason.
@@ -129,8 +132,11 @@ impl ReserveUpload<'_> {
                 .allowed_content_types
                 .as_ref()
                 .is_none_or(|types| types.iter().any(|t| t == self.content_type))
-            && (!matches!(self.reason, FileReason::Avatar | FileReason::OrgAvatar)
-                || codeyard_support::media::AVATAR_CONTENT_TYPES.contains(&self.content_type))
+            && (!matches!(
+                self.reason,
+                codeyard_db_core::models::FileReason::Avatar
+                    | codeyard_db_core::models::FileReason::OrgAvatar
+            ) || codeyard_support::media::AVATAR_CONTENT_TYPES.contains(&self.content_type))
     }
 }
 

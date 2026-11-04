@@ -36,13 +36,13 @@ fn rule<'a>(
 }
 
 async fn enqueue(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: i64,
     actor: i64,
     sha: &str,
     pipeline: &str,
     path: &str,
-) -> db::models::CiRun {
+) -> codeyard_db_core::models::CiRun {
     db::ci::enqueue_ci_run(
         pool,
         db::ci::NewCiRun {
@@ -102,7 +102,7 @@ async fn contract(pg: bool) {
         f.pool(),
         merger,
         repository.id,
-        db::models::AccessLevel::Write,
+        codeyard_db_core::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -620,8 +620,8 @@ async fn protection_contract(pg: bool) {
     .await
     .unwrap();
     for (user, level) in [
-        (writer, db::models::AccessLevel::Write),
-        (reader, db::models::AccessLevel::Read),
+        (writer, codeyard_db_core::models::AccessLevel::Write),
+        (reader, codeyard_db_core::models::AccessLevel::Read),
     ] {
         db::repositories::access::grant_repo_access(f.pool(), user, repository.id, level)
             .await
@@ -1134,13 +1134,13 @@ async fn postgres_linear_history_refuses_a_merge_commit_as_a_new_branch() {
 
 /// A queued `pull_request` run of `pull`, which targets `base`.
 async fn enqueue_pull_request_run(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: i64,
     actor: i64,
     pull: i64,
     base: &str,
     sha: &str,
-) -> db::models::CiRun {
+) -> codeyard_db_core::models::CiRun {
     db::ci::enqueue_ci_run(
         pool,
         db::ci::NewCiRun {

@@ -4,19 +4,17 @@ use crate::support::{
     http_client::Client,
 };
 use axum::http::StatusCode;
-use codeyard::backend::{
-    db::{
-        self,
-        models::{AccessLevel, PullRequest},
-        pull_caps::PullCapReached,
-        pull_requests::records::NewPullRequest,
-    },
-    identity::tokens::{self, TokenInput},
-};
+use codeyard::backend::db;
+use codeyard::backend::db::pull_caps::PullCapReached;
+use codeyard::backend::db::pull_requests::records::NewPullRequest;
+use codeyard::backend::identity::tokens;
+use codeyard::backend::identity::tokens::TokenInput;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::PullRequest;
 use serde_json::json;
 
 async fn open(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: i64,
     author: i64,
     branch: &str,
@@ -42,7 +40,7 @@ async fn open(
     .await
 }
 async fn state(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     pr: &PullRequest,
     actor: i64,
     state: &str,
@@ -154,9 +152,14 @@ async fn contract(pg: bool) {
         200,
     )
     .await;
-    db::repositories::access::grant_repo_access(f.pool(), bob, project.id, AccessLevel::Maintain)
-        .await
-        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        bob,
+        project.id,
+        codeyard_db_core::models::AccessLevel::Maintain,
+    )
+    .await
+    .unwrap();
     request(
         &router,
         "interactions/get-pull-request-creation-cap-for-repo",

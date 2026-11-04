@@ -5,7 +5,7 @@ use codeyard::backend::code_scanning;
 
 pub(super) async fn contract(
     router: &Router,
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     repo: i64,
     actor: i64,
     token: &str,
@@ -167,7 +167,7 @@ pub(super) async fn contract(
             actor,
             repo,
             "bob",
-            Some(db::models::AccessLevel::Read)
+            Some(codeyard_db_core::models::AccessLevel::Read)
         )
         .await
         .unwrap(),

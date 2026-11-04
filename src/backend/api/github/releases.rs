@@ -46,8 +46,8 @@ pub(super) async fn asset_document(
     state: &AppState,
     owner: &str,
     name: &str,
-    release: &db::models::Release,
-    asset: &db::models::ReleaseAsset,
+    release: &codeyard_db_core::models::Release,
+    asset: &codeyard_db_core::models::ReleaseAsset,
 ) -> Result<Value> {
     crate::backend::webhooks::documents::release_asset(&state.pool, owner, name, release, asset)
         .await
@@ -254,7 +254,7 @@ async fn discussion_category(
 async fn start_discussion(
     state: &AppState,
     auth: &auth::Authentication,
-    release: &db::models::Release,
+    release: &codeyard_db_core::models::Release,
     category: Option<i64>,
 ) -> Result<()> {
     let pool = &state.pool;

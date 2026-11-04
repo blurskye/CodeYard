@@ -20,7 +20,7 @@ use db::pull_caps::{CapUpdate, PullCapRefusal, PullCapScope};
 use std::sync::Arc;
 
 pub(crate) async fn panel(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     actor: i64,
     scope: InteractionScope,
     csrf: &str,

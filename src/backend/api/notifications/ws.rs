@@ -27,7 +27,7 @@ const MAX_EVENT_JSON: usize = 60 * 1024;
 pub async fn handle_socket(
     socket: WebSocket,
     broadcaster: std::sync::Arc<NotificationBroadcaster>,
-    pool: db::DbPool,
+    pool: codeyard_db_core::DbPool,
     session_id: String,
     user_id: i64,
     _slot: SocketSlot,

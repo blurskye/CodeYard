@@ -203,8 +203,7 @@ pub async fn organization_alert_page(
         matches!(
             role,
             crate::backend::db::organizations::OrganizationOutcome::Applied(
-                crate::backend::db::models::OrgRole::Owner
-                    | crate::backend::db::models::OrgRole::Admin
+                codeyard_db_core::models::OrgRole::Owner | codeyard_db_core::models::OrgRole::Admin
             )
         ),
         Refusal::Denied
@@ -219,7 +218,7 @@ pub async fn organization_alert_page(
     .await?;
     let mut result = Vec::with_capacity(rows.len());
     for alert in rows {
-        let repository: crate::backend::db::models::Repository =
+        let repository: codeyard_db_core::models::Repository =
             sqlx::query_as("SELECT * FROM repositories WHERE id=$1")
                 .bind(alert.repo_id)
                 .fetch_one(&mut *tx)

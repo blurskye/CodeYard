@@ -2,7 +2,8 @@
 //! sender at once: each claims its own rows. A failed send is tried again later, a few times.
 use super::{config, send};
 use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db::{self, DbPool};
+use crate::backend::db;
+use codeyard_db_core::DbPool;
 use std::time::Duration;
 use tracing::{info, warn};
 

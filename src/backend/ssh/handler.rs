@@ -1,8 +1,6 @@
 use crate::backend::ci::CiRuns;
-use crate::backend::db::models::{AccessLevel, Repository, User};
 use crate::backend::db::repositories::records::get_git_repository;
 use crate::backend::db::users::ssh_keys::get_user_by_key_fingerprint;
-use crate::backend::db::DbPool;
 use crate::backend::git::repository::process as git_process;
 use crate::backend::repositories::deploy_keys;
 use crate::backend::repositories::git_sessions::{validation, GitTasks, ReceiveCredential};
@@ -13,6 +11,10 @@ use crate::backend::repositories::traffic;
 use crate::backend::ssh::rate_limit::RateLimiter;
 use anyhow::Result;
 use bytes::Bytes;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
+use codeyard_db_core::DbPool;
 use russh::keys::PublicKey;
 use russh::server::{Auth, ChannelOpenHandle, Msg, Session};
 use russh::{Channel, ChannelId, ChannelMsg, ChannelWriteHalf};
@@ -231,12 +233,12 @@ impl GitSshHandler {
             Err(error) => match error.downcast_ref::<CredentialRefusal>() {
                 Some(CredentialRefusal::Missing | CredentialRefusal::Credential) => {
                     Self::repository_denial_message(
-                        Some((repo.is_private, AccessLevel::None)),
+                        Some((repo.is_private, codeyard_db_core::models::AccessLevel::None)),
                         write,
                     )
                 }
                 Some(_) => Self::repository_denial_message(
-                    Some((repo.is_private, AccessLevel::Read)),
+                    Some((repo.is_private, codeyard_db_core::models::AccessLevel::Read)),
                     write,
                 ),
                 None => return Err(error),
@@ -728,18 +730,26 @@ mod tests {
     fn private_repository_denials_match_missing_repository() {
         for is_write in [false, true] {
             let missing = GitSshHandler::repository_denial_message(None, is_write);
-            let private =
-                GitSshHandler::repository_denial_message(Some((true, AccessLevel::None)), is_write);
+            let private = GitSshHandler::repository_denial_message(
+                Some((true, codeyard_db_core::models::AccessLevel::None)),
+                is_write,
+            );
             assert_eq!(missing, private);
             assert_eq!(missing, "Repository not found\n");
         }
 
         assert_eq!(
-            GitSshHandler::repository_denial_message(Some((false, AccessLevel::None)), true,),
+            GitSshHandler::repository_denial_message(
+                Some((false, codeyard_db_core::models::AccessLevel::None)),
+                true,
+            ),
             "Permission denied: write access required for git-receive-pack\n"
         );
         assert_eq!(
-            GitSshHandler::repository_denial_message(Some((true, AccessLevel::Read)), true),
+            GitSshHandler::repository_denial_message(
+                Some((true, codeyard_db_core::models::AccessLevel::Read)),
+                true
+            ),
             "Permission denied: write access required for git-receive-pack\n"
         );
     }
@@ -793,8 +803,8 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        let pool = DbPool::from(native.clone());
-        crate::backend::db::run_migrations(&pool).await.unwrap();
+        let pool = codeyard_db_core::DbPool::from(native.clone());
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let owner = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
@@ -874,8 +884,8 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        let pool = DbPool::from(native);
-        crate::backend::db::run_migrations(&pool).await.unwrap();
+        let pool = codeyard_db_core::DbPool::from(native);
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let owner = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
@@ -947,7 +957,7 @@ mod tests {
             .connect_lazy("postgres://fixture:fixture@127.0.0.1:1/unused")
             .unwrap();
         pool.close().await;
-        let pool = DbPool::from(pool);
+        let pool = codeyard_db_core::DbPool::from(pool);
         let ci_service = Arc::new(CiRuns::new(
             pool.clone(),
             Arc::new(crate::backend::ci::CiConfig::default()),

@@ -6,12 +6,12 @@ use axum::{
     http::{header, HeaderMap, Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    db::{self, models::OrgRole, organizations as orgs},
-    storage::ObjectStore,
-};
+use codeyard::backend::api::create_router;
+use codeyard::backend::app::AppState;
+use codeyard::backend::db;
+use codeyard::backend::db::organizations as orgs;
+use codeyard::backend::storage::ObjectStore;
+use codeyard_db_core::models::OrgRole;
 use codeyard_webui::{
     app::{Page, PageEnvelope},
     pages::discovery as view,
@@ -117,9 +117,9 @@ impl Fixture {
         database.complete_setup().await;
         let org = Self::organization(pool, owner.id, "canonical_org").await;
         for (actor, role) in [
-            (&admin, OrgRole::Admin),
-            (&member, OrgRole::Member),
-            (&unknown, OrgRole::Member),
+            (&admin, codeyard_db_core::models::OrgRole::Admin),
+            (&member, codeyard_db_core::models::OrgRole::Member),
+            (&unknown, codeyard_db_core::models::OrgRole::Member),
         ] {
             applied(
                 orgs::add_organization_member(pool, owner.id, org, actor.id, role)
@@ -160,14 +160,14 @@ impl Fixture {
             _root: root,
         }
     }
-    pub async fn actor(pool: &db::DbPool, username: &str) -> Actor {
+    pub async fn actor(pool: &codeyard_db_core::DbPool, username: &str) -> Actor {
         let id = db::users::accounts::create_user(pool, username, None)
             .await
             .unwrap()
             .id;
         Self::session(pool, id).await
     }
-    async fn session(pool: &db::DbPool, id: i64) -> Actor {
+    async fn session(pool: &codeyard_db_core::DbPool, id: i64) -> Actor {
         let session = native::token();
         let csrf = native::token();
         db::users::sessions::create_session(
@@ -188,7 +188,7 @@ impl Fixture {
         );
         Actor { id, session, csrf }
     }
-    pub async fn organization(pool: &db::DbPool, actor: i64, slug: &str) -> i64 {
+    pub async fn organization(pool: &codeyard_db_core::DbPool, actor: i64, slug: &str) -> i64 {
         applied(
             orgs::create_organization(
                 pool,
@@ -288,7 +288,7 @@ impl Fixture {
         actor: i64,
         org: Option<i64>,
         private: bool,
-    ) -> db::models::Repository {
+    ) -> codeyard_db_core::models::Repository {
         let repository =
             db::repositories::records::get_repository(self.database.pool(), owner, name)
                 .await

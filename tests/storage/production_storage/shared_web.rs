@@ -158,15 +158,15 @@ async fn files_survive_a_web_node(pg: bool) {
     let asset_id = asset["id"].as_i64().unwrap();
 
     let sql = "INSERT INTO ci_runs(run_id,repo_id,triggered_by_id,mode,pipeline,event,branch,workflow_path,status,worker) VALUES($1,$2,$3,'local','ci','push','main','.github/workflows/ci.yml','running','test') RETURNING *";
-    let run: db::models::CiRun = match database.pool() {
-        db::DbPool::Postgres(pool) => sqlx::query_as(sql)
+    let run: codeyard_db_core::models::CiRun = match database.pool() {
+        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_as(sql)
             .bind(Uuid::new_v4())
             .bind(repo.id)
             .bind(actor)
             .fetch_one(pool)
             .await
             .unwrap(),
-        db::DbPool::Sqlite(pool) => sqlx::query_as(sql)
+        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_as(sql)
             .bind(Uuid::new_v4())
             .bind(repo.id)
             .bind(actor)

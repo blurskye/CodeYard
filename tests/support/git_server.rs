@@ -53,7 +53,7 @@ impl Server {
         master_key: Option<&str>,
     ) -> Self {
         let log = root.join("server.log");
-        let pool = db::init_db(url).await.unwrap();
+        let pool = codeyard_db_core::init_db(url).await.unwrap();
         let s3 = FakeS3::for_database(&pool).await;
         pool.close().await;
         let client = Client::new();
@@ -145,7 +145,7 @@ pub fn success(output: Output) {
 }
 
 /// Writes a token for `owner` that can push, stored the way the server looks tokens up.
-pub async fn write_token(pool: &db::DbPool, owner: i64) -> String {
+pub async fn write_token(pool: &codeyard_db_core::DbPool, owner: i64) -> String {
     let token = native::token();
     let stored = hex::encode(Sha256::digest(token.as_bytes()));
     let session = native::token();

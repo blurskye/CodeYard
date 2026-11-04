@@ -1,9 +1,12 @@
 //! Durable quorum decisions. These operations are opt-in; standalone Git does not call them.
-use crate::backend::db::{
-    models::{RecoveryView, RefChange, RefValue, WriteRecord, WriteSettings},
-    DbPool,
-};
 use anyhow::{ensure, Result};
+use codeyard_db_core::models::RecoveryView;
+use codeyard_db_core::models::RefChange;
+use codeyard_db_core::models::RefValue;
+use codeyard_db_core::models::WriteRecord;
+use codeyard_db_core::models::WriteSettings;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -2,13 +2,15 @@ use super::protocol::{self, Request, CHUNK, EOF, STDERR, STDIN, STDOUT};
 use super::validation::{self, RefUpdate};
 use super::{private_files, ReceiveCredential};
 use crate::backend::ci::CiRuns;
-use crate::backend::db::{self, models::Repository, DbPool};
+use crate::backend::db;
 use crate::backend::git::repository::process as git_process;
 use crate::backend::repositories::store::{
     repo_store, ErrorKind, GitService, GitSession, GitStreams, RepoError,
 };
 use crate::backend::repositories::traffic;
 use anyhow::{ensure, Context, Result};
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::DbPool;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -66,7 +68,7 @@ pub(super) struct HookState {
     pub(super) quorum: bool,
     pub(super) quorum_started: bool,
     pub(super) quorum_unknown: bool,
-    pub(super) writes: Vec<db::models::WriteRecord>,
+    pub(super) writes: Vec<codeyard_db_core::models::WriteRecord>,
     pub(super) transaction: Option<usize>,
 }
 

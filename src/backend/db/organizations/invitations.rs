@@ -1,11 +1,13 @@
 //! Organization invitations: an owner or admin offers membership, and only the invitee's
 //! acceptance adds the member.
 use super::*;
-use crate::backend::db::{
-    models::{OrgInvitation, OrgMembership, OrgRole, ReceivedInvitation},
-    DbPool,
-};
 use anyhow::Result;
+use codeyard_db_core::models::OrgInvitation;
+use codeyard_db_core::models::OrgMembership;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::models::ReceivedInvitation;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
 
 /// Native and REST offers use the same recipient and team validation in the authority transaction.
 #[derive(Debug, Clone)]
@@ -81,7 +83,7 @@ native_operation!(crate::backend::db::postgres::organizations::invitations::crea
 native_operation!(crate::backend::db::postgres::organizations::invitations::invitation_page, crate::backend::db::sqlite::organizations::invitations::invitation_page,
     fn invitation_page(pool: &DbPool, actor: i64, org: i64, filter: &InvitationFilter, window: (i64,i64)) -> Result<OrganizationOutcome<Vec<OrgInvitation>>>);
 native_operation!(crate::backend::db::postgres::organizations::invitations::invitation_teams, crate::backend::db::sqlite::organizations::invitations::invitation_teams,
-    fn invitation_teams(pool: &DbPool, actor: i64, org: i64, id: i64, window: (i64,i64)) -> Result<OrganizationOutcome<Vec<crate::backend::db::models::Team>>>);
+    fn invitation_teams(pool: &DbPool, actor: i64, org: i64, id: i64, window: (i64,i64)) -> Result<OrganizationOutcome<Vec<codeyard_db_core::models::Team>>>);
 native_operation!(crate::backend::db::postgres::organizations::invitations::invitation_team_counts, crate::backend::db::sqlite::organizations::invitations::invitation_team_counts,
     fn invitation_team_counts(pool: &DbPool, ids: &[i64]) -> Result<std::collections::HashMap<i64,i64>>);
 native_operation!(crate::backend::db::postgres::organizations::invitations::cancel_invitation_id, crate::backend::db::sqlite::organizations::invitations::cancel_invitation_id,

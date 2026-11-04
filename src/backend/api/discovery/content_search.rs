@@ -108,7 +108,7 @@ fn split_scope(text: &str) -> (String, Scope) {
 async fn page_hits(
     store: &RepoStore,
     owner: &str,
-    repo: &db::models::Repository,
+    repo: &codeyard_db_core::models::Repository,
     query: &Query<'_>,
     offset: usize,
     limit: usize,
@@ -487,8 +487,8 @@ mod tests {
 
     #[tokio::test]
     async fn search_candidates_are_reauthorized_after_visibility_changes() {
-        let pool = db::init_db("sqlite::memory:").await.unwrap();
-        db::run_migrations(&pool).await.unwrap();
+        let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
+        codeyard_db_core::run_migrations(&pool).await.unwrap();
         let root = tempfile::tempdir().unwrap();
         let user = db::users::accounts::create_user(&pool, "alice", None)
             .await

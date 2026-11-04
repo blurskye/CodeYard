@@ -170,8 +170,8 @@ pub enum CurrentPasswordError {
 /// Checks the account's current password before a settings change. A wrong one counts against
 /// the same account budget as a wrong sign-in password; a right one gives the attempt back.
 pub async fn verify_current_password(
-    pool: &crate::backend::db::DbPool,
-    user: &crate::backend::db::models::User,
+    pool: &codeyard_db_core::DbPool,
+    user: &codeyard_db_core::models::User,
     password: &str,
 ) -> Result<(), CurrentPasswordError> {
     let attempt = super::admission::admit_login(pool, None, Some(user.id), &user.username)

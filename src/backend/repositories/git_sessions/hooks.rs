@@ -2,25 +2,31 @@
 use super::broker::{Gateway, Operation};
 use super::validation::{self, RefUpdate, ZERO_SHA};
 use super::ReceiveCredential;
+use crate::backend::ci;
 use crate::backend::ci::workflows::WorkflowMatchBudget;
+use crate::backend::ci::CiRunRequest;
+use crate::backend::db;
+use crate::backend::git::published_refs_in_use;
+use crate::backend::git::ref_listing_bytes;
+use crate::backend::git::RefsInUse;
+use crate::backend::repositories::languages;
+use crate::backend::repositories::protection::check_branch_write_with;
+use crate::backend::repositories::protection::load_rules;
+use crate::backend::repositories::protection::BranchWrite;
+use crate::backend::repositories::protection::History;
+use crate::backend::repositories::protection::Refusal;
+use crate::backend::repositories::protection::WriteVia;
+use crate::backend::repositories::pull_requests;
+use crate::backend::repositories::reads;
+use crate::backend::repositories::store::ensure_ref_room;
+use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::ErrorKind;
+use crate::backend::repositories::store::RepoError;
 use crate::backend::webhooks::ref_changes::{self, RefMove};
-use crate::backend::{
-    ci::{self, CiRunRequest},
-    db::{
-        self,
-        models::{AccessLevel, Repository, User},
-    },
-    git::{published_refs_in_use, ref_listing_bytes, RefsInUse},
-    repositories::{
-        languages,
-        protection::{
-            check_branch_write_with, load_rules, BranchWrite, History, Refusal, WriteVia,
-        },
-        pull_requests, reads,
-        store::{ensure_ref_room, repo_store, ErrorKind, RepoError},
-    },
-};
 use anyhow::{ensure, Context, Result};
+use codeyard_db_core::models::AccessLevel;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -167,7 +173,7 @@ impl Gateway {
         let mut changes: Vec<_> = updates
             .iter()
             .filter(|update| update.reference != "HEAD" && update.old != update.new)
-            .map(|update| db::models::RefChange {
+            .map(|update| codeyard_db_core::models::RefChange {
                 name: update.reference.clone(),
                 kind: "oid".into(),
                 old_target: (update.old != ZERO_SHA).then(|| update.old.clone()),
@@ -701,7 +707,7 @@ impl Gateway {
                 .term;
             let changes = publications
                 .into_iter()
-                .map(|change| db::models::RefChange {
+                .map(|change| codeyard_db_core::models::RefChange {
                     name: change.reference,
                     kind: "oid".into(),
                     old_target: change.old,
@@ -884,7 +890,7 @@ impl Gateway {
             .await
         {
             Ok((identity, access)) if identity.id == actor_id => access,
-            _ => AccessLevel::None,
+            _ => codeyard_db_core::models::AccessLevel::None,
         };
         let repo = db::repositories::records::get_repository_by_id(&self.pool, repo.id)
             .await?
@@ -1138,7 +1144,7 @@ impl Gateway {
                     .credential
                     .authorize(&self.pool, &fresh_repo, true)
                     .await?;
-                if pipeline.includes_cd() && access < AccessLevel::Admin {
+                if pipeline.includes_cd() && access < codeyard_db_core::models::AccessLevel::Admin {
                     failed = true;
                     continue;
                 }
@@ -1238,7 +1244,7 @@ impl Gateway {
                     {
                         let target = format!("refs/heads/{first}");
                         if quorum {
-                            head_change = Some(db::models::RefChange {
+                            head_change = Some(codeyard_db_core::models::RefChange {
                                 name: "HEAD".into(),
                                 kind: "symbolic".into(),
                                 old_target: head.symbolic_target().map(str::to_owned),

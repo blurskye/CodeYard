@@ -1,8 +1,8 @@
 use crate::support::database::Database;
-use codeyard::backend::db::{
-    self, files,
-    models::{FileReason, FileVisibility},
-};
+use codeyard::backend::db;
+use codeyard::backend::db::files;
+use codeyard_db_core::models::FileReason;
+use codeyard_db_core::models::FileVisibility;
 
 async fn restricted_account_cannot_delete(pg: bool) {
     let mut database = Database::new(pg).await;
@@ -17,8 +17,8 @@ async fn restricted_account_cannot_delete(pg: bool) {
             filename: "avatar.png",
             content_type: "image/png",
             file_size: 8,
-            reason: FileReason::Avatar,
-            visibility: FileVisibility::Public,
+            reason: codeyard_db_core::models::FileReason::Avatar,
+            visibility: codeyard_db_core::models::FileVisibility::Public,
             sha256_hex: &"a".repeat(64),
         },
     )

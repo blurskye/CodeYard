@@ -3,8 +3,9 @@ use crate::backend::db::users::transitions::{
 };
 use sqlx::SqlitePool;
 // Atomic identity transitions. No provider, filesystem or KDF work under locks.
-use crate::backend::db::models::{NodeConfiguration, User};
 use anyhow::Result;
+use codeyard_db_core::models::NodeConfiguration;
+use codeyard_db_core::models::User;
 use sqlx::{Sqlite, Transaction};
 
 pub(crate) async fn organization_name_exists(

@@ -383,7 +383,7 @@ impl Advisory {
     }
 }
 
-pub async fn ingest(pool: &db::DbPool, bytes: &[u8]) -> Result<bool> {
+pub async fn ingest(pool: &codeyard_db_core::DbPool, bytes: &[u8]) -> Result<bool> {
     let bytes = bytes.to_vec();
     let record = tokio::task::spawn_blocking(move || Advisory::parse(&bytes)?.prepare()).await??;
     let changed = db::vulnerabilities::upsert(pool, &record).await?;
@@ -392,7 +392,7 @@ pub async fn ingest(pool: &db::DbPool, bytes: &[u8]) -> Result<bool> {
     }
     Ok(changed)
 }
-pub async fn findings(pool: &db::DbPool, package: &Package) -> Result<Vec<Advisory>> {
+pub async fn findings(pool: &codeyard_db_core::DbPool, package: &Package) -> Result<Vec<Advisory>> {
     let Some(ecosystem) = ecosystem(&package.ecosystem) else {
         return Ok(Vec::new());
     };
@@ -411,7 +411,11 @@ pub async fn findings(pool: &db::DbPool, package: &Package) -> Result<Vec<Adviso
         })
         .collect()
 }
-pub async fn scan(state: &AppState, repo: &db::models::Repository, generation: i64) -> Result<()> {
+pub async fn scan(
+    state: &AppState,
+    repo: &codeyard_db_core::models::Repository,
+    generation: i64,
+) -> Result<()> {
     let reader = db::dependency_graph::Reader::Scan(generation);
     let reference = format!("refs/heads/{}", repo.default_branch);
     let (sha, packages) =
@@ -431,7 +435,7 @@ async fn sync(state: &AppState) -> Result<()> {
 }
 /// Downloads each enabled ecosystem's `all.zip` from the OSV mirror and stores its records.
 pub async fn synchronize(
-    pool: &db::DbPool,
+    pool: &codeyard_db_core::DbPool,
     settings: &db::vulnerabilities::Settings,
 ) -> Result<()> {
     let enabled: Vec<String> = serde_json::from_str(&settings.ecosystems)?;
