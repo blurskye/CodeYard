@@ -6,6 +6,7 @@ use codeyard_app::storage::range::ByteRange;
 /// The requested `Range`, or `Full`. An `If-Range` that does not equal the response's strong
 /// validator asks for the complete representation (RFC 9110 section 13.1.5). Without a
 /// validator, such as a response with no ETag or Last-Modified, no `If-Range` can match.
+#[allow(clippy::result_unit_err)]
 pub fn requested(headers: &HeaderMap, validator: Option<&str>) -> Result<(ByteRange, bool), ()> {
     if let Some(condition) = headers.get(header::IF_RANGE) {
         if validator.is_none_or(|validator| condition.as_bytes() != validator.as_bytes()) {
