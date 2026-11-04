@@ -13,6 +13,7 @@ use crate::cluster::transport::CLOSE_UNAVAILABLE;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::ensure;
+use anyhow::Context;
 use anyhow::Result;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use codeyard_db_cluster::cluster::Authority;

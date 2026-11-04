@@ -1,4 +1,5 @@
 //! Accepted ref activity shared by editor/branch/merge publication and Git HTTP/SSH hooks.
+use anyhow::Context;
 
 use crate::webhooks::ref_changes::RefMove;
 use anyhow::Result;

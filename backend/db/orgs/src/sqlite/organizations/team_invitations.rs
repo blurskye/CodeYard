@@ -15,7 +15,7 @@ use codeyard_db_core::queries::organizations::administers;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
 use codeyard_db_core::queries::sqlite::organizations::authority::read_authority;
-use codeyard_db_core::queries::sqlite::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_sqlite;
 use sqlx::SqlitePool;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Denied;
@@ -94,7 +94,7 @@ pub async fn list_team_invitations(
     page: OrganizationPage,
 ) -> Result<OrganizationOutcome<Vec<TeamInvitation>>> {
     let mut tx = begin_read(pool).await?;
-    let role = require_read_org!(tx, actor, org);
+    let role = require_read_org_sqlite!(tx, actor, org);
     if !administers(role) {
         return Ok(Denied);
     }

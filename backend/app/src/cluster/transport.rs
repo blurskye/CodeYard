@@ -4,6 +4,7 @@ use crate::cluster::link::Link;
 use crate::cluster::pairing::PairingHandler;
 use anyhow::anyhow;
 use anyhow::bail;
+use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_core::DbPool;
 use codeyard_support::node_identity::NodeKey;

@@ -2,6 +2,7 @@
 //! section that lists them. A key acts only for its own repository and never signs in to the web
 //! UI. Its pushes are attributed to the account that added it, and it gets no more than that
 //! account's access, capped at write.
+use anyhow::Context;
 
 use anyhow::ensure;
 

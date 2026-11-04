@@ -1,4 +1,3 @@
-use crate::models::Repository;
 pub(crate) fn allows_delivery(subscribed: bool, ignored: bool, kind: &str) -> bool {
     !ignored
         && (subscribed

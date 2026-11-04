@@ -1,6 +1,7 @@
 //! Read resolved versions without invoking package managers or following external files.
 use crate::repositories::dependencies::npm::MAX_LOCK_BYTES;
 use anyhow::ensure;
+use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_repos::repositories::dependencies::MAX_PACKAGES;
 use codeyard_model::repositories::Package;

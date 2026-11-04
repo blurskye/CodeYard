@@ -84,7 +84,8 @@ pub async fn authority(
     Ok(Applied(role))
 }
 
-macro_rules! require_read_org {
+#[macro_export]
+macro_rules! require_read_org_sqlite {
     ($tx:ident, $actor:ident, $org:ident) => {
         match $crate::queries::sqlite::organizations::authority::read_authority(
             &mut $tx, $actor, $org,

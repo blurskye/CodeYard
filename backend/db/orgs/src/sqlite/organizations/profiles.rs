@@ -10,7 +10,7 @@ use codeyard_db_core::queries::organizations::administers;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::sqlite::organizations::authority::active;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
-use codeyard_db_core::queries::sqlite::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_sqlite;
 use sqlx::SqlitePool;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
@@ -130,7 +130,7 @@ pub async fn get_organization_avatar(
     org: i64,
 ) -> Result<OrganizationOutcome<Option<uuid::Uuid>>> {
     let mut tx = begin_read(pool).await?;
-    require_read_org!(tx, actor, org);
+    require_read_org_sqlite!(tx, actor, org);
     let avatar = sqlx::query_scalar("SELECT avatar_file_id FROM organizations WHERE id=?1")
         .bind(org)
         .fetch_one(&mut *tx)
@@ -165,7 +165,7 @@ pub async fn get_organization_metadata(
     org: i64,
 ) -> Result<OrganizationOutcome<OrganizationMetadata>> {
     let mut tx = begin_read(pool).await?;
-    require_read_org!(tx, actor, org);
+    require_read_org_sqlite!(tx, actor, org);
     let result = metadata(&mut tx, org).await?;
     tx.commit().await?;
     Ok(Applied(result))

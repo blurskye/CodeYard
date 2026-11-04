@@ -28,8 +28,8 @@ use codeyard_db_core::queries::postgres::organizations::authority::begin;
 use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
 use codeyard_db_core::queries::postgres::organizations::authority::membership_role;
 use codeyard_db_core::queries::postgres::organizations::authority::read_authority;
-use codeyard_db_core::queries::postgres::organizations::authority::require_read_org;
 use codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+use codeyard_db_core::require_read_org_postgres;
 use sqlx::PgPool;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
@@ -333,7 +333,7 @@ pub async fn list_organization_teams(
     page: OrganizationPage,
 ) -> Result<OrganizationOutcome<Vec<TeamListing>>> {
     let mut tx = begin_read(pool).await?;
-    let role = require_read_org!(tx, actor, org);
+    let role = require_read_org_postgres!(tx, actor, org);
     let mut teams: Vec<TeamListing> = sqlx::query_as("SELECT t.*, (SELECT COUNT(*) FROM effective_team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=t.org_id JOIN users u ON u.id=tm.user_id WHERE tm.team_id=t.id AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password) AS member_count FROM teams t WHERE t.org_id=$1 AND t.id>$2 AND (t.privacy='visible' OR (t.privacy='secret' AND ($3 OR EXISTS(SELECT 1 FROM team_memberships m WHERE m.team_id=t.id AND m.user_id=$4 AND m.role IN ('member','maintainer'))))) ORDER BY t.id LIMIT $5")
         .bind(org).bind(page.after).bind(administers(role)).bind(actor).bind(page.limit).fetch_all(&mut *tx).await?;
     let ids: Vec<i64> = teams
@@ -364,7 +364,7 @@ pub async fn count_organization_teams(
     org: i64,
 ) -> Result<OrganizationOutcome<i64>> {
     let mut tx = begin_read(pool).await?;
-    let role = require_read_org!(tx, actor, org);
+    let role = require_read_org_postgres!(tx, actor, org);
     let count = sqlx::query_scalar("SELECT COUNT(*) FROM teams t WHERE t.org_id=$1 AND (t.privacy='visible' OR (t.privacy='secret' AND ($2 OR EXISTS(SELECT 1 FROM team_memberships m WHERE m.team_id=t.id AND m.user_id=$3 AND m.role IN ('member','maintainer')))))")
         .bind(org).bind(administers(role)).bind(actor)
         .fetch_one(&mut *tx)
@@ -390,7 +390,7 @@ async fn list_members(
     direct: bool,
 ) -> Result<OrganizationOutcome<Vec<TeamMembership>>> {
     let mut tx = begin_read(pool).await?;
-    let role = require_read_org!(tx, actor, org);
+    let role = require_read_org_postgres!(tx, actor, org);
     let Some(team) = read_scoped_team(&mut tx, org, team).await? else {
         return Ok(Missing);
     };
@@ -632,7 +632,7 @@ async fn list_repositories(
     direct: bool,
 ) -> Result<OrganizationOutcome<Vec<TeamRepositoryGrant>>> {
     let mut tx = begin_read(pool).await?;
-    let role = require_read_org!(tx, actor, org);
+    let role = require_read_org_postgres!(tx, actor, org);
     let Some(team) = read_scoped_team(&mut tx, org, team).await? else {
         return Ok(Missing);
     };

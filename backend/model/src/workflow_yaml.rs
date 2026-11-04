@@ -1,4 +1,4 @@
-use anyhow::{ensure, Result};
+use anyhow::Result;
 use codeyard_git::ci::MAX_CI_WORKFLOW_BYTES;
 use serde_yaml::Value;
 use std::collections::BTreeMap;

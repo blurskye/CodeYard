@@ -1,5 +1,4 @@
 use crate::queries::rulesets::records::Owner;
-use crate::queries::rulesets::records::Ruleset;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;

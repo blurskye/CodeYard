@@ -24,7 +24,7 @@ use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
 use codeyard_db_core::queries::sqlite::organizations::authority::read_authority;
-use codeyard_db_core::queries::sqlite::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_sqlite;
 use sqlx::SqliteConnection;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
@@ -42,7 +42,7 @@ pub async fn catalog(
     org: i64,
 ) -> Result<OrganizationOutcome<Vec<Definition>>> {
     let mut tx = begin_read(pool).await?;
-    require_read_org!(tx, actor, org);
+    require_read_org_sqlite!(tx, actor, org);
     let result = definitions_on(&mut tx, org).await?;
     tx.commit().await?;
     Ok(Applied(result))
@@ -53,7 +53,7 @@ pub async fn summaries(
     org: i64,
 ) -> Result<OrganizationOutcome<Vec<DefinitionSummary>>> {
     let mut tx = begin_read(pool).await?;
-    require_read_org!(tx, actor, org);
+    require_read_org_sqlite!(tx, actor, org);
     let result = sqlx::query_as::<_, DefinitionSummary>("SELECT id,property_name,value_type,description,required,require_explicit_values FROM organization_repository_properties WHERE org_id=?1 ORDER BY LOWER(property_name),id LIMIT ?2")
         .bind(org)
         .bind(MAX_DEFINITIONS as i64)
@@ -493,7 +493,7 @@ pub async fn list_values(
         invalid("page", "Invalid repository property page")
     );
     let mut tx = begin_read(pool).await?;
-    require_read_org!(tx, actor, org);
+    require_read_org_sqlite!(tx, actor, org);
     let definitions = definitions_on(&mut tx, org).await?;
     for criterion in query.groups.iter().flatten() {
         if let query::Kind::Property(name, _) = &criterion.kind {

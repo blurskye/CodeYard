@@ -1,5 +1,6 @@
 //! Open scanners submit SARIF; queued uploads survive restarts and commit atomically.
 use anyhow::ensure;
+use anyhow::Context;
 use anyhow::Result;
 use base64::engine::general_purpose::STANDARD;
 use codeyard_db_core::DbPool;

@@ -9,7 +9,7 @@ use codeyard_db_core::queries::postgres::organizations::authority::active;
 use codeyard_db_core::queries::postgres::organizations::authority::begin;
 use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
 use codeyard_db_core::queries::postgres::organizations::authority::membership_role;
-use codeyard_db_core::queries::postgres::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_postgres;
 use sqlx::PgPool;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
@@ -25,7 +25,7 @@ pub async fn list(
     window: (i64, i64),
 ) -> Result<OrganizationOutcome<Vec<User>>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org_postgres!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     if !matches!(filter, "all" | "2fa_disabled" | "2fa_insecure") {

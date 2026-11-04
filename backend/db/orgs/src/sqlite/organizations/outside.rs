@@ -7,7 +7,7 @@ use codeyard_db_core::models::User;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
 use codeyard_db_core::queries::sqlite::organizations::authority::membership_role;
-use codeyard_db_core::queries::sqlite::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_sqlite;
 use sqlx::SqlitePool;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
@@ -23,7 +23,7 @@ pub async fn list(
     window: (i64, i64),
 ) -> Result<OrganizationOutcome<Vec<User>>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org_sqlite!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     if !matches!(filter, "all" | "2fa_disabled" | "2fa_insecure") {

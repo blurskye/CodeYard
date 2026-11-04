@@ -9,7 +9,6 @@ use crate::queries::code_security::RepositorySettings;
 use crate::queries::organizations::OrganizationOutcome;
 use anyhow::ensure;
 use anyhow::Result;
-use sqlx::Sqlite;
 use sqlx::SqliteConnection;
 use sqlx::SqlitePool;
 pub async fn readable(connection: &mut SqliteConnection, actor: i64, org: i64) -> Result<()> {

@@ -7,7 +7,7 @@ use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
-use codeyard_db_core::queries::sqlite::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_sqlite;
 use sqlx::SqlitePool;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
@@ -15,7 +15,7 @@ use OrganizationOutcome::Denied;
 
 pub async fn get(pool: &SqlitePool, actor: i64, org: i64) -> Result<OrganizationOutcome<Settings>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org_sqlite!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     let enforced_repositories = sqlx::query_scalar(
@@ -48,7 +48,7 @@ pub async fn repositories(
         "Invalid repository page"
     );
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org_sqlite!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     let selection = "FROM organization_immutable_release_repositories s JOIN repositories r ON r.id=s.repo_id JOIN organizations o ON o.id=r.owner_org_id WHERE s.org_id=?1 AND r.owner_kind='org' AND r.owner_org_id=?1 AND r.owner_user_id IS NULL";

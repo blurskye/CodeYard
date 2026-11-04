@@ -2,6 +2,7 @@
 use crate::app::AppState;
 use crate::repositories::store::repo_store;
 use anyhow::ensure;
+use anyhow::Context;
 use anyhow::Result;
 use codeyard_support::secret_detection::scan_with_patterns;
 use codeyard_support::secret_detection::MAX_BLOB_BYTES;

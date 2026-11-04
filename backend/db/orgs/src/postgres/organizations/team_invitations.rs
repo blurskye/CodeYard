@@ -17,7 +17,7 @@ use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::postgres::organizations::authority::begin;
 use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
 use codeyard_db_core::queries::postgres::organizations::authority::read_authority;
-use codeyard_db_core::queries::postgres::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_postgres;
 use sqlx::PgPool;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Denied;
@@ -101,7 +101,7 @@ pub async fn list_team_invitations(
     page: OrganizationPage,
 ) -> Result<OrganizationOutcome<Vec<TeamInvitation>>> {
     let mut tx = begin_read(pool).await?;
-    let role = require_read_org!(tx, actor, org);
+    let role = require_read_org_postgres!(tx, actor, org);
     if !administers(role) {
         return Ok(Denied);
     }

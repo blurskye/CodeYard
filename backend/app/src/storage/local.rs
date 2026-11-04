@@ -3,6 +3,7 @@ use crate::storage::media_signature_matches;
 use crate::storage::valid_key;
 use crate::storage::StorageError;
 use crate::storage::Upload;
+use anyhow::Context;
 use anyhow::Result;
 use codeyard_support::object_limits::MAX_OBJECT_BYTES;
 use sha2::Sha256;

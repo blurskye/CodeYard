@@ -60,7 +60,8 @@ pub async fn read_authority(
     })
 }
 
-macro_rules! require_read_org {
+#[macro_export]
+macro_rules! require_read_org_postgres {
     ($tx:ident, $actor:ident, $org:ident) => {
         match $crate::queries::postgres::organizations::authority::read_authority(
             &mut $tx, $actor, $org,

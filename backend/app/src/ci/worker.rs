@@ -9,6 +9,7 @@ use crate::ci::runner_labels::labels_from_value;
 use crate::ci::workers::CiWorkers;
 use anyhow::bail;
 use anyhow::ensure;
+use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_core::models::CiRun;
 use codeyard_model::ci::LogLine;

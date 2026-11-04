@@ -1,10 +1,9 @@
-use crate::queries::organizations::properties::effective_values;
 use crate::queries::organizations::properties::Definition;
 use crate::queries::organizations::properties::DefinitionRow;
 use crate::queries::organizations::properties::ValueInput;
 use crate::queries::organizations::OrganizationOutcome;
 use crate::queries::sqlite::organizations::authority::begin_read;
-use crate::queries::sqlite::organizations::authority::require_read_org;
+use crate::require_read_org_sqlite;
 use anyhow::Result;
 use sqlx::SqliteConnection;
 use sqlx::SqlitePool;
@@ -16,7 +15,7 @@ pub async fn definition(
     name: &str,
 ) -> Result<OrganizationOutcome<Option<Definition>>> {
     let mut tx = begin_read(pool).await?;
-    require_read_org!(tx, actor, org);
+    require_read_org_sqlite!(tx, actor, org);
     let result = sqlx::query_as::<_, DefinitionRow>("SELECT * FROM organization_repository_properties WHERE org_id=?1 AND LOWER(property_name)=LOWER(?2)")
         .bind(org)
         .bind(name)

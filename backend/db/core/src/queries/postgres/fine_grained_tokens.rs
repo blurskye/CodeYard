@@ -1,6 +1,5 @@
 use crate::queries::fine_grained_tokens::Bounds;
 use crate::queries::fine_grained_tokens::Policy;
-use crate::queries::fine_grained_tokens::Token;
 use anyhow::Result;
 use sqlx::PgPool;
 /// A token's bounds with its live membership and policy; package transactions read it too.

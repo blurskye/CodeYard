@@ -13,7 +13,7 @@ use codeyard_db_core::queries::sqlite::organizations::authority::authority;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
 use codeyard_db_core::queries::sqlite::organizations::authority::membership_role;
 use codeyard_db_core::queries::sqlite::organizations::authority::remaining_active_owner;
-use codeyard_db_core::queries::sqlite::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_sqlite;
 use sqlx::SqlitePool;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
@@ -26,7 +26,7 @@ pub async fn get_organization_role(
     org: i64,
 ) -> Result<OrganizationOutcome<OrgRole>> {
     let mut tx = begin_read(pool).await?;
-    let role = require_read_org!(tx, actor, org);
+    let role = require_read_org_sqlite!(tx, actor, org);
     tx.commit().await?;
     Ok(Applied(role))
 }
@@ -36,7 +36,7 @@ pub async fn count_organization_members(
     org: i64,
 ) -> Result<OrganizationOutcome<i64>> {
     let mut tx = begin_read(pool).await?;
-    require_read_org!(tx, actor, org);
+    require_read_org_sqlite!(tx, actor, org);
     let count = sqlx::query_scalar("SELECT COUNT(*) FROM org_memberships WHERE org_id=?1")
         .bind(org)
         .fetch_one(&mut *tx)
@@ -52,7 +52,7 @@ pub async fn list_organization_members(
     page: OrganizationPage,
 ) -> Result<OrganizationOutcome<Vec<OrgMembership>>> {
     let mut tx = begin_read(pool).await?;
-    require_read_org!(tx, actor, org);
+    require_read_org_sqlite!(tx, actor, org);
     let rows = sqlx::query_as(
         "SELECT * FROM org_memberships WHERE org_id=?1 AND id>?2 ORDER BY id LIMIT ?3",
     )

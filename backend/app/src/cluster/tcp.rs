@@ -9,6 +9,7 @@ use crate::cluster::transport::active_member;
 use crate::cluster::transport::ALPN_PAIR;
 use crate::cluster::transport::ALPN_RPC;
 use anyhow::bail;
+use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_core::DbPool;
 use codeyard_support::node_identity::NodeKey;

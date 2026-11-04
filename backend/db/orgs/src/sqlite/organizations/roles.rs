@@ -12,7 +12,7 @@ use codeyard_db_core::queries::sqlite::organizations::authority::active;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
 use codeyard_db_core::queries::sqlite::organizations::authority::membership_role;
-use codeyard_db_core::queries::sqlite::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_sqlite;
 use sqlx::SqliteConnection;
 use sqlx::SqlitePool;
 use OrganizationOutcome::Applied;
@@ -33,7 +33,7 @@ pub async fn catalog(
     org: i64,
 ) -> Result<OrganizationOutcome<Vec<OrganizationRole>>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org_sqlite!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     let roles = sqlx::query_as(
@@ -53,7 +53,7 @@ pub async fn users(
     window: (i64, i64),
 ) -> Result<OrganizationOutcome<Vec<UserAssignment>>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org_sqlite!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     if !role_exists(&mut tx, role).await? {
@@ -82,7 +82,7 @@ pub async fn teams(
     window: (i64, i64),
 ) -> Result<OrganizationOutcome<Vec<Team>>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org_sqlite!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     if !role_exists(&mut tx, role).await? {

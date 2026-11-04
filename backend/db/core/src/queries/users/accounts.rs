@@ -1,4 +1,3 @@
-use anyhow::Result;
 /// A settings operation retains its originating credential alongside account data.
 pub enum AccountCredential<'a> {
     Session(&'a str),

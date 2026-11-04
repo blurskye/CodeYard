@@ -6,7 +6,7 @@ use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
-use codeyard_db_core::queries::sqlite::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_sqlite;
 use sqlx::SqlitePool;
 use OrganizationOutcome::Applied;
 
@@ -48,7 +48,7 @@ pub async fn list_organization_repositories(
     page: OrganizationPage,
 ) -> Result<OrganizationOutcome<Vec<OrganizationRepository>>> {
     let mut tx = begin_read(pool).await?;
-    require_read_org!(tx, actor, org);
+    require_read_org_sqlite!(tx, actor, org);
     let readable = codeyard_db_core::queries::sqlite::repositories::access::readable_condition();
     let rows = sqlx::query_as(&format!("SELECT r.id, o.name AS owner, r.name FROM repositories r JOIN organizations o ON o.id=r.owner_org_id JOIN users u ON u.id=?3 WHERE r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id=?1 AND r.id>?2 AND {readable} ORDER BY r.id LIMIT ?4"))
         .bind(org)

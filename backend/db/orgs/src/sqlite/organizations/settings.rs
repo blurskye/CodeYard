@@ -3,13 +3,14 @@ use crate::organizations::settings::Settings;
 use crate::organizations::settings::Updated;
 use crate::sqlite::organizations::authority::credential;
 use crate::sqlite::organizations::authority::require_org;
+use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Organization;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
-use codeyard_db_core::queries::sqlite::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_sqlite;
 use sqlx::SqliteConnection;
 use sqlx::SqlitePool;
 use OrganizationOutcome::Applied;
@@ -32,7 +33,7 @@ pub async fn owned(
     org: i64,
 ) -> Result<OrganizationOutcome<Updated>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org_sqlite!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     let settings = get_on(&mut tx, org)

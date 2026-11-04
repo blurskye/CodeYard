@@ -3,6 +3,7 @@ use crate::ssh::handler::AuthOutcome;
 use crate::ssh::handler::GitSshHandler;
 use crate::ssh::rate_limit::client_key;
 use crate::ssh::rate_limit::RateLimiter;
+use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_core::DbPool;
 use rand::rngs::OsRng;

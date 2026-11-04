@@ -19,7 +19,7 @@ use codeyard_db_core::queries::postgres::organizations::authority::begin;
 use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
 use codeyard_db_core::queries::postgres::organizations::authority::membership_role;
 use codeyard_db_core::queries::postgres::organizations::authority::remaining_active_owner;
-use codeyard_db_core::queries::postgres::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_postgres;
 use sqlx::PgConnection;
 use sqlx::PgPool;
 use OrganizationOutcome::Applied;
@@ -302,7 +302,7 @@ pub async fn list_organization_invitations(
     page: OrganizationPage,
 ) -> Result<OrganizationOutcome<Vec<OrgInvitation>>> {
     let mut tx = begin_read(pool).await?;
-    let role = require_read_org!(tx, actor, org);
+    let role = require_read_org_postgres!(tx, actor, org);
     if !administers(role) {
         return Ok(Denied);
     }
@@ -324,7 +324,7 @@ pub async fn invitation_page(
     window: (i64, i64),
 ) -> Result<OrganizationOutcome<Vec<OrgInvitation>>> {
     let mut tx = begin_read(pool).await?;
-    let role = require_read_org!(tx, actor, org);
+    let role = require_read_org_postgres!(tx, actor, org);
     if !administers(role) || (filter.owner_only && role != OrgRole::Owner) {
         return Ok(Denied);
     }
@@ -344,7 +344,7 @@ pub async fn invitation_teams(
     window: (i64, i64),
 ) -> Result<OrganizationOutcome<Vec<Team>>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org_postgres!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     let exists: bool = sqlx::query_scalar(

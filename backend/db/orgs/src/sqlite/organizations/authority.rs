@@ -48,22 +48,24 @@ pub(super) async fn site_administrator(
 
 macro_rules! require_org {
     ($tx:ident, $actor:ident, $org:ident) => {
-        match $codeyard_db_core::queries::sqlite::organizations::authority::authority(
+        match codeyard_db_core::queries::sqlite::organizations::authority::authority(
             &mut $tx, $actor, $org,
         )
         .await?
         {
-            $codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(role) => role,
-            $codeyard_db_core::queries::organizations::OrganizationOutcome::Missing => {
-                return Ok($codeyard_db_core::queries::organizations::OrganizationOutcome::Missing)
+            codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(role) => role,
+            codeyard_db_core::queries::organizations::OrganizationOutcome::Missing => {
+                return Ok(codeyard_db_core::queries::organizations::OrganizationOutcome::Missing)
             }
-            $codeyard_db_core::queries::organizations::OrganizationOutcome::Suspended => {
-                return Ok($codeyard_db_core::queries::organizations::OrganizationOutcome::Suspended)
+            codeyard_db_core::queries::organizations::OrganizationOutcome::Suspended => {
+                return Ok(codeyard_db_core::queries::organizations::OrganizationOutcome::Suspended)
             }
-            _ => return Ok($codeyard_db_core::queries::organizations::OrganizationOutcome::Denied),
+            _ => return Ok(codeyard_db_core::queries::organizations::OrganizationOutcome::Denied),
         }
     };
 }
+pub(crate) use require_org;
+
 pub async fn metadata(connection: &mut SqliteConnection, org: i64) -> Result<OrganizationMetadata> {
     Ok(sqlx::query_as(
         "SELECT o.id,o.name,o.display_name,o.description,o.is_verified,NOT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) AS governance_suspended,o.avatar_file_id FROM organizations o WHERE o.id=?1",

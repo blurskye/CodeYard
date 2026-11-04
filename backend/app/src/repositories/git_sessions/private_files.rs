@@ -3,6 +3,7 @@
 use crate::repositories::git_sessions::validation::shell_safe_path;
 use anyhow::bail;
 use anyhow::ensure;
+use anyhow::Context;
 use anyhow::Result;
 use std::fs::DirBuilder;
 use std::fs::File;

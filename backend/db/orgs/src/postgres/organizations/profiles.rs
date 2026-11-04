@@ -13,7 +13,7 @@ use codeyard_db_core::queries::postgres::organizations::authority::authority;
 use codeyard_db_core::queries::postgres::organizations::authority::begin;
 use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
 use codeyard_db_core::queries::postgres::organizations::authority::read_active;
-use codeyard_db_core::queries::postgres::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_postgres;
 use sqlx::PgPool;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
@@ -146,7 +146,7 @@ pub async fn get_organization_avatar(
     org: i64,
 ) -> Result<OrganizationOutcome<Option<uuid::Uuid>>> {
     let mut tx = begin_read(pool).await?;
-    require_read_org!(tx, actor, org);
+    require_read_org_postgres!(tx, actor, org);
     let avatar = sqlx::query_scalar("SELECT avatar_file_id FROM organizations WHERE id=$1")
         .bind(org)
         .fetch_one(&mut *tx)
@@ -181,7 +181,7 @@ pub async fn get_organization_metadata(
     org: i64,
 ) -> Result<OrganizationOutcome<OrganizationMetadata>> {
     let mut tx = begin_read(pool).await?;
-    require_read_org!(tx, actor, org);
+    require_read_org_postgres!(tx, actor, org);
     let result = metadata(&mut tx, org).await?;
     tx.commit().await?;
     Ok(Applied(result))

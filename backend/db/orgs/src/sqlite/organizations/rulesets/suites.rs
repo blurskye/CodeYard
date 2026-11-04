@@ -11,7 +11,7 @@ use codeyard_db_core::queries::rulesets::records::SuiteFilter;
 use codeyard_db_core::queries::rulesets::records::SuiteResult;
 use codeyard_db_core::queries::sqlite::organizations::authority::active;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
-use codeyard_db_core::queries::sqlite::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_sqlite;
 
 pub async fn list_suites(
     pool: &SqlitePool,
@@ -21,7 +21,7 @@ pub async fn list_suites(
     page: Page,
 ) -> Result<OrganizationOutcome<Vec<Suite>>> {
     let mut tx = begin_read(pool).await?;
-    require_read_org!(tx, actor, org);
+    require_read_org_sqlite!(tx, actor, org);
     let readable = codeyard_db_core::queries::sqlite::repositories::access::readable_condition();
     let reference = filter.reference.as_deref();
     let short_ref = reference.filter(|r| !r.starts_with("refs/"));
@@ -45,7 +45,7 @@ pub async fn get_suite(
     id: i64,
 ) -> Result<OrganizationOutcome<Suite>> {
     let mut tx = begin_read(pool).await?;
-    require_read_org!(tx, actor, org);
+    require_read_org_sqlite!(tx, actor, org);
     let readable = codeyard_db_core::queries::sqlite::repositories::access::readable_condition();
     let row:Option<StoredSuite>=sqlx::query_as(&format!("SELECT s.* FROM repository_rule_suites s JOIN repositories r ON r.id=s.repo_id JOIN users u ON u.id=?2 WHERE s.org_id=?1 AND s.id=?3 AND r.owner_kind='org' AND r.owner_org_id=?1 AND r.owner_user_id IS NULL AND {readable}")).bind(org).bind(actor).bind(id).fetch_optional(&mut *tx).await?;
     let Some(row) = row else { return Ok(Missing) };

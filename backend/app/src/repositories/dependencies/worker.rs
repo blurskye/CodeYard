@@ -1,4 +1,5 @@
 //! Leased proposals consume the inventory and alerts maintained by the vulnerability worker.
+use anyhow::Context;
 
 use crate::ci::runs::CiRuns;
 use crate::repositories::dependencies::registry::Client;

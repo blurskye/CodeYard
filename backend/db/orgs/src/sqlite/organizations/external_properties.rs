@@ -7,7 +7,7 @@ use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
-use codeyard_db_core::queries::sqlite::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_sqlite;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use OrganizationOutcome::Applied;
@@ -20,7 +20,7 @@ pub async fn installations(
     org: i64,
 ) -> Result<OrganizationOutcome<Vec<Installation>>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org_sqlite!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     let rows = sqlx::query_as("SELECT display_name,installation_id FROM organization_external_property_installations WHERE org_id=$1 ORDER BY id").bind(org).fetch_all(&mut *tx).await?;
@@ -84,7 +84,7 @@ pub async fn definitions(
     org: i64,
 ) -> Result<OrganizationOutcome<Vec<String>>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org_sqlite!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     let rows = sqlx::query_scalar("SELECT DISTINCT v.property_name FROM organization_external_property_values v JOIN repositories r ON r.id=v.repo_id WHERE v.org_id=$1 AND r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL ORDER BY v.property_name").bind(org).fetch_all(&mut *tx).await?;

@@ -6,6 +6,7 @@ use codeyard_db_core::queries::actions::OrgCacheSettings;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::postgres::organizations::authority::begin;
 use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
+use codeyard_db_core::require_read_org_postgres;
 use sqlx::PgPool;
 
 pub async fn get_cache_settings(
@@ -21,7 +22,7 @@ pub async fn get_cache_settings(
     let Some(org) = org else {
         return Ok(OrganizationOutcome::Missing);
     };
-    let role = require_read_org!(tx, actor, org);
+    let role = require_read_org_postgres!(tx, actor, org);
     if !codeyard_db_core::queries::organizations::administers(role) {
         return Ok(OrganizationOutcome::Denied);
     }
@@ -108,7 +109,7 @@ pub async fn org_cache_usage(
     let Some(org) = org else {
         return Ok(OrganizationOutcome::Missing);
     };
-    let role = require_read_org!(tx, actor, org);
+    let role = require_read_org_postgres!(tx, actor, org);
     if !codeyard_db_core::queries::organizations::administers(role) {
         return Ok(OrganizationOutcome::Denied);
     }

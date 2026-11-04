@@ -1,3 +1,6 @@
+use crate::models::Notification;
+use crate::queries::notifications::records::NewNotification;
+use anyhow::Result;
 pub async fn ensure(
     connection: &mut sqlx::SqliteConnection,
     input: &NewNotification<'_>,

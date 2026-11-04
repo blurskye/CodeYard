@@ -11,7 +11,6 @@ use anyhow::ensure;
 use anyhow::Result;
 use sqlx::PgConnection;
 use sqlx::PgPool;
-use sqlx::Postgres;
 pub async fn readable(connection: &mut PgConnection, actor: i64, org: i64) -> Result<()> {
     match crate::queries::postgres::organizations::authority::read_authority(connection, actor, org)
         .await?

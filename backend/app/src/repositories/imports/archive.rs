@@ -1,5 +1,6 @@
 //! Reads migration records and Git object files without extracting an upstream tar to disk.
 use anyhow::ensure;
+use anyhow::Context;
 use anyhow::Result;
 use serde::de::SeqAccess;
 use serde::de::Visitor;

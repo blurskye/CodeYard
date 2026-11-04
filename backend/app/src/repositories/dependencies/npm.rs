@@ -1,6 +1,7 @@
 //! Bounded npm lockfiles and conservative registry patch updates, without running npm.
 use crate::npm::dependency_name;
 use anyhow::ensure;
+use anyhow::Context;
 use anyhow::Result;
 use base64::engine::general_purpose::STANDARD;
 use codeyard_db_repos::repositories::dependencies::MAX_PACKAGES;

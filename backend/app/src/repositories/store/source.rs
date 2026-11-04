@@ -1,4 +1,5 @@
 //! Fetch every advertised ref through Git's smart HTTP protocol, without following upstream URLs.
+use anyhow::Context;
 
 use crate::repositories::imports::Credentials;
 use crate::repositories::imports::MAX_IMPORT_PACK_BYTES;

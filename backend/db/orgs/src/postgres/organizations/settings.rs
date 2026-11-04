@@ -3,13 +3,14 @@ use crate::organizations::settings::Settings;
 use crate::organizations::settings::Updated;
 use crate::postgres::organizations::authority::credential;
 use crate::postgres::organizations::authority::require_org;
+use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Organization;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::postgres::organizations::authority::begin;
 use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
-use codeyard_db_core::queries::postgres::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_postgres;
 use sqlx::PgConnection;
 use sqlx::PgPool;
 use OrganizationOutcome::Applied;
@@ -28,7 +29,7 @@ pub async fn repository_requires_web_signoff(pool: &PgPool, repo: i64) -> Result
 
 pub async fn owned(pool: &PgPool, actor: i64, org: i64) -> Result<OrganizationOutcome<Updated>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org_postgres!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     let settings = get_on(&mut tx, org)

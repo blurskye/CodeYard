@@ -1,4 +1,3 @@
-use crate::models::Repository;
 use anyhow::ensure;
 use anyhow::Result;
 use serde::Deserialize;

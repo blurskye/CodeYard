@@ -1,4 +1,3 @@
-use codeyard_support::secret_detection::patterns::Pattern;
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
     #[error("Secret scanning access denied")]

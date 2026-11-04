@@ -1,4 +1,5 @@
 //! Registry downloads verify patch candidates; advisory matching belongs to vulnerabilities.
+use anyhow::Context;
 
 use anyhow::ensure;
 

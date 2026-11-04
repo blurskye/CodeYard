@@ -12,6 +12,7 @@ use crate::backups::repair::rebuild;
 use crate::backups::repair::verify;
 use anyhow::bail;
 use anyhow::ensure;
+use anyhow::Context;
 use anyhow::Result;
 use codeyard_git::mirror;
 use codeyard_support::fs::private_dir;

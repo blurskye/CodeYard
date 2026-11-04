@@ -9,6 +9,7 @@ use crate::ci::workflows::WorkflowDefinition;
 use crate::repositories::store::repo_store;
 use crate::repositories::store::types::MAX_COMMIT_PAGE_SIZE;
 use crate::repositories::store::RepoStore;
+use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
 use codeyard_git::CommitInfo;

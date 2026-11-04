@@ -6,6 +6,7 @@ use crate::storage::StorageError;
 use crate::storage::Upload;
 use anyhow::anyhow;
 use anyhow::ensure;
+use anyhow::Context;
 use anyhow::Result;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::config::BehaviorVersion;

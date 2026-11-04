@@ -1,6 +1,7 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
+use codeyard_model::advisories;
 use codeyard_model::advisories::Advisory;
 use codeyard_model::advisories::Data;
 use codeyard_model::advisories::Refusal;

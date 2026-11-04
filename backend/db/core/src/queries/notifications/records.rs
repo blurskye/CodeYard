@@ -1,4 +1,3 @@
-use crate::models::Notification;
 use serde_json::Value;
 pub struct NewNotification<'a> {
     pub user_id: i64,

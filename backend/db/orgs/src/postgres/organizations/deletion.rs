@@ -5,7 +5,7 @@ use codeyard_db_core::queries::credentials::Actor;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::postgres::organizations::authority::begin;
 use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
-use codeyard_db_core::queries::postgres::organizations::authority::require_read_org;
+use codeyard_db_core::require_read_org_postgres;
 use sqlx::PgConnection;
 use sqlx::PgPool;
 use OrganizationOutcome::Applied;
@@ -78,7 +78,7 @@ pub async fn count_organization_repositories(
     org: i64,
 ) -> Result<OrganizationOutcome<i64>> {
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    if require_read_org_postgres!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     let count = repository_count(&mut tx, org).await?;
