@@ -56,7 +56,7 @@ pub struct Update {
     /// Omitted leaves the stored policy alone; an explicit null clears it.
     #[serde(
         default,
-        deserialize_with = "super::repositories::records::nullable_change"
+        deserialize_with = "codeyard_db_repos::repositories::records::nullable_change"
     )]
     pub deployment_branch_policy: Option<Option<BranchPolicy>>,
 }

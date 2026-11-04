@@ -2,7 +2,7 @@
 use super::repository::{
     open_quarantined, peel_revision, process, quarantined_command, walk_commits,
 };
-use super::secret_detection::{
+use codeyard_support::secret_detection::{
     patterns::Pattern, scan_with_patterns_until, Detection, MAX_BLOB_BYTES,
 };
 use anyhow::{ensure, Context, Result};
