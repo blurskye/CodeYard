@@ -122,7 +122,7 @@ and results stay the same. A stage can be the last one.
    stages are committed before workspace, Clippy and WASM checks begin. Broker
    tests now live in `backend/app/tests/git_broker.rs` and link the app library
    with REST through one `AppState`. Hook barriers have one shared owner.
-   All workspace targets check. Clippy and WASM validation is pending.
+   All workspace targets check and Clippy is clean. WASM validation is pending.
 
 ## Move only: no behaviour change
 
