@@ -4,7 +4,6 @@ use axum::http::HeaderMap;
 use axum::http::Method;
 use axum::http::StatusCode;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::User;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 
@@ -791,7 +790,3 @@ use codeyard_app::api_shared::github::auth::ScopeError;
 use codeyard_app::api_shared::github::auth::authenticate;
 
 use codeyard_app::api_shared::github::auth::context;
-
-use codeyard_app::api_shared::github::auth::credential;
-
-use codeyard_app::api_shared::github::auth::identity;

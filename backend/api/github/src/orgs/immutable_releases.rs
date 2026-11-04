@@ -1,5 +1,4 @@
 //! Immutable release enforcement settings are owned by organization owners.
-use crate::auth;
 use crate::orgs::outcome;
 use crate::orgs::target;
 use axum::extract::OriginalUri;

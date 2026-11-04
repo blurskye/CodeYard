@@ -42,7 +42,7 @@ pub struct Outgoing {
     pub manual_actor: Option<i64>,
 }
 
-pub(crate) fn json_payload(outgoing: &Outgoing) -> Option<serde_json::Value> {
+pub fn json_payload(outgoing: &Outgoing) -> Option<serde_json::Value> {
     if outgoing.content_type == crate::webhooks::settings::FORM_CONTENT_TYPE {
         let json = url::form_urlencoded::parse(outgoing.body.as_bytes())
             .find(|(key, _)| key == "payload")?

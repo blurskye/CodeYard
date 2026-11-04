@@ -1,5 +1,4 @@
 //! Invitations remain offers until a verified recipient accepts through REST or native settings.
-use crate::auth;
 use crate::orgs::outcome;
 use crate::orgs::target;
 use axum::extract::OriginalUri;

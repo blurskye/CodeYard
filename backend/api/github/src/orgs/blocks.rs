@@ -1,5 +1,4 @@
 //! Organization blocking is enforced by native repository and invitation authority.
-use crate::auth;
 use crate::orgs::outcome;
 use crate::orgs::target;
 use axum::extract::OriginalUri;

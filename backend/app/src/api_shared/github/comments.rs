@@ -8,7 +8,7 @@ use std::collections::HashMap;
 pub struct Comment {
     pub id: i64,
     pub item: AssignedItem,
-    number: i32,
+    pub number: i32,
     author_id: i64,
     body: String,
     created_at: DateTime<Utc>,

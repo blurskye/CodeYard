@@ -1,4 +1,3 @@
-use crate::auth;
 use crate::orgs::membership_document;
 use crate::orgs::outcome;
 use crate::orgs::target;
@@ -157,5 +156,3 @@ async fn remove_member(
 ) -> Result<StatusCode> {
     remove(&state, &headers, &name, &username, true).await
 }
-
-use crate::orgs::membership;

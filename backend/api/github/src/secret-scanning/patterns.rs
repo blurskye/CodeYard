@@ -1,4 +1,3 @@
-use crate::auth;
 use crate::secret_scanning::error as alert_error;
 use axum::extract::OriginalUri;
 use axum::extract::Path;

@@ -23,7 +23,6 @@ use codeyard_api_http::shared::github::code_scanning::databases::HOST_UPLOAD_ROU
 use codeyard_api_http::shared::github::code_scanning::databases::UPLOAD_ROUTE as CODEQL_UPLOAD_ROUTE;
 use codeyard_app::app::AppState;
 use codeyard_model::github_error::Error;
-use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 mod actions;

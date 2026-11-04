@@ -1,5 +1,4 @@
 use crate::activity::engagement_error;
-use crate::auth;
 use crate::empty;
 use axum::body::Bytes;
 use axum::extract::OriginalUri;

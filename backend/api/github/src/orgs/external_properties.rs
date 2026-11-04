@@ -1,5 +1,4 @@
 //! External property values remain separate from organization-defined custom properties.
-use crate::auth;
 use crate::orgs::outcome;
 use crate::orgs::target;
 use axum::extract::Path;

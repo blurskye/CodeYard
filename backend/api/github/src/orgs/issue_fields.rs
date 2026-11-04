@@ -1,5 +1,4 @@
 //! Organization fields share inherited native definitions, typed values and stable select IDs.
-use crate::auth;
 use crate::orgs::target;
 use axum::extract::Path;
 use axum::extract::State;

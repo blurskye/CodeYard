@@ -677,8 +677,6 @@ use codeyard_app::api_shared::github::issues::read;
 
 use codeyard_app::api_shared::github::issues::resolve_assignees;
 
-use codeyard_app::api_shared::github::issues::split;
-
 pub mod relationships;
 
 pub mod issue_attributes;

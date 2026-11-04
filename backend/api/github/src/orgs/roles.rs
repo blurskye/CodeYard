@@ -1,5 +1,4 @@
 //! Predefined roles inherit native repository permissions without granting organization ownership.
-use crate::auth;
 use crate::orgs::outcome;
 use crate::orgs::target;
 use axum::extract::OriginalUri;

@@ -1,5 +1,4 @@
 //! Outside collaborators retain explicit repository grants, never organization-wide authority.
-use crate::auth;
 use crate::orgs::outcome;
 use crate::orgs::target;
 use axum::extract::OriginalUri;

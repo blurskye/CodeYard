@@ -1,5 +1,4 @@
 //! Organization hooks share validation, encrypted secrets and sends with native settings.
-use crate::auth;
 use crate::orgs::target;
 use crate::repos::webhooks::delivery_page;
 use crate::repos::webhooks::Deliveries;

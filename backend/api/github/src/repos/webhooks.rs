@@ -382,7 +382,7 @@ pub(crate) struct Deliveries {
 impl Deliveries {
     /// The history GitHub pages newest first by cursor, optionally keeping only successes or
     /// only failures: one row beyond the page tells whether another follows.
-    pub(super) fn window(&self, bodies: bool) -> Result<DeliveryWindow> {
+    pub(crate) fn window(&self, bodies: bool) -> Result<DeliveryWindow> {
         let before = self
             .cursor
             .as_ref()

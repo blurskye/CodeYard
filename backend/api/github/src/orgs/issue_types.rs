@@ -1,5 +1,4 @@
 //! Organization issue types are the same definitions inherited by repository issues.
-use crate::auth;
 use crate::orgs::target;
 use axum::extract::Path;
 use axum::extract::State;

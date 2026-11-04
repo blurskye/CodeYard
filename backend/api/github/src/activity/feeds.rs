@@ -1,4 +1,3 @@
-use crate::auth;
 use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;

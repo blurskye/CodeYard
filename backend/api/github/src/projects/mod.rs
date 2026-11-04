@@ -1,5 +1,4 @@
 //! Projects v2 adapters share the owner-scoped native project operations.
-use crate::auth;
 use crate::pagination::Cursor;
 use axum::extract::OriginalUri;
 use axum::extract::Path;

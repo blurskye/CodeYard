@@ -1,5 +1,4 @@
 //! Token-native projections and mutations of the same persisted inbox used by the web UI.
-use crate::auth;
 use crate::empty;
 use axum::body::Bytes;
 use axum::extract::rejection::QueryRejection;

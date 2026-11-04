@@ -1,4 +1,3 @@
-use crate::shared::repos::discussion::page;
 use codeyard_webui::pages::repos::issues as view;
 /// Bound the actual envelope, including drafts, pending threads, references and JSON escaping.
 pub(crate) fn bound_thread_projection(

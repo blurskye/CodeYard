@@ -532,10 +532,10 @@ pub async fn resolve_assignees(
 
 #[derive(Default)]
 pub struct Metadata {
-    issue_type: Option<Option<i64>>,
-    labels: Option<Vec<i64>>,
-    assignees: Option<Vec<codeyard_db_core::models::User>>,
-    milestone: Option<Option<i32>>,
+    pub issue_type: Option<Option<i64>>,
+    pub labels: Option<Vec<i64>>,
+    pub assignees: Option<Vec<codeyard_db_core::models::User>>,
+    pub milestone: Option<Option<i32>>,
 }
 
 impl Metadata {

@@ -1,6 +1,5 @@
 //! Project pages and plain forms use the same project operations as REST.
 use crate::context::PageContext;
-use axum::routing::get;
 use codeyard_db_repos::projects::Content;
 use codeyard_db_repos::projects::Owner;
 use codeyard_webui::pages::projects as view;

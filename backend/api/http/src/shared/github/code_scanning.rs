@@ -10,7 +10,6 @@ use axum::http::header;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::Response;
-use axum::routing::get;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
