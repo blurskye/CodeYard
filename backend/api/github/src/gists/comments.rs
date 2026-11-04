@@ -7,6 +7,7 @@ use crate::gists::list;
 use crate::gists::read;
 use crate::gists::remove;
 use crate::gists::update;
+use axum::response::IntoResponse;
 use codeyard_api_http::shared::github::gists::writer;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;

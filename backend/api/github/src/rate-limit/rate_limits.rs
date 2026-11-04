@@ -1,4 +1,5 @@
 //! Primary REST limits use persistent counters, including anonymous requests.
+use axum::response::IntoResponse;
 
 use axum::extract::Request;
 use axum::http::HeaderMap;

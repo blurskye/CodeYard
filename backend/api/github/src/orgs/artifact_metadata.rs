@@ -1,4 +1,5 @@
 //! Artifact inventory writes resolve the same repository-scoped provenance as attestation reads.
+use axum::response::IntoResponse;
 
 use axum::extract::OriginalUri;
 use axum::extract::Path;

@@ -1,4 +1,5 @@
 //! Package metadata and recovery use the same records and authority as the registries.
+use axum::response::IntoResponse;
 
 use axum::extract::OriginalUri;
 use axum::extract::Path;

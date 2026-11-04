@@ -9,6 +9,7 @@ use axum::response::Response;
 use codeyard_app::files::downloads::AssetDownload;
 use codeyard_app::files::downloads::DownloadTransport;
 use codeyard_app::storage::attachment_disposition;
+use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
 pub fn private_response(value: impl IntoResponse) -> Response {

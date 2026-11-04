@@ -1,4 +1,5 @@
 //! Sealed-box input is opened once, then stored with the site's encryption key.
+use axum::response::IntoResponse;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::OriginalUri;

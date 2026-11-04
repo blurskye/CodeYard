@@ -1,5 +1,7 @@
 //! Warm a derived Git index for authenticated repository mutations. This middleware grants
 //! nothing: failed/missing/stale proofs are rechecked and fail closed in the domain transaction.
+use axum::extract::FromRequestParts;
+use axum::response::IntoResponse;
 
 use axum::extract::Path;
 use axum::extract::Request;

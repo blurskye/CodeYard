@@ -1,4 +1,5 @@
 //! Invitations and effective collaborator permissions, including organization and team grants.
+use axum::response::IntoResponse;
 
 use crate::optional_json::OptionalJson;
 use axum::extract::OriginalUri;

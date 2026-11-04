@@ -5,6 +5,7 @@ use axum::http::HeaderMap;
 use axum::http::HeaderValue;
 use axum::http::StatusCode;
 use axum::http::Uri;
+use axum::response::IntoResponse;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;

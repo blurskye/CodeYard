@@ -1,5 +1,6 @@
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::response::Response;
 use codeyard_app::app::AppState;
 use codeyard_git::gist_types::MAX_GIST_REQUEST_BYTES;

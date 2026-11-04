@@ -5,6 +5,7 @@
 )]
 //! Repository routes. The repository resource, its creation form, its settings page and the
 //! repository-wide form endpoint stay here. Code, refs, settings and activity own their routes.
+use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Router;

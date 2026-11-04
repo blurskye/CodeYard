@@ -1,6 +1,7 @@
 //! The `.diff` and `.patch` media types, which `gh pr diff` and `git am` read.
 use axum::http::header;
 use axum::http::HeaderMap;
+use axum::response::IntoResponse;
 use axum::response::Response;
 use codeyard_app::repositories::store::RepoStore;
 use codeyard_git::error::ErrorKind;

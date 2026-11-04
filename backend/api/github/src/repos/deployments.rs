@@ -1,4 +1,5 @@
 //! Deployment requests use immutable commits and preserve every reported status.
+use axum::response::IntoResponse;
 
 use axum::extract::OriginalUri;
 use axum::extract::Path;

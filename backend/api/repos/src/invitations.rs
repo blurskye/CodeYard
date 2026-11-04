@@ -1,4 +1,5 @@
 //! Native recipient workflow, backed by the same invitation transactions as the REST adapters.
+use axum::response::IntoResponse;
 
 use axum::extract::Path;
 use axum::extract::State;

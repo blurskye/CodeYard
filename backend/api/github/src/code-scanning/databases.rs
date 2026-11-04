@@ -7,6 +7,7 @@ use axum::extract::State;
 use axum::http::header;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::response::Response;
 use codeyard_api_http::shared::github::code_scanning::failure;
 use codeyard_api_http::shared::github::code_scanning::scope;

@@ -5,6 +5,8 @@ edition.workspace = true
 license = "LGPL-3.0-or-later"
 
 [dependencies]
+codeyard-db-actions.workspace = true
+codeyard-db-orgs.workspace = true
 anyhow.workspace = true
 async-graphql.workspace = true
 axum.workspace = true

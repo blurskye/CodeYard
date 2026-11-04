@@ -8,6 +8,7 @@ use crate::gists::InvalidInput;
 use crate::gists::EDITOR_BYTES;
 use crate::gists::PAGE_SIZE;
 use anyhow::Result;
+use axum::response::IntoResponse;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::store::repo_store;

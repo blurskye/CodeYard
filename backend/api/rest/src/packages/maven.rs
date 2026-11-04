@@ -9,6 +9,7 @@ use axum::http::header;
 use axum::http::Method;
 use axum::http::StatusCode;
 use axum::middleware::Next;
+use axum::response::IntoResponse;
 use axum::response::Response;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::packages::MavenFile;

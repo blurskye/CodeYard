@@ -9,6 +9,7 @@ use axum::http::HeaderMap;
 use axum::http::HeaderValue;
 use axum::http::Method;
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::response::Redirect;
 use axum::response::Response;
 use codeyard_app::app::AppState;

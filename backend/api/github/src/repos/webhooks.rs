@@ -1,4 +1,5 @@
 //! Repository hooks share validation, encrypted secrets and delivery with the settings page.
+use axum::response::IntoResponse;
 
 use axum::extract::OriginalUri;
 use axum::extract::Path;

@@ -1,4 +1,5 @@
 //! Confidential dependency review; the domain and transactional DAL remain authoritative.
+use axum::response::IntoResponse;
 
 use crate::forms::checkbox;
 use axum::extract::DefaultBodyLimit;

@@ -8,6 +8,7 @@ use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;
 use axum::http::HeaderMap;
+use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::get;
 use axum::routing::MethodRouter;

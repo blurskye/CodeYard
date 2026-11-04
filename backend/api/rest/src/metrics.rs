@@ -1,4 +1,5 @@
 //! Private Prometheus gauges. Node ids and fixed states are the only labels.
+use axum::response::IntoResponse;
 use std::io::Write;
 use subtle::ConstantTimeEq;
 

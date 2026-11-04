@@ -1,4 +1,5 @@
 //! Repository, user and organization endpoints share bundles, subject indexes and live repository access.
+use axum::response::IntoResponse;
 
 use crate::pagination::Cursor;
 use axum::extract::OriginalUri;

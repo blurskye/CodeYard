@@ -1,4 +1,5 @@
 //! Branch merges are direct native writes, never synthetic pull-request merges.
+use axum::response::IntoResponse;
 
 use axum::extract::Path;
 use axum::extract::Request;

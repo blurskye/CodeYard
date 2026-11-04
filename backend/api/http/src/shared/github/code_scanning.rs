@@ -1,4 +1,5 @@
 //! Code scanning accepts open scanners rather than depending on GitHub's CodeQL service.
+use axum::response::IntoResponse;
 
 use crate::shared::github::pagination::Pagination;
 use axum::extract::OriginalUri;

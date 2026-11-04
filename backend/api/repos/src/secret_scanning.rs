@@ -1,4 +1,5 @@
 //! Native secret scanning pages use the same transactions as REST.
+use axum::response::IntoResponse;
 
 use axum::extract::Path;
 use axum::extract::State;

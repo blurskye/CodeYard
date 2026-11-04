@@ -11,6 +11,7 @@ use axum::http::HeaderMap;
 use axum::http::HeaderValue;
 use axum::http::StatusCode;
 use axum::http::Uri;
+use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::delete;
 use axum::routing::get;

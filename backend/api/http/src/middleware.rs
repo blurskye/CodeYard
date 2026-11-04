@@ -1,6 +1,7 @@
 //! Node access and private representation middleware.
 use crate::error::ApiError;
 use crate::session::get_current_user;
+use axum::body::HttpBody;
 use axum::extract::ConnectInfo;
 use axum::extract::MatchedPath;
 use axum::extract::Request;
@@ -8,6 +9,7 @@ use axum::http::header;
 use axum::http::Method;
 use axum::http::StatusCode;
 use axum::middleware::Next;
+use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::Extension;
 use axum::Json;

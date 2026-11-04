@@ -1,4 +1,5 @@
 //! Repository advisories and confidential reports share the native disclosure workflow.
+use axum::response::IntoResponse;
 
 use axum::extract::OriginalUri;
 use axum::extract::Path;

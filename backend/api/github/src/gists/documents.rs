@@ -7,6 +7,7 @@ use crate::gists::list;
 use crate::gists::public;
 use crate::gists::remove;
 use crate::gists::revision;
+use axum::response::IntoResponse;
 use codeyard_app::app::AppState;
 use codeyard_app::gists::LoadedGist;
 use codeyard_app::repositories::store::repo_store;

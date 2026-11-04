@@ -144,7 +144,7 @@ where
                     let moved = if issue || pull {
                         false
                     } else {
-                        match super::redirect(pool, record.id, number)
+                        match codeyard_db_repos::issues::management::redirect(pool, record.id, number)
                             .await
                             .ok()
                             .flatten()

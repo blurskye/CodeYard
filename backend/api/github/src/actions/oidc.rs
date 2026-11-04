@@ -1,4 +1,5 @@
 //! OIDC settings share the issuer's stored templates and native administration checks.
+use axum::response::IntoResponse;
 
 use axum::extract::Path;
 use axum::extract::Request;

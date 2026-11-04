@@ -1,6 +1,7 @@
 //! One address for every account picture: `/avatars/NAME`. An account with an uploaded picture
 //! is sent to that file, whose own visibility rules apply. Any other name, including a deleted
 //! account's, gets a generated square with the first letter, so a timeline never has a gap.
+use axum::response::IntoResponse;
 
 use axum::extract::Path;
 use axum::extract::State;

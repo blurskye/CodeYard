@@ -1,4 +1,5 @@
 //! Organization cache reports use one authorized snapshot, including private repositories.
+use axum::response::IntoResponse;
 
 use axum::extract::OriginalUri;
 use axum::extract::Path;

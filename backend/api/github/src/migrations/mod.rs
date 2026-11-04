@@ -1,4 +1,5 @@
 //! Source-import status and retry use the same durable attempt as the background Git transfer.
+use axum::response::IntoResponse;
 
 use axum::body::to_bytes;
 use axum::extract::Path;

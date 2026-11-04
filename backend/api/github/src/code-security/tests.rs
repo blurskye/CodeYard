@@ -1,4 +1,5 @@
 use crate::code_security::failure;
+use axum::response::IntoResponse;
 
 #[tokio::test]
 async fn code_scanning_security_configuration_errors_use_string_details() {

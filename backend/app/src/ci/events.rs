@@ -26,7 +26,7 @@ pub fn valid_dispatch(event_type: &str, client_payload: &Value) -> bool {
 impl CiRuns {
     /// Sends the `repository_dispatch` webhook and queues the default branch's matching
     /// workflows. Callers check write access and `valid_dispatch` first.
-    pub(crate) async fn dispatch_repository_event(
+    pub async fn dispatch_repository_event(
         &self,
         repo: &Repository,
         actor: i64,

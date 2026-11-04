@@ -5,6 +5,7 @@ use crate::auth::github_apps::Fields;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::http::Uri;
+use axum::response::IntoResponse;
 use axum::response::Redirect;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;

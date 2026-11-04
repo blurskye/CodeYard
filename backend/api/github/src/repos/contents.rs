@@ -1,4 +1,5 @@
 //! Contents API preconditions use blob IDs; publication still leases the entire branch tip.
+use axum::response::IntoResponse;
 
 use axum::extract::Path;
 use axum::extract::Query;
