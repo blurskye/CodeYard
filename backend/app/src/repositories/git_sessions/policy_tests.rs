@@ -7,6 +7,8 @@ mod fixture {
     use base64::Engine;
 
     use crate::repositories::git_sessions::hook_barrier::hold_next_hook;
+    use crate::repositories::git_sessions::hook_barrier::Barrier;
+    use crate::repositories::git_sessions::hook_barrier::BARRIERS;
     use tokio::sync::oneshot;
 
     /// Waits until the push reaches its hook. If the push ends first, say why
