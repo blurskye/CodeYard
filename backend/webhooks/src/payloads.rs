@@ -1908,7 +1908,7 @@ pub struct PushedCommits {
     pub forced: bool,
 }
 
-pub(crate) fn bounded_text(text: &str, limit: usize) -> String {
+pub fn bounded_text(text: &str, limit: usize) -> String {
     let mut end = text.len().min(limit);
     while !text.is_char_boundary(end) {
         end -= 1;

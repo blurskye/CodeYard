@@ -1,6 +1,7 @@
 pub mod activity;
 pub mod collaborators;
 pub mod commit_comments;
+pub mod community;
 pub mod dependencies;
 pub mod deploy_keys;
 pub mod editor;

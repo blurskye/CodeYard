@@ -195,5 +195,3 @@ pub(crate) fn store_error(error: anyhow::Error) -> codeyard_git::error::RepoErro
         ),
     }
 }
-
-use codeyard_repos::dependencies::{lockfiles, npm};

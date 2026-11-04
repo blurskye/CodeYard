@@ -204,7 +204,7 @@ pub(super) async fn resolve(
             .await?;
             let owner = crate::repository::owner(repo, request).await?;
             Ok(files.first().map(|(path, text)| {
-                let covenant = codeyard_app::repositories::community::contributor_covenant(text);
+                let covenant = codeyard_repos::community::contributor_covenant(text);
                 json!({"key":if covenant { "contributor_covenant" } else { "other" },"name":if covenant { "Contributor Covenant" } else { "Other" },"url":url(&codeyard_webui::pages::repos::ref_path::branch_url(&format!("/{}/{}",owner,repo.name),"blob",&repo.default_branch,path))})
             }).unwrap_or(Value::Null))
         }

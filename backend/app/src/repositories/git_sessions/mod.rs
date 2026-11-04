@@ -307,5 +307,3 @@ pub async fn receive_session(
         anyhow::bail!("Git receive requires Linux")
     }
 }
-
-use codeyard_repos::validation;

@@ -2728,5 +2728,3 @@ impl RepoStore {
 
 #[cfg(test)]
 mod tests;
-
-use codeyard_repos::{editor, gists, source};

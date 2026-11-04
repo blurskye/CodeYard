@@ -1,7 +1,6 @@
 //! Core addresses and the dialing-only context for a worker with no database.
 use crate::cluster::context::NodeContext;
 use anyhow::ensure;
-use anyhow::Context;
 use anyhow::Result;
 use codeyard_cluster::settings::Settings;
 use codeyard_cluster::transport::NodeAddress;
