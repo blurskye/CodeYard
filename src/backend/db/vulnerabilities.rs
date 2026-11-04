@@ -31,7 +31,7 @@ impl Settings {
             serde_json::from_str(&self.ecosystems).map_err(|_| Refusal::Invalid)?;
         let mut unique = Vec::new();
         for ecosystem in ecosystems {
-            if !crate::backend::model::vulnerabilities::ECOSYSTEMS.contains(&ecosystem.as_str()) {
+            if !codeyard_model::vulnerabilities::ECOSYSTEMS.contains(&ecosystem.as_str()) {
                 return Err(Refusal::Invalid);
             }
             if !unique.contains(&ecosystem) {

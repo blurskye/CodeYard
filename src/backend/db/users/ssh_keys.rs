@@ -1,8 +1,8 @@
 //! Shared named operation surface; native transactions stay inside db.
 use crate::backend::db::models::{SshKey, UserWithKey};
 use crate::backend::db::DbPool;
-use crate::backend::model::identity::SshKeyWriteRefusal;
 use anyhow::Result;
+use codeyard_model::identity::SshKeyWriteRefusal;
 use ssh_key::{HashAlg, PublicKey};
 
 #[derive(Debug, sqlx::FromRow)]
@@ -20,7 +20,7 @@ native_operation!(crate::backend::db::postgres::users::ssh_keys::list_user_key_s
     fn list_user_key_summaries(pool: &DbPool, user_id: i64, credential: &super::accounts::AccountCredential<'_>, after: i64) -> Result<Vec<SshKeySummary>>);
 
 fn parse_key_parts(key_type: &str, blob: &str) -> Result<PublicKey, SshKeyWriteRefusal> {
-    use SshKeyWriteRefusal::InvalidKey;
+    use codeyard_model::identity::SshKeyWriteRefusal::InvalidKey;
     if !matches!(
         key_type,
         "ssh-ed25519"
@@ -49,7 +49,7 @@ pub const MAX_PUBLIC_KEY_BYTES: usize = 32768;
 
 /// One complete-key policy for enrollment and both SSH transports; comments are labels only.
 pub(crate) fn parse_public_key(public_key: &str) -> Result<PublicKey, SshKeyWriteRefusal> {
-    use SshKeyWriteRefusal::InvalidKey;
+    use codeyard_model::identity::SshKeyWriteRefusal::InvalidKey;
     let public_key = public_key.trim();
     if public_key.len() > MAX_PUBLIC_KEY_BYTES || public_key.contains(['\r', '\n', '\0']) {
         return Err(InvalidKey);
@@ -115,7 +115,7 @@ mod tests {
         ] {
             assert_eq!(
                 parse_public_key(&input).unwrap_err(),
-                SshKeyWriteRefusal::InvalidKey,
+                codeyard_model::identity::SshKeyWriteRefusal::InvalidKey,
                 "{input}"
             );
         }
@@ -132,7 +132,7 @@ mod tests {
             );
             assert_eq!(
                 parse_public_key(&input).unwrap_err(),
-                SshKeyWriteRefusal::InvalidKey
+                codeyard_model::identity::SshKeyWriteRefusal::InvalidKey
             );
         }
         let blob = ED.split_whitespace().nth(1).unwrap();

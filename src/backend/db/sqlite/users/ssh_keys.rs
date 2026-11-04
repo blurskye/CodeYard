@@ -2,8 +2,8 @@ use crate::backend::db::models::{SshKey, User, UserWithKey};
 use crate::backend::db::users::accounts::{AccountCredential, AccountRestricted};
 use crate::backend::db::users::ssh_keys::calculate_fingerprint;
 use crate::backend::db::users::ssh_keys::valid_stored_key;
-use crate::backend::model::identity::SshKeyWriteRefusal;
 use anyhow::Result;
+use codeyard_model::identity::SshKeyWriteRefusal;
 use sqlx::SqlitePool;
 use tracing::debug;
 
@@ -73,7 +73,7 @@ async fn require_key_account(
             .map_err(|error| {
                 if error.is::<AccountRestricted>() {
                     anyhow::Error::from(
-                        crate::backend::model::identity::SshKeyWriteRefusal::AccountRestricted,
+                        codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted,
                     )
                 } else {
                     error
@@ -88,12 +88,12 @@ async fn require_key_account(
     .await?;
     anyhow::ensure!(
         active == Some(true),
-        crate::backend::model::identity::SshKeyWriteRefusal::AccountRestricted
+        codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted
     );
     if let Some(AccountCredential::Session(session)) = credential {
         anyhow::ensure!(
             super::transitions::live_session(tx, user, session).await?,
-            crate::backend::model::identity::SshKeyWriteRefusal::InvalidSession
+            codeyard_model::identity::SshKeyWriteRefusal::InvalidSession
         );
     }
     Ok(())
@@ -124,7 +124,7 @@ async fn insert_ssh_key(
             .await?;
     anyhow::ensure!(
         !used,
-        crate::backend::model::identity::SshKeyWriteRefusal::AlreadyUsed
+        codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed
     );
     let result = sqlx::query_as::<_, SshKey>(
         r#"
@@ -143,7 +143,7 @@ async fn insert_ssh_key(
     // The unique index is the final guard; report its violation as the refusal above.
     .map_err(|error| match &error {
         sqlx::Error::Database(database) if database.is_unique_violation() => {
-            anyhow::Error::from(crate::backend::model::identity::SshKeyWriteRefusal::AlreadyUsed)
+            anyhow::Error::from(codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed)
         }
         _ => anyhow::Error::from(error),
     })?;

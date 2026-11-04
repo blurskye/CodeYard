@@ -378,7 +378,7 @@ native_operation!(crate::backend::db::postgres::ci::append_ci_logs,
     run_id: i64,
     worker: &str,
     sequence: i64,
-    lines: &[crate::backend::model::ci::LogLine],
+    lines: &[codeyard_model::ci::LogLine],
 ) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::ci::list_ci_logs,

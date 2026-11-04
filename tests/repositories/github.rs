@@ -1752,8 +1752,8 @@ async fn deploy_keys_contract(pg: bool) {
         )
         .await;
     let id = key["id"].as_i64().unwrap();
-    use codeyard::backend::model::repositories::DeployKeyError;
     use codeyard::backend::repositories::deploy_keys::remove_key;
+    use codeyard_model::repositories::DeployKeyError;
     assert!(matches!(
         remove_key(
             f.pool(),
@@ -1766,7 +1766,7 @@ async fn deploy_keys_contract(pg: bool) {
             id
         )
         .await,
-        Err(crate::backend::model::repositories::DeployKeyError::Denied)
+        Err(codeyard_model::repositories::DeployKeyError::Denied)
     ));
     f.execute(
         "UPDATE personal_access_tokens SET expires_at='2000-01-01T00:00:00Z' WHERE id=$1",
@@ -1785,7 +1785,7 @@ async fn deploy_keys_contract(pg: bool) {
             id
         )
         .await,
-        Err(crate::backend::model::repositories::DeployKeyError::Denied)
+        Err(codeyard_model::repositories::DeployKeyError::Denied)
     ));
     checked(
         &router,

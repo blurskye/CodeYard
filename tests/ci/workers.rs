@@ -14,7 +14,6 @@ use codeyard::backend::cluster::rpc;
 use codeyard::backend::cluster::NodeContext;
 use codeyard::backend::crypto::SecretEncryptor;
 use codeyard::backend::db;
-use codeyard::backend::model::ci::LogLine;
 use codeyard::backend::notifications::current_event;
 use codeyard::backend::notifications::NotificationBroadcaster;
 use codeyard::backend::notifications::NotificationEvent;
@@ -22,6 +21,7 @@ use codeyard::backend::repositories::store::ErrorKind;
 use codeyard::backend::repositories::store::GitService;
 use codeyard::backend::repositories::store::GitSession;
 use codeyard::backend::repositories::store::RepoStore;
+use codeyard_model::ci::LogLine;
 use iroh::protocol::ProtocolHandler;
 use serde_json::json;
 use std::{
@@ -3683,13 +3683,7 @@ async fn log_totals_close_a_run_at_its_limit_with_one_truncation_line() {
         .await
         .unwrap()
         .unwrap();
-        set_log_totals(
-            pool,
-            run.id,
-            codeyard::backend::model::ci::MAX_RUN_LOG_LINES - 2,
-            0,
-        )
-        .await;
+        set_log_totals(pool, run.id, codeyard_model::ci::MAX_RUN_LOG_LINES - 2, 0).await;
 
         assert!(!db::ci::append_ci_logs(
             pool,

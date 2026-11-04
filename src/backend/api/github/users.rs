@@ -715,11 +715,11 @@ async fn create_key(
     )
     .await
     .map_err(|error| {
-        match error.downcast_ref::<crate::backend::model::identity::SshKeyWriteRefusal>() {
-            Some(crate::backend::model::identity::SshKeyWriteRefusal::InvalidKey) => {
+        match error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>() {
+            Some(codeyard_model::identity::SshKeyWriteRefusal::InvalidKey) => {
                 Error::validation("Key", "key", "invalid")
             }
-            Some(crate::backend::model::identity::SshKeyWriteRefusal::AlreadyUsed) => {
+            Some(codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed) => {
                 Error::validation("Key", "key", "already_exists")
             }
             Some(_) => Error::new(StatusCode::FORBIDDEN, "Account is restricted"),
@@ -751,8 +751,8 @@ async fn delete_key(
     )
     .await
     .map_err(|error| {
-        match error.downcast_ref::<crate::backend::model::identity::SshKeyWriteRefusal>() {
-            Some(crate::backend::model::identity::SshKeyWriteRefusal::AccountRestricted) => {
+        match error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>() {
+            Some(codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted) => {
                 Error::new(StatusCode::FORBIDDEN, "Account is restricted")
             }
             _ => Error::unavailable(error),

@@ -6,8 +6,8 @@ use codeyard::backend::ci::CiConfig;
 use codeyard::backend::db;
 use codeyard::backend::db::action_logs::Target;
 use codeyard::backend::db::models::CiRun;
-use codeyard::backend::model::ci::LogLine;
 use codeyard_actions::progress::{Event, Update};
+use codeyard_model::ci::LogLine;
 use std::io::Read;
 
 const WORKER: &str = "chunk-worker";

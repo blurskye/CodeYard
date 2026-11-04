@@ -9,7 +9,7 @@ use codeyard::backend::ci;
 use codeyard::backend::ci::admission::AdmissionError;
 use codeyard::backend::db;
 use codeyard::backend::db::ci::CiRunDeletion;
-use codeyard::backend::model::ci::LogLine;
+use codeyard_model::ci::LogLine;
 use std::collections::BTreeMap;
 
 async fn contract(pg: bool) {

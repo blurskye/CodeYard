@@ -151,24 +151,24 @@ def types():
         "ci::logs::MAX_RUN_LOG_LINES": "ci::MAX_RUN_LOG_LINES",
         "ci::logs::MAX_RUN_LOG_BYTES": "ci::MAX_RUN_LOG_BYTES",
         "identity::oauth_apps::CLI_CLIENT": "identity::CLI_CLIENT",
-        "crate::backend::model::identity::SshKeyWriteRefusal": "identity::SshKeyWriteRefusal",
+        "codeyard_model::identity::SshKeyWriteRefusal": "identity::SshKeyWriteRefusal",
         "repositories::dependency_graph::Package": "repositories::Package",
         "repositories::deploy_keys::DeployKeyError": "repositories::DeployKeyError",
         "repositories::code_owners::MAX_REVIEWERS": "repositories::MAX_REVIEWERS",
         "vulnerabilities::ECOSYSTEMS": "vulnerabilities::ECOSYSTEMS",
         "vulnerabilities::MAX_AFFECTED_PACKAGES": "vulnerabilities::MAX_AFFECTED_PACKAGES",
     }
-    rewrite([("crate::backend::" + old, "crate::backend::model::" + new) for old, new in names.items()])
+    rewrite([("crate::backend::" + old, "codeyard_model::" + new) for old, new in names.items()])
     for path, imports in {
-        "ci/queue.rs": "use crate::backend::model::ci::LogLine;",
-        "ci/tokens.rs": "use crate::backend::model::ci::MAX_EXPANDED_JOBS;",
-        "ci/logs.rs": "use crate::backend::model::ci::{MAX_RUN_LOG_LINES, MAX_RUN_LOG_BYTES};",
-        "identity/oauth_apps.rs": "use crate::backend::model::identity::CLI_CLIENT;",
-        "db/users/ssh_keys.rs": "use crate::backend::model::identity::SshKeyWriteRefusal;",
-        "repositories/dependency_graph.rs": "use crate::backend::model::repositories::Package;",
-        "repositories/deploy_keys.rs": "use crate::backend::model::repositories::DeployKeyError;",
-        "repositories/code_owners.rs": "use crate::backend::model::repositories::MAX_REVIEWERS;",
-        "vulnerabilities/mod.rs": "use crate::backend::model::vulnerabilities::{ECOSYSTEMS, MAX_AFFECTED_PACKAGES};",
+        "ci/queue.rs": "use codeyard_model::ci::LogLine;",
+        "ci/tokens.rs": "use codeyard_model::ci::MAX_EXPANDED_JOBS;",
+        "ci/logs.rs": "use codeyard_model::ci::{MAX_RUN_LOG_LINES, MAX_RUN_LOG_BYTES};",
+        "identity/oauth_apps.rs": "use codeyard_model::identity::CLI_CLIENT;",
+        "db/users/ssh_keys.rs": "use codeyard_model::identity::SshKeyWriteRefusal;",
+        "repositories/dependency_graph.rs": "use codeyard_model::repositories::Package;",
+        "repositories/deploy_keys.rs": "use codeyard_model::repositories::DeployKeyError;",
+        "repositories/code_owners.rs": "use codeyard_model::repositories::MAX_REVIEWERS;",
+        "vulnerabilities/mod.rs": "use codeyard_model::vulnerabilities::{ECOSYSTEMS, MAX_AFFECTED_PACKAGES};",
     }.items():
         prepend(Path("src/backend") / path, imports)
 
@@ -188,7 +188,7 @@ def model():
     (destination / "mod.rs").rename(destination / "lib.rs")
     path = Path("src/backend/mod.rs")
     path.write_text(path.read_text().replace("pub mod model;\n", ""))
-    rewrite([("crate::backend::model", "codeyard_model")])
+    rewrite([("codeyard_model", "codeyard_model")])
 
 
 def core():

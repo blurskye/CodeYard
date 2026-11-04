@@ -85,7 +85,7 @@ async fn contract(postgres: bool) {
     let inventory = codeyard::backend::repositories::dependency_graph::snapshot(
         sha.clone(),
         "refs/heads/main".into(),
-        vec![codeyard::backend::model::repositories::Package {
+        vec![codeyard_model::repositories::Package {
             manifest: "package-lock.json".into(),
             ecosystem: "npm".into(),
             name: "foo".into(),

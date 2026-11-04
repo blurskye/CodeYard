@@ -31,7 +31,7 @@ pub async fn account_statistics(
                 AND (NOT ('user'=ANY(string_to_array(o.scopes,',')) OR 'read:user'=ANY(string_to_array(o.scopes,',')))
                     OR (o.client_id<>$3 AND NOT EXISTS(SELECT 1 FROM oauth_applications a WHERE a.client_id=o.client_id))
                     OR EXISTS(SELECT 1 FROM oauth_applications a WHERE a.client_id=o.client_id AND a.is_github_app))))"))
-        .bind(user).bind(token).bind(crate::backend::model::identity::CLI_CLIENT).fetch_optional(pool).await?)
+        .bind(user).bind(token).bind(codeyard_model::identity::CLI_CLIENT).fetch_optional(pool).await?)
 }
 
 pub async fn public_email(pool: &PgPool, user: i64) -> Result<Option<String>> {

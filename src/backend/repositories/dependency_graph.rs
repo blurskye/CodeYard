@@ -3,11 +3,11 @@ use super::{
     dependencies::npm::Lockfile,
     store::{repo_store, ErrorKind, RepoError},
 };
-use crate::backend::model::repositories::Package;
 use crate::backend::{
     app::AppState,
     db::{self, dependency_graph::Reader, models::Repository},
 };
+use codeyard_model::repositories::Package;
 use std::collections::{BTreeMap, HashSet};
 
 fn unavailable(_: anyhow::Error) -> RepoError {

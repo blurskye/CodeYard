@@ -12,7 +12,7 @@ use codeyard::backend::{
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-const CLI: &str = crate::backend::model::identity::CLI_CLIENT;
+const CLI: &str = codeyard_model::identity::CLI_CLIENT;
 const SECRET: &str = "34ddeff2b558a23d38fba8a6de74f086ede1cc0b";
 const DEVICE: &str = "urn:ietf:params:oauth:grant-type:device_code";
 

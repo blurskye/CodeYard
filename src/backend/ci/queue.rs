@@ -1,6 +1,5 @@
 //! One CI queue, reached through the database or a paired core node.
 use super::{config::RunLimits, CiConfig, CiExecutionMode};
-use crate::backend::model::ci::LogLine;
 use crate::backend::{
     cluster::{self, rpc, NodeContext},
     crypto::SecretEncryptor,
@@ -9,6 +8,7 @@ use crate::backend::{
     repositories::store::{repo_store, RepoStore},
 };
 use anyhow::{ensure, Context, Result};
+use codeyard_model::ci::LogLine;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::watch;

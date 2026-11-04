@@ -9,8 +9,6 @@ use crate::backend::api::repos::forms::{checkbox, field};
 use crate::backend::api::repos::repository::{settings_model, settings_response};
 use crate::backend::app::AppState;
 use crate::backend::db::models::{DeployKey, Repository, User};
-use crate::backend::model::identity::SshKeyWriteRefusal;
-use crate::backend::model::repositories::DeployKeyError;
 use crate::backend::repositories::deploy_keys as keys;
 use axum::{
     extract::{Path, State},
@@ -20,6 +18,8 @@ use axum::{
     Json, Router,
 };
 use chrono::{DateTime, Utc};
+use codeyard_model::identity::SshKeyWriteRefusal;
+use codeyard_model::repositories::DeployKeyError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -61,20 +61,20 @@ pub struct CreateDeployKeyRequest {
 /// The HTTP status and stable code for a refused key operation. The JSON and form paths share it.
 fn refusal(error: &DeployKeyError) -> (StatusCode, &'static str) {
     match error {
-        crate::backend::model::repositories::DeployKeyError::Denied => {
+        codeyard_model::repositories::DeployKeyError::Denied => {
             (StatusCode::FORBIDDEN, "repository_admin_required")
         }
-        crate::backend::model::repositories::DeployKeyError::NotFound => {
+        codeyard_model::repositories::DeployKeyError::NotFound => {
             (StatusCode::NOT_FOUND, "not_found")
         }
-        crate::backend::model::repositories::DeployKeyError::Key(
-            crate::backend::model::identity::SshKeyWriteRefusal::AlreadyUsed,
+        codeyard_model::repositories::DeployKeyError::Key(
+            codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed,
         ) => (StatusCode::CONFLICT, "key_in_use"),
-        crate::backend::model::repositories::DeployKeyError::InvalidTitle
-        | crate::backend::model::repositories::DeployKeyError::Key(_) => {
+        codeyard_model::repositories::DeployKeyError::InvalidTitle
+        | codeyard_model::repositories::DeployKeyError::Key(_) => {
             (StatusCode::BAD_REQUEST, "validation_error")
         }
-        crate::backend::model::repositories::DeployKeyError::Unavailable(_) => {
+        codeyard_model::repositories::DeployKeyError::Unavailable(_) => {
             (StatusCode::SERVICE_UNAVAILABLE, "database_unavailable")
         }
     }
@@ -82,7 +82,7 @@ fn refusal(error: &DeployKeyError) -> (StatusCode, &'static str) {
 
 fn json_error(error: DeployKeyError) -> (StatusCode, Json<ApiError>) {
     let (status, code) = refusal(&error);
-    if let crate::backend::model::repositories::DeployKeyError::Unavailable(cause) = &error {
+    if let codeyard_model::repositories::DeployKeyError::Unavailable(cause) = &error {
         error!(error = %cause, "deploy key storage failed");
     }
     (status, Json(ApiError::new(code, &error.to_string())))
@@ -246,7 +246,7 @@ pub(super) async fn form(
             )
             .await
             .map(|()| "deleted"),
-            Err(_) => Err(crate::backend::model::repositories::DeployKeyError::NotFound),
+            Err(_) => Err(codeyard_model::repositories::DeployKeyError::NotFound),
         }
     };
     match outcome {

@@ -1236,7 +1236,7 @@ pub async fn request_code_owner_reviews(
         return Ok(Vec::new());
     };
     anyhow::ensure!(
-        owners.len() <= crate::backend::model::repositories::MAX_REVIEWERS,
+        owners.len() <= codeyard_model::repositories::MAX_REVIEWERS,
         "Too many code owners"
     );
     let access = crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;

@@ -5,10 +5,10 @@
 use crate::backend::db::models::{AccessLevel, DeployKey, Repository, User};
 use crate::backend::db::users::ssh_keys;
 use crate::backend::db::{self, deploy_keys::NewDeployKey};
-use crate::backend::model::identity::SshKeyWriteRefusal;
-use crate::backend::model::repositories::DeployKeyError;
 use crate::backend::repositories::access::can_admin;
 use anyhow::{ensure, Context, Result};
+use codeyard_model::identity::SshKeyWriteRefusal;
+use codeyard_model::repositories::DeployKeyError;
 use codeyard_webui::components::deploy_keys::{DeployKeyPanel, DeployKeyRow};
 use ssh_key::HashAlg;
 use tracing::warn;
@@ -17,13 +17,13 @@ use tracing::warn;
 fn refusal(error: anyhow::Error) -> DeployKeyError {
     if error
         .downcast_ref::<DeployKeyError>()
-        .is_some_and(|error| matches!(error, DeployKeyError::Denied))
+        .is_some_and(|error| matches!(error, codeyard_model::repositories::DeployKeyError::Denied))
     {
-        return DeployKeyError::Denied;
+        return codeyard_model::repositories::DeployKeyError::Denied;
     }
     match error.downcast::<SshKeyWriteRefusal>() {
-        Ok(refusal) => DeployKeyError::Key(refusal),
-        Err(error) => DeployKeyError::Unavailable(error),
+        Ok(refusal) => codeyard_model::repositories::DeployKeyError::Key(refusal),
+        Err(error) => codeyard_model::repositories::DeployKeyError::Unavailable(error),
     }
 }
 
@@ -34,8 +34,10 @@ async fn require_admin(
 ) -> Result<(), DeployKeyError> {
     match can_admin(pool, actor, repo).await {
         Ok(true) => Ok(()),
-        Ok(false) => Err(DeployKeyError::Denied),
-        Err(error) => Err(DeployKeyError::Unavailable(error)),
+        Ok(false) => Err(codeyard_model::repositories::DeployKeyError::Denied),
+        Err(error) => Err(codeyard_model::repositories::DeployKeyError::Unavailable(
+            error,
+        )),
     }
 }
 
@@ -65,7 +67,7 @@ pub async fn add_key(
     require_admin(pool, actor, repo).await?;
     let title = title.trim();
     if title.is_empty() || title.chars().count() > 255 || title.contains('\0') {
-        return Err(DeployKeyError::InvalidTitle);
+        return Err(codeyard_model::repositories::DeployKeyError::InvalidTitle);
     }
     let parsed = ssh_keys::parse_public_key(public_key)?;
     let key = NewDeployKey {
@@ -95,7 +97,7 @@ pub async fn remove_key(
     if deleted {
         Ok(())
     } else {
-        Err(DeployKeyError::NotFound)
+        Err(codeyard_model::repositories::DeployKeyError::NotFound)
     }
 }
 

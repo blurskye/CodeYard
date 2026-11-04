@@ -39,6 +39,7 @@ async-graphql-parser.workspace = true
 async-graphql-value.workspace = true
 codeyard-github-graphql.workspace = true
 codeyard-actions.workspace = true
+codeyard-model.workspace = true
 dioxus-ssr.workspace = true
 dioxus-fullstack-core.workspace = true
 subtle.workspace = true
@@ -123,8 +124,8 @@ debug = false
 
 [workspace]
 resolver = "2"
-members = ["crates/codeyard-actions", "crates/codeyard-github-graphql", "webui", "backend/support"]
-default-members = [".", "webui", "backend/support"]
+members = ["crates/codeyard-actions", "crates/codeyard-github-graphql", "webui", "backend/support", "backend/model"]
+default-members = [".", "webui", "backend/support", "backend/model"]
 
 [workspace.package]
 version = "0.1.5"
@@ -139,6 +140,7 @@ allow_attributes_without_reason = "deny"
 [workspace.dependencies]
 codeyard-actions = { path = "crates/codeyard-actions" }
 codeyard-github-graphql = { path = "crates/codeyard-github-graphql" }
+codeyard-model = { path = "backend/model" }
 codeyard-support = { path = "backend/support" }
 codeyard-webui = { path = "webui" }
 tokio = { version = "1", features = ["full"] }

@@ -1,6 +1,6 @@
 //! CODEOWNERS: which owners a path has at a commit, and which of them may review it.
 //! Parsing and matching are pure. Resolving owners reads users and teams.
-use crate::backend::model::repositories::MAX_REVIEWERS;
+use codeyard_model::repositories::MAX_REVIEWERS;
 
 use crate::backend::ci::workflows::{code_owner_glob_matches_bounded, WorkflowMatchBudget};
 use crate::backend::cluster::NodeContext;

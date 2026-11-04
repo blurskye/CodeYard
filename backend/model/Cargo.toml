@@ -1,0 +1,14 @@
+[package]
+name = "codeyard-model"
+version.workspace = true
+edition.workspace = true
+description = "Codeyard shared domain types and limits"
+license = "LGPL-3.0-or-later"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

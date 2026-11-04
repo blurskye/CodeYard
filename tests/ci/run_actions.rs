@@ -113,7 +113,7 @@ async fn contract(pg: bool) {
         0,
         &output
             .iter()
-            .map(|line| codeyard::backend::model::ci::LogLine {
+            .map(|line| codeyard_model::ci::LogLine {
                 stage: "ci.yml".into(),
                 line: (*line).into(),
                 level: "info".into(),

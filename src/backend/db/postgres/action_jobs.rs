@@ -74,7 +74,7 @@ pub async fn apply(
     ensure!(issued, "job is outside the issued credentials");
     let admitted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM actions_jobs WHERE run_id=$1 AND generation=$2 AND workflow_path=$3 AND logical_job=$4) OR (SELECT COUNT(*) FROM (SELECT DISTINCT workflow_path,logical_job FROM actions_jobs WHERE run_id=$1 AND generation=$2) jobs)<$5")
         .bind(run).bind(generation).bind(workflow).bind(&event.job)
-        .bind(crate::backend::model::ci::MAX_EXPANDED_JOBS as i64).fetch_one(&mut *tx).await?;
+        .bind(codeyard_model::ci::MAX_EXPANDED_JOBS as i64).fetch_one(&mut *tx).await?;
     ensure!(admitted, "run job budget exceeded");
     let mut transitioned = false;
     if let Update::Queued {

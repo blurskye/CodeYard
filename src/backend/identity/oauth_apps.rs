@@ -1,9 +1,9 @@
 //! OAuth clients authorize through native forms; only hashes of codes, secrets and tokens persist.
-use crate::backend::model::identity::CLI_CLIENT;
 use crate::backend::{
     db::{self, oauth_apps::Application, DbPool},
     identity::tokens::token_hash,
 };
+use codeyard_model::identity::CLI_CLIENT;
 use subtle::ConstantTimeEq;
 
 const CLI_SECRET: &str = "34ddeff2b558a23d38fba8a6de74f086ede1cc0b";

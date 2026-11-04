@@ -676,13 +676,13 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         "node-a/1",
         0,
         &[
-            codeyard::backend::model::ci::LogLine {
+            codeyard_model::ci::LogLine {
                 stage: "ci.yml".into(),
                 line: "running tests".into(),
                 level: "info".into(),
                 ..Default::default()
             },
-            codeyard::backend::model::ci::LogLine {
+            codeyard_model::ci::LogLine {
                 stage: "ci.yml".into(),
                 line: "warning: flaky test".into(),
                 level: "warn".into(),

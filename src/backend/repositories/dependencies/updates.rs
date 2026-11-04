@@ -260,7 +260,7 @@ pub(crate) async fn propose(
             {
                 continue;
             }
-            let candidate_package = crate::backend::model::repositories::Package {
+            let candidate_package = codeyard_model::repositories::Package {
                 manifest: "package-lock.json".into(),
                 ecosystem: "npm".into(),
                 name: package.name.clone(),

@@ -1353,7 +1353,7 @@ pub async fn append_ci_logs(
     run_id: i64,
     worker: &str,
     sequence: i64,
-    lines: &[crate::backend::model::ci::LogLine],
+    lines: &[codeyard_model::ci::LogLine],
 ) -> Result<bool> {
     ensure!(
         (0..100_000).contains(&sequence),
@@ -1408,9 +1408,9 @@ pub async fn append_ci_logs(
             previous == hash,
             "CI upload sequence has different contents"
         );
-        return Ok(stored_lines < crate::backend::model::ci::MAX_RUN_LOG_LINES);
+        return Ok(stored_lines < codeyard_model::ci::MAX_RUN_LOG_LINES);
     }
-    if stored_lines >= crate::backend::model::ci::MAX_RUN_LOG_LINES {
+    if stored_lines >= codeyard_model::ci::MAX_RUN_LOG_LINES {
         return Ok(false);
     }
     let next: i64 =
@@ -1436,7 +1436,7 @@ pub async fn append_ci_logs(
             .await?;
     }
     tx.commit().await?;
-    Ok(lines_total < crate::backend::model::ci::MAX_RUN_LOG_LINES)
+    Ok(lines_total < codeyard_model::ci::MAX_RUN_LOG_LINES)
 }
 pub async fn list_ci_logs(pool: &SqlitePool, run_id: i64, limit: i64) -> Result<Vec<CiLogLine>> {
     ensure!(limit >= 0, "Result limit must be nonnegative");

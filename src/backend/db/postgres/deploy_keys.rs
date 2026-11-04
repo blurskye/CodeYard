@@ -1,7 +1,7 @@
 use crate::backend::db::deploy_keys::NewDeployKey;
 use crate::backend::db::models::DeployKey;
-use crate::backend::model::identity::SshKeyWriteRefusal;
 use anyhow::Result;
+use codeyard_model::identity::SshKeyWriteRefusal;
 use sqlx::PgPool;
 
 const COLUMNS: &str = "id, repo_id, name AS title, fingerprint, public_key, NOT read_only AS can_write, created_by_id, last_used_at, created_at";
@@ -26,10 +26,7 @@ pub async fn list_deploy_keys(
         false,
     )
     .await?;
-    anyhow::ensure!(
-        live,
-        crate::backend::model::repositories::DeployKeyError::Denied
-    );
+    anyhow::ensure!(live, codeyard_model::repositories::DeployKeyError::Denied);
     let access = super::repositories::access::USER_REPO_ACCESS_SQL;
     let sql = format!("SELECT {COLUMNS} FROM deploy_keys WHERE repo_id=$1 AND id>$3 AND EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$2 WHERE r.id=deploy_keys.repo_id AND NOT r.is_gist AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>=5)) ORDER BY id LIMIT $4");
     let keys = sqlx::query_as(&sql)
@@ -102,7 +99,7 @@ async fn require_admin(
     .await?;
     anyhow::ensure!(
         allowed && live,
-        crate::backend::model::repositories::DeployKeyError::Denied
+        codeyard_model::repositories::DeployKeyError::Denied
     );
     Ok(())
 }
@@ -117,7 +114,7 @@ pub async fn insert_deploy_key(
     let enabled:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM repositories r JOIN organization_settings s ON s.org_id=r.owner_org_id WHERE r.id=$1 AND r.owner_kind='org' AND r.owner_user_id IS NULL AND NOT s.deploy_keys_enabled_for_repositories)").bind(key.repo_id).fetch_one(&mut *tx).await?;
     anyhow::ensure!(
         enabled,
-        crate::backend::model::repositories::DeployKeyError::Denied
+        codeyard_model::repositories::DeployKeyError::Denied
     );
 
     // The same advisory lock as account-key enrollment, so one fingerprint is checked once.
@@ -133,7 +130,7 @@ pub async fn insert_deploy_key(
     .await?;
     anyhow::ensure!(
         !used,
-        crate::backend::model::identity::SshKeyWriteRefusal::AlreadyUsed
+        codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed
     );
     let sql = format!(
         "INSERT INTO deploy_keys (repo_id, name, fingerprint, public_key, read_only, created_by_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING {COLUMNS}"
