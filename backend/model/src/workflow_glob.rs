@@ -7,7 +7,7 @@ pub struct WorkflowMatchLimit;
 
 /// One deterministic CPU budget shared by every workflow considered for an event.
 pub struct WorkflowMatchBudget {
-    remaining: u64,
+    pub remaining: u64,
 }
 
 impl WorkflowMatchBudget {
