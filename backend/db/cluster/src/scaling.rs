@@ -1,7 +1,7 @@
 //! Database-clock lease and policy evaluation; external effects use add and drain.
 use anyhow::Result;
 use codeyard_db_core::{native_operation, queries::credentials::Actor, DbPool};
-use codeyard_model::cluster::ScalingPolicy;
+use codeyard_support::cluster::ScalingPolicy;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Action {

@@ -125,7 +125,7 @@ pub(crate) async fn settings_post(
     if form.contains_key("scaling_role") {
         let number = |name| field(&form, name).parse::<i64>().ok();
         let policy = (|| {
-            Some(codeyard_model::cluster::ScalingPolicy {
+            Some(codeyard_support::cluster::ScalingPolicy {
                 role: field(&form, "scaling_role").into(),
                 minimum: i32::try_from(number("scaling_minimum")?).ok()?,
                 maximum: i32::try_from(number("scaling_maximum")?).ok()?,

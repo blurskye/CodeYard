@@ -1,7 +1,7 @@
 use crate::scaling::Action;
 use anyhow::{ensure, Result};
 use codeyard_db_core::queries::credentials::Actor;
-use codeyard_model::cluster::ScalingPolicy;
+use codeyard_support::cluster::ScalingPolicy;
 use sqlx::{SqliteConnection, SqlitePool};
 
 pub async fn policies(pool: &SqlitePool) -> Result<Vec<ScalingPolicy>> {

@@ -6,6 +6,7 @@ description = "Codeyard pure helpers shared by the server and browser"
 license = "LGPL-3.0-or-later"
 
 [dependencies]
+serde.workspace = true
 thiserror.workspace = true
 url.workspace = true
 
@@ -34,8 +35,6 @@ workspace = true
 workspace = true
 features = ["v4"]
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies.serde]
-workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.clap]
 workspace = true

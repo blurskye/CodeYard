@@ -9,7 +9,6 @@ anyhow.workspace = true
 chrono.workspace = true
 codeyard-db-core.workspace = true
 codeyard-git.workspace = true
-codeyard-model.workspace = true
 codeyard-support.workspace = true
 futures-util.workspace = true
 git2.workspace = true
