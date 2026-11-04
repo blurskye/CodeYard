@@ -17,3 +17,5 @@ pub mod organizations;
 pub mod packages;
 
 pub mod projects;
+
+pub mod vulnerabilities;

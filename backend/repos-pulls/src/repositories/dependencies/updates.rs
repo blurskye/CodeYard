@@ -280,7 +280,7 @@ pub(crate) async fn propose(
                 package_url: format!("pkg:npm/{}@{}", package.name.replace('@', "%40"), version),
                 scope: "unknown".into(),
             };
-            if !crate::vulnerabilities::findings(pool, &candidate_package)
+            if !codeyard_db_security::vulnerabilities::findings(pool, &candidate_package)
                 .await?
                 .is_empty()
             {

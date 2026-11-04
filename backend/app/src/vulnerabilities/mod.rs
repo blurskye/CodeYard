@@ -1,15 +1,11 @@
 //! OSV mirrors and repository alerts share the pinned dependency inventory.
-use crate::services::RepositoryServices;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_git::error::ErrorKind;
-use codeyard_model::repositories::Package;
-use codeyard_model::versions;
-use codeyard_model::vulnerabilities::ecosystem;
-use codeyard_model::vulnerabilities::name;
 use codeyard_model::vulnerabilities::Advisory;
 use codeyard_model::vulnerabilities::PreparedAdvisory;
 use codeyard_model::vulnerabilities::ECOSYSTEMS;
+use codeyard_repos_pulls::services::RepositoryServices;
 use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,29 +19,6 @@ pub async fn ingest(pool: &codeyard_db_core::DbPool, bytes: &[u8]) -> Result<boo
     }
     Ok(changed)
 }
-pub async fn findings(pool: &codeyard_db_core::DbPool, package: &Package) -> Result<Vec<Advisory>> {
-    let Some(ecosystem) = ecosystem(&package.ecosystem) else {
-        return Ok(Vec::new());
-    };
-    ensure!(
-        versions::compare(ecosystem, &package.version, &package.version).is_some(),
-        "Unsupported locked package version"
-    );
-    let rows = codeyard_db_security::vulnerabilities::advisories(
-        pool,
-        ecosystem,
-        &name(ecosystem, &package.name),
-    )
-    .await?;
-    rows.into_iter()
-        .map(|row| serde_json::from_str::<Advisory>(&row).map_err(Into::into))
-        .filter_map(|r| match r {
-            Ok(a) if a.matches(package) => Some(Ok(a)),
-            Ok(_) => None,
-            Err(e) => Some(Err(e)),
-        })
-        .collect()
-}
 pub async fn scan(
     state: &dyn RepositoryServices,
     repo: &codeyard_db_core::models::Repository,
@@ -53,18 +26,20 @@ pub async fn scan(
 ) -> Result<()> {
     let reader = codeyard_db_security::dependency_graph::Reader::Scan(generation);
     let reference = format!("refs/heads/{}", repo.default_branch);
-    let (sha, packages) = match crate::repositories::dependency_graph::native_inventory(
-        state, &reader, repo, &reference,
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath) => {
-            return Ok(())
-        }
-        Err(error) => return Err(error.into()),
-    };
-    let snapshot = crate::repositories::dependency_graph::snapshot(sha, reference, packages);
+    let (sha, packages) =
+        match codeyard_repos_pulls::repositories::dependency_graph::native_inventory(
+            state, &reader, repo, &reference,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath) => {
+                return Ok(())
+            }
+            Err(error) => return Err(error.into()),
+        };
+    let snapshot =
+        codeyard_repos_pulls::repositories::dependency_graph::snapshot(sha, reference, packages);
     codeyard_db_security::vulnerabilities::save_snapshot(
         state.pool(),
         repo.id,
@@ -229,6 +204,7 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codeyard_model::repositories::Package;
     use codeyard_model::vulnerabilities::in_range;
     use codeyard_model::vulnerabilities::OsvPackage;
     use serde_json::json;
@@ -268,7 +244,7 @@ mod tests {
             package_url: "pkg:pypi/example-package@1.0rc1".into(),
             scope: "runtime".into(),
         };
-        let snapshot = crate::repositories::dependency_graph::snapshot(
+        let snapshot = codeyard_repos_pulls::repositories::dependency_graph::snapshot(
             "a".repeat(40),
             "refs/heads/main".into(),
             vec![package],
@@ -308,7 +284,7 @@ mod tests {
             package_url: "pkg:maven/org.example/parser@1.0.0".into(),
             scope: "runtime".into(),
         };
-        let snapshot = crate::repositories::dependency_graph::snapshot(
+        let snapshot = codeyard_repos_pulls::repositories::dependency_graph::snapshot(
             "a".repeat(40),
             "refs/heads/main".into(),
             vec![package],

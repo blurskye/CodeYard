@@ -1,8 +1,12 @@
+use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
 use codeyard_model::dependency_graph::Snapshot;
+use codeyard_model::repositories::Package;
+use codeyard_model::versions;
 use codeyard_model::vulnerabilities::PreparedAdvisory;
+use codeyard_model::vulnerabilities::{ecosystem, name, Advisory};
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -70,3 +74,23 @@ native_operation!(crate::postgres::vulnerabilities::claim_sync,crate::sqlite::vu
     fn claim_sync(pool:&DbPool)->Result<bool>);
 native_operation!(crate::postgres::vulnerabilities::save_snapshot,crate::sqlite::vulnerabilities::save_snapshot,
     fn save_snapshot(pool:&DbPool,repo:i64,generation:i64,snapshot:&Snapshot)->Result<()>);
+
+pub async fn findings(pool: &codeyard_db_core::DbPool, package: &Package) -> Result<Vec<Advisory>> {
+    let Some(ecosystem) = ecosystem(&package.ecosystem) else {
+        return Ok(Vec::new());
+    };
+    ensure!(
+        versions::compare(ecosystem, &package.version, &package.version).is_some(),
+        "Unsupported locked package version"
+    );
+    let rows = crate::vulnerabilities::advisories(pool, ecosystem, &name(ecosystem, &package.name))
+        .await?;
+    rows.into_iter()
+        .map(|row| serde_json::from_str::<Advisory>(&row).map_err(Into::into))
+        .filter_map(|r| match r {
+            Ok(a) if a.matches(package) => Some(Ok(a)),
+            Ok(_) => None,
+            Err(e) => Some(Err(e)),
+        })
+        .collect()
+}

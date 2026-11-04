@@ -191,7 +191,7 @@ async fn compare(
             change["vulnerabilities"] = json!([]);
             continue;
         }
-        let mut vulnerabilities = codeyard_repos_pulls::vulnerabilities::findings(&state.pool,&package)
+        let mut vulnerabilities = codeyard_db_security::vulnerabilities::findings(&state.pool,&package)
             .await.map_err(Error::unavailable)?.iter().map(|a|json!({
                 "severity":a.severity(),
                 "advisory_ghsa_id":a.catalogue_id(),

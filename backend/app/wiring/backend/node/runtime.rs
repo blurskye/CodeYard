@@ -466,7 +466,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     ));
     let (stop_vulnerabilities, vulnerabilities_stop) = tokio::sync::watch::channel(false);
     let vulnerabilities = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(codeyard_repos_pulls::vulnerabilities::run(
+        tokio::spawn(codeyard_app::vulnerabilities::run(
             Arc::new(state.clone()),
             vulnerabilities_stop,
         ))

@@ -7,7 +7,6 @@ use crate::support::native_database as native;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_git::error::ErrorKind;
 use codeyard_repos::editor::FileWrite;
-use codeyard_repos_core::cluster;
 use codeyard_repos_core::repositories::lifecycle::provision;
 use codeyard_repos_core::repositories::store::repo_store;
 use std::path::Path;

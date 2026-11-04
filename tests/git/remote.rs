@@ -19,7 +19,6 @@ use chrono::{Duration as ChronoDuration, Utc};
 use codeyard_db_identity::users::tokens;
 use codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert;
 use codeyard_git::error::RepoError;
-use codeyard_repos_core::cluster;
 use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
 use codeyard_repos_core::store_types::GitService;
 use codeyard_repos_core::store_types::GitSession;

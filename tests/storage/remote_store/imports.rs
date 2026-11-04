@@ -15,7 +15,7 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
-    let web = cluster::start(
+    let web = codeyard_cluster::start(
         &database.pool,
         &root.path().join("web-state"),
         &root.path().join("web-repos"),
@@ -25,7 +25,7 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
     .await
     .unwrap();
     web.publish().await.unwrap();
-    let storage = cluster::start(
+    let storage = codeyard_cluster::start(
         &database.pool,
         &root.path().join("storage-state"),
         &root.path().join("storage-repos"),

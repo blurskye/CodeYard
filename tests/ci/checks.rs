@@ -11,7 +11,6 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
-use codeyard_repos_pulls::repositories;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 

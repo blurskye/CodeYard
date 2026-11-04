@@ -13,7 +13,7 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
-    let web = cluster::start(
+    let web = codeyard_cluster::start(
         &database.pool,
         &root.path().join("web-state"),
         &root.path().join("web-repos"),
@@ -23,7 +23,7 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
     .await
     .unwrap();
     web.publish().await.unwrap();
-    let storage = cluster::start(
+    let storage = codeyard_cluster::start(
         &database.pool,
         &root.path().join("storage-state"),
         &root.path().join("storage-repos"),
