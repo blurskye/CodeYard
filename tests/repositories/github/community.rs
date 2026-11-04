@@ -75,9 +75,7 @@ async fn community_contract(pg: bool) {
             ("CONTRIBUTING.md", "Contributing guide"),
             (
                 "CODE_OF_CONDUCT.md",
-                include_str!(
-                    "../../../backend/repos/src/templates/conduct/contributor-covenant-20.txt"
-                ),
+                codeyard_repos::templates::CONTRIBUTOR_COVENANT_20,
             ),
             ("ISSUE_TEMPLATE.md", "Describe the issue"),
             ("PULL_REQUEST_TEMPLATE.md", "Describe the change"),
