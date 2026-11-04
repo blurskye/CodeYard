@@ -11,11 +11,13 @@ url.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 anyhow.workspace = true
+crypto_box.workspace = true
 hex.workspace = true
 hmac.workspace = true
 libc.workspace = true
 rand.workspace = true
 sha2.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 
 [lints]

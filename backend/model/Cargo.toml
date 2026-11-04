@@ -6,6 +6,7 @@ description = "Codeyard shared domain types and limits"
 license = "LGPL-3.0-or-later"
 
 [dependencies]
+tracing.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 thiserror.workspace = true
