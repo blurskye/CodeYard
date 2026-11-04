@@ -25,7 +25,7 @@ backend/
     runner/                    the Actions runner
   cluster/                     membership, settings, transport, quorum writes
   identity/                    login, tokens, keys
-  notifications/               notifications, email, webhooks
+  notifications/               notifications and email
   api/
     http/                      shared HTTP plumbing (config, context, CSRF, errors, sessions)
     github/                    one crate: the router, the generated route table and one
@@ -113,8 +113,9 @@ and results stay the same. A stage can be the last one.
    templates and Git editor preparation live in `backend/repos/`. CI configuration,
    credentials, logs and environment values live in `backend/ci/`. Membership,
    transport, settings and quorum writes live in `backend/cluster/`. Webhook payloads,
-   subscriptions and delivery live in `backend/webhooks/`. `identity`, `notifications` and `ssh` are extracted. Repository
-   authority, identity mail links and delivery helpers have one lower owner.
+   subscriptions and delivery live in `backend/webhooks/`. `identity`, `notifications`
+   and `ssh` are extracted. Repository authority, identity mail links and delivery
+   helpers have one lower owner.
    `RepoStore` is a concrete enum-backed type, not the trait assumed above; its local
    and remote implementations call cluster RPC and CI, which call the concrete store
    back. The store, CI engine and inbound cluster handlers remain in the app. Their
@@ -128,8 +129,9 @@ and results stay the same. A stage can be the last one.
    binary wiring. All workspace targets check.
 8. **`app`.** Source layout complete. `backend/app/src` is the app library;
    `backend/app/wiring` contains the existing binary package's entry points, CLI
-   and node startup. Backups live in the app library. Storage and file operations live in `backend/storage/`. SSH lives in `backend/ssh/`. The source
-   stages are committed before workspace, Clippy and WASM checks begin. Broker
+   and node startup. Backups live in the app library. Storage and file operations
+   live in `backend/storage/`. SSH lives in `backend/ssh/`. The source stages are
+   committed before workspace, Clippy and WASM checks begin. Broker
    tests now live in `backend/app/tests/git_broker.rs` and link the app library
    with REST through one `AppState`. Hook barriers have one shared owner.
    The earlier split passed workspace, Clippy and WASM checks. The new service
