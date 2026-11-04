@@ -271,7 +271,7 @@ fn select_transport(config: &ServeConfig) -> Result<codeyard_support::ssh_mode::
 /// A worker-only process has no application state, database or inbound listeners.
 pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
     let _state_dir_lock = lock_state_dir(state_dir)?;
-    let settings = codeyard_cluster::settings::Settings::from_lookup(&|key| {
+    let settings = codeyard_cluster_core::settings::Settings::from_lookup(&|key| {
         // Empty counts as unset, as in `Settings::from_lookup`, so the fallback below applies.
         std::env::var(key)
             .ok()
@@ -286,7 +286,7 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
     let (context, peers) = tokio::select! {
         biased;
         result = &mut signal => return result,
-        result = codeyard_repos_core::cluster::worker::worker_context(state_dir, settings) => result?,
+        result = codeyard_cluster::worker::worker_context(state_dir, settings) => result?,
     };
     let config = std::sync::Arc::new(codeyard_ci::config::CiConfig::from_env()?);
     let workers = codeyard_repos_core::ci::workers::CiWorkers::new(
@@ -352,11 +352,11 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     };
     // The cluster transport is opt-in. Without cluster settings no cluster socket is
     // opened. With them, single-node mode still admits only runners.
-    let member = match codeyard_cluster::settings::Settings::from_env()? {
+    let member = match codeyard_cluster_core::settings::Settings::from_env()? {
         Some(settings) => Some(tokio::select! {
             biased;
             result = &mut signal => { pool.close().await; return result; }
-            result = codeyard_repos_core::cluster::start(&pool, &config.state_dir, &repos_path, &config.roles, settings) => result?,
+            result = codeyard_cluster::start(&pool, &config.state_dir, &repos_path, &config.roles, settings) => result?,
         }),
         None => None,
     };
@@ -536,7 +536,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         .as_ref()
         .filter(|_| config.roles.contains(NodeRole::Storage))
         .map(|member| {
-            tokio::spawn(codeyard_repos_core::cluster::replicas::run(
+            tokio::spawn(codeyard_cluster::replicas::run(
                 member.context.clone(),
                 replica_stop,
             ))
@@ -750,7 +750,7 @@ mod tests {
         // The withdrawal runs twice: before the drain, and again in `Cluster::shutdown`.
         let phases = SHUTDOWN_GRACE
             + codeyard_repos_core::ci::workers::SHUTDOWN_GRACE
-            + codeyard_cluster::settings::WITHDRAW_TIMEOUT * 2;
+            + codeyard_cluster_core::settings::WITHDRAW_TIMEOUT * 2;
         assert!(
             phases < MAX_SHUTDOWN,
             "the shutdown phases add up to {phases:?}"

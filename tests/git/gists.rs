@@ -495,7 +495,7 @@ async fn gists_http_ssh_remote_and_promotion() {
             .storage_node_id,
         Some(storage.node_id)
     );
-    let moved = codeyard_repos_core::cluster::replicas::promote::promote(
+    let moved = codeyard_cluster::replicas::promote::promote(
         &database.pool,
         repo.id,
         Some(copy.node_id),

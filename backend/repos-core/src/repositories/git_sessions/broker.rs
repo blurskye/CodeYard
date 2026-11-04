@@ -1013,12 +1013,12 @@ impl Gateway {
                     .write_all(b"write outcome unknown; fetch before retrying\n"),
             )
             .await;
-            return Err(codeyard_cluster::writes::OutcomeUnknown.into());
+            return Err(codeyard_cluster_core::writes::OutcomeUnknown.into());
         }
         let status = status?;
         if let Err(error) = output.release().await {
             return if committed {
-                Err(codeyard_cluster::writes::OutcomeUnknown.into())
+                Err(codeyard_cluster_core::writes::OutcomeUnknown.into())
             } else {
                 Err(error)
             };

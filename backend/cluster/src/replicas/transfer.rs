@@ -3,11 +3,11 @@
 //! sets its refs and HEAD to the listing. Git does the object and ref work. A bundle is
 //! not used: it leaves out the refs that point into the copy's history, so a copy that is
 //! ahead of a tag would lose the tag.
-use crate::context::NodeContext;
-use crate::wire::Operation;
-use crate::wire::Request;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::wire::Operation;
+use codeyard_repos_core::wire::Request;
 use crate::store_types::GitStreams;
-use crate::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::RepoStore;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
@@ -42,7 +42,7 @@ pub(super) async fn copy(
         biased;
         _ = stop.cancelled() => anyhow::bail!("replica assignment changed"),
         have = async {
-            if crate::cluster::replicas::connected(mirror).await? {
+            if codeyard_repos_core::cluster::replicas::connected(mirror).await? {
                 tips(context, repository, mirror).await
             } else {
                 Ok(Vec::new())
@@ -120,11 +120,11 @@ async fn fetch(
     let row = codeyard_db_cluster::cluster::get_repository_by_uuid(pool, &repository.to_string())
         .await?
         .context("replica repository was deleted")?;
-    let primary_path = crate::repositories::store::primary_path(&context.repos_path, repository);
+    let primary_path = codeyard_repos_core::repositories::store::primary_path(&context.repos_path, repository);
     let _installation = tokio::select! {
         biased;
         _ = stop.cancelled() => anyhow::bail!("replica assignment changed"),
-        guards = crate::cluster::replicas::moving(&primary_path, mirror) => guards,
+        guards = codeyard_repos_core::cluster::replicas::moving(&primary_path, mirror) => guards,
     };
     // From here cancellation is deferred until installation has ended. Copying retains
     // the task and its directory reservation until join, including during shutdown.
@@ -140,7 +140,7 @@ async fn fetch(
         "replica assignment changed before installation"
     );
     // `initialize` needs an empty path, so a directory Git cannot open is renamed aside first.
-    if !crate::cluster::replicas::connected(mirror).await? {
+    if !codeyard_repos_core::cluster::replicas::connected(mirror).await? {
         if mirror.exists() {
             move_aside(mirror).await?;
         }
@@ -172,7 +172,7 @@ async fn move_aside(mirror: &Path) -> Result<()> {
     let directory = mirror
         .parent()
         .context("replica copy has no parent")?
-        .join(crate::cluster::replicas::QUARANTINES)
+        .join(codeyard_repos_core::cluster::replicas::QUARANTINES)
         .join(name.as_ref());
     tokio::fs::create_dir_all(&directory).await?;
     let aside = directory.join(Uuid::new_v4().to_string());
@@ -186,7 +186,7 @@ async fn remove_aside_copies(mirror: &Path) {
         return;
     };
     let directory = directory
-        .join(crate::cluster::replicas::QUARANTINES)
+        .join(codeyard_repos_core::cluster::replicas::QUARANTINES)
         .join(name);
     let mut entries = match tokio::fs::read_dir(&directory).await {
         Ok(entries) => entries,
@@ -214,9 +214,9 @@ async fn remove_aside_copies(mirror: &Path) {
 mod tests {
     use super::*;
 
-    use codeyard_cluster::transport::IrohDialer;
-    use codeyard_cluster::transport::NodeAddress;
-    use codeyard_cluster::transport::Relay;
+    use codeyard_cluster_core::transport::IrohDialer;
+    use codeyard_cluster_core::transport::NodeAddress;
+    use codeyard_cluster_core::transport::Relay;
     use codeyard_support::node_identity::NodeKey;
 
     use std::sync::{
@@ -319,7 +319,7 @@ mod tests {
         .await
         .unwrap());
         let acceptor = tokio_rustls::TlsAcceptor::from(
-            codeyard_cluster::tls::server_config(&server_key).unwrap(),
+            codeyard_cluster_core::tls::server_config(&server_key).unwrap(),
         );
         let calls = Arc::new(AtomicUsize::new(0));
         let count = calls.clone();
@@ -327,7 +327,7 @@ mod tests {
             loop {
                 let (socket, _) = listener.accept().await.unwrap();
                 let mut stream = acceptor.accept(socket).await.unwrap();
-                let header = crate::wire::read_frame(
+                let header = codeyard_repos_core::wire::read_frame(
                     &mut stream,
                     codeyard_db_core::limits::MAX_JSON,
                 )
@@ -339,10 +339,10 @@ mod tests {
                     panic!("not a pack");
                 };
                 assert_eq!(have.is_empty(), call > 0);
-                let reply = crate::wire::Reply {
+                let reply = codeyard_repos_core::wire::Reply {
                     result: Ok(serde_json::json!({"head":null,"refs":{}})),
                 };
-                crate::wire::write_frame(
+                codeyard_repos_core::wire::write_frame(
                     &mut stream,
                     &serde_json::to_vec(&reply).unwrap(),
                     codeyard_db_core::limits::MAX_JSON,
@@ -350,17 +350,17 @@ mod tests {
                 .await
                 .unwrap();
                 // An invalid pack models a local indexing failure after a successful download.
-                crate::wire::write_frame(&mut stream, b"invalid pack", 32768)
+                codeyard_repos_core::wire::write_frame(&mut stream, b"invalid pack", 32768)
                     .await
                     .unwrap();
-                crate::wire::write_frame(&mut stream, b"", 32768)
+                codeyard_repos_core::wire::write_frame(&mut stream, b"", 32768)
                     .await
                     .unwrap();
                 let code = i32::from(primary_rejects && call == 0);
                 let exit =
                     serde_json::to_vec(&serde_json::json!({"result":{"Ok":code},"stderr":""}))
                         .unwrap();
-                crate::wire::write_frame(
+                codeyard_repos_core::wire::write_frame(
                     &mut stream,
                     &exit,
                     codeyard_db_core::limits::MAX_JSON,

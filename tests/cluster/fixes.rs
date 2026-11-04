@@ -1,9 +1,9 @@
 use crate::support::native_database::NativeDatabase;
 use crate::support::native_database::PostgresDatabase;
 
-use codeyard_cluster::pairing::InviteOptions;
-use codeyard_cluster::settings::Settings;
-use codeyard_cluster::transport::NodeAddress;
+use codeyard_cluster_core::pairing::InviteOptions;
+use codeyard_cluster_core::settings::Settings;
+use codeyard_cluster_core::transport::NodeAddress;
 use codeyard_support::node_identity::NodeKey;
 
 use codeyard_db_core::DbPool;
@@ -12,7 +12,7 @@ use std::time::Duration;
 #[tokio::test]
 async fn oversized_invites_are_refused_before_persisting_tokens() {
     let db = NativeDatabase::new().await;
-    let result = codeyard_cluster::pairing::create_invite(
+    let result = codeyard_cluster_core::pairing::create_invite(
         &db.pool,
         NodeKey::generate().public_key(),
         NodeAddress {
@@ -63,7 +63,7 @@ async fn service_startup_refuses_roles_outside_existing_enrollment() {
     })
     .unwrap()
     .unwrap();
-    let error = codeyard_repos_core::cluster::start(
+    let error = codeyard_cluster::start(
         &db.pool,
         root.path(),
         root.path(),
@@ -216,7 +216,7 @@ async fn adoption_refreshes_forks_committed_while_it_waits_for_the_source() {
     let pool = db.pool.clone();
     let directory = root.path().to_owned();
     let adopting = tokio::spawn(async move {
-        codeyard_repos_core::cluster::adopt_repositories(&pool, node.id, &directory).await
+        codeyard_cluster::adopt_repositories(&pool, node.id, &directory).await
     });
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(!adopting.is_finished());

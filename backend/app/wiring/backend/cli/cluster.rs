@@ -5,21 +5,21 @@ use anyhow::Context;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_repos_core::cluster::adopt_repositories;
-use codeyard_repos_core::cluster::replicas::promote::Promotion;
-use codeyard_cluster::pairing::approve;
-use codeyard_cluster::pairing::create_invite;
-use codeyard_cluster::pairing::join;
-use codeyard_cluster::pairing::parse_duration;
-use codeyard_cluster::pairing::revoke;
-use codeyard_cluster::pairing::InviteOptions;
-use codeyard_cluster::pairing::JoinTicket;
-use codeyard_cluster::pairing::Membership;
-use codeyard_cluster::settings::hostname;
-use codeyard_cluster::settings::require_postgres;
-use codeyard_cluster::settings::NEEDS_POSTGRES;
-use codeyard_cluster::transport::NodeAddress;
-use codeyard_cluster::transport::Relay;
+use codeyard_cluster::adopt_repositories;
+use codeyard_cluster::replicas::promote::Promotion;
+use codeyard_cluster_core::pairing::approve;
+use codeyard_cluster_core::pairing::create_invite;
+use codeyard_cluster_core::pairing::join;
+use codeyard_cluster_core::pairing::parse_duration;
+use codeyard_cluster_core::pairing::revoke;
+use codeyard_cluster_core::pairing::InviteOptions;
+use codeyard_cluster_core::pairing::JoinTicket;
+use codeyard_cluster_core::pairing::Membership;
+use codeyard_cluster_core::settings::hostname;
+use codeyard_cluster_core::settings::require_postgres;
+use codeyard_cluster_core::settings::NEEDS_POSTGRES;
+use codeyard_cluster_core::transport::NodeAddress;
+use codeyard_cluster_core::transport::Relay;
 use codeyard_db_cluster::cluster::Authority;
 use codeyard_db_core::models::NodeStatusChange;
 use codeyard_db_core::models::ReplicaSetting;
@@ -169,7 +169,7 @@ pub async fn run_offline(
             };
             let key = load_or_create(state_dir)?;
             let membership = join(&ticket, &key, &relay, &name, None).await?;
-            codeyard_repos_core::cluster::worker::save_core(state_dir, &ticket)?;
+            codeyard_cluster::worker::save_core(state_dir, &ticket)?;
             if let Some(config) = jit {
                 codeyard_repos_core::ci::runner_credentials::save_work_folder(
                     state_dir,
@@ -392,7 +392,7 @@ async fn set_replicas(pool: &DbPool, value: &str) -> Result<()> {
     println!(
         "Each repository keeps {}. Copies follow within {} seconds.",
         describe(setting),
-        codeyard_repos_core::cluster::replicas::INTERVAL.as_secs()
+        codeyard_cluster::replicas::INTERVAL.as_secs()
     );
     Ok(())
 }
@@ -423,7 +423,7 @@ async fn is_primary(pool: &DbPool, repository: i64, node: i64) -> Result<bool> {
 
 async fn report_promotion(pool: &DbPool, promotion: Promotion) -> Result<()> {
     let repository =
-        codeyard_repos_core::cluster::replicas::promote::repository_name(pool, promotion.repository)
+        codeyard_cluster::replicas::promote::repository_name(pool, promotion.repository)
             .await?;
     let from = node_name(pool, promotion.from).await?;
     let to = node_name(pool, promotion.to).await?;
@@ -437,7 +437,7 @@ async fn report_promotion(pool: &DbPool, promotion: Promotion) -> Result<()> {
     }
     println!(
         "{repository}: '{to}' is the primary now. '{from}' keeps a copy and catches up within {} seconds.",
-        codeyard_repos_core::cluster::replicas::INTERVAL.as_secs()
+        codeyard_cluster::replicas::INTERVAL.as_secs()
     );
     if promotion.lost_writes > 0 {
         eprintln!(
@@ -460,14 +460,14 @@ async fn promote_with_recovery(
         .await?
         .and_then(|row| row.storage_node_id)
         .context("repository has no primary")?;
-    let error = match codeyard_repos_core::cluster::replicas::promote::promote(pool, repository, to, force)
+    let error = match codeyard_cluster::replicas::promote::promote(pool, repository, to, force)
         .await
     {
         Ok(promotions) => return Ok(promotions),
         Err(error) => error,
     };
     let Some(target) = error
-        .downcast_ref::<codeyard_repos_core::cluster::replicas::promote::RecoveryPending>()
+        .downcast_ref::<codeyard_cluster::replicas::promote::RecoveryPending>()
         .map(|pending| pending.target)
     else {
         return Err(error);
@@ -480,7 +480,7 @@ async fn promote_with_recovery(
     else {
         return Err(error);
     };
-    if !codeyard_repos_core::cluster::replicas::promote::recover_family(
+    if !codeyard_cluster::replicas::promote::recover_family(
         pool, repository, local.id, repos_path,
     )
     .await?
@@ -574,7 +574,7 @@ async fn promote_command(
                             .await?
                             .serving
                     {
-                        let name = codeyard_repos_core::cluster::replicas::promote::repository_name(
+                        let name = codeyard_cluster::replicas::promote::repository_name(
                             pool,
                             *repository,
                         )
@@ -587,7 +587,7 @@ async fn promote_command(
             let failed = remaining.len() + fenced;
             for (repository, _) in remaining {
                 let name =
-                    codeyard_repos_core::cluster::replicas::promote::repository_name(pool, repository)
+                    codeyard_cluster::replicas::promote::repository_name(pool, repository)
                         .await?;
                 if let Some((_, error)) = failures.iter().find(|(id, _)| *id == repository) {
                     eprintln!("{name}: {error:#}");

@@ -289,7 +289,7 @@ pub async fn recover_family(
     for (member, _, _) in family {
         let view = journal::recovery_view(pool, member).await?;
         if !view.serving && view.voters.iter().any(|voter| voter.node_id == node) {
-            crate::repositories::store::RepoStore::recover_term(pool, member, node, repos).await?;
+            codeyard_repos_core::repositories::store::RepoStore::recover_term(pool, member, node, repos).await?;
         }
         terms.push((member, view.term));
     }
@@ -315,7 +315,7 @@ pub async fn take_over(
         .write_quorum
         .is_some();
     if !quorum {
-        crate::cluster::replicas::reconcile(pool, node, repos).await?;
+        crate::replicas::reconcile(pool, node, repos).await?;
     }
     let nodes = codeyard_db_cluster::cluster::list_nodes(pool).await?;
     let now = Instant::now();

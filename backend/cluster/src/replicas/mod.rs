@@ -3,10 +3,10 @@
 //! longer needs. It also takes over the fork families of a primary that has gone offline,
 //! when it holds a copy with every write of each member. A node acts only on its own
 //! primaries and its own copies, so the nodes coordinate through the database alone.
-use crate::context::NodeContext;
-use crate::cluster::replicas::promote::take_over;
-use crate::cluster::replicas::promote::Silent;
-use crate::cluster::replicas::promote::TAKE_OVER_AFTER;
+use codeyard_repos_core::context::NodeContext;
+use crate::replicas::promote::take_over;
+use crate::replicas::promote::Silent;
+use crate::replicas::promote::TAKE_OVER_AFTER;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_core::models::HeldReplica;
@@ -63,8 +63,8 @@ mod tests {
         let key = codeyard_support::node_identity::NodeKey::generate();
         let context = NodeContext {
             pool: None,
-            iroh: codeyard_cluster::transport::IrohDialer::new(
-                codeyard_cluster::transport::Relay::Off,
+            iroh: codeyard_cluster_core::transport::IrohDialer::new(
+                codeyard_cluster_core::transport::Relay::Off,
                 key.clone(),
             ),
             key,
@@ -203,13 +203,6 @@ const PARALLEL: usize = 2;
 /// outage, so it is short; a failed attempt against a dead node is one quick request.
 const RETRY_FIRST: Duration = Duration::from_secs(5);
 const RETRY_CAP: Duration = Duration::from_secs(30);
-/// How long moving or retiring a directory waits for the Git sessions using it. A directory
-/// that stays busy is left for a later pass, so a long clone holds nothing else up.
-pub(crate) const MOVE_WAIT: Duration = Duration::from_millis(500);
-/// Copies are kept here, under the repositories root, never at a primary's location.
-pub const MIRRORS: &str = "mirrors";
-pub const QUARANTINES: &str = ".quarantines";
-
 /// Runs passes every `INTERVAL` until `stop` is set. A failed pass is logged and the next
 /// one tries again. A copy that finishes frees its slot at once, so the next copy in line
 /// starts without waiting for the interval.
@@ -399,10 +392,6 @@ async fn place_and_start(
     Ok(())
 }
 
-pub(crate) fn copy_path(repos: &Path, uuid: Uuid) -> PathBuf {
-    repos.join(MIRRORS).join(format!("{uuid}.git"))
-}
-
 /// A recorded version outlives its directory. Clear it for a copy Git cannot open, before
 /// this node advertises itself or considers take-over, so the copy loop rebuilds it even
 /// without another write. A copy that cannot be read is cleared too, so take-over never
@@ -416,7 +405,7 @@ pub(crate) async fn reconcile(pool: &DbPool, node: i64, repos: &Path) -> Result<
         if row.applied_version < 0 {
             continue;
         }
-        let Ok(uuid) = crate::cluster::rpc::repository::repository_uuid(&row.disk_path) else {
+        let Ok(uuid) = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path) else {
             continue;
         };
         let usable = match connected(&copy_path(repos, uuid)).await {
@@ -438,19 +427,6 @@ pub(crate) async fn reconcile(pool: &DbPool, node: i64, repos: &Path) -> Result<
         }
     }
     Ok(())
-}
-
-/// Whether Git can open the copy at `mirror`. Reconcile and the copy path share this check, so
-/// a copy counts as usable only when Git can open it.
-async fn opens(mirror: &Path) -> Result<bool> {
-    let mirror = mirror.to_owned();
-    tokio::task::spawn_blocking(move || codeyard_git::repository::opens_as_repository(&mirror))
-        .await
-        .context("the copy check stopped")?
-}
-
-async fn connected(path: &Path) -> Result<bool> {
-    Ok(opens(path).await? && mirror::check(path).await?.is_none())
 }
 
 /// Puts each directory where its role says: a repository this node is primary of moves
@@ -476,7 +452,7 @@ async fn locate(
         Ok(_) => {}
     }
     for primary in primaries {
-        let Ok(uuid) = crate::cluster::rpc::repository::repository_uuid(&primary.disk_path) else {
+        let Ok(uuid) = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&primary.disk_path) else {
             continue;
         };
         if copying.is_running(uuid) {
@@ -484,7 +460,7 @@ async fn locate(
         }
         let (copy, place) = (
             copy_path(repos, uuid),
-            crate::repositories::store::primary_path(repos, uuid),
+            codeyard_repos_core::repositories::store::primary_path(repos, uuid),
         );
         if tokio::fs::try_exists(&copy).await.unwrap_or(true)
             && !tokio::fs::try_exists(&place).await.unwrap_or(false)
@@ -498,7 +474,7 @@ async fn locate(
         }
     }
     for row in held.iter().filter(|row| row.primary_node_id != Some(node)) {
-        let Ok(uuid) = crate::cluster::rpc::repository::repository_uuid(&row.disk_path) else {
+        let Ok(uuid) = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path) else {
             continue;
         };
         if copying.is_running(uuid) {
@@ -506,7 +482,7 @@ async fn locate(
         }
         let (copy, place) = (
             copy_path(repos, uuid),
-            crate::repositories::store::primary_path(repos, uuid),
+            codeyard_repos_core::repositories::store::primary_path(repos, uuid),
         );
         if tokio::fs::try_exists(&place).await.unwrap_or(true) {
             let moved = if tokio::fs::try_exists(&copy).await.unwrap_or(true) {
@@ -562,27 +538,6 @@ async fn move_directory(
         Ok::<_, anyhow::Error>(())
     })
     .await?
-}
-
-/// Keeps writers and readers out of a repository's primary and copy directories while one
-/// of them is replaced or moved.
-pub(crate) struct Moving {
-    _writers: (OwnedMutexGuard<()>, OwnedMutexGuard<()>),
-    _readers: (OwnedRwLockWriteGuard<()>, OwnedRwLockWriteGuard<()>),
-}
-
-/// Takes both writer locks, then waits for the readers of both directories to finish. Every
-/// mover takes them in this order.
-pub(crate) async fn moving(primary: &Path, mirror: &Path) -> Moving {
-    let writers = (locks::lock(primary).await, locks::lock(mirror).await);
-    let readers = (
-        locks::exclusive(primary).await,
-        locks::exclusive(mirror).await,
-    );
-    Moving {
-        _writers: writers,
-        _readers: readers,
-    }
 }
 
 /// Copies that are running, at most `PARALLEL`. Each one brings a copy up to its primary. A
@@ -692,7 +647,7 @@ impl Copying {
             .filter(|row| {
                 row.primary_node_id.is_some_and(|primary| primary != node)
                     && row.applied_version < row.write_version
-                    && crate::cluster::rpc::repository::repository_uuid(&row.disk_path)
+                    && codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path)
                         .is_ok_and(|uuid| !self.is_running(uuid))
             })
             .cloned()
@@ -708,7 +663,7 @@ impl Copying {
             if retry.waiting(row.repository_id) {
                 continue;
             }
-            let Ok(uuid) = crate::cluster::rpc::repository::repository_uuid(&row.disk_path) else {
+            let Ok(uuid) = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path) else {
                 continue;
             };
             if self.is_running(uuid) {
@@ -758,7 +713,7 @@ async fn copy_one(
         // Downloading the temporary pack cannot change the last usable copy. Transfer
         // invalidates it only immediately before installation, after a complete download.
         let mirror = copy_path(&context.repos_path, uuid);
-        crate::cluster::replicas::transfer::copy(context, primary, uuid, &mirror, stop).await?;
+        crate::replicas::transfer::copy(context, primary, uuid, &mirror, stop).await?;
         // Finish packing before publishing a promotable version: a running maintenance
         // command still needs the mirror directory and prevents relocation.
         maintenance::after_copy(row.repository_id, &mirror).await;
@@ -880,19 +835,21 @@ async fn keep_directories(context: &NodeContext) -> Result<HashSet<Uuid>> {
     // Copies first. A promotion to this node removes its copy row and makes it primary in one
     // transaction, so the later primary list shows the repository if the copy list did not.
     for row in codeyard_db_cluster::cluster::list_held_replicas(pool, node).await? {
-        keep.insert(crate::cluster::rpc::repository::repository_uuid(
+        keep.insert(codeyard_repos_core::cluster::rpc::repository::repository_uuid(
             &row.disk_path,
         )?);
     }
     for (_, disk_path) in codeyard_db_cluster::cluster::list_primary_paths(pool, node).await? {
-        keep.insert(crate::cluster::rpc::repository::repository_uuid(
+        keep.insert(codeyard_repos_core::cluster::rpc::repository::repository_uuid(
             &disk_path,
         )?);
     }
     for (_, disk_path) in codeyard_db_cluster::cluster::list_unplaced_repositories(pool).await? {
-        if let Ok(uuid) = crate::cluster::rpc::repository::repository_uuid(&disk_path) {
+        if let Ok(uuid) = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&disk_path) {
             keep.insert(uuid);
         }
     }
     Ok(keep)
 }
+
+use codeyard_repos_core::cluster::replicas::{MOVE_WAIT,MIRRORS,QUARANTINES,copy_path,connected,moving};

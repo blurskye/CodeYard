@@ -4,7 +4,7 @@ use crate::repositories::store::local::live_write;
 use crate::repositories::store::local::unavailable;
 use crate::repositories::store::local::LocalStore;
 use crate::repositories::store::local::RefChange;
-use codeyard_cluster::writes::OutcomeUnknown;
+use codeyard_cluster_core::writes::OutcomeUnknown;
 use codeyard_db_core::models::RefChange as WriteRef;
 use codeyard_repos::protection::BranchWrite;
 use codeyard_repos::protection::History;

@@ -10,10 +10,10 @@ use codeyard_ci::config::CiConfig;
 use codeyard_repos_core::context::term_path;
 
 use codeyard_repos_core::context::NodeContext;
-use codeyard_cluster::pairing::PairingHandler;
-use codeyard_cluster::transport::IrohDialer;
-use codeyard_cluster::transport::NodeAddress;
-use codeyard_cluster::transport::Relay;
+use codeyard_cluster_core::pairing::PairingHandler;
+use codeyard_cluster_core::transport::IrohDialer;
+use codeyard_cluster_core::transport::NodeAddress;
+use codeyard_cluster_core::transport::Relay;
 
 use codeyard_repos_core::repositories::git_sessions::receive_session;
 use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
@@ -46,7 +46,7 @@ fn commit(repo: &git2::Repository, message: &str, parent: Option<git2::Oid>) -> 
 struct Stores {
     fixture: Fixture,
     contexts: Vec<NodeContext>,
-    listeners: Vec<codeyard_repos_core::cluster::tcp::Listener>,
+    listeners: Vec<codeyard_cluster::tcp::Listener>,
     paths: Vec<PathBuf>,
     _roots: Vec<tempfile::TempDir>,
     old: String,
@@ -116,14 +116,14 @@ impl Stores {
                 context: Some(context.clone()),
                 notifications: Arc::new(NotificationBroadcaster::new(pool)),
             };
-            let listener = codeyard_repos_core::cluster::tcp::bind(
+            let listener = codeyard_cluster::tcp::bind(
                 "127.0.0.1:0".parse().unwrap(),
                 &context.key,
-                codeyard_repos_core::cluster::tcp::Services {
+                codeyard_cluster::tcp::Services {
                     pool: pool.clone(),
                     pairing: PairingHandler::new(pool.clone()),
                     rpc: Some(codeyard_repos_core::cluster::rpc::RpcHandler::new(context.clone())),
-                    events: codeyard_repos_core::cluster::ci::CiHandler::new(context.clone(), queue),
+                    events: codeyard_cluster::ci::CiHandler::new(context.clone(), queue),
                 },
             )
             .await
@@ -542,7 +542,7 @@ async fn stale_writer_is_refused(pool: &DbPool) {
     .await
     .unwrap());
     for context in &stores.contexts {
-        codeyard_repos_core::cluster::replicas::promote::recover_family(
+        codeyard_cluster::replicas::promote::recover_family(
             pool,
             f.repo,
             context.node_id,

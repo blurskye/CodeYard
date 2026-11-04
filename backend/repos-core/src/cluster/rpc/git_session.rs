@@ -21,7 +21,7 @@ use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_ci::config::CiConfig;
-use codeyard_cluster::link::Link;
+use codeyard_cluster_core::link::Link;
 use codeyard_db_core::limits::MAX_JSON;
 use codeyard_db_core::models::RefChange;
 use codeyard_db_core::models::WriteRecord;
@@ -210,7 +210,7 @@ impl NodeContext {
     ) -> Result<Opened, RepoError> {
         let opened = tokio::time::timeout_at(deadline, async {
             let mut link = self
-                .dial(node_id, codeyard_cluster::transport::ALPN_RPC)
+                .dial(node_id, codeyard_cluster_core::transport::ALPN_RPC)
                 .await?;
             write_frame(&mut link.writer, &serde_json::to_vec(request)?, MAX_JSON).await?;
             let reply: Reply =

@@ -1,6 +1,6 @@
 use crate::wire::unavailable;
-use codeyard_cluster::transport::IrohDialer;
-use codeyard_cluster::worker::CorePeer;
+use codeyard_cluster_core::transport::IrohDialer;
+use codeyard_cluster_core::worker::CorePeer;
 use codeyard_db_core::DbPool;
 use codeyard_git::error::RepoError;
 use codeyard_support::node_identity::NodeKey;

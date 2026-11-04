@@ -7,16 +7,16 @@ use crate::support::native_database as native;
 use codeyard_repos_core::ci::queue::RunQueue;
 use codeyard_repos_core::cluster;
 use codeyard_ci::config::CiExecutionMode;
-use codeyard_cluster::link::Link;
-use codeyard_cluster::pairing::InviteOptions;
-use codeyard_cluster::pairing::JoinTicket;
-use codeyard_cluster::settings::Settings;
-use codeyard_cluster::transport::IrohDialer;
-use codeyard_cluster::transport::NodeAddress;
-use codeyard_cluster::transport::Relay;
-use codeyard_cluster::transport::ALPN_EVENTS;
-use codeyard_cluster::transport::ALPN_PAIR;
-use codeyard_cluster::transport::ALPN_RPC;
+use codeyard_cluster_core::link::Link;
+use codeyard_cluster_core::pairing::InviteOptions;
+use codeyard_cluster_core::pairing::JoinTicket;
+use codeyard_cluster_core::settings::Settings;
+use codeyard_cluster_core::transport::IrohDialer;
+use codeyard_cluster_core::transport::NodeAddress;
+use codeyard_cluster_core::transport::Relay;
+use codeyard_cluster_core::transport::ALPN_EVENTS;
+use codeyard_cluster_core::transport::ALPN_PAIR;
+use codeyard_cluster_core::transport::ALPN_RPC;
 use codeyard_support::node_identity::NodeKey;
 use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
 use tokio::{
@@ -302,7 +302,7 @@ async fn pairing_over_tcp_admits_a_valid_ticket_and_refuses_a_bad_one() {
         .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
-    let ticket = codeyard_cluster::pairing::create_invite(
+    let ticket = codeyard_cluster_core::pairing::create_invite(
         &database.pool,
         core.public_key(),
         NodeAddress {
@@ -320,7 +320,7 @@ async fn pairing_over_tcp_admits_a_valid_ticket_and_refuses_a_bad_one() {
     .unwrap();
     let joining = NodeKey::generate();
     let membership =
-        codeyard_cluster::pairing::join(&ticket, &joining, &Relay::Off, "store-2", None)
+        codeyard_cluster_core::pairing::join(&ticket, &joining, &Relay::Off, "store-2", None)
             .await
             .expect("a valid ticket joins over TCP");
     assert_eq!(membership.status, "active");
@@ -335,7 +335,7 @@ async fn pairing_over_tcp_admits_a_valid_ticket_and_refuses_a_bad_one() {
         },
     )
     .unwrap();
-    let error = codeyard_cluster::pairing::join(&forged, &stranger, &Relay::Off, "intruder", None)
+    let error = codeyard_cluster_core::pairing::join(&forged, &stranger, &Relay::Off, "intruder", None)
         .await
         .unwrap_err();
     assert!(error.to_string().contains("not valid"), "{error:#}");
@@ -357,7 +357,7 @@ async fn unknown_keys_are_closed_on_rpc_and_events_before_any_answer() {
     for alpn in [ALPN_RPC, ALPN_EVENTS] {
         // The handshake succeeds for any well-formed key; membership is checked after it.
         let mut link =
-            codeyard_cluster::tcp::dial(&stranger, address_of(&core), core.public_key(), alpn)
+            codeyard_cluster_core::tcp::dial(&stranger, address_of(&core), core.public_key(), alpn)
                 .await
                 .expect("the handshake completes for any well-formed key");
         let answer = tokio::time::timeout(Duration::from_secs(5), async {
@@ -392,24 +392,24 @@ async fn revoked_member_is_refused_on_its_next_connection() {
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     let member = NodeKey::generate();
-    let declared = codeyard_cluster::pairing::parse_declared_nodes(&format!(
+    let declared = codeyard_cluster_core::pairing::parse_declared_nodes(&format!(
         "{}:web:web-2",
         member.public_hex()
     ))
     .unwrap();
-    codeyard_cluster::pairing::apply_declared_nodes(&database.pool, &declared)
+    codeyard_cluster_core::pairing::apply_declared_nodes(&database.pool, &declared)
         .await
         .unwrap();
 
     let mut link =
-        codeyard_cluster::tcp::dial(&member, address_of(&core), core.public_key(), ALPN_RPC)
+        codeyard_cluster_core::tcp::dial(&member, address_of(&core), core.public_key(), ALPN_RPC)
             .await
             .unwrap();
     exists(&mut link)
         .await
         .expect("an active member gets an answer");
 
-    codeyard_cluster::pairing::revoke(
+    codeyard_cluster_core::pairing::revoke(
         &database.pool,
         codeyard_db_cluster::cluster::Authority::Operator,
         "web-2",
@@ -417,7 +417,7 @@ async fn revoked_member_is_refused_on_its_next_connection() {
     .await
     .unwrap();
     let mut link =
-        codeyard_cluster::tcp::dial(&member, address_of(&core), core.public_key(), ALPN_RPC)
+        codeyard_cluster_core::tcp::dial(&member, address_of(&core), core.public_key(), ALPN_RPC)
             .await
             .unwrap();
     assert!(
@@ -436,7 +436,7 @@ async fn dialer_refuses_a_node_that_presents_another_key() {
     let node = start_tcp(&database, root.path(), "core-1", "storage").await;
     let impostor = NodeKey::generate().public_key();
     let error =
-        codeyard_cluster::tcp::dial(&NodeKey::generate(), address_of(&node), impostor, ALPN_RPC)
+        codeyard_cluster_core::tcp::dial(&NodeKey::generate(), address_of(&node), impostor, ALPN_RPC)
             .await
             .unwrap_err();
     assert!(format!("{error:#}").contains("pinned"), "{error:#}");
@@ -507,7 +507,7 @@ async fn hold_every_pairing_slot(address: SocketAddr, node: iroh::PublicKey) -> 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     let mut held = Vec::new();
     loop {
-        let mut peer = codeyard_cluster::tcp::dial(&NodeKey::generate(), address, node, ALPN_PAIR)
+        let mut peer = codeyard_cluster_core::tcp::dial(&NodeKey::generate(), address, node, ALPN_PAIR)
             .await
             .expect("the handshake completes");
         if closed_by_node(&mut peer).await {
@@ -539,7 +539,7 @@ async fn pairing_over_tcp_refuses_a_seventeenth_idle_peer_and_frees_slots_on_dro
     let idle = hold_every_pairing_slot(address, core.public_key()).await;
     // The seventeenth completes its handshake, and the node closes it without an answer.
     let mut refused =
-        codeyard_cluster::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
+        codeyard_cluster_core::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
             .await
             .expect("the handshake completes");
     let answer = tokio::time::timeout(
@@ -556,7 +556,7 @@ async fn pairing_over_tcp_refuses_a_seventeenth_idle_peer_and_frees_slots_on_dro
     drop(idle);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        let mut peer = codeyard_cluster::tcp::dial(
+        let mut peer = codeyard_cluster_core::tcp::dial(
             &NodeKey::generate(),
             address,
             core.public_key(),
@@ -600,7 +600,7 @@ async fn pairing_slots_are_shared_between_tcp_and_iroh() {
     // one handler, so the iroh listener has no slots of its own.
     let endpoint = core.endpoint().expect("the node listens on iroh");
     cluster::wait_for_address(endpoint).await;
-    let client = codeyard_cluster::transport::bind_client(&Relay::Off, &NodeKey::generate())
+    let client = codeyard_cluster_core::transport::bind_client(&Relay::Off, &NodeKey::generate())
         .await
         .unwrap();
     let connection = client
@@ -641,7 +641,7 @@ async fn garbage_and_stalled_clients_do_not_stop_the_listener() {
     .await;
 
     // A valid peer still gets through.
-    codeyard_cluster::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
+    codeyard_cluster_core::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
         .await
         .expect("the listener still accepts");
 
@@ -652,7 +652,7 @@ async fn garbage_and_stalled_clients_do_not_stop_the_listener() {
         stalled.push(TcpStream::connect(address).await.unwrap());
     }
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-    while codeyard_cluster::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
+    while codeyard_cluster_core::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
         .await
         .is_ok()
     {
@@ -663,7 +663,7 @@ async fn garbage_and_stalled_clients_do_not_stop_the_listener() {
     }
 
     // The stalled handshakes end after five seconds and free their slots.
-    while codeyard_cluster::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
+    while codeyard_cluster_core::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_PAIR)
         .await
         .is_err()
     {
@@ -790,7 +790,7 @@ async fn a_tcp_dial_opens_no_iroh_socket() {
         ..Default::default()
     };
     let _link =
-        codeyard_cluster::transport::dial_node(&dialer, core.public_key(), &address, ALPN_PAIR)
+        codeyard_cluster_core::transport::dial_node(&dialer, core.public_key(), &address, ALPN_PAIR)
             .await
             .expect("the node answers over TCP");
     assert!(!dialer.is_open(), "a dial over TCP opened an iroh endpoint");
@@ -809,7 +809,7 @@ async fn a_tcp_only_dialer_reaches_an_iroh_only_node_and_opens_iroh_for_it() {
     let address = NodeAddress::of(&endpoint.addr());
     let dialer = IrohDialer::new(Relay::Off, NodeKey::generate());
     let _link =
-        codeyard_cluster::transport::dial_node(&dialer, core.public_key(), &address, ALPN_PAIR)
+        codeyard_cluster_core::transport::dial_node(&dialer, core.public_key(), &address, ALPN_PAIR)
             .await
             .expect("the node answers over iroh");
     assert!(
@@ -844,7 +844,7 @@ async fn a_dial_falls_back_from_tcp_to_iroh_and_then_uses_tcp_again() {
         ..Default::default()
     };
     let _link =
-        codeyard_cluster::transport::dial_node(&dialer, core.public_key(), &fallback, ALPN_PAIR)
+        codeyard_cluster_core::transport::dial_node(&dialer, core.public_key(), &fallback, ALPN_PAIR)
             .await
             .expect("the dial falls back to iroh");
     assert!(dialer.is_open(), "the dial did not reach iroh");
@@ -856,7 +856,7 @@ async fn a_dial_falls_back_from_tcp_to_iroh_and_then_uses_tcp_again() {
         ..Default::default()
     };
     let _link =
-        codeyard_cluster::transport::dial_node(&dialer, core.public_key(), &back, ALPN_PAIR)
+        codeyard_cluster_core::transport::dial_node(&dialer, core.public_key(), &back, ALPN_PAIR)
             .await
             .expect("the next dial goes back to TCP");
 }
@@ -870,7 +870,7 @@ async fn shutdown_closes_the_connections_the_listener_holds() {
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     // A pairing peer that connects and says nothing. Pairing would wait fifteen seconds.
-    let mut idle = codeyard_cluster::tcp::dial(
+    let mut idle = codeyard_cluster_core::tcp::dial(
         &NodeKey::generate(),
         address_of(&core),
         core.public_key(),
@@ -915,7 +915,7 @@ async fn a_membership_check_that_stalls_keeps_its_handshake_slot() {
     loop {
         let attempt = tokio::time::timeout(
             Duration::from_secs(2),
-            codeyard_cluster::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_RPC),
+            codeyard_cluster_core::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_RPC),
         )
         .await
         .expect("the node answers each handshake attempt");
@@ -937,7 +937,7 @@ async fn a_membership_check_that_stalls_keeps_its_handshake_slot() {
     lock.rollback().await.unwrap();
     drop(waiting);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while codeyard_cluster::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_RPC)
+    while codeyard_cluster_core::tcp::dial(&NodeKey::generate(), address, core.public_key(), ALPN_RPC)
         .await
         .is_err()
     {
@@ -975,7 +975,7 @@ async fn a_ci_claim_moves_on_from_a_tcp_address_that_never_answers() {
     let worker = start_tcp(&database, root.path(), "ci-1", "runner").await;
     let queue = RunQueue::Remote {
         context: worker.context.clone(),
-        peers: vec![codeyard_cluster::worker::CorePeer {
+        peers: vec![codeyard_cluster_core::worker::CorePeer {
             target: None,
             public_key: core.public_key().to_string(),
             address: NodeAddress {
@@ -1018,7 +1018,7 @@ async fn a_ci_claim_reaches_the_core_over_iroh_after_a_tcp_address_never_answers
     let worker = start_tcp(&database, root.path(), "ci-1", "runner").await;
     let queue = RunQueue::Remote {
         context: worker.context.clone(),
-        peers: vec![codeyard_cluster::worker::CorePeer {
+        peers: vec![codeyard_cluster_core::worker::CorePeer {
             target: None,
             public_key: core.public_key().to_string(),
             address: NodeAddress {
@@ -1069,7 +1069,7 @@ async fn many_silent_tcp_addresses_share_one_dial_budget() {
         ..Default::default()
     };
     let started = std::time::Instant::now();
-    let outcome = codeyard_cluster::transport::dial_node(
+    let outcome = codeyard_cluster_core::transport::dial_node(
         &dialer,
         NodeKey::generate().public_key(),
         &address,
@@ -1108,7 +1108,7 @@ async fn a_dial_reaches_iroh_after_many_silent_tcp_addresses() {
     };
     let started = std::time::Instant::now();
     let _link =
-        codeyard_cluster::transport::dial_node(&dialer, core.public_key(), &address, ALPN_PAIR)
+        codeyard_cluster_core::transport::dial_node(&dialer, core.public_key(), &address, ALPN_PAIR)
             .await
             .expect("iroh answers once the TCP budget is spent");
     let elapsed = started.elapsed();

@@ -119,9 +119,9 @@ impl CiWorkers {
             .filter(|name| !name.trim().is_empty())
         {
             Some(name) => name,
-            None => codeyard_cluster::settings::hostname()?,
+            None => codeyard_cluster_core::settings::hostname()?,
         };
-        let node = codeyard_cluster::pairing::normalize_name(&node)?;
+        let node = codeyard_cluster_core::pairing::normalize_name(&node)?;
         let mut tasks = workers.tasks.lock().unwrap_or_else(|e| e.into_inner());
         if let RunQueue::Database { .. } = &self.queue {
             tasks.spawn(crate::ci::worker::fail_stale_runs(

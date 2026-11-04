@@ -10,7 +10,7 @@ use crate::wire::Request;
 use crate::wire::MAX_BYTES;
 use crate::wire::TIMEOUT;
 use anyhow::Result;
-use codeyard_cluster::link::Link;
+use codeyard_cluster_core::link::Link;
 use codeyard_db_core::limits::MAX_JSON;
 use iroh::endpoint::Connection;
 use iroh::protocol::AcceptError;
@@ -119,11 +119,11 @@ impl RpcHandler {
     }
 
     fn header_slot(&self, peer: iroh::PublicKey) -> Result<tokio::sync::OwnedSemaphorePermit> {
-        codeyard_cluster::transport::peer_header_slot(&self.headers, peer)
+        codeyard_cluster_core::transport::peer_header_slot(&self.headers, peer)
     }
 
     /// Serves one request stream. An error ends the connection the stream came on.
-    pub(crate) async fn serve_link(&self, link: Link) -> Result<()> {
+    pub async fn serve_link(&self, link: Link) -> Result<()> {
         let Some(request) = self.sessions.admit(self.answer_link(link)) else {
             return Ok(());
         };
@@ -138,7 +138,7 @@ impl RpcHandler {
         // Membership is checked before reading headers, also on reused connections.
         // A bad request gets an error reply; an oversized or broken frame ends the connection.
         let request = tokio::time::timeout_at(deadline, async {
-            if !codeyard_cluster::transport::active_member(self.context.database()?, peer)
+            if !codeyard_cluster_core::transport::active_member(self.context.database()?, peer)
                 .await
                 .map_err(|_| unavailable())?
             {
@@ -227,11 +227,11 @@ impl RpcHandler {
 
 impl ProtocolHandler for RpcHandler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-        let Ok(_connection) = codeyard_cluster::transport::connection_slot(&connection) else {
+        let Ok(_connection) = codeyard_cluster_core::transport::connection_slot(&connection) else {
             return Ok(());
         };
         // Each stream the peer opens is one request, answered in turn.
-        while let Some(link) = codeyard_cluster::transport::accept_stream(&connection).await {
+        while let Some(link) = codeyard_cluster_core::transport::accept_stream(&connection).await {
             if let Err(error) = self.serve_link(link).await {
                 tracing::warn!(%error, "repository RPC failed");
                 connection.close(500u32.into(), b"RPC request failed");

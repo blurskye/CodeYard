@@ -10,10 +10,10 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 
-use codeyard_repos_core::cluster::replicas::promote::Promotion;
-use codeyard_repos_core::cluster::replicas::promote::Silent;
-use codeyard_repos_core::cluster::replicas::Copying;
-use codeyard_repos_core::cluster::replicas::Retry;
+use codeyard_cluster::replicas::promote::Promotion;
+use codeyard_cluster::replicas::promote::Silent;
+use codeyard_cluster::replicas::Copying;
+use codeyard_cluster::replicas::Retry;
 
 use codeyard_repos_core::wire::Failure;
 use codeyard_repos_core::wire::Operation;
@@ -525,8 +525,8 @@ async fn replica_rules_hold_on_postgres() {
     check_replica_rules(&database.pool).await;
 }
 
-fn settings(name: &str) -> codeyard_cluster::settings::Settings {
-    codeyard_cluster::settings::Settings::from_lookup(&|key| match key {
+fn settings(name: &str) -> codeyard_cluster_core::settings::Settings {
+    codeyard_cluster_core::settings::Settings::from_lookup(&|key| match key {
         "IROH_BIND" => Some("127.0.0.1:0".into()),
         "NODE_NAME" => Some(name.into()),
         _ => None,
@@ -536,7 +536,7 @@ fn settings(name: &str) -> codeyard_cluster::settings::Settings {
 }
 
 /// A storage node with its own state and repositories directory, online and reporting.
-async fn start_storage(pool: &DbPool, root: &Path, name: &str) -> codeyard_repos_core::cluster::Cluster {
+async fn start_storage(pool: &DbPool, root: &Path, name: &str) -> codeyard_cluster::Cluster {
     start_node(pool, root, name, "storage").await
 }
 
@@ -545,8 +545,8 @@ async fn start_node(
     root: &Path,
     name: &str,
     roles: &str,
-) -> codeyard_repos_core::cluster::Cluster {
-    let node = codeyard_repos_core::cluster::start(
+) -> codeyard_cluster::Cluster {
+    let node = codeyard_cluster::start(
         pool,
         &root.join(format!("{name}-state")),
         &root.join(format!("{name}-repos")),
@@ -639,7 +639,7 @@ impl Repo<'_> {
 /// An empty repository on `primary`'s disk, with its row placed on `primary`.
 async fn create_repository<'a>(
     pool: &'a DbPool,
-    primary: &codeyard_repos_core::cluster::Cluster,
+    primary: &codeyard_cluster::Cluster,
     name: &str,
 ) -> Repo<'a> {
     let owner =
@@ -677,11 +677,11 @@ async fn create_repository<'a>(
 }
 
 /// Where a primary lives on `node`, and where a copy of it lives.
-fn primary_path(node: &codeyard_repos_core::cluster::Cluster, uuid: Uuid) -> PathBuf {
+fn primary_path(node: &codeyard_cluster::Cluster, uuid: Uuid) -> PathBuf {
     node.context.repos_path.join(format!("{uuid}.git"))
 }
 
-fn copy_path(node: &codeyard_repos_core::cluster::Cluster, uuid: Uuid) -> PathBuf {
+fn copy_path(node: &codeyard_cluster::Cluster, uuid: Uuid) -> PathBuf {
     node.context
         .repos_path
         .join("mirrors")
@@ -698,7 +698,7 @@ fn quarantines(mirror: &Path) -> PathBuf {
 async fn applied_on(
     pool: &DbPool,
     repository: i64,
-    node: &codeyard_repos_core::cluster::Cluster,
+    node: &codeyard_cluster::Cluster,
 ) -> Option<i64> {
     codeyard_db_cluster::cluster::list_replicas(pool, repository)
         .await
@@ -708,8 +708,8 @@ async fn applied_on(
         .map(|(_, applied)| applied)
 }
 
-async fn pass(node: &codeyard_repos_core::cluster::Cluster) {
-    codeyard_repos_core::cluster::replicas::pass(
+async fn pass(node: &codeyard_cluster::Cluster) {
+    codeyard_cluster::replicas::pass(
         &node.context,
         &mut Retry::default(),
         &mut Silent::default(),
@@ -722,8 +722,8 @@ async fn pass(node: &codeyard_repos_core::cluster::Cluster) {
 /// Both nodes run one pass, the primary's first. Then the copy is current: same refs and
 /// HEAD as the primary, and its applied version is the repository's write version.
 async fn assert_current(
-    primary: &codeyard_repos_core::cluster::Cluster,
-    copy: &codeyard_repos_core::cluster::Cluster,
+    primary: &codeyard_cluster::Cluster,
+    copy: &codeyard_cluster::Cluster,
     repo: &Repo<'_>,
 ) {
     pass(primary).await;
@@ -769,8 +769,8 @@ async fn two_storage_nodes(
     pool: &DbPool,
     root: &Path,
 ) -> (
-    codeyard_repos_core::cluster::Cluster,
-    codeyard_repos_core::cluster::Cluster,
+    codeyard_cluster::Cluster,
+    codeyard_cluster::Cluster,
 ) {
     codeyard_db_cluster::node_config::upsert_node_configuration(pool, "public", true)
         .await
@@ -1079,7 +1079,7 @@ async fn the_setting_decides_how_many_copies_exist_and_removes_the_rest() {
     let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repo.repository.disk_path)
         .unwrap();
     repo.save("main", "a.txt", "unborn", b"a").await;
-    let has_copy = |node: &codeyard_repos_core::cluster::Cluster| copy_path(node, uuid).exists();
+    let has_copy = |node: &codeyard_cluster::Cluster| copy_path(node, uuid).exists();
 
     assert!(codeyard_db_cluster::cluster::set_replicas(pool, "all")
         .await
@@ -1115,7 +1115,7 @@ async fn the_setting_decides_how_many_copies_exist_and_removes_the_rest() {
             pool,
             &node.endpoint().unwrap().id().to_string(),
             "test",
-            &serde_json::to_string(&codeyard_cluster::transport::NodeAddress::of(
+            &serde_json::to_string(&codeyard_cluster_core::transport::NodeAddress::of(
                 &node.endpoint().unwrap().addr()
             ))
             .unwrap(),
@@ -1154,11 +1154,11 @@ async fn the_loop_copies_on_its_own_and_stops_at_shutdown() {
     repo.save("main", "a.txt", "unborn", b"a").await;
 
     let (stop, stop_signal) = watch::channel(false);
-    let primary_loop = tokio::spawn(codeyard_repos_core::cluster::replicas::run(
+    let primary_loop = tokio::spawn(codeyard_cluster::replicas::run(
         primary.context.clone(),
         stop_signal.clone(),
     ));
-    let copy_loop = tokio::spawn(codeyard_repos_core::cluster::replicas::run(
+    let copy_loop = tokio::spawn(codeyard_cluster::replicas::run(
         copy.context.clone(),
         stop_signal,
     ));
@@ -1260,7 +1260,7 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
         std::fs::write(mirror.join(format!("objects/pack/extra-{index}.pack")), b"").unwrap();
     }
     let (stop, signal) = watch::channel(false);
-    let copying = tokio::spawn(codeyard_repos_core::cluster::replicas::run(
+    let copying = tokio::spawn(codeyard_cluster::replicas::run(
         copy.context.clone(),
         signal,
     ));
@@ -1352,7 +1352,7 @@ async fn completed_copies_refill_slots_before_the_next_periodic_pass() {
     }
     pass(&primary).await;
     let (stop, signal) = watch::channel(false);
-    let copying = tokio::spawn(codeyard_repos_core::cluster::replicas::run(
+    let copying = tokio::spawn(codeyard_cluster::replicas::run(
         copy.context.clone(),
         signal,
     ));
@@ -1410,7 +1410,7 @@ async fn busy_repositories_do_not_starve_later_copies() {
                 .await
                 .unwrap();
         }
-        codeyard_repos_core::cluster::replicas::pass(&copy.context, &mut retry, &mut silent, &mut copying)
+        codeyard_cluster::replicas::pass(&copy.context, &mut retry, &mut silent, &mut copying)
             .await
             .unwrap();
     }
@@ -1616,14 +1616,14 @@ async fn check_promotion(pool: &DbPool) {
     );
 
     assert!(
-        codeyard_repos_core::cluster::replicas::promote::promote(pool, repo, Some(c), false)
+        codeyard_cluster::replicas::promote::promote(pool, repo, Some(c), false)
             .await
             .is_err(),
         "a copy that is behind is refused"
     );
     assert_eq!(primary_of(pool, repo).await, a, "a refusal changes nothing");
 
-    let promoted = codeyard_repos_core::cluster::replicas::promote::promote(pool, repo, None, false)
+    let promoted = codeyard_cluster::replicas::promote::promote(pool, repo, None, false)
         .await
         .unwrap();
     assert_eq!(
@@ -1639,7 +1639,7 @@ async fn check_promotion(pool: &DbPool) {
     assert_eq!(primary_of(pool, repo).await, b);
 
     assert!(
-        codeyard_repos_core::cluster::replicas::promote::promote(pool, repo, Some(c), true)
+        codeyard_cluster::replicas::promote::promote(pool, repo, Some(c), true)
             .await
             .is_err(),
         "a copy that was never made cannot be promoted, even forced"
@@ -1656,7 +1656,7 @@ async fn check_promotion(pool: &DbPool) {
             .unwrap(),
         "a copy taken from the old primary is not recorded after the promotion"
     );
-    let forced = codeyard_repos_core::cluster::replicas::promote::promote(pool, repo, Some(c), true)
+    let forced = codeyard_cluster::replicas::promote::promote(pool, repo, Some(c), true)
         .await
         .unwrap();
     assert_eq!(
@@ -1699,7 +1699,7 @@ async fn check_promotion(pool: &DbPool) {
             .await
             .unwrap()
     );
-    let behind = codeyard_repos_core::cluster::replicas::promote::promote(pool, ahead, Some(c), true)
+    let behind = codeyard_cluster::replicas::promote::promote(pool, ahead, Some(c), true)
         .await
         .unwrap();
     assert_eq!(
@@ -1957,8 +1957,8 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
     let mut context = primary.context.clone();
     context.pool = None;
     context.node_id = 0;
-    context.iroh = codeyard_cluster::transport::IrohDialer::new(
-        codeyard_cluster::transport::Relay::Off,
+    context.iroh = codeyard_cluster_core::transport::IrohDialer::new(
+        codeyard_cluster_core::transport::Relay::Off,
         key.clone(),
     );
     context.key = key;
@@ -1999,7 +1999,7 @@ async fn a_promoted_copy_takes_writes_and_the_old_primary_follows() {
     assert_current(&primary, &copy, &repo).await;
 
     let promotion =
-        codeyard_repos_core::cluster::replicas::promote::promote(&database.pool, repo.id(), None, false)
+        codeyard_cluster::replicas::promote::promote(&database.pool, repo.id(), None, false)
             .await
             .unwrap();
     assert_eq!(
@@ -2088,7 +2088,7 @@ async fn returning_former_primary_cleanup_on_postgres() {
     // free space, and the promotions below need every copy on `primary`.
     let replacement = start_storage(pool, root.path(), "store-c").await;
     for row in [&repo, &deleted] {
-        codeyard_repos_core::cluster::replicas::promote::promote(
+        codeyard_cluster::replicas::promote::promote(
             pool,
             row.id(),
             Some(primary.context.node_id),
@@ -2152,7 +2152,7 @@ async fn a_former_primary_with_a_copy_keeps_the_repository_through_cleanup() {
         .unwrap();
     repo.save("main", "README.md", "unborn", b"kept\n").await;
     assert_current(&former, &primary, &repo).await;
-    codeyard_repos_core::cluster::replicas::promote::promote(
+    codeyard_cluster::replicas::promote::promote(
         pool,
         repo.id(),
         Some(primary.context.node_id),
@@ -2187,7 +2187,7 @@ async fn a_former_primary_without_a_copy_row_drops_its_directory() {
         .unwrap();
     repo.save("main", "README.md", "unborn", b"dropped\n").await;
     assert_current(&former, &primary, &repo).await;
-    codeyard_repos_core::cluster::replicas::promote::promote(
+    codeyard_cluster::replicas::promote::promote(
         pool,
         repo.id(),
         Some(primary.context.node_id),
@@ -2318,7 +2318,7 @@ async fn take_over(pool: &DbPool, node: i64, silent: &mut Silent, wait: Duration
                 .unwrap();
         }
     }
-    codeyard_repos_core::cluster::replicas::promote::take_over(pool, node, root.path(), silent, wait)
+    codeyard_cluster::replicas::promote::take_over(pool, node, root.path(), silent, wait)
         .await
         .unwrap()
 }
@@ -2391,7 +2391,7 @@ async fn clear_heartbeat(pool: &DbPool, key: &str) {
 }
 
 async fn cluster_revoke(pool: &DbPool, name: &str) {
-    codeyard_cluster::pairing::revoke(
+    codeyard_cluster_core::pairing::revoke(
         pool,
         codeyard_db_cluster::cluster::Authority::Operator,
         name,
@@ -2502,7 +2502,7 @@ async fn check_missing_copy_blocks_take_over(pool: &DbPool) {
     }
     std::fs::remove_dir_all(&paths[1]).unwrap();
     let mut silent = Silent::default();
-    assert!(codeyard_repos_core::cluster::replicas::promote::take_over(
+    assert!(codeyard_cluster::replicas::promote::take_over(
         pool,
         b,
         root.path(),
@@ -2538,7 +2538,7 @@ async fn check_missing_copy_blocks_take_over(pool: &DbPool) {
 
     git2::Repository::init_bare(&paths[1]).unwrap();
     assert!(
-        codeyard_repos_core::cluster::replicas::promote::take_over(
+        codeyard_cluster::replicas::promote::take_over(
             pool,
             b,
             root.path(),
@@ -2554,7 +2554,7 @@ async fn check_missing_copy_blocks_take_over(pool: &DbPool) {
         .await
         .unwrap();
     assert_eq!(
-        codeyard_repos_core::cluster::replicas::promote::take_over(
+        codeyard_cluster::replicas::promote::take_over(
             pool,
             b,
             root.path(),
@@ -2643,7 +2643,7 @@ async fn lost_current_copies_are_rebuilt_without_a_primary_write() {
     );
     primary.shutdown().await;
     std::fs::remove_dir_all(&mirror).unwrap();
-    assert!(codeyard_repos_core::cluster::replicas::promote::take_over(
+    assert!(codeyard_cluster::replicas::promote::take_over(
         pool,
         copy_id,
         &copy.context.repos_path,
@@ -2909,7 +2909,7 @@ async fn manual_promotion_reports_a_fork_inserted_after_its_family_snapshot() {
         .unwrap();
     let promote_pool = pool.clone();
     let task = tokio::spawn(async move {
-        codeyard_repos_core::cluster::replicas::promote::promote(&promote_pool, source, Some(b), false)
+        codeyard_cluster::replicas::promote::promote(&promote_pool, source, Some(b), false)
             .await
     });
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -2992,7 +2992,7 @@ async fn check_default_target_is_reporting_in(pool: &DbPool) {
     add_copy(pool, repo, b, a, 0).await;
     add_copy(pool, repo, c, a, 0).await;
     assert_eq!(
-        codeyard_repos_core::cluster::replicas::promote::promote(pool, repo, None, false)
+        codeyard_cluster::replicas::promote::promote(pool, repo, None, false)
             .await
             .unwrap(),
         vec![Promotion {
@@ -3013,7 +3013,7 @@ async fn check_default_target_is_reporting_in(pool: &DbPool) {
     add_copy(pool, source, d, a, 0).await;
     add_copy(pool, source, e, a, 0).await;
     add_copy(pool, fork, e, a, 0).await;
-    let promoted = codeyard_repos_core::cluster::replicas::promote::promote(pool, source, None, false)
+    let promoted = codeyard_cluster::replicas::promote::promote(pool, source, None, false)
         .await
         .unwrap();
     assert_eq!(promoted.len(), 2);
@@ -3057,7 +3057,7 @@ async fn check_unreadable_copy_does_not_stop_takeover(pool: &DbPool) {
     std::fs::create_dir_all(&mirrors).unwrap();
     // A file where the mirror belongs: Git cannot read it. `missing` has no mirror at all.
     std::fs::write(mirrors.join(format!("{uuid}.git")), b"not a repository").unwrap();
-    let taken = codeyard_repos_core::cluster::replicas::promote::take_over(
+    let taken = codeyard_cluster::replicas::promote::take_over(
         pool,
         b,
         root.path(),
@@ -3169,7 +3169,7 @@ async fn a_copy_takes_over_when_its_primary_stops() {
     let pool = &database.pool;
     let take = || async {
         let mut silent = Silent::default();
-        codeyard_repos_core::cluster::replicas::promote::take_over(
+        codeyard_cluster::replicas::promote::take_over(
             pool,
             copy_id,
             &copy.context.repos_path,
@@ -3231,7 +3231,7 @@ async fn check_fork_family_promotion(pool: &DbPool) {
         lost_writes: 0,
     };
     let promoted =
-        codeyard_repos_core::cluster::replicas::promote::promote(pool, fork, Some(b), false).await;
+        codeyard_cluster::replicas::promote::promote(pool, fork, Some(b), false).await;
     assert_eq!(
         promoted.unwrap(),
         vec![moved(source), moved(fork), moved(fork_of_fork)]
@@ -3260,7 +3260,7 @@ async fn check_fork_family_promotion(pool: &DbPool) {
     for repo in [reffork, refforkfork] {
         add_copy(pool, repo, e, d, 0).await;
     }
-    let error = codeyard_repos_core::cluster::replicas::promote::promote(pool, refsource, Some(f), false)
+    let error = codeyard_cluster::replicas::promote::promote(pool, refsource, Some(f), false)
         .await
         .unwrap_err();
     assert_eq!(
@@ -3269,7 +3269,7 @@ async fn check_fork_family_promotion(pool: &DbPool) {
     );
     // `--force` accepts a split family: the members that have no copy on the target stay.
     let forced =
-        codeyard_repos_core::cluster::replicas::promote::promote(pool, refsource, Some(f), true).await;
+        codeyard_cluster::replicas::promote::promote(pool, refsource, Some(f), true).await;
     assert_eq!(
         forced.unwrap(),
         vec![Promotion {
@@ -3295,7 +3295,7 @@ async fn check_fork_family_promotion(pool: &DbPool) {
             .await
             .unwrap()
     );
-    let error = codeyard_repos_core::cluster::replicas::promote::promote(pool, never_fork, Some(h), true)
+    let error = codeyard_cluster::replicas::promote::promote(pool, never_fork, Some(h), true)
         .await
         .unwrap_err();
     assert_eq!(
@@ -3476,8 +3476,8 @@ async fn promote_all_from_moves_a_fork_family_once() {
 }
 
 /// A node that serves only web requests. It asks the storage nodes for repository data.
-async fn web_node(pool: &DbPool, root: &Path) -> codeyard_repos_core::cluster::Cluster {
-    let node = codeyard_repos_core::cluster::start(
+async fn web_node(pool: &DbPool, root: &Path) -> codeyard_cluster::Cluster {
+    let node = codeyard_cluster::start(
         pool,
         &root.join("web-state"),
         &root.join("web-repos"),
@@ -3773,7 +3773,7 @@ async fn a_read_aimed_at_the_old_primary_reaches_the_promoted_copy() {
     assert_current(&primary, &copy, &repo).await;
     let primary_id = primary.context.node_id;
     primary.shutdown().await;
-    codeyard_repos_core::cluster::replicas::promote::promote(&database.pool, repo.id(), None, false)
+    codeyard_cluster::replicas::promote::promote(&database.pool, repo.id(), None, false)
         .await
         .unwrap();
     pass(&copy).await;
@@ -3983,7 +3983,7 @@ async fn a_moved_primary_that_answers_is_final_even_when_a_copy_could_serve() {
     assert_current(&old, &new, &repo).await;
     pass(&copy).await;
     // The new primary takes the repository over and moves its copy into place.
-    codeyard_repos_core::cluster::replicas::promote::promote(
+    codeyard_cluster::replicas::promote::promote(
         pool,
         repo.id(),
         Some(new.context.node_id),

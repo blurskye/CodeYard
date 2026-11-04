@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 /// Allows the primary and one replica their full transport admission budgets, plus search time.
 const DEFAULT_SEARCH_TIME_BUDGET: std::time::Duration =
-    codeyard_cluster::transport::DIAL_TIMEOUT.saturating_mul(7);
+    codeyard_cluster_core::transport::DIAL_TIMEOUT.saturating_mul(7);
 
 const DEFAULT_GRAPHQL_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 

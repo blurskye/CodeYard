@@ -5,10 +5,11 @@ edition.workspace = true
 license = "LGPL-3.0-or-later"
 
 [dependencies]
+codeyard-cluster.workspace = true
 codeyard-repos-pulls.workspace = true
 codeyard-repos-core.workspace = true
 codeyard-webhooks.workspace = true
-codeyard-cluster.workspace = true
+codeyard-cluster-core.workspace = true
 codeyard-ci.workspace = true
 codeyard-repos.workspace = true
 codeyard-storage.workspace = true

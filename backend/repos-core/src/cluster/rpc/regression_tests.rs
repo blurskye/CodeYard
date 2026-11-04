@@ -2,8 +2,8 @@ use super::*;
 use crate::context::NodeContext;
 use crate::cluster::rpc::repository::repository_uuid;
 use codeyard_ci::config::CiConfig;
-use codeyard_cluster::link::Link;
-use codeyard_cluster::transport;
+use codeyard_cluster_core::link::Link;
+use codeyard_cluster_core::transport;
 
 use crate::wire::read_frame;
 use crate::wire::write_frame;
@@ -16,8 +16,8 @@ use crate::repositories::git_sessions::ReceiveCredential;
 use crate::store_types::GitService;
 use crate::store_types::GitSession;
 use crate::repositories::store::RepoStore;
-use codeyard_cluster::transport::IrohDialer;
-use codeyard_cluster::transport::Relay;
+use codeyard_cluster_core::transport::IrohDialer;
+use codeyard_cluster_core::transport::Relay;
 use codeyard_db_core::DbPool;
 use codeyard_support::node_identity::NodeKey;
 use std::path::Path;
@@ -471,7 +471,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
     .await
     .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = codeyard_cluster::transport::NodeAddress {
+    let address = codeyard_cluster_core::transport::NodeAddress {
         tcp: vec![listener.local_addr().unwrap()],
         ..Default::default()
     };
@@ -525,7 +525,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     git2::Repository::init_bare(&path).unwrap();
     let acceptor =
-        tokio_rustls::TlsAcceptor::from(codeyard_cluster::tls::server_config(&key).unwrap());
+        tokio_rustls::TlsAcceptor::from(codeyard_cluster_core::tls::server_config(&key).unwrap());
     let (ready, mut waiting) = tokio::sync::mpsc::channel(2);
     let server = tokio::spawn(async move {
         let mut links = tokio::task::JoinSet::new();

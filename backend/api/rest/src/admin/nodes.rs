@@ -149,8 +149,8 @@ async fn change(
     };
     let pool = &ctx.state.pool;
     let result = match change {
-        Change::Approve => codeyard_cluster::pairing::approve(pool, authority, &name).await,
-        Change::Revoke => codeyard_cluster::pairing::revoke(pool, authority, &name).await,
+        Change::Approve => codeyard_cluster_core::pairing::approve(pool, authority, &name).await,
+        Change::Revoke => codeyard_cluster_core::pairing::revoke(pool, authority, &name).await,
     };
     match result {
         Ok(codeyard_db_core::models::NodeStatusChange::Changed { .. }) => {

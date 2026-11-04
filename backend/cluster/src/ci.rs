@@ -1,13 +1,13 @@
 //! CI queue RPCs. The authenticated node key owns every worker id it supplies.
-use crate::ci::queue::Operation;
-use crate::ci::queue::Reply;
-use crate::ci::queue::Request;
-use crate::ci::queue::RunQueue;
-use crate::ci::queue::CORE_UNAVAILABLE;
-use crate::context::NodeContext;
+use codeyard_repos_core::ci::queue::Operation;
+use codeyard_repos_core::ci::queue::Reply;
+use codeyard_repos_core::ci::queue::Request;
+use codeyard_repos_core::ci::queue::RunQueue;
+use codeyard_repos_core::ci::queue::CORE_UNAVAILABLE;
+use codeyard_repos_core::context::NodeContext;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_cluster::link::Link;
+use codeyard_cluster_core::link::Link;
 use iroh::endpoint::Connection;
 use iroh::protocol::AcceptError;
 use iroh::protocol::ProtocolHandler;
@@ -50,8 +50,8 @@ mod tests {
     use super::*;
     use codeyard_ci::config::CiConfig;
     use codeyard_ci::config::CiExecutionMode;
-    use codeyard_cluster::transport::IrohDialer;
-    use codeyard_cluster::transport::Relay;
+    use codeyard_cluster_core::transport::IrohDialer;
+    use codeyard_cluster_core::transport::Relay;
     use codeyard_support::node_identity::NodeKey;
 
     async fn test_context() -> (tempfile::TempDir, codeyard_db_core::DbPool, NodeContext) {
@@ -126,7 +126,7 @@ mod tests {
         frame.extend_from_slice(&header);
         let mut link = Link::tcp(
             context.key.public_key(),
-            codeyard_cluster::transport::ALPN_EVENTS,
+            codeyard_cluster_core::transport::ALPN_EVENTS,
             std::io::Cursor::new(frame),
             tokio::io::sink(),
         );
@@ -168,7 +168,7 @@ mod tests {
         let owner = codeyard_db_identity::users::accounts::create_user(&pool, "owner", None)
             .await
             .unwrap();
-        let repo = crate::repositories::lifecycle::provision(
+        let repo = codeyard_repos_core::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
@@ -304,7 +304,7 @@ pub struct CiHandler {
     slots: Arc<Semaphore>,
     accepting_claims: Arc<AtomicBool>,
     headers: Arc<std::sync::Mutex<std::collections::HashMap<iroh::PublicKey, Arc<Semaphore>>>>,
-    sessions: crate::cluster::rpc::SessionGate,
+    sessions: codeyard_repos_core::cluster::rpc::SessionGate,
 }
 
 impl std::fmt::Debug for CiHandler {
@@ -321,7 +321,7 @@ impl CiHandler {
             slots: Arc::new(Semaphore::new(16)),
             accepting_claims: Arc::new(AtomicBool::new(true)),
             headers: Default::default(),
-            sessions: crate::cluster::rpc::SessionGate::default(),
+            sessions: codeyard_repos_core::cluster::rpc::SessionGate::default(),
         }
     }
 
@@ -432,7 +432,7 @@ impl CiHandler {
                         node.status == "active" && node.roles.iter().any(|role| role == "storage")
                     })
                     .ok_or_else(|| anyhow::anyhow!(CORE_UNAVAILABLE))?;
-                let peer = codeyard_cluster::worker::CorePeer {
+                let peer = codeyard_cluster_core::worker::CorePeer {
                     target: None,
                     public_key: node.public_key,
                     address: serde_json::from_str(
@@ -539,7 +539,7 @@ impl CiHandler {
             return Ok(Err(refusal.to_owned()));
         }
         tracing::trace!(name: "ci_request_authorized", %peer, "CI queue request authorized; waiting for frame");
-        let header = crate::wire::read_frame(
+        let header = codeyard_repos_core::wire::read_frame(
             &mut link.reader,
             codeyard_db_core::limits::MAX_JSON + 64 * 1024,
         )
@@ -596,7 +596,7 @@ impl CiHandler {
     }
 
     async fn answer_link(&self, mut link: Link) -> Result<()> {
-        let _header = codeyard_cluster::transport::peer_header_slot(&self.headers, link.peer)?;
+        let _header = codeyard_cluster_core::transport::peer_header_slot(&self.headers, link.peer)?;
         tokio::time::timeout(std::time::Duration::from_secs(90), async {
             // A busy core refuses at once, as pairing does, so the client asks another
             // core instead of waiting in a queue. Hold admission through the reply write, and
@@ -607,7 +607,7 @@ impl CiHandler {
                 Err(_) => Err(CORE_UNAVAILABLE.to_owned()),
             };
             let header = serde_json::to_vec(&Reply { result })?;
-            crate::wire::write_frame(
+            codeyard_repos_core::wire::write_frame(
                 &mut link.writer,
                 &header,
                 codeyard_db_core::limits::MAX_JSON,
@@ -623,10 +623,10 @@ impl CiHandler {
 
 impl ProtocolHandler for CiHandler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-        let Ok(_connection) = codeyard_cluster::transport::connection_slot(&connection) else {
+        let Ok(_connection) = codeyard_cluster_core::transport::connection_slot(&connection) else {
             return Ok(());
         };
-        while let Some(link) = codeyard_cluster::transport::accept_stream(&connection).await {
+        while let Some(link) = codeyard_cluster_core::transport::accept_stream(&connection).await {
             if let Err(error) = self.serve_link(link).await {
                 tracing::warn!(%error, "CI queue RPC failed");
                 connection.close(500u32.into(), b"CI request failed");

@@ -215,7 +215,7 @@ pub async fn create_repo_cmd(
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", owner))?;
 
     codeyard_repos_core::repositories::lifecycle::validate_description(description.unwrap_or(""))?;
-    let context = codeyard_repos_core::cluster::client_context(pool, state_dir, repos_path).await?;
+    let context = codeyard_cluster::client_context(pool, state_dir, repos_path).await?;
     let created = codeyard_repos_core::repositories::lifecycle::provision(
         (pool, context.as_ref()),
         repos_path,
@@ -327,7 +327,7 @@ pub async fn repo_info_cmd(
     println!("ID: {}", repo.id);
     println!("Private: {}", if repo.is_private { "yes" } else { "no" });
     println!("Default branch: {}", terminal_text(&repo.default_branch));
-    let context = codeyard_repos_core::cluster::client_context(pool, state_dir, repos_path).await?;
+    let context = codeyard_cluster::client_context(pool, state_dir, repos_path).await?;
     let store = repo_store(&repo, context.as_ref());
     println!(
         "Disk path: {}",

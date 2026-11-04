@@ -94,9 +94,9 @@ pub struct ClaimedRun {
     pub environment_values: codeyard_ci::environment_values::EnvironmentValues,
     #[serde(default)]
     pub pull_request: Option<PullRequestEvent>,
-    pub storage_peer: Option<codeyard_cluster::worker::CorePeer>,
+    pub storage_peer: Option<codeyard_cluster_core::worker::CorePeer>,
     #[serde(default)]
-    pub storage_replicas: Vec<(i64, codeyard_cluster::worker::CorePeer)>,
+    pub storage_replicas: Vec<(i64, codeyard_cluster_core::worker::CorePeer)>,
     #[serde(default)]
     pub limits: RunLimits,
     #[serde(default)]
@@ -119,7 +119,7 @@ pub enum RunQueue {
     },
     Remote {
         context: NodeContext,
-        peers: Vec<codeyard_cluster::worker::CorePeer>,
+        peers: Vec<codeyard_cluster_core::worker::CorePeer>,
         preferred: Arc<std::sync::Mutex<Option<String>>>,
     },
 }
@@ -308,7 +308,7 @@ impl RunQueue {
                 let local_worker = worker
                     .strip_prefix(&format!("{}/", context.key.public_hex()))
                     .context("the CI run belongs to another worker")?;
-                let (node, peer): (i64, codeyard_cluster::worker::CorePeer) = self
+                let (node, peer): (i64, codeyard_cluster_core::worker::CorePeer) = self
                     .call(
                         local_worker,
                         Operation::Storage {
@@ -564,7 +564,7 @@ impl RunQueue {
                             };
                             targets.push((
                                 id,
-                                codeyard_cluster::worker::CorePeer {
+                                codeyard_cluster_core::worker::CorePeer {
                                     target: None,
                                     public_key: node.public_key,
                                     address,
@@ -991,11 +991,11 @@ impl RunQueue {
             // ends only the dial: once the request is written, its reply is awaited below.
             let dial = async {
                 let address = peer.resolved_address().await?;
-                codeyard_cluster::transport::dial_node(
+                codeyard_cluster_core::transport::dial_node(
                     &context.iroh,
                     node,
                     &address,
-                    codeyard_cluster::transport::ALPN_EVENTS,
+                    codeyard_cluster_core::transport::ALPN_EVENTS,
                 )
                 .await
             };

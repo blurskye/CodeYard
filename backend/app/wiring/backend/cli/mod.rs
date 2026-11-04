@@ -251,7 +251,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
             return crate::backend::node::runtime::serve_worker(&cli.state_dir).await;
         }
         if configured_database_url.is_none() {
-            anyhow::ensure!(roles.single_node() && codeyard_cluster::settings::Settings::from_env()?.is_none(),
+            anyhow::ensure!(roles.single_node() && codeyard_cluster_core::settings::Settings::from_env()?.is_none(),
                 "a server and the cluster roles require DATABASE_URL (PostgreSQL for a cluster, sqlite://... for a single node); only a runner can run without a database");
         }
     }
@@ -321,7 +321,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                 host_key,
             } => {
                 if cluster {
-                    codeyard_cluster::settings::require_postgres(&pool)?;
+                    codeyard_cluster_core::settings::require_postgres(&pool)?;
                     if codeyard_db_cluster::cluster::enable_cluster(&pool).await? {
                         info!("cluster mode is on");
                     }

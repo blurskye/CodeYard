@@ -976,16 +976,16 @@ mod tests {
         tokio_rustls::client::TlsStream<tokio::io::DuplexStream>,
         tokio_rustls::server::TlsStream<tokio::io::DuplexStream>,
     ) {
-        use codeyard_cluster::transport::ALPN_RPC;
+        use codeyard_cluster_core::transport::ALPN_RPC;
         use codeyard_support::node_identity::NodeKey;
         let server_key = NodeKey::generate();
         let client_key = NodeKey::generate();
         let (client_io, server_io) = tokio::io::duplex(capacity);
         let acceptor = tokio_rustls::TlsAcceptor::from(
-            codeyard_cluster::tls::server_config(&server_key).unwrap(),
+            codeyard_cluster_core::tls::server_config(&server_key).unwrap(),
         );
         let connector = tokio_rustls::TlsConnector::from(
-            codeyard_cluster::tls::client_config(&client_key, server_key.public_key(), ALPN_RPC)
+            codeyard_cluster_core::tls::client_config(&client_key, server_key.public_key(), ALPN_RPC)
                 .unwrap(),
         );
         let name = tokio_rustls::rustls::pki_types::ServerName::IpAddress(

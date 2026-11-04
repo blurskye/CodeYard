@@ -18,7 +18,7 @@ async fn start_node(
     name: &str,
     roles: &str,
 ) -> cluster::Cluster {
-    let settings = codeyard_cluster::settings::Settings::from_lookup(&|key| match key {
+    let settings = codeyard_cluster_core::settings::Settings::from_lookup(&|key| match key {
         "IROH_BIND" => Some("127.0.0.1:0".into()),
         "NODE_NAME" => Some(name.into()),
         _ => None,
@@ -334,7 +334,7 @@ async fn content_search_allows_transport_fallback_and_keeps_completed_repositori
             .await
             .unwrap()
             .unwrap();
-    let mut address: codeyard_cluster::transport::NodeAddress =
+    let mut address: codeyard_cluster_core::transport::NodeAddress =
         serde_json::from_str(node.addr_hint.as_deref().unwrap()).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     address.tcp = vec![listener.local_addr().unwrap()];
