@@ -126,6 +126,23 @@ impl RepoStore {
         Ok(Self(Backend::Local(local)))
     }
 
+    /// A reserved repository has no serving term yet. Only initialization may use this store.
+    pub fn for_initialization(
+        repository: &Repository,
+        context: &NodeContext,
+    ) -> Result<Self, RepoError> {
+        let uuid = crate::wire::repository_uuid(&repository.disk_path)?;
+        Ok(Self(Backend::Local(
+            local::LocalStore::new(
+                primary_path(&context.repos_path, uuid)
+                    .to_str()
+                    .ok_or_else(crate::wire::unavailable)?,
+                Some(Some(context.node_id)),
+            )
+            .with_context(context, repository.id),
+        )))
+    }
+
     /// CI workers receive a storage node and UUID, not a repository database row.
     pub fn remote(uuid: uuid::Uuid, node_id: i64, context: &NodeContext) -> Self {
         Self(Backend::Remote(

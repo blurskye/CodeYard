@@ -149,6 +149,34 @@ pub async fn bootstrap_writes(
     Ok(())
 }
 
+pub async fn enable_initialized_repository(
+    pool: &SqlitePool,
+    repo: i64,
+    primary: i64,
+) -> Result<bool> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let control = lock_control(&mut tx, repo).await?;
+    if control.primary_id != primary
+        || control.term != 1
+        || control.committed_version != 0
+        || control.serving
+    {
+        return Ok(false);
+    }
+    let refs = canonical_refs(&mut tx, repo).await?;
+    if refs.len() != 1 || refs[0].name != "HEAD" || refs[0].kind != "symbolic" {
+        return Ok(false);
+    }
+    let required = quorum(&mut tx, repo, 1).await?;
+    if !published(&mut tx, repo, primary, 1, 0, required).await? {
+        return Ok(false);
+    }
+    sqlx::query("UPDATE repository_write_control SET serving=1 WHERE repository_id=$1 AND term=1 AND committed_version=0 AND serving=0")
+        .bind(repo).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
 pub async fn begin_write(
     pool: &SqlitePool,
     repo: i64,

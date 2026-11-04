@@ -159,7 +159,9 @@ pub fn authorize_operation(
             ))
         };
     }
-    if roles.iter().any(|role| role == "web" || role == "ssh")
+    if (matches!(operation, Operation::Initialize { source: None, .. })
+        && roles.iter().any(|role| role == "storage"))
+        || roles.iter().any(|role| role == "web" || role == "ssh")
         || (worker_read && roles.iter().any(|role| role == "runner"))
     {
         Ok(name)
@@ -449,6 +451,50 @@ impl RpcHandler {
                 | Operation::WritePack { .. }
         ) {
             return self.write_admission(request, node.id).await;
+        }
+        if matches!(
+            request.operation,
+            Operation::Initialize { .. } | Operation::InitializeCopy { .. }
+        ) && codeyard_db_cluster::cluster::writes::write_settings(pool)
+            .await
+            .map_err(|_| unavailable())?
+            .write_quorum
+            .is_some()
+        {
+            let row = codeyard_db_cluster::cluster::get_repository_by_uuid(
+                pool,
+                &request.repository.to_string(),
+            )
+            .await
+            .map_err(|_| unavailable())?
+            .ok_or_else(unavailable)?;
+            if row.storage_node_id != Some(self.context.node_id) {
+                let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, row.id)
+                    .await
+                    .map_err(|_| unavailable())?;
+                if !matches!(
+                    request.operation,
+                    Operation::Initialize { source: None, .. }
+                ) || view.primary_id != node.id
+                    || view.serving
+                    || view.term != 1
+                    || view.committed_version != 0
+                    || !view
+                        .voters
+                        .iter()
+                        .any(|voter| voter.node_id == self.context.node_id)
+                {
+                    return Err(unavailable());
+                }
+            } else if !node.roles.iter().any(|role| role == "web" || role == "ssh") {
+                return Err(invalid(
+                    "repository initialization requires a web or ssh node",
+                ));
+            }
+            return Ok((
+                RepoStore::for_initialization(&row, &self.context)?,
+                Some(row.id),
+            ));
         }
         let (repo_id, directory) = self
             .check_repository(

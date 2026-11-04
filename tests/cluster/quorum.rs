@@ -815,63 +815,105 @@ async fn default_branch_uses_both_stores(pool: &DbPool) {
     stores.stop().await;
 }
 
-async fn new_repositories_stay_refused(pool: &DbPool) {
+async fn new_repositories_use_both_voters(pool: &DbPool) {
+    use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
     use codeyard_repos_core::repositories::lifecycle;
-    use codeyard_repos_core::repositories::lifecycle::LifecycleFailure;
     let stores = Stores::new(pool).await;
     let f = &stores.fixture;
     let source = codeyard_db_repos::repositories::records::get_repository_by_id(pool, f.repo)
         .await
         .unwrap()
         .unwrap();
-    for voter_down in [false, true] {
-        if voter_down {
-            stores.listeners[1].stop().await;
+    for (name, source) in [("new-empty", None), ("new-copy", Some(&source))] {
+        let repo = lifecycle::provision(
+            (pool, Some(&stores.contexts[0])),
+            &stores.contexts[0].repos_path,
+            RepositoryCreationOwner::personal(f.owner),
+            name,
+            None,
+            false,
+            source,
+        )
+        .await
+        .unwrap();
+        let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, repo.id)
+            .await
+            .unwrap();
+        assert!(view.serving);
+        assert_eq!(view.voters.len(), 2);
+        assert!(view
+            .voters
+            .iter()
+            .all(|voter| voter.applied_version == view.committed_version));
+        let uuid = codeyard_repos_core::wire::repository_uuid(&repo.disk_path).unwrap();
+        for context in &stores.contexts {
+            let store = RepoStore::from_disk_path(
+                term_path(&context.repos_path, uuid, 1).to_str().unwrap(),
+            );
+            assert_eq!(store.head_target().await.unwrap().as_deref(), Some(MAIN));
+            if source.is_some() {
+                assert_eq!(store.refs().await.unwrap().get(MAIN), Some(&stores.old));
+            } else {
+                assert!(store.refs().await.unwrap().is_empty());
+            }
         }
-        for (name, source) in [("new-empty", None), ("new-copy", Some(&source))] {
-            let error = lifecycle::provision(
-                (pool, Some(&stores.contexts[0])),
-                &stores.contexts[0].repos_path,
-                codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
-                    f.owner,
-                ),
-                name,
-                None,
-                false,
-                source,
+        // Initialization cannot reset a serving term, including a replay from a voter.
+        assert!(codeyard_repos_core::repositories::store::repo_store(
+            &repo,
+            Some(&stores.contexts[0])
+        )
+        .initialize(None, "other")
+        .await
+        .is_err());
+        let reply = stores.contexts[1]
+            .call(
+                stores.contexts[0].node_id,
+                codeyard_repos_core::wire::Request {
+                    repository: uuid,
+                    operation: codeyard_repos_core::wire::Operation::Initialize {
+                        source: None,
+                        default_branch: "other".into(),
+                    },
+                    actor: None,
+                    ci_run: None,
+                },
+                b"",
             )
             .await
-            .unwrap_err();
-            assert_eq!(error.kind, LifecycleFailure::Unavailable);
-            assert_eq!(
-                error.message,
-                "Repository initialization and copy are unavailable with write quorum."
-            );
-        }
+            .unwrap()
+            .0;
+        assert!(reply.result.is_err());
     }
-    let query = "SELECT COUNT(*) FROM repositories WHERE owner_user_id=$1";
-    let count: i64 = match pool {
-        DbPool::Postgres(raw) => sqlx::query_scalar(query)
-            .bind(f.owner)
-            .fetch_one(raw)
-            .await
-            .unwrap(),
-        DbPool::Sqlite(raw) => sqlx::query_scalar(query)
-            .bind(f.owner)
-            .fetch_one(raw)
-            .await
-            .unwrap(),
-    };
-    assert_eq!(count, 1);
-    for context in &stores.contexts {
-        assert_eq!(std::fs::read_dir(&context.repos_path).unwrap().count(), 1);
-        assert_eq!(
-            std::fs::read_dir(context.repos_path.join("terms"))
-                .unwrap()
-                .count(),
-            1
-        );
+    stores.listeners[1].stop().await;
+    for (name, source) in [("failed-empty", None), ("failed-copy", Some(&source))] {
+        assert!(lifecycle::provision(
+            (pool, Some(&stores.contexts[0])),
+            &stores.contexts[0].repos_path,
+            RepositoryCreationOwner::personal(f.owner),
+            name,
+            None,
+            false,
+            source,
+        )
+        .await
+        .is_err());
+        assert!(codeyard_db_repos::repositories::records::get_repository(
+            pool,
+            "quorum-owner",
+            name
+        )
+        .await
+        .unwrap()
+        .is_none());
     }
+    assert_eq!(
+        RepoStore::from_disk_path(stores.paths[0].to_str().unwrap())
+            .refs()
+            .await
+            .unwrap()
+            .get(MAIN),
+        Some(&stores.old)
+    );
     stores.stop().await;
 }
 
@@ -935,7 +977,7 @@ engine_pair!(
     default_branch_uses_both_stores
 );
 engine_pair!(
-    sqlite_new_repositories_stay_refused,
-    postgres_new_repositories_stay_refused,
-    new_repositories_stay_refused
+    sqlite_new_repositories_use_both_voters,
+    postgres_new_repositories_use_both_voters,
+    new_repositories_use_both_voters
 );

@@ -25,6 +25,10 @@ native_operation!(crate::postgres::cluster::writes::bootstrap_writes,
     crate::sqlite::cluster::writes::bootstrap_writes,
     /// Bootstraps once, under a write pause, from a verified complete primary. Serving stays off.
     fn bootstrap_writes(pool: &DbPool, repo: i64, primary: i64, voters: &[i64], refs: &[RefValue]) -> Result<()>);
+native_operation!(crate::postgres::cluster::writes::enable_initialized_repository,
+    crate::sqlite::cluster::writes::enable_initialized_repository,
+    /// Enables a fresh empty term only after all voters have durably reconstructed it.
+    fn enable_initialized_repository(pool: &DbPool, repo: i64, primary: i64) -> Result<bool>);
 native_operation!(crate::postgres::cluster::writes::begin_write,
     crate::sqlite::cluster::writes::begin_write,
     fn begin_write(pool: &DbPool, repo: i64, primary: i64, term: i64, id: &str, refs: &[RefChange]) -> Result<WriteRecord>);

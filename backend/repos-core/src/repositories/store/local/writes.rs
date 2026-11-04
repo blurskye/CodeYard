@@ -281,3 +281,233 @@ impl LocalStore {
         Ok(())
     }
 }
+
+impl LocalStore {
+    /// An empty canonical HEAD has no objects to transfer. Each voter creates and verifies
+    /// its own term before the database enables serving; copies publish their refs later.
+    pub(super) async fn initialize_quorum(
+        &self,
+        context: &crate::context::NodeContext,
+        repository: i64,
+        default_branch: &str,
+    ) -> Result<(), RepoError> {
+        use codeyard_db_cluster::cluster::writes as journal;
+        use codeyard_db_core::models::RefValue;
+        let reference = git::branch_ref(default_branch)
+            .ok_or_else(|| codeyard_git::error::invalid_ref("branch"))?;
+        let pool = context.database()?;
+        let row = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository)
+            .await
+            .map_err(RepoError::from)?
+            .ok_or_else(RepoError::write_denied)?;
+        let primary = row
+            .storage_node_id
+            .ok_or_else(RepoError::storage_node_unavailable)?;
+        let uuid = crate::wire::repository_uuid(&row.disk_path)?;
+        let nodes = codeyard_db_cluster::cluster::list_nodes(pool)
+            .await
+            .map_err(RepoError::from)?;
+        if !nodes.iter().any(|node| {
+            node.id == context.node_id
+                && node.public_key == context.key.public_hex()
+                && node.is_serving_storage()
+        }) {
+            return Err(RepoError::storage_node_unavailable());
+        }
+        let other = if primary == context.node_id {
+            if codeyard_db_cluster::cluster::get_write_version(pool, repository)
+                .await
+                .map_err(RepoError::from)?
+                != Some(0)
+            {
+                return Err(RepoError::write_denied());
+            }
+            let other = codeyard_db_core::models::ClusterNode::ranked_storage(&nodes)
+                .into_iter()
+                .find(|node| node.id != primary)
+                .ok_or_else(RepoError::storage_node_unavailable)?
+                .id;
+            journal::bootstrap_writes(
+                pool,
+                repository,
+                primary,
+                &[primary, other],
+                &[RefValue {
+                    name: "HEAD".into(),
+                    kind: "symbolic".into(),
+                    target: reference.clone(),
+                }],
+            )
+            .await
+            .map_err(RepoError::from)?;
+            Some(other)
+        } else {
+            None
+        };
+        let view = journal::recovery_view(pool, repository)
+            .await
+            .map_err(RepoError::from)?;
+        if view.serving
+            || view.term != 1
+            || view.committed_version != 0
+            || view.unfinished.is_some()
+            || view.refs.len() != 1
+            || view.refs[0].name != "HEAD"
+            || view.refs[0].kind != "symbolic"
+            || view.refs[0].target != reference
+            || !view
+                .voters
+                .iter()
+                .any(|voter| voter.node_id == context.node_id)
+        {
+            return Err(RepoError::storage_node_unavailable());
+        }
+        let baseline = crate::repositories::store::primary_path(&context.repos_path, uuid);
+        let _lock = git::locks::lock(&baseline).await;
+        if !tokio::fs::try_exists(&baseline)
+            .await
+            .map_err(|error| RepoError::from(anyhow::Error::from(error)))?
+        {
+            git::initialize_repository(&baseline, None, default_branch)
+                .await
+                .map_err(RepoError::from)?;
+        }
+        super::recover_term(pool, repository, context.node_id, &context.repos_path)
+            .await
+            .map_err(RepoError::from)?;
+        if let Some(other) = other {
+            let (reply, _) = Box::pin(context.call(
+                other,
+                crate::wire::Request {
+                    repository: uuid,
+                    operation: crate::wire::Operation::Initialize {
+                        source: None,
+                        default_branch: default_branch.into(),
+                    },
+                    actor: None,
+                    ci_run: None,
+                },
+                b"",
+            ))
+            .await?;
+            reply.result.map_err(|failure| match failure {
+                crate::wire::Failure::Repository(error) => error,
+                _ => RepoError::storage_node_unavailable(),
+            })?;
+            if !journal::enable_initialized_repository(pool, repository, primary)
+                .await
+                .map_err(RepoError::from)?
+            {
+                return Err(RepoError::storage_node_unavailable());
+            }
+        }
+        Ok(())
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Copy publication retains both repositories and the initiating credential."
+    )]
+    pub(super) async fn publish_quorum_copy(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        repository: i64,
+        source_id: i64,
+        authority: &codeyard_db_core::queries::credentials::Actor,
+        source: &LocalStore,
+        staged: &LocalStore,
+        refs: &std::collections::HashMap<String, String>,
+    ) -> Result<(), RepoError> {
+        use tokio::io::AsyncWriteExt;
+        // Only objects move before authorization. No copied reference is visible yet.
+        let pack = tempfile::NamedTempFile::new()
+            .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
+        let mut output = tokio::fs::File::from_std(
+            pack.reopen()
+                .map_err(|error| RepoError::from(anyhow::Error::from(error)))?,
+        );
+        let limits = crate::git_transport::WriteLimits::load(pool)
+            .await
+            .map_err(RepoError::from)?;
+        let targets: Vec<_> = refs.values().cloned().collect();
+        let status = staged
+            .replica_pack(
+                &targets,
+                &[],
+                crate::store_types::GitStreams {
+                    input: &mut tokio::io::empty(),
+                    output: &mut crate::git_transport::LimitedWriter::new(
+                        &mut output,
+                        limits.pack_bytes,
+                    ),
+                    errors: &mut tokio::io::sink(),
+                },
+            )
+            .await
+            .map_err(RepoError::from)?;
+        if !status.success() {
+            return Err(unavailable("Repository copy pack failed"));
+        }
+        output
+            .flush()
+            .await
+            .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
+        self.index_pack(pack.path(), true).await?;
+        let changes: Vec<_> = refs
+            .iter()
+            .map(|(name, target)| oid_change(name, None, Some(target)))
+            .collect();
+        let publication = git::locks::publication(self.path())
+            .await
+            .map_err(RepoError::from)?;
+        publication
+            .scope(self.publish_quorum_refs(pool, repository, &changes, async {
+                super::live_read(
+                    pool,
+                    source_id,
+                    authority.user_id,
+                    source.path(),
+                    source.node_id,
+                )
+                .await?;
+                if let Some(token) = authority.token_id() {
+                    let row =
+                        codeyard_identity::repository_access::current_repository(pool, source_id)
+                            .await
+                            .map_err(|_| RepoError::authority_unavailable())?;
+                    crate::repositories::git_sessions::ReceiveCredential::Token(token)
+                        .authorize(pool, &row, false)
+                        .await
+                        .map_err(RepoError::from)?;
+                }
+                let destination =
+                    codeyard_identity::repository_access::current_repository(pool, repository)
+                        .await
+                        .map_err(|_| RepoError::authority_unavailable())?;
+                if destination.is_gist {
+                    if destination.owner_user_id != Some(authority.user_id)
+                        || destination.is_archived
+                    {
+                        return Err(RepoError::write_denied());
+                    }
+                } else {
+                    super::live_write(
+                        pool,
+                        repository,
+                        authority.user_id,
+                        None,
+                        &History::SingleCommit,
+                        self.path(),
+                        self.node_id,
+                    )
+                    .await?;
+                }
+                codeyard_identity::repository_access::credential_user(pool, authority, true)
+                    .await
+                    .map_err(RepoError::from)?;
+                Ok(())
+            }))
+            .await?;
+        Ok(())
+    }
+}

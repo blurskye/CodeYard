@@ -1264,7 +1264,19 @@ impl LocalStore {
         default_branch: &str,
     ) -> Result<(), RepoError> {
         if let Some((context, repository)) = &self.context {
-            require_legacy_publisher(context.database()?, *repository).await?;
+            if codeyard_db_cluster::cluster::writes::write_settings(context.database()?)
+                .await
+                .map_err(RepoError::from)?
+                .write_quorum
+                .is_some()
+            {
+                if source.is_some() {
+                    return Err(unavailable("Repository copy requires live authority"));
+                }
+                return self
+                    .initialize_quorum(context, *repository, default_branch)
+                    .await;
+            }
         }
         let source = match source {
             Some(source) => Some(source.admitted_path(true).await?),
@@ -1287,6 +1299,18 @@ impl LocalStore {
         let actor = authority.user_id;
         source.admitted_path(true).await?;
         let default_branch = options.default_branch.as_str();
+        if let Some((context, repository)) = &self.context {
+            if codeyard_db_cluster::cluster::writes::write_settings(pool)
+                .await
+                .map_err(RepoError::from)?
+                .write_quorum
+                .is_some()
+            {
+                self.initialize_quorum(context, *repository, default_branch)
+                    .await?;
+                self.admitted_path(false).await?;
+            }
+        }
         // The row is already discoverable. Keep copied objects outside its live path
         // until the source-access check, on the same filesystem for atomic publication.
         let temporary = tempfile::Builder::new()
@@ -1414,6 +1438,26 @@ impl LocalStore {
         codeyard_identity::repository_access::credential_user(pool, &authority, true)
             .await
             .map_err(RepoError::from)?;
+        if self.quorum_context(pool, repo_id).await?.is_some() {
+            let staged = Self::new(
+                temporary
+                    .path()
+                    .to_str()
+                    .ok_or_else(|| unavailable("Invalid copy path"))?,
+                None,
+            );
+            self.publish_quorum_copy(
+                pool,
+                repo_id,
+                source_repo_id,
+                &authority,
+                source,
+                &staged,
+                &copied,
+            )
+            .await?;
+            return Ok(());
+        }
         require_legacy_publisher(pool, repo_id).await?;
         tokio::fs::rename(temporary.path(), self.path())
             .await

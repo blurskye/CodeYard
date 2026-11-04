@@ -529,19 +529,6 @@ async fn provision_stored_owned(
     let storage_node_id = crate::cluster::placement::storage_node(context, source)
         .await
         .map_err(git_storage_error)?;
-    if storage_node_id.is_some()
-        && codeyard_db_cluster::cluster::writes::write_settings(pool)
-            .await
-            .map_err(|_| unavailable())?
-            .write_quorum
-            .is_some()
-    {
-        // The ref journal requires an existing serving term on both voters.
-        return Err(StorageError {
-            kind: LifecycleFailure::Unavailable,
-            message: "Repository initialization and copy are unavailable with write quorum.",
-        });
-    }
     let root = std::path::absolute(repos_path).map_err(|_| unavailable())?;
     let location = crate::repositories::store::primary_path(&root, Uuid::new_v4());
     let disk_path = location.to_str().ok_or_else(unavailable)?;
@@ -638,7 +625,14 @@ async fn provision_stored_owned(
                 .map_err(git_storage_error)?;
         }
         // Fork initialization records its version on the owning store before refreshing languages.
-        if source.is_none() {
+        if source.is_none()
+            && (storage_node_id.is_none()
+                || codeyard_db_cluster::cluster::writes::write_settings(pool)
+                    .await
+                    .map_err(|_| unavailable())?
+                    .write_quorum
+                    .is_none())
+        {
             codeyard_db_cluster::cluster::bump_write_version(pool, repository.id, None)
                 .await
                 .map_err(|_| unavailable())?;

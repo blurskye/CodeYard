@@ -6,7 +6,10 @@ to check in the cluster code that exists, what is still missing, and the decisio
 every open question. [Architecture](ARCHITECTURE.md#3-scaling-out-cells-behind-a-router-plan-not-built)
 keeps the longer plan for cells; this file comes first and does not repeat it.
 
-Nothing here is started except the checks in part A. Cluster mode stays hidden behind
+Items 1–3 have implementation and tests; quorum initialization and copy are being
+completed. Metrics and readiness probes also exist. Node drain, provisioning and the
+remaining operations work are not complete. Acceptance checks still need builder runs.
+Cluster mode stays hidden behind
 `CODEYARD_EXPERIMENTAL_CLUSTER=1` until part A passes and part B items 1 to 6 are done.
 
 ## Where we are
@@ -17,9 +20,12 @@ asynchronous copies with `cluster promote`, take-over after a node stops reporti
 workers on other machines, live logs and notifications across web nodes, and a four-node
 round in `scripts/e2e.sh`.
 
-Not built: acknowledging a push only after a majority of copies hold it, PostgreSQL high
-availability, cluster-aware backup, node drain and automatic scaling, files (packages, CI
-artifacts and caches) that survive a web node, and any load test.
+The experimental write path uses two storage voters, PostgreSQL decisions and a ref
+journal. Cluster startup requires shared S3 storage for files. Repository initialization
+and copy now use the same quorum path; builder verification is pending.
+
+Not complete: PostgreSQL failover acceptance, cluster-aware backup, node drain,
+provisioning, automatic scaling, rebalancing, rolling upgrades and measured load limits.
 
 ## A. Checks on what exists
 

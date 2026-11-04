@@ -56,6 +56,11 @@ and committed-but-unpublished writes for recovery. A refused preparation reports
 it does not mean the write was rolled back. Clusters without `write_quorum` keep the
 existing push path.
 
+Empty repositories initialize a canonical HEAD on both voters before serving starts.
+Fork and template objects are staged privately; their refs publish through the same
+quorum coordinator as pushes, after live source and destination authority checks.
+A missing voter refuses creation. These initialization changes await builder verification.
+
 ## Monitoring
 
 `/health` is liveness; `/ready` checks the database with a 2-second deadline. Nodes with
