@@ -1,6 +1,6 @@
 //! Called workflows are admitted from authorized repositories and run from immutable snapshots.
 use crate::support::database::Database;
-use codeyard::backend::db;
+
 use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;
 use codeyard_app::ci::config::CiExecutionMode;

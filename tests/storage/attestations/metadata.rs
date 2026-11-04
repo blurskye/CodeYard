@@ -1,5 +1,5 @@
 use super::*;
-use codeyard::backend::db;
+
 use codeyard_app::artifact_metadata;
 use codeyard_support::token_hash::token_hash;
 use std::time::Duration;

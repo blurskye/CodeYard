@@ -7,8 +7,8 @@ use axum::{
     Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard::backend::identity::tokens;
 use codeyard_app::packages;
+use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -613,7 +613,7 @@ async fn oci(pg: bool) {
     );
     let grant = codeyard_db_repos::packages::registry_token(
         f.pool(),
-        &tokens::token_hash(writer.trim_start_matches("Bearer ")),
+        &codeyard_support::token_hash::token_hash(writer.trim_start_matches("Bearer ")),
     )
     .await
     .unwrap()

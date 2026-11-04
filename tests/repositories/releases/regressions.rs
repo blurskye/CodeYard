@@ -33,7 +33,8 @@ async fn postgres_release_pagination_rejects_overflow() {
 }
 
 async fn concurrent_release_updates_report_one_publication(pg: bool) {
-    use db::releases::{ReleaseChanges, ReleaseFields};
+    use codeyard_db_repos::releases::ReleaseChanges;
+    use codeyard_db_repos::releases::ReleaseFields;
     let mut world = setup(pg).await;
     let pool = world.database.pool();
     let repo = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")
@@ -97,7 +98,9 @@ async fn postgres_concurrent_release_updates_report_one_publication() {
 /// An edit prepared for a published release skips the tag checks that publishing runs, so it
 /// must not publish a release that became a draft before the edit was written.
 async fn an_edit_prepared_for_a_published_release_does_not_publish_a_draft(pg: bool) {
-    use db::releases::{ReleaseChanges, ReleaseFields, ReleaseRefusal};
+    use codeyard_db_repos::releases::ReleaseChanges;
+    use codeyard_db_repos::releases::ReleaseFields;
+    use codeyard_db_repos::releases::ReleaseRefusal;
     let mut world = setup(pg).await;
     let pool = world.database.pool();
     let repo = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")

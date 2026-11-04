@@ -477,10 +477,9 @@ async fn vulnerability_contract(pg: bool) {
     use codeyard_app::ci::config::CiConfig;
     use codeyard_app::storage::ObjectStore;
     use codeyard_app::vulnerabilities;
-    use db::organizations::{
-        profiles::{NewOrganization, OrganizationProfile},
-        OrganizationOutcome,
-    };
+    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_db_orgs::organizations::profiles::NewOrganization;
+    use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
     use std::sync::Arc;
     crate::support::fake_webui_bundle::install();
     let mut f = Database::new(pg).await;

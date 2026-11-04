@@ -10,7 +10,7 @@ use axum::{
     http::Request,
     Router,
 };
-use codeyard::backend::db;
+
 use codeyard_api_rest::user::fine_grained::settings::fine_grained::Model;
 use codeyard_api_rest::user::fine_grained::settings::fine_grained::View;
 use codeyard_app::repositories::lifecycle;

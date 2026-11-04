@@ -62,7 +62,7 @@ fn token() -> String {
         uuid::Uuid::new_v4().simple()
     )
 }
-use codeyard::backend::db;
+
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::store::RepoStore;

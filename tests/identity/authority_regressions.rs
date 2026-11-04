@@ -4,8 +4,8 @@ use crate::support::database::Database;
 use crate::support::native_database::token;
 use crate::support::PASSWORD_WORK;
 use chrono::{Duration, Utc};
-use codeyard::backend::db;
-use codeyard::backend::identity;
+
+use codeyard_identity as identity;
 
 const KEY: &str =
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";

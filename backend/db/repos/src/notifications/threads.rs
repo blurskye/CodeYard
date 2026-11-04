@@ -296,5 +296,3 @@ pub struct ThreadInbox {
     pub found: bool,
     pub updated: u64,
 }
-
-use codeyard_db_core::queries::notifications::threads::subject;

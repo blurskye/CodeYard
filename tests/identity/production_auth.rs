@@ -1,21 +1,21 @@
 //! Required PostgreSQL-only auth fixtures. No .env fallback and no silent skips.
 use crate::support::native_database as native;
 use chrono::{Duration, Utc};
-use codeyard::backend::db;
-use codeyard::backend::identity;
-use codeyard::backend::identity::admission;
-use codeyard::backend::identity::passwords;
+
+use codeyard_db_identity::auth_admission as admission;
 use codeyard_db_identity::users::sessions as stored;
 use codeyard_db_identity::users::transitions;
 use codeyard_db_identity::users::transitions::AccountAdmission;
 use codeyard_db_identity::users::transitions::BanChange;
 use codeyard_db_identity::users::transitions::SetupClaim;
+use codeyard_identity as identity;
 use codeyard_identity::accounts::ManagedAccountError;
 use codeyard_identity::accounts::PasswordChange;
 use codeyard_identity::accounts::SignupDecision;
 use codeyard_identity::accounts::SignupReviewOutcome;
 use codeyard_identity::credentials::PasswordAccount;
 use codeyard_identity::login::PasswordCredentials;
+use codeyard_identity::passwords;
 use codeyard_identity::registration::RegistrationError;
 use codeyard_identity::registration::RegistrationOutcome;
 use codeyard_identity::sessions::AccountAuthorityError;
@@ -86,7 +86,7 @@ fn shared_identity_inputs_keep_key_profile_token_and_oauth_bounds() {
         Err(tokens::TokenError::Invalid)
     );
     assert_eq!(
-        tokens::token_hash("abc"),
+        codeyard_support::token_hash::token_hash("abc"),
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     );
 

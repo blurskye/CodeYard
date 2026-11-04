@@ -1,10 +1,11 @@
 use super::{db, Fixture};
+use codeyard_db_repos::notifications::records::NotificationCredential;
+use codeyard_db_repos::notifications::records::NotificationInboxAction;
+use codeyard_db_repos::notifications::threads::ThreadAction;
+use codeyard_db_repos::notifications::threads::ThreadFilter;
+use codeyard_db_repos::notifications::threads::ThreadInbox;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
-use db::notifications::{
-    records::{NotificationCredential, NotificationInboxAction},
-    threads::{ThreadAction, ThreadFilter, ThreadInbox},
-};
 use serde_json::json;
 
 async fn act(f: &Fixture, user: i64, token: i64, action: ThreadAction) -> ThreadInbox {

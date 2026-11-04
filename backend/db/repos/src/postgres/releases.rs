@@ -11,8 +11,8 @@ use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 use uuid::Uuid;
-mod notes;
-mod read;
+pub(crate) mod notes;
+pub(crate) mod read;
 
 const RELEASE_COLUMNS: &str = "r.id, r.repo_id, r.tag_name, r.target_commitish, r.name, r.body, r.is_draft, r.is_immutable, r.is_prerelease, r.is_latest, r.author_id, r.created_at, r.published_at";
 

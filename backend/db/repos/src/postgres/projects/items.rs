@@ -1,6 +1,5 @@
 use super::readable_at;
 use super::*;
-use crate::postgres::projects::fields;
 use crate::postgres::projects::owner_authority;
 use crate::postgres::projects::readable;
 use crate::postgres::projects::write_project;

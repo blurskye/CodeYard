@@ -4,7 +4,7 @@ use super::fake_s3::FakeS3;
 use super::native_database as native;
 use super::server::spawn_on_free_ports;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard::backend::db;
+
 use codeyard_support::node_identity::NodeKey;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;

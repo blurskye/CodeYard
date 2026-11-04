@@ -1,7 +1,7 @@
 //! The new namespace neither hides existing accounts nor lets deleted gist URLs be captured.
 use crate::support::database::Database;
 use crate::support::http_client::Client;
-use codeyard::backend::db;
+
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;

@@ -1,7 +1,6 @@
 use super::*;
 use crate::repositories::dependencies::project;
 use crate::repositories::dependencies::receipts;
-use crate::repositories::dependencies::Alert;
 use crate::repositories::dependencies::AlertState;
 use crate::repositories::dependencies::Update;
 

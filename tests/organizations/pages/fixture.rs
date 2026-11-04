@@ -6,7 +6,7 @@ use axum::{
     http::{header, HeaderMap, Request, StatusCode},
     Router,
 };
-use codeyard::backend::db;
+
 use codeyard_api_rest::create_router;
 use codeyard_api_rest::user::fine_grained::orgs as view;
 use codeyard_app::app::AppState;

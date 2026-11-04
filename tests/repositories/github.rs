@@ -22,12 +22,12 @@ use axum::{
     http::{HeaderMap, Request, StatusCode},
     Router,
 };
-use codeyard::backend::db;
-use codeyard::backend::identity::tokens;
+
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;
 use codeyard_app::storage::ObjectStore;
+use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -1768,7 +1768,7 @@ async fn deploy_keys_contract(pg: bool) {
             &actor,
             codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
                 read_id,
-                tokens::token_hash(reader.strip_prefix("Bearer ").unwrap())
+                codeyard_support::token_hash::token_hash(reader.strip_prefix("Bearer ").unwrap())
             ),
             &repo,
             id
@@ -1787,7 +1787,7 @@ async fn deploy_keys_contract(pg: bool) {
             &actor,
             codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
                 token_id,
-                tokens::token_hash(writer.strip_prefix("Bearer ").unwrap())
+                codeyard_support::token_hash::token_hash(writer.strip_prefix("Bearer ").unwrap())
             ),
             &repo,
             id
@@ -2564,7 +2564,10 @@ async fn collaborators_contract(pg: bool) {
     .unwrap()
     .is_empty());
 
-    use db::organizations::{membership, profiles, teams, OrganizationOutcome};
+    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_db_orgs::organizations::membership;
+    use codeyard_db_orgs::organizations::profiles;
+    use codeyard_db_orgs::organizations::roles::teams;
     let input = profiles::NewOrganization::new(
         "acme",
         profiles::OrganizationProfile::new(None, None).unwrap(),

@@ -14,7 +14,7 @@ use axum::{
     http::{header, Request, StatusCode},
     Router,
 };
-use codeyard::backend::db;
+
 use codeyard_app::repositories::lifecycle;
 use codeyard_db_identity::users::transitions::SetupClaim;
 use serde_json::{json, Value};

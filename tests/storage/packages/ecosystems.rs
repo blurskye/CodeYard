@@ -1,6 +1,6 @@
 //! Client-shaped Maven/Gradle, NuGet and RubyGems conversations on both databases.
 use super::*;
-use codeyard::backend::db;
+
 use codeyard_model::permissions::Permissions;
 use sha2::{Digest, Sha512};
 use std::{
@@ -1015,7 +1015,7 @@ async fn ecosystems(pg: bool) {
         .scalar("SELECT id FROM ci_runs WHERE repo_id=$1", &[repo])
         .await;
     let job = "ghs_ecosystems";
-    let hash = tokens::token_hash(job);
+    let hash = codeyard_support::token_hash::token_hash(job);
     let permissions = serde_json::to_string(&Permissions(BTreeMap::from([
         ("packages".into(), 2),
         ("contents".into(), 2),

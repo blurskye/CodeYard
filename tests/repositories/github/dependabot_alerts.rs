@@ -330,7 +330,9 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::OK, "{second}");
     assert_ne!(page[0]["number"], second[0]["number"]);
-    use db::organizations::{self, NewOrganization, OrganizationProfile};
+    use codeyard_db_orgs::organizations;
+    use codeyard_db_orgs::organizations::profiles::NewOrganization;
+    use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
     let created = organizations::create_organization(
         f.pool(),
         owner,

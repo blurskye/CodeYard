@@ -6,8 +6,8 @@ use axum::{
     http::{Request, StatusCode},
     Router,
 };
-use codeyard::backend::db;
-use codeyard::backend::identity::oauth_apps as oauth;
+
+use codeyard_identity::oauth_apps as oauth;
 use codeyard_support::token_hash::token_hash;
 use serde_json::{json, Value};
 use tower::ServiceExt;

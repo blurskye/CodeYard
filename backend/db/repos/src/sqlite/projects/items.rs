@@ -5,7 +5,6 @@ use crate::projects::FieldUpdate;
 use crate::projects::Item;
 use crate::projects::NewView;
 use crate::projects::View;
-use crate::sqlite::projects::fields;
 use crate::sqlite::projects::owner_authority;
 use crate::sqlite::projects::readable;
 use crate::sqlite::projects::readable_at;

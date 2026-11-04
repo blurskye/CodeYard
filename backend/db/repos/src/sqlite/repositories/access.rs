@@ -5,7 +5,6 @@ use codeyard_db_core::models::RepoAccess;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
 use sqlx::Sqlite;
-use sqlx::SqliteConnection;
 use sqlx::SqlitePool;
 use sqlx::Transaction;
 

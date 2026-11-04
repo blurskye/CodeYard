@@ -2,10 +2,11 @@ use super::github::{document, request};
 use crate::support::database::Database;
 use crate::support::http_client::Client;
 use axum::http::StatusCode;
-use codeyard::backend::db;
-use codeyard::backend::identity::tokens;
+
+use codeyard_db_identity::relationships::Kind;
+use codeyard_db_identity::relationships::Mutation;
+use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
-use db::relationships::{Kind, Mutation};
 use serde_json::{json, Value};
 
 /// The stored hash of the Actions bot's job token in these tests.

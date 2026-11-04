@@ -7,7 +7,7 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::db;
+
 use codeyard_app::app::AppState;
 use codeyard_app::storage::ObjectStore;
 use database::Database;

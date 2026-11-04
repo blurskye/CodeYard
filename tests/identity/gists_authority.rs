@@ -2,8 +2,7 @@
 use super::github::request;
 use crate::support::database::Database;
 use crate::support::http_client::Client;
-use codeyard::backend::db;
-use codeyard::backend::identity::tokens;
+
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;
@@ -18,6 +17,7 @@ use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_git::gist_types::GistEdit;
 use codeyard_git::gist_types::GistFileChange;
 use codeyard_git::gist_types::MAX_GIST_BYTES;
+use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::Path, sync::Arc};

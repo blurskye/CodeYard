@@ -587,7 +587,9 @@ async fn traffic_contract(pg: bool) {
     assert_eq!(data["count"], 1);
     assert_eq!(views(&router, &reader).await["count"], personal);
     assert_eq!(f.scalar("SELECT COUNT(*) FROM repository_traffic_keys a JOIN repository_traffic_keys b ON a.salt=b.salt WHERE a.repo_id=$1 AND b.repo_id=$2",&[repo.id,other["id"].as_i64().unwrap()]).await,0);
-    use db::organizations::{membership, profiles, OrganizationOutcome};
+    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_db_orgs::organizations::membership;
+    use codeyard_db_orgs::organizations::profiles;
     let input = profiles::NewOrganization::new(
         "acme",
         profiles::OrganizationProfile::new(None, None).unwrap(),

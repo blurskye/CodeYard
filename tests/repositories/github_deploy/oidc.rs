@@ -7,7 +7,7 @@ use axum::{
     Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use codeyard::backend::db;
+
 use codeyard_app::ci;
 use codeyard_app::repositories;
 use codeyard_identity::tokens;

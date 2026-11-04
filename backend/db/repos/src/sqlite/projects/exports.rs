@@ -1,5 +1,4 @@
 use super::*;
-use crate::sqlite::projects::fields;
 use crate::sqlite::projects::readable;
 
 pub async fn list_page(

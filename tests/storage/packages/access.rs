@@ -1,5 +1,5 @@
 use super::*;
-use codeyard::backend::db;
+
 use codeyard_model::permissions::Permissions;
 use std::collections::BTreeMap;
 
@@ -42,7 +42,11 @@ async fn access(pg: bool) {
                 ("metadata".into(), 1),
             ])))
             .unwrap();
-            (name, tokens::token_hash(&value), permissions)
+            (
+                name,
+                codeyard_support::token_hash::token_hash(&value),
+                permissions,
+            )
         })
         .collect();
     let credentials: Vec<_> = policies

@@ -7,9 +7,9 @@ use crate::support::fake_webui_bundle;
 use crate::support::http_client::Client;
 
 use axum::http::StatusCode;
-use codeyard::backend::db;
-use codeyard::backend::identity::passwords;
+
 use codeyard_db_identity::users::signup_requests as requests;
+use codeyard_identity::passwords;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
 

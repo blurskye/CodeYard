@@ -4,7 +4,6 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::native_database as native;
 
-use codeyard::backend::db;
 use codeyard_app::ci::config::CiExecutionMode;
 use codeyard_app::ci::queue::RunQueue;
 use codeyard_app::cluster;

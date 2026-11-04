@@ -10,7 +10,7 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
     Engine,
 };
-use codeyard::backend::db;
+
 use codeyard_app::ci;
 use codeyard_app::repositories::lifecycle;
 use serde_json::{json, Value};

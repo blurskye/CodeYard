@@ -2,7 +2,7 @@
 use super::action_secrets::{pat, request, sealed};
 use crate::support::database::Database;
 use crate::support::fake_webui_bundle;
-use codeyard::backend::db;
+
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;
@@ -370,11 +370,11 @@ async fn repository_secrets(pg: bool) {
 
 async fn organization_secrets(pg: bool) {
     use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_db_orgs::organizations;
     use codeyard_db_orgs::organizations::profiles::NewOrganization;
     use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
     use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
     use codeyard_db_repos::repositories::creation::RepositoryTarget;
-    use db::organizations;
     fake_webui_bundle::install();
     let mut f = Database::new(pg).await;
     f.complete_setup().await;

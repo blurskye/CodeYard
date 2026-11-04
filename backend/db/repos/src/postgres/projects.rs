@@ -1,6 +1,3 @@
-use crate::postgres::projects::extended::copy;
-use crate::postgres::projects::items::items;
-use crate::postgres::projects::items::readable_items;
 use crate::projects::validate_project;
 use crate::projects::Field;
 use crate::projects::NewField;
@@ -16,10 +13,10 @@ use codeyard_model::project_query::Refusal;
 use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
-mod exports;
+pub(crate) mod exports;
 
-mod extended;
-mod items;
+pub(crate) mod extended;
+pub(crate) mod items;
 
 async fn owner_authority(
     tx: &mut Transaction<'_, Postgres>,

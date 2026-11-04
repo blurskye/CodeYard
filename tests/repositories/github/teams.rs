@@ -1,7 +1,10 @@
 use super::*;
 
 async fn teams_contract(pg: bool) {
-    use db::organizations::{membership, profiles, teams, OrganizationOutcome};
+    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_db_orgs::organizations::membership;
+    use codeyard_db_orgs::organizations::profiles;
+    use codeyard_db_orgs::organizations::roles::teams;
     crate::support::fake_webui_bundle::install();
     let f = Database::new(pg).await;
     f.complete_setup().await;

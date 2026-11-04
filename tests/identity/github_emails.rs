@@ -5,16 +5,16 @@ use super::{
 };
 use crate::support::database::Database;
 use crate::support::http_client::Client;
-use codeyard::backend::db;
-use codeyard::backend::email::links;
-use codeyard::backend::identity;
-use codeyard::backend::identity::tokens;
+
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;
 use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_identity as identity;
+use codeyard_identity::email_links as links;
 use codeyard_identity::email_links::Purpose;
+use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::json;
 use std::sync::Arc;

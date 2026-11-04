@@ -7,7 +7,7 @@ use crate::support::database::Database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client::Client;
 use axum::http::StatusCode;
-use codeyard::backend::db;
+
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;
@@ -274,8 +274,9 @@ async fn rest_settings(pg: bool) {
         results,
     };
     use crate::support::organizations::applied;
+    use codeyard_db_orgs::organizations::profiles::NewOrganization;
+    use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
     use codeyard_db_repos::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
-    use db::organizations::{NewOrganization, OrganizationProfile};
     use serde_json::Value;
 
     bundle::install();

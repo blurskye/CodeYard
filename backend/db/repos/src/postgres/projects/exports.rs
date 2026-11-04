@@ -1,5 +1,4 @@
 use super::*;
-use crate::postgres::projects::fields;
 use crate::postgres::projects::readable;
 
 pub async fn list_page(

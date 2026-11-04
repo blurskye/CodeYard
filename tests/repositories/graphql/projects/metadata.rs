@@ -3,7 +3,7 @@ use super::{
     cli::{node_id, send},
     *,
 };
-use db::projects as store;
+use codeyard_db_repos::projects as store;
 
 macro_rules! document {
     ($name:literal) => {

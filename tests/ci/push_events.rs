@@ -1,6 +1,6 @@
 //! Push admission uses the published ref and endpoint trees, regardless of the write route.
 use crate::support::database::Database;
-use codeyard::backend::db;
+
 use codeyard_app::ci::config::CiConfig;
 use codeyard_app::ci::config::CiPipelineKind;
 use codeyard_app::ci::push::RefUpdate;

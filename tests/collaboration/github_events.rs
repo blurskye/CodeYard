@@ -1,8 +1,8 @@
 use super::github::{document, request};
 use crate::support::database::Database;
 use crate::support::http_client::Client;
-use codeyard::backend::db;
-use codeyard::backend::identity::tokens;
+
+use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 

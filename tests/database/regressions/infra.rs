@@ -283,7 +283,9 @@ async fn native_notification_projections_refresh_links_before_returning() {
 
 #[tokio::test]
 async fn webhook_settings_reads_recheck_repository_and_organization_authority() {
-    use db::webhooks::{self, HookOwner, WebhookFields};
+    use codeyard_db_core::queries::webhooks::WebhookFields;
+    use codeyard_db_repos::webhooks;
+    use codeyard_db_repos::webhooks::HookOwner;
     for pg in [false, true] {
         let mut f = Database::new(pg).await;
         let owner = f.actor("hook_owner").await;

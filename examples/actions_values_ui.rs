@@ -1,17 +1,14 @@
 //! Browser fixture runner: build the real UI, then `cargo run --example actions_values_ui`.
 //! This is not an automatic test target: ordinary native tests need no browser bundle.
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    crypto::SecretEncryptor,
-    db::{
-        self,
-        environment_values::{self as environments, Kind, Save},
-    },
-    repositories::lifecycle,
-    storage::ObjectStore,
-};
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::repositories::lifecycle;
+use codeyard_app::storage::ObjectStore;
+use codeyard_db_actions::environment_values as environments;
+use codeyard_db_actions::environment_values::Save;
+use codeyard_db_orgs::organization_values::Kind;
+use codeyard_support::secrets::SecretEncryptor;
 use std::{path::Path, sync::Arc, time::Duration};
 
 #[tokio::main]

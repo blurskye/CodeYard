@@ -7,7 +7,7 @@ use axum::{
     Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard::backend::db;
+
 use codeyard_app::ci;
 use codeyard_app::repositories;
 use serde_json::{json, Value};

@@ -6,8 +6,6 @@ use crate::notifications::threads::ThreadInbox;
 use crate::notifications::threads::ThreadSubscription;
 use crate::notifications::threads::ThreadSummary;
 use crate::notifications::threads::ThreadView;
-use crate::sqlite::notifications::records::refresh_links;
-use crate::sqlite::notifications::records::scope_readable_condition;
 use codeyard_db_core::models::Repository;
 
 pub(crate) async fn subscribers(

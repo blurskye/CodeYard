@@ -3,8 +3,8 @@ use crate::support::database::Database;
 use crate::support::http_client::Client;
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard::backend::db;
-use codeyard::backend::identity::tokens;
+
+use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 fn url(kind: &str, q: &str, extra: &[(&str, &str)]) -> String {

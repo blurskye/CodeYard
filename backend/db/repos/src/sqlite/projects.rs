@@ -7,19 +7,16 @@ use crate::projects::Project;
 use crate::projects::ProjectContents;
 use crate::projects::SelectOption;
 use crate::projects::Settings;
-use crate::sqlite::projects::extended::copy;
-use crate::sqlite::projects::items::items;
-use crate::sqlite::projects::items::readable_items;
 use anyhow::Result;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_model::project_query::Refusal;
 use sqlx::Sqlite;
 use sqlx::SqlitePool;
 use sqlx::Transaction;
-mod exports;
+pub(crate) mod exports;
 
-mod extended;
-mod items;
+pub(crate) mod extended;
+pub(crate) mod items;
 
 async fn owner_authority(tx: &mut Transaction<'_, Sqlite>, actor: i64, owner: Owner) -> Result<()> {
     let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)")

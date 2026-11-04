@@ -7,9 +7,9 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
     Engine,
 };
-use codeyard::backend::db;
-use codeyard::backend::identity::oauth_apps;
-use codeyard::backend::identity::tokens;
+
+use codeyard_identity::oauth_apps;
+use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use rsa::{
     pkcs1v15::SigningKey,
@@ -497,7 +497,7 @@ async fn contract(pg: bool) {
     codeyard_db_identity::oauth_apps::save_grant(
         f.pool(),
         &codeyard_db_identity::oauth_apps::Grant {
-            hash: tokens::token_hash(&code),
+            hash: codeyard_support::token_hash::token_hash(&code),
             client_id: app.client_id.clone(),
             user_code: codeyard_support::crypto::random_hex(),
             scopes: "repo".into(),
@@ -518,7 +518,7 @@ async fn contract(pg: bool) {
     assert!(matches!(
         codeyard_db_identity::oauth_apps::exchange(
             f.pool(),
-            &tokens::token_hash(&code),
+            &codeyard_support::token_hash::token_hash(&code),
             &app.client_id,
             "web",
             Some(&app.homepage),
@@ -536,7 +536,7 @@ async fn contract(pg: bool) {
         &format!(
             "UPDATE personal_access_tokens SET expires_at='{}' WHERE token_hash='{}'",
             parent_expiry.to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
-            tokens::token_hash("user-app-token")
+            codeyard_support::token_hash::token_hash("user-app-token")
         ),
         &[],
     )

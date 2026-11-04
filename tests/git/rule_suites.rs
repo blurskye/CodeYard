@@ -2,7 +2,7 @@
 use crate::support::database::Database;
 use crate::support::git_server;
 use crate::support::github_spec::assert_github_schema;
-use codeyard::backend::db;
+
 use codeyard_app::repositories::lifecycle;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::rulesets::records::Owner;

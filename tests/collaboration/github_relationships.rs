@@ -2,8 +2,8 @@ use super::github::{document, request};
 use crate::support::database::Database;
 use crate::support::http_client::Client;
 use axum::http::StatusCode;
-use codeyard::backend::db;
-use codeyard::backend::identity::tokens;
+
+use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 async fn relationships(pg: bool) {
@@ -432,7 +432,8 @@ async fn relationships(pg: bool) {
                 .unwrap(),
         );
     }
-    use db::relationships::{Kind, Mutation};
+    use codeyard_db_identity::relationships::Kind;
+    use codeyard_db_identity::relationships::Mutation;
     for (source, target) in [(0, 1), (2, 3)] {
         codeyard_db_identity::relationships::change(
             f.pool(),

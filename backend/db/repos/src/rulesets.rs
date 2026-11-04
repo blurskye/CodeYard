@@ -1,4 +1,4 @@
-mod operations;
+pub mod operations;
 mod records;
 
 #[cfg(test)]

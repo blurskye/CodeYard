@@ -10,9 +10,7 @@ use axum::{
     http::{header, HeaderMap, Request, StatusCode},
     Router,
 };
-use codeyard::backend::db;
-use codeyard::backend::identity;
-use codeyard::backend::identity::passwords;
+
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;
@@ -20,7 +18,9 @@ use codeyard_app::storage::ObjectStore;
 use codeyard_db_identity::auth_admission::AdmissionError;
 use codeyard_db_identity::users::transitions;
 use codeyard_db_identity::users::transitions::SetupClaim;
+use codeyard_identity as identity;
 use codeyard_identity::credentials::PasswordAccount;
+use codeyard_identity::passwords;
 use codeyard_identity::sessions::InitiatingSession;
 use codeyard_identity::sessions::SessionContext;
 use codeyard_identity::setup::SetupError;

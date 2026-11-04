@@ -1,10 +1,10 @@
 use super::github::request;
 use crate::support::database::Database;
 use crate::support::http_client::Client;
-use codeyard::backend::db;
-use codeyard::backend::identity;
-use codeyard::backend::identity::gpg;
-use codeyard::backend::identity::tokens;
+
+use codeyard_identity as identity;
+use codeyard_identity::gpg;
+use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use pgp::{
     composed::{

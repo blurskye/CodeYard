@@ -39,11 +39,14 @@ async fn token(f: &Database, router: &Router, actor: i64, scope: &str) -> String
 
 async fn oauth_token(f: &Database, router: &Router, actor: i64, scopes: &str) -> String {
     let value = token(f, router, actor, "write").await;
-    let id = codeyard_db_identity::users::tokens::find_token(f.pool(), &tokens::token_hash(&value))
-        .await
-        .unwrap()
-        .unwrap()
-        .id;
+    let id = codeyard_db_identity::users::tokens::find_token(
+        f.pool(),
+        &codeyard_support::token_hash::token_hash(&value),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .id;
     f.execute("INSERT INTO oauth_applications(owner_id,client_id,secret_hash,name,homepage,redirect_uri) VALUES($1,'package-fixture','fixture','Package fixture','https://example.test','https://example.test/callback') ON CONFLICT(client_id) DO NOTHING",&[actor]).await;
     f.execute(&format!("INSERT INTO oauth_app_tokens(token_id,client_id,scopes) VALUES($1,'package-fixture','{scopes}')"),&[id]).await;
     value

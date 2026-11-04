@@ -1,5 +1,7 @@
 use super::*;
-use db::organizations::{membership, profiles, OrganizationOutcome};
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_orgs::organizations::membership;
+use codeyard_db_orgs::organizations::profiles;
 
 async fn organization(f: &Database, actor: i64, name: &str) -> i64 {
     let input = profiles::NewOrganization::new(

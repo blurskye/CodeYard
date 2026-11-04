@@ -10,9 +10,9 @@ use axum::{
     http::Request,
     Router,
 };
-use codeyard::backend::db;
-use codeyard::backend::identity::gpg;
-use codeyard::backend::identity::tokens;
+
+use codeyard_identity::gpg;
+use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use tower::ServiceExt;

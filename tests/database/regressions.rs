@@ -1,12 +1,15 @@
 //! Regression contracts for database effects and their current authority on both engines.
 use crate::support::database::Database;
-use codeyard::backend::db;
-use codeyard::backend::identity;
-use codeyard::backend::notifications;
+
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Repository;
-use db::notifications::{NewNotification, NotificationFilter, NotificationInboxAction};
-use db::repositories::{creation::RepositoryTarget, records};
+use codeyard_db_core::queries::notifications::records::NewNotification;
+use codeyard_db_repos::notifications::records::NotificationFilter;
+use codeyard_db_repos::notifications::records::NotificationInboxAction;
+use codeyard_db_repos::repositories::creation::RepositoryTarget;
+use codeyard_db_repos::repositories::records;
+use codeyard_identity as identity;
+use codeyard_notifications as notifications;
 use std::time::Duration;
 
 async fn repo(f: &Database, owner: i64, name: &str) -> Repository {

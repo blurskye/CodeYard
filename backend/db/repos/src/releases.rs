@@ -7,7 +7,7 @@ use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
 use uuid::Uuid;
 
-mod notes;
+pub mod notes;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ReleaseRefusal {

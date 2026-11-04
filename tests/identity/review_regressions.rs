@@ -7,8 +7,8 @@ use crate::support::native_database::token;
 use crate::support::PASSWORD_WORK;
 use axum::http::StatusCode;
 use chrono::{Duration, Utc};
-use codeyard::backend::db;
-use codeyard::backend::identity;
+
+use codeyard_identity as identity;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::NotificationEvent;
 
@@ -28,10 +28,9 @@ async fn session(pool: &codeyard_db_core::DbPool, user: i64) -> String {
 }
 
 async fn signup_review(pg: bool) {
-    use db::users::{
-        signup_requests as requests,
-        transitions::{self, AccountAdmission},
-    };
+    use codeyard_db_identity::users::signup_requests as requests;
+    use codeyard_db_identity::users::transitions;
+    use codeyard_db_identity::users::transitions::AccountAdmission;
     fake_webui_bundle::install();
     let mut f = Database::new(pg).await;
     f.execute("INSERT INTO node_configuration(id,setup_completed,node_mode) VALUES(1,TRUE,'private') ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE,node_mode='private'", &[]).await;
@@ -279,10 +278,11 @@ async fn sqlite_admin_search_matches_unicode_without_interpreting_regex_syntax()
 }
 
 async fn totp_rollback(pg: bool) {
-    use db::users::{
-        sessions::{self, SessionCredential},
-        two_factor::{self, FactorAuthority, StoredTwoFactor},
-    };
+    use codeyard_db_identity::users::sessions;
+    use codeyard_db_identity::users::sessions::SessionCredential;
+    use codeyard_db_identity::users::two_factor;
+    use codeyard_db_identity::users::two_factor::FactorAuthority;
+    use codeyard_db_identity::users::two_factor::StoredTwoFactor;
     let mut f = Database::new(pg).await;
     f.complete_setup().await;
     let actor = codeyard_db_identity::users::accounts::create_user_with_password(

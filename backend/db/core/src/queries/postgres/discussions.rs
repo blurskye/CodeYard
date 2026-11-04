@@ -6,8 +6,8 @@ use sqlx::Transaction;
 pub struct DiscussionAuthority {
     pub access: AccessLevel,
     pub personal_override: bool,
-    personal_owner: bool,
-    organization: bool,
+    pub personal_owner: bool,
+    pub organization: bool,
 }
 
 /// Lock the complete authority that supports a database effect. Organization

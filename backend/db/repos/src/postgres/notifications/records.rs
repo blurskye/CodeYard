@@ -2,14 +2,14 @@ use crate::notifications::records::NotificationCounts;
 use crate::notifications::records::NotificationCredential;
 use crate::notifications::records::NotificationCursor;
 use crate::notifications::records::NotificationFilter;
+use crate::notifications::records::NotificationInbox;
+use crate::notifications::records::NotificationInboxAction;
 use crate::notifications::records::NotificationMark;
 use crate::notifications::records::NotificationScopes;
 use crate::notifications::threads::ThreadAction;
-use crate::notifications::NewNotification;
-use crate::notifications::NotificationInbox;
-use crate::notifications::NotificationInboxAction;
 use anyhow::Result;
 use codeyard_db_core::models::Notification;
+use codeyard_db_core::queries::notifications::records::NewNotification;
 use codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
 use codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared;
 use sqlx::PgPool;
@@ -160,7 +160,10 @@ pub async fn create_notification(
         .await?;
         anyhow::ensure!(comment.is_some(), NotificationSuppressed);
     }
-    let thread_id = threads::ensure(&mut tx, &input).await?;
+    let thread_id = codeyard_db_core::queries::postgres::notifications::records::threads::ensure(
+        &mut tx, &input,
+    )
+    .await?;
     let notification = sqlx::query_as::<_, Notification>(
         r#"
         INSERT INTO notifications (user_id, actor_id, repo_id, kind, title, body, link, metadata, scope_repository_id,thread_id,created_at)
@@ -747,7 +750,7 @@ pub async fn notification_delivery(
     session_id: &str,
     user_id: i64,
     notification_id: Option<i64>,
-) -> Result<Option<crate::notifications::NotificationDelivery>> {
+) -> Result<Option<crate::notifications::records::NotificationDelivery>> {
     let mut tx = pool.begin().await?;
     let Some(_) = notification_recipient(&mut tx, user_id).await? else {
         return Ok(None);
@@ -787,7 +790,7 @@ pub async fn notification_delivery(
         return Ok(None);
     }
     tx.commit().await?;
-    Ok(Some(crate::notifications::NotificationDelivery {
+    Ok(Some(crate::notifications::records::NotificationDelivery {
         notification,
         unread_count,
     }))

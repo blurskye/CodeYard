@@ -1220,11 +1220,11 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
 }
 
 async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &Database) {
-    use codeyard::backend::notifications::current_event;
     use codeyard_app::ci::config::CiConfig;
     use codeyard_app::ci::queue::RunQueue;
     use codeyard_app::ci::runs::CiRuns;
     use codeyard_notifications::broadcast::NotificationBroadcaster;
+    use codeyard_notifications::current_event;
     use codeyard_notifications::NotificationEvent;
     use std::sync::Arc;
     let w = world(db, "live").await;

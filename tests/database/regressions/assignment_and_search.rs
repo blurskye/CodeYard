@@ -2,7 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn organization_assignees_require_scoped_grants_not_public_visibility() {
-    use db::assignees::{self, AssignedItem, AssignmentRefusal};
+    use codeyard_db_repos::assignees;
+    use codeyard_db_repos::assignees::AssignedItem;
+    use codeyard_db_repos::assignees::AssignmentRefusal;
     for pg in [false, true] {
         let mut f = Database::new(pg).await;
         let owner = f.actor("assignment_owner").await;

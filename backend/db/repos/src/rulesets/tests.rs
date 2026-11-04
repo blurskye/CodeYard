@@ -1,4 +1,3 @@
-use super::*;
 use codeyard_db_core::queries::rulesets::matching::RepositoryContext;
 use codeyard_db_core::queries::rulesets::records::Owner;
 use codeyard_db_core::queries::rulesets::BypassMode;
@@ -6,6 +5,7 @@ use codeyard_db_core::queries::rulesets::Definition;
 use codeyard_db_core::queries::rulesets::Enforcement;
 use codeyard_db_core::queries::rulesets::Rule;
 use serde_json::json;
+use serde_json::Value;
 
 #[test]
 fn repository_and_ref_selectors_share_native_globs_and_effective_typed_values() {
