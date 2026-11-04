@@ -128,7 +128,7 @@ async fn populate(source: &NativeDatabase) -> Seed {
     .unwrap();
 
     // Tenant-scoped typed metadata must survive both copy directions unchanged.
-    let org = match codeyard_db_orgs::organizations::create_organization(
+    let org = match super::create_organization(
         pool,
         alice.id,
         &codeyard_db_orgs::organizations::NewOrganization::new(

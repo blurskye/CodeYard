@@ -1,8 +1,8 @@
 //! Follow edges and their best-effort notices, shared by JSON and native forms.
 
+use crate::broadcast::NotificationBroadcaster;
 use crate::create::create_and_broadcast_notification;
 use crate::create::NotificationRequest;
-use crate::NotificationBroadcaster;
 use codeyard_db_core::DbPool;
 use serde_json::json;
 

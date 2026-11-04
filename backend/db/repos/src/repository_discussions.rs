@@ -164,7 +164,7 @@ impl Filter {
         filter.query = (!words.is_empty()).then(|| words.join(" "));
         Ok(filter)
     }
-    pub(crate) fn statement(
+    pub fn statement(
         &self,
         postgres: bool,
         readable: &str,

@@ -1,8 +1,8 @@
 //! Assignment notifications. A user who is newly assigned to an issue or pull request hears about
 //! it, unless they assigned themselves, are restricted, cannot read the repository, or ignore it.
+use crate::broadcast::NotificationBroadcaster;
 use crate::create::create_and_broadcast_notification;
 use crate::create::NotificationRequest;
-use crate::NotificationBroadcaster;
 
 use codeyard_identity::repository_access::can_read;
 use serde_json::json;

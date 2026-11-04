@@ -14,20 +14,21 @@ mod release_notes;
 mod repository_action_permissions;
 mod teams;
 mod traffic;
-use crate::support::{database::Database, github_spec::assert_github_schema, http_client::Client};
+use crate::support::database::Database;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db,
-    identity::tokens::{self, TokenInput},
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::storage::ObjectStore;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -561,7 +562,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repository_row = codeyard::backend::repositories::lifecycle::provision(
+    let repository_row = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -927,7 +928,7 @@ async fn contract(pg: bool) {
         json!({
             "id":reported["id"], "node_id":reported["node_id"], "avatar_url":reported["avatar_url"], "url":reported_url,"state":"success","context":"default",
             "description":"All checks passed","target_url":null,
-            "creator":codeyard::backend::webhooks::payloads::person(&codeyard::backend::webhooks::payloads::Person { id:alice, login:"alice".into(), site_admin:false }),
+            "creator":codeyard_app::webhooks::payloads::person(&codeyard_app::webhooks::payloads::Person { id:alice, login:"alice".into(), site_admin:false }),
             "created_at":reported["created_at"],"updated_at":reported["updated_at"],
         })
     );
@@ -1752,7 +1753,7 @@ async fn deploy_keys_contract(pg: bool) {
         )
         .await;
     let id = key["id"].as_i64().unwrap();
-    use codeyard::backend::repositories::deploy_keys::remove_key;
+    use codeyard_app::repositories::deploy_keys::remove_key;
 
     assert!(matches!(
         remove_key(
@@ -2764,7 +2765,7 @@ async fn update_contract(pg: bool) {
     assert_eq!(current["description"], "Updated");
     assert_eq!(current["homepage"], "https://example.test/");
     let repo = f.repository(created["id"].as_i64().unwrap()).await;
-    let refs = codeyard::backend::repositories::store::repo_store(&repo, None)
+    let refs = codeyard_app::repositories::store::repo_store(&repo, None)
         .refs()
         .await
         .unwrap();

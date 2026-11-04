@@ -15,8 +15,8 @@ pub enum Refusal {
 /// Verified on the primary before it is passed into the release SQL transaction.
 /// This type intentionally cannot be deserialized from an RPC/user request.
 pub struct Publication {
-    pub(crate) statement: Statement,
-    pub(crate) attestation: String,
+    pub statement: Statement,
+    pub attestation: String,
     pub(crate) signer_key: String,
 }
 impl Publication {

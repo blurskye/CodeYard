@@ -5,7 +5,8 @@ use codeyard_db_core::models::PersonalAccessToken;
 use codeyard_db_core::DbPool;
 use sha2::{Digest, Sha256};
 
-use codeyard_support::tokens::{INSTALLATION_PREFIX, PAT_PREFIX};
+use codeyard_support::tokens::INSTALLATION_PREFIX;
+use codeyard_support::tokens::PAT_PREFIX;
 
 pub struct TokenInput<'a> {
     pub name: &'a str,

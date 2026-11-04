@@ -4,10 +4,12 @@ use super::{
 };
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, crypto::SecretEncryptor, db,
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::storage::ObjectStore;
+use codeyard_support::secrets::SecretEncryptor;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -56,7 +58,7 @@ async fn contract(pg: bool) {
     let mut repos = Vec::new();
     for (org, name) in [(orgs[0].id, "one"), (orgs[1].id, "foreign")] {
         repos.push(
-            codeyard::backend::repositories::lifecycle::provision(
+            codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 db::repositories::creation::RepositoryCreationOwner {

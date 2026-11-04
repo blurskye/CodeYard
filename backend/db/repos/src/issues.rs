@@ -13,7 +13,7 @@ native_operation!(crate::postgres::issues::issue_repositories,
     fn issue_repositories(pool: &DbPool, ids: &[i64]) -> Result<Vec<(i64, i64)>>);
 
 /// Reopening normalizes its reason in storage; a closed issue cannot be `reopened`.
-pub(crate) fn valid_state_reason(state: &str, reason: Option<&str>) -> bool {
+pub fn valid_state_reason(state: &str, reason: Option<&str>) -> bool {
     match reason {
         None | Some("completed" | "not_planned" | "duplicate") => true,
         Some("reopened") => state == "open",

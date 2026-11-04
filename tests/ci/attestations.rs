@@ -1,5 +1,6 @@
 use super::action_secrets::{pat, request};
-use crate::support::{database::Database, fake_webui_bundle};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
@@ -9,7 +10,9 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
     Engine,
 };
-use codeyard::backend::{ci, db, repositories::lifecycle};
+use codeyard::backend::db;
+use codeyard_app::ci;
+use codeyard_app::repositories::lifecycle;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -376,7 +379,7 @@ async fn contract(pg: bool) {
         "worker",
         "local",
         &[owner],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()

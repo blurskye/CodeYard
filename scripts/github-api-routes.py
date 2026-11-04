@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Generate the /api/v3 route table and the coverage document from GitHub's REST description.
 
-Writes src/backend/api/github/routes.rs and docs/GITHUB_API.md. With --check, fails when
+Writes backend/api/github/src/routes.rs and docs/GITHUB_API.md. With --check, fails when
 either file is out of date instead. An operation counts as implemented when its operation ID
-appears as a string literal in src/backend/api/github/ (the area handler lists).
+appears as a string literal in backend/api/github/src/ (the area handler lists).
 """
 import gzip
 import json
@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = ROOT / "spec/github/api.github.com.json.gz"
-ROUTES = ROOT / "src/backend/api/github/routes.rs"
+ROUTES = ROOT / "backend/api/github/src/routes.rs"
 DOC = ROOT / "docs/GITHUB_API.md"
 METHODS = ("get", "post", "put", "patch", "delete")
 
@@ -139,7 +139,7 @@ def rust_string(value):
 
 def implemented_ids(ids):
     found = set()
-    for file in (ROOT / "src/backend/api/github").rglob("*.rs"):
+    for file in (ROOT / "backend/api/github/src").rglob("*.rs"):
         if file == ROUTES:
             continue
         found.update(m for m in re.findall(r'"([a-z0-9-]+/[a-z0-9-]+)"', file.read_text()) if m in ids)

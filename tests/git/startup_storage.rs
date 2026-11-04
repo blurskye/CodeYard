@@ -1,6 +1,8 @@
-use crate::support::{fake_s3::FakeS3, native_database};
+use crate::support::fake_s3::FakeS3;
+use crate::support::native_database;
 
-use codeyard::backend::storage::s3::{create_client, S3Store};
+use codeyard_app::storage::s3::create_client;
+use codeyard_app::storage::s3::S3Store;
 use reqwest::StatusCode;
 use std::time::Duration;
 

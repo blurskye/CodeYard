@@ -1,7 +1,9 @@
 //! Workflow concurrency combines immutable admission inputs with transaction-assigned run identity.
 use crate::ci_admission::AdmissionError;
 use crate::ci_concurrency::Configuration;
-use codeyard_actions::expressions::{self, Contexts, Status};
+use codeyard_actions::expressions;
+use codeyard_actions::expressions::Contexts;
+use codeyard_actions::expressions::Status;
 
 pub async fn resolve(
     value: serde_yaml::Value,

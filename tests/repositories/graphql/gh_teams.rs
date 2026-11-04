@@ -1,16 +1,17 @@
 //! Query texts from gh 2.102.0's release, org and repo command paths.
 use super::{call, query, request};
-use crate::support::{database::Database, http_client::Client, organizations::applied};
+use crate::support::database::Database;
+use crate::support::http_client::Client;
+use crate::support::organizations::applied;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db,
-    identity::tokens::{self, TokenInput},
-    repositories::lifecycle,
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::repositories::lifecycle;
+use codeyard_app::storage::ObjectStore;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -572,7 +573,7 @@ async fn contract(pg: bool) {
     assert_eq!(data["repo_000"]["defaultBranchRef"], json!({"name":"main"}));
     assert_eq!(data["repo_000"]["isPrivate"], false);
     assert!(data["repo_000"]["id"].is_string());
-    let broadcaster = codeyard_notifications::NotificationBroadcaster::new(f.pool());
+    let broadcaster = codeyard_notifications::broadcast::NotificationBroadcaster::new(f.pool());
     lifecycle::fork(
         f.pool(),
         None,

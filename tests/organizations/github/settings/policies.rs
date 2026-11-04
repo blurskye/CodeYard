@@ -46,7 +46,7 @@ pub(super) async fn contract(
     assert_eq!(status, StatusCode::CREATED, "{key}");
     let id = key["id"].as_i64().unwrap();
     assert_eq!(
-        codeyard::backend::repositories::deploy_keys::authorize(f.pool(), id, first, true)
+        codeyard_app::repositories::deploy_keys::authorize(f.pool(), id, first, true)
             .await
             .unwrap()
             .1,
@@ -63,14 +63,11 @@ pub(super) async fn contract(
     )
     .await;
     for write in [false, true] {
-        assert!(codeyard::backend::repositories::deploy_keys::authorize(
-            f.pool(),
-            id,
-            first,
-            write
-        )
-        .await
-        .is_err());
+        assert!(
+            codeyard_app::repositories::deploy_keys::authorize(f.pool(), id, first, write)
+                .await
+                .is_err()
+        );
     }
     assert!(
         db::deploy_keys::get_deploy_key(f.pool(), id)
@@ -93,7 +90,7 @@ pub(super) async fn contract(
     )
     .await;
     assert!(
-        codeyard::backend::repositories::deploy_keys::authorize(f.pool(), id, first, true)
+        codeyard_app::repositories::deploy_keys::authorize(f.pool(), id, first, true)
             .await
             .is_ok()
     );
@@ -113,13 +110,13 @@ pub(super) async fn contract(
     .await
     .unwrap();
     assert!(
-        codeyard::backend::repositories::deploy_keys::authorize(f.pool(), id, first, true)
+        codeyard_app::repositories::deploy_keys::authorize(f.pool(), id, first, true)
             .await
             .is_err(),
         "a cached old organization must not bypass the destination key policy"
     );
     assert!(
-        codeyard::backend::repositories::deploy_keys::authorize(f.pool(), id, &moved, true)
+        codeyard_app::repositories::deploy_keys::authorize(f.pool(), id, &moved, true)
             .await
             .is_err()
     );
@@ -198,13 +195,13 @@ pub(super) async fn contract(
         200,
     )
     .await;
-    let store = codeyard::backend::repositories::store::repo_store(second, None);
+    let store = codeyard_app::repositories::store::repo_store(second, None);
     let head = store.commit("refs/heads/main").await.unwrap();
     let actor = db::users::accounts::get_user_by_id(f.pool(), owner)
         .await
         .unwrap()
         .unwrap();
-    let input = codeyard::backend::repositories::store::FileWrite {
+    let input = codeyard_app::repositories::store::editor::FileWrite {
         branch: "main".into(),
         path: "policy.txt".into(),
         message: "Prepared before enabling the policy".into(),
@@ -222,7 +219,7 @@ pub(super) async fn contract(
         .await
         .unwrap();
     prepared.web_commit = true;
-    let mut prepared: codeyard::backend::repositories::store::PreparedFile =
+    let mut prepared: codeyard_app::repositories::store::editor::PreparedFile =
         serde_json::from_value(serde_json::to_value(prepared).unwrap()).unwrap();
     request(
         router,

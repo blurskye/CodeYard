@@ -1,7 +1,8 @@
 use super::{db, json, protection::call, request, Client, Router, Value};
 use axum::http::StatusCode;
-use codeyard::backend::repositories::access::change_collaborator;
-use codeyard_webui::{app::Page, pages::repos::page::Page as RepoPage};
+use codeyard_identity::repository_access::change_collaborator;
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::repos::page::Page as RepoPage;
 
 const OP: &str = "repos/list-pull-requests-associated-with-commit";
 
@@ -438,7 +439,7 @@ pub(super) async fn run(
         .unwrap()
         .unwrap();
     assert_eq!(
-        codeyard::backend::repositories::access::author_association(pool, &record, bob)
+        codeyard_identity::repository_access::author_association(pool, &record, bob)
             .await
             .unwrap(),
         "COLLABORATOR"

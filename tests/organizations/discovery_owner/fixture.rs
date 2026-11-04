@@ -5,8 +5,12 @@ use axum::{
     http::{header, Request, StatusCode},
     Router,
 };
-use codeyard::backend::{api::create_router, app::AppState, db, storage::ObjectStore};
-use codeyard_webui::app::{Page, PageEnvelope};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::storage::ObjectStore;
+use codeyard_webui::app::Page;
+use codeyard_webui::app::PageEnvelope;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc, Once,
@@ -294,7 +298,7 @@ impl Fixture {
             root.path().join("repos"),
             Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
             None,
-            codeyard::backend::ci::CiConfig::default(),
+            codeyard_app::ci::config::CiConfig::default(),
             None,
         );
         Self {

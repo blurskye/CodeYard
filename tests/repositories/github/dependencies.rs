@@ -1,9 +1,8 @@
 use super::*;
-use codeyard::backend::{
-    ci::CiRuns,
-    notifications::NotificationBroadcaster,
-    repositories::dependencies::{registry, worker},
-};
+use codeyard_app::ci::runs::CiRuns;
+use codeyard_app::repositories::dependencies::registry;
+use codeyard_app::repositories::dependencies::worker;
+use codeyard_notifications::broadcast::NotificationBroadcaster;
 mod provider;
 mod workers;
 struct World {

@@ -1,12 +1,14 @@
 //! Requested teams are durable native identities, with live nested membership and visibility.
 use super::github::exchange;
-use crate::support::{database::Database, http_client::Client, organizations::applied};
+use crate::support::database::Database;
+use crate::support::http_client::Client;
+use crate::support::organizations::applied;
 use axum::http::StatusCode;
 use base64::Engine;
-use codeyard::backend::{
-    db::{self, organizations as orgs},
-    identity::tokens::{self, TokenInput},
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_db_orgs::organizations as orgs;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -72,7 +74,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner {

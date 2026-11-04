@@ -3,12 +3,12 @@ use super::{
     actions_objects::pat,
     actions_workflows::{checked, router},
 };
-use crate::support::{database::Database, fake_webui_bundle};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    db,
-    repositories::store::{repo_store, FileWrite},
-};
+use codeyard::backend::db;
+use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_app::repositories::store::repo_store;
 use serde_json::{json, Value};
 
 async fn dispatch(api: &axum::Router, token: &str, workflow: &str) -> i64 {
@@ -31,7 +31,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -94,7 +94,7 @@ async fn contract(pg: bool) {
         "first",
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -105,7 +105,7 @@ async fn contract(pg: bool) {
         "blocked",
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels()
+        &codeyard_app::ci::config::CiConfig::default().platform_labels()
     )
     .await
     .unwrap()
@@ -117,7 +117,7 @@ async fn contract(pg: bool) {
             "other",
             "local",
             &[alice],
-            &codeyard::backend::ci::CiConfig::default().platform_labels()
+            &codeyard_app::ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()
@@ -209,7 +209,7 @@ async fn contract(pg: bool) {
         "blocked",
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels()
+        &codeyard_app::ci::config::CiConfig::default().platform_labels()
     )
     .await
     .unwrap()
@@ -224,7 +224,7 @@ async fn contract(pg: bool) {
             "replacement",
             "local",
             &[alice],
-            &codeyard::backend::ci::CiConfig::default().platform_labels()
+            &codeyard_app::ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()

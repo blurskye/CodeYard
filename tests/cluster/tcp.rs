@@ -4,14 +4,23 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::native_database as native;
 
-use codeyard::backend::{
-    ci::{queue::RunQueue, CiExecutionMode},
-    cluster::{
-        self, link::Link, rpc, tcp, InviteOptions, IrohDialer, JoinTicket, NodeAddress, NodeKey,
-        Relay, Settings, ALPN_EVENTS, ALPN_PAIR, ALPN_RPC,
-    },
-    db,
-};
+use codeyard::backend::db;
+use codeyard_app::ci::config::CiExecutionMode;
+use codeyard_app::ci::queue::RunQueue;
+use codeyard_app::cluster;
+use codeyard_app::cluster::link::Link;
+use codeyard_app::cluster::pairing::InviteOptions;
+use codeyard_app::cluster::pairing::JoinTicket;
+use codeyard_app::cluster::rpc;
+use codeyard_app::cluster::tcp;
+use codeyard_app::cluster::transport::IrohDialer;
+use codeyard_app::cluster::transport::NodeAddress;
+use codeyard_app::cluster::transport::Relay;
+use codeyard_app::cluster::transport::ALPN_EVENTS;
+use codeyard_app::cluster::transport::ALPN_PAIR;
+use codeyard_app::cluster::transport::ALPN_RPC;
+use codeyard_app::cluster::Settings;
+use codeyard_support::node_identity::NodeKey;
 use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -923,7 +932,7 @@ async fn a_ci_claim_moves_on_from_a_tcp_address_that_never_answers() {
         .claim(
             "slot-1",
             CiExecutionMode::Local,
-            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .expect("the second TCP address answers");
@@ -965,7 +974,7 @@ async fn a_ci_claim_reaches_the_core_over_iroh_after_a_tcp_address_never_answers
         .claim(
             "slot-1",
             CiExecutionMode::Local,
-            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .expect("iroh answers once TCP gives up");

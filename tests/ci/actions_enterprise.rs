@@ -1,5 +1,6 @@
 //! Absent tenancy and provider identities must never become fabricated data.
-use crate::support::{database::Database, github_spec::assert_github_schema};
+use crate::support::database::Database;
+use crate::support::github_spec::assert_github_schema;
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
@@ -39,7 +40,7 @@ async fn contract(pg: bool) {
         }
     }
     let actor = fixture.actor("alice").await;
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (fixture.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),

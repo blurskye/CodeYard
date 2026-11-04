@@ -48,7 +48,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -472,9 +472,11 @@ async fn postgres_dependency_graph() {
 
 async fn vulnerability_contract(pg: bool) {
     use base64::{engine::general_purpose::STANDARD, Engine};
-    use codeyard::backend::{
-        api::create_router, app::AppState, ci::CiConfig, storage::ObjectStore, vulnerabilities,
-    };
+    use codeyard_api_rest::create_router;
+    use codeyard_app::app::AppState;
+    use codeyard_app::ci::config::CiConfig;
+    use codeyard_app::storage::ObjectStore;
+    use codeyard_app::vulnerabilities;
     use db::organizations::{
         profiles::{NewOrganization, OrganizationProfile},
         OrganizationOutcome,

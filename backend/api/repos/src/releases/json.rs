@@ -1,0 +1,427 @@
+//! The release JSON API, shaped like GitHub's `/repos/{owner}/{repo}/releases`. Writers create,
+//! change and delete releases; drafts are shown only to writers.
+use crate::access::find_repository;
+use crate::paging::json_page;
+use crate::paging::PageQuery;
+use crate::releases::pages::refused;
+use axum::extract::Path;
+use axum::extract::Query;
+use axum::extract::State;
+use axum::http::HeaderMap;
+use axum::http::StatusCode;
+use axum::Json;
+use codeyard_api_http::error::ApiError;
+use codeyard_api_http::session::get_current_user;
+use codeyard_api_http::session::get_optional_user;
+use codeyard_app::app::AppState;
+use codeyard_app::repositories::releases::ReleaseError;
+use codeyard_app::repositories::releases::ReleaseInput;
+use codeyard_db_core::models::ReleaseAsset;
+use codeyard_db_core::models::ReleaseRow;
+use codeyard_db_repos::releases::ReleaseChanges;
+use codeyard_db_repos::releases::ReleaseFields;
+use codeyard_model::http_config::public_origin;
+use serde::Deserialize;
+use serde::Serialize;
+use std::sync::Arc;
+
+type Failure = (StatusCode, Json<ApiError>);
+
+#[derive(Serialize)]
+pub struct AssetResponse {
+    id: i64,
+    name: String,
+    label: Option<String>,
+    content_type: String,
+    size: i64,
+    download_count: i32,
+    browser_download_url: String,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Serialize)]
+pub struct Author {
+    login: String,
+}
+
+#[derive(Serialize)]
+pub struct ReleaseResponse {
+    id: i64,
+    tag_name: String,
+    target_commitish: String,
+    name: Option<String>,
+    body: Option<String>,
+    draft: bool,
+    immutable: bool,
+    prerelease: bool,
+    latest: bool,
+    author: Author,
+    created_at: String,
+    published_at: Option<String>,
+    html_url: String,
+    tarball_url: String,
+    zipball_url: String,
+    assets: Vec<AssetResponse>,
+}
+
+/// The body of a create or update. An update changes only the fields it sends.
+#[derive(Deserialize)]
+pub struct ReleaseRequest {
+    tag_name: Option<String>,
+    target_commitish: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "codeyard_db_repos::repositories::records::nullable_change"
+    )]
+    name: Option<Option<String>>,
+    #[serde(
+        default,
+        deserialize_with = "codeyard_db_repos::repositories::records::nullable_change"
+    )]
+    body: Option<Option<String>>,
+    draft: Option<bool>,
+    prerelease: Option<bool>,
+    make_latest: Option<bool>,
+}
+
+fn json_error(error: ReleaseError) -> Failure {
+    let (status, message) = refused(&error);
+    let code = match status {
+        StatusCode::NOT_FOUND => "not_found",
+        StatusCode::FORBIDDEN => "forbidden",
+        StatusCode::CONFLICT => "revision_conflict",
+        StatusCode::UNPROCESSABLE_ENTITY => "validation_error",
+        _ => "unavailable",
+    };
+    // The page words these two for a form with a draft. A JSON client has no draft.
+    let message = match error {
+        ReleaseError::Conflict => "The release changed. Fetch the latest release and retry.".into(),
+        ReleaseError::TargetRequired => {
+            "target_commitish must name a branch or commit for the new tag.".into()
+        }
+        _ => message,
+    };
+    (status, Json(ApiError::new(code, &message)))
+}
+
+fn asset_response(origin: &str, base: &str, tag: &str, asset: &ReleaseAsset) -> AssetResponse {
+    AssetResponse {
+        id: asset.id,
+        name: asset.name.clone(),
+        label: asset.label.clone(),
+        content_type: asset.content_type.clone(),
+        size: asset.size,
+        download_count: asset.download_count,
+        browser_download_url: format!(
+            "{origin}{base}/releases/download/{}/{}",
+            codeyard_webui::encode_component(tag),
+            codeyard_webui::encode_component(&asset.name)
+        ),
+        created_at: asset.created_at.to_rfc3339(),
+        updated_at: asset.updated_at.to_rfc3339(),
+    }
+}
+
+/// What the source archives of a release are cut from: the tag's full ref, so a branch with the
+/// same name is not downloaded. A draft whose tag does not exist yet keeps the commit it was
+/// saved for.
+pub(super) fn archive_revision(release: &codeyard_db_core::models::Release) -> String {
+    if release.is_draft && codeyard_git::is_full_commit_id(&release.target_commitish) {
+        release.target_commitish.clone()
+    } else {
+        format!("refs/tags/{}", release.tag_name)
+    }
+}
+
+fn release_response(
+    origin: &str,
+    (owner, name): (&str, &str),
+    row: &ReleaseRow,
+    assets: &[ReleaseAsset],
+) -> ReleaseResponse {
+    let release = &row.release;
+    let base = format!(
+        "/{}/{}",
+        codeyard_webui::encode_component(owner),
+        codeyard_webui::encode_component(name)
+    );
+    let tag = codeyard_webui::encode_component(&release.tag_name);
+    let revision = codeyard_webui::encode_component(&archive_revision(release));
+    ReleaseResponse {
+        id: release.id,
+        tag_name: release.tag_name.clone(),
+        target_commitish: release.target_commitish.clone(),
+        name: release.name.clone(),
+        body: release.body.clone(),
+        draft: release.is_draft,
+        immutable: release.is_immutable,
+        prerelease: release.is_prerelease,
+        latest: release.is_latest,
+        author: Author {
+            login: row.author.clone(),
+        },
+        created_at: release.created_at.to_rfc3339(),
+        published_at: release.published_at.map(|date| date.to_rfc3339()),
+        html_url: format!("{origin}{base}/releases/tag/{tag}"),
+        tarball_url: format!("{origin}{base}/archive/{revision}.tar.gz"),
+        zipball_url: format!("{origin}{base}/archive/{revision}.zip"),
+        assets: assets
+            .iter()
+            .map(|asset| asset_response(origin, &base, &release.tag_name, asset))
+            .collect(),
+    }
+}
+
+pub(super) async fn list(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name)): Path<(String, String)>,
+    Query(query): Query<PageQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ReleaseResponse>>, Failure> {
+    let viewer = get_optional_user(&state.pool, &headers)
+        .await?
+        .map(|user| user.id);
+    let (offset, limit) = json_page(query.page, query.per_page)?;
+    let page = (offset / limit + 1) as i64;
+    let listing = codeyard_app::repositories::releases::list(
+        &state.pool,
+        viewer,
+        crate::access::find_repository(&state.pool, &owner, &name)
+            .await?
+            .id,
+        page,
+        limit as i64,
+    )
+    .await
+    .map_err(json_error)?;
+    let origin = public_origin();
+    let assets = listing.assets;
+    let mut grouped = std::collections::HashMap::<i64, Vec<ReleaseAsset>>::new();
+    for asset in assets {
+        grouped.entry(asset.release_id).or_default().push(asset);
+    }
+    let mut responses = Vec::with_capacity(listing.releases.len());
+    for row in &listing.releases {
+        let assets = grouped.remove(&row.release.id).unwrap_or_default();
+        responses.push(release_response(&origin, (&owner, &name), row, &assets));
+    }
+    Ok(Json(responses))
+}
+
+pub(super) async fn get_one(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name, id)): Path<(String, String, i64)>,
+    headers: HeaderMap,
+) -> Result<Json<ReleaseResponse>, Failure> {
+    let viewer = get_optional_user(&state.pool, &headers)
+        .await?
+        .map(|user| user.id);
+    let found = codeyard_app::repositories::releases::detail_by_id(
+        &state.pool,
+        viewer,
+        crate::access::find_repository(&state.pool, &owner, &name)
+            .await?
+            .id,
+        id,
+    )
+    .await
+    .map_err(json_error)?;
+    Ok(Json(release_response(
+        &public_origin(),
+        (&owner, &name),
+        &found.release,
+        &found.assets,
+    )))
+}
+
+pub(super) async fn get_by_tag(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name, tag)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<ReleaseResponse>, Failure> {
+    let viewer = get_optional_user(&state.pool, &headers)
+        .await?
+        .map(|user| user.id);
+    let found = codeyard_app::repositories::releases::detail_by_tag(
+        &state.pool,
+        viewer,
+        crate::access::find_repository(&state.pool, &owner, &name)
+            .await?
+            .id,
+        &tag,
+    )
+    .await
+    .map_err(json_error)?;
+    Ok(Json(release_response(
+        &public_origin(),
+        (&owner, &name),
+        &found.release,
+        &found.assets,
+    )))
+}
+
+pub(super) async fn create(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(request): Json<ReleaseRequest>,
+) -> Result<(StatusCode, Json<ReleaseResponse>), Failure> {
+    let actor = get_current_user(&state.pool, &headers).await?;
+    let repository = find_repository(&state.pool, &owner, &name).await?;
+    let input = ReleaseInput {
+        repository_id: repository.id,
+        tag: request.tag_name.clone().unwrap_or_default(),
+        target: request
+            .target_commitish
+            .clone()
+            .filter(|target| !target.trim().is_empty())
+            .unwrap_or(repository.default_branch.clone()),
+        fields: ReleaseFields {
+            name: request
+                .name
+                .clone()
+                .flatten()
+                .filter(|name| !name.is_empty()),
+            body: request
+                .body
+                .clone()
+                .flatten()
+                .filter(|body| !body.is_empty()),
+            is_draft: request.draft.unwrap_or(false),
+            is_prerelease: request.prerelease.unwrap_or(false),
+            make_latest: request.make_latest.unwrap_or(true).into(),
+        },
+        new_tag_denied: false,
+    };
+    let release = codeyard_app::repositories::releases::create(
+        &state.pool,
+        state.cluster.as_ref(),
+        &state.ci_runs,
+        &state.notification_broadcaster,
+        actor.id,
+        &owner,
+        &name,
+        &input,
+    )
+    .await
+    .map_err(json_error)?;
+    let found = codeyard_app::repositories::releases::detail_by_id(
+        &state.pool,
+        Some(actor.id),
+        release.repo_id,
+        release.id,
+    )
+    .await
+    .map_err(json_error)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(release_response(
+            &public_origin(),
+            (&owner, &name),
+            &found.release,
+            &found.assets,
+        )),
+    ))
+}
+
+/// Changes the sent fields and keeps the rest of the release as it is.
+pub(super) async fn update(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name, id)): Path<(String, String, i64)>,
+    headers: HeaderMap,
+    Json(request): Json<ReleaseRequest>,
+) -> Result<Json<ReleaseResponse>, Failure> {
+    let actor = get_current_user(&state.pool, &headers).await?;
+    // A release keeps its tag and target. Echoing the current values back is accepted.
+    if request.tag_name.is_some() || request.target_commitish.is_some() {
+        let current = codeyard_app::repositories::releases::detail_by_id(
+            &state.pool,
+            Some(actor.id),
+            crate::access::find_repository(&state.pool, &owner, &name)
+                .await?
+                .id,
+            id,
+        )
+        .await
+        .map_err(json_error)?;
+        let same =
+            |sent: &Option<String>, stored: &str| sent.as_deref().is_none_or(|sent| sent == stored);
+        if !same(&request.tag_name, &current.release.release.tag_name)
+            || !same(
+                &request.target_commitish,
+                &current.release.release.target_commitish,
+            )
+        {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ApiError::new(
+                    "validation_error",
+                    "The tag and target of a release cannot be changed.",
+                )),
+            ));
+        }
+    }
+    let fields = ReleaseChanges {
+        expected_revision: None,
+        tag: None,
+        target: None,
+        name: request
+            .name
+            .map(|name| name.filter(|name| !name.is_empty())),
+        body: request
+            .body
+            .map(|body| body.filter(|body| !body.is_empty())),
+        is_draft: request.draft,
+        is_prerelease: request.prerelease,
+        make_latest: request.make_latest.map(Into::into),
+        expected_draft: None,
+        new_tag_denied: false,
+    };
+    let release = codeyard_app::repositories::releases::update(
+        &state.pool,
+        state.cluster.as_ref(),
+        &state.ci_runs,
+        &state.notification_broadcaster,
+        actor.id,
+        &owner,
+        &name,
+        id,
+        &fields,
+    )
+    .await
+    .map_err(json_error)?;
+    let found = codeyard_app::repositories::releases::detail_by_id(
+        &state.pool,
+        Some(actor.id),
+        release.repo_id,
+        release.id,
+    )
+    .await
+    .map_err(json_error)?;
+    Ok(Json(release_response(
+        &public_origin(),
+        (&owner, &name),
+        &found.release,
+        &found.assets,
+    )))
+}
+
+pub(super) async fn delete(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name, id)): Path<(String, String, i64)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, Failure> {
+    let actor = get_current_user(&state.pool, &headers).await?;
+    codeyard_app::repositories::releases::delete(
+        &state.pool,
+        &state.storage,
+        actor.id,
+        &owner,
+        &name,
+        id,
+    )
+    .await
+    .map_err(json_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}

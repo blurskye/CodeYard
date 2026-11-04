@@ -68,7 +68,7 @@ pub struct FieldChanges {
     pub options: Option<Vec<OptionInput>>,
 }
 impl FieldChanges {
-    pub(crate) fn apply_to(&self, current: &Attribute) -> Definition {
+    pub fn apply_to(&self, current: &Attribute) -> Definition {
         Definition {
             id: Some(current.id),
             expected_updated: Some(current.updated_at),

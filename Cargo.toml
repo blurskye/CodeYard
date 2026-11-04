@@ -42,6 +42,12 @@ codeyard-actions.workspace = true
 codeyard-git.workspace = true
 codeyard-model.workspace = true
 codeyard-db-core.workspace = true
+codeyard-api-rest.workspace = true
+codeyard-api-graphql.workspace = true
+codeyard-api-repos.workspace = true
+codeyard-api-github.workspace = true
+codeyard-api-http.workspace = true
+codeyard-app.workspace = true
 codeyard-notifications.workspace = true
 codeyard-identity.workspace = true
 codeyard-db-cluster.workspace = true
@@ -134,7 +140,7 @@ debug = false
 
 [workspace]
 resolver = "2"
-members = ["backend/notifications", "backend/identity", "backend/api/github-graphql", "backend/ci/runner", "backend/db/actions", "backend/db/cluster", "backend/db/core", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/model", "backend/support", "webui"]
+members = ["backend/api/rest", "backend/api/graphql", "backend/api/repos", "backend/api/github", "backend/api/http", "backend/app", "backend/notifications", "backend/identity", "backend/api/github-graphql", "backend/ci/runner", "backend/db/actions", "backend/db/cluster", "backend/db/core", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/model", "backend/support", "webui"]
 default-members = [".", "backend/api/github-graphql", "backend/ci/runner", "backend/db/actions", "backend/db/cluster", "backend/db/core", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/model", "backend/support", "webui"]
 
 [workspace.package]
@@ -148,6 +154,12 @@ undocumented_unsafe_blocks = "deny"
 allow_attributes_without_reason = "deny"
 
 [workspace.dependencies]
+codeyard-api-rest = { path = "backend/api/rest" }
+codeyard-api-graphql = { path = "backend/api/graphql" }
+codeyard-api-repos = { path = "backend/api/repos" }
+codeyard-api-github = { path = "backend/api/github" }
+codeyard-api-http = { path = "backend/api/http" }
+codeyard-app = { path = "backend/app" }
 codeyard-notifications = { path = "backend/notifications" }
 codeyard-identity = { path = "backend/identity" }
 codeyard-db-cluster = { path = "backend/db/cluster" }

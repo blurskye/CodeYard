@@ -1,14 +1,14 @@
 //! The native gist forms work without product JavaScript and use the same stored Git data.
-use crate::support::{
-    database::Database,
-    http_client::{hidden_value, Client},
-};
+use crate::support::database::Database;
+use crate::support::http_client::hidden_value;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     http::Request,
 };
 
-use codeyard_webui::{app::Page, pages::gists};
+use codeyard_api_rest::user::fine_grained::gists;
+use codeyard_webui::app::Page;
 use tower::ServiceExt;
 
 async fn pages(pg: bool) {

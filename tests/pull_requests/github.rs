@@ -1,14 +1,15 @@
 //! GitHub pull request reads through the real router on both engines.
-use crate::support::{database::Database, github_spec::assert_github_schema, http_client::Client};
+use crate::support::database::Database;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    db,
-    identity::tokens::{self, TokenInput},
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -93,7 +94,7 @@ async fn contract(pg: bool) {
     let bob_id = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
     for (name, private) in [("proj", false), ("secret", true)] {
-        codeyard::backend::repositories::lifecycle::provision(
+        codeyard_app::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
             db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -366,7 +367,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    let store = codeyard::backend::repositories::store::repo_store(&repo, None);
+    let store = codeyard_app::repositories::store::repo_store(&repo, None);
     let commit = store.commit(body["sha"].as_str().unwrap()).await.unwrap();
     assert_eq!(commit.message, "Custom merge\n\nCustom description");
     assert_eq!(commit.parents.len(), 2);

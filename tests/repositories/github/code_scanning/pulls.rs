@@ -65,7 +65,7 @@ pub(super) async fn contract(
         202,
     )
     .await;
-    assert!(codeyard::backend::code_scanning::process_next(pool)
+    assert!(codeyard_app::code_scanning::process_next(pool)
         .await
         .unwrap());
     call(
@@ -84,7 +84,7 @@ pub(super) async fn contract(
     assert_eq!(status, StatusCode::OK, "{html}");
     assert!(html.contains("SARIF upload"));
     assert!(html.contains("pending"));
-    assert!(codeyard::backend::code_scanning::process_next(pool)
+    assert!(codeyard_app::code_scanning::process_next(pool)
         .await
         .unwrap());
     let (status, html) = client.send("GET", &checks, "", String::new()).await;
@@ -137,7 +137,7 @@ pub(super) async fn contract(
         202,
     )
     .await;
-    assert!(codeyard::backend::code_scanning::process_next(pool)
+    assert!(codeyard_app::code_scanning::process_next(pool)
         .await
         .unwrap());
     let (status, html) = client.send("GET", &checks, "", String::new()).await;
@@ -158,7 +158,7 @@ pub(super) async fn contract(
         202,
     )
     .await;
-    assert!(codeyard::backend::code_scanning::process_next(pool)
+    assert!(codeyard_app::code_scanning::process_next(pool)
         .await
         .unwrap());
     let (_, html) = client.send("GET", &checks, "", String::new()).await;

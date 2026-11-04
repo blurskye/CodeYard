@@ -1,4 +1,4 @@
-use crate::NotificationBroadcaster;
+use crate::broadcast::NotificationBroadcaster;
 
 /// The invitation stands even if its notification cannot be stored. Its email was queued in the
 /// transaction that saved it.
@@ -11,13 +11,7 @@ pub async fn organization_invitation(
     let Some(user_id) = invitation.user_id else {
         return;
     };
-    let name = match codeyard_db_orgs::organizations::get_organization_metadata(
-        pool,
-        actor,
-        invitation.org_id,
-    )
-    .await
-    {
+    let name = match super::get_organization_metadata(pool, actor, invitation.org_id).await {
         Ok(codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(metadata)) => {
             metadata.name
         }

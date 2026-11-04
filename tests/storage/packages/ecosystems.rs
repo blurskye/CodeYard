@@ -1,6 +1,7 @@
 //! Client-shaped Maven/Gradle, NuGet and RubyGems conversations on both databases.
 use super::*;
-use codeyard::backend::{ci::tokens::Permissions, db};
+use codeyard::backend::db;
+use codeyard_model::permissions::Permissions;
 use sha2::{Digest, Sha512};
 use std::{
     collections::BTreeMap,
@@ -1151,7 +1152,7 @@ async fn ecosystems(pg: bool) {
         .await;
     f.execute("UPDATE package_blobs SET expires_at=0", &[])
         .await;
-    let store = codeyard::backend::storage::ObjectStore::open(root.path(), None)
+    let store = codeyard_app::storage::ObjectStore::open(root.path(), None)
         .await
         .unwrap();
     packages::collect(f.pool(), &store).await.unwrap();

@@ -5,9 +5,11 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
+use codeyard_api_rest::user::fine_grained::orgs::TeamPage;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_orgs::organizations::*;
-use codeyard_webui::{app::Page, bootstrap, pages::orgs::TeamPage};
+use codeyard_webui::app::Page;
+use codeyard_webui::bootstrap;
 use tower::ServiceExt;
 
 const TEAMS: &str = "/orgs/native_org/teams";

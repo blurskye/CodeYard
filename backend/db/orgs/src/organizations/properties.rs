@@ -73,7 +73,7 @@ pub(crate) fn checked_changes(
     result.sort_unstable_by_key(|(id, _)| *id);
     Ok(result)
 }
-pub(crate) fn checked_catalog_bytes<'a>(
+pub fn checked_catalog_bytes<'a>(
     fields: impl IntoIterator<Item = &'a DefinitionInput>,
 ) -> Result<()> {
     let mut bytes = 2usize;

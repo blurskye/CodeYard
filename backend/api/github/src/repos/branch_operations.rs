@@ -1,0 +1,198 @@
+//! Branch renames and upstream synchronization use the owning repository store.
+use axum::extract::Path;
+use axum::extract::Request;
+use axum::extract::State;
+use axum::http::HeaderMap;
+use axum::http::StatusCode;
+use axum::routing::post;
+use axum::routing::MethodRouter;
+use axum::Json;
+use codeyard_app::api_shared::github::contents::store_error;
+use codeyard_app::api_shared::github::repository;
+use codeyard_app::app::AppState;
+use codeyard_app::repositories::store::repo_store;
+use codeyard_model::github_error::Error;
+use codeyard_model::github_error::Result;
+use serde::Deserialize;
+use serde_json::json;
+use serde_json::Value;
+use std::sync::Arc;
+
+#[derive(Deserialize)]
+struct Rename {
+    new_name: String,
+}
+
+async fn rename(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, name, branch)): Path<(String, String, String)>,
+    Json(input): Json<Rename>,
+) -> Result<(StatusCode, Json<Value>)> {
+    let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
+    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = auth.user.id;
+    let authority = auth.database_actor();
+    repo_store(&repo, state.cluster.as_ref())
+        .rename_branch_as(&state.pool, repo.id, authority, &branch, &input.new_name)
+        .await
+        .map_err(store_error)?;
+    codeyard_app::repositories::pull_requests::branches::refresh_open_pull_requests(
+        &state.pool,
+        &repo,
+        Some(&[&branch, &input.new_name]),
+        &state.ci_runs,
+        actor,
+        codeyard_db_core::models::AccessLevel::Owner,
+    )
+    .await
+    .map_err(|_| {
+        Error::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Branch renamed but pull request refresh failed",
+        )
+    })?;
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            crate::repos::branches::document(&state, &repo, &owner, &name, &input.new_name).await?,
+        ),
+    ))
+}
+
+#[derive(Deserialize)]
+struct Upstream {
+    branch: String,
+}
+
+async fn upstream(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+    request: Request,
+) -> Result<Json<Value>> {
+    let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
+    let auth = auth.ok_or_else(codeyard_app::api_shared::github::auth::required)?;
+    let actor = &auth.user;
+    let Json(input) = Json::<Upstream>::from_request(request, &state)
+        .await
+        .map_err(|_| Error::invalid("A branch name is required"))?;
+    if codeyard_git::branch_ref(&input.branch).is_none() {
+        return Err(Error::invalid("Invalid branch name"));
+    }
+    let parent = repo
+        .forked_from_id
+        .filter(|_| repo.is_fork)
+        .ok_or_else(|| Error::invalid("Repository is not a fork"))?;
+    let parent =
+        codeyard_identity::repository_access::check_read(&state.pool, parent, Some(actor.id))
+            .await
+            .map_err(|error| match error {
+                codeyard_identity::repository_access::AccessError::Unavailable => {
+                    Error::unavailable(())
+                }
+                _ => Error::missing(),
+            })?;
+    // The upstream's commits become readable through the fork, so the credential must reach
+    // the upstream too, not only the fork the request names.
+    auth.repository_scope(&state.pool, parent.id, "contents", false)
+        .await
+        .map_err(crate::auth::scope_error)?;
+    let parent_owner =
+        codeyard_db_repos::repositories::records::repository_owner_name(&state.pool, parent.id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+    let base_branch = format!("{parent_owner}:{}", input.branch);
+    let tasks = state.git_tasks.clone();
+    let (send, receive) = tokio::sync::oneshot::channel();
+    if !tasks.spawn(async move {
+        let result = complete_upstream(state, repo, parent, input, owner, base_branch, auth).await;
+        if result.is_err() {
+            tracing::warn!("upstream synchronization or its follow-up failed");
+        }
+        let _ = send.send(result);
+    }) {
+        return Err(Error::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Repository writes are busy",
+        ));
+    }
+    receive.await.map_err(Error::unavailable)?
+}
+
+async fn complete_upstream(
+    state: Arc<AppState>,
+    repo: codeyard_db_core::models::Repository,
+    parent: codeyard_db_core::models::Repository,
+    input: Upstream,
+    owner: String,
+    base_branch: String,
+    auth: codeyard_app::api_shared::github::auth::Authentication,
+) -> Result<Json<Value>> {
+    let actor = &auth.user;
+    let source = repo_store(&parent, state.cluster.as_ref());
+    let merged = repo_store(&repo, state.cluster.as_ref())
+        .merge_upstream_as(
+            &state.pool,
+            repo.id,
+            actor.id,
+            (parent.id, &source),
+            &input.branch,
+            Some(auth.token.id),
+        )
+        .await
+        .map_err(store_error)?;
+    if merged.merge_type != codeyard_app::repositories::store::types::UpstreamMergeType::None {
+        // The branch moved, so its push workflows run as they do after any other push.
+        state
+            .ci_runs
+            .queue_push_runs(
+                &repo,
+                &owner,
+                actor.id,
+                codeyard_app::ci::push::RefUpdate {
+                    reference: format!("refs/heads/{}", input.branch),
+                    old: Some(merged.old.clone()),
+                    new: merged.sha.clone(),
+                    changed_paths: None,
+                },
+            )
+            .await;
+    }
+    codeyard_app::repositories::pull_requests::branches::refresh_open_pull_requests(
+        &state.pool,
+        &repo,
+        Some(&[&input.branch]),
+        &state.ci_runs,
+        actor.id,
+        codeyard_db_core::models::AccessLevel::Owner,
+    )
+    .await
+    .map_err(|_| {
+        Error::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Branch synchronized but pull request refresh failed",
+        )
+    })?;
+    use codeyard_app::repositories::store::types::UpstreamMergeType;
+    let message = match merged.merge_type {
+        UpstreamMergeType::None => format!("Already up to date with upstream {base_branch}"),
+        UpstreamMergeType::FastForward => {
+            format!("Successfully fetched and fast-forwarded from upstream {base_branch}")
+        }
+        UpstreamMergeType::Merge => {
+            format!("Successfully fetched and merged from upstream {base_branch}")
+        }
+    };
+    Ok(Json(
+        json!({"message":message,"merge_type":merged.merge_type,"base_branch":base_branch}),
+    ))
+}
+
+pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+    vec![
+        ("repos/rename-branch", post(rename)),
+        ("repos/merge-upstream", post(upstream)),
+    ]
+}

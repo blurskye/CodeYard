@@ -16,11 +16,11 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use codeyard::backend::api::create_router;
-use codeyard::backend::app::AppState;
-use codeyard::backend::ci::CiConfig;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
 
-use codeyard::backend::storage::ObjectStore;
+use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::models::repositories::AccessLevel;
 use codeyard_notifications::NotificationEvent;
 use fixture::Fixture;
@@ -261,15 +261,9 @@ async fn authority_contract(pg: bool) {
     .await;
     agrees(&f, recipient, &[account, team_notice]).await;
     assert!(matches!(
-        codeyard_db_orgs::organizations::revoke_organization_team_repository(
-            f.pool(),
-            owner,
-            org,
-            team,
-            tenant
-        )
-        .await
-        .unwrap(),
+        super::revoke_organization_team_repository(f.pool(), owner, org, team, tenant)
+            .await
+            .unwrap(),
         codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     agrees(&f, recipient, &[account]).await;
@@ -279,15 +273,9 @@ async fn authority_contract(pg: bool) {
     )
     .await;
     assert!(matches!(
-        codeyard_db_orgs::organizations::remove_organization_team_member(
-            f.pool(),
-            owner,
-            org,
-            team,
-            recipient
-        )
-        .await
-        .unwrap(),
+        super::remove_organization_team_member(f.pool(), owner, org, team, recipient)
+            .await
+            .unwrap(),
         codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     agrees(&f, recipient, &[account]).await;
@@ -317,14 +305,9 @@ async fn authority_contract(pg: bool) {
     .unwrap();
     // Real member removal clears direct and team contributions, not notifications.
     assert!(matches!(
-        codeyard_db_orgs::organizations::remove_organization_member(
-            f.pool(),
-            owner,
-            org,
-            recipient
-        )
-        .await
-        .unwrap(),
+        super::remove_organization_member(f.pool(), owner, org, recipient)
+            .await
+            .unwrap(),
         codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     agrees(&f, recipient, &[account]).await;

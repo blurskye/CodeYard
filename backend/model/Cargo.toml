@@ -66,3 +66,12 @@ workspace = true
 
 [dependencies.uuid]
 workspace = true
+
+[dependencies.axum]
+workspace = true
+
+[dependencies.async-graphql]
+workspace = true
+
+[dependencies.http-body-util]
+workspace = true

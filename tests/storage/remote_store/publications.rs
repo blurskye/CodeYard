@@ -42,7 +42,7 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
     let outsider = db::users::accounts::create_user(&database.pool, "publication_outsider", None)
         .await
         .unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (&database.pool, Some(&web.context)),
         &web.context.repos_path,
         db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
@@ -54,7 +54,7 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
     .await
     .unwrap();
     assert_eq!(repository.storage_node_id, Some(storage.context.node_id));
-    codeyard::backend::repositories::access::change_collaborator(
+    codeyard_identity::repository_access::change_collaborator(
         &database.pool,
         owner.id,
         repository.id,
@@ -251,7 +251,7 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
     )
     .await
     .unwrap();
-    let mut request = codeyard::backend::repositories::store::PullBranchUpdate {
+    let mut request = codeyard_app::repositories::store::types::PullBranchUpdate {
         pull_request_id: pull.id,
         base_branch: "upstream".into(),
         branch: "main".into(),

@@ -1,27 +1,30 @@
 //! Required PostgreSQL-only auth fixtures. No .env fallback and no silent skips.
 use crate::support::native_database as native;
 use chrono::{Duration, Utc};
-use codeyard::backend::{
-    db::{
-        self,
-        users::{
-            sessions as stored,
-            transitions::{self, AccountAdmission, BanChange, SetupClaim},
-        },
-    },
-    identity::{
-        self,
-        accounts::{ManagedAccountError, PasswordChange, SignupDecision, SignupReviewOutcome},
-        admission,
-        credentials::PasswordAccount,
-        login::PasswordCredentials,
-        passwords,
-        registration::{RegistrationError, RegistrationOutcome},
-        sessions::{AccountAuthorityError, InitiatingSession, SessionContext, SessionIssueError},
-        setup::{SetupError, SetupInput},
-        AuthenticatedAccount,
-    },
-};
+use codeyard::backend::db;
+use codeyard::backend::identity;
+use codeyard::backend::identity::admission;
+use codeyard::backend::identity::passwords;
+use codeyard_db_identity::users::sessions as stored;
+use codeyard_db_identity::users::transitions;
+use codeyard_db_identity::users::transitions::AccountAdmission;
+use codeyard_db_identity::users::transitions::BanChange;
+use codeyard_db_identity::users::transitions::SetupClaim;
+use codeyard_identity::accounts::ManagedAccountError;
+use codeyard_identity::accounts::PasswordChange;
+use codeyard_identity::accounts::SignupDecision;
+use codeyard_identity::accounts::SignupReviewOutcome;
+use codeyard_identity::credentials::PasswordAccount;
+use codeyard_identity::login::PasswordCredentials;
+use codeyard_identity::registration::RegistrationError;
+use codeyard_identity::registration::RegistrationOutcome;
+use codeyard_identity::sessions::AccountAuthorityError;
+use codeyard_identity::sessions::InitiatingSession;
+use codeyard_identity::sessions::SessionContext;
+use codeyard_identity::sessions::SessionIssueError;
+use codeyard_identity::setup::SetupError;
+use codeyard_identity::setup::SetupInput;
+use codeyard_identity::AuthenticatedAccount;
 use sha2::{Digest, Sha256};
 use sqlx::{postgres::PgPoolOptions, Postgres, Transaction};
 use std::time::Duration as StdDuration;

@@ -50,7 +50,7 @@ fn parse_key_parts(key_type: &str, blob: &str) -> Result<PublicKey, SshKeyWriteR
 pub const MAX_PUBLIC_KEY_BYTES: usize = 32768;
 
 /// One complete-key policy for enrollment and both SSH transports; comments are labels only.
-pub(crate) fn parse_public_key(public_key: &str) -> Result<PublicKey, SshKeyWriteRefusal> {
+pub fn parse_public_key(public_key: &str) -> Result<PublicKey, SshKeyWriteRefusal> {
     use codeyard_model::identity::SshKeyWriteRefusal::InvalidKey;
     let public_key = public_key.trim();
     if public_key.len() > MAX_PUBLIC_KEY_BYTES || public_key.contains(['\r', '\n', '\0']) {
@@ -63,7 +63,7 @@ pub(crate) fn parse_public_key(public_key: &str) -> Result<PublicKey, SshKeyWrit
     )
 }
 
-pub(crate) fn canonical_key(key_type: &str, blob: &str) -> Result<String> {
+pub fn canonical_key(key_type: &str, blob: &str) -> Result<String> {
     Ok(parse_key_parts(key_type, blob)?.to_openssh()?)
 }
 

@@ -102,7 +102,7 @@ async fn grant_changes(pool: &codeyard_db_core::DbPool) {
                 &slot,
                 "podman",
                 &trusted,
-                &codeyard::backend::ci::CiConfig::default().platform_labels()
+                &codeyard_app::ci::config::CiConfig::default().platform_labels()
             )
             .await
             .unwrap()
@@ -141,7 +141,7 @@ async fn grant_changes(pool: &codeyard_db_core::DbPool) {
             &other,
             "podman",
             &trusted,
-            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .unwrap();
@@ -149,7 +149,7 @@ async fn grant_changes(pool: &codeyard_db_core::DbPool) {
             assert_eq!(queued_now.status, "cancelled");
             assert_eq!(
                 queued_now.error_message.as_deref(),
-                Some(codeyard_db_actions::ci::ACCESS_LOST_MESSAGE)
+                Some(codeyard_db_core::ci_policy::ACCESS_LOST_MESSAGE)
             );
             assert!(queued_now.completed_at.is_some());
             assert!(queued_now.worker.is_none() && queued_now.started_at.is_none());
@@ -203,7 +203,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
             WORKER,
             "podman",
             &trusted,
-            &codeyard::backend::ci::CiConfig::default().platform_labels()
+            &codeyard_app::ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()
@@ -218,7 +218,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
             SECOND_WORKER,
             "podman",
             &trusted,
-            &codeyard::backend::ci::CiConfig::default().platform_labels()
+            &codeyard_app::ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()
@@ -313,7 +313,7 @@ async fn claimed_run_behind_repository_lock(
             WORKER,
             "podman",
             &trusted,
-            &codeyard::backend::ci::CiConfig::default().platform_labels()
+            &codeyard_app::ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()
@@ -564,8 +564,8 @@ async fn postgres_cancellation_rechecks_admin_after_waiting() {
             .unwrap_err();
         assert!(
             matches!(
-                error.downcast_ref::<codeyard_db_actions::ci::CiAdmissionRefusal>(),
-                Some(codeyard_db_actions::ci::CiAdmissionRefusal::Denied(_))
+                error.downcast_ref::<codeyard_db_core::ci_policy::CiAdmissionRefusal>(),
+                Some(codeyard_db_core::ci_policy::CiAdmissionRefusal::Denied(_))
             ),
             "{error:?}"
         );
@@ -584,7 +584,7 @@ async fn cancellation_after_access_loss(pool: &codeyard_db_core::DbPool) {
             WORKER,
             "local",
             &[writer],
-            &codeyard::backend::ci::CiConfig::default().platform_labels()
+            &codeyard_app::ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()
@@ -665,7 +665,7 @@ async fn team_writer_repository(
             .unwrap()
             .id;
     let org = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             pool,
             owner,
             &codeyard_db_orgs::organizations::NewOrganization::new(
@@ -679,18 +679,12 @@ async fn team_writer_repository(
     )
     .id;
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            pool,
-            owner,
-            org,
-            member,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(pool, owner, org, member, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let team = applied(
-        codeyard_db_orgs::organizations::create_organization_team(
+        super::create_organization_team(
             pool,
             owner,
             org,
@@ -710,7 +704,7 @@ async fn team_writer_repository(
     )
     .id;
     applied(
-        codeyard_db_orgs::organizations::add_organization_team_member(
+        super::add_organization_team_member(
             pool,
             owner,
             org,
@@ -741,7 +735,7 @@ async fn team_writer_repository(
     .await
     .unwrap();
     applied(
-        codeyard_db_orgs::organizations::grant_organization_team_repository(
+        super::grant_organization_team_repository(
             pool,
             owner,
             org,
@@ -795,10 +789,7 @@ async fn postgres_team_grant_revocation_and_claim_do_not_deadlock() {
         .unwrap();
     let pool = fixture.pool.clone();
     let revoking = tokio::spawn(async move {
-        codeyard_db_orgs::organizations::revoke_organization_team_repository(
-            &pool, owner, org, team, repo,
-        )
-        .await
+        super::revoke_organization_team_repository(&pool, owner, org, team, repo).await
     });
     wait_until_blocked(raw, holder, 1).await;
     let pool = fixture.pool.clone();
@@ -808,7 +799,7 @@ async fn postgres_team_grant_revocation_and_claim_do_not_deadlock() {
             WORKER,
             "local",
             &trusted,
-            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
         )
         .await
     });
@@ -840,7 +831,7 @@ async fn postgres_team_grant_revocation_and_claim_do_not_deadlock() {
     assert_eq!(cancelled.status, "cancelled");
     assert_eq!(
         cancelled.error_message.as_deref(),
-        Some(codeyard_db_actions::ci::ACCESS_LOST_MESSAGE)
+        Some(codeyard_db_core::ci_policy::ACCESS_LOST_MESSAGE)
     );
 }
 

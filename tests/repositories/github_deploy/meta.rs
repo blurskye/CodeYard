@@ -189,7 +189,7 @@ async fn contract(pg: bool) {
     .await;
     assert!(svg.starts_with("<svg"));
     assert!(svg.contains('🚀'));
-    codeyard::backend::repositories::lifecycle::provision(
+    codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -200,8 +200,8 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let license_text = codeyard::backend::repositories::templates::fill_license(
-        codeyard::backend::repositories::templates::license("MIT")
+    let license_text = codeyard_app::repositories::templates::fill_license(
+        codeyard_app::repositories::templates::license("MIT")
             .unwrap()
             .text,
         2026,

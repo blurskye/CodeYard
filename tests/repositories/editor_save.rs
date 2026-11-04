@@ -12,10 +12,9 @@ use axum::{
 };
 use base64::Engine;
 
-use codeyard_webui::{
-    app::{Page, PageEnvelope},
-    pages::repos as view,
-};
+use codeyard_api_rest::user::fine_grained::repos as view;
+use codeyard_webui::app::Page;
+use codeyard_webui::app::PageEnvelope;
 use database::Database;
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -151,7 +150,7 @@ async fn contract(pg: bool) {
         Some(csrf.clone())
     );
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
@@ -731,7 +730,7 @@ async fn stale_repository_contract(pg: bool) {
             &[repository.id],
         )
         .await;
-        let replacement = codeyard::backend::repositories::lifecycle::provision(
+        let replacement = codeyard_app::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
@@ -793,7 +792,7 @@ async fn postgres_stale_editor_cannot_write_replacement_repository() {
 /// A signed-in client for `owner`'s empty repository `save`, behind a fresh router.
 async fn long_name_client(f: &Database, owner: i64) -> (http::Client, tempfile::TempDir) {
     let root = tempfile::tempdir().unwrap();
-    codeyard::backend::repositories::lifecycle::provision(
+    codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),

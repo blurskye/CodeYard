@@ -8,12 +8,12 @@ pub mod credentials;
 pub mod dependencies;
 pub mod discovery;
 pub mod github;
-pub(crate) mod immutable_releases;
+pub mod immutable_releases;
 pub mod protection;
 pub mod push_teams;
 pub mod records;
 pub mod security;
 pub mod topics;
-pub(crate) mod traffic;
+pub mod traffic;
 
 pub mod engagement;

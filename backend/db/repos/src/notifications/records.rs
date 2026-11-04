@@ -230,7 +230,7 @@ pub enum NotificationInboxAction {
 }
 
 impl NotificationInboxAction {
-    pub(crate) fn requires_write(&self) -> bool {
+    pub fn requires_write(&self) -> bool {
         match self {
             Self::Threads(action) => action.requires_write(),
             _ => !matches!(self, Self::List { .. }),

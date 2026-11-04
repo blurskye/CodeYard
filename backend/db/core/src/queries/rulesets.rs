@@ -304,7 +304,7 @@ impl Rule {
         )
     }
 
-    fn validate(&mut self, target: Target) -> Result<(), Invalid> {
+    pub fn validate(&mut self, target: Target) -> Result<(), Invalid> {
         let applicable = match self {
             Self::Creation | Self::Update { .. } | Self::Deletion | Self::NonFastForward => {
                 target != Target::Push
@@ -508,7 +508,7 @@ impl Definition {
         }
         Self::parse(&document)
     }
-    fn validate(&mut self) -> Result<(), Invalid> {
+    pub fn validate(&mut self) -> Result<(), Invalid> {
         if self.name.trim().is_empty()
             || self.name.len() > 1024
             || self.name.chars().any(char::is_control)

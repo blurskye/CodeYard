@@ -1,26 +1,22 @@
 //! Fine-grained personal access tokens from the settings pages: the create form, the value
 //! shown once, regeneration, expiry and deletion, on both engines.
-use crate::support::{database::Database, http_client::Client, organizations::applied};
+use super::NewOrganization;
+use super::OrganizationProfile;
+use crate::support::database::Database;
+use crate::support::http_client::Client;
+use crate::support::organizations::applied;
 use axum::{
     body::{to_bytes, Body},
     http::Request,
     Router,
 };
-use codeyard::backend::{
-    db::{
-        self,
-        organizations::{NewOrganization, OrganizationProfile},
-        repositories::creation::RepositoryCreationOwner,
-    },
-    repositories::lifecycle,
-};
-use codeyard_webui::{
-    app::Page,
-    pages::{
-        account,
-        settings::fine_grained::{Model, View},
-    },
-};
+use codeyard::backend::db;
+use codeyard_api_rest::user::fine_grained::settings::fine_grained::Model;
+use codeyard_api_rest::user::fine_grained::settings::fine_grained::View;
+use codeyard_app::repositories::lifecycle;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::account;
 use tower::ServiceExt;
 
 const BASE: &str = "/settings/personal-access-tokens";
@@ -216,7 +212,7 @@ async fn contract(pg: bool) {
         f.scalar(
             &format!(
                 "SELECT COUNT(*) FROM personal_access_tokens WHERE id=$1 AND token_hash='{}'",
-                codeyard_identity::tokens::token_hash(&first)
+                codeyard_support::token_hash::token_hash(&first)
             ),
             &[token]
         )

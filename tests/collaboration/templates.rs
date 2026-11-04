@@ -25,7 +25,7 @@ pub(super) async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Cli
     let alice_id = database.actor("alice").await;
     let bob_id = database.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    codeyard::backend::repositories::lifecycle::provision(
+    codeyard_app::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

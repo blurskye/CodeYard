@@ -39,7 +39,7 @@ impl Owner {
 pub const MAX_FIELDS: usize = 100;
 pub type ItemLink = (i64, String, String, String, i32);
 
-native_operation!(crate::postgres::projects::item_links, crate::sqlite::projects::item_links,
+native_operation!(super::item_links, super::item_links,
     fn item_links(pool: &DbPool, viewer: Option<i64>, project: i64, items: &[i64]) -> Result<Vec<ItemLink>>);
 
 pub struct ItemWindow {
@@ -51,19 +51,19 @@ pub struct ItemWindow {
     pub limit: i64,
     pub count: bool,
 }
-native_operation!(crate::postgres::projects::items_window, crate::sqlite::projects::items_window,
+native_operation!(super::items_window, super::items_window,
     fn items_window(pool: &DbPool, viewer: Option<i64>, window: &ItemWindow) -> Result<(i64, Vec<Item>)>);
 
 // Deleted payloads retain read-only access in their originating request; ordinary readers use false.
-native_operation!(crate::postgres::projects::by_id_at, crate::sqlite::projects::by_id_at,
+native_operation!(super::by_id_at, crate::sqlite::projects::extended::by_id_at,
     fn by_id_at(pool: &DbPool, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<Project>);
 native_operation!(crate::postgres::projects::fields_at, crate::sqlite::projects::fields_at,
     fn fields_at(pool: &DbPool, viewer: Option<i64>, project: i64, include_deleted: bool) -> Result<Vec<Field>>);
-native_operation!(crate::postgres::projects::items_at, crate::sqlite::projects::items_at,
+native_operation!(super::items_at, super::items_at,
     fn items_at(pool: &DbPool, viewer: Option<i64>, project: i64, include_deleted: bool) -> Result<Vec<Item>>);
-native_operation!(crate::postgres::projects::item_by_id_at, crate::sqlite::projects::item_by_id_at,
+native_operation!(super::item_by_id_at, crate::sqlite::projects::extended::item_by_id_at,
     fn item_by_id_at(pool: &DbPool, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<Item>);
-native_operation!(crate::postgres::projects::content_items, crate::sqlite::projects::content_items,
+native_operation!(super::content_items, super::content_items,
     fn content_items(pool: &DbPool, viewer: Option<i64>, content: &Content, include_archived: bool, offset: i64, limit: i64, count: bool) -> Result<(i64, Vec<Item>)>);
 
 #[derive(Clone, Debug, Serialize, Deserialize, sqlx::FromRow)]
@@ -126,7 +126,7 @@ impl ListFilter {
         }
         filter
     }
-    pub(crate) fn statement(&self, postgres: bool) -> crate::discussion_search::Statement {
+    pub fn statement(&self, postgres: bool) -> crate::discussion_search::Statement {
         let mut sql = crate::discussion_search::Statement::new(postgres);
         let mut conditions = vec![readable_condition(&sql.placeholder(1))];
         if let Some(owner) = self.owner {
@@ -551,50 +551,50 @@ pub fn validate_value(field: &Field, value: &Value) -> Result<()> {
     Ok(())
 }
 
-native_operation!(crate::postgres::projects::can_write, crate::sqlite::projects::can_write,
+native_operation!(super::can_write, super::can_write,
     fn can_write(pool: &DbPool, actor: i64, owner: Owner) -> Result<bool>);
-native_operation!(crate::postgres::projects::delete_field, crate::sqlite::projects::delete_field,
+native_operation!(super::delete_field, super::delete_field,
     fn delete_field(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, field: i64) -> Result<()>);
-native_operation!(crate::postgres::projects::add_item, crate::sqlite::projects::add_item,
+native_operation!(super::add_item, super::add_item,
     fn add_item(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, content: &Content) -> Result<Item>);
-native_operation!(crate::postgres::projects::item, crate::sqlite::projects::item,
+native_operation!(super::item, super::item,
     fn item(pool: &DbPool, viewer: Option<i64>, project: i64, id: i64) -> Result<Option<Item>>);
-native_operation!(crate::postgres::projects::items_page, crate::sqlite::projects::items_page,
+native_operation!(super::items_page, super::items_page,
     fn items_page(pool: &DbPool, viewer: Option<i64>, project: i64, after: i64, before: i64, limit: i64) -> Result<Vec<Item>>);
 native_operation!(crate::postgres::projects::exports::list_window, crate::sqlite::projects::exports::list_window,
     fn list_window(pool: &DbPool, viewer: Option<i64>, owner: Owner, after: i64, before: i64, limit: i64) -> Result<Vec<Project>>);
 native_operation!(crate::postgres::projects::exports::fields_window, crate::sqlite::projects::exports::fields_window,
     fn fields_window(pool: &DbPool, viewer: Option<i64>, project: i64, after: i64, before: i64, limit: i64) -> Result<Vec<Field>>);
-native_operation!(crate::postgres::projects::items, crate::sqlite::projects::items,
+native_operation!(super::items, super::items,
     fn items(pool: &DbPool, viewer: Option<i64>, project: i64) -> Result<Vec<Item>>);
-native_operation!(crate::postgres::projects::update_item, crate::sqlite::projects::update_item,
+native_operation!(super::update_item, super::update_item,
     fn update_item(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, item: i64, updates: &[FieldUpdate]) -> Result<Item>);
-native_operation!(crate::postgres::projects::delete_item, crate::sqlite::projects::delete_item,
+native_operation!(super::delete_item, super::delete_item,
     fn delete_item(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, item: i64) -> Result<()>);
-native_operation!(crate::postgres::projects::create_view, crate::sqlite::projects::create_view,
+native_operation!(super::create_view, super::create_view,
     fn create_view(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, input: &NewView) -> Result<View>);
-native_operation!(crate::postgres::projects::views, crate::sqlite::projects::views,
+native_operation!(super::views, super::views,
     fn views(pool: &DbPool, viewer: Option<i64>, project: i64) -> Result<Vec<View>>);
-native_operation!(crate::postgres::projects::link_repository, crate::sqlite::projects::link_repository,
+native_operation!(super::link_repository, super::link_repository,
     fn link_repository(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, repo: i64, linked: bool) -> Result<()>);
 
-native_operation!(crate::postgres::projects::link_team, crate::sqlite::projects::link_team,
+native_operation!(crate::postgres::projects::extended::link_team, crate::sqlite::projects::extended::link_team,
     fn link_team(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, team: i64, linked: bool) -> Result<()>);
-native_operation!(crate::postgres::projects::by_id, crate::sqlite::projects::by_id,
+native_operation!(crate::postgres::projects::extended::by_id, crate::sqlite::projects::extended::by_id,
     fn by_id(pool: &DbPool, viewer: Option<i64>, project: i64) -> Result<Project>);
-native_operation!(crate::postgres::projects::field_by_id, crate::sqlite::projects::field_by_id,
+native_operation!(crate::postgres::projects::extended::field_by_id, crate::sqlite::projects::extended::field_by_id,
     fn field_by_id(pool: &DbPool, viewer: Option<i64>, field: i64) -> Result<Field>);
-native_operation!(crate::postgres::projects::item_by_id, crate::sqlite::projects::item_by_id,
+native_operation!(crate::postgres::projects::extended::item_by_id, crate::sqlite::projects::extended::item_by_id,
     fn item_by_id(pool: &DbPool, viewer: Option<i64>, item: i64) -> Result<Item>);
-native_operation!(crate::postgres::projects::metadata, crate::sqlite::projects::metadata,
+native_operation!(crate::postgres::projects::extended::metadata, crate::sqlite::projects::extended::metadata,
     fn metadata(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, readme: Option<&str>, template: Option<bool>) -> Result<Project>);
-native_operation!(crate::postgres::projects::archive_item, crate::sqlite::projects::archive_item,
+native_operation!(crate::postgres::projects::extended::archive_item, crate::sqlite::projects::extended::archive_item,
     fn archive_item(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, item: i64, archived: bool) -> Result<Item>);
-native_operation!(crate::postgres::projects::edit_draft, crate::sqlite::projects::edit_draft,
+native_operation!(crate::postgres::projects::extended::edit_draft, crate::sqlite::projects::extended::edit_draft,
     fn edit_draft(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, item: i64, title: Option<&str>, body: Option<&str>) -> Result<Item>);
-native_operation!(crate::postgres::projects::reorder_item, crate::sqlite::projects::reorder_item,
+native_operation!(crate::postgres::projects::extended::reorder_item, crate::sqlite::projects::extended::reorder_item,
     fn reorder_item(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, item: i64, after: Option<i64>) -> Result<Item>);
-native_operation!(crate::postgres::projects::copy, crate::sqlite::projects::copy,
+native_operation!(crate::postgres::projects::extended::copy, crate::sqlite::projects::extended::copy,
     fn copy(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, source: i64, owner: Owner, title: &str, drafts: bool) -> Result<Project>);
 
 pub fn field_configuration(field: &Field) -> Result<Value> {

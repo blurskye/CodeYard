@@ -1,10 +1,10 @@
 use super::github::{document, request};
-use crate::support::{database::Database, http_client::Client};
+use crate::support::database::Database;
+use crate::support::http_client::Client;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    db,
-    identity::tokens::{self, TokenInput},
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 async fn relationships(pg: bool) {
     crate::support::fake_webui_bundle::install();
@@ -20,7 +20,7 @@ async fn relationships(pg: bool) {
         (bob, "public", false),
     ] {
         repos.push(
-            codeyard::backend::repositories::lifecycle::provision(
+            codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 db::repositories::creation::RepositoryCreationOwner::personal(actor),

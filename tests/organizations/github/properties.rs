@@ -1,12 +1,12 @@
 use super::request;
-use crate::support::{
-    codeyard_db_orgs::organizations::applied, database::Database, http_client::Client,
-};
+use crate::support::codeyard_db_orgs::organizations::applied;
+use crate::support::database::Database;
+use crate::support::http_client::Client;
 
+use super::NewOrganization;
+use super::OrganizationProfile;
 use codeyard_db_core::queries::organizations::properties::PropertyValue;
 use codeyard_db_core::queries::organizations::properties::ValueInput;
-use codeyard_db_orgs::organizations::NewOrganization;
-use codeyard_db_orgs::organizations::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::NewRepository;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
@@ -62,7 +62,7 @@ async fn contract(pg: bool) {
     let outside = f.actor("outside").await;
     let delegated = f.actor("delegated").await;
     let org = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -71,7 +71,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let other = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("foreign", OrganizationProfile::new(None, None).unwrap())
@@ -82,15 +82,9 @@ async fn contract(pg: bool) {
     );
     for (user, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
         applied(
-            codeyard_db_orgs::organizations::add_organization_member(
-                f.pool(),
-                owner,
-                org.id,
-                user,
-                role,
-            )
-            .await
-            .unwrap(),
+            super::add_organization_member(f.pool(), owner, org.id, user, role)
+                .await
+                .unwrap(),
         );
     }
     let root = tempfile::tempdir().unwrap();

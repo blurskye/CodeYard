@@ -646,7 +646,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         "node-a/1",
         "podman",
         &[],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -660,7 +660,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
             "node-b/1",
             "local",
             &[],
-            &codeyard::backend::ci::CiConfig::default().platform_labels()
+            &codeyard_app::ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()
@@ -778,7 +778,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         "node-a/1",
         "podman",
         &[],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -968,10 +968,12 @@ async fn test_token_creation_refuses_session_revoked_by_password_change_on_sqlit
 /// no token. The session check and the insert are one transaction or statement, so the
 /// change either precedes the insert or the insert is refused.
 async fn token_session_revocation_contract(pool: &DbPool) {
-    use codeyard::backend::{
-        codeyard_db_identity::users::{accounts, sessions, transitions},
-        identity::tokens::{self, TokenError, TokenInput},
-    };
+    use codeyard::backend::codeyard_db_identity::users::accounts;
+    use codeyard::backend::codeyard_db_identity::users::sessions;
+    use codeyard::backend::codeyard_db_identity::users::transitions;
+    use codeyard::backend::identity::tokens;
+    use codeyard_identity::tokens::TokenError;
+    use codeyard_identity::tokens::TokenInput;
     let user = accounts::create_user_with_password_and_flags(
         pool,
         &unique_name("token-race"),
@@ -2071,7 +2073,8 @@ async fn ranked_repository(
 /// Stars are ranked before the limit, so a bounded list keeps the most starred
 /// repository even when a newer, less starred one exists.
 async fn public_repository_stars_contract(pool: &DbPool) {
-    use codeyard_db_repos::repositories::records::{list_public_repositories, RepositorySort};
+    use codeyard_db_repos::repositories::records::list_public_repositories;
+    use codeyard_db_repos::repositories::records::RepositorySort;
     let owner =
         codeyard_db_identity::users::accounts::create_user(pool, &unique_name("stars-owner"), None)
             .await
@@ -2136,12 +2139,11 @@ async fn test_public_repository_stars_order_on_sqlite() {
 /// Search matches a public repository's name or description, ignoring case, and never a private
 /// one. A shared repository is one that another user gives the viewer access to.
 async fn public_repository_search_contract(pool: &DbPool) {
-    use codeyard_db_repos::repositories::{
-        access::grant_repo_access,
-        records::{
-            list_shared_repositories, search_public_repositories, RepositoryFilter, RepositorySort,
-        },
-    };
+    use codeyard_db_repos::repositories::access::grant_repo_access;
+    use codeyard_db_repos::repositories::records::list_shared_repositories;
+    use codeyard_db_repos::repositories::records::search_public_repositories;
+    use codeyard_db_repos::repositories::records::RepositoryFilter;
+    use codeyard_db_repos::repositories::records::RepositorySort;
 
     let owner = codeyard_db_identity::users::accounts::create_user(
         pool,

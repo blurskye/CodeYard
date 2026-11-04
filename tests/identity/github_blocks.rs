@@ -1,9 +1,8 @@
 //! Private blocking policy is enforced at the same database effects used by every transport.
 use super::github::request;
-use crate::support::{
-    database::{wait_until_blocked, Database},
-    http_client::Client,
-};
+use crate::support::database::wait_until_blocked;
+use crate::support::database::Database;
+use crate::support::http_client::Client;
 
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_db_repos::repositories::creation::NewRepository;
@@ -415,13 +414,9 @@ async fn contract(pg: bool) {
         codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
     )
     .unwrap();
-    let organization = match codeyard_db_orgs::organizations::profiles::create_organization(
-        f.pool(),
-        alice,
-        &organization,
-    )
-    .await
-    .unwrap()
+    let organization = match super::create_organization(f.pool(), alice, &organization)
+        .await
+        .unwrap()
     {
         codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         other => panic!("{other:?}"),

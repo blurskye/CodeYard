@@ -2,13 +2,13 @@ use super::fixture::{applied, Actor, Fixture, Reply};
 use axum::http::StatusCode;
 use codeyard_support::node_identity::NodeKey;
 
+use codeyard_api_rest::user::fine_grained::discovery as view;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
-use codeyard_webui::{
-    app::{Page, PageEnvelope},
-    bootstrap::{Bootstrap, BOOTSTRAP_ID},
-    pages::discovery as view,
-};
+use codeyard_webui::app::Page;
+use codeyard_webui::app::PageEnvelope;
+use codeyard_webui::bootstrap::Bootstrap;
+use codeyard_webui::bootstrap::BOOTSTRAP_ID;
 
 fn fields<'a>(
     name: &'a str,
@@ -353,7 +353,7 @@ pub async fn revocation(f: &Fixture) {
         f.org
     );
     applied(
-        codeyard_db_orgs::organizations::update_organization_member_role(
+        super::update_organization_member_role(
             pool,
             f.owner.id,
             f.org,
@@ -365,15 +365,9 @@ pub async fn revocation(f: &Fixture) {
     );
     stale_refusal(f, &f.admin, "after_demotion").await;
     applied(
-        codeyard_db_orgs::organizations::update_organization_member_role(
-            pool,
-            f.owner.id,
-            f.org,
-            f.admin.id,
-            OrgRole::Admin,
-        )
-        .await
-        .unwrap(),
+        super::update_organization_member_role(pool, f.owner.id, f.org, f.admin.id, OrgRole::Admin)
+            .await
+            .unwrap(),
     );
     assert_eq!(
         f.get(&f.admin, "/new", true)
@@ -385,23 +379,15 @@ pub async fn revocation(f: &Fixture) {
         f.org
     );
     applied(
-        codeyard_db_orgs::organizations::remove_organization_member(
-            pool, f.owner.id, f.org, f.admin.id,
-        )
-        .await
-        .unwrap(),
+        super::remove_organization_member(pool, f.owner.id, f.org, f.admin.id)
+            .await
+            .unwrap(),
     );
     stale_refusal(f, &f.admin, "after_removal").await;
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            pool,
-            f.owner.id,
-            f.org,
-            f.admin.id,
-            OrgRole::Admin,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(pool, f.owner.id, f.org, f.admin.id, OrgRole::Admin)
+            .await
+            .unwrap(),
     );
     for column in ["is_banned", "must_change_password"] {
         assert_eq!(

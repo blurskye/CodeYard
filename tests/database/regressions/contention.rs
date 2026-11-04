@@ -40,7 +40,7 @@ async fn postgres_direct_grant_changes_conflict_with_repository_authority_reads(
                         .unwrap();
                 }
                 2 | 3 => {
-                    codeyard::backend::repositories::access::change_collaborator(
+                    codeyard_identity::repository_access::change_collaborator(
                         &pool,
                         owner,
                         r.id,
@@ -263,7 +263,7 @@ async fn postgres_collaborator_takes_account_locks_before_rows() {
         .unwrap();
     let pool = f.pool().clone();
     let request = tokio::spawn(async move {
-        codeyard::backend::repositories::access::change_collaborator(
+        codeyard_identity::repository_access::change_collaborator(
             &pool,
             owner,
             r.id,

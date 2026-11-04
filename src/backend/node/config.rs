@@ -1,6 +1,6 @@
-use crate::backend::node::NodeRoles;
-
-use std::{net::SocketAddr, path::PathBuf};
+use codeyard_model::node_roles::NodeRoles;
+use std::net::SocketAddr;
+use std::path::PathBuf;
 
 pub struct ServeConfig {
     pub roles: NodeRoles,

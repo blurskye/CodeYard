@@ -196,10 +196,12 @@ impl Scanner {
             toml::from_str(include_str!("../../../../spec/gitleaks/gitleaks.toml"))?;
         // Personal tokens issued before prefixes were introduced remain valid, but cannot be
         // distinguished reliably from arbitrary hexadecimal values in source code.
-        use codeyard_support::tokens::{
-            ACTIONS_PREFIX, FGPAT_PREFIX, HEX_TOKEN_CHARS, INSTALLATION_PREFIX, PAT_PREFIX,
-            URL_TOKEN_CHARS,
-        };
+        use crate::tokens::ACTIONS_PREFIX;
+        use crate::tokens::FGPAT_PREFIX;
+        use crate::tokens::HEX_TOKEN_CHARS;
+        use crate::tokens::INSTALLATION_PREFIX;
+        use crate::tokens::PAT_PREFIX;
+        use crate::tokens::URL_TOKEN_CHARS;
         for (id, prefix, alphabet, length) in [
             ("codeyard-pat", PAT_PREFIX, "a-f0-9", HEX_TOKEN_CHARS),
             (

@@ -37,7 +37,7 @@ impl World {
         let carol_id = database.actor("carol").await;
         let dave_id = database.actor("dave").await;
         let root = tempfile::tempdir().unwrap();
-        let repository = codeyard::backend::repositories::lifecycle::provision(
+        let repository = codeyard_app::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -402,12 +402,12 @@ async fn reader_merge_form_leaves_the_stored_head(pg: bool) {
     .await
     .unwrap()
     .unwrap();
-    let second = codeyard::backend::repositories::store::repo_store(&repository, None)
+    let second = codeyard_app::repositories::store::repo_store(&repository, None)
         .save_file_as(
             world.database.pool(),
             repository.id,
             repository.owner_user_id.unwrap(),
-            &codeyard::backend::repositories::store::FileWrite {
+            &codeyard_app::repositories::store::editor::FileWrite {
                 branch: "topic".into(),
                 path: "second.txt".into(),
                 message: "second".into(),

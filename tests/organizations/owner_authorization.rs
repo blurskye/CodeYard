@@ -62,9 +62,11 @@ fn token() -> String {
         uuid::Uuid::new_v4().simple()
     )
 }
-use codeyard::backend::{
-    api::create_router, app::AppState, db, repositories::store::RepoStore, storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::repositories::store::RepoStore;
+use codeyard_app::storage::ObjectStore;
 use codeyard_git::error::RepoError;
 use tower::ServiceExt;
 
@@ -157,7 +159,7 @@ impl Fixture {
             root.path().join("repos"),
             Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
             None,
-            codeyard::backend::ci::CiConfig::default(),
+            codeyard_app::ci::config::CiConfig::default(),
             None,
         );
         let router = create_router(state);
@@ -1118,7 +1120,7 @@ async fn valid_ref_without_workflow_directory_has_empty_actions_not_outage() {
         )
         .unwrap();
     let store = RepoStore::from_disk_path(directory.path().to_str().unwrap());
-    let workflows = codeyard::backend::ci::list_workflows_for_ref(&store, "main").await;
+    let workflows = codeyard_app::ci::workflows::list_workflows_for_ref(&store, "main").await;
     let kind = workflows
         .as_ref()
         .err()
@@ -1132,14 +1134,14 @@ async fn valid_ref_without_workflow_directory_has_empty_actions_not_outage() {
     // A nonexistent ref or missing repository must remain an error, not be
     // mistaken for an existing commit without workflow definitions.
     assert!(
-        codeyard::backend::ci::list_workflows_for_ref(&store, "missing-ref")
+        codeyard_app::ci::workflows::list_workflows_for_ref(&store, "missing-ref")
             .await
             .is_err()
     );
     let missing = directory.path().join("missing-repository");
     let missing = RepoStore::from_disk_path(missing.to_str().unwrap());
     assert!(
-        codeyard::backend::ci::list_workflows_for_ref(&missing, "main")
+        codeyard_app::ci::workflows::list_workflows_for_ref(&missing, "main")
             .await
             .is_err()
     );

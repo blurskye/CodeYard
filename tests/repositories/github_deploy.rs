@@ -2,16 +2,17 @@
 mod deployments;
 mod meta;
 mod oidc;
-use crate::support::{database::Database, github_spec::assert_github_schema, http_client::Client};
+use crate::support::database::Database;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    db,
-    identity::tokens::{self, TokenInput},
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -63,7 +64,7 @@ async fn environments_contract(pg: bool) {
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),

@@ -1,5 +1,7 @@
 //! Real HTTP attestation conversations, including shared storage and live visibility, on both engines.
-use crate::support::{database::Database, github_spec::assert_github_schema, http_client::Client};
+use crate::support::database::Database;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::http_client::Client;
 mod access;
 mod docker_conflicts;
 mod inventory;
@@ -13,7 +15,8 @@ use axum::{
     Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard_identity::tokens::{self, TokenInput};
+use codeyard_identity::tokens;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 

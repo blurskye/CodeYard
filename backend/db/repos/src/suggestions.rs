@@ -33,7 +33,7 @@ impl Action {
             Self::CloseIssue => "close_issue",
         }
     }
-    pub(crate) fn slot(self, target: Option<i64>) -> String {
+    pub fn slot(self, target: Option<i64>) -> String {
         match self {
             Self::SetType | Self::CloseIssue => self.name().into(),
             _ => format!("{}:{}", self.name(), target.unwrap_or(0)),

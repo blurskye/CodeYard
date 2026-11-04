@@ -1,0 +1,208 @@
+//! The site settings page: the sign-up mode and the site-wide AI crawler setting.
+
+use crate::crawlers::BLOCK;
+use crate::user::fine_grained::admin::AdminSettings;
+use crate::user::responses::mutation_guard;
+use crate::user::responses::require_account;
+use axum::extract::Form;
+use axum::extract::State;
+use axum::http::HeaderMap;
+use axum::http::StatusCode;
+use axum::http::Uri;
+use axum::response::Response;
+use codeyard_api_http::context::PageContext;
+use codeyard_api_http::shared::user::responses::field;
+use codeyard_api_http::shared::user::responses::Fields;
+use codeyard_app::app::AppState;
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::account;
+use std::sync::Arc;
+
+/// The site settings page. A refused save shows the page again with the message.
+async fn settings_response(
+    ctx: &PageContext,
+    status: StatusCode,
+    message: Option<&str>,
+    submitted: Option<&Fields>,
+) -> Response {
+    let mut ctx = ctx.clone();
+    ctx.return_to = Some("/admin/settings".to_owned());
+    let ctx = &ctx;
+    if let Err(response) = require_account(ctx, true) {
+        return response;
+    }
+    let config =
+        match codeyard_db_cluster::node_config::get_node_configuration(&ctx.state.pool).await {
+            Ok(config) => config,
+            Err(_) => {
+                return ctx.error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Unable to load the site settings.",
+                )
+            }
+        };
+    let osv = match codeyard_db_security::vulnerabilities::settings(&ctx.state.pool).await {
+        Ok(value) => value,
+        Err(_) => {
+            return ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load vulnerability settings.",
+            )
+        }
+    };
+    let private = config.as_ref().is_some_and(|config| config.is_private());
+    let ai_crawlers = config.map_or_else(|| BLOCK.to_owned(), |config| config.ai_crawlers);
+    ctx.page_model_status(
+        status,
+        "Site settings",
+        Page::Identity(account::Page::AdminSettings {
+            model: AdminSettings {
+                private,
+                ai_crawlers,
+                osv_base_url: submitted
+                    .map(|form| field(form, "osv_base_url").to_owned())
+                    .unwrap_or(osv.base_url),
+                osv_ecosystems: submitted
+                    .map(|form| field(form, "osv_ecosystems").to_owned())
+                    .unwrap_or_else(|| {
+                        serde_json::from_str::<Vec<String>>(&osv.ecosystems)
+                            .unwrap_or_default()
+                            .join(", ")
+                    }),
+            },
+            csrf_token: ctx.csrf_token.clone(),
+            message: message.map(str::to_owned),
+            is_error: !status.is_success(),
+        }),
+    )
+}
+
+pub(crate) async fn settings_get(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    let message = match ctx.query.get("saved").map(String::as_str) {
+        Some("crawlers") => Some("AI crawler setting saved."),
+        Some("signup") => Some("Sign-up setting saved."),
+        Some("vulnerabilities") => Some("Vulnerability sources saved."),
+        _ => None,
+    };
+    settings_response(&ctx, StatusCode::OK, message, None).await
+}
+
+/// The settings form. Without JavaScript it posts here and is redirected back.
+pub(crate) async fn settings_post(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(form): Form<Fields>,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    if let Err(response) = mutation_guard(&ctx, &form, true) {
+        return response;
+    }
+    let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let actor = ctx.user.as_ref().expect("admin guard").id;
+    if form.contains_key("osv_base_url") {
+        let ecosystems = field(&form, "osv_ecosystems")
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>();
+        let settings = codeyard_db_security::vulnerabilities::Settings {
+            base_url: field(&form, "osv_base_url").into(),
+            ecosystems: serde_json::json!(ecosystems).to_string(),
+        };
+        return match codeyard_db_security::vulnerabilities::save_settings(
+            &ctx.state.pool,
+            actor,
+            &session,
+            &settings,
+        )
+        .await
+        {
+            Ok(()) => ctx.redirect("/admin/settings?saved=vulnerabilities"),
+            Err(error) => {
+                settings_response(
+                    &ctx,
+                    match error.downcast_ref::<codeyard_db_security::vulnerabilities::Refusal>() {
+                        Some(codeyard_db_security::vulnerabilities::Refusal::Invalid) => {
+                            StatusCode::UNPROCESSABLE_ENTITY
+                        }
+                        Some(codeyard_db_security::vulnerabilities::Refusal::Denied) => {
+                            StatusCode::FORBIDDEN
+                        }
+                        None => StatusCode::SERVICE_UNAVAILABLE,
+                    },
+                    Some(
+                        "Unable to save vulnerability sources. Check the URL and ecosystem names.",
+                    ),
+                    Some(&form),
+                )
+                .await
+            }
+        };
+    }
+    // Each section of the page posts its own field.
+    let (saved, section, failure) = if form.contains_key("node_mode") {
+        let Some(mode) = codeyard_identity::setup::node_mode(field(&form, "node_mode")) else {
+            return settings_response(
+                &ctx,
+                StatusCode::BAD_REQUEST,
+                Some("Choose open or by approval for sign-up."),
+                None,
+            )
+            .await;
+        };
+        (
+            codeyard_db_cluster::node_config::set_node_mode(&ctx.state.pool, actor, &session, mode)
+                .await,
+            "signup",
+            "Unable to save the sign-up setting.",
+        )
+    } else {
+        let Some(value) = crate::crawlers::setting_value(field(&form, "ai_crawlers")) else {
+            return settings_response(
+                &ctx,
+                StatusCode::BAD_REQUEST,
+                Some("Choose allow or block for AI crawlers."),
+                None,
+            )
+            .await;
+        };
+        (
+            codeyard_db_cluster::node_config::set_ai_crawlers(
+                &ctx.state.pool,
+                actor,
+                &session,
+                value,
+            )
+            .await,
+            "crawlers",
+            "Unable to save the AI crawler setting.",
+        )
+    };
+    match saved {
+        Ok(true) => ctx.redirect(&format!("/admin/settings?saved={section}")),
+        Ok(false) => {
+            settings_response(
+                &ctx,
+                StatusCode::CONFLICT,
+                Some("Finish setup before changing this setting."),
+                None,
+            )
+            .await
+        }
+        Err(_) => {
+            settings_response(&ctx, StatusCode::SERVICE_UNAVAILABLE, Some(failure), None).await
+        }
+    }
+}

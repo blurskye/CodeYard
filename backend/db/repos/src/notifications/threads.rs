@@ -78,7 +78,7 @@ pub enum ThreadAction {
     DeleteSubscription(i64),
 }
 impl ThreadAction {
-    pub(crate) fn requires_write(&self) -> bool {
+    pub fn requires_write(&self) -> bool {
         !matches!(
             self,
             Self::List(_) | Self::Get(_) | Self::GetSubscription(_)

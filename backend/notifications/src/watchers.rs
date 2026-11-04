@@ -1,8 +1,8 @@
 //! Watch notifications. A new issue, pull request or published release notifies the users watching
 //! the repository: everyone on "All activity", and "Custom" watchers who picked that kind of event.
+use crate::broadcast::NotificationBroadcaster;
 use crate::create::create_and_broadcast_notification;
 use crate::create::NotificationRequest;
-use crate::NotificationBroadcaster;
 
 use serde_json::json;
 
@@ -17,7 +17,7 @@ pub enum WatchEvent {
 }
 
 impl WatchEvent {
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::Issue => "issues",
             Self::Pull => "pulls",

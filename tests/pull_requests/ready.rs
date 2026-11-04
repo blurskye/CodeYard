@@ -12,9 +12,11 @@ use axum::{
     Router,
 };
 use base64::Engine;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::storage::ObjectStore;
 use database::Database;
 use pulls::{moved_forward, text, Client};
 use serde_json::{json, Value};
@@ -56,7 +58,7 @@ async fn contract(pg: bool) {
     let dave_id = f.actor("dave").await;
     let root = tempfile::tempdir().unwrap();
     // A public repository: carol and dave can read it, alice owns it.
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -310,7 +312,7 @@ async fn cookie_bound_mutations(pg: bool) {
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
-    codeyard::backend::repositories::lifecycle::provision(
+    codeyard_app::repositories::lifecycle::provision(
         (fixture.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),

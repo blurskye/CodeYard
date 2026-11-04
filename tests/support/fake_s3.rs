@@ -6,7 +6,8 @@ use axum::{
     response::{IntoResponse, Response},
     Router,
 };
-use codeyard::backend::{db, storage::s3::S3Config};
+use codeyard::backend::db;
+use codeyard_app::storage::s3::S3Config;
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]

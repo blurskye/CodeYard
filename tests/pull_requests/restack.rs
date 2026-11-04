@@ -9,17 +9,15 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db,
-    repositories::{
-        pull_requests::{restack, OperationError},
-        store::{repo_store, RestackMove},
-    },
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::repositories::pull_requests::restack;
+use codeyard_app::repositories::pull_requests::OperationError;
+use codeyard_app::repositories::store::repo_store;
+use codeyard_app::repositories::store::types::RestackMove;
+use codeyard_app::storage::ObjectStore;
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};
@@ -39,7 +37,7 @@ async fn setup(f: &mut Database, root: &Path) -> App {
     f.complete_setup().await;
     let owner = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root,
         db::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -1133,15 +1131,21 @@ async fn slow_ci_admission_contract(restack: bool) {
                 .await
                 .unwrap()
                 .unwrap();
-            let ci = codeyard::backend::ci::CiRuns::new(
+            let ci = codeyard_app::ci::runs::CiRuns::new(
                 f.pool().clone(),
                 Arc::new(CiConfig::default()),
                 Arc::new(tokio::sync::Notify::new()),
                 None,
-                Arc::new(codeyard_notifications::NotificationBroadcaster::new(f.pool())),
+                Arc::new(codeyard_notifications::broadcast::NotificationBroadcaster::new(f.pool())),
             );
-            codeyard::backend::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
-                f.pool(), &ci, &app.repository, &[pull], app.owner).await;
+            codeyard_app::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
+                f.pool(),
+                &ci,
+                &app.repository,
+                &[pull],
+                app.owner,
+            )
+            .await;
         }
     };
     tokio::join!(admission, release);

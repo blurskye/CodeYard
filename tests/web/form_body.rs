@@ -4,10 +4,10 @@ use axum::{
     body::Body,
     http::{header, Request},
 };
-use codeyard::backend::api::create_router;
-use codeyard::backend::app::AppState;
-use codeyard::backend::ci::CiConfig;
-use codeyard::backend::storage::ObjectStore;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::DbPool;
 use std::{sync::Arc, time::Duration};
 use tower::ServiceExt;

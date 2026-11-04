@@ -1,9 +1,9 @@
 use super::github::{document, request};
-use crate::support::{database::Database, http_client::Client};
-use codeyard::backend::{
-    db,
-    identity::tokens::{self, TokenInput},
-};
+use crate::support::database::Database;
+use crate::support::http_client::Client;
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 fn path(q: &str, extra: &str) -> String {
     let query = url::form_urlencoded::Serializer::new(String::new())
@@ -20,7 +20,7 @@ async fn search(pg: bool) {
     let mut repos = Vec::new();
     for (name, private) in [("proj", false), ("hidden", true)] {
         repos.push(
-            codeyard::backend::repositories::lifecycle::provision(
+            codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 db::repositories::creation::RepositoryCreationOwner::personal(alice),

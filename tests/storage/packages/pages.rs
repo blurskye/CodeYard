@@ -186,7 +186,7 @@ async fn pages(pg: bool) {
         error.downcast_ref::<codeyard_db_repos::packages::Refusal>(),
         Some(codeyard_db_repos::packages::Refusal::Missing)
     ));
-    let storage = codeyard::backend::storage::ObjectStore::open(root.path(), None)
+    let storage = codeyard_app::storage::ObjectStore::open(root.path(), None)
         .await
         .unwrap();
     packages::collect(f.pool(), &storage).await.unwrap();

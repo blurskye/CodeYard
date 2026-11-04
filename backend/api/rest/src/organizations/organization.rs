@@ -1,0 +1,1349 @@
+//! Organization settings, bounded native commands and authorized page projections.
+
+use crate::organizations::INDEX;
+use crate::user::fine_grained::orgs as view;
+use axum::extract::rejection::FormRejection;
+use axum::extract::Form;
+use axum::extract::State;
+use axum::http::HeaderMap;
+use axum::http::StatusCode;
+use axum::http::Uri;
+use axum::response::Response;
+use codeyard_api_http::context::PageContext;
+use codeyard_api_http::shared::user::responses::field;
+use codeyard_app::app::AppState;
+use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::queries::organizations::OrganizationOutcome::*;
+use codeyard_db_identity::interactions::InteractionScope;
+use codeyard_db_orgs::organizations::*;
+use codeyard_webui::app::Page;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+pub(super) type Fields = HashMap<String, String>;
+pub(super) const BODY_LIMIT: usize = 32 * 1024;
+/// Refusal for a form that has no more specific reason.
+pub(super) const INVALID_FORM: &str = "Check the organization form values.";
+const ORG_NAME_RULE: &str = "Organization name must be 3-255 characters: letters, numbers, hyphens or underscores. Reserved names cannot be used.";
+const ORG_DISPLAY_NAME_RULE: &str =
+    "Display name must be at most 255 characters and cannot contain control characters.";
+/// Query value that makes the organizations index show the deletion notice.
+const DELETED_NOTICE: &str = "organization-deleted";
+
+pub(super) enum Command {
+    Create(NewOrganization),
+    Profile(OrganizationProfile),
+    Membership(crate::organizations::membership::Command),
+    Role(crate::organizations::roles::Command),
+    Team(crate::organizations::teams::Command),
+    Delete,
+}
+
+pub(super) fn optional<'a>(form: &'a Fields, key: &str) -> Option<&'a str> {
+    let value = field(form, key);
+    (!value.is_empty()).then_some(value)
+}
+pub(super) fn id(form: &Fields, key: &str) -> Result<i64, ()> {
+    field(form, key).parse().ok().filter(|id| *id > 0).ok_or(())
+}
+/// The name of an existing account. OAuth can create one- and two-character names, so the length
+/// rule for new accounts does not apply here.
+pub(super) fn username(form: &Fields) -> Result<String, ()> {
+    let value = field(form, "username");
+    if !(1..=1024).contains(&value.len())
+        || value.chars().count() > 255
+        || !value
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(());
+    }
+    Ok(value.to_owned())
+}
+fn keys(action: &str) -> &'static [&'static str] {
+    match action {
+        "create" => &["slug", "display_name", "description"],
+        "profile" => &["display_name", "description"],
+        "add-member" => &["username", "role", "team_slugs", "reinstate"],
+        "member-role" => &["user_id", "role"],
+        "membership-visibility" => &["visibility"],
+        "remove-member" | "convert-outside" | "remove-outside" => &["user_id", "confirm"],
+        "cancel-invitation" => &["user_id", "invitation_id"],
+        "block-user" => &["username"],
+        "unblock-user" => &["user_id"],
+        "assign-user-role" => &["username", "role_id"],
+        "assign-team-role" => &["team_slug", "role_id"],
+        "revoke-user-role" => &["username", "role_id", "confirm"],
+        "revoke-team-role" => &["team_id", "role_id", "confirm"],
+        "revoke-all-user-roles" => &["username", "confirm"],
+        "revoke-all-team-roles" => &["team_id", "confirm"],
+        "recover-owner" => &["org_id", "username", "confirm"],
+        "delete-organization" => &["confirm"],
+        "team" => &["slug", "name", "description", "privacy", "parent_team_id"],
+        "team-edit" => &[
+            "team_id",
+            "name",
+            "description",
+            "privacy",
+            "parent_team_id",
+        ],
+        "team-delete" => &["team_id", "confirmation"],
+        "team-member" => &["team_id", "username", "role"],
+        "remove-team-member" => &["team_id", "user_id", "confirm"],
+        "grant" => &["team_id", "repo_id", "permission"],
+        "revoke" => &["team_id", "repo_id"],
+        "dependabot-default" => &["default_level"],
+        "dependabot-add" | "dependabot-remove" => &["repo_id"],
+        _ => &[],
+    }
+}
+fn bound(key: &str) -> usize {
+    match key {
+        "description" => 4096,
+        "team_slugs" => 24 * 1024,
+        "slug" | "team_slug" | "display_name" | "name" | "username" | "confirm" => 1024,
+        "csrf_token" => 64,
+        _ => 32,
+    }
+}
+
+pub(super) fn bounded(form: &Fields) -> bool {
+    let allowed = keys(field(form, "action"));
+    !allowed.is_empty()
+        && form.len() <= allowed.len() + 2
+        && form.iter().all(|(key, value)| {
+            (matches!(key.as_str(), "csrf_token" | "action") || allowed.contains(&key.as_str()))
+                && value.len() <= bound(key)
+        })
+}
+
+pub(super) fn draft(form: &Fields) -> Fields {
+    let action = field(form, "action");
+    let allowed = keys(action);
+    if allowed.is_empty() {
+        return Fields::new();
+    }
+    // Known descriptions may exceed the write limit; keep the request-bounded rejected text.
+    form.iter()
+        .filter(|(key, value)| {
+            (key.as_str() == "action" || allowed.contains(&key.as_str()))
+                && value.len()
+                    <= if key.as_str() == "description" {
+                        BODY_LIMIT
+                    } else {
+                        bound(key)
+                    }
+        })
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
+impl Command {
+    pub(super) fn parse(
+        form: &Fields,
+        current: Option<&OrganizationMetadata>,
+    ) -> Result<Self, &'static str> {
+        if !bounded(form) {
+            return Err(
+                if keys(field(form, "action")).contains(&"description")
+                    && field(form, "description").len() > bound("description")
+                {
+                    "Description must be at most 4096 UTF-8 bytes."
+                } else {
+                    INVALID_FORM
+                },
+            );
+        }
+        let profile = || {
+            // A field the request leaves out keeps its stored value; the write reads that
+            // value under its own lock. An empty field clears it. Native forms send both.
+            let display_name = form
+                .contains_key("display_name")
+                .then(|| optional(form, "display_name"));
+            let description = form
+                .contains_key("description")
+                .then(|| optional(form, "description"));
+            OrganizationProfile::partial(display_name, description).map_err(|error| match error {
+                OrganizationInputError::Name => ORG_DISPLAY_NAME_RULE,
+                _ => INVALID_FORM,
+            })
+        };
+        let command = match field(form, "action") {
+            "create" if current.is_none() => Self::Create(
+                NewOrganization::new(field(form, "slug"), profile()?).map_err(
+                    |error| match error {
+                        OrganizationInputError::Slug => ORG_NAME_RULE,
+                        _ => INVALID_FORM,
+                    },
+                )?,
+            ),
+            "profile" => Self::Profile(profile()?),
+            "add-member"
+            | "member-role"
+            | "remove-member"
+            | "convert-outside"
+            | "remove-outside"
+            | "block-user"
+            | "unblock-user"
+            | "cancel-invitation"
+            | "membership-visibility" => Self::Membership(
+                crate::organizations::membership::Command::parse(form)
+                    .map_err(|()| INVALID_FORM)?,
+            ),
+            "assign-user-role"
+            | "assign-team-role"
+            | "revoke-user-role"
+            | "revoke-team-role"
+            | "revoke-all-user-roles"
+            | "revoke-all-team-roles" => {
+                Self::Role(crate::organizations::roles::Command::parse(form)?)
+            }
+            "delete-organization" => match current {
+                Some(org) if field(form, "confirm") == org.name => Self::Delete,
+                _ => return Err("Type the organization name to confirm deletion."),
+            },
+            _ => Self::Team(crate::organizations::teams::Command::parse(form)?),
+        };
+        if current.is_none() && !matches!(command, Self::Create(_)) {
+            return Err(INVALID_FORM);
+        }
+        Ok(command)
+    }
+}
+pub(super) fn selected_id(uri: &Uri) -> Option<i64> {
+    uri.path()
+        .strip_prefix("/settings/organizations/")
+        .and_then(|value| value.parse().ok())
+        .filter(|id| *id > 0)
+}
+pub(super) fn unavailable(ctx: &PageContext) -> Response {
+    ctx.error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Organization data is temporarily unavailable.",
+    )
+}
+pub(super) fn invalid(ctx: &PageContext) -> Response {
+    ctx.error(StatusCode::BAD_REQUEST, INVALID_FORM)
+}
+pub(super) fn not_found(ctx: &PageContext) -> Response {
+    ctx.error(StatusCode::NOT_FOUND, "Organization not found.")
+}
+/// The header of an organization's public pages, with its picture.
+pub(super) fn public_view(org: codeyard_db_core::models::Organization) -> view::Organization {
+    view::Organization {
+        id: org.id,
+        name: org.name,
+        display_name: org.display_name,
+        description: org.description.unwrap_or_default(),
+        suspended: false,
+        avatar_url: org
+            .avatar_file_id
+            .map(|id| format!("/api/files/{id}/download")),
+    }
+}
+
+/// A team with its member count, as the organization pages list it.
+pub(super) fn team_view(team: codeyard_db_core::models::Team, member_count: i64) -> view::Team {
+    view::Team {
+        id: team.id,
+        name: team.name,
+        slug: team.slug,
+        description: team.description.unwrap_or_default(),
+        privacy: team.privacy,
+        parent_team_id: team.parent_team_id,
+        member_count,
+    }
+}
+
+fn metadata(org: OrganizationMetadata) -> view::Organization {
+    view::Organization {
+        id: org.id,
+        name: org.name,
+        display_name: org.display_name,
+        description: org.description.unwrap_or_default(),
+        suspended: org.governance_suspended,
+        avatar_url: org
+            .avatar_file_id
+            .map(|id| format!("/api/files/{id}/download")),
+    }
+}
+
+pub(super) async fn selected(
+    ctx: &PageContext,
+    actor: i64,
+    org: i64,
+) -> Result<OrganizationMetadata, Response> {
+    match super::get_organization_metadata(&ctx.state.pool, actor, org).await {
+        Ok(Applied(value)) => Ok(value),
+        Ok(_) => Err(not_found(ctx)),
+        Err(_) => Err(unavailable(ctx)),
+    }
+}
+
+/// Rows per list page. A full page may have rows after it, so its next link is shown.
+pub(super) const PAGE_LIMIT: i64 = 100;
+
+pub(super) fn cursor(ctx: &PageContext, name: &str) -> Option<(i64, OrganizationPage)> {
+    cursor_with_limit(ctx, name, PAGE_LIMIT)
+}
+
+/// The cursor named by `name`, read as a page of `limit` rows.
+pub(super) fn cursor_with_limit(
+    ctx: &PageContext,
+    name: &str,
+    limit: i64,
+) -> Option<(i64, OrganizationPage)> {
+    let after = match ctx.query.get(name) {
+        Some(value) => value.parse().ok()?,
+        None => 0,
+    };
+    OrganizationPage::new(after, limit)
+        .ok()
+        .map(|page| (after, page))
+}
+
+pub(super) async fn respond(
+    ctx: &PageContext,
+    org: Option<i64>,
+    status: StatusCode,
+    message: Option<String>,
+    draft: Fields,
+) -> Response {
+    respond_with_hook_draft(ctx, org, status, message, draft, None).await
+}
+
+pub(super) async fn respond_with_hook_draft(
+    ctx: &PageContext,
+    org: Option<i64>,
+    status: StatusCode,
+    message: Option<String>,
+    draft: Fields,
+    hook_draft: Option<codeyard_webui::components::webhooks::HookDraft>,
+) -> Response {
+    // A refused form is shown at its POST-only address, so the appearance switch returns to the
+    // settings page instead.
+    let refused_ctx;
+    let ctx = if status.is_success() {
+        ctx
+    } else {
+        let mut copy = ctx.clone();
+        copy.return_to = Some(destination(ctx, org, false));
+        refused_ctx = copy;
+        &refused_ctx
+    };
+    let actor = match ctx.require_user() {
+        Ok(user) => user.id,
+        Err(response) => return response,
+    };
+    // Establish visibility before rejecting query values, so missing and
+    // unrelated organizations retain the same refusal even with bad cursors.
+    let current = if let Some(org) = org {
+        match selected(ctx, actor, org).await {
+            Ok(value) => Some(metadata(value)),
+            Err(response) => return response,
+        }
+    } else {
+        None
+    };
+    // The same role check every write makes; the page only chooses which controls to show.
+    let can_recover = ctx.administrator().is_some();
+    let (can_manage, is_owner) = match org {
+        Some(org) => match super::get_organization_role(&ctx.state.pool, actor, org).await {
+            Ok(Applied(role)) => (administers(role), role == OrgRole::Owner),
+            Ok(_) => return not_found(ctx),
+            Err(_) => return unavailable(ctx),
+        },
+        None => (false, false),
+    };
+    let mut tab = requested_tab(ctx);
+    if !ctx.query.contains_key("tab") {
+        tab = match draft.get("action").map(String::as_str) {
+            Some(
+                "add-member"
+                | "member-role"
+                | "remove-member"
+                | "convert-outside"
+                | "remove-outside"
+                | "block-user"
+                | "unblock-user"
+                | "cancel-invitation"
+                | "membership-visibility",
+            ) => "members".into(),
+            Some(
+                "assign-user-role"
+                | "assign-team-role"
+                | "revoke-user-role"
+                | "revoke-team-role"
+                | "revoke-all-user-roles"
+                | "revoke-all-team-roles",
+            ) => "roles".into(),
+            Some(action) if keys(action).contains(&"team_id") || action == "team" => "teams".into(),
+            _ => tab,
+        };
+    }
+    if (matches!(
+        tab.as_str(),
+        "webhooks" | "roles" | "settings" | "personal-access-tokens"
+    ) && !is_owner)
+        || (matches!(
+            tab.as_str(),
+            "actions" | "dependabot" | "private-registries"
+        ) && !can_manage)
+    {
+        tab = "overview".to_owned();
+    }
+    // Only the overview offers organization deletion.
+    let owned_repositories = match org {
+        Some(org) if is_owner && tab == "overview" => {
+            match super::count_organization_repositories(&ctx.state.pool, actor, org).await {
+                Ok(Applied(count)) => count,
+                _ => return unavailable(ctx),
+            }
+        }
+        _ => 0,
+    };
+    let (after, page) = match cursor(ctx, "after") {
+        Some(page) => page,
+        None => return invalid(ctx),
+    };
+    let (invitations_after, invitations_page) = match cursor(ctx, "invitations_after") {
+        Some(page) => page,
+        None => return invalid(ctx),
+    };
+    let (ownerless_after, ownerless_page) = match cursor(ctx, "ownerless_after") {
+        Some(page) => page,
+        None => return invalid(ctx),
+    };
+    // Only a site administrator can recover an organization, so only they see the list.
+    // The picker needs names only, so profile text stays out of refusal pages.
+    let mut ownerless_next = None;
+    let ownerless_organizations = if org.is_none() && can_recover {
+        match super::list_ownerless_organizations(&ctx.state.pool, actor, ownerless_page).await {
+            Ok(Applied(values)) => {
+                if values.len() as i64 == PAGE_LIMIT {
+                    ownerless_next = values.last().map(|v|format!("{INDEX}?after={after}&invitations_after={invitations_after}&ownerless_after={}",v.id));
+                }
+                values
+                    .into_iter()
+                    .map(|ownerless| view::Organization {
+                        id: ownerless.id,
+                        name: ownerless.name,
+                        display_name: None,
+                        description: String::new(),
+                        suspended: ownerless.governance_suspended,
+                        avatar_url: None,
+                    })
+                    .collect()
+            }
+            Ok(_) => vec![],
+            Err(_) => return unavailable(ctx),
+        }
+    } else {
+        vec![]
+    };
+    let interactions = if can_manage && tab == "overview" {
+        // Interaction limits need working governance; a suspended organization shows its
+        // suspension notice instead.
+        if let Some(org) = current.as_ref().filter(|org| !org.suspended) {
+            match codeyard_api_http::shared::user::interactions::panel(
+                &ctx.state.pool,
+                actor,
+                InteractionScope::Organization(org.id),
+                &ctx.csrf_token,
+                is_owner,
+            )
+            .await
+            {
+                Ok(panel) => Some(Box::new(panel)),
+                Err(_) => return unavailable(ctx),
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let membership_public = if let Some(org) = org {
+        match codeyard_db_orgs::organizations::discovery::list_organizations(
+            &ctx.state.pool,
+            Some(actor),
+            false,
+            org - 1,
+            0,
+            1,
+        )
+        .await
+        {
+            Ok(rows) => rows.first().is_some_and(|row| row.id == org),
+            Err(_) => return unavailable(ctx),
+        }
+    } else {
+        false
+    };
+    let mut model = view::Page {
+        csrf_token: ctx.csrf_token.clone(),
+        organizations: vec![],
+        selected: current,
+        can_manage,
+        is_owner,
+        viewer_id: actor,
+        membership_public,
+        tab,
+        members: vec![],
+        teams: vec![],
+        repositories: vec![],
+        more_repositories: false,
+        more_organizations: false,
+        more_members: false,
+        more_teams: false,
+        after,
+        members_after: 0,
+        teams_after: 0,
+        // These retain the supplied other-list cursor, not its next-page cursor.
+        members_cursor: 0,
+        teams_cursor: 0,
+        selected_team: None,
+        can_recover,
+        ownerless_organizations,
+        owned_repositories,
+        notice: (ctx.query.get("notice").map(String::as_str) == Some(DELETED_NOTICE))
+            .then(|| "Organization deleted.".to_owned()),
+        message,
+        webhooks: None,
+        dependabot: None,
+        private_registries: None,
+        actions: None,
+        roles: None,
+        properties: None,
+        settings: None,
+        tokens: None,
+        interactions,
+        draft,
+        invitations: vec![],
+        pending_invitations: vec![],
+        invitations_next: None,
+        pending_invitations_next: None,
+        failed_invitations: vec![],
+        failed_invitations_next: None,
+        outside_collaborators: vec![],
+        outside_next: None,
+        blocked_users: vec![],
+        blocks_next: None,
+        ownerless_next,
+    };
+    if let Some(org) = org {
+        let (member_after, member_page) = match cursor(ctx, "members_after") {
+            Some(page) => page,
+            None => return invalid(ctx),
+        };
+        let (team_after, team_page) = match cursor(ctx, "teams_after") {
+            Some(page) => page,
+            None => return invalid(ctx),
+        };
+        model.members_cursor = member_after;
+        model.teams_cursor = team_after;
+        if model.tab == "members" {
+            model.members =
+                match super::list_organization_members(&ctx.state.pool, actor, org, member_page)
+                    .await
+                {
+                    Ok(Applied(values)) => {
+                        model.members_after = values.last().map(|v| v.id).unwrap_or(member_after);
+                        model.more_members = values.len() as i64 == PAGE_LIMIT;
+                        match crate::organizations::membership::project(
+                            ctx,
+                            values.into_iter().map(|v| (v.user_id, v.role)).collect(),
+                        )
+                        .await
+                        {
+                            Ok(members) => members,
+                            Err(response) => return response,
+                        }
+                    }
+                    Ok(_) => return not_found(ctx),
+                    Err(_) => return unavailable(ctx),
+                };
+        }
+        if model.tab == "teams" {
+            model.selected_team = match crate::organizations::teams::detail(ctx, actor, org).await {
+                Ok(value) => value,
+                Err(response) => return response,
+            };
+            model.teams = match super::list_organization_teams(
+                &ctx.state.pool,
+                actor,
+                org,
+                team_page,
+            )
+            .await
+            {
+                Ok(Applied(values)) => {
+                    model.teams_after = values.last().map(|v| v.team.id).unwrap_or(team_after);
+                    model.more_teams = values.len() as i64 == PAGE_LIMIT;
+                    values
+                        .into_iter()
+                        .map(|v| team_view(v.team, v.member_count))
+                        .collect()
+                }
+                Ok(_) => return not_found(ctx),
+                Err(_) => return unavailable(ctx),
+            };
+            let (repositories, more_repositories) =
+                match crate::organizations::teams::repository_choices(ctx, actor, org).await {
+                    Ok(choices) => choices,
+                    Err(response) => return response,
+                };
+            model.repositories = repositories;
+            model.more_repositories = more_repositories;
+        }
+        if model.tab == "dependabot" {
+            let page = ctx
+                .query
+                .get("page")
+                .and_then(|p| p.parse::<i64>().ok())
+                .unwrap_or(1)
+                .clamp(1, 10_000);
+            let (default_level, mut repositories) =
+                match codeyard_db_security::dependabot::repository_access(
+                    &ctx.state.pool,
+                    ctx.database_actor(actor),
+                    org,
+                    ((page - 1) * 30, 31),
+                )
+                .await
+                {
+                    Ok(access) => access,
+                    Err(
+                        codeyard_db_core::queries::secrets::SecretsError::Denied
+                        | codeyard_db_core::queries::secrets::SecretsError::NotFound,
+                    ) => return not_found(ctx),
+                    Err(_) => return unavailable(ctx),
+                };
+            let has_more = repositories.len() > 30;
+            repositories.truncate(30);
+            model.dependabot = Some(Box::new(view::dependabot::RepositoryAccess {
+                default_level,
+                page,
+                has_more,
+                repositories: repositories
+                    .into_iter()
+                    .map(|repo| view::dependabot::Repository {
+                        id: repo.id,
+                        name: repo.name,
+                        private: repo.is_private,
+                    })
+                    .collect(),
+            }));
+        }
+        if model.tab == "private-registries" {
+            let registries = match codeyard_db_actions::private_registries::list(
+                &ctx.state.pool,
+                actor,
+                org,
+                None,
+                0,
+                100,
+            )
+            .await
+            {
+                Ok((_, registries)) => registries,
+                Err(codeyard_db_actions::private_registries::RegistryError::Secret(
+                    codeyard_db_core::queries::secrets::SecretsError::Denied
+                    | codeyard_db_core::queries::secrets::SecretsError::NotFound,
+                )) => return not_found(ctx),
+                Err(_) => return unavailable(ctx),
+            };
+            let registries = match registries
+                .into_iter()
+                .map(crate::organizations::private_registries::project)
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(registries) => registries,
+                Err(_) => return unavailable(ctx),
+            };
+            let editing = if let Some(name) = ctx.query.get("registry") {
+                match registries
+                    .iter()
+                    .find(|registry| registry.name.eq_ignore_ascii_case(name))
+                    .cloned()
+                {
+                    Some(registry) => Some(registry),
+                    None => return not_found(ctx),
+                }
+            } else {
+                None
+            };
+            let page = ctx
+                .query
+                .get("page")
+                .and_then(|p| p.parse::<i64>().ok())
+                .unwrap_or(1)
+                .clamp(1, 10_000);
+            let offset = (page as usize - 1) * 30;
+            let has_more = offset + 30 < registries.len();
+            model.private_registries = Some(Box::new(view::private_registries::Page {
+                registries: registries.into_iter().skip(offset).take(30).collect(),
+                editing,
+                page,
+                has_more,
+            }));
+        }
+        if model.tab == "actions" {
+            match crate::organizations::action_values::build(ctx, actor, org).await {
+                Ok(panel) => model.actions = Some(Box::new(panel)),
+                Err(
+                    codeyard_db_orgs::organization_values::ValueError::Denied
+                    | codeyard_db_orgs::organization_values::ValueError::NotFound,
+                ) => return not_found(ctx),
+                Err(_) => return unavailable(ctx),
+            }
+        }
+        if model.tab == "roles" {
+            model.roles = match crate::organizations::roles::panel(ctx, actor, org).await {
+                Ok(panel) => Some(Box::new(panel)),
+                Err(response) => return response,
+            };
+        }
+        if model.tab == "settings" {
+            model.settings = match crate::organizations::settings::panel(ctx, actor, org).await {
+                Ok(panel) => Some(Box::new(panel)),
+                Err(response) => return response,
+            };
+        }
+        if model.tab == "personal-access-tokens" {
+            model.tokens = match crate::organizations::tokens::panel(ctx, actor, org).await {
+                Ok(panel) => Some(Box::new(panel)),
+                Err(response) => return response,
+            };
+        }
+        if model.tab == "properties" {
+            model.properties = match crate::organizations::properties::panel(ctx, actor, org).await
+            {
+                Ok(panel) => Some(Box::new(panel)),
+                Err(response) => return response,
+            };
+        }
+        if model.tab == "webhooks" {
+            let base = format!("{INDEX}/{org}?tab=webhooks");
+            let action_base = format!("{INDEX}/{org}/webhooks?tab=webhooks");
+            let place = codeyard_app::webhooks::panel::Place {
+                owner: codeyard_db_repos::webhooks::HookOwner::Organization(org),
+                base: &base,
+                action_base: &action_base,
+                csrf_token: &ctx.csrf_token,
+                repository_id: None,
+            };
+            let viewer = ctx.require_user().ok();
+            let built = match viewer {
+                Some(viewer) => {
+                    codeyard_app::webhooks::panel::build(
+                        &ctx.state.pool,
+                        viewer,
+                        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                            &codeyard_api_http::session::extract_session_id(&ctx.headers)
+                                .unwrap_or_default(),
+                        ),
+                        &place,
+                        &ctx.query,
+                    )
+                    .await
+                }
+                None => Err(codeyard_app::webhooks::settings::HookError::Denied),
+            };
+            match built {
+                Ok(mut panel) => {
+                    // A refused webhook action returns here with its message in the section.
+                    panel.error = model.message.take();
+                    if let Some(draft) = hook_draft {
+                        panel.detail = None;
+                        panel.editing = Some(draft);
+                    }
+                    model.webhooks = Some(Box::new(panel));
+                }
+                Err(
+                    codeyard_app::webhooks::settings::HookError::Denied
+                    | codeyard_app::webhooks::settings::HookError::NotFound,
+                ) => return not_found(ctx),
+                Err(_) => return unavailable(ctx),
+            }
+        }
+        if can_manage && model.tab == "members" {
+            let Some((invitations_after, invitations_page)) = cursor(ctx, "invitations_after")
+            else {
+                return invalid(ctx);
+            };
+            let Some((failed_after, _)) = cursor(ctx, "failed_invitations_after") else {
+                return invalid(ctx);
+            };
+            let Some((outside_after, _)) = cursor(ctx, "outside_after") else {
+                return invalid(ctx);
+            };
+            model.pending_invitations = match super::list_organization_invitations(
+                &ctx.state.pool,
+                actor,
+                org,
+                invitations_page,
+            )
+            .await
+            {
+                Ok(Applied(values)) => {
+                    if values.len() as i64 == PAGE_LIMIT {
+                        model.pending_invitations_next = values.last().map(|v|format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&failed_invitations_after={failed_after}&invitations_after={}",v.id));
+                    }
+                    match crate::organizations::membership::project_invitations(ctx, values).await {
+                        Ok(invitations) => invitations,
+                        Err(response) => return response,
+                    }
+                }
+                _ => return unavailable(ctx),
+            };
+            if is_owner {
+                let Some((blocks_after, _)) = cursor(ctx, "blocks_after") else {
+                    return invalid(ctx);
+                };
+                model.blocked_users = match codeyard_db_orgs::organizations::blocks::list(
+                    &ctx.state.pool,
+                    actor,
+                    org,
+                    blocks_after,
+                    (0, PAGE_LIMIT),
+                )
+                .await
+                {
+                    Ok(Applied(users)) => {
+                        if users.len() as i64 == PAGE_LIMIT {
+                            model.blocks_next = users.last().map(|user|format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&invitations_after={invitations_after}&failed_invitations_after={failed_after}&outside_after={outside_after}&blocks_after={}",user.id));
+                        }
+                        users
+                            .into_iter()
+                            .map(|user| view::BlockedUser {
+                                user_id: user.id,
+                                username: user.username,
+                            })
+                            .collect()
+                    }
+                    _ => return unavailable(ctx),
+                };
+                model.outside_collaborators = match codeyard_db_orgs::organizations::outside::list(
+                    &ctx.state.pool,
+                    actor,
+                    org,
+                    "all",
+                    outside_after,
+                    (0, PAGE_LIMIT),
+                )
+                .await
+                {
+                    Ok(Applied(users)) => {
+                        if users.len() as i64 == PAGE_LIMIT {
+                            model.outside_next = users.last().map(|user| format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&invitations_after={invitations_after}&failed_invitations_after={failed_after}&outside_after={}",user.id));
+                        }
+                        users
+                            .into_iter()
+                            .map(|user| view::OutsideCollaborator {
+                                user_id: user.id,
+                                username: user.username,
+                            })
+                            .collect()
+                    }
+                    _ => return unavailable(ctx),
+                };
+            }
+            let filter = codeyard_db_orgs::organizations::invitations::InvitationFilter {
+                failed: true,
+                after: failed_after,
+                ..Default::default()
+            };
+            model.failed_invitations = match super::invitation_page(
+                &ctx.state.pool,
+                actor,
+                org,
+                &filter,
+                (0, PAGE_LIMIT),
+            )
+            .await
+            {
+                Ok(Applied(values)) => {
+                    if values.len() as i64 == PAGE_LIMIT {
+                        model.failed_invitations_next = values.last().map(|v| format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&invitations_after={invitations_after}&failed_invitations_after={}", v.id));
+                    }
+                    match crate::organizations::membership::project_invitations(ctx, values).await {
+                        Ok(invitations) => invitations,
+                        Err(response) => return response,
+                    }
+                }
+                _ => return unavailable(ctx),
+            };
+        }
+    } else {
+        model.invitations = match super::list_received_organization_invitations(
+            &ctx.state.pool,
+            actor,
+            invitations_page,
+        )
+        .await
+        {
+            Ok(values) => {
+                if values.len() as i64 == PAGE_LIMIT {
+                    model.invitations_next = values.last().map(|v|format!("{INDEX}?after={after}&ownerless_after={ownerless_after}&invitations_after={}",v.id));
+                }
+                values
+                    .into_iter()
+                    .map(|invite| view::Invitation {
+                        id: invite.id,
+                        org_id: invite.org_id,
+                        name: invite.org_name,
+                        display_name: invite.org_display_name,
+                        role: invite.role,
+                    })
+                    .collect()
+            }
+            Err(_) => return unavailable(ctx),
+        };
+        if ["team", "team_members_after", "team_repositories_after"]
+            .iter()
+            .any(|key| ctx.query.contains_key(*key))
+        {
+            return invalid(ctx);
+        }
+        model.organizations =
+            match super::list_actor_organizations(&ctx.state.pool, actor, page).await {
+                Ok(Applied(values)) => {
+                    model.after = values.last().map(|v| v.id).unwrap_or(after);
+                    model.more_organizations = values.len() as i64 == PAGE_LIMIT;
+                    values.into_iter().map(metadata).collect()
+                }
+                Ok(_) => {
+                    return ctx.error(
+                        StatusCode::FORBIDDEN,
+                        "This organization operation is not permitted.",
+                    )
+                }
+                Err(_) => return unavailable(ctx),
+            };
+    }
+    // An organization's settings are titled for the organization, not the personal account.
+    let title = match &model.selected {
+        Some(org) => format!(
+            "{} settings",
+            org.display_name
+                .as_deref()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or(&org.name)
+        ),
+        None => "Organizations".to_owned(),
+    };
+    ctx.page_model_status(status, &title, Page::Organizations(model))
+}
+
+/// The section the URL names. Overview is the default, and any other value shows it too.
+pub(super) fn requested_tab(ctx: &PageContext) -> String {
+    match ctx.query.get("tab").map(String::as_str) {
+        Some(
+            tab @ ("members"
+            | "teams"
+            | "webhooks"
+            | "actions"
+            | "roles"
+            | "properties"
+            | "settings"
+            | "dependabot"
+            | "private-registries"
+            | "personal-access-tokens"),
+        ) => tab.to_owned(),
+        None if ctx.query.contains_key("team")
+            || (ctx.query.contains_key("teams_after")
+                && !ctx.query.contains_key("members_after")) =>
+        {
+            "teams".to_owned()
+        }
+        None if ctx.query.contains_key("members_after") => "members".to_owned(),
+        _ => "overview".to_owned(),
+    }
+}
+
+/// Fixed same-origin path with only recognized, valid navigation values.
+pub(super) fn destination(ctx: &PageContext, org: Option<i64>, keep_team: bool) -> String {
+    let Some(org) = org else {
+        return INDEX.to_owned();
+    };
+    let mut query = url::form_urlencoded::Serializer::new(String::new());
+    for key in [
+        "members_after",
+        "teams_after",
+        "invitations_after",
+        "failed_invitations_after",
+        "outside_after",
+        "blocks_after",
+        "role_users_after",
+        "role_teams_after",
+    ] {
+        if ctx.query.contains_key(key) {
+            if let Some((after, _)) = cursor(ctx, key) {
+                query.append_pair(key, &after.to_string());
+            }
+        }
+    }
+    if keep_team {
+        if let Some(team) = ctx
+            .query
+            .get("team")
+            .and_then(|value| value.parse::<i64>().ok())
+            .filter(|id| *id > 0)
+        {
+            query.append_pair("team", &team.to_string());
+            for key in ["team_members_after", "team_repositories_after"] {
+                if ctx.query.contains_key(key) {
+                    if let Some((after, _)) = cursor(ctx, key) {
+                        query.append_pair(key, &after.to_string());
+                    }
+                }
+            }
+        }
+    }
+    let tab = requested_tab(ctx);
+    if tab == "properties" {
+        if let Some(property) = ctx.query.get("property").filter(|property| {
+            codeyard_db_core::queries::organizations::properties::valid_name(property)
+        }) {
+            query.append_pair("property", property);
+        }
+    }
+    if tab == "roles" {
+        if let Some(role) = ctx
+            .query
+            .get("role")
+            .and_then(|value| value.parse::<i64>().ok())
+            .filter(|id| *id > 0)
+        {
+            query.append_pair("role", &role.to_string());
+        }
+    }
+    if tab != "overview" && ctx.query.contains_key("tab") {
+        query.append_pair("tab", &tab);
+    }
+    let query = query.finish();
+    format!(
+        "{}/{org}{}",
+        INDEX,
+        if query.is_empty() {
+            String::new()
+        } else {
+            format!("?{query}")
+        }
+    )
+}
+pub(super) fn unit<T>(result: OrganizationOutcome<T>) -> OrganizationOutcome<()> {
+    result.map(|_| ())
+}
+
+async fn delete_with_repositories(
+    ctx: &PageContext,
+    actor: i64,
+    org: i64,
+) -> Result<OrganizationOutcome<()>, Response> {
+    codeyard_app::organizations::delete(
+        &ctx.state,
+        (
+            actor,
+            codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+        ),
+        org,
+    )
+    .await
+    .map_err(|error| {
+        if let Some(error) =
+            error.downcast_ref::<codeyard_app::repositories::lifecycle::StorageError>()
+        {
+            ctx.error(StatusCode::CONFLICT, error.message)
+        } else {
+            unavailable(ctx)
+        }
+    })
+}
+
+async fn apply(
+    ctx: &PageContext,
+    actor: i64,
+    org: i64,
+    command: Command,
+) -> Result<OrganizationOutcome<()>, Response> {
+    let pool = &ctx.state.pool;
+    // Typed inputs and readable, non-suspended governance were checked before
+    // resolving a username. The scoped DAO recheck remains the final authority;
+    // no blanket org-admin precheck may replace scoped team-management policy.
+    let result = match command {
+        Command::Create(_) => return Err(invalid(ctx)),
+        Command::Delete => return delete_with_repositories(ctx, actor, org).await,
+        Command::Profile(profile) => {
+            let credential = codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                ctx.session_id.as_deref().unwrap_or(""),
+            );
+            super::update_organization_profile(pool, actor, &credential, org, &profile)
+                .await
+                .map(unit)
+        }
+        Command::Membership(command) => {
+            // An unknown username is the one Missing that the form reports by name.
+            let add = matches!(
+                command,
+                crate::organizations::membership::Command::Invite { .. }
+            );
+            return crate::organizations::membership::apply(ctx, actor, org, command)
+                .await
+                .map(|outcome| match outcome {
+                    Missing if !add => Denied,
+                    outcome => outcome,
+                });
+        }
+        Command::Role(command) => {
+            return crate::organizations::roles::apply(ctx, actor, org, command)
+                .await
+                .map_err(|_| unavailable(ctx))
+                .map(|outcome| {
+                    if matches!(outcome, Missing) {
+                        Denied
+                    } else {
+                        outcome
+                    }
+                });
+        }
+        Command::Team(command) => {
+            return crate::organizations::teams::apply(ctx, actor, org, command)
+                .await
+                .map(|outcome| {
+                    if matches!(outcome, Missing) {
+                        Denied
+                    } else {
+                        outcome
+                    }
+                })
+        }
+    };
+    // Missing scoped targets must not distinguish nonexistent accounts from
+    // real but ineligible accounts. The organization's own missing case was
+    // already handled by the authorized metadata read.
+    result
+        .map(|outcome| {
+            if matches!(outcome, Missing) {
+                Denied
+            } else {
+                outcome
+            }
+        })
+        .map_err(|_| unavailable(ctx))
+}
+
+pub(super) async fn mutate(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    form: Result<Form<Fields>, FormRejection>,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    let actor = match ctx.require_user() {
+        Ok(user) => user.id,
+        Err(response) => return response,
+    };
+    let form = match form {
+        Ok(Form(form)) => form,
+        Err(rejection) => {
+            // Do not reflect extractor diagnostics/body values; still use the
+            // shared private-cache/security response contract for body errors.
+            let status = rejection.status();
+            return ctx.error(
+                status,
+                "Unable to read the organization form. Submit a bounded URL-encoded form.",
+            );
+        }
+    };
+    if let Err(response) = ctx.check_csrf(&form) {
+        return response;
+    }
+    let org = selected_id(&uri);
+    if uri.path() != INDEX && org.is_none() {
+        return not_found(&ctx);
+    }
+    let current = if let Some(org) = org {
+        match selected(&ctx, actor, org).await {
+            Ok(value) => Some(value),
+            Err(response) => return response,
+        }
+    } else {
+        None
+    };
+    let draft = draft(&form);
+    if current.as_ref().is_some_and(|org| org.governance_suspended) {
+        return respond(
+            &ctx,
+            org,
+            StatusCode::CONFLICT,
+            Some("Organization governance is suspended.".into()),
+            draft,
+        )
+        .await;
+    }
+    let command = match Command::parse(&form, current.as_ref()) {
+        Ok(command) => command,
+        Err(message) => {
+            return respond(
+                &ctx,
+                org,
+                StatusCode::BAD_REQUEST,
+                Some(message.into()),
+                draft,
+            )
+            .await
+        }
+    };
+    let self_removal = matches!(&command, Command::Membership(crate::organizations::membership::Command::Remove { user } | crate::organizations::membership::Command::ConvertOutside { user }) if *user == actor);
+    // Every removal needs the removed account's username typed in that row's confirmation field.
+    let removed = match &command {
+        Command::Membership(
+            crate::organizations::membership::Command::Remove { user }
+            | crate::organizations::membership::Command::ConvertOutside { user }
+            | crate::organizations::membership::Command::RemoveOutside { user },
+        )
+        | Command::Team(crate::organizations::teams::Command::RemoveMember { user, .. }) => {
+            Some(*user)
+        }
+        _ => None,
+    };
+    if let Some(user) = removed {
+        let name =
+            match codeyard_db_identity::users::accounts::get_users_by_ids(&ctx.state.pool, &[user])
+                .await
+            {
+                Ok(users) => users.into_iter().next().map(|user| user.username),
+                Err(_) => return unavailable(&ctx),
+            };
+        if name.as_deref() != Some(field(&form, "confirm")) {
+            let message = if self_removal {
+                "Type your username to confirm leaving this organization."
+            } else {
+                "Type the member's username to confirm removing them."
+            };
+            return respond(
+                &ctx,
+                org,
+                StatusCode::BAD_REQUEST,
+                Some(message.into()),
+                draft,
+            )
+            .await;
+        }
+    }
+    // Only a role change or removal can leave an organization without an active owner.
+    let membership_change = matches!(
+        &command,
+        Command::Membership(
+            crate::organizations::membership::Command::ChangeRole { .. }
+                | crate::organizations::membership::Command::Remove { .. }
+                | crate::organizations::membership::Command::ConvertOutside { .. }
+        )
+    );
+    let team_deleted = matches!(
+        &command,
+        Command::Team(crate::organizations::teams::Command::Delete { .. })
+    );
+    let organization_deleted = matches!(&command, Command::Delete);
+    let outcome = match command {
+        Command::Create(input) => super::create_organization(&ctx.state.pool, actor, &input)
+            .await
+            .map(unit)
+            .map_err(|_| unavailable(&ctx)),
+        command => {
+            apply(
+                &ctx,
+                actor,
+                org.expect("parsed organization command has a selected organization"),
+                command,
+            )
+            .await
+        }
+    };
+    // An unknown username is the one refusal that names the username.
+    if matches!(outcome, Ok(Missing)) && field(&form, "action") == "add-member" {
+        let message = format!("No user named {}.", field(&form, "username"));
+        return respond(&ctx, org, StatusCode::NOT_FOUND, Some(message), draft).await;
+    }
+    if matches!(outcome, Ok(Conflict)) && field(&form, "action") == "assign-user-role" {
+        return respond(
+            &ctx,
+            org,
+            StatusCode::CONFLICT,
+            Some("Only organization members can be assigned organization roles.".into()),
+            draft,
+        )
+        .await;
+    }
+    if matches!(outcome, Ok(Conflict)) && field(&form, "action") == "block-user" {
+        return respond(
+            &ctx,
+            org,
+            StatusCode::CONFLICT,
+            Some("Remove the user from the organization before blocking them.".into()),
+            draft,
+        )
+        .await;
+    }
+    if matches!(outcome, Ok(Conflict)) && field(&form, "action") == "add-member" {
+        let message = format!(
+            "{} is already a member or has a pending invitation.",
+            field(&form, "username")
+        );
+        return respond(&ctx, org, StatusCode::CONFLICT, Some(message), draft).await;
+    }
+    let (status, message) = match outcome {
+        Ok(Applied(())) => {
+            let destination = if self_removal {
+                INDEX.to_owned()
+            } else if organization_deleted {
+                format!("{INDEX}?notice={DELETED_NOTICE}")
+            } else {
+                destination(&ctx, org, !team_deleted)
+            };
+            return ctx.redirect(&destination);
+        }
+        Ok(Missing) => (StatusCode::NOT_FOUND, "Organization item not found."),
+        Ok(Denied) => (
+            StatusCode::FORBIDDEN,
+            "This organization operation is not permitted.",
+        ),
+        Ok(Conflict) if organization_deleted => (
+            StatusCode::CONFLICT,
+            "New repositories were added while the organization was being deleted. Try again.",
+        ),
+        Ok(Conflict) if membership_change => (
+            StatusCode::CONFLICT,
+            "An organization needs at least one active owner.",
+        ),
+        Ok(Conflict) => (
+            StatusCode::CONFLICT,
+            "The organization changed or this name is occupied.",
+        ),
+        Ok(Suspended) => (
+            StatusCode::CONFLICT,
+            "Organization governance is suspended.",
+        ),
+        Err(response) => return response,
+    };
+    respond(&ctx, org, status, Some(message.into()), draft).await
+}
+pub(super) async fn show(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    if uri.path() != INDEX && selected_id(&uri).is_none() {
+        return not_found(&ctx);
+    }
+    respond(&ctx, selected_id(&uri), StatusCode::OK, None, Fields::new()).await
+}

@@ -4,10 +4,14 @@ use super::{
     actions_objects::pat,
     actions_workflows::{checked, router},
 };
-use crate::support::{database::Database, fake_webui_bundle};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
 use axum::{http::StatusCode, Router};
-use codeyard::backend::{ci::runtime, db};
-use codeyard_actions::progress::{Conclusion, Event, Update};
+use codeyard::backend::db;
+use codeyard_actions::progress::Conclusion;
+use codeyard_actions::progress::Event;
+use codeyard_actions::progress::Update;
+use codeyard_app::ci::runtime;
 use serde_json::json;
 
 const WORKFLOW: &str = ".github/workflows/ci.yml";
@@ -60,7 +64,7 @@ async fn start(
         worker,
         "local",
         &[actor],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -123,7 +127,7 @@ async fn contract(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),

@@ -1,9 +1,9 @@
 use super::github::{document, request};
-use crate::support::{database::Database, http_client::Client};
-use codeyard::backend::{
-    db,
-    identity::tokens::{self, TokenInput},
-};
+use crate::support::database::Database;
+use crate::support::http_client::Client;
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 
 async fn events(pg: bool) {
@@ -12,7 +12,7 @@ async fn events(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -23,7 +23,7 @@ async fn events(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard::backend::repositories::lifecycle::provision(
+    codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),

@@ -1,11 +1,13 @@
 //! Requests emitted by gh 2.102.0 for SSH keys and Enterprise auth status.
-use crate::support::{database::Database, http_client::Client};
+use crate::support::database::Database;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, Request},
     Router,
 };
-use codeyard_identity::tokens::{self, TokenInput};
+use codeyard_identity::tokens;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 

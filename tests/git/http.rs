@@ -382,7 +382,7 @@ async fn buffered_fetch_revalidates(pool: &DbPool, server: &Server, root: &Path)
         "unchanged",
     ] {
         let anonymous = matches!(case, "node_private" | "repo_private" | "setup_incomplete");
-        let repo = codeyard::backend::repositories::lifecycle::provision(
+        let repo = codeyard_app::repositories::lifecycle::provision(
             (pool, None),
             &root.join("repos"),
             codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
@@ -539,7 +539,7 @@ async fn buffered_fetch_revalidates(pool: &DbPool, server: &Server, root: &Path)
                         repo.id,
                     )
                     .await;
-                    let replacement = codeyard::backend::repositories::lifecycle::provision(
+                    let replacement = codeyard_app::repositories::lifecycle::provision(
                         (pool, None),
                         &root.join("repos"),
                         codeyard_db_repos::repositories::RepositoryCreationOwner::personal(
@@ -741,7 +741,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     let owner = codeyard_db_identity::users::accounts::create_user(pool, "http_owner", None)
         .await
         .unwrap();
-    let public = codeyard::backend::repositories::lifecycle::provision(
+    let public = codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
         codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
@@ -752,7 +752,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     )
     .await
     .unwrap();
-    let private = codeyard::backend::repositories::lifecycle::provision(
+    let private = codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
         codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
@@ -988,7 +988,7 @@ async fn exercise(pool: &DbPool, url: &str) {
             format!("{}/{}", "a".repeat(128), "b".repeat(128)),
         ),
     ] {
-        let repository = codeyard::backend::repositories::lifecycle::provision(
+        let repository = codeyard_app::repositories::lifecycle::provision(
             (pool, None),
             &root.path().join("repos"),
             codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
@@ -1079,7 +1079,7 @@ async fn exercise(pool: &DbPool, url: &str) {
         .success());
     }
 
-    let packed = codeyard::backend::repositories::lifecycle::provision(
+    let packed = codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
         codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
@@ -1098,7 +1098,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     )
     .await;
 
-    let many_refs = codeyard::backend::repositories::lifecycle::provision(
+    let many_refs = codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
         codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
@@ -1205,7 +1205,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     );
     // A name ending in .git cannot be created, so a clone URL ending in .git.git never names a
     // repository other than the one before the suffix.
-    assert!(codeyard::backend::repositories::lifecycle::provision(
+    assert!(codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
         codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
@@ -1695,7 +1695,7 @@ async fn push_rechecks_access_after_waiting_for_a_slot(pool: &DbPool, url: &str)
     let owner = codeyard_db_identity::users::accounts::create_user(pool, "slot_owner", None)
         .await
         .unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
         codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),

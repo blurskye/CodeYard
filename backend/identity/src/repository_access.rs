@@ -1,5 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::models::{Repository, User};
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::User;
 use codeyard_db_repos::repositories::access::CollaboratorChange;
 /// Retained account identity, without substituting Git permissions for a metadata operation.
 pub async fn credential_user(

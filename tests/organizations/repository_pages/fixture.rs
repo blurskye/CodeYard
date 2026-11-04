@@ -6,15 +6,14 @@ use axum::{
     http::{header, HeaderMap, Request, StatusCode},
     Router,
 };
-use codeyard::backend::api::create_router;
-use codeyard::backend::app::AppState;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
 
-use codeyard::backend::storage::ObjectStore;
+use codeyard_api_rest::user::fine_grained::discovery as view;
+use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
-use codeyard_webui::{
-    app::{Page, PageEnvelope},
-    pages::discovery as view,
-};
+use codeyard_webui::app::Page;
+use codeyard_webui::app::PageEnvelope;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -121,11 +120,9 @@ impl Fixture {
             (&unknown, OrgRole::Member),
         ] {
             applied(
-                codeyard_db_orgs::organizations::add_organization_member(
-                    pool, owner.id, org, actor.id, role,
-                )
-                .await
-                .unwrap(),
+                super::add_organization_member(pool, owner.id, org, actor.id, role)
+                    .await
+                    .unwrap(),
             );
         }
         // Fixture-owned malformed membership; production never repairs it implicitly.
@@ -143,7 +140,7 @@ impl Fixture {
             repos_path.clone(),
             Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
             None,
-            codeyard::backend::ci::CiConfig::default(),
+            codeyard_app::ci::config::CiConfig::default(),
             None,
         );
         Self {
@@ -197,7 +194,7 @@ impl Fixture {
     }
     pub async fn organization(pool: &codeyard_db_core::DbPool, actor: i64, slug: &str) -> i64 {
         applied(
-            codeyard_db_orgs::organizations::create_organization(
+            super::create_organization(
                 pool,
                 actor,
                 &codeyard_db_orgs::organizations::NewOrganization::new(

@@ -1,14 +1,14 @@
 //! GitHub CLI OAuth requests, native approval, replay and revocation on both databases.
-use crate::support::{database::Database, http_client::Client};
+use crate::support::database::Database;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    db,
-    identity::{oauth_apps as oauth, tokens::token_hash},
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::oauth_apps as oauth;
+use codeyard_support::token_hash::token_hash;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -207,7 +207,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     let setup = format!("Bearer {}", setup.value);
-    codeyard::backend::repositories::lifecycle::provision(
+    codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(actor),

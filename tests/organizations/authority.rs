@@ -809,13 +809,9 @@ async fn same_org_teams_secret_visibility_and_permissions(database: &Database) {
         .unwrap(),
     );
     assert_eq!(
-        codeyard_db_orgs::organizations::get_organization_repo_access(
-            &database.pool,
-            member,
-            &repo
-        )
-        .await
-        .unwrap(),
+        super::get_organization_repo_access(&database.pool, member, &repo)
+            .await
+            .unwrap(),
         codeyard_db_core::models::AccessLevel::Write
     );
     for level in 1..=5 {
@@ -898,13 +894,13 @@ async fn same_org_teams_secret_visibility_and_permissions(database: &Database) {
             .unwrap(),
     );
     assert_eq!(
-        codeyard_db_orgs::organizations::get_organization_repo_access(&database.pool, other, &repo)
+        super::get_organization_repo_access(&database.pool, other, &repo)
             .await
             .unwrap(),
         codeyard_db_core::models::AccessLevel::None
     );
     assert_eq!(
-        codeyard_db_orgs::organizations::get_organization_repo_access(&database.pool, owner, &repo)
+        super::get_organization_repo_access(&database.pool, owner, &repo)
             .await
             .unwrap(),
         codeyard_db_core::models::AccessLevel::Owner

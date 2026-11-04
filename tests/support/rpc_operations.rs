@@ -1,15 +1,18 @@
 //! Every repository operation, with whether a worker may read it while claimed.
-use codeyard::backend::{
-    cluster::rpc::Operation,
-    repositories::git_sessions::ReceiveCredential,
-    repositories::store::{
-        BlobRange, FileWrite, GitService, GitSession, MergeMethod, MergeRequest, RestackMove,
-    },
-};
+use codeyard_app::cluster::rpc::wire::Operation;
+use codeyard_app::repositories::git_sessions::ReceiveCredential;
+use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_app::repositories::store::types::GitService;
+use codeyard_app::repositories::store::types::GitSession;
+use codeyard_app::repositories::store::types::MergeMethod;
+use codeyard_app::repositories::store::types::MergeRequest;
+use codeyard_app::repositories::store::types::RestackMove;
+use codeyard_app::storage::range::ByteRange;
 use uuid::Uuid;
 
-fn prepared(sha: &str) -> codeyard::backend::repositories::store::PreparedFile {
-    use codeyard::backend::repositories::store::{CommitInfo, PreparedFile};
+fn prepared(sha: &str) -> codeyard_app::repositories::store::editor::PreparedFile {
+    use codeyard_app::repositories::store::editor::PreparedFile;
+    use codeyard_git::CommitInfo;
     PreparedFile {
         staging: None,
         authority: None,
@@ -66,7 +69,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::GistWrite {
-                credential: codeyard::backend::repositories::store::GistCredential::Token(1, String::new()),
+                credential: codeyard_app::repositories::store::gists::GistCredential::Token(1, String::new()),
             },
             false,
         ),
@@ -424,7 +427,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::PublishFile {
-                prepared: codeyard::backend::repositories::store::PreparedFile {
+                prepared: codeyard_app::repositories::store::editor::PreparedFile {
                     staging: None,
                     authority: None,
                     branch: "main".into(),
@@ -432,7 +435,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                     expected: Some(sha.into()),
                     web_commit: false,
                     new_branch: false,
-                    commit: codeyard::backend::repositories::store::CommitInfo {
+                    commit: codeyard_git::CommitInfo {
                         sha: sha.into(),
                         tree_sha: sha.into(),
                         message: "fixture".into(),
@@ -506,7 +509,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         (
             Operation::UpdatePullBranch {
                 source: Uuid::nil(),
-                request: codeyard::backend::repositories::store::PullBranchUpdate {
+                request: codeyard_app::repositories::store::types::PullBranchUpdate {
                     pull_request_id: 1,
                     base_branch: "main".into(),
                     branch: "feature".into(),
@@ -522,7 +525,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::PublishAsyncMerge {
-                request: codeyard::backend::repositories::store::AsyncMergePublication {
+                request: codeyard_app::repositories::store::types::AsyncMergePublication {
                     policy: None,
                     uuid: uuid::Uuid::nil().to_string(),
                     token_id: 1,
@@ -551,7 +554,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::PublishBranchMerge {
-                publication: codeyard::backend::repositories::store::BranchMergePublication {
+                publication: codeyard_app::repositories::store::types::BranchMergePublication {
                     base_branch: "main".into(),
                     base: sha.into(),
                     head_branch: Some("topic".into()),

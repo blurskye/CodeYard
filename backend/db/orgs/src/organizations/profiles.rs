@@ -103,7 +103,7 @@ impl OrganizationProfile {
 #[derive(Debug, Clone)]
 pub struct NewOrganization {
     pub slug: String,
-    pub(crate) profile: OrganizationProfile,
+    pub profile: OrganizationProfile,
 }
 impl NewOrganization {
     pub fn new(

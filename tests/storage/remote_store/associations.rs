@@ -1,6 +1,7 @@
 //! Association parity gets its own fixture so it does not enlarge the broad RPC contract future.
 use super::*;
-use codeyard::backend::repositories::commit_pulls::{associated_pulls, CommitPullQuery};
+use codeyard_app::repositories::commit_pulls::associated_pulls;
+use codeyard_app::repositories::commit_pulls::CommitPullQuery;
 
 #[tokio::test]
 async fn associated_pulls_use_primary_storage_without_changing_refs_or_metadata() {
@@ -37,7 +38,7 @@ async fn associated_pulls_use_primary_storage_without_changing_refs_or_metadata(
     let owner = db::users::accounts::create_user(&database.pool, "rpc_owner", None)
         .await
         .unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (&database.pool, Some(&web.context)),
         &web.context.repos_path,
         db::repositories::creation::RepositoryCreationOwner::personal(owner.id),

@@ -426,7 +426,7 @@ async fn done_marks_are_announced(pg: bool) {
     fixture.notify(user, Some(repo), "done-second").await;
     let original = session(fixture.pool(), user).await;
     let pool = fixture.pool();
-    let broadcaster = codeyard_notifications::NotificationBroadcaster::new(pool);
+    let broadcaster = codeyard_notifications::broadcast::NotificationBroadcaster::new(pool);
     let mut events = broadcaster.subscribe(user);
     async fn announced(
         pool: &codeyard_db_core::DbPool,
@@ -587,7 +587,7 @@ async fn hidden_backlog(pg: bool) {
         assert_eq!(result.unread_count, if listing { 256 } else { 0 });
         assert_eq!(result.updated, if listing { 0 } else { 256 });
     }
-    let broadcaster = codeyard_notifications::NotificationBroadcaster::new(pool);
+    let broadcaster = codeyard_notifications::broadcast::NotificationBroadcaster::new(pool);
     let mut events = broadcaster.subscribe(user);
     codeyard_notifications::create::create_and_broadcast_notification(
         pool,

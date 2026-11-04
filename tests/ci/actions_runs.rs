@@ -3,12 +3,12 @@ use super::{
     actions_objects::pat,
     actions_workflows::{checked, router},
 };
-use crate::support::{database::Database, fake_webui_bundle};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    db,
-    repositories::store::{repo_store, FileWrite},
-};
+use codeyard::backend::db;
+use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_app::repositories::store::repo_store;
 use serde_json::{json, Value};
 
 async fn contract(pg: bool) {
@@ -19,7 +19,7 @@ async fn contract(pg: bool) {
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
     let repos = root.path().join("repos");
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         &repos,
         db::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -61,7 +61,7 @@ async fn contract(pg: bool) {
         "documents",
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -82,7 +82,7 @@ async fn contract(pg: bool) {
         "documents",
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -311,16 +311,16 @@ async fn contract(pg: bool) {
     )
     .await;
     // Native aggregate admission remains available, without inventing a comma-named YAML file.
-    let native = codeyard::backend::app::AppState::new(
+    let native = codeyard_app::app::AppState::new(
         f.pool().clone(),
         repos.clone(),
         std::sync::Arc::new(
-            codeyard::backend::storage::ObjectStore::open(&repos, None)
+            codeyard_app::storage::ObjectStore::open(&repos, None)
                 .await
                 .unwrap(),
         ),
         None,
-        codeyard::backend::ci::CiConfig {
+        codeyard_app::ci::config::CiConfig {
             trusted_actor_ids: std::collections::BTreeSet::from([alice]),
             ..Default::default()
         },
@@ -328,7 +328,7 @@ async fn contract(pg: bool) {
     );
     let aggregate = native
         .ci_runs
-        .trigger_run(codeyard::backend::ci::CiRunRequest {
+        .trigger_run(codeyard_app::ci::runs::CiRunRequest {
             repo_id: repo.id,
             repo_owner: "alice".into(),
             repo_name: "project".into(),
@@ -336,7 +336,7 @@ async fn contract(pg: bool) {
             head_sha: Some(head.sha.clone()),
             event: "workflow_dispatch".into(),
             pull_request_id: None,
-            pipeline: codeyard::backend::ci::CiPipelineKind::Ci,
+            pipeline: codeyard_app::ci::config::CiPipelineKind::Ci,
             workflow_paths: vec![
                 ".github/workflows/ci.yml".into(),
                 ".github/workflows/other.yml".into(),

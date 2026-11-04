@@ -1,8 +1,9 @@
-use crate::support::native_database::{NativeDatabase, PostgresDatabase};
+use crate::support::native_database::NativeDatabase;
+use crate::support::native_database::PostgresDatabase;
 
-use codeyard::backend::cluster::InviteOptions;
-use codeyard::backend::cluster::NodeAddress;
-use codeyard::backend::cluster::Settings;
+use codeyard_app::cluster::pairing::InviteOptions;
+use codeyard_app::cluster::transport::NodeAddress;
+use codeyard_app::cluster::Settings;
 use codeyard_support::node_identity::NodeKey;
 
 use codeyard_db_core::DbPool;
@@ -11,7 +12,7 @@ use std::time::Duration;
 #[tokio::test]
 async fn oversized_invites_are_refused_before_persisting_tokens() {
     let db = NativeDatabase::new().await;
-    let result = codeyard::backend::cluster::create_invite(
+    let result = codeyard_app::cluster::pairing::create_invite(
         &db.pool,
         NodeKey::generate().public_key(),
         NodeAddress {
@@ -45,7 +46,7 @@ async fn service_startup_refuses_roles_outside_existing_enrollment() {
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
-    let key = codeyard::backend::cluster::load_or_create(root.path()).unwrap();
+    let key = codeyard_support::node_identity::load_or_create(root.path()).unwrap();
     codeyard_db_cluster::cluster::register_own_node(
         &db.pool,
         &key.public_hex(),
@@ -62,7 +63,7 @@ async fn service_startup_refuses_roles_outside_existing_enrollment() {
     })
     .unwrap()
     .unwrap();
-    let error = codeyard::backend::cluster::start(
+    let error = codeyard_app::cluster::start(
         &db.pool,
         root.path(),
         root.path(),
@@ -215,7 +216,7 @@ async fn adoption_refreshes_forks_committed_while_it_waits_for_the_source() {
     let pool = db.pool.clone();
     let directory = root.path().to_owned();
     let adopting = tokio::spawn(async move {
-        codeyard::backend::cluster::adopt_repositories(&pool, node.id, &directory).await
+        codeyard_app::cluster::adopt_repositories(&pool, node.id, &directory).await
     });
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(!adopting.is_finished());

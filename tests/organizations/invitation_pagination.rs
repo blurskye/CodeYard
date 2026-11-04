@@ -1,9 +1,8 @@
+use crate::support::database::wait_until_blocked;
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
+use crate::support::http_client::Client;
 use crate::support::organizations::applied;
-use crate::support::{
-    database::{wait_until_blocked, Database},
-    fake_webui_bundle,
-    http_client::Client,
-};
 use axum::http::StatusCode;
 
 use codeyard_db_orgs::organizations::*;

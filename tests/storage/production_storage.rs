@@ -34,20 +34,20 @@ use base64::Engine;
 use codeyard_db_repos::files::AdmissionError;
 use codeyard_db_repos::files::ReserveUpload;
 
-use codeyard::backend::files::ConfirmationError;
-use codeyard::backend::files::DeleteError;
-use codeyard::backend::files::DownloadCapability;
-use codeyard::backend::files::DownloadError;
-use codeyard::backend::files::DownloadTransport;
-use codeyard::backend::files::LocalUploadError;
-use codeyard::backend::files::UploadCapability;
-use codeyard::backend::files::UploadDeclaration;
-use codeyard::backend::files::UploadError;
+use codeyard_app::files::deletion::DeleteError;
+use codeyard_app::files::downloads::DownloadCapability;
+use codeyard_app::files::downloads::DownloadError;
+use codeyard_app::files::downloads::DownloadTransport;
+use codeyard_app::files::local_uploads::LocalUploadError;
+use codeyard_app::files::uploads::ConfirmationError;
+use codeyard_app::files::uploads::UploadCapability;
+use codeyard_app::files::uploads::UploadDeclaration;
+use codeyard_app::files::uploads::UploadError;
 
-use crate::backend::api::avatar_ops::AvatarError;
+use codeyard_api_rest::avatar_ops::AvatarError;
 
-use codeyard::backend::storage::s3::S3Config;
-use codeyard::backend::storage::ObjectStore;
+use codeyard_app::storage::s3::S3Config;
+use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::models::File;
 use codeyard_db_core::models::FileReason;
 use codeyard_db_core::models::FileVisibility;
@@ -483,10 +483,14 @@ async fn s3_reservations_sign_the_declared_object_and_charge_the_quota() {
         visibility: FileVisibility::Owner,
         sha256_hex: &checksum,
     };
-    let reservation =
-        codeyard::backend::files::reserve_and_sign_upload(&db.pool, &store, db.user, declaration())
-            .await
-            .unwrap();
+    let reservation = codeyard_app::files::uploads::reserve_and_sign_upload(
+        &db.pool,
+        &store,
+        db.user,
+        declaration(),
+    )
+    .await
+    .unwrap();
     let file = codeyard_db_repos::files::get_file_by_id(&db.pool, reservation.file_id)
         .await
         .unwrap()
@@ -531,9 +535,14 @@ async fn s3_reservations_sign_the_declared_object_and_charge_the_quota() {
 
     // The quota is charged when the URL is handed out.
     assert_eq!(
-        codeyard::backend::files::reserve_and_sign_upload(&db.pool, &store, db.user, declaration())
-            .await
-            .unwrap_err(),
+        codeyard_app::files::uploads::reserve_and_sign_upload(
+            &db.pool,
+            &store,
+            db.user,
+            declaration()
+        )
+        .await
+        .unwrap_err(),
         UploadError::Quota
     );
 }
@@ -544,7 +553,7 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
     let store = Arc::new(signing_store("owned-unit-fixture").await);
     let file = reserve(&db, 7).await.unwrap();
     assert_eq!(
-        codeyard::backend::files::download_asset(&db.pool, &store, Some(db.user), file.id)
+        codeyard_app::files::downloads::download_asset(&db.pool, &store, Some(db.user), file.id)
             .await
             .unwrap_err(),
         DownloadError::NotFound,
@@ -554,21 +563,22 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
 
     for actor in [None, Some(db.user + 1)] {
         assert_eq!(
-            codeyard::backend::files::download_asset(&db.pool, &store, actor, file.id)
+            codeyard_app::files::downloads::download_asset(&db.pool, &store, actor, file.id)
                 .await
                 .unwrap_err(),
             DownloadError::NotFound
         );
         assert_eq!(
-            codeyard::backend::files::open_asset_download(&db.pool, &store, actor, file.id)
+            codeyard_app::files::downloads::open_asset_download(&db.pool, &store, actor, file.id)
                 .await
                 .unwrap_err(),
             DownloadError::NotFound
         );
     }
-    let asset = codeyard::backend::files::download_asset(&db.pool, &store, Some(db.user), file.id)
-        .await
-        .unwrap();
+    let asset =
+        codeyard_app::files::downloads::download_asset(&db.pool, &store, Some(db.user), file.id)
+            .await
+            .unwrap();
     assert_eq!(asset.capability, DownloadCapability::S3PresignedGet);
     assert_eq!(asset.filename, "fixture.txt");
     assert_eq!(asset.content_type, "text/plain");
@@ -594,16 +604,20 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
             .downloads_24h
     };
     assert_eq!(downloads().await, 0);
-    codeyard::backend::files::download_for_user(&db.pool, &store, db.user, file.id)
+    codeyard_app::files::downloads::download_for_user(&db.pool, &store, db.user, file.id)
         .await
         .unwrap();
     assert_eq!(downloads().await, 1);
 
     // Streaming routes redirect to the same kind of URL.
-    let opened =
-        codeyard::backend::files::open_asset_download(&db.pool, &store, Some(db.user), file.id)
-            .await
-            .unwrap();
+    let opened = codeyard_app::files::downloads::open_asset_download(
+        &db.pool,
+        &store,
+        Some(db.user),
+        file.id,
+    )
+    .await
+    .unwrap();
     assert_eq!(opened.inline_type, None);
     let DownloadTransport::RemoteUrl(remote) = opened.transport else {
         panic!("S3 downloads redirect to a signed URL")
@@ -618,7 +632,7 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
     activate(&db, avatar.id).await;
     for actor in [None, Some(db.user)] {
         let opened =
-            codeyard::backend::files::open_asset_download(&db.pool, &store, actor, avatar.id)
+            codeyard_app::files::downloads::open_asset_download(&db.pool, &store, actor, avatar.id)
                 .await
                 .unwrap();
         assert_eq!(opened.inline_type.as_deref(), Some("image/png"));
@@ -640,12 +654,12 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
-    let router = codeyard::backend::api::create_router(codeyard::backend::app::AppState::new(
+    let router = codeyard_api_rest::create_router(codeyard_app::app::AppState::new(
         db.pool.clone(),
         root.path().to_owned(),
         store,
         None,
-        codeyard::backend::ci::CiConfig::default(),
+        codeyard_app::ci::config::CiConfig::default(),
         None,
     ));
     let response = router
@@ -669,7 +683,7 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
 async fn s3_confirmation_needs_the_object_to_match_the_declaration() {
     let db = database().await;
     let s3 = FakeS3::start("owned-unit-fixture").await;
-    let reservation = codeyard::backend::files::reserve_and_sign_upload(
+    let reservation = codeyard_app::files::uploads::reserve_and_sign_upload(
         &db.pool,
         &s3.store,
         db.user,
@@ -696,7 +710,7 @@ async fn s3_confirmation_needs_the_object_to_match_the_declaration() {
 
     // The local upload route has nothing to do when the bytes go to S3.
     assert_eq!(
-        codeyard::backend::files::put_local_upload(
+        codeyard_app::files::local_uploads::put_local_upload(
             &db.pool,
             &s3.store,
             db.user,
@@ -711,13 +725,13 @@ async fn s3_confirmation_needs_the_object_to_match_the_declaration() {
 
     // Only the owner can confirm, and nothing has arrived yet.
     assert_eq!(
-        codeyard::backend::files::confirm_upload(&db.pool, &s3.store, db.user + 1, id)
+        codeyard_app::files::uploads::confirm_upload(&db.pool, &s3.store, db.user + 1, id)
             .await
             .unwrap_err(),
         ConfirmationError::NotFound
     );
     assert_eq!(
-        codeyard::backend::files::confirm_upload(&db.pool, &s3.store, db.user, id)
+        codeyard_app::files::uploads::confirm_upload(&db.pool, &s3.store, db.user, id)
             .await
             .unwrap_err(),
         ConfirmationError::VerificationFailed
@@ -725,14 +739,14 @@ async fn s3_confirmation_needs_the_object_to_match_the_declaration() {
     // An object of the wrong size, or of the right size but not a PNG, is refused.
     s3.put(key, b"\x89PNG\r\n\x1a\nextra");
     assert_eq!(
-        codeyard::backend::files::confirm_upload(&db.pool, &s3.store, db.user, id)
+        codeyard_app::files::uploads::confirm_upload(&db.pool, &s3.store, db.user, id)
             .await
             .unwrap_err(),
         ConfirmationError::VerificationFailed
     );
     s3.put(key, b"<html>!!");
     assert_eq!(
-        codeyard::backend::files::confirm_upload(&db.pool, &s3.store, db.user, id)
+        codeyard_app::files::uploads::confirm_upload(&db.pool, &s3.store, db.user, id)
             .await
             .unwrap_err(),
         ConfirmationError::VerificationFailed
@@ -744,12 +758,12 @@ async fn s3_confirmation_needs_the_object_to_match_the_declaration() {
 
     // Once the right bytes are there the same reservation can be confirmed, once.
     s3.put(key, PNG);
-    codeyard::backend::files::confirm_upload(&db.pool, &s3.store, db.user, id)
+    codeyard_app::files::uploads::confirm_upload(&db.pool, &s3.store, db.user, id)
         .await
         .unwrap();
     assert!(!pending().await);
     assert_eq!(
-        codeyard::backend::files::confirm_upload(&db.pool, &s3.store, db.user, id)
+        codeyard_app::files::uploads::confirm_upload(&db.pool, &s3.store, db.user, id)
             .await
             .unwrap_err(),
         ConfirmationError::NotPending
@@ -784,7 +798,7 @@ async fn s3_stores_bytes_the_server_holds_and_leaves_nothing_behind_on_failure()
     };
 
     // The bytes go to the bucket under the file's key, verified but still pending.
-    let id = codeyard::backend::files::store_upload(
+    let id = codeyard_app::files::uploads::store_upload(
         &db.pool,
         &s3.store,
         db.user,
@@ -815,16 +829,22 @@ async fn s3_stores_bytes_the_server_holds_and_leaves_nothing_behind_on_failure()
     // Bytes that are not what was declared are refused before anything is sent.
     let other = b"\x89PNG\r\n\x1a\nnot the declared bytes".to_vec();
     assert_eq!(
-        codeyard::backend::files::store_upload(&db.pool, &s3.store, db.user, declaration(), other)
-            .await
-            .unwrap_err(),
+        codeyard_app::files::uploads::store_upload(
+            &db.pool,
+            &s3.store,
+            db.user,
+            declaration(),
+            other
+        )
+        .await
+        .unwrap_err(),
         UploadError::StorageUnavailable
     );
     assert_eq!(s3.state.puts.lock().unwrap().len(), 1);
     // A bucket that refuses the upload leaves no pending file behind either.
     s3.refuse_puts(true);
     assert_eq!(
-        codeyard::backend::files::store_upload(
+        codeyard_app::files::uploads::store_upload(
             &db.pool,
             &s3.store,
             db.user,
@@ -845,7 +865,7 @@ async fn s3_failed_direct_upload_persists_cleanup_without_retaining_metadata() {
     let s3 = FakeS3::start("owned-unit-fixture").await;
     s3.refuse_puts(true);
     s3.refuse_deletes(true);
-    let error = codeyard::backend::files::store_upload(
+    let error = codeyard_app::files::uploads::store_upload(
         &db.pool,
         &s3.store,
         db.user,
@@ -877,7 +897,7 @@ async fn s3_failed_direct_upload_persists_cleanup_without_retaining_metadata() {
         .execute(&db.raw)
         .await
         .unwrap();
-    codeyard::backend::files::remove_expired_uploads(&db.pool, &s3.store)
+    codeyard_app::files::deletion::remove_expired_uploads(&db.pool, &s3.store)
         .await
         .unwrap();
     let cleanup: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pending_object_deletions")
@@ -891,7 +911,7 @@ async fn s3_failed_direct_upload_persists_cleanup_without_retaining_metadata() {
         .execute(&db.raw)
         .await
         .unwrap();
-    codeyard::backend::files::remove_expired_uploads(&db.pool, &s3.store)
+    codeyard_app::files::deletion::remove_expired_uploads(&db.pool, &s3.store)
         .await
         .unwrap();
     assert!(s3.object(&object_key).is_none());
@@ -909,14 +929,14 @@ async fn s3_confirmation_distinguishes_an_unavailable_store_from_missing_bytes()
     let s3 = FakeS3::start("owned-unit-fixture").await;
     let file = reserve(&db, 7).await.unwrap();
     assert_eq!(
-        codeyard::backend::files::confirm_upload(&db.pool, &s3.store, db.user, file.id)
+        codeyard_app::files::uploads::confirm_upload(&db.pool, &s3.store, db.user, file.id)
             .await
             .unwrap_err(),
         ConfirmationError::VerificationFailed
     );
     s3.state.refuse_reads.store(true, Ordering::SeqCst);
     assert_eq!(
-        codeyard::backend::files::confirm_upload(&db.pool, &s3.store, db.user, file.id)
+        codeyard_app::files::uploads::confirm_upload(&db.pool, &s3.store, db.user, file.id)
             .await
             .unwrap_err(),
         ConfirmationError::StorageUnavailable
@@ -930,7 +950,7 @@ async fn s3_confirmation_distinguishes_an_unavailable_store_from_missing_bytes()
     );
     s3.state.refuse_reads.store(false, Ordering::SeqCst);
     s3.put(&file.object_key, b"fixture");
-    codeyard::backend::files::confirm_upload(&db.pool, &s3.store, db.user, file.id)
+    codeyard_app::files::uploads::confirm_upload(&db.pool, &s3.store, db.user, file.id)
         .await
         .unwrap();
 }
@@ -946,7 +966,7 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
     activate(&db, file.id).await;
     s3.put(&file.object_key, b"fixture");
     assert_eq!(
-        codeyard::backend::files::delete_owned_file(&db.pool, &s3.store, db.user + 1, file.id)
+        codeyard_app::files::deletion::delete_owned_file(&db.pool, &s3.store, db.user + 1, file.id)
             .await
             .unwrap_err(),
         DeleteError::NotFound
@@ -955,7 +975,7 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
 
     // Metadata disappears immediately. The object waits out the restore window in the
     // deletion queue, and a failed removal once it is due leaves the work queued.
-    codeyard::backend::files::delete_owned_file(&db.pool, &s3.store, db.user, file.id)
+    codeyard_app::files::deletion::delete_owned_file(&db.pool, &s3.store, db.user, file.id)
         .await
         .unwrap();
     assert!(codeyard_db_repos::files::get_file_by_id(&db.pool, file.id)
@@ -968,7 +988,7 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
         .await
         .unwrap();
     s3.refuse_deletes(true);
-    codeyard::backend::files::remove_expired_uploads(&db.pool, &s3.store)
+    codeyard_app::files::deletion::remove_expired_uploads(&db.pool, &s3.store)
         .await
         .unwrap();
     assert_eq!(s3.deleted(), [s3.path(&file.object_key)]);
@@ -977,7 +997,7 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
         .execute(&db.raw)
         .await
         .unwrap();
-    codeyard::backend::files::remove_expired_uploads(&db.pool, &s3.store)
+    codeyard_app::files::deletion::remove_expired_uploads(&db.pool, &s3.store)
         .await
         .unwrap();
     assert_eq!(
@@ -991,7 +1011,7 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
     s3.put(&stale.object_key, b"fixture");
     expire(&db, stale.id).await;
     assert_eq!(
-        codeyard::backend::files::remove_expired_uploads(&db.pool, &s3.store)
+        codeyard_app::files::deletion::remove_expired_uploads(&db.pool, &s3.store)
             .await
             .unwrap(),
         1
@@ -1002,7 +1022,7 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
         .is_none());
     s3.refuse_deletes(false);
     assert_eq!(
-        codeyard::backend::files::remove_expired_uploads(&db.pool, &s3.store)
+        codeyard_app::files::deletion::remove_expired_uploads(&db.pool, &s3.store)
             .await
             .unwrap(),
         0
@@ -1013,7 +1033,7 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
         .is_none());
     assert_eq!(s3.deleted().last(), Some(&s3.path(&stale.object_key)));
     assert_eq!(
-        codeyard::backend::files::remove_expired_uploads(&db.pool, &s3.store)
+        codeyard_app::files::deletion::remove_expired_uploads(&db.pool, &s3.store)
             .await
             .unwrap(),
         0
@@ -1022,7 +1042,7 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
     // Deleting a still-pending upload works the same way. Nothing was uploaded yet, so the sweep
     // finds no object, and the kept tombstone removes one that a late PUT stores.
     let pending = reserve(&db, 7).await.unwrap();
-    codeyard::backend::files::delete_owned_file(&db.pool, &s3.store, db.user, pending.id)
+    codeyard_app::files::deletion::delete_owned_file(&db.pool, &s3.store, db.user, pending.id)
         .await
         .unwrap();
     assert!(!s3.deleted().contains(&s3.path(&pending.object_key)));
@@ -1034,7 +1054,7 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
             .execute(&db.raw)
             .await
             .unwrap();
-        codeyard::backend::files::remove_expired_uploads(&db.pool, &s3.store)
+        codeyard_app::files::deletion::remove_expired_uploads(&db.pool, &s3.store)
             .await
             .unwrap();
         assert_eq!(s3.deleted().contains(&s3.path(&pending.object_key)), late);
@@ -1059,7 +1079,7 @@ async fn s3_put_that_lands_after_its_deadline_is_removed_by_the_queued_cleanup()
         .await
         .unwrap();
     assert_eq!(
-        codeyard::backend::files::remove_expired_uploads(&db.pool, &s3.store)
+        codeyard_app::files::deletion::remove_expired_uploads(&db.pool, &s3.store)
             .await
             .unwrap(),
         1
@@ -1068,7 +1088,7 @@ async fn s3_put_that_lands_after_its_deadline_is_removed_by_the_queued_cleanup()
     // A PUT accepted before the deadline lands after the record is gone.
     s3.put(&stale.object_key, b"fixture");
     assert_eq!(
-        codeyard::backend::files::remove_expired_uploads(&db.pool, &s3.store)
+        codeyard_app::files::deletion::remove_expired_uploads(&db.pool, &s3.store)
             .await
             .unwrap(),
         0
@@ -1091,7 +1111,7 @@ async fn s3_put_that_lands_after_its_deadline_is_removed_by_the_queued_cleanup()
         .execute(&db.raw)
         .await
         .unwrap();
-    codeyard::backend::files::remove_expired_uploads(&db.pool, &s3.store)
+    codeyard_app::files::deletion::remove_expired_uploads(&db.pool, &s3.store)
         .await
         .unwrap();
     assert!(s3.object(&stale.object_key).is_none());
@@ -1110,7 +1130,7 @@ async fn s3_deletes_are_not_sent_while_every_storage_slot_is_busy() {
     while let Ok(permit) = s3.store.try_acquire_io() {
         slots.push(permit);
     }
-    codeyard::backend::files::delete_owned_file(&db.pool, &s3.store, db.user, file.id)
+    codeyard_app::files::deletion::delete_owned_file(&db.pool, &s3.store, db.user, file.id)
         .await
         .unwrap();
     assert!(
@@ -1124,7 +1144,7 @@ async fn s3_deletes_are_not_sent_while_every_storage_slot_is_busy() {
         .execute(&db.raw)
         .await
         .unwrap();
-    codeyard::backend::files::remove_expired_uploads(&db.pool, &s3.store)
+    codeyard_app::files::deletion::remove_expired_uploads(&db.pool, &s3.store)
         .await
         .unwrap();
     assert_eq!(s3.deleted(), [s3.path(&file.object_key)]);
@@ -1222,7 +1242,7 @@ async fn pg_a_banned_account_keeps_its_picture() {
         .await
         .unwrap()
         .unwrap();
-    crate::backend::api::avatar_ops::set_user_avatar(
+    codeyard_api_rest::avatar_ops::set_user_avatar(
         &db.pool,
         &user,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
@@ -1238,7 +1258,7 @@ async fn pg_a_banned_account_keeps_its_picture() {
         .await
         .unwrap();
 
-    let changed = crate::backend::api::avatar_ops::set_user_avatar(
+    let changed = codeyard_api_rest::avatar_ops::set_user_avatar(
         &db.pool,
         &user,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
@@ -1248,7 +1268,7 @@ async fn pg_a_banned_account_keeps_its_picture() {
     )
     .await;
     assert_eq!(changed, Err(AvatarError::Denied));
-    let cleared = crate::backend::api::avatar_ops::remove_user_avatar(
+    let cleared = codeyard_api_rest::avatar_ops::remove_user_avatar(
         &db.pool,
         &user,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
@@ -1275,7 +1295,7 @@ async fn pg_confirmation_waits_for_the_bytes_and_then_succeeds_once() {
     let db = database().await;
     let state = tempfile::tempdir().unwrap();
     let store = ObjectStore::open(state.path(), None).await.unwrap();
-    let reservation = codeyard::backend::files::reserve_and_sign_upload(
+    let reservation = codeyard_app::files::uploads::reserve_and_sign_upload(
         &db.pool,
         &store,
         db.user,
@@ -1295,12 +1315,17 @@ async fn pg_confirmation_waits_for_the_bytes_and_then_succeeds_once() {
         UploadCapability::AuthenticatedLocalPut
     );
     assert_eq!(
-        codeyard::backend::files::confirm_upload(&db.pool, &store, db.user, reservation.file_id)
-            .await
-            .unwrap_err(),
+        codeyard_app::files::uploads::confirm_upload(
+            &db.pool,
+            &store,
+            db.user,
+            reservation.file_id
+        )
+        .await
+        .unwrap_err(),
         ConfirmationError::VerificationFailed
     );
-    codeyard::backend::files::put_local_upload(
+    codeyard_app::files::local_uploads::put_local_upload(
         &db.pool,
         &store,
         db.user,
@@ -1310,7 +1335,7 @@ async fn pg_confirmation_waits_for_the_bytes_and_then_succeeds_once() {
     )
     .await
     .unwrap();
-    codeyard::backend::files::confirm_upload(&db.pool, &store, db.user, reservation.file_id)
+    codeyard_app::files::uploads::confirm_upload(&db.pool, &store, db.user, reservation.file_id)
         .await
         .unwrap();
     assert!(
@@ -1321,9 +1346,14 @@ async fn pg_confirmation_waits_for_the_bytes_and_then_succeeds_once() {
             .is_active
     );
     assert_eq!(
-        codeyard::backend::files::confirm_upload(&db.pool, &store, db.user, reservation.file_id)
-            .await
-            .unwrap_err(),
+        codeyard_app::files::uploads::confirm_upload(
+            &db.pool,
+            &store,
+            db.user,
+            reservation.file_id
+        )
+        .await
+        .unwrap_err(),
         ConfirmationError::NotPending
     );
 }
@@ -1458,7 +1488,7 @@ async fn expiry_and_deletion_do_not_refund_the_quota_but_the_window_does() {
     // Removing the expired record keeps the charge, so uploads cannot be
     // reserved over and over by letting them lapse.
     assert_eq!(
-        codeyard::backend::files::remove_expired_uploads(&db.pool, &store)
+        codeyard_app::files::deletion::remove_expired_uploads(&db.pool, &store)
             .await
             .unwrap(),
         1
@@ -1840,7 +1870,7 @@ impl ObjectFixture {
             bucket,
             region: "us-east-1".into(),
         };
-        let client = codeyard::backend::storage::s3::create_client(&config)
+        let client = codeyard_app::storage::s3::create_client(&config)
             .await
             .unwrap();
         let marker = client
@@ -1932,7 +1962,7 @@ async fn actual_presigned_put_replay_confirmation_download_and_delete() {
     let db = database().await;
     let object = ObjectFixture::open().await;
     let data = b"owned real public authority upload";
-    let reservation = codeyard::backend::files::reserve_and_sign_upload(
+    let reservation = codeyard_app::files::uploads::reserve_and_sign_upload(
         &db.pool,
         &object.store,
         db.user,
@@ -1960,7 +1990,7 @@ async fn actual_presigned_put_replay_confirmation_download_and_delete() {
     let http = http_client();
 
     assert_eq!(
-        codeyard::backend::files::confirm_upload(&db.pool, &object.store, db.user, id)
+        codeyard_app::files::uploads::confirm_upload(&db.pool, &object.store, db.user, id)
             .await
             .unwrap_err(),
         ConfirmationError::VerificationFailed,
@@ -1978,12 +2008,12 @@ async fn actual_presigned_put_replay_confirmation_download_and_delete() {
         matches!(replay.status().as_u16(), 409 | 412),
         "conditional PUT must reject replay, not a signing/auth error"
     );
-    codeyard::backend::files::confirm_upload(&db.pool, &object.store, db.user, id)
+    codeyard_app::files::uploads::confirm_upload(&db.pool, &object.store, db.user, id)
         .await
         .unwrap();
 
     let download =
-        codeyard::backend::files::download_for_user(&db.pool, &object.store, db.user, id)
+        codeyard_app::files::downloads::download_for_user(&db.pool, &object.store, db.user, id)
             .await
             .unwrap();
     assert_eq!(download.capability, DownloadCapability::S3PresignedGet);
@@ -1999,13 +2029,18 @@ async fn actual_presigned_put_replay_confirmation_download_and_delete() {
     );
     assert_eq!(received.bytes().await.unwrap().as_ref(), data);
     assert_eq!(
-        codeyard::backend::files::download_asset(&db.pool, &object.store, Some(db.user + 1), id)
-            .await
-            .unwrap_err(),
+        codeyard_app::files::downloads::download_asset(
+            &db.pool,
+            &object.store,
+            Some(db.user + 1),
+            id
+        )
+        .await
+        .unwrap_err(),
         DownloadError::NotFound
     );
 
-    codeyard::backend::files::delete_owned_file(&db.pool, &object.store, db.user, id)
+    codeyard_app::files::deletion::delete_owned_file(&db.pool, &object.store, db.user, id)
         .await
         .unwrap();
     assert!(codeyard_db_repos::files::get_file_by_id(&db.pool, id)
@@ -2013,7 +2048,7 @@ async fn actual_presigned_put_replay_confirmation_download_and_delete() {
         .unwrap()
         .is_none());
     assert_eq!(
-        codeyard::backend::files::download_for_user(&db.pool, &object.store, db.user, id)
+        codeyard_app::files::downloads::download_for_user(&db.pool, &object.store, db.user, id)
             .await
             .unwrap_err(),
         DownloadError::NotFound
@@ -2037,7 +2072,7 @@ async fn actual_presigned_put_replay_confirmation_download_and_delete() {
         .execute(&db.raw)
         .await
         .unwrap();
-    codeyard::backend::files::remove_expired_uploads(&db.pool, &object.store)
+    codeyard_app::files::deletion::remove_expired_uploads(&db.pool, &object.store)
         .await
         .unwrap();
     assert!(object
@@ -2049,7 +2084,7 @@ async fn actual_presigned_put_replay_confirmation_download_and_delete() {
         .await
         .is_err());
 
-    let pending = codeyard::backend::files::reserve_and_sign_upload(
+    let pending = codeyard_app::files::uploads::reserve_and_sign_upload(
         &db.pool,
         &object.store,
         db.user,
@@ -2064,9 +2099,14 @@ async fn actual_presigned_put_replay_confirmation_download_and_delete() {
     )
     .await
     .unwrap();
-    codeyard::backend::files::delete_owned_file(&db.pool, &object.store, db.user, pending.file_id)
-        .await
-        .unwrap();
+    codeyard_app::files::deletion::delete_owned_file(
+        &db.pool,
+        &object.store,
+        db.user,
+        pending.file_id,
+    )
+    .await
+    .unwrap();
     assert!(
         actual_put(&http, &pending.url, &pending.headers, data)
             .await
@@ -2081,7 +2121,7 @@ async fn actual_presigned_put_replay_confirmation_download_and_delete() {
             .is_none()
     );
     assert_eq!(
-        codeyard::backend::files::download_for_user(
+        codeyard_app::files::downloads::download_for_user(
             &db.pool,
             &object.store,
             db.user,
@@ -2095,7 +2135,7 @@ async fn actual_presigned_put_replay_confirmation_download_and_delete() {
         .execute(&db.raw)
         .await
         .unwrap();
-    codeyard::backend::files::remove_expired_uploads(&db.pool, &object.store)
+    codeyard_app::files::deletion::remove_expired_uploads(&db.pool, &object.store)
         .await
         .unwrap();
     assert!(object
@@ -2115,7 +2155,7 @@ async fn actual_wrong_size_type_checksum_and_changed_headers_are_refused() {
     let object = ObjectFixture::open().await;
     let http = http_client();
     let data = b"expected";
-    let reservation = codeyard::backend::files::reserve_and_sign_upload(
+    let reservation = codeyard_app::files::uploads::reserve_and_sign_upload(
         &db.pool,
         &object.store,
         db.user,
@@ -2152,10 +2192,15 @@ async fn actual_wrong_size_type_checksum_and_changed_headers_are_refused() {
             .status()
             .is_success()
     );
-    codeyard::backend::files::confirm_upload(&db.pool, &object.store, db.user, reservation.file_id)
-        .await
-        .unwrap();
-    codeyard::backend::files::delete_owned_file(
+    codeyard_app::files::uploads::confirm_upload(
+        &db.pool,
+        &object.store,
+        db.user,
+        reservation.file_id,
+    )
+    .await
+    .unwrap();
+    codeyard_app::files::deletion::delete_owned_file(
         &db.pool,
         &object.store,
         db.user,
@@ -2165,7 +2210,7 @@ async fn actual_wrong_size_type_checksum_and_changed_headers_are_refused() {
     .unwrap();
 
     // Objects written around the presigned URL are still checked when confirmed.
-    let wrong_size = codeyard::backend::files::reserve_and_sign_upload(
+    let wrong_size = codeyard_app::files::uploads::reserve_and_sign_upload(
         &db.pool,
         &object.store,
         db.user,
@@ -2184,7 +2229,7 @@ async fn actual_wrong_size_type_checksum_and_changed_headers_are_refused() {
         .write(&wrong_size.object_key, "text/plain", b"wrong size")
         .await;
     assert_eq!(
-        codeyard::backend::files::confirm_upload(
+        codeyard_app::files::uploads::confirm_upload(
             &db.pool,
             &object.store,
             db.user,
@@ -2196,7 +2241,7 @@ async fn actual_wrong_size_type_checksum_and_changed_headers_are_refused() {
     );
     object.remove(&wrong_size.object_key).await;
 
-    let not_an_image = codeyard::backend::files::reserve_and_sign_upload(
+    let not_an_image = codeyard_app::files::uploads::reserve_and_sign_upload(
         &db.pool,
         &object.store,
         db.user,
@@ -2215,7 +2260,7 @@ async fn actual_wrong_size_type_checksum_and_changed_headers_are_refused() {
         .write(&not_an_image.object_key, "image/png", b"<html>!!")
         .await;
     assert_eq!(
-        codeyard::backend::files::confirm_upload(
+        codeyard_app::files::uploads::confirm_upload(
             &db.pool,
             &object.store,
             db.user,
@@ -2248,7 +2293,7 @@ async fn actual_equal_endpoints_and_public_avatar_still_work() {
         .unwrap();
     let data = base64::engine::general_purpose::STANDARD.decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ1cAAAAASUVORK5CYII=").unwrap();
-    let reservation = codeyard::backend::files::reserve_and_sign_upload(
+    let reservation = codeyard_app::files::uploads::reserve_and_sign_upload(
         &db.pool,
         &store,
         db.user,
@@ -2274,7 +2319,7 @@ async fn actual_equal_endpoints_and_public_avatar_still_work() {
             .status()
             .is_success()
     );
-    codeyard::backend::files::confirm_upload(&db.pool, &store, db.user, reservation.file_id)
+    codeyard_app::files::uploads::confirm_upload(&db.pool, &store, db.user, reservation.file_id)
         .await
         .unwrap();
     assert!(
@@ -2284,7 +2329,7 @@ async fn actual_equal_endpoints_and_public_avatar_still_work() {
             .is_some()
     );
     let shown =
-        codeyard::backend::files::download_asset(&db.pool, &store, None, reservation.file_id)
+        codeyard_app::files::downloads::download_asset(&db.pool, &store, None, reservation.file_id)
             .await
             .unwrap();
     let received = http.get(&shown.url).send().await.unwrap();

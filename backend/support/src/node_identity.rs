@@ -61,7 +61,7 @@ impl NodeKey {
         self.secret.sign(message).to_bytes()
     }
 
-    pub(super) fn iroh_secret(&self) -> SecretKey {
+    pub fn iroh_secret(&self) -> SecretKey {
         (*self.secret).clone()
     }
 }

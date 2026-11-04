@@ -41,7 +41,7 @@ impl World {
         let root = tempfile::tempdir().unwrap();
         let mut proj = None;
         for (name, private) in [("proj", false), ("vault", true)] {
-            let repository = codeyard::backend::repositories::lifecycle::provision(
+            let repository = codeyard_app::repositories::lifecycle::provision(
                 (database.pool(), None),
                 root.path(),
                 codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(

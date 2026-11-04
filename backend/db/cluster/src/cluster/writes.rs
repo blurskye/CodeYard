@@ -60,7 +60,7 @@ native_operation!(crate::postgres::cluster::writes::write_family,
     crate::sqlite::cluster::writes::write_family,
     fn write_family(pool: &DbPool, repo: i64) -> Result<Vec<(i64, Option<i64>, i64)>>);
 
-pub(crate) fn validate_id(id: &str) -> Result<()> {
+pub fn validate_id(id: &str) -> Result<()> {
     ensure!(
         id.len() == 36 && uuid::Uuid::parse_str(id).is_ok(),
         "invalid write id"
@@ -96,7 +96,7 @@ pub(crate) fn validate_terms(terms: &[(i64, i64)]) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn required_votes(setting: &str, count: usize) -> Result<i64> {
+pub fn required_votes(setting: &str, count: usize) -> Result<i64> {
     ensure!(count > 0 && count <= MAX_VOTERS, "invalid voter count");
     ensure!(
         count > 1 || setting == "1",
@@ -162,7 +162,7 @@ pub(crate) fn validate_values(refs: &[RefValue]) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_changes(refs: &[RefChange]) -> Result<()> {
+pub fn validate_changes(refs: &[RefChange]) -> Result<()> {
     ensure!(
         !refs.is_empty() && refs.len() <= MAX_REFS,
         "invalid reference count"
@@ -214,7 +214,7 @@ pub(crate) fn changed_refs(current: Vec<RefValue>, changes: &[RefChange]) -> Res
     Ok(refs)
 }
 
-pub(crate) fn manifest_hash(
+pub fn manifest_hash(
     repo: i64,
     primary: i64,
     term: i64,

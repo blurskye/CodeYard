@@ -6,8 +6,8 @@ use super::Client;
 use super::Router;
 use super::StatusCode;
 use super::Value;
-use codeyard::backend::repositories::access::change_collaborator;
 use codeyard_db_core::models::AccessLevel;
+use codeyard_identity::repository_access::change_collaborator;
 
 pub(super) async fn run(
     router: &Router,

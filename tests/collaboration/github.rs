@@ -1,19 +1,20 @@
 //! GitHub labels through the real router on SQLite and PostgreSQL.
-use crate::support::{database::Database, github_spec::assert_github_schema, http_client::Client};
+use crate::support::database::Database;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
     response::Response,
     Router,
 };
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db,
-    identity::tokens::{self, TokenInput},
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::storage::ObjectStore;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -57,7 +58,7 @@ async fn labels(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),

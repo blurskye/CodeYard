@@ -1,7 +1,11 @@
 //! Fine-grained personal access tokens on repositories: each repository selection, read and
 //! write grants, and the resource owner, through REST, GraphQL and Git over HTTP on both
 //! engines.
-use crate::support::{database::Database, http_client::Client, organizations::applied};
+use super::NewOrganization;
+use super::OrganizationProfile;
+use crate::support::database::Database;
+use crate::support::http_client::Client;
+use crate::support::organizations::applied;
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, Request},
@@ -9,15 +13,13 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 use chrono::{Duration, Utc};
-use codeyard::backend::{
-    db::{
-        self,
-        organizations::{NewOrganization, OrganizationProfile},
-        repositories::creation::{RepositoryCreationOwner, RepositoryTarget},
-    },
-    identity::fine_grained::{self, Access, Owner},
-    repositories::lifecycle,
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::fine_grained;
+use codeyard_app::repositories::lifecycle;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_db_repos::repositories::creation::RepositoryTarget;
+use codeyard_identity::fine_grained::Access;
+use codeyard_identity::fine_grained::Owner;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 

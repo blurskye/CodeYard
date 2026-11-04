@@ -1,8 +1,8 @@
+use crate::checks::Annotation;
 use crate::checks::PageSnapshot;
-use crate::sqlite::checks::Annotation;
-use crate::sqlite::checks::Refusal;
-use crate::sqlite::checks::Run;
-use crate::sqlite::checks::Suite;
+use crate::checks::Refusal;
+use crate::checks::Run;
+use crate::checks::Suite;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;

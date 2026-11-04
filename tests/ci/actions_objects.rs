@@ -1,17 +1,18 @@
 //! Actions REST metadata and capability downloads operate on real runtime uploads on both databases.
 use super::results;
-use crate::support::{
-    database::Database, fake_webui_bundle, github_spec::assert_github_schema, http_client::Client,
-};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    ci, db,
-    identity::tokens::{self, TokenInput},
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_app::ci;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use tower::ServiceExt;
@@ -167,7 +168,7 @@ async fn contract(pg: bool) {
     let mut repos = Vec::new();
     for name in ["project", "separate"] {
         repos.push(
-            codeyard::backend::repositories::lifecycle::provision(
+            codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 db::repositories::creation::RepositoryCreationOwner::personal(alice),

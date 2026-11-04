@@ -33,7 +33,7 @@ async fn setup(pg: bool) -> World {
     let root = tempfile::tempdir().unwrap();
     let mut vault = 0;
     for (name, private) in [("proj", false), ("vault", true)] {
-        let repo = codeyard::backend::repositories::lifecycle::provision(
+        let repo = codeyard_app::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

@@ -9,7 +9,7 @@ async fn contract(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("metadata-alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -47,7 +47,7 @@ async fn contract(pg: bool) {
         ("main.rs", "fn main() {}\n"),
         ("SECURITY.md", "Report a vulnerability privately.\n"),
         ("CODE_OF_CONDUCT.md", "# Contributor Covenant\n"),
-        ("LICENSE", codeyard::backend::repositories::templates::license("MIT").unwrap().text),
+        ("LICENSE", codeyard_app::repositories::templates::license("MIT").unwrap().text),
         (".github/ISSUE_TEMPLATE/bug.md", "---\nname: Bug\ntitle: Broken\nabout: Report a bug\n---\nSteps\n"),
         (".github/ISSUE_TEMPLATE/config.yml", "blank_issues_enabled: false\ncontact_links:\n  - name: Help\n    about: Ask for help\n    url: https://example.test/help\n"),
         (".github/PULL_REQUEST_TEMPLATE.md", "Explain the change.\n"),

@@ -1,5 +1,6 @@
 use super::*;
-use codeyard_db_repos::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
 async fn exported(router: &Router, path: &str, token: &str, operation: &str) -> Value {
     tokio::time::timeout(std::time::Duration::from_secs(30), async {
@@ -444,7 +445,7 @@ pub(super) async fn run(
             .unwrap()
             .unwrap();
         assert!(
-            !codeyard::backend::repositories::access::can_write(f.pool(), &actor, repo)
+            !codeyard_identity::repository_access::can_write(f.pool(), &actor, repo)
                 .await
                 .unwrap()
         );
@@ -501,8 +502,8 @@ pub(super) async fn run(
             .collect();
         assert_eq!(actual, repo_store(repo, None).mirror_refs().await.unwrap());
         // Exercise the reader and the authorized native publication path, not only tar extraction.
-        let source = codeyard::backend::repositories::imports::archive::read(&bytes, None).unwrap();
-        let prepared = codeyard::backend::repositories::imports::archive::git::prepare(&source)
+        let source = codeyard_app::repositories::imports::archive::read(&bytes, None).unwrap();
+        let prepared = codeyard_app::repositories::imports::archive::git::prepare(&source)
             .await
             .unwrap();
         let user_refs: std::collections::HashMap<_, _> = actual
@@ -544,7 +545,7 @@ pub(super) async fn run(
         .unwrap();
         let token = db::users::tokens::find_token(
             f.pool(),
-            &codeyard_identity::tokens::token_hash(writer.split_once(' ').unwrap().1),
+            &codeyard_support::token_hash::token_hash(writer.split_once(' ').unwrap().1),
         )
         .await
         .unwrap()
@@ -554,9 +555,9 @@ pub(super) async fn run(
                 f.pool(),
                 restored.id,
                 alice,
-                codeyard::backend::repositories::imports::GitImport {
+                codeyard_app::repositories::imports::GitImport {
                     generation: generation.clone(),
-                    credential: codeyard::backend::repositories::imports::ImportCredential::Token(
+                    credential: codeyard_app::repositories::imports::ImportCredential::Token(
                         token.id,
                     ),
                     refs: prepared.refs,
@@ -749,7 +750,7 @@ pub(super) async fn run(
         )
         .await;
         assert!(
-            codeyard::backend::repositories::access::can_write(f.pool(), &actor, repo)
+            codeyard_identity::repository_access::can_write(f.pool(), &actor, repo)
                 .await
                 .unwrap()
         );

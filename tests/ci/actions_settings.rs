@@ -7,14 +7,15 @@ use crate::support::database::Database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client::Client;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::{queue::RunQueue, CiConfig, CiExecutionMode, RunLimits},
-    db,
-    notifications::NotificationBroadcaster,
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::ci::config::CiExecutionMode;
+use codeyard_app::ci::config::RunLimits;
+use codeyard_app::ci::queue::RunQueue;
+use codeyard_app::storage::ObjectStore;
+use codeyard_notifications::broadcast::NotificationBroadcaster;
 use serde_json::json;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -33,7 +34,7 @@ async fn contract(pg: bool) {
     )
     .await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -202,7 +203,7 @@ async fn contract(pg: bool) {
         .claim(
             "slot-1",
             CiExecutionMode::Local,
-            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .unwrap()
@@ -212,7 +213,7 @@ async fn contract(pg: bool) {
     assert_eq!(
         db::action_objects::authenticate(
             f.pool(),
-            &codeyard::backend::ci::runtime::token_hash(&claimed.runtime.token)
+            &codeyard_support::token_hash::token_hash(&claimed.runtime.token)
         )
         .await
         .unwrap()
@@ -294,7 +295,7 @@ async fn rest_settings(pg: bool) {
     )
     .await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner {
@@ -734,7 +735,7 @@ async fn rest_settings(pg: bool) {
             .claim(
                 "settings",
                 CiExecutionMode::Local,
-                &codeyard::backend::ci::CiConfig::default().platform_labels(),
+                &codeyard_app::ci::config::CiConfig::default().platform_labels(),
             )
             .await
             .unwrap()
@@ -742,7 +743,7 @@ async fn rest_settings(pg: bool) {
         let token = &claim.github_tokens.workflows[".github/workflows/ci.yml"]["test"];
         let pat = db::users::tokens::find_token(
             f.pool(),
-            &codeyard::backend::ci::runtime::token_hash(token),
+            &codeyard_support::token_hash::token_hash(token),
         )
         .await
         .unwrap()
@@ -873,7 +874,7 @@ async fn rest_settings(pg: bool) {
         .claim(
             "settings",
             CiExecutionMode::Local,
-            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .unwrap()
@@ -946,7 +947,7 @@ async fn rest_reviews(pg: bool) {
     let bob = f.actor("bob").await;
     let carol = f.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner::personal(alice),
@@ -957,7 +958,7 @@ async fn rest_reviews(pg: bool) {
     )
     .await
     .unwrap();
-    let fork = codeyard::backend::repositories::lifecycle::provision(
+    let fork = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner::personal(bob),

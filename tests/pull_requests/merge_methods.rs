@@ -9,20 +9,16 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db,
-    repositories::{
-        pull_requests::{
-            merge::{prepare_pull_request_merge, publish_prepared_merge, MergeRequest},
-            OperationError,
-        },
-        store::MergeMethod,
-    },
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::repositories::pull_requests::merge::prepare_pull_request_merge;
+use codeyard_app::repositories::pull_requests::merge::publish_prepared_merge;
+use codeyard_app::repositories::pull_requests::merge::MergeRequest;
+use codeyard_app::repositories::pull_requests::OperationError;
+use codeyard_app::repositories::store::types::MergeMethod;
+use codeyard_app::storage::ObjectStore;
 use database::Database;
 use pulls::{text, Client, Reply};
 use serde_json::{json, Value};
@@ -43,7 +39,7 @@ async fn setup(f: &mut Database, root: &Path) -> Fixture {
     f.complete_setup().await;
     let owner = f.actor("alice").await;
     let merger_id = f.actor("merger").await;
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root,
         db::repositories::creation::RepositoryCreationOwner::personal(owner),

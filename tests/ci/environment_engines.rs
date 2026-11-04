@@ -1,17 +1,20 @@
 //! Both real engines receive job-bound scopes, including Unicode case aliases.
 use crate::support::database::Database;
-use codeyard::backend::{
-    app::AppState,
-    ci::{queue::RunQueue, CiConfig, CiExecutionMode, CiPipelineKind, CiRunRequest, CiWorkers},
-    crypto::SecretEncryptor,
-    db::{
-        self,
-        environment_values::{self as values, Kind, Save},
-    },
-    notifications::NotificationBroadcaster,
-    repositories::lifecycle,
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::ci::config::CiExecutionMode;
+use codeyard_app::ci::config::CiPipelineKind;
+use codeyard_app::ci::queue::RunQueue;
+use codeyard_app::ci::runs::CiRunRequest;
+use codeyard_app::ci::workers::CiWorkers;
+use codeyard_app::repositories::lifecycle;
+use codeyard_app::storage::ObjectStore;
+use codeyard_db_actions::environment_values as values;
+use codeyard_db_actions::environment_values::Save;
+use codeyard_db_orgs::organization_values::Kind;
+use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_support::secrets::SecretEncryptor;
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 fn scoped_workflow() -> String {
@@ -373,7 +376,7 @@ async fn fork_claims(pg: bool) {
                 .claim(
                     "worker",
                     CiExecutionMode::Local,
-                    &codeyard::backend::ci::CiConfig::default().platform_labels(),
+                    &codeyard_app::ci::config::CiConfig::default().platform_labels(),
                 )
                 .await
                 .unwrap()
@@ -409,7 +412,7 @@ async fn fork_claims(pg: bool) {
                 .claim(
                     "worker",
                     CiExecutionMode::Local,
-                    &codeyard::backend::ci::CiConfig::default().platform_labels(),
+                    &codeyard_app::ci::config::CiConfig::default().platform_labels(),
                 )
                 .await
                 .err()

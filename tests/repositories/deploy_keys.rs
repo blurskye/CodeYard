@@ -7,14 +7,13 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client::Client;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    crypto::SecretEncryptor,
-    db::{self, users::ssh_keys},
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::storage::ObjectStore;
+use codeyard_db_identity::users::ssh_keys;
+use codeyard_support::secrets::SecretEncryptor;
 use database::Database;
 use serde_json::json;
 use std::sync::Arc;
@@ -32,7 +31,7 @@ async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
     let alice_id = database.actor("alice").await;
     let bob_id = database.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    codeyard::backend::repositories::lifecycle::provision(
+    codeyard_app::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -373,7 +372,7 @@ async fn live_authority(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    let key = codeyard::backend::repositories::deploy_keys::add_key(
+    let key = codeyard_app::repositories::deploy_keys::add_key(
         pool,
         &administrator,
         &bob.session,
@@ -385,21 +384,17 @@ async fn live_authority(pg: bool) {
     .await
     .unwrap();
     for write in [false, true] {
-        let (_, access) = codeyard::backend::repositories::deploy_keys::authorize(
-            pool,
-            key.id,
-            &repository,
-            write,
-        )
-        .await
-        .unwrap();
+        let (_, access) =
+            codeyard_app::repositories::deploy_keys::authorize(pool, key.id, &repository, write)
+                .await
+                .unwrap();
         assert_eq!(access, codeyard_db_core::models::AccessLevel::Write);
     }
     db::users::sessions::delete_session(pool, &alice.session)
         .await
         .unwrap();
     assert!(matches!(
-        codeyard::backend::repositories::deploy_keys::add_key(
+        codeyard_app::repositories::deploy_keys::add_key(
             pool,
             &owner,
             &alice.session,
@@ -423,7 +418,7 @@ async fn live_authority(pg: bool) {
     database
         .execute("UPDATE users SET is_admin=FALSE WHERE id=$1", &[bob_id])
         .await;
-    assert!(codeyard::backend::repositories::deploy_keys::remove_key(
+    assert!(codeyard_app::repositories::deploy_keys::remove_key(
         pool,
         &administrator,
         &bob.session,
@@ -463,7 +458,7 @@ async fn live_authority(pg: bool) {
         .await;
     let organization_repository = database.repository(repository.id).await;
     assert!(
-        codeyard::backend::repositories::deploy_keys::authorize(
+        codeyard_app::repositories::deploy_keys::authorize(
             pool,
             key.id,
             &organization_repository,

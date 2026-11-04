@@ -7,8 +7,10 @@ use crate::support::fake_webui_bundle;
 use crate::support::http_client::Client;
 
 use axum::http::StatusCode;
-use codeyard::backend::{db, identity::passwords};
-use codeyard_webui::{app::Page, pages::account};
+use codeyard::backend::db;
+use codeyard::backend::identity::passwords;
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::account;
 use db::users::signup_requests as requests;
 
 async fn user(f: &Database, name: &str) -> codeyard_db_core::models::User {

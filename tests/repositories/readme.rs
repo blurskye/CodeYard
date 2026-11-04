@@ -9,17 +9,15 @@ use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
 };
-use codeyard::backend::{
-    db,
-    repositories::{
-        lifecycle::provision,
-        store::{repo_store, FileWrite, RepoStore},
-    },
-};
-use codeyard_webui::{
-    app::{Page, PageEnvelope},
-    pages::repos::{self as view, tree::MAX_README_BYTES},
-};
+use codeyard::backend::db;
+use codeyard_app::repositories::lifecycle::provision;
+use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_app::repositories::store::repo_store;
+use codeyard_app::repositories::store::RepoStore;
+use codeyard_webui::app::Page;
+use codeyard_webui::app::PageEnvelope;
+use codeyard_webui::pages::repos as view;
+use codeyard_webui::pages::repos::tree::MAX_README_BYTES;
 use database::Database;
 use std::io::Write;
 use tower::ServiceExt;

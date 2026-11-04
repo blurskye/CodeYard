@@ -1,9 +1,10 @@
 //! Incremental log durability, cursors and retention on both native engines.
 use crate::support::database::Database;
 
-use codeyard::backend::ci::CiConfig;
+use codeyard_app::ci::config::CiConfig;
 
-use codeyard_actions::progress::{Event, Update};
+use codeyard_actions::progress::Event;
+use codeyard_actions::progress::Update;
 use codeyard_db_actions::action_logs::Target;
 use codeyard_db_core::models::CiRun;
 use codeyard_model::ci::LogLine;
@@ -65,7 +66,7 @@ impl Fixture {
         .await
         .unwrap()
         .unwrap();
-        let generation = codeyard::backend::ci::runtime::token_hash("chunk-runtime");
+        let generation = codeyard_support::token_hash::token_hash("chunk-runtime");
         codeyard_db_actions::action_objects::issue_token(
             db.pool(),
             run.id,
@@ -144,7 +145,7 @@ impl Fixture {
     }
 
     async fn capability(&self, secret: &str, job: Option<i64>, step: Option<i32>) -> String {
-        let hash = codeyard::backend::ci::runtime::token_hash(secret);
+        let hash = codeyard_support::token_hash::token_hash(secret);
         assert!(codeyard_db_actions::action_logs::issue(
             self.db.pool(),
             self.owner,
@@ -295,7 +296,7 @@ async fn ordered_read_across_500_chunks(pg: bool) {
         .unwrap()
         .unwrap();
     assert_eq!(snapshot.lines.len(), 1000);
-    let (bytes, kind, _) = codeyard::backend::ci::logs::archive::encode(snapshot).unwrap();
+    let (bytes, kind, _) = codeyard_app::ci::logs::archive::encode(snapshot).unwrap();
     assert_eq!(kind, "application/zip");
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
     let mut text = String::new();
@@ -550,7 +551,7 @@ async fn expiry(pg: bool) {
             job: None,
             step: None
         },
-        &codeyard::backend::ci::runtime::token_hash("expired")
+        &codeyard_support::token_hash::token_hash("expired")
     )
     .await
     .unwrap());

@@ -1,15 +1,15 @@
 //! Registry requests as Docker sends them, against both database engines.
-use crate::support::{database::Database, http_client::Client};
+use crate::support::database::Database;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, Request, StatusCode},
     Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard::backend::{
-    identity::tokens::{self, TokenInput},
-    packages,
-};
+use codeyard::backend::identity::tokens;
+use codeyard_app::packages;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -427,7 +427,7 @@ async fn oci(pg: bool) {
         .await;
     f.execute("UPDATE package_blob_grants SET expires_at=0", &[])
         .await;
-    let storage = codeyard::backend::storage::ObjectStore::open(root.path(), None)
+    let storage = codeyard_app::storage::ObjectStore::open(root.path(), None)
         .await
         .unwrap();
     packages::collect(f.pool(), &storage).await.unwrap();
@@ -691,7 +691,7 @@ async fn packages_oci_postgres() {
 #[tokio::test]
 async fn packages_reject_truncated_or_corrupt_chunks() {
     let root = tempfile::tempdir().unwrap();
-    let storage = codeyard::backend::storage::ObjectStore::open(root.path(), None)
+    let storage = codeyard_app::storage::ObjectStore::open(root.path(), None)
         .await
         .unwrap();
     let bytes = b"original";
@@ -702,7 +702,7 @@ async fn packages_reject_truncated_or_corrupt_chunks() {
     let key = codeyard_db_repos::packages::object_key(&blob.digest);
     storage
         .put_bytes(
-            &codeyard::backend::storage::Upload {
+            &codeyard_app::storage::Upload {
                 key: &key,
                 bytes: blob.size,
                 content_type: "application/octet-stream",

@@ -2,18 +2,19 @@
 //! single-use codes, recovery codes, password-gated changes, administrator recovery and the
 //! settings forms over HTTP. On SQLite and PostgreSQL.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
+use crate::support::database::Database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client::Client;
 use crate::support::native_database::token;
-use crate::support::{database::Database, PASSWORD_WORK};
+use crate::support::PASSWORD_WORK;
 use axum::{
     body::{to_bytes, Body},
     http::{header, HeaderMap, Request, StatusCode},
     Router,
 };
-use codeyard::backend::api::create_router;
-use codeyard::backend::app::AppState;
-use codeyard::backend::ci::CiConfig;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
 use codeyard_support::secrets::SecretEncryptor;
 
 use codeyard_identity::login::FirstFactor;
@@ -23,7 +24,7 @@ use codeyard_identity::login::PasswordCredentials;
 use codeyard_identity::sessions::InitiatingSession;
 use codeyard_identity::sessions::SessionContext;
 
-use codeyard::backend::storage::ObjectStore;
+use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::models::User;
 use codeyard_identity::two_factor::TwoFactorError;
 use std::sync::Arc;
@@ -793,7 +794,8 @@ async fn password_change_ends_pending_sign_ins(pg: bool) {
 }
 
 async fn enrollment_and_revocation(pg: bool) {
-    use codeyard_db_identity::users::two_factor::{self as stored, FactorAuthority};
+    use codeyard_db_identity::users::two_factor as stored;
+    use codeyard_db_identity::users::two_factor::FactorAuthority;
     let _work = PASSWORD_WORK.lock().await;
     let mut database = fixture(pg).await;
     let pool = database.pool();
@@ -886,7 +888,8 @@ async fn enrollment_and_revocation(pg: bool) {
 }
 
 async fn unsuccessful_disable_changes_nothing(pg: bool) {
-    use codeyard_db_identity::users::two_factor::{self as stored, FactorAuthority};
+    use codeyard_db_identity::users::two_factor as stored;
+    use codeyard_db_identity::users::two_factor::FactorAuthority;
     let _work = PASSWORD_WORK.lock().await;
     let mut database = fixture(pg).await;
     let alice = new_user(&database, "alice", false).await;

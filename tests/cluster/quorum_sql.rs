@@ -1114,37 +1114,33 @@ async fn coordinator_publication(pool: &DbPool) {
     let f = setup(pool, 2, "2").await;
     let id = Uuid::new_v4().to_string();
     let prepared =
-        codeyard::backend::cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
+        codeyard_app::cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
             .await
             .unwrap();
     assert_eq!(prepared.record().id, id);
     votes(pool, &f, &id).await;
     assert!(
-        codeyard::backend::cluster::writes::collect_votes(pool, &prepared)
+        codeyard_app::cluster::writes::collect_votes(pool, &prepared)
             .await
             .unwrap()
     );
-    let committed = codeyard::backend::cluster::writes::decide(pool, &prepared, true)
+    let committed = codeyard_app::cluster::writes::decide(pool, &prepared, true)
         .await
         .unwrap();
     assert_eq!(committed.decision, "commit");
-    assert!(
-        codeyard::backend::cluster::writes::publish(pool, &committed)
-            .await
-            .unwrap_err()
-            .is::<codeyard::backend::cluster::writes::OutcomeUnknown>()
-    );
+    assert!(codeyard_app::cluster::writes::publish(pool, &committed)
+        .await
+        .unwrap_err()
+        .is::<codeyard_app::cluster::writes::OutcomeUnknown>());
     assert!(codeyard_db_cluster::cluster::writes::mark_write_applied(
         pool, f.repo, f.primary, 1, 1
     )
     .await
     .unwrap());
-    assert!(
-        codeyard::backend::cluster::writes::publish(pool, &committed)
-            .await
-            .unwrap_err()
-            .is::<codeyard::backend::cluster::writes::OutcomeUnknown>()
-    );
+    assert!(codeyard_app::cluster::writes::publish(pool, &committed)
+        .await
+        .unwrap_err()
+        .is::<codeyard_app::cluster::writes::OutcomeUnknown>());
     assert!(codeyard_db_cluster::cluster::writes::mark_write_applied(
         pool,
         f.repo,
@@ -1154,12 +1150,12 @@ async fn coordinator_publication(pool: &DbPool) {
     )
     .await
     .unwrap());
-    codeyard::backend::cluster::writes::publish(pool, &committed)
+    codeyard_app::cluster::writes::publish(pool, &committed)
         .await
         .unwrap();
     // A later refusal cannot turn a committed decision into a rollback.
     assert_eq!(
-        codeyard::backend::cluster::writes::decide(pool, &prepared, false)
+        codeyard_app::cluster::writes::decide(pool, &prepared, false)
             .await
             .unwrap()
             .decision,
@@ -1173,7 +1169,7 @@ async fn coordinator_missing_vote(pool: &DbPool) {
     let id = Uuid::new_v4().to_string();
     let started = std::time::Instant::now();
     let prepared =
-        codeyard::backend::cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
+        codeyard_app::cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
             .await
             .unwrap();
     assert!(
@@ -1182,11 +1178,11 @@ async fn coordinator_missing_vote(pool: &DbPool) {
             .unwrap()
     );
     assert!(
-        !codeyard::backend::cluster::writes::collect_votes(pool, &prepared)
+        !codeyard_app::cluster::writes::collect_votes(pool, &prepared)
             .await
             .unwrap()
     );
-    let aborted = codeyard::backend::cluster::writes::decide(pool, &prepared, true)
+    let aborted = codeyard_app::cluster::writes::decide(pool, &prepared, true)
         .await
         .unwrap();
     assert_eq!(aborted.decision, "abort");
@@ -1201,7 +1197,7 @@ async fn coordinator_missing_vote(pool: &DbPool) {
 async fn coordinator_admission(pool: &DbPool) {
     let f = setup(pool, 2, "2").await;
     configure(pool, "1").await.unwrap();
-    assert!(codeyard::backend::cluster::writes::begin(
+    assert!(codeyard_app::cluster::writes::begin(
         pool,
         f.repo,
         f.primary,
@@ -1212,7 +1208,7 @@ async fn coordinator_admission(pool: &DbPool) {
     .await
     .is_err());
     configure(pool, "2").await.unwrap();
-    assert!(codeyard::backend::cluster::writes::begin(
+    assert!(codeyard_app::cluster::writes::begin(
         pool,
         f.repo,
         f.primary,
@@ -1222,7 +1218,7 @@ async fn coordinator_admission(pool: &DbPool) {
     )
     .await
     .is_err());
-    assert!(codeyard::backend::cluster::writes::begin(
+    assert!(codeyard_app::cluster::writes::begin(
         pool,
         f.repo,
         f.voters[1],
@@ -1233,7 +1229,7 @@ async fn coordinator_admission(pool: &DbPool) {
     .await
     .is_err());
     assert!(
-        codeyard::backend::cluster::writes::recover(pool, f.repo, f.primary, 1)
+        codeyard_app::cluster::writes::recover(pool, f.repo, f.primary, 1)
             .await
             .is_err()
     );
@@ -1247,7 +1243,7 @@ async fn coordinator_admission(pool: &DbPool) {
     )
     .await
     .unwrap());
-    assert!(codeyard::backend::cluster::writes::begin(
+    assert!(codeyard_app::cluster::writes::begin(
         pool,
         f.repo,
         f.primary,
@@ -1257,7 +1253,7 @@ async fn coordinator_admission(pool: &DbPool) {
     )
     .await
     .is_err());
-    assert!(codeyard::backend::cluster::writes::begin(
+    assert!(codeyard_app::cluster::writes::begin(
         pool,
         f.repo,
         f.voters[1],
@@ -1267,7 +1263,7 @@ async fn coordinator_admission(pool: &DbPool) {
     )
     .await
     .is_err());
-    let view = codeyard::backend::cluster::writes::recover(pool, f.repo, f.voters[1], 2)
+    let view = codeyard_app::cluster::writes::recover(pool, f.repo, f.voters[1], 2)
         .await
         .unwrap();
     assert!(!view.serving);
@@ -1276,7 +1272,7 @@ async fn coordinator_admission(pool: &DbPool) {
 
 async fn coordinator_three_voters(pool: &DbPool) {
     let f = setup(pool, 3, "majority").await;
-    assert!(codeyard::backend::cluster::writes::begin(
+    assert!(codeyard_app::cluster::writes::begin(
         pool,
         f.repo,
         f.primary,
@@ -1299,21 +1295,21 @@ async fn coordinator_duplicate_begin(pool: &DbPool) {
     let f = setup(pool, 2, "2").await;
     let id = Uuid::new_v4().to_string();
     let original =
-        codeyard::backend::cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
+        codeyard_app::cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
             .await
             .unwrap();
     let retried =
-        codeyard::backend::cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
+        codeyard_app::cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
             .await
             .unwrap();
     assert_eq!(original.record(), retried.record());
     assert!(
-        !codeyard::backend::cluster::writes::collect_votes(pool, &retried)
+        !codeyard_app::cluster::writes::collect_votes(pool, &retried)
             .await
             .unwrap()
     );
     assert_eq!(
-        codeyard::backend::cluster::writes::decide(pool, &retried, true)
+        codeyard_app::cluster::writes::decide(pool, &retried, true)
             .await
             .unwrap()
             .decision,
@@ -1332,18 +1328,16 @@ async fn coordinator_recovery(pool: &DbPool) {
     let f = setup(pool, 2, "2").await;
     let id = Uuid::new_v4().to_string();
     let prepared =
-        codeyard::backend::cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
+        codeyard_app::cluster::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
             .await
             .unwrap();
     votes(pool, &f, &id).await;
-    let committed = codeyard::backend::cluster::writes::decide(pool, &prepared, true)
+    let committed = codeyard_app::cluster::writes::decide(pool, &prepared, true)
         .await
         .unwrap();
-    assert!(
-        codeyard::backend::cluster::writes::publish(pool, &committed)
-            .await
-            .is_err()
-    );
+    assert!(codeyard_app::cluster::writes::publish(pool, &committed)
+        .await
+        .is_err());
     let target = f.voters[1];
     assert!(codeyard_db_cluster::cluster::writes::switch_write_family(
         pool,
@@ -1355,7 +1349,7 @@ async fn coordinator_recovery(pool: &DbPool) {
     )
     .await
     .unwrap());
-    let view = codeyard::backend::cluster::writes::recover(pool, f.repo, target, 2)
+    let view = codeyard_app::cluster::writes::recover(pool, f.repo, target, 2)
         .await
         .unwrap();
     assert_eq!(view.committed_version, 1);
@@ -1412,7 +1406,8 @@ pub(super) async fn replace_node_key(pool: &DbPool, node: i64) -> NodeKey {
 }
 
 async fn term_directory_admission(pool: &DbPool) {
-    use codeyard::backend::cluster::{self, context::term_path};
+    use codeyard_app::cluster;
+    use codeyard_app::cluster::context::term_path;
     let f = setup(pool, 2, "2").await;
     let root = tempfile::tempdir().unwrap();
     let key = replace_node_key(pool, f.primary).await;
@@ -1525,7 +1520,7 @@ async fn quorum_promotion_fences(pool: &DbPool) {
     .await
     .unwrap();
     assert!(
-        codeyard::backend::cluster::replicas::promote(pool, f.repo, Some(target), true)
+        codeyard_app::cluster::replicas::promote::promote(pool, f.repo, Some(target), true)
             .await
             .is_err()
     );
@@ -1536,10 +1531,11 @@ async fn quorum_promotion_fences(pool: &DbPool) {
         (before.primary_id, before.term, before.serving),
         (f.primary, 1, true)
     );
-    let pending = codeyard::backend::cluster::replicas::promote(pool, f.repo, Some(target), false)
-        .await
-        .unwrap_err();
-    assert!(pending.is::<codeyard::backend::cluster::replicas::RecoveryPending>());
+    let pending =
+        codeyard_app::cluster::replicas::promote::promote(pool, f.repo, Some(target), false)
+            .await
+            .unwrap_err();
+    assert!(pending.is::<codeyard_app::cluster::replicas::promote::RecoveryPending>());
     let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
         .await
         .unwrap();
@@ -1552,10 +1548,10 @@ async fn quorum_promotion_fences(pool: &DbPool) {
         .iter()
         .all(|voter| voter.term == 2 && voter.applied_version == -1));
     assert!(
-        codeyard::backend::cluster::replicas::promote(pool, f.repo, Some(target), false)
+        codeyard_app::cluster::replicas::promote::promote(pool, f.repo, Some(target), false)
             .await
             .unwrap_err()
-            .is::<codeyard::backend::cluster::replicas::RecoveryPending>()
+            .is::<codeyard_app::cluster::replicas::promote::RecoveryPending>()
     );
     assert_eq!(
         codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
@@ -1564,15 +1560,20 @@ async fn quorum_promotion_fences(pool: &DbPool) {
             .term,
         2
     );
-    assert!(
-        codeyard::backend::cluster::replicas::promote(pool, f.repo, Some(f.primary), false)
-            .await
-            .is_err()
-    );
+    assert!(codeyard_app::cluster::replicas::promote::promote(
+        pool,
+        f.repo,
+        Some(f.primary),
+        false
+    )
+    .await
+    .is_err());
 }
 
 async fn quorum_directory_recovery(pool: &DbPool) {
-    use codeyard::backend::cluster::{self, context::term_path, replicas};
+    use codeyard_app::cluster;
+    use codeyard_app::cluster::context::term_path;
+    use codeyard_app::cluster::replicas;
     let seed = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init_bare(seed.path()).unwrap();
     let signature = git2::Signature::now("owner", "owner@example.test").unwrap();
@@ -1624,12 +1625,12 @@ async fn quorum_directory_recovery(pool: &DbPool) {
     .await
     .unwrap();
     assert!(
-        codeyard::backend::cluster::replicas::promote(pool, f.repo, Some(target), false)
+        codeyard_app::cluster::replicas::promote::promote(pool, f.repo, Some(target), false)
             .await
             .unwrap_err()
-            .is::<codeyard::backend::cluster::replicas::RecoveryPending>()
+            .is::<codeyard_app::cluster::replicas::promote::RecoveryPending>()
     );
-    assert!(!codeyard::backend::cluster::replicas::recover_family(
+    assert!(!codeyard_app::cluster::replicas::promote::recover_family(
         pool,
         f.repo,
         f.primary,
@@ -1643,7 +1644,7 @@ async fn quorum_directory_recovery(pool: &DbPool) {
             .unwrap()
             .serving
     );
-    assert!(codeyard::backend::cluster::replicas::recover_family(
+    assert!(codeyard_app::cluster::replicas::promote::recover_family(
         pool,
         f.repo,
         target,
@@ -1679,12 +1680,12 @@ async fn legacy_publishers_refused(pool: &DbPool) {
         .await
         .unwrap()
         .unwrap();
-    let error = codeyard::backend::cluster::writes::require_legacy_publisher(pool, f.repo)
+    let error = codeyard_app::cluster::writes::require_legacy_publisher(pool, f.repo)
         .await
         .unwrap_err();
-    assert!(error.is::<codeyard::backend::cluster::writes::PublisherUnavailable>());
+    assert!(error.is::<codeyard_app::cluster::writes::PublisherUnavailable>());
     let root = tempfile::tempdir().unwrap();
-    assert!(codeyard::backend::repositories::store::begin_ref_change(
+    assert!(codeyard_app::repositories::store::local::begin_ref_change(
         pool,
         f.repo,
         root.path(),
@@ -1709,7 +1710,7 @@ async fn legacy_publishers_refused(pool: &DbPool) {
     )
     .await
     .unwrap();
-    codeyard::backend::cluster::writes::require_legacy_publisher(pool, standalone.id)
+    codeyard_app::cluster::writes::require_legacy_publisher(pool, standalone.id)
         .await
         .unwrap();
     match pool {
@@ -1726,10 +1727,10 @@ async fn legacy_publishers_refused(pool: &DbPool) {
                 .unwrap();
         }
     }
-    codeyard::backend::cluster::writes::require_legacy_publisher(pool, f.repo)
+    codeyard_app::cluster::writes::require_legacy_publisher(pool, f.repo)
         .await
         .unwrap();
-    let change = codeyard::backend::repositories::store::begin_ref_change(
+    let change = codeyard_app::repositories::store::local::begin_ref_change(
         pool,
         f.repo,
         root.path(),

@@ -3,7 +3,8 @@ use super::{
     OrganizationProfile, TokenInput,
 };
 use axum::http::StatusCode;
-use codeyard_db_repos::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_db_repos::repositories::creation::RepositoryTarget;
 use serde_json::{json, Value};
 
 const BASE: &str = "/api/v3/orgs/acme/dependabot/repository-access";
@@ -42,7 +43,7 @@ async fn contract(pg: bool) {
         (orgs[1].id, "foreign", true),
     ] {
         repositories.push(
-            codeyard::backend::repositories::lifecycle::provision(
+            codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 RepositoryCreationOwner {

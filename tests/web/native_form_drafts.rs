@@ -1,13 +1,16 @@
 //! Native VDOM policy tests, not browser/domain acceptance or mocked product responses.
 //! The fetched WASM browser suite must separately prove real user draft preservation.
-use codeyard_webui::pages::{
-    ci,
-    repos::{
-        actions::{ActionsPage, Workflow},
-        chrome::{repo_engagement, repo_tabs, RepoChrome},
-        issues::{self, DetailDraft, Item, Kind, Repository},
-    },
-};
+use codeyard_api_rest::user::fine_grained::ci;
+use codeyard_webui::pages::repos::actions::ActionsPage;
+use codeyard_webui::pages::repos::actions::Workflow;
+use codeyard_webui::pages::repos::chrome::repo_engagement;
+use codeyard_webui::pages::repos::chrome::repo_tabs;
+use codeyard_webui::pages::repos::chrome::RepoChrome;
+use codeyard_webui::pages::repos::issues;
+use codeyard_webui::pages::repos::issues::DetailDraft;
+use codeyard_webui::pages::repos::issues::Item;
+use codeyard_webui::pages::repos::issues::Kind;
+use codeyard_webui::pages::repos::issues::Repository;
 use dioxus::{
     core::{AttributeValue, Mutation},
     prelude::*,

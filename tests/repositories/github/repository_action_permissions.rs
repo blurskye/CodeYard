@@ -1,10 +1,9 @@
 use super::*;
-use codeyard::backend::{
-    ci::{queue::RunQueue, CiExecutionMode},
-    db::repositories::creation::RepositoryCreationOwner,
-    notifications::NotificationBroadcaster,
-    repositories::lifecycle,
-};
+use codeyard_app::ci::config::CiExecutionMode;
+use codeyard_app::ci::queue::RunQueue;
+use codeyard_app::repositories::lifecycle;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_notifications::broadcast::NotificationBroadcaster;
 use std::collections::BTreeSet;
 
 async fn contract(pg: bool) {
@@ -171,7 +170,7 @@ async fn contract(pg: bool) {
         .claim(
             "slot-1",
             CiExecutionMode::Local,
-            &codeyard::backend::ci::CiConfig::default().platform_labels()
+            &codeyard_app::ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()
@@ -208,7 +207,7 @@ async fn contract(pg: bool) {
         .claim(
             "slot-1",
             CiExecutionMode::Local,
-            &codeyard::backend::ci::CiConfig::default().platform_labels()
+            &codeyard_app::ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()

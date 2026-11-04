@@ -1,15 +1,13 @@
 use super::github::exchange;
-use crate::support::{
-    database::Database,
-    fake_webui_bundle as bundle,
-    http_client::{visible_text, Client},
-};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle as bundle;
+use crate::support::http_client::visible_text;
+use crate::support::http_client::Client;
 use axum::{http::StatusCode, Router};
-use codeyard::backend::{
-    db,
-    identity::tokens::{self, TokenInput},
-    repositories::lifecycle,
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_app::repositories::lifecycle;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 
 async fn call(

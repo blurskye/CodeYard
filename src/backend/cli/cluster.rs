@@ -1,31 +1,34 @@
-use crate::backend::cluster::adopt_repositories;
-use crate::backend::cluster::approve;
-use crate::backend::cluster::create_invite;
-use crate::backend::cluster::join;
-use crate::backend::cluster::parse_duration;
-use codeyard_support::node_identity::load_existing;
-use codeyard_support::node_identity::load_or_create;
-
-use crate::backend::cluster::hostname;
-use crate::backend::cluster::replicas::Promotion;
-use crate::backend::cluster::require_postgres;
-use crate::backend::cluster::revoke;
-use crate::backend::cluster::InviteOptions;
-use crate::backend::cluster::JoinTicket;
-use crate::backend::cluster::Membership;
-use crate::backend::cluster::NodeAddress;
-use crate::backend::cluster::Relay;
-use crate::backend::cluster::NEEDS_POSTGRES;
-use codeyard_support::node_identity::NodeKey;
-
-use crate::backend::node::NodeRoles;
-use anyhow::{anyhow, bail, ensure, Context, Result};
-use chrono::{DateTime, Utc};
+use anyhow::anyhow;
+use anyhow::bail;
+use anyhow::ensure;
+use anyhow::Result;
+use chrono::DateTime;
+use chrono::Utc;
+use codeyard_app::cluster::adopt_repositories;
+use codeyard_app::cluster::hostname;
+use codeyard_app::cluster::pairing::approve;
+use codeyard_app::cluster::pairing::create_invite;
+use codeyard_app::cluster::pairing::join;
+use codeyard_app::cluster::pairing::parse_duration;
+use codeyard_app::cluster::pairing::revoke;
+use codeyard_app::cluster::pairing::InviteOptions;
+use codeyard_app::cluster::pairing::JoinTicket;
+use codeyard_app::cluster::pairing::Membership;
+use codeyard_app::cluster::replicas::promote::Promotion;
+use codeyard_app::cluster::require_postgres;
+use codeyard_app::cluster::transport::NodeAddress;
+use codeyard_app::cluster::transport::Relay;
+use codeyard_app::cluster::NEEDS_POSTGRES;
 use codeyard_db_cluster::cluster::Authority;
 use codeyard_db_core::models::NodeStatusChange;
 use codeyard_db_core::models::ReplicaSetting;
 use codeyard_db_core::DbPool;
-use std::{path::Path, time::Duration};
+use codeyard_model::node_roles::NodeRoles;
+use codeyard_support::node_identity::load_existing;
+use codeyard_support::node_identity::load_or_create;
+use codeyard_support::node_identity::NodeKey;
+use std::path::Path;
+use std::time::Duration;
 
 /// The address this node last reported while serving, for putting in a ticket.
 pub async fn own_address(pool: &DbPool, key: &NodeKey) -> Result<NodeAddress> {
@@ -157,7 +160,7 @@ pub async fn run_offline(
             );
             let ticket = JoinTicket::decode(ticket)?;
             let relay = Relay::parse(std::env::var("IROH_RELAY").ok().as_deref())?;
-            let jit = crate::backend::ci::runner_credentials::jit_from_env()?;
+            let jit = codeyard_app::ci::runner_credentials::jit_from_env()?;
             let name = match (name, &jit) {
                 (Some(name), _) => name.clone(),
                 (None, Some(config)) => config.node_name.clone(),
@@ -165,9 +168,9 @@ pub async fn run_offline(
             };
             let key = load_or_create(state_dir)?;
             let membership = join(&ticket, &key, &relay, &name, None).await?;
-            crate::backend::cluster::worker::save_core(state_dir, &ticket)?;
+            codeyard_app::cluster::worker::save_core(state_dir, &ticket)?;
             if let Some(config) = jit {
-                crate::backend::ci::runner_credentials::save_work_folder(
+                codeyard_app::ci::runner_credentials::save_work_folder(
                     state_dir,
                     &config.work_folder,
                 )?;
@@ -388,7 +391,7 @@ async fn set_replicas(pool: &DbPool, value: &str) -> Result<()> {
     println!(
         "Each repository keeps {}. Copies follow within {} seconds.",
         describe(setting),
-        crate::backend::cluster::replicas::INTERVAL.as_secs()
+        codeyard_app::cluster::replicas::INTERVAL.as_secs()
     );
     Ok(())
 }
@@ -419,7 +422,8 @@ async fn is_primary(pool: &DbPool, repository: i64, node: i64) -> Result<bool> {
 
 async fn report_promotion(pool: &DbPool, promotion: Promotion) -> Result<()> {
     let repository =
-        crate::backend::cluster::replicas::repository_name(pool, promotion.repository).await?;
+        codeyard_app::cluster::replicas::promote::repository_name(pool, promotion.repository)
+            .await?;
     let from = node_name(pool, promotion.from).await?;
     let to = node_name(pool, promotion.to).await?;
     if codeyard_db_cluster::cluster::writes::write_settings(pool)
@@ -432,7 +436,7 @@ async fn report_promotion(pool: &DbPool, promotion: Promotion) -> Result<()> {
     }
     println!(
         "{repository}: '{to}' is the primary now. '{from}' keeps a copy and catches up within {} seconds.",
-        crate::backend::cluster::replicas::INTERVAL.as_secs()
+        codeyard_app::cluster::replicas::INTERVAL.as_secs()
     );
     if promotion.lost_writes > 0 {
         eprintln!(
@@ -455,13 +459,14 @@ async fn promote_with_recovery(
         .await?
         .and_then(|row| row.storage_node_id)
         .context("repository has no primary")?;
-    let error = match crate::backend::cluster::replicas::promote(pool, repository, to, force).await
+    let error = match codeyard_app::cluster::replicas::promote::promote(pool, repository, to, force)
+        .await
     {
         Ok(promotions) => return Ok(promotions),
         Err(error) => error,
     };
     let Some(target) = error
-        .downcast_ref::<crate::backend::cluster::replicas::RecoveryPending>()
+        .downcast_ref::<codeyard_app::cluster::replicas::promote::RecoveryPending>()
         .map(|pending| pending.target)
     else {
         return Err(error);
@@ -474,8 +479,10 @@ async fn promote_with_recovery(
     else {
         return Err(error);
     };
-    if !crate::backend::cluster::replicas::recover_family(pool, repository, local.id, repos_path)
-        .await?
+    if !codeyard_app::cluster::replicas::promote::recover_family(
+        pool, repository, local.id, repos_path,
+    )
+    .await?
     {
         return Err(error);
     }
@@ -566,9 +573,11 @@ async fn promote_command(
                             .await?
                             .serving
                     {
-                        let name =
-                            crate::backend::cluster::replicas::repository_name(pool, *repository)
-                                .await?;
+                        let name = codeyard_app::cluster::replicas::promote::repository_name(
+                            pool,
+                            *repository,
+                        )
+                        .await?;
                         eprintln!("{name}: {error:#}");
                         fenced += 1;
                     }
@@ -577,7 +586,8 @@ async fn promote_command(
             let failed = remaining.len() + fenced;
             for (repository, _) in remaining {
                 let name =
-                    crate::backend::cluster::replicas::repository_name(pool, repository).await?;
+                    codeyard_app::cluster::replicas::promote::repository_name(pool, repository)
+                        .await?;
                 if let Some((_, error)) = failures.iter().find(|(id, _)| *id == repository) {
                     eprintln!("{name}: {error:#}");
                 } else {
@@ -611,7 +621,7 @@ async fn list(pool: &DbPool) -> Result<()> {
             "{:<20} {:<8} {:<28} {:<10} {:<10} {}",
             node.name,
             node.status,
-            crate::backend::node::describe_roles(&node.roles),
+            codeyard_model::node_roles::describe_roles(&node.roles),
             node.last_seen.map_or("never".to_owned(), ago),
             node.version.as_deref().unwrap_or("-"),
             node.public_key,
@@ -634,7 +644,7 @@ async fn invites(pool: &DbPool) -> Result<()> {
         println!(
             "{:<6} {:<28} {:<9} {:<9} {:<5} {}",
             invite.id,
-            crate::backend::node::describe_roles(&invite.roles),
+            codeyard_model::node_roles::describe_roles(&invite.roles),
             if invite.reusable {
                 "reusable"
             } else {

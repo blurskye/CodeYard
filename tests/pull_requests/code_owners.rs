@@ -37,7 +37,7 @@ impl World {
         let carol_id = database.actor("carol").await;
         let dave_id = database.actor("dave").await;
         let root = tempfile::tempdir().unwrap();
-        let repository = codeyard::backend::repositories::lifecycle::provision(
+        let repository = codeyard_app::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -353,7 +353,7 @@ async fn owner_regressions_contract(pg: bool) {
         for user in current {
             assert_eq!(
                 writers.contains(&user.id),
-                codeyard::backend::repositories::access::can_write(pool, &user, &repo)
+                codeyard_identity::repository_access::can_write(pool, &user, &repo)
                     .await
                     .unwrap()
             );
@@ -363,7 +363,7 @@ async fn owner_regressions_contract(pg: bool) {
 }
 
 async fn private_teams_and_unverified_email_do_not_resolve(pg: bool) {
-    use codeyard::backend::repositories::code_owners::resolve_owners;
+    use codeyard_app::repositories::code_owners::resolve_owners;
     let mut world = World::new(pg).await;
     let pool = world._database.pool();
     let repo = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")
@@ -411,7 +411,7 @@ async fn private_teams_and_unverified_email_do_not_resolve(pg: bool) {
         resolved["@acme/council"].is_empty(),
         "personal repositories must not expand organization teams"
     );
-    let org_repo = codeyard::backend::repositories::lifecycle::provision(
+    let org_repo = codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         world._root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner {

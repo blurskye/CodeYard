@@ -1,9 +1,9 @@
 //! Mention notifications. A new issue, pull request, comment or review text, and an edited
 //! issue or pull request body, notifies each user it newly @mentions. The names are the ones the
 //! Markdown renderer links, so a mention in code or in a link notifies nobody.
+use crate::broadcast::NotificationBroadcaster;
 use crate::create::create_and_broadcast_notification;
 use crate::create::NotificationRequest;
-use crate::NotificationBroadcaster;
 
 use codeyard_identity::repository_access::can_read;
 use codeyard_webui::components::references::mentioned_usernames;

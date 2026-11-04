@@ -39,7 +39,7 @@ async fn setup(pg: bool) -> World {
     let root = tempfile::tempdir().unwrap();
     let mut repositories = Vec::new();
     for (name, private) in [("proj", false), ("docs", false), ("vault", true)] {
-        let repo = codeyard::backend::repositories::lifecycle::provision(
+        let repo = codeyard_app::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -137,9 +137,10 @@ async fn bounded_previews_and_current_targets(pg: bool) {
         assert_eq!(item["body"], body);
         assert_eq!(item["link"], "/alice/renamed/issues/7?page=3#comment-9");
     }
-    use codeyard_db_orgs::organizations::{
-        self, NewOrganization, OrganizationOutcome, OrganizationProfile,
-    };
+    use super::NewOrganization;
+    use super::OrganizationProfile;
+    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_db_orgs::organizations;
     assert!(matches!(
         organizations::create_organization(
             w.database.pool(),
@@ -151,7 +152,7 @@ async fn bounded_previews_and_current_targets(pg: bool) {
         .unwrap(),
         OrganizationOutcome::Applied(_)
     ));
-    codeyard::backend::repositories::lifecycle::transfer(
+    codeyard_app::repositories::lifecycle::transfer(
         w.database.pool(),
         None,
         w.alice_id,
@@ -169,7 +170,8 @@ async fn bounded_previews_and_current_targets(pg: bool) {
         assert!(item["body"].as_str().unwrap().chars().count() <= 160);
         assert_eq!(item["link"], "/moved_org/renamed/issues/7?page=3#comment-9");
     }
-    use codeyard_notifications::{current_event, NotificationEvent};
+    use codeyard_notifications::current_event;
+    use codeyard_notifications::NotificationEvent;
     let hint = NotificationEvent::Created {
         user_id: w.alice_id,
         notification_id: ids[0],

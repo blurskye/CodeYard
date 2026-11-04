@@ -1,11 +1,13 @@
 //! The public organization page at /NAME: each viewer sees the repositories the store allows.
 use super::fixture::{Actor, Fixture, Reply};
+use super::TeamPrivacy;
 use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use codeyard_db_orgs::organizations::TeamPrivacy;
-use codeyard_webui::{app::Page, bootstrap, pages::orgs::OrganizationProfile};
+use codeyard_api_rest::user::fine_grained::orgs::OrganizationProfile;
+use codeyard_webui::app::Page;
+use codeyard_webui::bootstrap;
 use std::collections::HashSet;
 use tower::ServiceExt;
 

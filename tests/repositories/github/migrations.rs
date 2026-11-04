@@ -4,7 +4,8 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use codeyard::backend::repositories::{lifecycle, store::repo_store};
+use codeyard_app::repositories::lifecycle;
+use codeyard_app::repositories::store::repo_store;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 mod exports;
@@ -791,7 +792,7 @@ async fn contract(pg: bool, source: &Source) {
 #[tokio::test]
 async fn github_source_imports() {
     crate::support::fake_webui_bundle::install();
-    use codeyard::backend::repositories::imports::source_url;
+    use codeyard_app::repositories::imports::source_url;
     assert!(source_url("http://127.0.0.1/repo.git").is_err());
     std::env::set_var("MIGRATIONS_ALLOW_PRIVATE", "true");
     let source = source().await;

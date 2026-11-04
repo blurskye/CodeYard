@@ -1785,7 +1785,7 @@ async fn postgres_ban_and_milestone_write_do_not_deadlock() {
         )
         .await
         .unwrap();
-        let organization = codeyard_db_orgs::organizations::create_organization(
+        let organization = super::create_organization(
             pool,
             owner.id,
             &codeyard_db_orgs::organizations::NewOrganization::new(
@@ -2604,7 +2604,7 @@ async fn check_repository_search_matches_owner_names(pool: &codeyard_db_core::Db
     let alice = codeyard_db_identity::users::accounts::create_user(pool, "alice", None)
         .await
         .unwrap();
-    let acme = match codeyard_db_orgs::organizations::create_organization(
+    let acme = match super::create_organization(
         pool,
         admin.id,
         &codeyard_db_orgs::organizations::NewOrganization::new(
@@ -3089,7 +3089,9 @@ async fn populated_sqlite_and_postgres_named_operations_have_semantic_parity() {
 }
 
 async fn check_ci_admission_refusals(pool: &codeyard_db_core::DbPool) {
-    use codeyard_db_actions::ci::{self, CiAdmissionRefusal, NewCiRun};
+    use codeyard_db_actions::ci;
+    use codeyard_db_actions::ci::NewCiRun;
+    use codeyard_db_core::ci_policy::CiAdmissionRefusal;
 
     let owner = setup(pool, "public").await;
     let repo = repository(pool, owner.id, "ci-refusals").await;
@@ -3828,7 +3830,8 @@ async fn postgres_list_projections_and_owned_notification_cursor() {
 }
 
 async fn check_notification_cursor(pool: &codeyard_db_core::DbPool) {
-    use codeyard_db_repos::notifications::events::{announce, EventCursor};
+    use codeyard_db_repos::notifications::events::announce;
+    use codeyard_db_repos::notifications::events::EventCursor;
     let mut cursor = EventCursor::connect(pool).await.unwrap();
     let payload = format!("projection-test-{}", uuid::Uuid::new_v4());
     announce(pool, &payload).await.unwrap();
@@ -4754,9 +4757,9 @@ async fn profile_after_update(
     pool: &codeyard_db_core::DbPool,
     actor: i64,
     organization: i64,
-    profile: codeyard_db_orgs::organizations::OrganizationProfile,
+    profile: super::OrganizationProfile,
 ) -> (Option<String>, Option<String>) {
-    match codeyard_db_orgs::organizations::update_organization_profile(
+    match super::update_organization_profile(
         pool,
         actor,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
@@ -4779,12 +4782,12 @@ async fn profile_after_update(
 /// runs. A description-only update must not restore a display name that another update
 /// changed after the request read the organization.
 async fn check_partial_profile_updates_keep_omitted_fields(pool: &codeyard_db_core::DbPool) {
-    use codeyard_db_orgs::organizations::OrganizationProfile;
+    use super::OrganizationProfile;
 
     let owner = codeyard_db_identity::users::accounts::create_user(pool, "profile_owner", None)
         .await
         .unwrap();
-    let organization = match codeyard_db_orgs::organizations::create_organization(
+    let organization = match super::create_organization(
         pool,
         owner.id,
         &codeyard_db_orgs::organizations::NewOrganization::new(
@@ -5516,7 +5519,9 @@ async fn primary_emails_differing_only_in_case_conflict_on_both_engines() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_merge_policy_check_holds_nothing_and_refuses_a_moved_policy_on_both_engines() {
-    use codeyard_db_repos::pull_requests::merge_policy::{AutoMergeIdentity, Changed, Snapshot};
+    use codeyard_db_repos::pull_requests::merge_policy::AutoMergeIdentity;
+    use codeyard_db_repos::pull_requests::merge_policy::Changed;
+    use codeyard_db_repos::pull_requests::merge_policy::Snapshot;
     let postgres = PostgresDatabase::new().await;
     let sqlite = NativeDatabase::new().await;
     for pool in [&postgres.pool, &sqlite.pool] {

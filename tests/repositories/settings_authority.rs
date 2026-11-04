@@ -812,7 +812,7 @@ async fn postgres_collaborator_change_observes_a_ban_that_commits_first() {
 
     let pool = f.database.pool().clone();
     let changing = tokio::spawn(async move {
-        codeyard::backend::repositories::access::change_collaborator(
+        codeyard_identity::repository_access::change_collaborator(
             &pool,
             owner,
             repo,
@@ -830,7 +830,7 @@ async fn postgres_collaborator_change_observes_a_ban_that_commits_first() {
             .expect("the collaborator request must finish after the ban")
             .unwrap()
             .unwrap_err(),
-        codeyard::backend::repositories::access::AccessError::NotFound
+        codeyard_identity::repository_access::AccessError::NotFound
     );
     let grants: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM repo_access WHERE repo_id=$1 AND user_id=$2")

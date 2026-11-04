@@ -5,7 +5,7 @@ use crate::support::http_client as requests;
 use crate::support::native_database as native;
 
 use axum::http::StatusCode;
-use codeyard::backend::api::user::responses::PublicUserResponse;
+use codeyard_api_http::shared::user::responses::PublicUserResponse;
 
 use codeyard_db_identity::users::accounts::AuthorDisplay;
 use serde_json::json;
@@ -116,11 +116,12 @@ async fn profile_updates_reject_nul_in_json_and_native_forms_on_both_engines() {
 
 #[tokio::test]
 async fn setup_rejects_nul_email_on_both_engines() {
-    use codeyard_identity::{
-        credentials::PasswordAccount,
-        sessions::{InitiatingSession, SessionContext},
-        setup::{self, SetupError, SetupInput},
-    };
+    use codeyard_identity::credentials::PasswordAccount;
+    use codeyard_identity::sessions::InitiatingSession;
+    use codeyard_identity::sessions::SessionContext;
+    use codeyard_identity::setup;
+    use codeyard_identity::setup::SetupError;
+    use codeyard_identity::setup::SetupInput;
     for pg in [false, true] {
         let mut database = crate::support::database::Database::new(pg).await;
         let fresh = native::token();

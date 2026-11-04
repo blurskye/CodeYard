@@ -7,7 +7,7 @@ async fn contract(pg: bool) {
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),

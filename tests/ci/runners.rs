@@ -1,27 +1,27 @@
 //! REST runner administration uses real cluster pairing and the native claim transactions.
-use crate::support::{
-    database::Database, github_spec::assert_github_schema, http_client::Client,
-    organizations::applied,
-};
+use crate::support::database::Database;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::http_client::Client;
+use crate::support::organizations::applied;
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
     Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard::backend::api::create_router;
-use codeyard::backend::app::AppState;
-use codeyard::backend::ci::runner_credentials::JitConfig;
-use codeyard::backend::ci::CiConfig;
-use codeyard::backend::ci::CiExecutionMode;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::ci::config::CiExecutionMode;
+use codeyard_app::ci::runner_credentials::JitConfig;
 
-use codeyard::backend::cluster::Listen;
-use codeyard::backend::cluster::NodeAddress;
-use codeyard::backend::cluster::NodeContext;
-use codeyard::backend::cluster::Relay;
+use codeyard_app::cluster::context::NodeContext;
+use codeyard_app::cluster::transport::Listen;
+use codeyard_app::cluster::transport::NodeAddress;
+use codeyard_app::cluster::transport::Relay;
 use codeyard_support::node_identity::NodeKey;
 
-use codeyard::backend::storage::ObjectStore;
+use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
@@ -94,8 +94,8 @@ async fn token(
     )
 }
 async fn pair(ticket: &str, key: &NodeKey, name: &str) {
-    let ticket = codeyard::backend::cluster::JoinTicket::decode(ticket).unwrap();
-    let joined = codeyard::backend::cluster::join(&ticket, key, &Relay::Off, name, None)
+    let ticket = codeyard_app::cluster::pairing::JoinTicket::decode(ticket).unwrap();
+    let joined = codeyard_app::cluster::pairing::join(&ticket, key, &Relay::Off, name, None)
         .await
         .unwrap();
     assert!(joined.newly_joined);
@@ -108,7 +108,7 @@ async fn contract(pg: bool) {
     let bob = f.actor("runner_member").await;
     let eve = f.actor("runner_outsider").await;
     let org = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             f.pool(),
             alice,
             &codeyard_db_orgs::organizations::NewOrganization::new(
@@ -121,19 +121,13 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            f.pool(),
-            alice,
-            org.id,
-            bob,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(f.pool(), alice, org.id, bob, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let key = NodeKey::generate();
-    let endpoint = codeyard::backend::cluster::bind(
+    let endpoint = codeyard_app::cluster::transport::bind(
         &Listen {
             bind: "127.0.0.1:0".parse().unwrap(),
             relay: Relay::Off,
@@ -144,12 +138,12 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let core = codeyard::backend::cluster::router(
+    let core = codeyard_app::cluster::transport::router(
         endpoint,
-        codeyard::backend::cluster::PairingHandler::new(f.pool().clone()),
+        codeyard_app::cluster::pairing::PairingHandler::new(f.pool().clone()),
     )
     .spawn();
-    codeyard::backend::cluster::wait_for_address(core.endpoint()).await;
+    codeyard_app::cluster::wait_for_address(core.endpoint()).await;
     let address = NodeAddress::of(&core.endpoint().addr());
     let node = codeyard_db_cluster::cluster::register_own_node(
         f.pool(),
@@ -171,7 +165,7 @@ async fn contract(pg: bool) {
     .unwrap();
     let context = NodeContext {
         pool: Some(f.pool().clone()),
-        iroh: codeyard::backend::cluster::IrohDialer::new(Relay::Off, key.clone()),
+        iroh: codeyard_app::cluster::transport::IrohDialer::new(Relay::Off, key.clone()),
         key,
         node_id: node.id,
         repos_path: root.path().to_owned(),
@@ -794,7 +788,7 @@ async fn contract(pg: bool) {
         &format!("{}/slot", repo_runner_key.public_hex()),
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -806,7 +800,7 @@ async fn contract(pg: bool) {
         &worker,
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -815,7 +809,7 @@ async fn contract(pg: bool) {
     assert_eq!(claim.runner_group.as_deref(), Some("Restricted"));
     // actions:write is not runner-administration authority. In particular, an
     // active workflow token cannot mint a longer-lived registration credential.
-    let credentials = codeyard::backend::ci::tokens::issue(
+    let credentials = codeyard_app::ci::tokens::issue(
         f.pool(),
         &claim,
         &std::collections::BTreeMap::from([(
@@ -923,7 +917,7 @@ async fn contract(pg: bool) {
         &worker,
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -991,7 +985,7 @@ async fn contract(pg: bool) {
                 String::from_utf8_lossy(&output.stderr)
             );
             assert_eq!(
-                codeyard::backend::ci::runner_credentials::work_root(&state).unwrap(),
+                codeyard_app::ci::runner_credentials::work_root(&state).unwrap(),
                 state.join("runner-workspaces/jit-work")
             );
             let node = codeyard_db_cluster::cluster::get_node_by_name(f.pool(), &config.node_name)
@@ -1017,8 +1011,8 @@ async fn contract(pg: bool) {
             pair(&config.ticket, &jit_key, &config.node_name).await;
         }
         let retry_key = NodeKey::generate();
-        assert!(codeyard::backend::cluster::join(
-            &codeyard::backend::cluster::JoinTicket::decode(&config.ticket).unwrap(),
+        assert!(codeyard_app::cluster::pairing::join(
+            &codeyard_app::cluster::pairing::JoinTicket::decode(&config.ticket).unwrap(),
             &retry_key,
             &Relay::Off,
             "second-use",
@@ -1035,7 +1029,7 @@ async fn contract(pg: bool) {
                 &jit_worker,
                 "local",
                 &[alice],
-                &codeyard::backend::ci::CiConfig::default().platform_labels(),
+                &codeyard_app::ci::config::CiConfig::default().platform_labels(),
             )
             .await
             .unwrap()
@@ -1050,7 +1044,7 @@ async fn contract(pg: bool) {
                 &format!("{}/second-slot", jit_key.public_hex()),
                 "local",
                 &[alice],
-                &codeyard::backend::ci::CiConfig::default().platform_labels(),
+                &codeyard_app::ci::config::CiConfig::default().platform_labels(),
             )
             .await
             .unwrap()
@@ -1145,8 +1139,8 @@ async fn contract(pg: bool) {
     )
     .await;
     let expired_key = NodeKey::generate();
-    assert!(codeyard::backend::cluster::join(
-        &codeyard::backend::cluster::JoinTicket::decode(&registration_tokens[0]).unwrap(),
+    assert!(codeyard_app::cluster::pairing::join(
+        &codeyard_app::cluster::pairing::JoinTicket::decode(&registration_tokens[0]).unwrap(),
         &expired_key,
         &Relay::Off,
         "expired",
@@ -1187,7 +1181,7 @@ async fn runner_settings_browser() {
     f.complete_setup().await;
     let alice = f.actor("browser_owner").await;
     let org = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             f.pool(),
             alice,
             &codeyard_db_orgs::organizations::NewOrganization::new(

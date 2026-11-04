@@ -1,20 +1,20 @@
 //! `codeyard serve`: starts the HTTP server, the selected SSH transport and the
 //! CI service, then waits for a shutdown signal.
 use crate::backend::node::config::ServeConfig;
-use crate::backend::node::NodeRole;
-
-use codeyard_support::fs::lock_state_dir;
-
-use crate::backend::app::AppState;
-use crate::backend::ci::CiConfig;
-use crate::backend::storage::s3::S3Config;
-use crate::backend::storage::ObjectStore;
-use anyhow::{Context, Result};
+use anyhow::Result;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::storage::s3::S3Config;
+use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::DbPool;
+use codeyard_model::node_roles::NodeRole;
+use codeyard_support::fs::lock_state_dir;
 use codeyard_support::secrets::SecretEncryptor;
+use std::path::Path;
 use std::path::PathBuf;
-use std::{path::Path, sync::Arc};
-use tracing::{info, warn};
+use std::sync::Arc;
+use tracing::info;
+use tracing::warn;
 
 fn validate_cluster_encryptor(
     clustered: bool,
@@ -55,8 +55,8 @@ async fn prepare_application(
     pool: DbPool,
     repos_path: PathBuf,
     state_dir: &Path,
-    roles: &crate::backend::node::NodeRoles,
-    cluster: Option<crate::backend::cluster::NodeContext>,
+    roles: &codeyard_model::node_roles::NodeRoles,
+    cluster: Option<codeyard_app::cluster::context::NodeContext>,
     s3: Option<S3Config>,
 ) -> Result<AppState> {
     let serves_web = roles.contains(NodeRole::Web);
@@ -71,7 +71,7 @@ async fn prepare_application(
     if cluster.is_none() {
         let (state_dir, repos) = (state_dir.to_owned(), repos_path.clone());
         tokio::task::spawn_blocking(move || {
-            crate::backend::repositories::releases::immutable::configure_local_identity(
+            codeyard_app::repositories::releases::immutable::configure_local_identity(
                 &state_dir, &repos,
             )
         })
@@ -96,7 +96,7 @@ async fn prepare_application(
     if serves_web {
         storage.prepare().await?;
     }
-    crate::backend::repositories::pull_requests::async_merge::recover(
+    codeyard_app::repositories::pull_requests::async_merge::recover(
         &pool,
         cluster.as_ref().map(|n| n.node_id),
     )
@@ -140,7 +140,7 @@ const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
 /// restore window. Safe to run on several nodes at once: each row is removed by only one.
 async fn remove_expired_rows(
     pool: DbPool,
-    storage: std::sync::Arc<crate::backend::storage::ObjectStore>,
+    storage: std::sync::Arc<codeyard_app::storage::ObjectStore>,
     web: bool,
     repos_path: Option<PathBuf>,
     mut stop: tokio::sync::watch::Receiver<bool>,
@@ -162,8 +162,8 @@ async fn remove_expired_rows(
                 codeyard_db_core::queries::files::RESTORE_WINDOW_SECONDS as u64,
             );
             let sweep = tokio::task::spawn_blocking(move || {
-                let mirrors = root.join(crate::backend::cluster::replicas::MIRRORS);
-                let quarantines = mirrors.join(crate::backend::cluster::replicas::QUARANTINES);
+                let mirrors = root.join(codeyard_app::cluster::replicas::MIRRORS);
+                let quarantines = mirrors.join(codeyard_app::cluster::replicas::QUARANTINES);
                 let mut removed = 0;
                 for root in [root, mirrors, quarantines] {
                     removed += codeyard_git::mirror::remove_expired_deleted(&root, window)?;
@@ -183,10 +183,10 @@ async fn remove_expired_rows(
     }
 }
 
-async fn remove_expired_web_rows(pool: &DbPool, storage: &crate::backend::storage::ObjectStore) {
+async fn remove_expired_web_rows(pool: &DbPool, storage: &codeyard_app::storage::ObjectStore) {
     match tokio::time::timeout(
         std::time::Duration::from_secs(12),
-        crate::backend::files::remove_expired_uploads(pool, storage),
+        codeyard_app::files::deletion::remove_expired_uploads(pool, storage),
     )
     .await
     {
@@ -198,7 +198,7 @@ async fn remove_expired_web_rows(pool: &DbPool, storage: &crate::backend::storag
     // Object families have independent budgets; a slow package delete cannot cancel uploads.
     match tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        crate::backend::packages::collect(pool, storage),
+        codeyard_app::packages::collect(pool, storage),
     )
     .await
     {
@@ -270,7 +270,7 @@ fn select_transport(config: &ServeConfig) -> Result<codeyard_support::ssh_mode::
 /// A worker-only process has no application state, database or inbound listeners.
 pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
     let _state_dir_lock = lock_state_dir(state_dir)?;
-    let settings = crate::backend::cluster::Settings::from_lookup(&|key| {
+    let settings = codeyard_app::cluster::Settings::from_lookup(&|key| {
         // Empty counts as unset, as in `Settings::from_lookup`, so the fallback below applies.
         std::env::var(key)
             .ok()
@@ -285,11 +285,11 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
     let (context, peers) = tokio::select! {
         biased;
         result = &mut signal => return result,
-        result = crate::backend::cluster::worker_context(state_dir, settings) => result?,
+        result = codeyard_app::cluster::worker::worker_context(state_dir, settings) => result?,
     };
-    let config = std::sync::Arc::new(crate::backend::ci::CiConfig::from_env()?);
-    let workers = crate::backend::ci::CiWorkers::new(
-        crate::backend::ci::queue::RunQueue::Remote {
+    let config = std::sync::Arc::new(codeyard_app::ci::config::CiConfig::from_env()?);
+    let workers = codeyard_app::ci::workers::CiWorkers::new(
+        codeyard_app::ci::queue::RunQueue::Remote {
             preferred: Default::default(),
             context: context.clone(),
             peers,
@@ -330,7 +330,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     };
     if !config.roles.single_node() && !clustered {
         pool.close().await;
-        anyhow::bail!(crate::backend::node::SINGLE_NODE_ROLES);
+        anyhow::bail!(codeyard_model::node_roles::SINGLE_NODE_ROLES);
     }
     let s3 = S3Config::optional_from_env()?;
     anyhow::ensure!(
@@ -351,11 +351,11 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     };
     // The cluster transport is opt-in. Without cluster settings no cluster socket is
     // opened. With them, single-node mode still admits only runners.
-    let member = match crate::backend::cluster::Settings::from_env()? {
+    let member = match codeyard_app::cluster::Settings::from_env()? {
         Some(settings) => Some(tokio::select! {
             biased;
             result = &mut signal => { pool.close().await; return result; }
-            result = crate::backend::cluster::start(&pool, &config.state_dir, &repos_path, &config.roles, settings) => result?,
+            result = codeyard_app::cluster::start(&pool, &config.state_dir, &repos_path, &config.roles, settings) => result?,
         }),
         None => None,
     };
@@ -419,8 +419,8 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     let ci_runs = state.ci_runs.clone();
     let notifications = state.notification_broadcaster.clone();
     let git_tasks = state.git_tasks.clone();
-    let workers = crate::backend::ci::CiWorkers::with_wakeup(
-        crate::backend::ci::queue::RunQueue::Database {
+    let workers = codeyard_app::ci::workers::CiWorkers::with_wakeup(
+        codeyard_app::ci::queue::RunQueue::Database {
             pool: pool.clone(),
             config: ci_runs.config.clone(),
             secrets: state.secret_encryptor.clone(),
@@ -459,27 +459,27 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         return started.map(|_| ()).and(stopped);
     }
     let (stop_traffic, traffic_stop) = tokio::sync::watch::channel(false);
-    let traffic = tokio::spawn(crate::backend::repositories::traffic::maintain(
+    let traffic = tokio::spawn(codeyard_app::repositories::traffic::maintain(
         pool.clone(),
         traffic_stop,
     ));
     let (stop_vulnerabilities, vulnerabilities_stop) = tokio::sync::watch::channel(false);
     let vulnerabilities = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(crate::backend::vulnerabilities::run(
+        tokio::spawn(codeyard_app::vulnerabilities::run(
             Arc::new(state.clone()),
             vulnerabilities_stop,
         ))
     });
     let (stop_scanning, scanning_stop) = tokio::sync::watch::channel(false);
     let scanning = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(crate::backend::code_scanning::run(
+        tokio::spawn(codeyard_app::code_scanning::run(
             pool.clone(),
             scanning_stop,
         ))
     });
     let (stop_schedules, schedules_stop) = tokio::sync::watch::channel(false);
     let schedules = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(crate::backend::ci::schedule::run(
+        tokio::spawn(codeyard_app::ci::schedule::run(
             ci_runs.clone(),
             schedules_stop,
         ))
@@ -501,19 +501,17 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     // Every web node sends queued email; each claims its own messages.
     let (stop_secret_scanning, secret_scanning_stop) = tokio::sync::watch::channel(false);
     let secret_scanning = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(crate::backend::repositories::secret_scanning::jobs::run(
+        tokio::spawn(codeyard_app::repositories::secret_scanning::jobs::run(
             Arc::new(state.clone()),
             secret_scanning_stop,
         ))
     });
     let (stop_auto_merge, auto_merge_stop) = tokio::sync::watch::channel(false);
     let auto_merge = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(
-            crate::backend::repositories::pull_requests::auto_merge::run(
-                Arc::new(state.clone()),
-                auto_merge_stop,
-            ),
-        )
+        tokio::spawn(codeyard_app::repositories::pull_requests::auto_merge::run(
+            Arc::new(state.clone()),
+            auto_merge_stop,
+        ))
     });
     let (stop_email, email_stop) = tokio::sync::watch::channel(false);
     let email = config.roles.contains(NodeRole::Web).then(|| {
@@ -526,7 +524,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     // Durable inventory jobs are claimed transactionally; every web node may drain the queue.
     let (stop_metadata, metadata_stop) = tokio::sync::watch::channel(false);
     let metadata = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(crate::backend::artifact_metadata::run(
+        tokio::spawn(codeyard_app::artifact_metadata::run(
             pool.clone(),
             metadata_stop,
         ))
@@ -537,7 +535,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         .as_ref()
         .filter(|_| config.roles.contains(NodeRole::Storage))
         .map(|member| {
-            tokio::spawn(crate::backend::cluster::replicas::run(
+            tokio::spawn(codeyard_app::cluster::replicas::run(
                 member.context.clone(),
                 replica_stop,
             ))
@@ -547,9 +545,9 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     let (stop_listeners, stop) = tokio::sync::watch::channel(false);
     let web_server = async {
         if config.roles.contains(NodeRole::Web) {
-            crate::backend::api::run_web_server(config.http_addr, state, stop.clone()).await
+            codeyard_api_rest::run_web_server(config.http_addr, state, stop.clone()).await
         } else if config.roles.contains(NodeRole::Storage) {
-            crate::backend::api::health::run_server(config.http_addr, state, stop.clone()).await
+            codeyard_api_rest::health::run_server(config.http_addr, state, stop.clone()).await
         } else {
             // Without an HTTP listener, this future ends with the shutdown signal.
             let _ = stop.clone().wait_for(|stopped| *stopped).await;
@@ -563,7 +561,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
                     .host_key
                     .to_str()
                     .context("host key path is not UTF-8")?;
-                let mut server = crate::backend::ssh::SshServer::new(
+                let mut server = codeyard_app::ssh::server::SshServer::new(
                     pool.clone(),
                     Some(host_key),
                     ci_runs.clone(),
@@ -575,7 +573,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             #[cfg(unix)]
             codeyard_support::ssh_mode::SshMode::Openssh if !transport.setup_required => {
                 info!("using host OpenSSH for Git over SSH");
-                let gateway = crate::backend::repositories::git_sessions::run_gateway(
+                let gateway = codeyard_app::repositories::git_sessions::run_gateway(
                     transport.socket,
                     repos_path,
                     pool.clone(),
@@ -666,7 +664,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         // Keep the pool and event sinks alive until their effects have finished.
         member.drain_sessions().await;
     }
-    crate::backend::webhooks::shutdown(tokio::time::Instant::now() + SHUTDOWN_GRACE).await;
+    codeyard_app::webhooks::shutdown(tokio::time::Instant::now() + SHUTDOWN_GRACE).await;
     notifications.shutdown().await;
     pool.close().await;
     result.and(stopped)
@@ -750,8 +748,8 @@ mod tests {
     fn shutdown_phases_fit_inside_the_stop_grace() {
         // The withdrawal runs twice: before the drain, and again in `Cluster::shutdown`.
         let phases = SHUTDOWN_GRACE
-            + crate::backend::ci::workers::SHUTDOWN_GRACE
-            + crate::backend::cluster::WITHDRAW_TIMEOUT * 2;
+            + codeyard_app::ci::workers::SHUTDOWN_GRACE
+            + codeyard_app::cluster::WITHDRAW_TIMEOUT * 2;
         assert!(
             phases < MAX_SHUTDOWN,
             "the shutdown phases add up to {phases:?}"

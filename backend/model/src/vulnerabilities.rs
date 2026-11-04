@@ -370,7 +370,7 @@ impl Advisory {
             }
         }
         value["vulnerabilities"] = json!(vulnerabilities);
-        crate::advisory_documents::osv_document(&value)
+        codeyard_db_security::dependabot_alerts::osv_document(&value)
     }
     pub fn document(&self) -> Value {
         let ghsa = self

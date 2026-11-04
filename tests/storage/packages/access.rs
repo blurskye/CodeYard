@@ -1,5 +1,6 @@
 use super::*;
-use codeyard::backend::{ci::tokens::Permissions, db};
+use codeyard::backend::db;
+use codeyard_model::permissions::Permissions;
 use std::collections::BTreeMap;
 
 async fn access(pg: bool) {

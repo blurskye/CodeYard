@@ -3,9 +3,11 @@ use super::{
     actions_objects::pat,
     actions_workflows::{checked, router},
 };
-use crate::support::{database::Database, fake_webui_bundle};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
 use axum::http::StatusCode;
-use codeyard::backend::{db, repositories::lifecycle};
+use codeyard::backend::db;
+use codeyard_app::repositories::lifecycle;
 use serde_json::{json, Value};
 
 async fn contract(pg: bool) {
@@ -71,7 +73,7 @@ async fn contract(pg: bool) {
         "blocked",
         "local",
         &[alice, bob],
-        &codeyard::backend::ci::CiConfig::default().platform_labels()
+        &codeyard_app::ci::config::CiConfig::default().platform_labels()
     )
     .await
     .unwrap()
@@ -125,7 +127,7 @@ async fn contract(pg: bool) {
         "approved",
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()

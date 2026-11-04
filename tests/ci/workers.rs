@@ -5,21 +5,21 @@ use crate::support::http_client as pulls;
 use crate::support::native_database as native;
 use crate::support::rpc_operations;
 
-use codeyard::backend::ci::queue::RunQueue;
-use codeyard::backend::ci::CiConfig;
-use codeyard::backend::ci::CiExecutionMode;
-use codeyard::backend::ci::CiWorkers;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::ci::config::CiExecutionMode;
+use codeyard_app::ci::queue::RunQueue;
+use codeyard_app::ci::workers::CiWorkers;
 
-use codeyard::backend::cluster::NodeContext;
+use codeyard_app::cluster::context::NodeContext;
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard::backend::repositories::store::GitService;
-use codeyard::backend::repositories::store::GitSession;
-use codeyard::backend::repositories::store::RepoStore;
+use codeyard_app::repositories::store::types::GitService;
+use codeyard_app::repositories::store::types::GitSession;
+use codeyard_app::repositories::store::RepoStore;
 use codeyard_git::error::ErrorKind;
 use codeyard_model::ci::LogLine;
+use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::current_event;
-use codeyard_notifications::NotificationBroadcaster;
 use codeyard_notifications::NotificationEvent;
 use iroh::protocol::ProtocolHandler;
 use serde_json::json;
@@ -249,12 +249,15 @@ fn line(text: &str) -> LogLine {
 async fn client(key: &codeyard_support::node_identity::NodeKey) -> NodeContext {
     NodeContext {
         pool: None,
-        iroh: codeyard::backend::cluster::IrohDialer::with_endpoint(
-            codeyard::backend::cluster::Relay::Off,
+        iroh: codeyard_app::cluster::transport::IrohDialer::with_endpoint(
+            codeyard_app::cluster::transport::Relay::Off,
             key.clone(),
-            codeyard::backend::cluster::bind_client(&codeyard::backend::cluster::Relay::Off, key)
-                .await
-                .unwrap(),
+            codeyard_app::cluster::transport::bind_client(
+                &codeyard_app::cluster::transport::Relay::Off,
+                key,
+            )
+            .await
+            .unwrap(),
         ),
         key: key.clone(),
         node_id: 0,
@@ -320,18 +323,18 @@ async fn stream_request(
     request: serde_json::Value,
 ) -> serde_json::Value {
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    codeyard::backend::cluster::rpc::write_frame(
+    codeyard_app::cluster::rpc::wire::write_frame(
         &mut send,
         &serde_json::to_vec(&request).unwrap(),
-        codeyard::backend::cluster::rpc::MAX_JSON,
+        codeyard_db_core::limits::MAX_JSON,
     )
     .await
     .unwrap();
     send.finish().unwrap();
     serde_json::from_slice(
-        &codeyard::backend::cluster::rpc::read_frame(
+        &codeyard_app::cluster::rpc::wire::read_frame(
             &mut recv,
-            codeyard::backend::cluster::rpc::MAX_JSON,
+            codeyard_db_core::limits::MAX_JSON,
         )
         .await
         .unwrap(),
@@ -342,57 +345,57 @@ async fn stream_request(
 async fn repository_refused_with_claim(
     connection: &iroh::endpoint::Connection,
     repository: Uuid,
-    operation: codeyard::backend::cluster::rpc::Operation,
-    ci_run: Option<codeyard::backend::cluster::rpc::CiRunAccess>,
+    operation: codeyard_app::cluster::rpc::wire::Operation,
+    ci_run: Option<codeyard_app::cluster::rpc::wire::CiRunAccess>,
     message: &str,
 ) {
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
     let streaming = matches!(
         &operation,
-        codeyard::backend::cluster::rpc::Operation::GitSession(_)
-            | codeyard::backend::cluster::rpc::Operation::ReplicaPack { .. }
+        codeyard_app::cluster::rpc::wire::Operation::GitSession(_)
+            | codeyard_app::cluster::rpc::wire::Operation::ReplicaPack { .. }
     );
-    codeyard::backend::cluster::rpc::write_frame(
+    codeyard_app::cluster::rpc::wire::write_frame(
         &mut send,
-        &serde_json::to_vec(&codeyard::backend::cluster::rpc::Request {
+        &serde_json::to_vec(&codeyard_app::cluster::rpc::wire::Request {
             repository,
             operation,
             actor: None,
             ci_run,
         })
         .unwrap(),
-        codeyard::backend::cluster::rpc::MAX_JSON,
+        codeyard_db_core::limits::MAX_JSON,
     )
     .await
     .unwrap();
     if !streaming {
-        codeyard::backend::cluster::rpc::write_frame(
+        codeyard_app::cluster::rpc::wire::write_frame(
             &mut send,
             b"",
-            codeyard::backend::cluster::rpc::MAX_BYTES,
+            codeyard_app::cluster::rpc::wire::MAX_BYTES,
         )
         .await
         .unwrap();
         send.finish().unwrap();
     }
-    let reply: codeyard::backend::cluster::rpc::Reply = serde_json::from_slice(
-        &codeyard::backend::cluster::rpc::read_frame(
+    let reply: codeyard_app::cluster::rpc::wire::Reply = serde_json::from_slice(
+        &codeyard_app::cluster::rpc::wire::read_frame(
             &mut recv,
-            codeyard::backend::cluster::rpc::MAX_JSON,
+            codeyard_db_core::limits::MAX_JSON,
         )
         .await
         .unwrap(),
     )
     .unwrap();
-    assert!(codeyard::backend::cluster::rpc::read_frame(
+    assert!(codeyard_app::cluster::rpc::wire::read_frame(
         &mut recv,
-        codeyard::backend::cluster::rpc::MAX_BYTES
+        codeyard_app::cluster::rpc::wire::MAX_BYTES
     )
     .await
     .unwrap()
     .is_empty());
     match reply.result {
-        Err(codeyard::backend::cluster::rpc::Failure::Repository(error)) => {
+        Err(codeyard_app::cluster::rpc::wire::Failure::Repository(error)) => {
             assert_eq!(error.kind, ErrorKind::Invalid);
             assert!(error.message.contains(message), "{error}");
         }
@@ -403,7 +406,7 @@ async fn repository_refused_with_claim(
 async fn repository_refused(
     connection: &iroh::endpoint::Connection,
     repository: Uuid,
-    operation: codeyard::backend::cluster::rpc::Operation,
+    operation: codeyard_app::cluster::rpc::wire::Operation,
     message: &str,
 ) {
     repository_refused_with_claim(connection, repository, operation, None, message).await;
@@ -461,10 +464,10 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     )
     .await
     .unwrap();
-    let endpoint = codeyard::backend::cluster::bind(
-        &codeyard::backend::cluster::Listen {
+    let endpoint = codeyard_app::cluster::transport::bind(
+        &codeyard_app::cluster::transport::Listen {
             bind: "127.0.0.1:0".parse().unwrap(),
-            relay: codeyard::backend::cluster::Relay::Off,
+            relay: codeyard_app::cluster::transport::Relay::Off,
             advertise: vec![],
         },
         &core_key,
@@ -474,8 +477,8 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     .unwrap();
     let context = NodeContext {
         pool: Some(pool.clone()),
-        iroh: codeyard::backend::cluster::IrohDialer::with_endpoint(
-            codeyard::backend::cluster::Relay::Off,
+        iroh: codeyard_app::cluster::transport::IrohDialer::with_endpoint(
+            codeyard_app::cluster::transport::Relay::Off,
             core_key.clone(),
             endpoint.clone(),
         ),
@@ -517,25 +520,25 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         context: Some(context.clone()),
         notifications,
     };
-    let router = codeyard::backend::cluster::router(
+    let router = codeyard_app::cluster::transport::router(
         endpoint.clone(),
-        codeyard::backend::cluster::PairingHandler::new(pool.clone()),
+        codeyard_app::cluster::pairing::PairingHandler::new(pool.clone()),
     )
     .accept(
-        codeyard::backend::cluster::ALPN_RPC,
-        codeyard::backend::cluster::rpc::RpcHandler::new(context.clone()),
+        codeyard_app::cluster::transport::ALPN_RPC,
+        codeyard_app::cluster::rpc::RpcHandler::new(context.clone()),
     )
     .accept(
-        codeyard::backend::cluster::ALPN_EVENTS,
-        codeyard::backend::cluster::ci::CiHandler::new(context.clone(), queue),
+        codeyard_app::cluster::transport::ALPN_EVENTS,
+        codeyard_app::cluster::ci::CiHandler::new(context.clone(), queue),
     )
     .spawn();
-    codeyard::backend::cluster::wait_for_address(&endpoint).await;
+    codeyard_app::cluster::wait_for_address(&endpoint).await;
     codeyard_db_cluster::cluster::record_node_heartbeat(
         pool,
         &core_key.public_hex(),
         "test",
-        &serde_json::to_string(&codeyard::backend::cluster::NodeAddress::of(
+        &serde_json::to_string(&codeyard_app::cluster::transport::NodeAddress::of(
             &endpoint.addr(),
         ))
         .unwrap(),
@@ -563,7 +566,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
             pool,
             repo.id,
             owner.id,
-            &codeyard::backend::repositories::store::FileWrite {
+            &codeyard_app::repositories::store::editor::FileWrite {
                 branch: "main".into(),
                 path: ".github/workflows/ci.yml".into(),
                 message: "Add CI".into(),
@@ -607,11 +610,11 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     )
     .await
     .unwrap();
-    let ticket = codeyard::backend::cluster::create_invite(
+    let ticket = codeyard_app::cluster::pairing::create_invite(
         pool,
         core_key.public_key(),
-        codeyard::backend::cluster::NodeAddress::of(&endpoint.addr()),
-        &codeyard::backend::cluster::InviteOptions {
+        codeyard_app::cluster::transport::NodeAddress::of(&endpoint.addr()),
+        &codeyard_app::cluster::pairing::InviteOptions {
             roles: "runner".parse().unwrap(),
             reusable: true,
             requires_approval: false,
@@ -620,7 +623,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     )
     .await
     .unwrap();
-    let settings = codeyard::backend::cluster::Settings::from_lookup(&|name| match name {
+    let settings = codeyard_app::cluster::Settings::from_lookup(&|name| match name {
         "CLUSTER_JOIN_TOKEN" => Some(ticket.encode()),
         "NODE_NAME" => Some("ci-worker".into()),
         _ => None,
@@ -628,19 +631,19 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     .unwrap()
     .unwrap();
     let state_dir = root.path().join("worker-state");
-    let (first_worker, _) = codeyard::backend::cluster::worker_context(&state_dir, settings)
+    let (first_worker, _) = codeyard_app::cluster::worker::worker_context(&state_dir, settings)
         .await
         .unwrap();
     first_worker.iroh.close().await;
     // Restart without the token, using only the persisted key and core address.
-    let settings = codeyard::backend::cluster::Settings::from_lookup(&|name| match name {
+    let settings = codeyard_app::cluster::Settings::from_lookup(&|name| match name {
         "IROH_BIND" => Some("127.0.0.1:0".into()),
         "NODE_NAME" => Some("ci-worker".into()),
         _ => None,
     })
     .unwrap()
     .unwrap();
-    let (worker, peers) = codeyard::backend::cluster::worker_context(&state_dir, settings)
+    let (worker, peers) = codeyard_app::cluster::worker::worker_context(&state_dir, settings)
         .await
         .unwrap();
     let other_key = codeyard_support::node_identity::NodeKey::generate();
@@ -671,10 +674,10 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         preferred: Default::default(),
         context: worker.clone(),
         peers: vec![
-            codeyard::backend::cluster::CorePeer {
+            codeyard_app::cluster::worker::CorePeer {
                 target: None,
                 public_key: codeyard_support::node_identity::NodeKey::generate().public_hex(),
-                address: codeyard::backend::cluster::NodeAddress {
+                address: codeyard_app::cluster::transport::NodeAddress {
                     addrs: vec!["127.0.0.1:9".parse().unwrap()],
                     relays: vec![],
                     tcp: vec![],
@@ -699,7 +702,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .unwrap()
         .connect(
             peer.endpoint_addr().unwrap(),
-            codeyard::backend::cluster::ALPN_RPC,
+            codeyard_app::cluster::transport::ALPN_RPC,
         )
         .await
         .unwrap();
@@ -710,7 +713,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .unwrap()
         .connect(
             peer.endpoint_addr().unwrap(),
-            codeyard::backend::cluster::ALPN_RPC,
+            codeyard_app::cluster::transport::ALPN_RPC,
         )
         .await
         .unwrap();
@@ -724,7 +727,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     repository_refused(
         &worker_connection,
         uuid,
-        codeyard::backend::cluster::rpc::Operation::GitSession(GitSession::new(
+        codeyard_app::cluster::rpc::wire::Operation::GitSession(GitSession::new(
             GitService::UploadPack,
             true,
         )),
@@ -756,10 +759,10 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     // An obsolete, unreachable placement from a claim is refreshed through the core.
     let mut stale_claim = claimed.clone();
     stale_claim.storage_node_id = Some(core_node.id + 100_000);
-    stale_claim.storage_peer = Some(codeyard::backend::cluster::CorePeer {
+    stale_claim.storage_peer = Some(codeyard_app::cluster::worker::CorePeer {
         target: None,
         public_key: codeyard_support::node_identity::NodeKey::generate().public_hex(),
-        address: codeyard::backend::cluster::NodeAddress {
+        address: codeyard_app::cluster::transport::NodeAddress {
             tcp: vec!["127.0.0.1:1".parse().unwrap()],
             ..Default::default()
         },
@@ -817,7 +820,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         } else {
             // A copy's pack is for storage nodes; every other call is for web and ssh nodes.
             let message = match operation {
-                codeyard::backend::cluster::rpc::Operation::ReplicaPack { .. } => {
+                codeyard_app::cluster::rpc::wire::Operation::ReplicaPack { .. } => {
                     "requires a storage node"
                 }
                 _ => "requires a web or ssh node",
@@ -848,16 +851,16 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     )
     .await
     .unwrap();
-    let claim_access = codeyard::backend::cluster::rpc::CiRunAccess {
+    let claim_access = codeyard_app::cluster::rpc::wire::CiRunAccess {
         id: claimed.run.id,
         worker: claimed.run.worker.clone().unwrap(),
     };
     for access in [
-        codeyard::backend::cluster::rpc::CiRunAccess {
+        codeyard_app::cluster::rpc::wire::CiRunAccess {
             id: claim_access.id + 10_000,
             ..claim_access.clone()
         },
-        codeyard::backend::cluster::rpc::CiRunAccess {
+        codeyard_app::cluster::rpc::wire::CiRunAccess {
             worker: format!("{}/other-slot", worker.key.public_key()),
             ..claim_access.clone()
         },
@@ -865,7 +868,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         repository_refused_with_claim(
             &worker_connection,
             uuid,
-            codeyard::backend::cluster::rpc::Operation::BlobById { id: blob.clone() },
+            codeyard_app::cluster::rpc::wire::Operation::BlobById { id: blob.clone() },
             Some(access),
             "running CI claim",
         )
@@ -874,7 +877,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     repository_refused_with_claim(
         &worker_connection,
         other_uuid,
-        codeyard::backend::cluster::rpc::Operation::BlobById { id: blob.clone() },
+        codeyard_app::cluster::rpc::wire::Operation::BlobById { id: blob.clone() },
         Some(claim_access),
         "running CI claim",
     )
@@ -918,14 +921,14 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .unwrap()
         .connect(
             peer.endpoint_addr().unwrap(),
-            codeyard::backend::cluster::ALPN_RPC,
+            codeyard_app::cluster::transport::ALPN_RPC,
         )
         .await
         .unwrap();
     for (operation, _) in rpc_operations::operations(&revision.sha) {
         // A storage node may ask for a copy's pack, and is refused when it holds no copy.
         let message = match operation {
-            codeyard::backend::cluster::rpc::Operation::ReplicaPack { .. } => {
+            codeyard_app::cluster::rpc::wire::Operation::ReplicaPack { .. } => {
                 "holds no copy of this repository"
             }
             _ => "requires a web or ssh node",
@@ -975,7 +978,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .unwrap()
         .connect(
             peer.endpoint_addr().unwrap(),
-            codeyard::backend::cluster::ALPN_EVENTS,
+            codeyard_app::cluster::transport::ALPN_EVENTS,
         )
         .await
         .unwrap();
@@ -1103,7 +1106,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     repository_refused(
         &worker_connection,
         uuid,
-        codeyard::backend::cluster::rpc::Operation::GitSession(GitSession::new(
+        codeyard_app::cluster::rpc::wire::Operation::GitSession(GitSession::new(
             GitService::UploadPack,
             true,
         )),
@@ -1255,7 +1258,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     assert_eq!(storage_claim.run.id, storage_run.id);
     let cached_storage = remote.store(&storage_claim).unwrap();
     assert_eq!(cached_storage.blob_by_id(&blob).await.unwrap(), workflow);
-    codeyard::backend::cluster::revoke(
+    codeyard_app::cluster::pairing::revoke(
         pool,
         codeyard_db_cluster::cluster::Authority::Operator,
         "ci-core",
@@ -1264,7 +1267,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     .unwrap();
     let revoked = cached_storage.blob_by_id(&blob).await.unwrap_err();
     assert!(revoked.is_storage_node_unavailable(), "{revoked:?}");
-    codeyard::backend::cluster::approve(
+    codeyard_app::cluster::pairing::approve(
         pool,
         codeyard_db_cluster::cluster::Authority::Operator,
         "ci-core",
@@ -1277,7 +1280,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .await
         .unwrap());
 
-    codeyard::backend::cluster::revoke(
+    codeyard_app::cluster::pairing::revoke(
         pool,
         codeyard_db_cluster::cluster::Authority::Operator,
         "ci-worker",
@@ -1633,10 +1636,10 @@ async fn worker_only_cli_has_no_database_or_listeners_and_stops_on_sigterm() {
     let state_dir = root.path().join("state");
     std::fs::create_dir(&state_dir).unwrap();
     std::fs::write(state_dir.join("node.key"), key.secret_hex()).unwrap();
-    let peer = codeyard::backend::cluster::CorePeer {
+    let peer = codeyard_app::cluster::worker::CorePeer {
         target: None,
         public_key: codeyard_support::node_identity::NodeKey::generate().public_hex(),
-        address: codeyard::backend::cluster::NodeAddress {
+        address: codeyard_app::cluster::transport::NodeAddress {
             addrs: vec!["127.0.0.1:9".parse().unwrap()],
             relays: vec![],
             tcp: vec![],
@@ -1857,7 +1860,7 @@ async fn http_ci(
     config: CiConfig,
 ) -> (
     tempfile::TempDir,
-    codeyard::backend::app::AppState,
+    codeyard_app::app::AppState,
     codeyard_db_core::models::User,
     codeyard_db_core::models::Repository,
 ) {
@@ -1876,7 +1879,7 @@ async fn http_ci(
         panic!("fresh CI installation");
     };
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
@@ -1888,11 +1891,11 @@ async fn http_ci(
     .await
     .unwrap();
     act_engine(pool, repo.id).await;
-    let state = codeyard::backend::app::AppState::new(
+    let state = codeyard_app::app::AppState::new(
         pool.clone(),
         root.path().to_owned(),
         Arc::new(
-            codeyard::backend::storage::ObjectStore::open(root.path(), None)
+            codeyard_app::storage::ObjectStore::open(root.path(), None)
                 .await
                 .unwrap(),
         ),
@@ -1940,7 +1943,7 @@ async fn full_pipeline_tests_gate_deployment_and_report_the_workers_mode() {
             context: None,
             notifications: state.notification_broadcaster.clone(),
         };
-        let router = codeyard::backend::api::create_router(state);
+        let router = codeyard_api_rest::create_router(state);
         let client = pulls::Client::login(&router, pool, owner.id).await;
         let workflow = "on: workflow_dispatch\njobs:\n  run:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n";
         let sha = save_ci_file(&client, ".github/workflows/tests.yml", "unborn", workflow).await;
@@ -2009,7 +2012,7 @@ async fn full_pipeline_tests_gate_deployment_and_report_the_workers_mode() {
             );
         }
         let deduplicated = ci
-            .trigger_run(codeyard::backend::ci::CiRunRequest {
+            .trigger_run(codeyard_app::ci::runs::CiRunRequest {
                 repo_id: repo.id,
                 repo_owner: owner.username.clone(),
                 repo_name: repo.name.clone(),
@@ -2018,7 +2021,7 @@ async fn full_pipeline_tests_gate_deployment_and_report_the_workers_mode() {
                 event: "workflow_dispatch".into(),
                 pull_request_id: None,
                 inputs: None,
-                pipeline: codeyard::backend::ci::CiPipelineKind::Full,
+                pipeline: codeyard_app::ci::config::CiPipelineKind::Full,
                 workflow_paths: vec![
                     ".github/workflows/tests.yml".into(),
                     ".github/workflows/deploy.yml".into(),
@@ -2045,7 +2048,7 @@ async fn automatic_deployments_use_yaml_environments_and_explicit_targets_still_
     for pool in [&postgres.pool, &sqlite.pool] {
         let (_root, state, owner, repo) = http_ci(pool, CiConfig::default()).await;
         let ci = state.ci_runs.clone();
-        let router = codeyard::backend::api::create_router(state);
+        let router = codeyard_api_rest::create_router(state);
         let client = pulls::Client::login(&router, pool, owner.id).await;
         let sha = save_ci_file(&client, ".github/workflows/deploy.yml", "unborn",
             "on: [push, pull_request, workflow_dispatch]\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    environment: staging\n    steps:\n      - run: true\n").await;
@@ -2094,7 +2097,7 @@ async fn automatic_deployments_use_yaml_environments_and_explicit_targets_still_
         )
         .await
         .unwrap();
-        codeyard::backend::repositories::pull_requests::workflows::queue_pull_request_ci(
+        codeyard_app::repositories::pull_requests::workflows::queue_pull_request_ci(
             pool,
             &ci,
             &repo,
@@ -2234,7 +2237,7 @@ async fn queued_pull_request_runs(
 /// on that base are then queued for its head, which did not change.
 async fn retarget_queues_pull_request_workflows(pool: &codeyard_db_core::DbPool) {
     let (_root, state, owner, repo) = http_ci(pool, CiConfig::default()).await;
-    let router = codeyard::backend::api::create_router(state);
+    let router = codeyard_api_rest::create_router(state);
     let client = pulls::Client::login(&router, pool, owner.id).await;
     let main0 = write_fixture_file(
         &client,
@@ -2279,7 +2282,7 @@ async fn retarget_queues_pull_request_workflows(pool: &codeyard_db_core::DbPool)
 /// A base that no workflow lists queues nothing.
 async fn base_change_queues_pull_request_workflows(pool: &codeyard_db_core::DbPool) {
     let (_root, state, owner, repo) = http_ci(pool, CiConfig::default()).await;
-    let router = codeyard::backend::api::create_router(state);
+    let router = codeyard_api_rest::create_router(state);
     let client = pulls::Client::login(&router, pool, owner.id).await;
     let main0 = write_fixture_file(
         &client,
@@ -2349,7 +2352,7 @@ async fn postgres_retarget_queues_pull_request_workflows() {
 /// the layer's own base is refused.
 async fn manual_dispatch_upper_layer_contract(pool: &codeyard_db_core::DbPool) {
     let (_root, state, owner, repo) = http_ci(pool, CiConfig::default()).await;
-    let router = codeyard::backend::api::create_router(state);
+    let router = codeyard_api_rest::create_router(state);
     let client = pulls::Client::login(&router, pool, owner.id).await;
     let main0 = write_fixture_file(
         &client,
@@ -2440,12 +2443,9 @@ impl ProtocolHandler for StalledWorkflowReads {
         connection: iroh::endpoint::Connection,
     ) -> Result<(), iroh::protocol::AcceptError> {
         let (_send, mut recv) = connection.accept_bi().await.unwrap();
-        codeyard::backend::cluster::rpc::read_frame(
-            &mut recv,
-            codeyard::backend::cluster::rpc::MAX_JSON,
-        )
-        .await
-        .unwrap();
+        codeyard_app::cluster::rpc::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+            .await
+            .unwrap();
         let _ = self.0.send(());
         connection.closed().await;
         Ok(())
@@ -2458,18 +2458,18 @@ async fn actions_history_survives_a_stalled_git_preflight() {
     let run = fixture.queue_run().await;
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(iroh::RelayMode::Disabled)
-        .alpns(vec![codeyard::backend::cluster::ALPN_RPC.to_vec()])
+        .alpns(vec![codeyard_app::cluster::transport::ALPN_RPC.to_vec()])
         .bind()
         .await
         .unwrap();
     let (reads, _started) = mpsc::unbounded_channel();
     let router = iroh::protocol::Router::builder(endpoint.clone())
         .accept(
-            codeyard::backend::cluster::ALPN_RPC,
+            codeyard_app::cluster::transport::ALPN_RPC,
             StalledWorkflowReads(reads),
         )
         .spawn();
-    codeyard::backend::cluster::wait_for_address(&endpoint).await;
+    codeyard_app::cluster::wait_for_address(&endpoint).await;
     let node = codeyard_db_cluster::cluster::register_own_node(
         fixture.pool(),
         &endpoint.id().to_string(),
@@ -2483,7 +2483,7 @@ async fn actions_history_survives_a_stalled_git_preflight() {
         fixture.pool(),
         &endpoint.id().to_string(),
         "test",
-        &serde_json::to_string(&codeyard::backend::cluster::NodeAddress::of(
+        &serde_json::to_string(&codeyard_app::cluster::transport::NodeAddress::of(
             &endpoint.addr(),
         ))
         .unwrap(),
@@ -2504,11 +2504,11 @@ async fn actions_history_survives_a_stalled_git_preflight() {
     crate::support::fake_webui_bundle::install();
     let mut context = fixture.worker.clone();
     context.pool = Some(fixture.pool().clone());
-    let app = codeyard::backend::api::create_router(codeyard::backend::app::AppState::new(
+    let app = codeyard_api_rest::create_router(codeyard_app::app::AppState::new(
         fixture.pool().clone(),
         fixture.root.path().to_owned(),
         Arc::new(
-            codeyard::backend::storage::ObjectStore::open(fixture.root.path(), None)
+            codeyard_app::storage::ObjectStore::open(fixture.root.path(), None)
                 .await
                 .unwrap(),
         ),
@@ -2528,7 +2528,9 @@ async fn actions_history_survives_a_stalled_git_preflight() {
     .await
     .unwrap();
     assert_eq!(status, axum::http::StatusCode::OK);
-    let codeyard_webui::app::Page::Actions(codeyard_webui::pages::ci::Page::Actions(model)) = page
+    let codeyard_webui::app::Page::Actions(
+        codeyard_api_rest::user::fine_grained::ci::Page::Actions(model),
+    ) = page
     else {
         panic!("Actions model")
     };
@@ -2542,29 +2544,29 @@ async fn actions_history_survives_a_stalled_git_preflight() {
 
 #[tokio::test]
 async fn stalled_repository_reads_do_not_occupy_workflow_parsing_slots() {
-    use codeyard::backend::ci::list_workflows_for_ref;
+    use codeyard_app::ci::workflows::list_workflows_for_ref;
     let fixture = ci_fixture().await;
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(iroh::RelayMode::Disabled)
-        .alpns(vec![codeyard::backend::cluster::ALPN_RPC.to_vec()])
+        .alpns(vec![codeyard_app::cluster::transport::ALPN_RPC.to_vec()])
         .bind()
         .await
         .unwrap();
     let (reads, mut started) = mpsc::unbounded_channel();
     let router = iroh::protocol::Router::builder(endpoint.clone())
         .accept(
-            codeyard::backend::cluster::ALPN_RPC,
+            codeyard_app::cluster::transport::ALPN_RPC,
             StalledWorkflowReads(reads),
         )
         .spawn();
-    codeyard::backend::cluster::wait_for_address(&endpoint).await;
+    codeyard_app::cluster::wait_for_address(&endpoint).await;
     let context = fixture.worker.clone();
     context.remember_peer(
         100_000,
-        codeyard::backend::cluster::CorePeer {
+        codeyard_app::cluster::worker::CorePeer {
             target: None,
             public_key: endpoint.id().to_string(),
-            address: codeyard::backend::cluster::NodeAddress::of(&endpoint.addr()),
+            address: codeyard_app::cluster::transport::NodeAddress::of(&endpoint.addr()),
         },
     );
     let store = RepoStore::remote(Uuid::new_v4(), 100_000, &context);
@@ -2768,7 +2770,7 @@ async fn shutdown_with_blocked_workspace_cleanup(pool: &codeyard_db_core::DbPool
             pool,
             repo.id,
             owner.id,
-            &codeyard::backend::repositories::store::FileWrite {
+            &codeyard_app::repositories::store::editor::FileWrite {
                 branch: "main".into(),
                 path: ".github/workflows/ci.yml".into(),
                 message: "Add CI".into(),
@@ -2928,7 +2930,7 @@ async fn database_workers_recheck_membership_before_consuming_runs() {
             pool,
             &key.public_hex(),
             "test",
-            &serde_json::to_string(&codeyard::backend::cluster::NodeAddress::of(
+            &serde_json::to_string(&codeyard_app::cluster::transport::NodeAddress::of(
                 &context.iroh.endpoint().await.unwrap().addr(),
             ))
             .unwrap(),
@@ -2959,7 +2961,7 @@ async fn database_workers_recheck_membership_before_consuming_runs() {
                 pool,
                 repo.id,
                 owner.id,
-                &codeyard::backend::repositories::store::FileWrite {
+                &codeyard_app::repositories::store::editor::FileWrite {
                     branch: "main".into(),
                     path: ".github/workflows/ci.yml".into(),
                     message: "Add CI".into(),
@@ -3095,7 +3097,7 @@ async fn database_workers_recheck_membership_before_consuming_runs() {
                 )
                 .await
                 .unwrap();
-                codeyard::backend::cluster::approve(
+                codeyard_app::cluster::pairing::approve(
                     pool,
                     codeyard_db_cluster::cluster::Authority::Operator,
                     &node.name,
@@ -3469,7 +3471,7 @@ async fn discovery_allows_stalled_tcp_to_fall_back_to_iroh() {
     });
     let workflows = tokio::time::timeout(
         Duration::from_secs(25),
-        codeyard::backend::ci::list_workflows_for_ref(&store, "main"),
+        codeyard_app::ci::workflows::list_workflows_for_ref(&store, "main"),
     )
     .await
     .unwrap()
@@ -3906,7 +3908,7 @@ async fn fork_claims_receive_variables_but_no_repository_or_organization_secrets
         let (_root, repo, sha, blob) = secrets_repository(pool, owner.id, "fork-values").await;
         let encryptor = Arc::new(SecretEncryptor::new(&[7; 32]));
         let org = crate::support::organizations::applied(
-            codeyard_db_orgs::organizations::create_organization(
+            super::create_organization(
                 pool,
                 owner.id,
                 &codeyard_db_orgs::organizations::NewOrganization::new(
@@ -3918,7 +3920,7 @@ async fn fork_claims_receive_variables_but_no_repository_or_organization_secrets
             .await
             .unwrap(),
         );
-        let repo = codeyard::backend::repositories::lifecycle::transfer(
+        let repo = codeyard_app::repositories::lifecycle::transfer(
             pool,
             None,
             owner.id,
@@ -4309,7 +4311,7 @@ impl tracing_subscriber::Layer<tracing_subscriber::Registry> for CiAuthorization
 /// Counts the connections that reach the CI queue. A worker opens one for each request.
 #[derive(Debug)]
 struct CountingCi {
-    inner: codeyard::backend::cluster::ci::CiHandler,
+    inner: codeyard_app::cluster::ci::CiHandler,
     requests: Arc<AtomicUsize>,
     dispatch: tracing::Dispatch,
 }
@@ -4337,7 +4339,7 @@ struct CiFixture {
     requests: Arc<AtomicUsize>,
     authorized: mpsc::UnboundedReceiver<()>,
     worker: NodeContext,
-    peer: codeyard::backend::cluster::CorePeer,
+    peer: codeyard_app::cluster::worker::CorePeer,
     owner: i64,
     repo: i64,
     sha: String,
@@ -4389,10 +4391,10 @@ async fn ci_fixture() -> CiFixture {
     )
     .await
     .unwrap();
-    let endpoint = codeyard::backend::cluster::bind(
-        &codeyard::backend::cluster::Listen {
+    let endpoint = codeyard_app::cluster::transport::bind(
+        &codeyard_app::cluster::transport::Listen {
             bind: "127.0.0.1:0".parse().unwrap(),
-            relay: codeyard::backend::cluster::Relay::Off,
+            relay: codeyard_app::cluster::transport::Relay::Off,
             advertise: vec![],
         },
         &core_key,
@@ -4402,8 +4404,8 @@ async fn ci_fixture() -> CiFixture {
     .unwrap();
     let context = NodeContext {
         pool: Some(pool.clone()),
-        iroh: codeyard::backend::cluster::IrohDialer::with_endpoint(
-            codeyard::backend::cluster::Relay::Off,
+        iroh: codeyard_app::cluster::transport::IrohDialer::with_endpoint(
+            codeyard_app::cluster::transport::Relay::Off,
             core_key.clone(),
             endpoint.clone(),
         ),
@@ -4431,29 +4433,29 @@ async fn ci_fixture() -> CiFixture {
     let (authorized, authorization) = mpsc::unbounded_channel();
     let dispatch =
         tracing::Dispatch::new(tracing_subscriber::registry().with(CiAuthorization(authorized)));
-    let router = codeyard::backend::cluster::router(
+    let router = codeyard_app::cluster::transport::router(
         endpoint.clone(),
-        codeyard::backend::cluster::PairingHandler::new(pool.clone()),
+        codeyard_app::cluster::pairing::PairingHandler::new(pool.clone()),
     )
     .accept(
-        codeyard::backend::cluster::ALPN_RPC,
-        codeyard::backend::cluster::rpc::RpcHandler::new(context.clone()),
+        codeyard_app::cluster::transport::ALPN_RPC,
+        codeyard_app::cluster::rpc::RpcHandler::new(context.clone()),
     )
     .accept(
-        codeyard::backend::cluster::ALPN_EVENTS,
+        codeyard_app::cluster::transport::ALPN_EVENTS,
         CountingCi {
-            inner: codeyard::backend::cluster::ci::CiHandler::new(context.clone(), queue),
+            inner: codeyard_app::cluster::ci::CiHandler::new(context.clone(), queue),
             requests: requests.clone(),
             dispatch,
         },
     )
     .spawn();
-    codeyard::backend::cluster::wait_for_address(&endpoint).await;
+    codeyard_app::cluster::wait_for_address(&endpoint).await;
     codeyard_db_cluster::cluster::record_node_heartbeat(
         &pool,
         &core_key.public_hex(),
         "test",
-        &serde_json::to_string(&codeyard::backend::cluster::NodeAddress::of(
+        &serde_json::to_string(&codeyard_app::cluster::transport::NodeAddress::of(
             &endpoint.addr(),
         ))
         .unwrap(),
@@ -4482,7 +4484,7 @@ async fn ci_fixture() -> CiFixture {
             &pool,
             repo.id,
             owner.id,
-            &codeyard::backend::repositories::store::FileWrite {
+            &codeyard_app::repositories::store::editor::FileWrite {
                 branch: "main".into(),
                 path: ".github/workflows/ci.yml".into(),
                 message: "Add CI".into(),
@@ -4512,10 +4514,10 @@ async fn ci_fixture() -> CiFixture {
     .await
     .unwrap();
     let worker = client(&worker_key).await;
-    let peer = codeyard::backend::cluster::CorePeer {
+    let peer = codeyard_app::cluster::worker::CorePeer {
         target: None,
         public_key: core_key.public_hex(),
-        address: codeyard::backend::cluster::NodeAddress::of(&endpoint.addr()),
+        address: codeyard_app::cluster::transport::NodeAddress::of(&endpoint.addr()),
     };
     CiFixture {
         database,
@@ -4546,7 +4548,7 @@ async fn a_claim_frame_that_arrives_after_its_worker_is_revoked_is_refused() {
         .unwrap()
         .connect(
             fixture.peer.endpoint_addr().unwrap(),
-            codeyard::backend::cluster::ALPN_EVENTS,
+            codeyard_app::cluster::transport::ALPN_EVENTS,
         )
         .await
         .unwrap();
@@ -4557,7 +4559,7 @@ async fn a_claim_frame_that_arrives_after_its_worker_is_revoked_is_refused() {
     // Keep the body back until the core has checked membership and we have revoked it.
     send.write_u32(frame.len() as u32).await.unwrap();
     fixture.authorized().await;
-    codeyard::backend::cluster::revoke(
+    codeyard_app::cluster::pairing::revoke(
         &pool,
         codeyard_db_cluster::cluster::Authority::Operator,
         "ci-worker",
@@ -4567,9 +4569,9 @@ async fn a_claim_frame_that_arrives_after_its_worker_is_revoked_is_refused() {
     send.write_all(&frame).await.unwrap();
     send.finish().unwrap();
     let reply: serde_json::Value = serde_json::from_slice(
-        &codeyard::backend::cluster::rpc::read_frame(
+        &codeyard_app::cluster::rpc::wire::read_frame(
             &mut recv,
-            codeyard::backend::cluster::rpc::MAX_JSON,
+            codeyard_db_core::limits::MAX_JSON,
         )
         .await
         .unwrap(),
@@ -4583,7 +4585,7 @@ async fn a_claim_frame_that_arrives_after_its_worker_is_revoked_is_refused() {
     assert_eq!(run.status, "queued");
     connection.close(0u32.into(), b"test complete");
 
-    codeyard::backend::cluster::approve(
+    codeyard_app::cluster::pairing::approve(
         &pool,
         codeyard_db_cluster::cluster::Authority::Operator,
         "ci-worker",
@@ -4692,7 +4694,7 @@ async fn a_busy_core_refuses_a_request_at_once_when_all_slots_are_taken() {
             .unwrap()
             .connect(
                 fixture.peer.endpoint_addr().unwrap(),
-                codeyard::backend::cluster::ALPN_EVENTS,
+                codeyard_app::cluster::transport::ALPN_EVENTS,
             )
             .await
             .unwrap();
@@ -4710,7 +4712,7 @@ async fn a_busy_core_refuses_a_request_at_once_when_all_slots_are_taken() {
         .unwrap()
         .connect(
             fixture.peer.endpoint_addr().unwrap(),
-            codeyard::backend::cluster::ALPN_EVENTS,
+            codeyard_app::cluster::transport::ALPN_EVENTS,
         )
         .await
         .unwrap();
@@ -4724,9 +4726,9 @@ async fn a_busy_core_refuses_a_request_at_once_when_all_slots_are_taken() {
         send.write_all(&body).await.unwrap();
         send.finish().unwrap();
         let reply: serde_json::Value = serde_json::from_slice(
-            &codeyard::backend::cluster::rpc::read_frame(
+            &codeyard_app::cluster::rpc::wire::read_frame(
                 &mut recv,
-                codeyard::backend::cluster::rpc::MAX_JSON,
+                codeyard_db_core::limits::MAX_JSON,
             )
             .await
             .unwrap(),
@@ -4743,7 +4745,7 @@ async fn a_busy_core_refuses_a_request_at_once_when_all_slots_are_taken() {
         .unwrap()
         .connect(
             fixture.peer.endpoint_addr().unwrap(),
-            codeyard::backend::cluster::ALPN_EVENTS,
+            codeyard_app::cluster::transport::ALPN_EVENTS,
         )
         .await
         .unwrap();
@@ -4792,19 +4794,19 @@ async fn stalled_ci_replies_keep_their_admission_slots() {
         let connection = slow[index % slow.len()]
             .connect(
                 fixture.peer.endpoint_addr().unwrap(),
-                codeyard::backend::cluster::ALPN_EVENTS,
+                codeyard_app::cluster::transport::ALPN_EVENTS,
             )
             .await
             .unwrap();
         let (mut send, mut recv) = connection.open_bi().await.unwrap();
         // Each stalled claim is a different slot, so it takes its own queued run.
-        codeyard::backend::cluster::rpc::write_frame(
+        codeyard_app::cluster::rpc::wire::write_frame(
             &mut send,
             &serde_json::to_vec(
                 &json!({"worker": format!("stalled-{index}"), "operation": {"Claim": {"mode": "local", "platforms": CiConfig::default().platform_labels()}}}),
             )
             .unwrap(),
-            codeyard::backend::cluster::rpc::MAX_JSON,
+            codeyard_db_core::limits::MAX_JSON,
         )
         .await
         .unwrap();
@@ -4840,7 +4842,7 @@ async fn stalled_ci_replies_keep_their_admission_slots() {
     for (connection, mut recv, id) in held {
         let body = tokio::time::timeout(
             Duration::from_secs(5),
-            recv.read_to_end(codeyard::backend::cluster::rpc::MAX_JSON),
+            recv.read_to_end(codeyard_db_core::limits::MAX_JSON),
         )
         .await
         .unwrap()
@@ -4876,7 +4878,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         .unwrap()
         .unwrap();
     act_engine(pool, repo.id).await;
-    let store = codeyard::backend::repositories::store::repo_store(&repo, None);
+    let store = codeyard_app::repositories::store::repo_store(&repo, None);
     {
         let git = git2::Repository::open_bare(&repo.disk_path).unwrap();
         git.reference(
@@ -4887,7 +4889,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         )
         .unwrap();
     }
-    let head = store.save_file_as(pool, repo.id, fixture.owner, &codeyard::backend::repositories::store::FileWrite {
+    let head = store.save_file_as(pool, repo.id, fixture.owner, &codeyard_app::repositories::store::editor::FileWrite {
         branch: "topic".into(), path: ".github/workflows/ci.yml".into(), message: "Test pull".into(),
         expected_revision: fixture.sha.clone(), creating: false, deleting: false,
     }, b"on: pull_request\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n", "Tester", "tester@example.invalid").await.unwrap();
@@ -4910,7 +4912,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
     )
     .await
     .unwrap();
-    let ci = codeyard::backend::ci::CiRuns::new(
+    let ci = codeyard_app::ci::runs::CiRuns::new(
         pool.clone(),
         Arc::new(CiConfig {
             trusted_actor_ids: BTreeSet::from([fixture.owner]),
@@ -4920,7 +4922,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         None,
         Arc::new(NotificationBroadcaster::new(pool)),
     );
-    codeyard::backend::repositories::pull_requests::workflows::queue_pull_request_ci(
+    codeyard_app::repositories::pull_requests::workflows::queue_pull_request_ci(
         pool,
         &ci,
         &repo,
@@ -4957,7 +4959,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
             pool,
             repo.id,
             fixture.owner,
-            &codeyard::backend::repositories::store::FileWrite {
+            &codeyard_app::repositories::store::editor::FileWrite {
                 branch: "main".into(),
                 path: "base.txt".into(),
                 message: "Advance base".into(),
@@ -4971,8 +4973,13 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         )
         .await
         .unwrap();
-    codeyard::backend::repositories::pull_requests::branches_moved(pool, &repo, &ci, fixture.owner)
-        .await;
+    codeyard_app::repositories::pull_requests::branches::branches_moved(
+        pool,
+        &repo,
+        &ci,
+        fixture.owner,
+    )
+    .await;
     let current = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull.id)
         .await
         .unwrap()
@@ -5053,9 +5060,9 @@ impl ProtocolHandler for LogReplyProxy {
         connection: iroh::endpoint::Connection,
     ) -> Result<(), iroh::protocol::AcceptError> {
         let (mut send, mut recv) = connection.accept_bi().await.unwrap();
-        let header = codeyard::backend::cluster::rpc::read_frame(
+        let header = codeyard_app::cluster::rpc::wire::read_frame(
             &mut recv,
-            codeyard::backend::cluster::rpc::MAX_JSON,
+            codeyard_db_core::limits::MAX_JSON,
         )
         .await
         .unwrap();
@@ -5071,21 +5078,24 @@ impl ProtocolHandler for LogReplyProxy {
         }
         let upstream = self
             .upstream
-            .connect(self.peer.clone(), codeyard::backend::cluster::ALPN_EVENTS)
+            .connect(
+                self.peer.clone(),
+                codeyard_app::cluster::transport::ALPN_EVENTS,
+            )
             .await
             .unwrap();
         let (mut writer, mut reader) = upstream.open_bi().await.unwrap();
-        codeyard::backend::cluster::rpc::write_frame(
+        codeyard_app::cluster::rpc::wire::write_frame(
             &mut writer,
             &header,
-            codeyard::backend::cluster::rpc::MAX_JSON,
+            codeyard_db_core::limits::MAX_JSON,
         )
         .await
         .unwrap();
         writer.finish().unwrap();
-        let reply = codeyard::backend::cluster::rpc::read_frame(
+        let reply = codeyard_app::cluster::rpc::wire::read_frame(
             &mut reader,
-            codeyard::backend::cluster::rpc::MAX_JSON,
+            codeyard_db_core::limits::MAX_JSON,
         )
         .await
         .unwrap();
@@ -5093,10 +5103,10 @@ impl ProtocolHandler for LogReplyProxy {
             let _ = self.logs.send(());
             connection.close(0u32.into(), b"lost log reply");
         } else {
-            codeyard::backend::cluster::rpc::write_frame(
+            codeyard_app::cluster::rpc::wire::write_frame(
                 &mut send,
                 &reply,
-                codeyard::backend::cluster::rpc::MAX_JSON,
+                codeyard_db_core::limits::MAX_JSON,
             )
             .await
             .unwrap();
@@ -5126,10 +5136,10 @@ async fn successful_core_is_tried_first_for_subsequent_log_batches() {
         context: fixture.worker.clone(),
         preferred: Default::default(),
         peers: vec![
-            codeyard::backend::cluster::CorePeer {
+            codeyard_app::cluster::worker::CorePeer {
                 target: None,
                 public_key: codeyard_support::node_identity::NodeKey::generate().public_hex(),
-                address: codeyard::backend::cluster::NodeAddress {
+                address: codeyard_app::cluster::transport::NodeAddress {
                     tcp: vec![address],
                     ..Default::default()
                 },
@@ -5174,14 +5184,14 @@ async fn shutdown_cancels_a_run_while_its_heartbeat_is_stalled() {
     let fixture = ci_fixture().await;
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(iroh::RelayMode::Disabled)
-        .alpns(vec![codeyard::backend::cluster::ALPN_EVENTS.to_vec()])
+        .alpns(vec![codeyard_app::cluster::transport::ALPN_EVENTS.to_vec()])
         .bind()
         .await
         .unwrap();
     let (logs, mut heartbeat) = mpsc::unbounded_channel();
     let router = iroh::protocol::Router::builder(endpoint.clone())
         .accept(
-            codeyard::backend::cluster::ALPN_EVENTS,
+            codeyard_app::cluster::transport::ALPN_EVENTS,
             LogReplyProxy {
                 upstream: fixture.worker.iroh.endpoint().await.unwrap().clone(),
                 peer: fixture.peer.endpoint_addr().unwrap(),
@@ -5191,7 +5201,7 @@ async fn shutdown_cancels_a_run_while_its_heartbeat_is_stalled() {
             },
         )
         .spawn();
-    codeyard::backend::cluster::wait_for_address(&endpoint).await;
+    codeyard_app::cluster::wait_for_address(&endpoint).await;
     let runner = fixture.root.path().join("runner");
     std::fs::write(&runner, "#!/bin/sh\nsleep 60\n").unwrap();
     std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -5199,10 +5209,10 @@ async fn shutdown_cancels_a_run_while_its_heartbeat_is_stalled() {
     let queue = RunQueue::Remote {
         context: fixture.worker.clone(),
         preferred: Default::default(),
-        peers: vec![codeyard::backend::cluster::CorePeer {
+        peers: vec![codeyard_app::cluster::worker::CorePeer {
             target: None,
             public_key: endpoint.id().to_string(),
-            address: codeyard::backend::cluster::NodeAddress::of(&endpoint.addr()),
+            address: codeyard_app::cluster::transport::NodeAddress::of(&endpoint.addr()),
         }],
     };
     let workers = CiWorkers::new(
@@ -5255,14 +5265,14 @@ async fn a_lost_log_reply_replays_without_duplicating_a_committed_batch_on_the_n
         .unwrap();
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(iroh::RelayMode::Disabled)
-        .alpns(vec![codeyard::backend::cluster::ALPN_EVENTS.to_vec()])
+        .alpns(vec![codeyard_app::cluster::transport::ALPN_EVENTS.to_vec()])
         .bind()
         .await
         .unwrap();
     let (logs, mut received) = mpsc::unbounded_channel();
     let router = iroh::protocol::Router::builder(endpoint.clone())
         .accept(
-            codeyard::backend::cluster::ALPN_EVENTS,
+            codeyard_app::cluster::transport::ALPN_EVENTS,
             LogReplyProxy {
                 upstream: fixture.worker.iroh.endpoint().await.unwrap().clone(),
                 peer: fixture.peer.endpoint_addr().unwrap(),
@@ -5272,15 +5282,15 @@ async fn a_lost_log_reply_replays_without_duplicating_a_committed_batch_on_the_n
             },
         )
         .spawn();
-    codeyard::backend::cluster::wait_for_address(&endpoint).await;
+    codeyard_app::cluster::wait_for_address(&endpoint).await;
     let queue = RunQueue::Remote {
         preferred: Default::default(),
         context: fixture.worker.clone(),
         peers: vec![
-            codeyard::backend::cluster::CorePeer {
+            codeyard_app::cluster::worker::CorePeer {
                 target: None,
                 public_key: endpoint.id().to_string(),
-                address: codeyard::backend::cluster::NodeAddress::of(&endpoint.addr()),
+                address: codeyard_app::cluster::transport::NodeAddress::of(&endpoint.addr()),
             },
             fixture.peer.clone(),
         ],
@@ -5408,14 +5418,14 @@ async fn stalled_remote_logs_fail_success_and_do_not_delay_timeout_or_cancellati
     let fixture = ci_fixture().await;
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(iroh::RelayMode::Disabled)
-        .alpns(vec![codeyard::backend::cluster::ALPN_EVENTS.to_vec()])
+        .alpns(vec![codeyard_app::cluster::transport::ALPN_EVENTS.to_vec()])
         .bind()
         .await
         .unwrap();
     let (logs, mut received) = mpsc::unbounded_channel();
     let router = iroh::protocol::Router::builder(endpoint.clone())
         .accept(
-            codeyard::backend::cluster::ALPN_EVENTS,
+            codeyard_app::cluster::transport::ALPN_EVENTS,
             LogReplyProxy {
                 upstream: fixture.worker.iroh.endpoint().await.unwrap().clone(),
                 peer: fixture.peer.endpoint_addr().unwrap(),
@@ -5425,7 +5435,7 @@ async fn stalled_remote_logs_fail_success_and_do_not_delay_timeout_or_cancellati
             },
         )
         .spawn();
-    codeyard::backend::cluster::wait_for_address(&endpoint).await;
+    codeyard_app::cluster::wait_for_address(&endpoint).await;
     let runner = fixture.root.path().join("runner");
     let config = Arc::new(CiConfig {
         mode: CiExecutionMode::Local,
@@ -5437,10 +5447,10 @@ async fn stalled_remote_logs_fail_success_and_do_not_delay_timeout_or_cancellati
     let queue = RunQueue::Remote {
         preferred: Default::default(),
         context: fixture.worker.clone(),
-        peers: vec![codeyard::backend::cluster::CorePeer {
+        peers: vec![codeyard_app::cluster::worker::CorePeer {
             target: None,
             public_key: endpoint.id().to_string(),
-            address: codeyard::backend::cluster::NodeAddress::of(&endpoint.addr()),
+            address: codeyard_app::cluster::transport::NodeAddress::of(&endpoint.addr()),
         }],
     };
     for outcome in ["success", "timeout", "shutdown"] {

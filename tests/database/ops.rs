@@ -1,4 +1,5 @@
-use crate::support::native_database::{NativeDatabase, PostgresDatabase};
+use crate::support::native_database::NativeDatabase;
+use crate::support::native_database::PostgresDatabase;
 
 use codeyard_db_core::DbPool;
 

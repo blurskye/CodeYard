@@ -1,16 +1,17 @@
 //! Real receive-pack rejects quarantined secrets and honors only the pusher's bypass.
-use crate::support::{
-    database::Database, git_server, github_spec::assert_github_schema, http_client::Client,
-};
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    crypto::SecretEncryptor,
-    db::{self, secret_scanning as records},
-    repositories::{lifecycle, store::repo_store},
-    storage::ObjectStore,
-};
+use crate::support::database::Database;
+use crate::support::git_server;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::http_client::Client;
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::repositories::lifecycle;
+use codeyard_app::repositories::store::repo_store;
+use codeyard_app::storage::ObjectStore;
+use codeyard_db_security::secret_scanning as records;
+use codeyard_support::secrets::SecretEncryptor;
 use serde_json::{json, Value};
 use std::{path::Path, process::Output, sync::Arc};
 
@@ -184,7 +185,7 @@ async fn contract(pg: bool) {
         fixture.pool(),
         owner,
         repo.id,
-        &codeyard_identity::tokens::token_hash(&secret),
+        &codeyard_support::token_hash::token_hash(&secret),
         "codeyard_personal_access_token",
     )
     .await

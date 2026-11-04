@@ -1,18 +1,31 @@
+use crate::backend::cli::arguments::Cli;
+use crate::backend::cli::arguments::Commands;
+use crate::backend::cli::arguments::DbAction;
+use crate::backend::cli::arguments::KeyAction;
+use crate::backend::cli::arguments::RepoAction;
+use crate::backend::cli::arguments::UserAction;
+use crate::backend::cli::commands::add_key_cmd;
+use crate::backend::cli::commands::add_key_from_file_cmd;
+use crate::backend::cli::commands::bootstrap_user_cmd;
+use crate::backend::cli::commands::copy_database_cmd;
+use crate::backend::cli::commands::create_repo_cmd;
+use crate::backend::cli::commands::create_user_cmd;
+use crate::backend::cli::commands::grant_access_cmd;
+use crate::backend::cli::commands::list_keys_cmd;
+use crate::backend::cli::commands::list_repos_cmd;
+use crate::backend::cli::commands::list_users_cmd;
+use crate::backend::cli::commands::repo_info_cmd;
+use anyhow::bail;
+use anyhow::Result;
+use codeyard_support::fs::private_dir as prepare_state_directory;
+use std::ffi::OsString;
+use std::time::Duration;
+use tracing::info;
+use tracing_subscriber::EnvFilter;
 pub mod commands;
-
-pub use commands::*;
 
 pub mod arguments;
 pub mod cluster;
-use arguments::{Cli, Commands, DbAction, KeyAction, RepoAction, UserAction};
-
-use codeyard_support::fs::private_dir as prepare_state_directory;
-
-use anyhow::{bail, Result};
-use clap::Parser;
-use std::{ffi::OsString, time::Duration};
-use tracing::info;
-use tracing_subscriber::EnvFilter;
 
 fn load_dotenv() -> Result<()> {
     match dotenvy::dotenv() {
@@ -46,7 +59,7 @@ fn database_url_from_env() -> Result<Option<String>> {
 }
 
 fn cluster_join_ticket_from_env() -> Result<String> {
-    if let Some(config) = crate::backend::ci::runner_credentials::jit_from_env()? {
+    if let Some(config) = codeyard_app::ci::runner_credentials::jit_from_env()? {
         anyhow::ensure!(
             std::env::var("CLUSTER_JOIN_TOKEN")
                 .ok()
@@ -172,7 +185,7 @@ pub fn run() -> Result<()> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let status = runtime.block_on(crate::backend::ssh::openssh::run_command(action))?;
+        let status = runtime.block_on(codeyard_app::ssh::openssh::run_command(action))?;
         std::process::exit(status.clamp(0, 255));
     }
     #[cfg(not(unix))]
@@ -221,7 +234,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
             DbAction::Copy {
                 from: Some(from),
                 to: Some(to),
-            } => crate::backend::cli::copy_database_cmd(from, to).await,
+            } => crate::backend::cli::commands::copy_database_cmd(from, to).await,
             DbAction::Copy { .. } => bail!(
                 "db copy needs --from and --to, or COPY_FROM_DATABASE_URL and COPY_TO_DATABASE_URL"
             ),
@@ -242,10 +255,10 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
     if let Commands::Serve { roles, .. } = &cli.command {
         if roles.worker_only() && configured_database_url.is_none() {
             prepare_state_directory(&cli.state_dir)?;
-            return crate::backend::node::serve_worker(&cli.state_dir).await;
+            return crate::backend::node::runtime::serve_worker(&cli.state_dir).await;
         }
         if configured_database_url.is_none() {
-            anyhow::ensure!(roles.single_node() && crate::backend::cluster::Settings::from_env()?.is_none(),
+            anyhow::ensure!(roles.single_node() && codeyard_app::cluster::Settings::from_env()?.is_none(),
                 "a server and the cluster roles require DATABASE_URL (PostgreSQL for a cluster, sqlite://... for a single node); only a runner can run without a database");
         }
     }
@@ -261,12 +274,12 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
     };
     // A restore fills an empty database itself, before anything migrates it.
     if let Commands::Restore { dir } = &cli.command {
-        let places = crate::backend::backups::Places {
+        let places = codeyard_app::backups::Places {
             database_url: &database_url,
             state_dir: &cli.state_dir,
             repos_path: &cli.repos_path,
         };
-        let pool = crate::backend::backups::restore(&places, dir).await?;
+        let pool = codeyard_app::backups::restore(&places, dir).await?;
         pool.close().await;
         return Ok(());
     }
@@ -295,12 +308,12 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
             }
 
             Commands::Backup { dir } => {
-                let places = crate::backend::backups::Places {
+                let places = codeyard_app::backups::Places {
                     database_url: &database_url,
                     state_dir: &cli.state_dir,
                     repos_path: &cli.repos_path,
                 };
-                crate::backend::backups::backup(&pool, &places, &dir).await?;
+                codeyard_app::backups::backup(&pool, &places, &dir).await?;
             }
 
             Commands::Serve {
@@ -315,14 +328,14 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                 host_key,
             } => {
                 if cluster {
-                    crate::backend::cluster::require_postgres(&pool)?;
+                    codeyard_app::cluster::require_postgres(&pool)?;
                     if codeyard_db_cluster::cluster::enable_cluster(&pool).await? {
                         info!("cluster mode is on");
                     }
                 }
-                crate::backend::node::serve(
+                crate::backend::node::runtime::serve(
                     pool.clone(),
-                    crate::backend::node::ServeConfig {
+                    crate::backend::node::config::ServeConfig {
                         roles,
                         repos_path: cli.repos_path,
                         state_dir: cli.state_dir,
@@ -340,18 +353,23 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
 
             Commands::User { action } => match action {
                 UserAction::Create { username, email } => {
-                    crate::backend::cli::create_user_cmd(&pool, &username, email.as_deref())
-                        .await?;
+                    crate::backend::cli::commands::create_user_cmd(
+                        &pool,
+                        &username,
+                        email.as_deref(),
+                    )
+                    .await?;
                 }
                 UserAction::Bootstrap {
                     username,
                     password_stdin: _,
                     mode,
                 } => {
-                    crate::backend::cli::bootstrap_user_cmd(&pool, &username, &mode).await?;
+                    crate::backend::cli::commands::bootstrap_user_cmd(&pool, &username, &mode)
+                        .await?;
                 }
                 UserAction::List => {
-                    crate::backend::cli::list_users_cmd(&pool).await?;
+                    crate::backend::cli::commands::list_users_cmd(&pool).await?;
                 }
             },
 
@@ -363,19 +381,24 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                     file,
                 } => {
                     if let Some(key_path) = file {
-                        crate::backend::cli::add_key_from_file_cmd(
+                        crate::backend::cli::commands::add_key_from_file_cmd(
                             &pool, &username, &name, &key_path,
                         )
                         .await?;
                     } else if let Some(public_key) = key {
-                        crate::backend::cli::add_key_cmd(&pool, &username, &name, &public_key)
-                            .await?;
+                        crate::backend::cli::commands::add_key_cmd(
+                            &pool,
+                            &username,
+                            &name,
+                            &public_key,
+                        )
+                        .await?;
                     } else {
                         return Err(anyhow::anyhow!("Must provide --key or --file"));
                     }
                 }
                 KeyAction::List { username } => {
-                    crate::backend::cli::list_keys_cmd(&pool, &username).await?;
+                    crate::backend::cli::commands::list_keys_cmd(&pool, &username).await?;
                 }
             },
 
@@ -391,7 +414,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                     description,
                     private,
                 } => {
-                    crate::backend::cli::create_repo_cmd(
+                    crate::backend::cli::commands::create_repo_cmd(
                         &pool,
                         &cli.state_dir,
                         &cli.repos_path,
@@ -403,10 +426,10 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                     .await?;
                 }
                 RepoAction::List { owner } => {
-                    crate::backend::cli::list_repos_cmd(&pool, &owner).await?;
+                    crate::backend::cli::commands::list_repos_cmd(&pool, &owner).await?;
                 }
                 RepoAction::Info { owner, name } => {
-                    crate::backend::cli::repo_info_cmd(
+                    crate::backend::cli::commands::repo_info_cmd(
                         &pool,
                         &cli.state_dir,
                         &cli.repos_path,
@@ -416,13 +439,13 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                     .await?;
                 }
                 RepoAction::Verify { repair } => {
-                    let problems = crate::backend::backups::verify(&pool, repair).await?;
+                    let problems = codeyard_app::backups::repair::verify(&pool, repair).await?;
                     if problems > 0 {
                         bail!("{problems} problems found");
                     }
                 }
                 RepoAction::Rebuild => {
-                    crate::backend::backups::rebuild(&pool).await?;
+                    codeyard_app::backups::repair::rebuild(&pool).await?;
                 }
                 RepoAction::Grant {
                     owner,
@@ -441,3 +464,5 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
     pool.close().await;
     result
 }
+
+use crate::backend::cli::commands::add_key_cmd;

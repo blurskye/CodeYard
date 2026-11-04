@@ -1,20 +1,24 @@
 //! Live gist authority, publication recovery, and size boundaries on both engines.
 use super::github::request;
-use crate::support::{database::Database, http_client::Client};
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db::{self, users::accounts::AccountCredential},
-    gists::{self, CreateGist},
-    identity::tokens::{self, TokenInput},
-    repositories::{
-        access, lifecycle,
-        store::{repo_store, GistCredential},
-    },
-    storage::ObjectStore,
-};
-use codeyard_git::gist_types::{GistEdit, GistFileChange, MAX_GIST_BYTES};
+use crate::support::database::Database;
+use crate::support::http_client::Client;
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::gists;
+use codeyard_app::gists::CreateGist;
+use codeyard_app::repositories::access;
+use codeyard_app::repositories::lifecycle;
+use codeyard_app::repositories::store::gists::GistCredential;
+use codeyard_app::repositories::store::repo_store;
+use codeyard_app::storage::ObjectStore;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_git::gist_types::GistEdit;
+use codeyard_git::gist_types::GistFileChange;
+use codeyard_git::gist_types::MAX_GIST_BYTES;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 
@@ -393,8 +397,9 @@ async fn authority(pg: bool) {
         large.snapshot.sha
     );
     let (_, model) = a.model(&format!("/gists/{}/edit", large.gist.id)).await;
-    let codeyard_webui::app::Page::Gists(codeyard_webui::pages::gists::Page::Editor(editor)) =
-        model
+    let codeyard_webui::app::Page::Gists(
+        codeyard_api_rest::user::fine_grained::gists::Page::Editor(editor),
+    ) = model
     else {
         panic!("expected editor")
     };

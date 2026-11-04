@@ -1,11 +1,11 @@
 //! Account metadata, privileged mutations and enrollment retain their database authority.
-use crate::support::{
-    database::{wait_until_blocked, Database},
-    native_database::token,
-    PASSWORD_WORK,
-};
+use crate::support::database::wait_until_blocked;
+use crate::support::database::Database;
+use crate::support::native_database::token;
+use crate::support::PASSWORD_WORK;
 use chrono::{Duration, Utc};
-use codeyard::backend::{db, identity};
+use codeyard::backend::db;
+use codeyard::backend::identity;
 
 const KEY: &str =
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";

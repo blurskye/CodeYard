@@ -10,9 +10,14 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::repositories::pull_requests::{merge, OperationError};
-use codeyard::backend::{api::create_router, app::AppState, db, storage::ObjectStore};
-use codeyard_db_repos::pull_requests::records::{StackJoin, StackRefusal};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::repositories::pull_requests::merge;
+use codeyard_app::repositories::pull_requests::OperationError;
+use codeyard_app::storage::ObjectStore;
+use codeyard_db_repos::pull_requests::records::StackJoin;
+use codeyard_db_repos::pull_requests::records::StackRefusal;
 use database::{wait_until_blocked, Database};
 use pulls::Client;
 use serde_json::{json, Value};
@@ -24,15 +29,15 @@ struct Runs {
     router: axum::Router,
     alice: i64,
     bob: i64,
-    ci: Arc<codeyard::backend::ci::CiRuns>,
-    broadcaster: Arc<codeyard_notifications::NotificationBroadcaster>,
+    ci: Arc<codeyard_app::ci::runs::CiRuns>,
+    broadcaster: Arc<codeyard_notifications::broadcast::NotificationBroadcaster>,
 }
 
 async fn application_with_runs(f: &mut Database, root: &Path) -> Runs {
     f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
-    codeyard::backend::repositories::lifecycle::provision(
+    codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root,
         db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -48,7 +53,7 @@ async fn application_with_runs(f: &mut Database, root: &Path) -> Runs {
         root.to_owned(),
         Arc::new(ObjectStore::open(root, None).await.unwrap()),
         None,
-        codeyard::backend::ci::CiConfig::default(),
+        codeyard_app::ci::config::CiConfig::default(),
         None,
     );
     let ci = state.ci_runs.clone();

@@ -1,22 +1,22 @@
 //! PR read budgets, revision checks and metadata projections on both databases.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
-use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db,
-    repositories::{self, lifecycle},
-    storage::ObjectStore,
-};
-use codeyard_webui::{
-    app::{Page, PageEnvelope},
-    pages::repos::issues,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::repositories;
+use codeyard_app::repositories::lifecycle;
+use codeyard_app::storage::ObjectStore;
+use codeyard_webui::app::Page;
+use codeyard_webui::app::PageEnvelope;
+use codeyard_webui::pages::repos::issues;
 use serde_json::json;
 use std::sync::Arc;
 use tower::ServiceExt;

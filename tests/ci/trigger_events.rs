@@ -1,16 +1,18 @@
 //! Pull request activity filters and base-workflow authority through the HTTP API.
-use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
+use crate::support::http_client::Client;
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::{queue::RunQueue, CiConfig, CiExecutionMode},
-    crypto::SecretEncryptor,
-    db,
-    repositories::lifecycle::provision,
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::ci::config::CiExecutionMode;
+use codeyard_app::ci::queue::RunQueue;
+use codeyard_app::repositories::lifecycle::provision;
+use codeyard_app::storage::ObjectStore;
+use codeyard_support::secrets::SecretEncryptor;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, sync::Arc};
 use tower::ServiceExt;
@@ -176,7 +178,7 @@ async fn contract(pg: bool) {
         .claim(
             "target-worker",
             CiExecutionMode::Local,
-            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .unwrap()
@@ -231,7 +233,7 @@ async fn contract(pg: bool) {
         .claim(
             "fork-worker",
             CiExecutionMode::Local,
-            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .unwrap()
@@ -435,7 +437,7 @@ async fn dispatch_contract(pg: bool) {
         .claim(
             "custom-worker",
             CiExecutionMode::Local,
-            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .unwrap()
@@ -445,7 +447,7 @@ async fn dispatch_contract(pg: bool) {
         .claim(
             "source-worker",
             CiExecutionMode::Local,
-            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .unwrap()
@@ -609,7 +611,7 @@ async fn workflow_run_contract(pg: bool) {
         .claim(
             "source-worker",
             CiExecutionMode::Local,
-            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .unwrap()
@@ -620,7 +622,7 @@ async fn workflow_run_contract(pg: bool) {
         .claim(
             "source-worker",
             CiExecutionMode::Local,
-            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .unwrap()

@@ -4,7 +4,7 @@ use chrono::Utc;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
 
-pub(crate) const SCAN_ROWS: i64 = 100;
+pub const SCAN_ROWS: i64 = 100;
 
 pub(crate) fn scan_window(limit: i64, offset: i64) -> (i64, i64, i64) {
     let limit = limit.clamp(0, SCAN_ROWS);

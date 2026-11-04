@@ -1,5 +1,6 @@
 //! Provider sign-in is a browser flow, separate from the token-only API.
-use crate::support::{database::Database, fake_webui_bundle};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
 use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},

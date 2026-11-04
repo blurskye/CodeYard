@@ -3,14 +3,11 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use chrono::{Datelike, Utc};
-use codeyard::backend::{
-    db,
-    repositories::{
-        lifecycle::{provision_with_initial_files, InitialFiles},
-        store::repo_store,
-        templates,
-    },
-};
+use codeyard::backend::db;
+use codeyard_app::repositories::lifecycle::provision_with_initial_files;
+use codeyard_app::repositories::lifecycle::InitialFiles;
+use codeyard_app::repositories::store::repo_store;
+use codeyard_app::repositories::templates;
 use database::Database;
 
 async fn contract(pg: bool) {

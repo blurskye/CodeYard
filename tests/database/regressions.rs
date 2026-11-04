@@ -1,6 +1,8 @@
 //! Regression contracts for database effects and their current authority on both engines.
 use crate::support::database::Database;
-use codeyard::backend::{db, identity, notifications};
+use codeyard::backend::db;
+use codeyard::backend::identity;
+use codeyard::backend::notifications;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Repository;
 use db::notifications::{NewNotification, NotificationFilter, NotificationInboxAction};

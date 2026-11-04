@@ -1,12 +1,15 @@
 //! Run credentials through REST, smart Git and the live credential rechecks on both engines.
-use crate::support::{database::Database, github_spec::assert_github_schema};
+use crate::support::database::Database;
+use crate::support::github_spec::assert_github_schema;
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
     Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard::backend::{ci, db, repositories};
+use codeyard::backend::db;
+use codeyard_app::ci;
+use codeyard_app::repositories;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use tower::ServiceExt;
@@ -107,7 +110,7 @@ async fn contract(pg: bool) {
         "worker",
         "local",
         &[actor],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -186,10 +189,7 @@ async fn contract(pg: bool) {
     )
     .await
     .is_err());
-    assert_eq!(
-        codeyard::backend::webhooks::payloads::user(&bot)["type"],
-        "Bot"
-    );
+    assert_eq!(codeyard_app::webhooks::payloads::user(&bot)["type"], "Bot");
     // The shared GraphQL implementation must not borrow this bot's grants from other runs.
     db::repositories::access::grant_repo_access(
         f.pool(),
@@ -297,7 +297,9 @@ async fn contract(pg: bool) {
         assert_eq!(response.status(), expected);
     }
     {
-        use crate::support::git_server::{self, git, success};
+        use crate::support::git_server;
+        use crate::support::git_server::git;
+        use crate::support::git_server::success;
         let bare = git2::Repository::open_bare(&repo.disk_path).unwrap();
         crate::support::production_ci::commit(&bare, "refs/heads/main", None, "checkout", None);
         drop(bare);

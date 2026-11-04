@@ -1,15 +1,15 @@
 use super::request;
-use crate::support::{
-    codeyard_db_orgs::organizations::applied, database::Database, http_client::Client,
-};
+use crate::support::codeyard_db_orgs::organizations::applied;
+use crate::support::database::Database;
+use crate::support::http_client::Client;
 use axum::http::StatusCode;
 
-use codeyard_db_orgs::organizations::NewOrganization;
-use codeyard_db_orgs::organizations::NewTeam;
-use codeyard_db_orgs::organizations::OrganizationProfile;
-use codeyard_db_orgs::organizations::TeamPrivacy;
-use codeyard_db_orgs::organizations::TeamProfile;
-use codeyard_db_orgs::organizations::TeamRole;
+use super::NewOrganization;
+use super::NewTeam;
+use super::OrganizationProfile;
+use super::TeamPrivacy;
+use super::TeamProfile;
+use super::TeamRole;
 use codeyard_db_repos::repositories::creation::NewRepository;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
@@ -89,7 +89,7 @@ async fn contract(pg: bool) {
     let mut orgs = Vec::new();
     for name in ["acme", "foreign"] {
         orgs.push(applied(
-            codeyard_db_orgs::organizations::create_organization(
+            super::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -104,30 +104,18 @@ async fn contract(pg: bool) {
         (delegated, OrgRole::Admin),
     ] {
         applied(
-            codeyard_db_orgs::organizations::add_organization_member(
-                f.pool(),
-                owner,
-                orgs[0].id,
-                id,
-                role,
-            )
-            .await
-            .unwrap(),
+            super::add_organization_member(f.pool(), owner, orgs[0].id, id, role)
+                .await
+                .unwrap(),
         );
     }
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            f.pool(),
-            owner,
-            orgs[1].id,
-            member,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(f.pool(), owner, orgs[1].id, member, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let team = applied(
-        codeyard_db_orgs::organizations::create_organization_team(
+        super::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -141,7 +129,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::create_organization_team(
+        super::create_organization_team(
             f.pool(),
             owner,
             orgs[1].id,
@@ -156,7 +144,7 @@ async fn contract(pg: bool) {
     );
     for user in [member, other] {
         applied(
-            codeyard_db_orgs::organizations::add_organization_team_member(
+            super::add_organization_team_member(
                 f.pool(),
                 owner,
                 orgs[0].id,
@@ -446,7 +434,7 @@ async fn contract(pg: bool) {
     assert_eq!(body["permissions"]["pull"], true);
     assert_eq!(body["permissions"]["push"], false);
     let metadata = applied(
-        codeyard_db_orgs::organizations::create_organization_team(
+        super::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -460,7 +448,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::grant_organization_team_repository(
+        super::grant_organization_team_repository(
             f.pool(),
             owner,
             orgs[0].id,
@@ -510,7 +498,7 @@ async fn contract(pg: bool) {
             .all(|repository| repository["id"] != foreign.id));
     }
     assert_eq!(
-        codeyard_db_orgs::organizations::get_organization_repo_access(f.pool(), member, &first)
+        super::get_organization_repo_access(f.pool(), member, &first)
             .await
             .unwrap(),
         AccessLevel::Read
@@ -527,7 +515,7 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(
         applied(
-            codeyard_db_orgs::organizations::get_organization_role(f.pool(), member, orgs[0].id)
+            super::get_organization_role(f.pool(), member, orgs[0].id)
                 .await
                 .unwrap()
         ),
@@ -885,18 +873,12 @@ async fn contract(pg: bool) {
     )
     .await;
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            f.pool(),
-            owner,
-            orgs[0].id,
-            member,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(f.pool(), owner, orgs[0].id, member, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::add_organization_team_member(
+        super::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1107,18 +1089,12 @@ async fn contract(pg: bool) {
     // push restrictions, cleanup and conversion. It must never become org governance.
     let nested = f.actor("nested").await;
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            f.pool(),
-            owner,
-            orgs[0].id,
-            nested,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(f.pool(), owner, orgs[0].id, nested, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let parent = applied(
-        codeyard_db_orgs::organizations::create_organization_team(
+        super::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1132,7 +1108,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let child = applied(
-        codeyard_db_orgs::organizations::create_organization_team(
+        super::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1149,7 +1125,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::add_organization_team_member(
+        super::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1197,7 +1173,7 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(body["permissions"]["push"], true);
     assert_eq!(
-        codeyard_db_orgs::organizations::get_organization_repo_access(f.pool(), nested, &first)
+        super::get_organization_repo_access(f.pool(), nested, &first)
             .await
             .unwrap(),
         AccessLevel::Write
@@ -1257,14 +1233,9 @@ async fn contract(pg: bool) {
     .await;
     run(&f, first.id, nested, "queued").await;
     applied(
-        codeyard_db_orgs::organizations::delete_organization_team(
-            f.pool(),
-            owner,
-            orgs[0].id,
-            parent.id,
-        )
-        .await
-        .unwrap(),
+        super::delete_organization_team(f.pool(), owner, orgs[0].id, parent.id)
+            .await
+            .unwrap(),
     );
     request(
         &router,
@@ -1278,17 +1249,14 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(f.scalar("SELECT COUNT(*) FROM ci_runs WHERE repo_id=$1 AND triggered_by_id=$2 AND status='cancelled'",&[first.id,nested]).await,1);
     // The child team went with its parent; a new team of the same name stands in for it.
-    assert!(codeyard_db_orgs::organizations::get_public_team(
-        f.pool(),
-        owner,
-        orgs[0].id,
-        "role-child"
-    )
-    .await
-    .unwrap()
-    .is_none());
+    assert!(
+        super::get_public_team(f.pool(), owner, orgs[0].id, "role-child")
+            .await
+            .unwrap()
+            .is_none()
+    );
     let child = applied(
-        codeyard_db_orgs::organizations::create_organization_team(
+        super::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1302,7 +1270,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::add_organization_team_member(
+        super::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1325,15 +1293,9 @@ async fn contract(pg: bool) {
     .await;
     run(&f, first.id, nested, "queued").await;
     applied(
-        codeyard_db_orgs::organizations::remove_organization_team_member(
-            f.pool(),
-            owner,
-            orgs[0].id,
-            child.id,
-            nested,
-        )
-        .await
-        .unwrap(),
+        super::remove_organization_team_member(f.pool(), owner, orgs[0].id, child.id, nested)
+            .await
+            .unwrap(),
     );
     assert_eq!(f.scalar("SELECT COUNT(*) FROM ci_runs WHERE repo_id=$1 AND triggered_by_id=$2 AND status='cancelled'",&[first.id,nested]).await,2);
     request(
@@ -1347,7 +1309,7 @@ async fn contract(pg: bool) {
     )
     .await;
     applied(
-        codeyard_db_orgs::organizations::add_organization_team_member(
+        super::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1378,7 +1340,7 @@ async fn contract(pg: bool) {
     );
     // Ordinary team changes must not cancel unrelated repository jobs in the same org.
     let scoped = applied(
-        codeyard_db_orgs::organizations::create_organization_team(
+        super::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1392,7 +1354,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::grant_organization_team_repository(
+        super::grant_organization_team_repository(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1404,7 +1366,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::add_organization_team_member(
+        super::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1424,20 +1386,14 @@ async fn contract(pg: bool) {
     run(&f, first.id, other, "queued").await;
     run(&f, future.id, other, "queued").await;
     applied(
-        codeyard_db_orgs::organizations::remove_organization_team_member(
-            f.pool(),
-            owner,
-            orgs[0].id,
-            scoped.id,
-            other,
-        )
-        .await
-        .unwrap(),
+        super::remove_organization_team_member(f.pool(), owner, orgs[0].id, scoped.id, other)
+            .await
+            .unwrap(),
     );
     assert_eq!(f.scalar("SELECT COUNT(*) FROM ci_runs WHERE repo_id=$1 AND triggered_by_id=$2 AND status='cancelled'",&[first.id,other]).await,stopped+1);
     assert_eq!(f.scalar("SELECT COUNT(*) FROM ci_runs WHERE repo_id=$1 AND triggered_by_id=$2 AND status='queued'",&[future.id,other]).await,1);
     applied(
-        codeyard_db_orgs::organizations::add_organization_team_member(
+        super::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1450,14 +1406,9 @@ async fn contract(pg: bool) {
     );
     run(&f, first.id, other, "queued").await;
     applied(
-        codeyard_db_orgs::organizations::delete_organization_team(
-            f.pool(),
-            owner,
-            orgs[0].id,
-            scoped.id,
-        )
-        .await
-        .unwrap(),
+        super::delete_organization_team(f.pool(), owner, orgs[0].id, scoped.id)
+            .await
+            .unwrap(),
     );
     assert_eq!(f.scalar("SELECT COUNT(*) FROM ci_runs WHERE repo_id=$1 AND triggered_by_id=$2 AND status='cancelled'",&[first.id,other]).await,stopped+2);
     assert_eq!(f.scalar("SELECT COUNT(*) FROM ci_runs WHERE repo_id=$1 AND triggered_by_id=$2 AND status='queued'",&[future.id,other]).await,1);

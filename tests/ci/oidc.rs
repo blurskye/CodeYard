@@ -1,6 +1,8 @@
 //! Called workflows retain their own OIDC identity and cannot borrow a caller's permission.
 use crate::support::database::Database;
-use codeyard::backend::{ci, db, repositories};
+use codeyard::backend::db;
+use codeyard_app::ci;
+use codeyard_app::repositories;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -68,7 +70,7 @@ async fn contract(pg: bool) {
         "worker",
         "local",
         &[actor],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()

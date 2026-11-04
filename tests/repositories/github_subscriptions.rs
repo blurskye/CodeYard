@@ -1,13 +1,14 @@
-use crate::support::{database::Database, github_spec::assert_github_schema, http_client::Client};
+use crate::support::database::Database;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    db,
-    identity::tokens::{self, TokenInput},
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 async fn call(
@@ -62,7 +63,7 @@ async fn contract(pg: bool) {
     let mut repos = Vec::new();
     for (name, private) in [("proj", false), ("secret", true)] {
         repos.push(
-            codeyard::backend::repositories::lifecycle::provision(
+            codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 db::repositories::creation::RepositoryCreationOwner::personal(owner_id),

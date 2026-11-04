@@ -1,9 +1,12 @@
 //! Selects the existing disposable SQLite or seeded PostgreSQL fixture.
-use crate::support::{native_database as native, production_ci as production};
+use crate::support::native_database as native;
+use crate::support::production_ci as production;
 use axum::Router;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::storage::ObjectStore;
 use std::{
     path::Path,
     sync::Arc,

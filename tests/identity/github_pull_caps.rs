@@ -1,8 +1,7 @@
 use super::github::request;
-use crate::support::{
-    database::{wait_until_blocked, Database},
-    http_client::Client,
-};
+use crate::support::database::wait_until_blocked;
+use crate::support::database::Database;
+use crate::support::http_client::Client;
 use axum::http::StatusCode;
 
 use codeyard_db_repos::pull_caps::PullCapReached;
@@ -524,13 +523,9 @@ async fn contract(pg: bool) {
         codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
     )
     .unwrap();
-    let org = match codeyard_db_orgs::organizations::profiles::create_organization(
-        f.pool(),
-        alice,
-        &input,
-    )
-    .await
-    .unwrap()
+    let org = match super::create_organization(f.pool(), alice, &input)
+        .await
+        .unwrap()
     {
         codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization refused"),

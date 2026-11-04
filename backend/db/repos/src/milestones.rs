@@ -33,7 +33,7 @@ pub struct MilestoneInput<'a> {
     pub state: Option<&'a str>,
 }
 
-pub(crate) fn due_on(day: Option<&str>) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+pub fn due_on(day: Option<&str>) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
     day.map(|day| {
         Ok(chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d")?
             .and_hms_opt(0, 0, 0)

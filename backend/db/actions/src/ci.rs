@@ -31,7 +31,7 @@ pub(crate) fn repeats_pull_request_event(
             && latest.is_some_and(|latest| latest["action"] == "synchronize"))
 }
 
-pub(crate) fn may_cancel_run(
+pub fn may_cancel_run(
     actor_id: i64,
     triggered_by_id: Option<i64>,
     personal_admin: bool,
@@ -76,7 +76,7 @@ pub enum CiReplaySelection {
 /// The proof actually presented by the request, retained across Git and body awaits.
 /// Serializes selection, credential rotation and state initialization for one worker,
 /// including retries that arrive through a different core.
-pub(crate) async fn prepare_claim<T>(
+pub async fn prepare_claim<T>(
     pool: &DbPool,
     worker: &str,
     prepare: impl std::future::Future<Output = Result<T>>,

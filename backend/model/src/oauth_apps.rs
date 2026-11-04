@@ -127,7 +127,7 @@ pub fn verify_challenge(challenge: &str, verifier: &str) -> bool {
     bool::from(actual.as_bytes().ct_eq(challenge.as_bytes()))
 }
 /// The RFC 7636 S256 challenge for a PKCE verifier.
-pub(crate) fn pkce_challenge(verifier: &str) -> String {
+pub fn pkce_challenge(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 pub fn validated_public_origin(value: &str) -> Option<String> {

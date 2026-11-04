@@ -1,7 +1,8 @@
 //! Git database objects are written without publishing a reference.
 use super::repository::process;
 use super::repository::{MAX_COMMIT_EMAIL_BYTES, MAX_COMMIT_NAME_BYTES};
-use crate::error::{ErrorKind, RepoError};
+use crate::error::ErrorKind;
+use crate::error::RepoError;
 use anyhow::{ensure, Context, Result};
 use git2::{ObjectType, Oid, Repository};
 use serde::{Deserialize, Serialize};
@@ -61,7 +62,7 @@ impl Signature {
         Ok(())
     }
 
-    fn git(&self) -> Result<git2::Signature<'static>> {
+    pub fn git(&self) -> Result<git2::Signature<'static>> {
         self.validate()?;
         let signature = match self.date {
             Some(date) => git2::Signature::new(

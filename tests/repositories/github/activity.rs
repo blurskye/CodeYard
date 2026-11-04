@@ -1,5 +1,6 @@
 use super::*;
-use crate::support::git_server::{self, Server};
+use crate::support::git_server;
+use crate::support::git_server::Server;
 
 fn linked(headers: &HeaderMap, relation: &str) -> String {
     let link = headers["link"]

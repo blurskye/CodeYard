@@ -372,7 +372,8 @@ fn template_metadata(
     revision: &str,
     paths: &[String],
 ) -> Result<Vec<Option<(String, u64)>>> {
-    use codeyard_support::git_limits::{MAX_TEMPLATES, MAX_TEMPLATE_BYTES};
+    use codeyard_support::git_limits::MAX_TEMPLATES;
+    use codeyard_support::git_limits::MAX_TEMPLATE_BYTES;
     ensure!(
         paths.len() <= MAX_TEMPLATES + 2
             && paths.iter().all(|path| path.len() <= MAX_TREE_PATH_BYTES),
@@ -3120,7 +3121,9 @@ mod regression_tests;
 #[cfg(test)]
 mod read_limit_tests {
     use super::*;
-    use crate::ci::{list_ci_workflow_files, read_ci_workflow, resolve_ci_commit};
+    use crate::ci::list_ci_workflow_files;
+    use crate::ci::read_ci_workflow;
+    use crate::ci::resolve_ci_commit;
 
     fn metadata_for_files(count: usize) -> Vec<u8> {
         let mut output = Vec::new();

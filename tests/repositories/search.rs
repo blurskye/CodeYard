@@ -7,20 +7,20 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as http;
 
 use axum::http::StatusCode;
-use codeyard::backend::api::create_router;
-use codeyard::backend::app::AppState;
-use codeyard::backend::ci::CiConfig;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
 
-use codeyard::backend::repositories::lifecycle::provision;
-use codeyard::backend::repositories::store::repo_store;
-use codeyard::backend::repositories::store::FileWrite;
-use codeyard::backend::repositories::store::RepoStore;
-use codeyard::backend::storage::ObjectStore;
+use super::NewOrganization;
+use super::OrganizationProfile;
+use codeyard_app::repositories::lifecycle::provision;
+use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_app::repositories::store::repo_store;
+use codeyard_app::repositories::store::RepoStore;
+use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_orgs::organizations::NewOrganization;
-use codeyard_db_orgs::organizations::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 use database::Database;
@@ -146,7 +146,7 @@ async fn visibility_contract(pg: bool) {
     )
     .await
     .unwrap();
-    let acme = match codeyard_db_orgs::organizations::create_organization(
+    let acme = match super::create_organization(
         f.pool(),
         alice,
         &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),

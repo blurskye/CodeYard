@@ -1,9 +1,9 @@
 use super::github::{document, request};
-use crate::support::{database::Database, http_client::Client};
-use codeyard::backend::{
-    db,
-    identity::tokens::{self, TokenInput},
-};
+use crate::support::database::Database;
+use crate::support::http_client::Client;
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::Value;
 
 async fn lists(pg: bool) {
@@ -42,7 +42,7 @@ async fn lists(pg: bool) {
         ),
     ] {
         repos.push(
-            codeyard::backend::repositories::lifecycle::provision(
+            codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 owner,

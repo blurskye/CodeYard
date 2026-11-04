@@ -40,7 +40,7 @@ pub enum EventViewer<'a> {
     },
 }
 impl<'a> EventViewer<'a> {
-    pub(crate) fn parts(self) -> (i64, i64, Option<&'a str>) {
+    pub fn parts(self) -> (i64, i64, Option<&'a str>) {
         match self {
             Self::Token { user, token } => (user, token, None),
             Self::Feed { user, token, value } => (user, token, Some(value)),
@@ -58,7 +58,7 @@ pub enum EventScope {
     Received(i64),
 }
 impl EventScope {
-    pub(crate) fn parts(self) -> (&'static str, Option<i64>) {
+    pub fn parts(self) -> (&'static str, Option<i64>) {
         match self {
             Self::All => ("all", None),
             Self::Repository(id) => ("repo", Some(id)),

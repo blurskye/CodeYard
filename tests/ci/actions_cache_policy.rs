@@ -1,20 +1,18 @@
 //! Administrative cache limits patch one field and constrain existing and future runtime objects.
 use super::{actions_objects::pat, results};
-use crate::support::{
-    database::Database, fake_webui_bundle, github_spec::assert_github_schema, http_client::Client,
-};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    ci,
-    db::{
-        self,
-        action_objects::{self as objects, NewObject},
-    },
-};
+use codeyard::backend::db;
+use codeyard_app::ci;
+use codeyard_db_actions::action_objects as objects;
+use codeyard_db_actions::action_objects::NewObject;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use tower::ServiceExt;
@@ -68,7 +66,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),

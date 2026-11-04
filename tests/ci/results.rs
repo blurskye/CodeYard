@@ -1,14 +1,15 @@
 //! Toolkit-shaped Twirp requests and Azure block blobs over the real router on both engines.
-use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    ci::runtime,
-    db::{self, action_objects as objects},
-};
+use codeyard::backend::db;
+use codeyard_app::ci::runtime;
+use codeyard_db_actions::action_objects as objects;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -177,7 +178,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("results_alice").await;
     let bob = f.actor("results_bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -192,7 +193,7 @@ async fn contract(pg: bool) {
     let (main, main_token) = run(&f, repo.id, alice, "main").await;
     let (feature, feature_token) = run(&f, repo.id, alice, "feature").await;
     let (_, other_token) = run(&f, repo.id, alice, "other").await;
-    let other_repo = codeyard::backend::repositories::lifecycle::provision(
+    let other_repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -719,10 +720,10 @@ async fn contract(pg: bool) {
         &[],
     )
     .await;
-    let storage = codeyard::backend::storage::ObjectStore::open(root.path(), None)
+    let storage = codeyard_app::storage::ObjectStore::open(root.path(), None)
         .await
         .unwrap();
-    codeyard::backend::files::remove_expired_uploads(f.pool(), &storage)
+    codeyard_app::files::deletion::remove_expired_uploads(f.pool(), &storage)
         .await
         .unwrap();
     assert_eq!(
@@ -741,7 +742,7 @@ async fn eviction(pg: bool) {
     let mut f = Database::new(pg).await;
     let alice = f.actor("eviction_alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -763,7 +764,7 @@ async fn eviction(pg: bool) {
     assert!(objects::finalize_object(
         f.pool(),
         run.id,
-        &codeyard::backend::ci::runtime::token_hash(&token.token),
+        &codeyard_support::token_hash::token_hash(&token.token),
         b,
         4,
         6
@@ -780,7 +781,7 @@ async fn eviction(pg: bool) {
     assert!(!objects::finalize_object(
         f.pool(),
         run.id,
-        &codeyard::backend::ci::runtime::token_hash(&token.token),
+        &codeyard_support::token_hash::token_hash(&token.token),
         a,
         4,
         3
@@ -794,7 +795,7 @@ async fn pending_uploads_share_the_cache_quota(pg: bool) {
     let mut f = Database::new(pg).await;
     let alice = f.actor("pending_quota_alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -888,11 +889,10 @@ async fn postgres_results_pending_uploads_share_quota() {
 
 async fn shared_s3_across_routers(pg: bool) {
     use axum::{extract::State, http::Method, response::IntoResponse};
-    use codeyard::backend::{
-        app::AppState,
-        ci::CiConfig,
-        storage::{s3::S3Config, ObjectStore},
-    };
+    use codeyard_app::app::AppState;
+    use codeyard_app::ci::config::CiConfig;
+    use codeyard_app::storage::s3::S3Config;
+    use codeyard_app::storage::ObjectStore;
     use std::{
         collections::HashMap,
         sync::{Arc, Mutex},
@@ -939,7 +939,7 @@ async fn shared_s3_across_routers(pg: bool) {
     let actor = f.actor("shared_actions").await;
     let first = tempfile::tempdir().unwrap();
     let second = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         first.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(actor),
@@ -953,7 +953,7 @@ async fn shared_s3_across_routers(pg: bool) {
     let mut routers = Vec::new();
     for root in [first.path(), second.path()] {
         let storage = ObjectStore::open(root, Some(config.clone())).await.unwrap();
-        routers.push(codeyard::backend::api::create_router(AppState::new(
+        routers.push(codeyard_api_rest::create_router(AppState::new(
             f.pool().clone(),
             root.to_owned(),
             Arc::new(storage),

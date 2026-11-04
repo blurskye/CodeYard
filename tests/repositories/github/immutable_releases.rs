@@ -1,5 +1,6 @@
 use super::*;
-use crate::support::git_server::{self, Server};
+use crate::support::git_server;
+use crate::support::git_server::Server;
 use sha2::Digest;
 mod namespaces;
 async fn immutable_contract(pg: bool) {
@@ -262,7 +263,7 @@ async fn immutable_contract(pg: bool) {
     .await;
     assert_eq!(edited["immutable"], true);
     assert_eq!(edited["body"], Value::Null);
-    let store = codeyard::backend::repositories::store::repo_store(&repo, None);
+    let store = codeyard_app::repositories::store::repo_store(&repo, None);
     assert!(store
         .delete_tag_as(f.pool(), repo.id, alice, "v1")
         .await

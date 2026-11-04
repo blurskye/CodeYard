@@ -6,25 +6,38 @@ use crate::support::native_database as native;
 use crate::support::rpc_operations;
 
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::{list_workflows_for_ref, CiConfig},
-    cluster::{
-        self,
-        rpc::{self, Failure, Operation, Reply, Request},
-        NodeContext,
-    },
-    db,
-    repositories::store::{
-        repo_store, BlobRange, FileWrite, GitService, GitSession, GitStreams, MergeMethod,
-        MergeRequest, PreparedFile, RepoStore, MAX_ARCHIVE_RESPONSE_BYTES, MAX_BLOB_RESPONSE_BYTES,
-        MAX_CI_WORKFLOW_BYTES, MAX_DIFF_FILE_PATCH_BYTES, MAX_EDITOR_BYTES, MAX_TREE_ENTRIES,
-        MAX_WORKFLOW_DIRECTORY_ENTRIES,
-    },
-    storage::ObjectStore,
-};
-use codeyard_git::{self as git, error::ErrorKind};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::ci::workflows::list_workflows_for_ref;
+use codeyard_app::cluster;
+use codeyard_app::cluster::context::NodeContext;
+use codeyard_app::cluster::rpc;
+use codeyard_app::cluster::rpc::wire::Failure;
+use codeyard_app::cluster::rpc::wire::Operation;
+use codeyard_app::cluster::rpc::wire::Reply;
+use codeyard_app::cluster::rpc::wire::Request;
+use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_app::repositories::store::editor::PreparedFile;
+use codeyard_app::repositories::store::editor::MAX_EDITOR_BYTES;
+use codeyard_app::repositories::store::repo_store;
+use codeyard_app::repositories::store::types::GitService;
+use codeyard_app::repositories::store::types::GitSession;
+use codeyard_app::repositories::store::types::GitStreams;
+use codeyard_app::repositories::store::types::MergeMethod;
+use codeyard_app::repositories::store::types::MergeRequest;
+use codeyard_app::repositories::store::types::MAX_ARCHIVE_RESPONSE_BYTES;
+use codeyard_app::repositories::store::types::MAX_BLOB_RESPONSE_BYTES;
+use codeyard_app::repositories::store::RepoStore;
+use codeyard_app::storage::range::ByteRange;
+use codeyard_app::storage::ObjectStore;
+use codeyard_git as git;
+use codeyard_git::error::ErrorKind;
+use codeyard_git::MAX_CI_WORKFLOW_BYTES;
+use codeyard_git::MAX_DIFF_FILE_PATCH_BYTES;
+use codeyard_git::MAX_TREE_ENTRIES;
+use codeyard_git::MAX_WORKFLOW_DIRECTORY_ENTRIES;
 use rand::RngCore;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -156,7 +169,7 @@ async fn remote_first_reader_persists_languages() {
     let owner = db::users::accounts::create_user(&database.pool, "remote_language_owner", None)
         .await
         .unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (&database.pool, Some(&web.context)),
         &web.context.repos_path,
         db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
@@ -188,7 +201,7 @@ async fn remote_first_reader_persists_languages() {
         .unwrap();
     }
     let remote = repo_store(&repository, Some(&web.context));
-    let languages = codeyard::backend::repositories::languages::compute_and_store(
+    let languages = codeyard_app::repositories::languages::compute_and_store(
         &database.pool,
         &remote,
         &repository,
@@ -232,7 +245,7 @@ async fn direct_branch_merges(
         ))
         .await
         .unwrap();
-    let publication = codeyard::backend::repositories::store::BranchMergePublication {
+    let publication = codeyard_app::repositories::store::types::BranchMergePublication {
         base_branch: "direct-base".into(),
         base: base.into(),
         head_branch: Some("direct-head".into()),
@@ -855,7 +868,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
     )
     .unwrap();
     assert_eq!(prepared.expected, None);
-    let saved: codeyard::backend::repositories::store::CommitInfo = serde_json::from_value(
+    let saved: codeyard_git::CommitInfo = serde_json::from_value(
         raw_editor_call(
             &web,
             &storage,
@@ -2502,7 +2515,7 @@ async fn remote_web_contract() {
     )
     .await
     .unwrap();
-    let mut update_request = codeyard::backend::repositories::store::PullBranchUpdate {
+    let mut update_request = codeyard_app::repositories::store::types::PullBranchUpdate {
         pull_request_id: update_pull.id,
         base_branch: "update-base".into(),
         branch: "update-head".into(),
@@ -2666,7 +2679,7 @@ async fn remote_web_contract() {
         .await
         .unwrap();
         assert!(
-            !codeyard::backend::repositories::access::can_write(&database.pool, &owner, &fork)
+            !codeyard_identity::repository_access::can_write(&database.pool, &owner, &fork)
                 .await
                 .unwrap()
         );
@@ -2683,7 +2696,7 @@ async fn remote_web_contract() {
             .await
             .unwrap_err()
             .is_write_denied());
-        let mut request = codeyard::backend::repositories::store::PullBranchUpdate {
+        let mut request = codeyard_app::repositories::store::types::PullBranchUpdate {
             pull_request_id: pull.id,
             base_branch: "consent-base".into(),
             branch: "consent-head".into(),

@@ -2,12 +2,12 @@ use super::{
     request,
     roles::{repo, run},
 };
-use crate::support::{
-    codeyard_db_orgs::organizations::applied, database::Database, http_client::Client,
-};
+use crate::support::codeyard_db_orgs::organizations::applied;
+use crate::support::database::Database;
+use crate::support::http_client::Client;
 
-use codeyard_db_orgs::organizations::NewOrganization;
-use codeyard_db_orgs::organizations::OrganizationProfile;
+use super::NewOrganization;
+use super::OrganizationProfile;
 
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
@@ -28,7 +28,7 @@ async fn contract(pg: bool) {
     let mut orgs = Vec::new();
     for name in ["acme", "foreign"] {
         orgs.push(applied(
-            codeyard_db_orgs::organizations::create_organization(
+            super::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -39,27 +39,15 @@ async fn contract(pg: bool) {
     }
     for (user, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
         applied(
-            codeyard_db_orgs::organizations::add_organization_member(
-                f.pool(),
-                owner,
-                orgs[0].id,
-                user,
-                role,
-            )
-            .await
-            .unwrap(),
+            super::add_organization_member(f.pool(), owner, orgs[0].id, user, role)
+                .await
+                .unwrap(),
         );
     }
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            f.pool(),
-            owner,
-            orgs[1].id,
-            member,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(f.pool(), owner, orgs[1].id, member, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let first = repo(&f, root.path(), owner, orgs[0].id, "first").await;

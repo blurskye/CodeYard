@@ -1,18 +1,18 @@
 //! The new namespace neither hides existing accounts nor lets deleted gist URLs be captured.
-use crate::support::{database::Database, http_client::Client};
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db::{
-        self,
-        repositories::creation::{RepositoryCreationOwner, RepositoryTarget},
-        users::accounts::AccountCredential,
-    },
-    gists::{self, CreateGist},
-    repositories::{lifecycle, store::GistCredential},
-    storage::ObjectStore,
-};
+use crate::support::database::Database;
+use crate::support::http_client::Client;
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::gists;
+use codeyard_app::gists::CreateGist;
+use codeyard_app::repositories::lifecycle;
+use codeyard_app::repositories::store::gists::GistCredential;
+use codeyard_app::storage::ObjectStore;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_db_repos::repositories::creation::RepositoryTarget;
 use std::{collections::BTreeMap, sync::Arc};
 
 async fn namespace(pg: bool) {
@@ -430,7 +430,7 @@ async fn namespace(pg: bool) {
         .unwrap()
         .unwrap();
     assert!(
-        codeyard::backend::webhooks::payloads::team_organization(&org, 1, true)["html_url"]
+        codeyard_app::webhooks::payloads::team_organization(&org, 1, true)["html_url"]
             .as_str()
             .unwrap()
             .ends_with("/gists/@users/gists")

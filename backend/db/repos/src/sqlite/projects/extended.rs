@@ -1,3 +1,4 @@
+use super::ITEM;
 use crate::projects::valid_name;
 use crate::projects::Item;
 use crate::sqlite::projects::extended::archive_item;
@@ -18,7 +19,6 @@ use crate::sqlite::projects::items::items;
 use crate::sqlite::projects::items::repository_read;
 use crate::sqlite::projects::items::views;
 use crate::sqlite::projects::items::writable_item;
-use crate::sqlite::projects::items::ITEM;
 use crate::sqlite::projects::owner_authority;
 use crate::sqlite::projects::readable;
 use crate::sqlite::projects::readable_at;

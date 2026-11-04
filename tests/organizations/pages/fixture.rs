@@ -6,16 +6,14 @@ use axum::{
     http::{header, HeaderMap, Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    db::{self, organizations::*},
-    storage::ObjectStore,
-};
-use codeyard_webui::{
-    app::{Page, PageEnvelope},
-    pages::orgs as view,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_api_rest::user::fine_grained::orgs as view;
+use codeyard_app::app::AppState;
+use codeyard_app::storage::ObjectStore;
+use codeyard_db_orgs::organizations::*;
+use codeyard_webui::app::Page;
+use codeyard_webui::app::PageEnvelope;
 use std::sync::Arc;
 use tower::ServiceExt;
 
@@ -209,7 +207,7 @@ impl Fixture {
             root.path().join("repos"),
             Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
             None,
-            codeyard::backend::ci::CiConfig::default(),
+            codeyard_app::ci::config::CiConfig::default(),
             None,
         );
         drop(tree);

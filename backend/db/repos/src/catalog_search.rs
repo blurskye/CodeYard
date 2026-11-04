@@ -124,7 +124,7 @@ impl Search {
     pub fn needs_viewer(&self) -> bool {
         has(&self.expr, "user", Some("@me"))
     }
-    pub(crate) fn from_expression(kind: Kind, mut expr: Expr) -> Result<Self, &'static str> {
+    pub fn from_expression(kind: Kind, mut expr: Expr) -> Result<Self, &'static str> {
         let mut fields = Vec::new();
         extract_fields(&mut expr, &mut fields)?;
         if fields.is_empty() {
@@ -147,7 +147,7 @@ impl Search {
         search.statement(false, "TRUE", None)?;
         Ok(search)
     }
-    pub(crate) fn statement(
+    pub fn statement(
         &self,
         postgres: bool,
         readable: &str,
@@ -208,7 +208,7 @@ impl Search {
         sql.prefix=format!("WITH {git}, {visible}{people}, matched AS (SELECT {key} AS key,{repo} AS repository_id,CAST(({score}) AS BIGINT) AS score FROM {source} WHERE ({predicate}){extra}{restricted})");
         Ok(sql)
     }
-    fn field(&self, field: &str) -> Result<&str, &'static str> {
+    pub fn field(&self, field: &str) -> Result<&str, &'static str> {
         Ok(match (self.kind, field) {
             (Kind::Repositories | Kind::Labels | Kind::Topics, "name") => "i.name",
             (Kind::Repositories | Kind::Labels | Kind::Topics, "description") => "i.description",
@@ -223,14 +223,14 @@ impl Search {
             _ => return Err("Invalid search field"),
         })
     }
-    fn text(&self, sql: &mut Statement, value: &str) -> Result<String, &'static str> {
+    pub fn text(&self, sql: &mut Statement, value: &str) -> Result<String, &'static str> {
         self.fields
             .iter()
             .map(|field| Ok(sql.matches(self.field(field)?, value)))
             .collect::<Result<Vec<_>, _>>()
             .map(|parts| parts.join(" OR "))
     }
-    fn expr(&self, sql: &mut Statement, expr: &Expr) -> Result<String, &'static str> {
+    pub fn expr(&self, sql: &mut Statement, expr: &Expr) -> Result<String, &'static str> {
         Ok(match expr {
             Expr::And(values) | Expr::Or(values) => {
                 let parts = values
@@ -394,7 +394,7 @@ impl Search {
         ))
     }
 }
-pub(crate) fn has(expr: &Expr, key: &str, value: Option<&str>) -> bool {
+pub fn has(expr: &Expr, key: &str, value: Option<&str>) -> bool {
     match expr {
         Expr::Term(k, v) => k == key && value.is_none_or(|value| v == value),
         Expr::And(v) | Expr::Or(v) => v.iter().any(|e| has(e, key, value)),
@@ -418,10 +418,7 @@ fn contains_in(expr: &Expr) -> bool {
         Expr::Not(v) => contains_in(v),
     }
 }
-pub(crate) fn extract_fields(
-    expr: &mut Expr,
-    fields: &mut Vec<String>,
-) -> Result<(), &'static str> {
+pub fn extract_fields(expr: &mut Expr, fields: &mut Vec<String>) -> Result<(), &'static str> {
     match expr {
         Expr::Term(k, v) if k == "in" => {
             for field in v.split(',') {

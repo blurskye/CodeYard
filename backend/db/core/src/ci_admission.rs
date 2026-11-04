@@ -1,4 +1,5 @@
-use codeyard_git::error::{ErrorKind, RepoError};
+use codeyard_git::error::ErrorKind;
+use codeyard_git::error::RepoError;
 #[derive(Debug, thiserror::Error)]
 pub enum AdmissionError {
     /// The workflow, or Actions for the repository, is turned off: nothing runs, and event

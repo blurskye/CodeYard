@@ -11,10 +11,12 @@ use axum::{
     http::{header, Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, repositories::lifecycle,
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::repositories::lifecycle;
+use codeyard_app::storage::ObjectStore;
 use database::Database;
 use serde_json::json;
 use std::{path::Path, sync::Arc};
@@ -195,7 +197,7 @@ async fn contract(pg: bool) {
     );
     assert!(reply.contains("private draft"));
     assert!(
-        codeyard::backend::repositories::store::repo_store(&replacement, None)
+        codeyard_app::repositories::store::repo_store(&replacement, None)
             .refs()
             .await
             .unwrap()

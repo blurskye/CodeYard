@@ -1,5 +1,7 @@
 use anyhow::{ensure, Result};
-use codeyard_model::ci::{LogLine, MAX_RUN_LOG_BYTES, MAX_RUN_LOG_LINES};
+use codeyard_model::ci::LogLine;
+use codeyard_model::ci::MAX_RUN_LOG_BYTES;
+use codeyard_model::ci::MAX_RUN_LOG_LINES;
 pub const TRUNCATED_LINE: &str = "Log output truncated: this run reached its log limit.";
 
 /// Bytes kept free for the truncation line, whose stage is at most 255 bytes.

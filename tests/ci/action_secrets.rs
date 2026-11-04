@@ -1,22 +1,22 @@
 //! Repository secrets use sealed-box input, encrypted storage and metadata-only reads.
-use crate::support::{
-    database::Database, fake_webui_bundle, github_spec::assert_github_schema, http_client::Client,
-};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, Request, StatusCode},
     Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    crypto::SecretEncryptor,
-    db,
-    identity::tokens::{self, TokenInput},
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::storage::ObjectStore;
+use codeyard_identity::tokens::TokenInput;
+use codeyard_support::secrets::SecretEncryptor;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -163,7 +163,7 @@ async fn contract(pg: bool) {
     let owner = f.actor("alice").await;
     let outsider = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -174,7 +174,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let second = codeyard::backend::repositories::lifecycle::provision(
+    let second = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(owner),

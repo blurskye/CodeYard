@@ -86,11 +86,11 @@ fn directive_shape(sdl: &str) -> BTreeMap<String, Json> {
 
 #[test]
 fn exported_derive_schema_matches_every_sdl_type_and_field() {
-    let expected = shape(include_str!("../../../spec/github/schema.docs.graphql"));
+    let expected = shape(include_str!("../../../../spec/github/schema.docs.graphql"));
     let exported = schema().sdl();
     let directives = directive_shape(&exported);
     for (name, expected) in
-        directive_shape(include_str!("../../../spec/github/schema.docs.graphql"))
+        directive_shape(include_str!("../../../../spec/github/schema.docs.graphql"))
     {
         assert_eq!(directives[&name], expected, "directive {name}");
     }

@@ -6,14 +6,13 @@ use axum::{
     body::Body,
     http::{header, Request, StatusCode},
 };
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db,
-    identity::tokens::{self, TokenInput},
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::storage::ObjectStore;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -108,7 +107,7 @@ async fn comment_reaches_connected_clients(pg: bool) {
     let alice = database.actor("alice").await;
     let bob = database.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),

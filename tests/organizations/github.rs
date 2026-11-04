@@ -17,23 +17,23 @@ mod security;
 mod settings;
 mod teams;
 mod token_grants;
-use crate::support::{
-    codeyard_db_orgs::organizations::applied, database::Database,
-    github_spec::assert_github_schema, http_client::Client,
-};
+use crate::support::codeyard_db_orgs::organizations::applied;
+use crate::support::database::Database;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, Request},
     Router,
 };
-use codeyard::backend::api::create_router;
-use codeyard::backend::app::AppState;
-use codeyard::backend::ci::CiConfig;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
 
-use codeyard_db_orgs::organizations::NewOrganization;
-use codeyard_db_orgs::organizations::OrganizationProfile;
+use super::NewOrganization;
+use super::OrganizationProfile;
 
-use codeyard::backend::storage::ObjectStore;
+use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
@@ -90,7 +90,7 @@ async fn contract(pg: bool) {
     let member = f.actor("member").await;
     let outsider = f.actor("outsider").await;
     let org = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new(
@@ -103,29 +103,17 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            f.pool(),
-            owner,
-            org.id,
-            member,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(f.pool(), owner, org.id, member, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::invite_organization_member(
-            f.pool(),
-            owner,
-            org.id,
-            outsider,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::invite_organization_member(f.pool(), owner, org.id, outsider, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let second = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("second", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -563,15 +551,9 @@ async fn contract(pg: bool) {
     )
     .await;
     applied(
-        codeyard_db_orgs::organizations::update_organization_member_role(
-            f.pool(),
-            owner,
-            org.id,
-            member,
-            OrgRole::Admin,
-        )
-        .await
-        .unwrap(),
+        super::update_organization_member_role(f.pool(), owner, org.id, member, OrgRole::Admin)
+            .await
+            .unwrap(),
     );
     request(
         &router,
@@ -594,15 +576,9 @@ async fn contract(pg: bool) {
     )
     .await;
     applied(
-        codeyard_db_orgs::organizations::update_organization_member_role(
-            f.pool(),
-            owner,
-            org.id,
-            member,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::update_organization_member_role(f.pool(), owner, org.id, member, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     request(
         &router,

@@ -14,16 +14,16 @@ use crate::support::native_database as native;
 use crate::support::organizations::applied;
 use crate::support::production_ci as production;
 
+use super::NewOrganization;
+use super::NewTeam;
+use super::OrganizationProfile;
+use super::TeamPrivacy;
+use super::TeamProfile;
+use super::TeamRepositoryPermission;
+use super::TeamRole;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::CiRun;
 use codeyard_db_core::models::OrgRole;
-use codeyard_db_orgs::organizations::NewOrganization;
-use codeyard_db_orgs::organizations::NewTeam;
-use codeyard_db_orgs::organizations::OrganizationProfile;
-use codeyard_db_orgs::organizations::TeamPrivacy;
-use codeyard_db_orgs::organizations::TeamProfile;
-use codeyard_db_orgs::organizations::TeamRepositoryPermission;
-use codeyard_db_orgs::organizations::TeamRole;
 use std::{
     future::Future,
     sync::atomic::{AtomicU64, Ordering},
@@ -34,11 +34,11 @@ use uuid::Uuid;
 mod filtered_history;
 
 fn platforms() -> Vec<String> {
-    codeyard::backend::ci::CiConfig::default().platform_labels()
+    codeyard_app::ci::config::CiConfig::default().platform_labels()
 }
 
 const WORKER: &str = "worker-1";
-const ACCESS_LOST: &str = codeyard_db_actions::ci::ACCESS_LOST_MESSAGE;
+const ACCESS_LOST: &str = codeyard_db_core::ci_policy::ACCESS_LOST_MESSAGE;
 const WORKFLOW: &str = ".github/workflows/ci.yml";
 
 impl Database {
@@ -668,7 +668,7 @@ struct OrganizationWork {
 
 async fn organization_repository(db: &Database, owner: i64, prefix: &str) -> OrganizationWork {
     let organization = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             db.pool(),
             owner,
             &NewOrganization::new(
@@ -751,15 +751,9 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
     let survivor = db.actor(&format!("{kind}_survivor")).await;
     let retained = organization_repository(db, owner, &format!("{kind}_retained")).await;
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            db.pool(),
-            owner,
-            retained.id,
-            survivor,
-            OrgRole::Owner,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(db.pool(), owner, retained.id, survivor, OrgRole::Owner)
+            .await
+            .unwrap(),
     );
     codeyard_db_repos::repositories::access::grant_repo_access(
         db.pool(),
@@ -1226,10 +1220,12 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
 }
 
 async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &Database) {
-    use codeyard::backend::{
-        ci::{queue::RunQueue, CiConfig, CiRuns},
-        notifications::{current_event, NotificationBroadcaster, NotificationEvent},
-    };
+    use codeyard::backend::notifications::current_event;
+    use codeyard_app::ci::config::CiConfig;
+    use codeyard_app::ci::queue::RunQueue;
+    use codeyard_app::ci::runs::CiRuns;
+    use codeyard_notifications::broadcast::NotificationBroadcaster;
+    use codeyard_notifications::NotificationEvent;
     use std::sync::Arc;
     let w = world(db, "live").await;
     let broadcaster = Arc::new(NotificationBroadcaster::new(db.pool()));
@@ -1413,7 +1409,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     let owner = db.actor("list_owner").await;
     let member = db.actor("list_member").await;
     let org = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             db.pool(),
             owner,
             &NewOrganization::new(
@@ -1426,29 +1422,17 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
         .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            db.pool(),
-            owner,
-            org.id,
-            member,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(db.pool(), owner, org.id, member, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            db.pool(),
-            owner,
-            org.id,
-            site,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(db.pool(), owner, org.id, site, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let team = applied(
-        codeyard_db_orgs::organizations::create_organization_team(
+        super::create_organization_team(
             db.pool(),
             owner,
             org.id,
@@ -1462,7 +1446,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
         .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::add_organization_team_member(
+        super::add_organization_team_member(
             db.pool(),
             owner,
             org.id,
@@ -1480,7 +1464,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     )
     .await;
     applied(
-        codeyard_db_orgs::organizations::grant_organization_team_repository(
+        super::grant_organization_team_repository(
             db.pool(),
             owner,
             org.id,
@@ -1530,7 +1514,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     // With a team grant they see them, and once removed from the organization they
     // lose them again, administrator or not.
     applied(
-        codeyard_db_orgs::organizations::add_organization_team_member(
+        super::add_organization_team_member(
             db.pool(),
             owner,
             org.id,
@@ -1545,7 +1529,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     seen.sort();
     assert_eq!(seen, [org_repo, personal, direct, public]);
     applied(
-        codeyard_db_orgs::organizations::remove_organization_member(db.pool(), owner, org.id, site)
+        super::remove_organization_member(db.pool(), owner, org.id, site)
             .await
             .unwrap(),
     );
@@ -1623,16 +1607,15 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
         http::{header, Request, StatusCode},
         Router,
     };
-    use codeyard::backend::api::create_router;
-    use codeyard::backend::app::AppState;
-    use codeyard::backend::ci::CiConfig;
-    use codeyard::backend::storage::ObjectStore;
+    use codeyard_api_rest::create_router;
+    use codeyard_api_rest::user::fine_grained::ci;
+    use codeyard_app::app::AppState;
+    use codeyard_app::ci::config::CiConfig;
+    use codeyard_app::storage::ObjectStore;
     use codeyard_model::ci::LogLine;
-    use codeyard_webui::{
-        app::PageEnvelope,
-        bootstrap::{MAX_PAGE_MODEL_BYTES, MODEL_CONTENT_TYPE},
-        pages::ci,
-    };
+    use codeyard_webui::app::PageEnvelope;
+    use codeyard_webui::bootstrap::MAX_PAGE_MODEL_BYTES;
+    use codeyard_webui::bootstrap::MODEL_CONTENT_TYPE;
     use std::sync::Arc;
     use tower::ServiceExt;
 
@@ -1936,8 +1919,8 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
         .await
         .unwrap_err();
     assert!(matches!(
-        ambiguous.downcast_ref::<codeyard_db_actions::ci::CiAdmissionRefusal>(),
-        Some(codeyard_db_actions::ci::CiAdmissionRefusal::Conflict(
+        ambiguous.downcast_ref::<codeyard_db_core::ci_policy::CiAdmissionRefusal>(),
+        Some(codeyard_db_core::ci_policy::CiAdmissionRefusal::Conflict(
             "CI pull request revision is not open"
         ))
     ));
@@ -2508,10 +2491,11 @@ macro_rules! on_both_engines {
 }
 
 async fn stale_failures_are_broadcast_after_commit(db: &Database) {
-    use codeyard::backend::{
-        ci::{queue::RunQueue, CiConfig, CiWorkers},
-        notifications::{NotificationBroadcaster, NotificationEvent},
-    };
+    use codeyard_app::ci::config::CiConfig;
+    use codeyard_app::ci::queue::RunQueue;
+    use codeyard_app::ci::workers::CiWorkers;
+    use codeyard_notifications::broadcast::NotificationBroadcaster;
+    use codeyard_notifications::NotificationEvent;
     use std::sync::Arc;
     let w = world(db, "stale_live").await;
     let run = db.enqueue(w.repo, w.owner, false, &[]).await;
@@ -3016,7 +3000,7 @@ mod interleaved {
         let runner = db.actor("concurrent_runner").await;
         let organization = organization_repository(&db, first_owner, "concurrent_governance").await;
         applied(
-            codeyard_db_orgs::organizations::add_organization_member(
+            super::add_organization_member(
                 db.pool(),
                 first_owner,
                 organization.id,
@@ -3141,8 +3125,8 @@ mod interleaved {
             .unwrap()
             .expect_err("the committed revocation must deny admission");
         assert!(matches!(
-            error.downcast_ref::<codeyard_db_actions::ci::CiAdmissionRefusal>(),
-            Some(codeyard_db_actions::ci::CiAdmissionRefusal::Denied(
+            error.downcast_ref::<codeyard_db_core::ci_policy::CiAdmissionRefusal>(),
+            Some(codeyard_db_core::ci_policy::CiAdmissionRefusal::Denied(
                 "CI repository execution permission denied"
             ))
         ));
@@ -3199,7 +3183,7 @@ mod interleaved {
         let actor = db.actor("enqueue_org_revoke_actor").await;
         let organization = organization_repository(&db, owner, "enqueue_org_revoke").await;
         applied(
-            codeyard_db_orgs::organizations::add_organization_member(
+            super::add_organization_member(
                 db.pool(),
                 owner,
                 organization.id,
@@ -3240,8 +3224,8 @@ mod interleaved {
             .unwrap()
             .expect_err("the committed membership revocation must deny admission");
         assert!(matches!(
-            error.downcast_ref::<codeyard_db_actions::ci::CiAdmissionRefusal>(),
-            Some(codeyard_db_actions::ci::CiAdmissionRefusal::Denied(
+            error.downcast_ref::<codeyard_db_core::ci_policy::CiAdmissionRefusal>(),
+            Some(codeyard_db_core::ci_policy::CiAdmissionRefusal::Denied(
                 "CI repository execution permission denied"
             ))
         ));

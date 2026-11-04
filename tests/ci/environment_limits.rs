@@ -1,12 +1,11 @@
 use crate::support::database::Database;
-use codeyard::backend::{
-    crypto::SecretEncryptor,
-    db::{
-        self,
-        environment_values::{self as values, Kind, Save, ValueError},
-    },
-    repositories::lifecycle,
-};
+use codeyard::backend::db;
+use codeyard_app::repositories::lifecycle;
+use codeyard_db_actions::environment_values as values;
+use codeyard_db_actions::environment_values::Save;
+use codeyard_db_actions::environment_values::ValueError;
+use codeyard_db_orgs::organization_values::Kind;
+use codeyard_support::secrets::SecretEncryptor;
 
 async fn limits(pg: bool) {
     let mut f = Database::new(pg).await;

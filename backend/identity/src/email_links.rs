@@ -17,14 +17,14 @@ pub enum Purpose {
 }
 
 impl Purpose {
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Purpose::Verify => "verify",
             Purpose::Reset => "reset",
         }
     }
 
-    fn lifetime_seconds(self) -> i64 {
+    pub fn lifetime_seconds(self) -> i64 {
         match self {
             Purpose::Verify => 24 * 60 * 60,
             Purpose::Reset => 60 * 60,

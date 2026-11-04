@@ -94,7 +94,7 @@ async fn stale_comment_and_milestone_forms(pg: bool) {
             &[repo.id],
         )
         .await;
-    let replacement = codeyard::backend::repositories::lifecycle::provision(
+    let replacement = codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
@@ -214,7 +214,7 @@ async fn stale_issue_forms(pg: bool) {
             &[repo.id],
         )
         .await;
-    let replacement = codeyard::backend::repositories::lifecycle::provision(
+    let replacement = codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(

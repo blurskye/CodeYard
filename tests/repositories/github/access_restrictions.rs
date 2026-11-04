@@ -1,5 +1,5 @@
 use super::{db, json, protection::call, request, Router, Value};
-use codeyard::backend::repositories::store::repo_store;
+use codeyard_app::repositories::store::repo_store;
 
 #[tokio::test]
 async fn sqlite_app_access_restrictions() {
@@ -383,7 +383,7 @@ pub(super) async fn run(
         ("repos/add-user-access-restrictions", 422),
     )
     .await;
-    codeyard::backend::repositories::access::change_collaborator(
+    codeyard_identity::repository_access::change_collaborator(
         pool,
         alice,
         repo,
@@ -528,7 +528,7 @@ pub(super) async fn run(
         union
     );
     // An allowance never retains repository write permission after that permission is revoked.
-    codeyard::backend::repositories::access::change_collaborator(pool, alice, repo, "bob", None)
+    codeyard_identity::repository_access::change_collaborator(pool, alice, repo, "bob", None)
         .await
         .unwrap();
     let refused = db::repositories::protection::update_branch_protection_rule(

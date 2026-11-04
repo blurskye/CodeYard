@@ -1,13 +1,17 @@
 //! Actions OIDC exchange verifies signatures using only public discovery material.
-use crate::support::{database::Database, http_client::Client};
+use crate::support::database::Database;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     http::Request,
     Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use codeyard_identity::tokens::{self, TokenInput};
-use codeyard::backend::{ci, db, repositories};
+use codeyard::backend::db;
+use codeyard_app::ci;
+use codeyard_app::repositories;
+use codeyard_identity::tokens;
+use codeyard_identity::tokens::TokenInput;
 use rsa::{
     pkcs1v15::{Signature, VerifyingKey},
     signature::Verifier,
@@ -106,7 +110,7 @@ async fn contract(pg: bool) {
         "worker",
         "local",
         &[actor],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -553,7 +557,7 @@ async fn organization_contract(pg: bool) {
         "worker",
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()

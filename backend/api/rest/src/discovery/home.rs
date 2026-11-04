@@ -1,0 +1,141 @@
+use crate::discovery::dashboard_cards;
+use crate::discovery::unavailable;
+use crate::user::fine_grained::discovery as view;
+use crate::user::fine_grained::discovery::HomeModel;
+use crate::user::fine_grained::discovery::SharedRepositoryCard;
+use axum::extract::State;
+use axum::http::HeaderMap;
+use axum::http::Uri;
+use axum::response::Response;
+use codeyard_api_http::context::PageContext;
+use codeyard_app::app::AppState;
+use codeyard_db_core::models::AccessLevel;
+use codeyard_webui::app::Page as AppPage;
+use std::sync::Arc;
+
+pub(super) async fn home(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    let Some(user) = &ctx.user else {
+        return ctx.page_model(
+            "Codeyard",
+            AppPage::Discovery(view::Page::Home(HomeModel::default())),
+        );
+    };
+    let username = user.username.clone();
+    let find = ctx
+        .query
+        .get("q")
+        .map(|text| text.trim().chars().take(100).collect::<String>())
+        .unwrap_or_default();
+    // This scope comes from the verified session, never from a query/form owner.
+    const PAGE_SIZE: i64 = 30;
+    let page = ctx
+        .query
+        .get("page")
+        .and_then(|page| page.parse::<usize>().ok())
+        .unwrap_or(1)
+        // The browser model holds a 32-bit page, so keep the 10,000-page limit pages use.
+        .clamp(1, 10_000);
+    let offset = i64::try_from(page.saturating_sub(1).saturating_mul(PAGE_SIZE as usize))
+        .unwrap_or(i64::MAX);
+    let (own, repository_count) =
+        match codeyard_db_repos::repositories::records::list_user_repository_page(
+            &ctx.state.pool,
+            user.id,
+            ctx.session_id.as_deref(),
+            &find,
+            true,
+            PAGE_SIZE,
+            offset,
+        )
+        .await
+        {
+            Ok(repos) => repos,
+            Err(_) => return unavailable(&ctx, "home_repositories"),
+        };
+    let (shared, shared_count) =
+        match codeyard_db_repos::repositories::records::list_shared_repository_page(
+            &ctx.state.pool,
+            user.id,
+            &find,
+            true,
+            PAGE_SIZE,
+            offset,
+        )
+        .await
+        {
+            Ok(rows) => rows,
+            Err(_) => return unavailable(&ctx, "home_shared_repositories"),
+        };
+    // Trending is for other people's repositories, so the viewer's own are left out. The filter
+    // narrows every repository list on the dashboard, Trending included.
+    let public = match codeyard_db_repos::repositories::records::list_trending_repositories(
+        &ctx.state.pool,
+        user.id,
+        &find,
+        5,
+    )
+    .await
+    {
+        Ok(repos) => repos,
+        Err(_) => return unavailable(&ctx, "home_trending"),
+    };
+    let repositories = match dashboard_cards(&ctx.state, own).await {
+        Ok(cards) => cards,
+        Err(_) => return unavailable(&ctx, "home_repository_owners"),
+    };
+    let (shared_repos, levels): (Vec<_>, Vec<_>) = shared
+        .into_iter()
+        .map(|row| (row.repository, row.access_level))
+        .unzip();
+    let shared = match dashboard_cards(&ctx.state, shared_repos).await {
+        Ok(cards) => cards,
+        Err(_) => return unavailable(&ctx, "home_shared_owners"),
+    };
+    let shared: Vec<SharedRepositoryCard> = shared
+        .into_iter()
+        .zip(levels)
+        .map(|(repository, level)| SharedRepositoryCard {
+            repository,
+            role: role_name(level).to_owned(),
+        })
+        .collect();
+    let trending = match dashboard_cards(&ctx.state, public).await {
+        Ok(cards) => cards,
+        Err(_) => return unavailable(&ctx, "home_trending_owners"),
+    };
+    ctx.page_model(
+        "Dashboard",
+        AppPage::Discovery(view::Page::Home(HomeModel {
+            username: Some(username),
+            repositories,
+            shared,
+            trending,
+            find,
+            page,
+            repository_count,
+            shared_count,
+            has_older: offset.saturating_add(PAGE_SIZE) < repository_count.max(shared_count),
+        })),
+    )
+}
+
+/// The name of a collaborator level, as the repository settings name it.
+fn role_name(level: i16) -> &'static str {
+    match AccessLevel::from(level) {
+        AccessLevel::None => "None",
+        AccessLevel::Read => "Read",
+        AccessLevel::Triage => "Triage",
+        AccessLevel::Write => "Write",
+        AccessLevel::Maintain => "Maintain",
+        AccessLevel::Admin => "Admin",
+        AccessLevel::Owner => "Owner",
+    }
+}

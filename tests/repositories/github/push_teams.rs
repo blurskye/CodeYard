@@ -14,7 +14,7 @@ pub(super) async fn run(
     let (pool, alice, bob) = scope;
     let (writer, reader, bob_token) = tokens;
     let org = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             pool,
             alice,
             &codeyard_db_orgs::organizations::NewOrganization::new(
@@ -28,18 +28,12 @@ pub(super) async fn run(
     )
     .id;
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            pool,
-            alice,
-            org,
-            bob,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(pool, alice, org, bob, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let writers = applied(
-        codeyard_db_orgs::organizations::create_organization_team(
+        super::create_organization_team(
             pool,
             alice,
             org,
@@ -59,7 +53,7 @@ pub(super) async fn run(
     )
     .id;
     let readers = applied(
-        codeyard_db_orgs::organizations::create_organization_team(
+        super::create_organization_team(
             pool,
             alice,
             org,
@@ -79,7 +73,7 @@ pub(super) async fn run(
     )
     .id;
     applied(
-        codeyard_db_orgs::organizations::add_organization_team_member(
+        super::add_organization_team_member(
             pool,
             alice,
             org,
@@ -103,7 +97,7 @@ pub(super) async fn run(
     let tip = session.expect("POST", "/api/repos/push-org/team-policy/contents/seed.txt", json!({"content":"c2VlZAo=","message":"Seed team policy","branch":"main","expected_revision":"unborn"}), StatusCode::CREATED).await["sha"].as_str().unwrap().to_owned();
     for (team, permission) in [(writers, 3), (readers, 1)] {
         applied(
-            codeyard_db_orgs::organizations::grant_organization_team_repository(
+            super::grant_organization_team_repository(
                 pool,
                 alice,
                 org,
@@ -270,11 +264,9 @@ pub(super) async fn run(
     )
     .await;
     applied(
-        codeyard_db_orgs::organizations::remove_organization_team_member(
-            pool, alice, org, writers, bob,
-        )
-        .await
-        .unwrap(),
+        super::remove_organization_team_member(pool, alice, org, writers, bob)
+            .await
+            .unwrap(),
     );
     call(
         router,
@@ -286,7 +278,7 @@ pub(super) async fn run(
     )
     .await;
     applied(
-        codeyard_db_orgs::organizations::add_organization_team_member(
+        super::add_organization_team_member(
             pool,
             alice,
             org,
@@ -298,11 +290,9 @@ pub(super) async fn run(
         .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::revoke_organization_team_repository(
-            pool, alice, org, writers, repo,
-        )
-        .await
-        .unwrap(),
+        super::revoke_organization_team_repository(pool, alice, org, writers, repo)
+            .await
+            .unwrap(),
     );
     call(
         router,
@@ -339,7 +329,7 @@ pub(super) async fn run(
         "revoked allowances remain removable"
     );
     applied(
-        codeyard_db_orgs::organizations::grant_organization_team_repository(
+        super::grant_organization_team_repository(
             pool,
             alice,
             org,

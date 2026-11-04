@@ -28,7 +28,7 @@ async fn actor(database: &Database, name: &str) -> i64 {
 }
 async fn organization(database: &Database, actor: i64, slug: &str) -> i64 {
     applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             database.pool(),
             actor,
             &codeyard_db_orgs::organizations::NewOrganization::new(
@@ -44,15 +44,9 @@ async fn organization(database: &Database, actor: i64, slug: &str) -> i64 {
 }
 async fn member(database: &Database, actor: i64, org: i64, user: i64, role: OrgRole) {
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            database.pool(),
-            actor,
-            org,
-            user,
-            role,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(database.pool(), actor, org, user, role)
+            .await
+            .unwrap(),
     );
 }
 async fn create(
@@ -242,15 +236,9 @@ async fn creation_contract(mut database: Database) {
             .await;
     }
     applied(
-        codeyard_db_orgs::organizations::update_organization_member_role(
-            database.pool(),
-            own,
-            org,
-            admin,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::update_organization_member_role(database.pool(), own, org, admin, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     denied(
         create(
@@ -264,14 +252,9 @@ async fn creation_contract(mut database: Database) {
         RepositoryStorageRefusal::Denied,
     );
     applied(
-        codeyard_db_orgs::organizations::remove_organization_member(
-            database.pool(),
-            own,
-            org,
-            admin,
-        )
-        .await
-        .unwrap(),
+        super::remove_organization_member(database.pool(), own, org, admin)
+            .await
+            .unwrap(),
     );
     denied(
         create(
@@ -383,7 +366,7 @@ async fn provision_contract(mut database: Database) {
     let own = actor(&database, "domain_owner").await;
     let org = organization(&database, own, "domain_org").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         owner(own, RepositoryTarget::Organization(org)),
@@ -404,7 +387,7 @@ async fn provision_contract(mut database: Database) {
     );
     // A duplicate name leaves no directory behind.
     let entries = std::fs::read_dir(root.path()).unwrap().count();
-    let duplicate = codeyard::backend::repositories::lifecycle::provision(
+    let duplicate = codeyard_app::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         owner(own, RepositoryTarget::Organization(org)),
@@ -417,7 +400,7 @@ async fn provision_contract(mut database: Database) {
     .unwrap_err();
     assert_eq!(
         duplicate.kind,
-        codeyard::backend::repositories::lifecycle::LifecycleFailure::Conflict
+        codeyard_app::repositories::lifecycle::LifecycleFailure::Conflict
     );
     assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), entries);
     database.finish().await;
@@ -427,7 +410,7 @@ async fn initialization_cleanup_contract(mut database: Database) {
     let source_owner = actor(&database, "cleanup_source_owner").await;
     let creator = actor(&database, "cleanup_owner").await;
     let root = tempfile::tempdir().unwrap();
-    let source = codeyard::backend::repositories::lifecycle::provision(
+    let source = codeyard_app::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         owner(source_owner, RepositoryTarget::Personal(source_owner)),
@@ -446,7 +429,7 @@ async fn initialization_cleanup_contract(mut database: Database) {
         .into_owned();
     let original_entries = std::fs::read_dir(root.path()).unwrap().count();
 
-    let cleaned = codeyard::backend::repositories::lifecycle::provision(
+    let cleaned = codeyard_app::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         owner(creator, RepositoryTarget::Personal(creator)),
@@ -459,7 +442,7 @@ async fn initialization_cleanup_contract(mut database: Database) {
     .unwrap_err();
     assert_eq!(
         cleaned.kind,
-        codeyard::backend::repositories::lifecycle::LifecycleFailure::Unavailable
+        codeyard_app::repositories::lifecycle::LifecycleFailure::Unavailable
     );
     assert!(codeyard_db_repos::repositories::records::get_repository(
         database.pool(),
@@ -505,7 +488,7 @@ async fn initialization_cleanup_contract(mut database: Database) {
             .unwrap();
         }
     }
-    let partial = codeyard::backend::repositories::lifecycle::provision(
+    let partial = codeyard_app::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         owner(creator, RepositoryTarget::Personal(creator)),
@@ -518,7 +501,7 @@ async fn initialization_cleanup_contract(mut database: Database) {
     .unwrap_err();
     assert_eq!(
         partial.kind,
-        codeyard::backend::repositories::lifecycle::LifecycleFailure::InitializationCleanupFailed
+        codeyard_app::repositories::lifecycle::LifecycleFailure::InitializationCleanupFailed
     );
     let remaining = codeyard_db_repos::repositories::records::get_repository(
         database.pool(),
@@ -534,7 +517,7 @@ async fn initialization_cleanup_contract(mut database: Database) {
         original_entries
     );
     let path = remaining.disk_path.clone();
-    let retry = codeyard::backend::repositories::lifecycle::provision(
+    let retry = codeyard_app::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         owner(creator, RepositoryTarget::Personal(creator)),
@@ -547,7 +530,7 @@ async fn initialization_cleanup_contract(mut database: Database) {
     .unwrap_err();
     assert_eq!(
         retry.kind,
-        codeyard::backend::repositories::lifecycle::LifecycleFailure::Conflict
+        codeyard_app::repositories::lifecycle::LifecycleFailure::Conflict
     );
     let after_retry = codeyard_db_repos::repositories::records::get_repository(
         database.pool(),
@@ -805,14 +788,13 @@ async fn postgres_fork_refuses_stale_placement() {
 
 async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
     use axum::http::StatusCode;
-    use codeyard::backend::{
-        api::create_router,
-        app::AppState,
-        ci::CiConfig,
-        cluster,
-        repositories::store::{repo_store, FileWrite},
-        storage::ObjectStore,
-    };
+    use codeyard_api_rest::create_router;
+    use codeyard_app::app::AppState;
+    use codeyard_app::ci::config::CiConfig;
+    use codeyard_app::cluster;
+    use codeyard_app::repositories::store::editor::FileWrite;
+    use codeyard_app::repositories::store::repo_store;
+    use codeyard_app::storage::ObjectStore;
     use serde_json::Value;
     use std::sync::Arc;
     let Some(gate) = fixture::fork_process(test).await else {
@@ -854,7 +836,7 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
     let context = nodes.first().map(|node| &node.context);
     let owner = actor(&database, "snapshot_owner").await;
     let forker = actor(&database, "snapshot_forker").await;
-    let source = codeyard::backend::repositories::lifecycle::provision(
+    let source = codeyard_app::repositories::lifecycle::provision(
         (database.pool(), context),
         root.path(),
         RepositoryCreationOwner::personal(owner),

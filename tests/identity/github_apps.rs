@@ -1,20 +1,16 @@
 //! App JWTs, installation credentials and native account consent through the real router.
 use super::github::request;
-use crate::support::{
-    database::Database,
-    http_client::{visible_text, Client},
-};
+use crate::support::database::Database;
+use crate::support::http_client::visible_text;
+use crate::support::http_client::Client;
 use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
     Engine,
 };
-use codeyard::backend::{
-    db,
-    identity::{
-        oauth_apps,
-        tokens::{self, TokenInput},
-    },
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::oauth_apps;
+use codeyard::backend::identity::tokens;
+use codeyard_identity::tokens::TokenInput;
 use rsa::{
     pkcs1v15::SigningKey,
     pkcs8::DecodePrivateKey,

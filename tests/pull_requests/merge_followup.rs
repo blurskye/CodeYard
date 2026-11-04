@@ -1,15 +1,16 @@
 //! An applied merge still reconciles PRs and CI when repository metadata cannot be saved.
-use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
+use crate::support::http_client::Client;
 use axum::http::StatusCode;
 use base64::Engine;
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db,
-    repositories::{lifecycle, pull_requests::merge},
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::repositories::lifecycle;
+use codeyard_app::repositories::pull_requests::merge;
+use codeyard_app::storage::ObjectStore;
 use serde_json::json;
 use std::sync::Arc;
 

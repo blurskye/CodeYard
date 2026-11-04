@@ -9,7 +9,7 @@ async fn contract(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("discussion-alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),

@@ -170,7 +170,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(status["processing_status"], "pending");
-    assert!(codeyard::backend::code_scanning::process_next(f.pool())
+    assert!(codeyard_app::code_scanning::process_next(f.pool())
         .await
         .unwrap());
     let status = call(
@@ -363,7 +363,7 @@ async fn contract(pg: bool) {
             202,
         )
         .await;
-        assert!(codeyard::backend::code_scanning::process_next(f.pool())
+        assert!(codeyard_app::code_scanning::process_next(f.pool())
             .await
             .unwrap());
         let alert = call(
@@ -399,7 +399,7 @@ async fn contract(pg: bool) {
         202,
     )
     .await;
-    assert!(codeyard::backend::code_scanning::process_next(f.pool())
+    assert!(codeyard_app::code_scanning::process_next(f.pool())
         .await
         .unwrap());
     let reopened = call(
@@ -571,7 +571,7 @@ async fn contract(pg: bool) {
         202,
     )
     .await;
-    assert!(codeyard::backend::code_scanning::process_next(f.pool())
+    assert!(codeyard_app::code_scanning::process_next(f.pool())
         .await
         .unwrap());
     let status = call(
@@ -711,7 +711,7 @@ async fn workflow_tokens(
         "scanner-worker",
         "local",
         &[actor],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -723,7 +723,7 @@ async fn workflow_tokens(
             ".github/workflows/security.yml".into(),
             b"permissions: {contents: read, actions: read, security-events: write}\njobs: {scanner: {}}".to_vec(),
         )]);
-        let tokens = codeyard::backend::ci::tokens::issue(pool, &run, &definitions, false)
+        let tokens = codeyard_app::ci::tokens::issue(pool, &run, &definitions, false)
             .await
             .unwrap();
         let token = if engine == "act" {
@@ -789,7 +789,7 @@ async fn workflow_tokens(
             202,
         )
         .await;
-        assert!(codeyard::backend::code_scanning::process_next(pool)
+        assert!(codeyard_app::code_scanning::process_next(pool)
             .await
             .unwrap());
         let analyses = call(
@@ -810,7 +810,7 @@ async fn workflow_tokens(
             ".github/workflows/security.yml".into(),
             b"permissions: {contents: write}\njobs: {scanner: {}}".to_vec(),
         )]);
-        let tokens = codeyard::backend::ci::tokens::issue(pool, &run, &definitions, false)
+        let tokens = codeyard_app::ci::tokens::issue(pool, &run, &definitions, false)
             .await
             .unwrap();
         let token = if engine == "act" {

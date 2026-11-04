@@ -7,7 +7,9 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::{app::AppState, db, storage::ObjectStore};
+use codeyard::backend::db;
+use codeyard_app::app::AppState;
+use codeyard_app::storage::ObjectStore;
 use database::Database;
 use pulls::{moved_forward, text, Client};
 use serde_json::{json, Value};
@@ -22,7 +24,7 @@ async fn contract(pg: bool) {
     let bob_id = f.actor("bob").await;
     let carol_id = f.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -71,7 +73,7 @@ async fn contract(pg: bool) {
     }
     let protected_tip = tip_of("guarded/stable");
     assert!(git.find_reference("refs/heads/guarded/new").is_err());
-    let refs_before = codeyard::backend::repositories::store::repo_store(&repository, None)
+    let refs_before = codeyard_app::repositories::store::repo_store(&repository, None)
         .refs()
         .await
         .unwrap();
@@ -134,7 +136,7 @@ async fn contract(pg: bool) {
             "native delete-branch {alias}: {page}"
         );
     }
-    let refs_after = codeyard::backend::repositories::store::repo_store(&repository, None)
+    let refs_after = codeyard_app::repositories::store::repo_store(&repository, None)
         .refs()
         .await
         .unwrap();
@@ -545,7 +547,7 @@ async fn concurrent_refresh_converges(pg: bool) {
         })
         .await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(actor),
@@ -561,17 +563,17 @@ async fn concurrent_refresh_converges(pg: bool) {
         root.path().to_owned(),
         Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
         None,
-        codeyard::backend::ci::CiConfig::default(),
+        codeyard_app::ci::config::CiConfig::default(),
         None,
     );
     let ci = state.ci_runs.clone();
-    let store = codeyard::backend::repositories::store::repo_store(&repository, None);
+    let store = codeyard_app::repositories::store::repo_store(&repository, None);
     let main = store
         .save_file_as(
             f.pool(),
             repository.id,
             actor,
-            &codeyard::backend::repositories::store::FileWrite {
+            &codeyard_app::repositories::store::editor::FileWrite {
                 branch: "main".into(),
                 path: "README.md".into(),
                 message: "initial".into(),
@@ -613,7 +615,7 @@ async fn concurrent_refresh_converges(pg: bool) {
             f.pool(),
             repository.id,
             actor,
-            &codeyard::backend::repositories::store::FileWrite {
+            &codeyard_app::repositories::store::editor::FileWrite {
                 branch: "topic".into(),
                 path: "one.txt".into(),
                 message: "first head".into(),
@@ -632,7 +634,7 @@ async fn concurrent_refresh_converges(pg: bool) {
             f.pool(),
             repository.id,
             actor,
-            &codeyard::backend::repositories::store::FileWrite {
+            &codeyard_app::repositories::store::editor::FileWrite {
                 branch: "main".into(),
                 path: "base-one.txt".into(),
                 message: "first base".into(),
@@ -648,7 +650,7 @@ async fn concurrent_refresh_converges(pg: bool) {
         .unwrap();
     let second_head = store
         .prepare_file(
-            &codeyard::backend::repositories::store::FileWrite {
+            &codeyard_app::repositories::store::editor::FileWrite {
                 branch: "topic".into(),
                 path: "two.txt".into(),
                 message: "second head".into(),
@@ -664,7 +666,7 @@ async fn concurrent_refresh_converges(pg: bool) {
         .unwrap();
     let second_base = store
         .prepare_file(
-            &codeyard::backend::repositories::store::FileWrite {
+            &codeyard_app::repositories::store::editor::FileWrite {
                 branch: "main".into(),
                 path: "base-two.txt".into(),
                 message: "second base".into(),
@@ -742,7 +744,7 @@ async fn concurrent_refresh_converges(pg: bool) {
         let repository = repository.clone();
         let ci = ci.clone();
         tokio::spawn(async move {
-            codeyard::backend::repositories::pull_requests::refresh_open_pull_requests(
+            codeyard_app::repositories::pull_requests::branches::refresh_open_pull_requests(
                 &pool,
                 &repository,
                 Some(&["main", "topic"][..]),
@@ -856,7 +858,7 @@ async fn refresh_touches_only_pull_requests_on_the_moved_branch(pg: bool) {
     f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -934,7 +936,7 @@ async fn merge_names_the_base_branch_it_read(pg: bool) {
     f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -1028,7 +1030,7 @@ async fn merge_into_the_default_branch_closes_named_issues(pg: bool) {
     f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice_id),

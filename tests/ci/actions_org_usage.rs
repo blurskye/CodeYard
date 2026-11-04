@@ -1,17 +1,17 @@
 //! Organization cache reports include real uploads, paging, and current tenant authority.
 use super::{actions_objects::pat, results};
-use crate::support::{
-    database::Database, fake_webui_bundle, github_spec::assert_github_schema,
-    organizations::applied,
-};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::organizations::applied;
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, Request, StatusCode},
     Router,
 };
 
-use codeyard_db_orgs::organizations::NewOrganization;
-use codeyard_db_orgs::organizations::OrganizationProfile;
+use super::NewOrganization;
+use super::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 use serde_json::Value;
@@ -70,7 +70,7 @@ async fn contract(pg: bool) {
     f.execute("UPDATE users SET is_admin=true WHERE id=$1", &[site_admin])
         .await;
     let org = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("builders", OrganizationProfile::new(None, None).unwrap())
@@ -88,7 +88,7 @@ async fn contract(pg: bool) {
     let mut repos = Vec::new();
     for (name, private) in [("one", true), ("two", false), ("empty", true)] {
         repos.push(
-            codeyard::backend::repositories::lifecycle::provision(
+            codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 RepositoryCreationOwner {
@@ -104,7 +104,7 @@ async fn contract(pg: bool) {
             .unwrap(),
         );
     }
-    let personal = codeyard::backend::repositories::lifecycle::provision(
+    let personal = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner::personal(owner),

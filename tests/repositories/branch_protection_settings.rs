@@ -67,7 +67,7 @@ async fn contract(pg: bool) {
     // Carol has no access to the repository, so she cannot be a push allowance.
     f.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
-    codeyard::backend::repositories::lifecycle::provision(
+    codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

@@ -1,5 +1,7 @@
 use super::action_secrets::{pat, request};
-use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
+use crate::support::http_client::Client;
 use axum::http::StatusCode;
 
 use serde_json::{json, Value};
@@ -11,7 +13,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),

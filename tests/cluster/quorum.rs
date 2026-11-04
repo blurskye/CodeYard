@@ -3,28 +3,28 @@
 use super::quorum_sql::{replace_node_key, set_timeout, setup_with_refs, Fixture};
 use crate::support::native_database as native;
 use base64::Engine;
-use codeyard::backend::ci::queue::RunQueue;
-use codeyard::backend::ci::CiConfig;
-use codeyard::backend::ci::CiRuns;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::ci::queue::RunQueue;
+use codeyard_app::ci::runs::CiRuns;
 
-use codeyard::backend::cluster::context::term_path;
+use codeyard_app::cluster::context::term_path;
 
-use codeyard::backend::cluster::IrohDialer;
-use codeyard::backend::cluster::NodeAddress;
-use codeyard::backend::cluster::NodeContext;
-use codeyard::backend::cluster::PairingHandler;
-use codeyard::backend::cluster::Relay;
+use codeyard_app::cluster::context::NodeContext;
+use codeyard_app::cluster::pairing::PairingHandler;
+use codeyard_app::cluster::transport::IrohDialer;
+use codeyard_app::cluster::transport::NodeAddress;
+use codeyard_app::cluster::transport::Relay;
 
-use codeyard::backend::repositories::git_sessions::receive_session;
-use codeyard::backend::repositories::git_sessions::ReceiveCredential;
-use codeyard::backend::repositories::git_sessions::ReceiveSession;
-use codeyard::backend::repositories::store::GitService;
-use codeyard::backend::repositories::store::GitSession;
-use codeyard::backend::repositories::store::GitStreams;
-use codeyard::backend::repositories::store::RepoStore;
+use codeyard_app::repositories::git_sessions::receive_session;
+use codeyard_app::repositories::git_sessions::ReceiveCredential;
+use codeyard_app::repositories::git_sessions::ReceiveSession;
+use codeyard_app::repositories::store::types::GitService;
+use codeyard_app::repositories::store::types::GitSession;
+use codeyard_app::repositories::store::types::GitStreams;
+use codeyard_app::repositories::store::RepoStore;
 use codeyard_db_core::models::RefValue;
 use codeyard_db_core::DbPool;
-use codeyard_notifications::NotificationBroadcaster;
+use codeyard_notifications::broadcast::NotificationBroadcaster;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::time::{timeout, Instant};
 
@@ -46,7 +46,7 @@ fn commit(repo: &git2::Repository, message: &str, parent: Option<git2::Oid>) -> 
 struct Stores {
     fixture: Fixture,
     contexts: Vec<NodeContext>,
-    listeners: Vec<codeyard::backend::cluster::tcp::Listener>,
+    listeners: Vec<codeyard_app::cluster::tcp::Listener>,
     paths: Vec<PathBuf>,
     _roots: Vec<tempfile::TempDir>,
     old: String,
@@ -84,7 +84,8 @@ impl Stores {
                 .await
                 .unwrap()
                 .unwrap();
-        let uuid = codeyard::backend::cluster::rpc::repository_uuid(&repository.disk_path).unwrap();
+        let uuid =
+            codeyard_app::cluster::rpc::repository::repository_uuid(&repository.disk_path).unwrap();
         let mut roots = Vec::new();
         let mut paths = Vec::new();
         let mut contexts = Vec::new();
@@ -115,16 +116,14 @@ impl Stores {
                 context: Some(context.clone()),
                 notifications: Arc::new(NotificationBroadcaster::new(pool)),
             };
-            let listener = codeyard::backend::cluster::tcp::bind(
+            let listener = codeyard_app::cluster::tcp::bind(
                 "127.0.0.1:0".parse().unwrap(),
                 &context.key,
-                codeyard::backend::cluster::tcp::Services {
+                codeyard_app::cluster::tcp::Services {
                     pool: pool.clone(),
                     pairing: PairingHandler::new(pool.clone()),
-                    rpc: Some(codeyard::backend::cluster::rpc::RpcHandler::new(
-                        context.clone(),
-                    )),
-                    events: codeyard::backend::cluster::ci::CiHandler::new(context.clone(), queue),
+                    rpc: Some(codeyard_app::cluster::rpc::RpcHandler::new(context.clone())),
+                    events: codeyard_app::cluster::ci::CiHandler::new(context.clone(), queue),
                 },
             )
             .await
@@ -264,12 +263,12 @@ impl Stores {
         let (reply, _) = context
             .call(
                 self.fixture.primary,
-                codeyard::backend::cluster::rpc::Request {
-                    repository: codeyard::backend::cluster::rpc::repository_uuid(
+                codeyard_app::cluster::rpc::wire::Request {
+                    repository: codeyard_app::cluster::rpc::repository::repository_uuid(
                         &repository.disk_path,
                     )
                     .unwrap(),
-                    operation: codeyard::backend::cluster::rpc::Operation::Refs,
+                    operation: codeyard_app::cluster::rpc::wire::Operation::Refs,
                     actor: None,
                     ci_run: None,
                 },
@@ -402,7 +401,7 @@ async fn editor_uses_both_stores(pool: &DbPool) {
             pool,
             f.repo,
             f.owner,
-            &codeyard::backend::repositories::store::FileWrite {
+            &codeyard_app::repositories::store::editor::FileWrite {
                 branch: "main".into(),
                 path: "README.md".into(),
                 message: "save file".into(),
@@ -543,7 +542,7 @@ async fn stale_writer_is_refused(pool: &DbPool) {
     .await
     .unwrap());
     for context in &stores.contexts {
-        codeyard::backend::cluster::replicas::recover_family(
+        codeyard_app::cluster::replicas::promote::recover_family(
             pool,
             f.repo,
             context.node_id,
@@ -580,7 +579,7 @@ async fn stale_writer_is_refused(pool: &DbPool) {
         .create_branch_as(pool, f.repo, f.owner, "current", &stores.old)
         .await
         .unwrap();
-    let uuid = codeyard::backend::cluster::rpc::repository_uuid(&row.disk_path).unwrap();
+    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&row.disk_path).unwrap();
     for context in &stores.contexts {
         let repo = git2::Repository::open_bare(term_path(&context.repos_path, uuid, 2)).unwrap();
         assert!(repo.find_reference("refs/heads/stale").is_err());
@@ -770,10 +769,7 @@ async fn default_branch_uses_both_stores(pool: &DbPool) {
         )
         .await
         .unwrap_err();
-    assert_eq!(
-        error.kind,
-        codeyard::backend::repositories::store::ErrorKind::Invalid
-    );
+    assert_eq!(error.kind, codeyard_git::error::ErrorKind::Invalid);
     assert_eq!(stores.heads(), vec![other; 2]);
     let restored = codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
         .await
@@ -822,7 +818,8 @@ async fn default_branch_uses_both_stores(pool: &DbPool) {
 }
 
 async fn new_repositories_stay_refused(pool: &DbPool) {
-    use codeyard::backend::repositories::lifecycle::{self, LifecycleFailure};
+    use codeyard_app::repositories::lifecycle;
+    use codeyard_app::repositories::lifecycle::LifecycleFailure;
     let stores = Stores::new(pool).await;
     let f = &stores.fixture;
     let source = codeyard_db_repos::repositories::records::get_repository_by_id(pool, f.repo)

@@ -1,11 +1,13 @@
 //! Environment rule APIs and App decisions fence real CI claims on both engines.
 use super::action_secrets::{pat, request};
-use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
+use crate::support::http_client::Client;
 
 use codeyard_db_actions::deployment_protection::Refusal;
 use codeyard_db_actions::deployment_protection::Review;
 use codeyard_db_identity::github_apps::App;
-use codeyard_identity::tokens::token_hash;
+use codeyard_support::token_hash::token_hash;
 
 use codeyard_db_core::models::CiRun;
 use serde_json::{json, Value};
@@ -338,14 +340,14 @@ async fn contract(pg: bool) {
         "worker",
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels()
+        &codeyard_app::ci::config::CiConfig::default().platform_labels()
     )
     .await
     .unwrap()
     .is_none());
 
     // The normal sender records its SSRF refusal; the payload still proves targeting and callback identity.
-    codeyard::backend::webhooks::deployment_protection::requested(f.pool(), &run)
+    codeyard_app::webhooks::deployment_protection::requested(f.pool(), &run)
         .await
         .unwrap();
     let delivery_id = tokio::time::timeout(Duration::from_secs(15), async {
@@ -456,7 +458,7 @@ async fn contract(pg: bool) {
         "worker",
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels()
+        &codeyard_app::ci::config::CiConfig::default().platform_labels()
     )
     .await
     .unwrap()
@@ -472,7 +474,7 @@ async fn contract(pg: bool) {
             "worker",
             "local",
             &[alice],
-            &codeyard::backend::ci::CiConfig::default().platform_labels()
+            &codeyard_app::ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()
@@ -498,7 +500,7 @@ async fn contract(pg: bool) {
         "worker",
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels()
+        &codeyard_app::ci::config::CiConfig::default().platform_labels()
     )
     .await
     .unwrap()
@@ -509,7 +511,7 @@ async fn contract(pg: bool) {
         "worker",
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels()
+        &codeyard_app::ci::config::CiConfig::default().platform_labels()
     )
     .await
     .unwrap()
@@ -575,7 +577,7 @@ async fn contract(pg: bool) {
             "worker",
             "local",
             &[alice],
-            &codeyard::backend::ci::CiConfig::default().platform_labels()
+            &codeyard_app::ci::config::CiConfig::default().platform_labels()
         )
         .await
         .unwrap()
@@ -614,7 +616,7 @@ async fn contract(pg: bool) {
         "worker",
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels()
+        &codeyard_app::ci::config::CiConfig::default().platform_labels()
     )
     .await
     .unwrap()
@@ -627,7 +629,7 @@ async fn contract(pg: bool) {
         "worker",
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels()
+        &codeyard_app::ci::config::CiConfig::default().platform_labels()
     )
     .await
     .unwrap()

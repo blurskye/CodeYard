@@ -1,24 +1,24 @@
 use super::request;
-use crate::support::{
-    codeyard_db_orgs::organizations::applied, database::Database, http_client::Client,
-};
+use crate::support::codeyard_db_orgs::organizations::applied;
+use crate::support::database::Database;
+use crate::support::http_client::Client;
 use axum::{
     http::{HeaderMap, StatusCode},
     routing::post,
     Router,
 };
 use base64::Engine as _;
-use codeyard::backend::api::create_router;
-use codeyard::backend::app::AppState;
-use codeyard::backend::ci::CiConfig;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard_db_orgs::organizations::NewOrganization;
-use codeyard_db_orgs::organizations::OrganizationProfile;
+use super::NewOrganization;
+use super::OrganizationProfile;
 
 use codeyard_db_repos::webhooks::HookOwner;
 
-use codeyard::backend::storage::ObjectStore;
+use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
 use codeyard_support::crypto::hmac_sha256;
@@ -52,7 +52,7 @@ async fn contract(pg: bool) {
     let admin = f.actor("delegated").await;
     let outsider = f.actor("outsider").await;
     let org = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -62,19 +62,13 @@ async fn contract(pg: bool) {
     );
     for (user, role) in [(member, OrgRole::Member), (admin, OrgRole::Admin)] {
         applied(
-            codeyard_db_orgs::organizations::add_organization_member(
-                f.pool(),
-                owner,
-                org.id,
-                user,
-                role,
-            )
-            .await
-            .unwrap(),
+            super::add_organization_member(f.pool(), owner, org.id, user, role)
+                .await
+                .unwrap(),
         );
     }
     applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("other", OrganizationProfile::new(None, None).unwrap()).unwrap(),

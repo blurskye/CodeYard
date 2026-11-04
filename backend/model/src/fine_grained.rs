@@ -17,7 +17,7 @@ const RW: &[&str] = &["read", "write"];
 
 const RWA: &[&str] = &["read", "write", "admin"];
 
-const fn permission(
+pub const fn permission(
     key: &'static str,
     name: &'static str,
     group: Group,

@@ -7,13 +7,11 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as http;
 
 use axum::http::StatusCode;
-use codeyard::backend::{
-    db,
-    repositories::{
-        lifecycle::provision,
-        store::{repo_store, FileWrite, RepoStore},
-    },
-};
+use codeyard::backend::db;
+use codeyard_app::repositories::lifecycle::provision;
+use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_app::repositories::store::repo_store;
+use codeyard_app::repositories::store::RepoStore;
 use database::Database;
 
 /// Commits `bytes` as a new file at `path` on `main`, after `tip`, and returns the new tip.

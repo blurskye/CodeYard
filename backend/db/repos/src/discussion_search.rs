@@ -5,7 +5,7 @@ use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
 
 #[derive(Debug, Clone)]
-pub(crate) enum Expr {
+pub enum Expr {
     Term(String, String),
     And(Vec<Self>),
     Or(Vec<Self>),
@@ -280,7 +280,7 @@ impl Parser {
     }
 }
 
-pub(crate) fn expression(query: &str) -> Result<Expr, &'static str> {
+pub fn expression(query: &str) -> Result<Expr, &'static str> {
     parse_words(tokens(query)?)
 }
 fn parse_words(words: Vec<String>) -> Result<Expr, &'static str> {
@@ -414,11 +414,7 @@ impl Search {
         }
         needs(&self.expr)
     }
-    pub(crate) fn statement(
-        &self,
-        postgres: bool,
-        readable: &str,
-    ) -> Result<Statement, &'static str> {
+    pub fn statement(&self, postgres: bool, readable: &str) -> Result<Statement, &'static str> {
         let mut sql = Statement {
             postgres,
             args: Vec::new(),
@@ -468,7 +464,7 @@ impl Search {
         Ok(sql)
     }
 }
-pub(crate) fn positive_text<'a>(expr: &'a Expr, negative: bool, values: &mut Vec<&'a str>) {
+pub fn positive_text<'a>(expr: &'a Expr, negative: bool, values: &mut Vec<&'a str>) {
     match expr {
         Expr::Term(key, value) if key == "text" && !negative => values.push(value),
         Expr::And(v) | Expr::Or(v) => {

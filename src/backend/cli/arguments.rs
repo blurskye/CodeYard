@@ -1,5 +1,7 @@
-use clap::{Parser, Subcommand};
-use std::{net::SocketAddr, path::PathBuf};
+use clap::Parser;
+use clap::Subcommand;
+use std::net::SocketAddr;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "codeyard", version)]
@@ -25,7 +27,7 @@ pub(super) enum Commands {
         /// (Actions jobs). A runner may run alone on another machine. In cluster mode the
         /// server's parts are the web, storage and ssh roles, on separate machines.
         #[arg(long, env = "GITSERV_NODE_ROLES", default_value = "server,runner")]
-        roles: crate::backend::node::NodeRoles,
+        roles: codeyard_model::node_roles::NodeRoles,
 
         /// Turn cluster mode on first (PostgreSQL only), so this node can take the web,
         /// storage and ssh roles. Same as running `cluster enable` before `serve`.
@@ -65,7 +67,7 @@ pub(super) enum Commands {
     #[cfg(unix)]
     Ssh {
         #[command(subcommand)]
-        action: crate::backend::ssh::openssh::Commands,
+        action: codeyard_app::ssh::openssh::Commands,
     },
 
     /// User management

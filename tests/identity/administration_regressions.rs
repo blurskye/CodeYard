@@ -1,7 +1,11 @@
-use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
+use crate::support::http_client::Client;
 use axum::http::StatusCode;
-use codeyard::backend::{db, identity};
-use codeyard_webui::{app::Page, pages::account};
+use codeyard::backend::db;
+use codeyard::backend::identity;
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::account;
 
 async fn bounded_administration(pg: bool) {
     fake_webui_bundle::install();

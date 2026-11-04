@@ -60,7 +60,7 @@ pub fn validate_required_checks(checks: &[String]) -> Result<(), ProtectionWrite
 
 /// Keep producer selection identical for presentation and enforcement. Identical entries collapse;
 /// conflicting entries are refused instead of giving different readers first/last-wins semantics.
-pub(crate) fn normalize_check_bindings(
+pub fn normalize_check_bindings(
     checks: &mut Vec<serde_json::Value>,
 ) -> Result<(), ProtectionWriteRefusal> {
     if checks.len() > 100 {
@@ -280,7 +280,7 @@ pub fn has_review_requirements(rule: &BranchProtectionRule) -> bool {
         || rule.github_settings.require_last_push_approval
 }
 
-pub(crate) fn apply_protection_update(
+pub fn apply_protection_update(
     rule: &mut BranchProtectionRule,
     update: ProtectionUpdate,
 ) -> Result<()> {
@@ -505,7 +505,7 @@ pub fn validate_branch_pattern(pattern: &str) -> Result<(), ProtectionWriteRefus
 /// Whether `pattern` names `branch`. A pattern without `*`, `?` or `[` is a plain name and is only
 /// compared (Git ref names cannot contain those characters). A wildcard pattern is matched within `budget`, and running out of it is an error,
 /// never a non-match.
-pub(crate) fn branch_pattern_matches(
+pub fn branch_pattern_matches(
     pattern: &str,
     branch: &str,
     budget: &mut WorkflowMatchBudget,

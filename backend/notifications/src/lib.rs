@@ -55,7 +55,7 @@ impl NotificationEvent {
 
     /// Only which notification changed. A node that receives this from another node
     /// reads the content and the unread count from the database, like every event.
-    fn hint(&self) -> Self {
+    pub fn hint(&self) -> Self {
         match self {
             Self::Created {
                 user_id,

@@ -6,9 +6,11 @@ use crate::support::database::Database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client::Client;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::storage::ObjectStore;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::repos::insights::Page as Insights;
 use codeyard_webui::pages::repos::page::Page as RepoPage;
@@ -30,7 +32,7 @@ async fn insights_flow(pg: bool) {
     let bob_id = database.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
     for name in ["proj", "vault"] {
-        codeyard::backend::repositories::lifecycle::provision(
+        codeyard_app::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
             db::repositories::creation::RepositoryCreationOwner::personal(alice_id),

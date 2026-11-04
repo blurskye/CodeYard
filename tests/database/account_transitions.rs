@@ -1,4 +1,5 @@
-use crate::support::database::{wait_until_blocked, Database};
+use crate::support::database::wait_until_blocked;
+use crate::support::database::Database;
 
 use codeyard_db_identity::users::accounts;
 use codeyard_db_identity::users::transitions;

@@ -5,15 +5,15 @@
 
 use crate::support::production_ci;
 
+use super::create_organization;
+use super::NewOrganization;
+use super::OrganizationMetadata;
+use super::OrganizationProfile;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_identity::users::signup_requests::ReviewError;
 use codeyard_db_identity::users::transitions;
 use codeyard_db_identity::users::transitions::AccountAdmission;
 use codeyard_db_identity::users::transitions::SetupClaim;
-use codeyard_db_orgs::organizations::create_organization;
-use codeyard_db_orgs::organizations::NewOrganization;
-use codeyard_db_orgs::organizations::OrganizationMetadata;
-use codeyard_db_orgs::organizations::OrganizationProfile;
 use futures_util::FutureExt;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use std::{panic::AssertUnwindSafe, str::FromStr, time::Duration};
@@ -792,7 +792,8 @@ async fn wait_for_pg_blocked(raw: &sqlx::PgPool, holder: i32) -> i32 {
 }
 
 async fn managed_account_sessions(database: &Database) {
-    use codeyard_db_identity::users::{accounts, sessions};
+    use codeyard_db_identity::users::accounts;
+    use codeyard_db_identity::users::sessions;
 
     let SetupClaim::Completed(admin) =
         transitions::complete_setup(&database.pool, "admin", None, "old-hash", "private", None)

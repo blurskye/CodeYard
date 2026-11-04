@@ -1,17 +1,17 @@
 //! Organization repository discovery, paging, deletion scope and invitation consumption.
+use crate::support::database::wait_until_blocked;
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
+use crate::support::http_client::Client;
 use crate::support::organizations::applied;
-use crate::support::{
-    database::{wait_until_blocked, Database},
-    fake_webui_bundle,
-    http_client::Client,
-};
 use axum::http::StatusCode;
 
+use codeyard_api_rest::user::fine_grained::discovery;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Repository;
 use codeyard_db_orgs::organizations::*;
 use codeyard_db_repos::repositories::creation::*;
-use codeyard_webui::{app::Page, pages::discovery};
+use codeyard_webui::app::Page;
 
 async fn org(f: &Database, owner: i64, name: &str) -> i64 {
     applied(

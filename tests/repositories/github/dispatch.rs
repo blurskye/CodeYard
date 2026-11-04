@@ -104,7 +104,7 @@ async fn dispatch_contract(pg: bool) {
         "dispatch-worker",
         "local",
         &[],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()

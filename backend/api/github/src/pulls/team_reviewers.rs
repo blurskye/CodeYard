@@ -1,0 +1,25 @@
+use codeyard_app::app::AppState;
+use codeyard_model::github_error::Error;
+use codeyard_model::github_error::Result;
+use serde_json::Value;
+
+pub(super) async fn documents(
+    state: &AppState,
+    repo: i64,
+    pull: i64,
+    viewer: Option<i64>,
+) -> Result<Vec<Value>> {
+    let teams = codeyard_db_repos::pull_requests::team_reviewers::list(
+        &state.pool,
+        repo,
+        Some(pull),
+        viewer,
+    )
+    .await
+    .map_err(Error::unavailable)?;
+    let mut values = Vec::new();
+    for row in teams {
+        values.push(crate::teams::summary(state, &row.team, &row.org_slug, row.permission).await?);
+    }
+    Ok(values)
+}

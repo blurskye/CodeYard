@@ -1,8 +1,8 @@
+use crate::checks::Annotation;
 use crate::checks::PageSnapshot;
-use crate::postgres::checks::Annotation;
-use crate::postgres::checks::Refusal;
-use crate::postgres::checks::Run;
-use crate::postgres::checks::Suite;
+use crate::checks::Refusal;
+use crate::checks::Run;
+use crate::checks::Suite;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;

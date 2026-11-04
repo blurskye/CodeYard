@@ -1,17 +1,17 @@
 //! The fine-grained token pages render on the server with plain forms, so they work without
 //! JavaScript, and they are only for the signed-in account and the organization's owners.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
-use crate::support::{
-    codeyard_db_orgs::organizations::applied, database::Database, http_client::Client,
-};
+use crate::support::codeyard_db_orgs::organizations::applied;
+use crate::support::database::Database;
+use crate::support::http_client::Client;
 use chrono::{Duration, Utc};
 
-use codeyard_db_orgs::organizations::NewOrganization;
-use codeyard_db_orgs::organizations::OrganizationProfile;
+use super::NewOrganization;
+use super::OrganizationProfile;
 
+use codeyard_db_core::models::OrgRole;
 use codeyard_identity::fine_grained::Access;
 use codeyard_identity::fine_grained::Owner;
-use codeyard_db_core::models::OrgRole;
 
 async fn contract(pg: bool) {
     crate::support::fake_webui_bundle::install();
@@ -20,7 +20,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("alice").await;
     let carol = f.actor("carol").await;
     let org = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             f.pool(),
             alice,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -30,15 +30,9 @@ async fn contract(pg: bool) {
     )
     .id;
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            f.pool(),
-            alice,
-            org,
-            carol,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(f.pool(), alice, org, carol, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;

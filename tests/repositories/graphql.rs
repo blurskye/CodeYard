@@ -17,7 +17,9 @@ mod reviews;
 #[path = "graphql_status.rs"]
 mod status;
 
-use crate::support::{database::Database, http_client::Client, organizations::applied};
+use crate::support::database::Database;
+use crate::support::http_client::Client;
+use crate::support::organizations::applied;
 use async_graphql_parser::{
     parse_schema,
     types::{TypeKind, TypeSystemDefinition},
@@ -27,14 +29,13 @@ use axum::{
     http::{Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db,
-    identity::tokens::{self, TokenInput},
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::storage::ObjectStore;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, sync::Arc};
 use tower::ServiceExt;
@@ -120,7 +121,7 @@ async fn contract(pg: bool) {
     )
     .await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(alice),

@@ -411,7 +411,7 @@ async fn contract(pg: bool) {
     d.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[site])
         .await;
     let org = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             d.pool(),
             owner,
             &codeyard_db_orgs::organizations::NewOrganization::new(
@@ -426,15 +426,9 @@ async fn contract(pg: bool) {
     .id;
     for (actor, role) in [(admin, OrgRole::Admin), (member, OrgRole::Member)] {
         applied(
-            codeyard_db_orgs::organizations::add_organization_member(
-                d.pool(),
-                owner,
-                org,
-                actor,
-                role,
-            )
-            .await
-            .unwrap(),
+            super::add_organization_member(d.pool(), owner, org, actor, role)
+                .await
+                .unwrap(),
         );
     }
     let personal = d.repo(owner, None, "secret_personal", true).await;
@@ -534,44 +528,26 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     applied(
-        codeyard_db_orgs::organizations::update_organization_member_role(
-            d.pool(),
-            owner,
-            org,
-            admin,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
-    );
-    refuse(&d, private, admin).await;
-    applied(
-        codeyard_db_orgs::organizations::update_organization_member_role(
-            d.pool(),
-            owner,
-            org,
-            admin,
-            OrgRole::Admin,
-        )
-        .await
-        .unwrap(),
-    );
-    applied(
-        codeyard_db_orgs::organizations::remove_organization_member(d.pool(), owner, org, admin)
+        super::update_organization_member_role(d.pool(), owner, org, admin, OrgRole::Member)
             .await
             .unwrap(),
     );
     refuse(&d, private, admin).await;
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            d.pool(),
-            owner,
-            org,
-            admin,
-            OrgRole::Admin,
-        )
-        .await
-        .unwrap(),
+        super::update_organization_member_role(d.pool(), owner, org, admin, OrgRole::Admin)
+            .await
+            .unwrap(),
+    );
+    applied(
+        super::remove_organization_member(d.pool(), owner, org, admin)
+            .await
+            .unwrap(),
+    );
+    refuse(&d, private, admin).await;
+    applied(
+        super::add_organization_member(d.pool(), owner, org, admin, OrgRole::Admin)
+            .await
+            .unwrap(),
     );
 
     for flag in ["is_banned", "must_change_password"] {

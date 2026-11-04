@@ -1,10 +1,10 @@
 use super::github::{document, request};
-use crate::support::{database::Database, http_client::Client};
+use crate::support::database::Database;
+use crate::support::http_client::Client;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    db,
-    identity::tokens::{self, TokenInput},
-};
+use codeyard::backend::db;
+use codeyard::backend::identity::tokens;
+use codeyard_identity::tokens::TokenInput;
 use db::relationships::{Kind, Mutation};
 use serde_json::{json, Value};
 
@@ -21,7 +21,7 @@ async fn parents(pg: bool) {
     let mut repos = Vec::new();
     for (actor, name) in [(alice, "proj"), (alice, "other"), (bob, "foreign")] {
         repos.push(
-            codeyard::backend::repositories::lifecycle::provision(
+            codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 db::repositories::creation::RepositoryCreationOwner::personal(actor),

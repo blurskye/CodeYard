@@ -1,12 +1,13 @@
 //! Real gist smart HTTP, built-in SSH, remote publication, and promoted-copy recovery.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
-use crate::support::{
-    fake_webui_bundle as bundle,
-    git_remote::{git, success, tool, Server},
-    git_server::write_token,
-    github_spec::assert_github_schema,
-    native_database as native,
-};
+use crate::support::fake_webui_bundle as bundle;
+use crate::support::git_remote::git;
+use crate::support::git_remote::success;
+use crate::support::git_remote::tool;
+use crate::support::git_remote::Server;
+use crate::support::git_server::write_token;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::native_database as native;
 
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_model::repositories::DeployKeyError;
@@ -209,7 +210,7 @@ async fn gists_http_ssh_remote_and_promotion() {
     .unwrap()
     .unwrap();
     assert_eq!(repo.storage_node_id, Some(storage.node_id));
-    let uuid = codeyard::backend::cluster::rpc::repository_uuid(&repo.disk_path).unwrap();
+    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&repo.disk_path).unwrap();
     let disk = storage_root.join("repos").join(format!("{uuid}.git"));
     assert!(disk.is_dir());
     let http = format!("{}/gists/{id}.git", web.base);
@@ -494,7 +495,7 @@ async fn gists_http_ssh_remote_and_promotion() {
             .storage_node_id,
         Some(storage.node_id)
     );
-    let moved = codeyard::backend::cluster::replicas::promote(
+    let moved = codeyard_app::cluster::replicas::promote::promote(
         &database.pool,
         repo.id,
         Some(copy.node_id),

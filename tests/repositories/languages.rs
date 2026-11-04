@@ -2,21 +2,21 @@
 //! merge or fork that moves the default branch stores them, and the first reader computes them
 //! when none are stored. The API, the About panel and the Explore filter read the rows.
 #![cfg(not(target_arch = "wasm32"))]
-use crate::support::{
-    fake_webui_bundle as bundle,
-    git_server::{git, success, write_token, Server},
-    native_database as native,
-};
+use crate::support::fake_webui_bundle as bundle;
+use crate::support::git_server::git;
+use crate::support::git_server::success;
+use crate::support::git_server::write_token;
+use crate::support::git_server::Server;
+use crate::support::native_database as native;
 
 use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    db::{self, users::transitions::SetupClaim},
-    repositories::lifecycle,
-};
+use codeyard::backend::db;
+use codeyard_app::repositories::lifecycle;
+use codeyard_db_identity::users::transitions::SetupClaim;
 use serde_json::{json, Value};
 use std::{path::Path, time::Duration};
 use tower::ServiceExt;
@@ -229,14 +229,12 @@ async fn first_language_reader_retries_when_the_default_changes_during_publicati
     git.set_head("refs/heads/main").unwrap();
     let tx = fixture.raw.begin_with("BEGIN IMMEDIATE").await.unwrap();
     let pool = fixture.pool.clone();
-    let store = codeyard::backend::repositories::store::repo_store(&record, None);
+    let store = codeyard_app::repositories::store::repo_store(&record, None);
     let repository_id = record.id;
     let task = tokio::spawn(async move {
-        codeyard::backend::repositories::languages::compute_and_store(
-            &pool, &store, &record, "main",
-        )
-        .await
-        .unwrap()
+        codeyard_app::repositories::languages::compute_and_store(&pool, &store, &record, "main")
+            .await
+            .unwrap()
     });
     // Move the default only once the reader holds the publication lease, which it takes after
     // computing `main` and before writing it. A reader that started late would otherwise see the

@@ -1,9 +1,8 @@
 use super::*;
-use codeyard::backend::{
-    ci::CiRuns,
-    notifications::NotificationBroadcaster,
-    repositories::{pull_requests as pulls, store::repo_store},
-};
+use codeyard_app::ci::runs::CiRuns;
+use codeyard_app::repositories::pull_requests as pulls;
+use codeyard_app::repositories::store::repo_store;
+use codeyard_notifications::broadcast::NotificationBroadcaster;
 
 const WORKFLOW: &str = "on: [pull_request, push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n";
 
@@ -640,7 +639,7 @@ async fn refs_prefixed_base(pg: bool) {
         ci(&w)
             .dispatch_run(
                 w.alice_id,
-                codeyard::backend::ci::runs::DispatchRequest {
+                codeyard_app::ci::runs::DispatchRequest {
                     repo_owner: "alice".into(),
                     repo_name: "proj".into(),
                     branch: branch.into(),

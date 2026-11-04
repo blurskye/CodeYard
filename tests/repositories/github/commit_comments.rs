@@ -4,10 +4,9 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use codeyard::backend::{
-    db::repositories::commit_comments as records, repositories::access::change_collaborator,
-};
 use codeyard_db_core::models::AccessLevel;
+use codeyard_db_repos::repositories::commit_comments as records;
+use codeyard_identity::repository_access::change_collaborator;
 use tower::ServiceExt;
 
 async fn delivery(pool: &codeyard_db_core::DbPool, hook: i64, comment: i64) -> Value {

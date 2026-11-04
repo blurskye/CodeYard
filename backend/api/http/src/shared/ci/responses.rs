@@ -1,0 +1,166 @@
+use codeyard_webui::pages::ci as view;
+use codeyard_webui::pages::repos::actions as view_actions;
+pub fn map_run(
+    run: codeyard_db_core::models::CiRun,
+    repository: &codeyard_db_core::models::Repository,
+) -> view_actions::Run {
+    // A pull request run is stored on its base branch, which admission uses. The page shows the head
+    // branch of the pull request, which the run kept in its event.
+    let head_branch = run
+        .pull_request_event
+        .as_ref()
+        .filter(|_| run.event == "pull_request")
+        .and_then(|event| event["head_ref"].as_str());
+    // Runs stored before short branch names were used still have the full ref.
+    let branch = head_branch
+        .unwrap_or_else(|| {
+            if matches!(run.event.as_str(), "pull_request" | "pull_request_target") {
+                &run.branch
+            } else {
+                codeyard_db_core::ci_messages::branch_name(&run.branch)
+            }
+        })
+        .to_owned();
+    view_actions::Run {
+        approval_required: run.approval_required,
+        approval_pull: None,
+        concurrency_groups: Vec::new(),
+        waiting_for_concurrency: false,
+        artifacts: Vec::new(),
+        engine: run.engine.clone(),
+        commit_status_context: run.commit_status_context(),
+        id: run.run_id.to_string(),
+        api_id: run.workflow_run_id.unwrap_or(run.id),
+        api_attempt: run.workflow_run_attempt.unwrap_or(1),
+        repository: repository.name.clone(),
+        status: run.status,
+        workflow_path: run.workflow_path,
+        branch,
+        event: run.event,
+        pipeline: run.pipeline,
+        mode: run.mode,
+        head_sha: run.head_sha,
+        created_at: run.created_at.timestamp(),
+        started_at: run.started_at.map(|value| value.timestamp()),
+        completed_at: run.completed_at.map(|value| value.timestamp()),
+        error_message: codeyard_db_core::ci_messages::visible_run_error(
+            run.error_message.as_deref(),
+        ),
+        // Admission stores these as an object of strings; the page shows none if it cannot read them.
+        inputs: run
+            .workflow_inputs
+            .and_then(|inputs| serde_json::from_value(inputs).ok())
+            .unwrap_or_default(),
+    }
+}
+
+/// A workflow as the Actions page lists it: its inputs only matter when it can be dispatched.
+pub fn workflow_view(
+    workflow: codeyard_app::ci::workflows::WorkflowDefinition,
+) -> view_actions::Workflow {
+    view_actions::Workflow {
+        path: workflow.path,
+        name: workflow.name.chars().take(256).collect(),
+        dispatchable: workflow.triggers.workflow_dispatch,
+        inputs: workflow
+            .triggers
+            .dispatch_inputs
+            .into_iter()
+            .map(workflow_input_view)
+            .collect(),
+    }
+}
+
+fn workflow_input_view(
+    input: codeyard_actions::workflow::dispatch_inputs::DispatchInput,
+) -> view_actions::WorkflowInput {
+    use codeyard_actions::workflow::dispatch_inputs::InputKind;
+    view_actions::WorkflowInput {
+        name: input.name,
+        description: input.description.chars().take(1024).collect(),
+        kind: match input.kind {
+            InputKind::Text => view_actions::InputKind::Text,
+            InputKind::Boolean => view_actions::InputKind::Boolean,
+            InputKind::Number => view_actions::InputKind::Number,
+            InputKind::Choice => view_actions::InputKind::Choice,
+            InputKind::Environment => view_actions::InputKind::Environment,
+        },
+        required: input.required,
+        default: input.default,
+        options: input.options,
+    }
+}
+
+const WORKFLOW_INPUTS_WARNING: &str =
+    "Some workflow inputs exceed the page size limit. Use the API to dispatch those workflows.";
+
+/// Clears the inputs of the workflows past the 2 MiB budget, which then dispatch through the API.
+fn bound_workflow_inputs(
+    workflows: &mut [view_actions::Workflow],
+) -> Result<bool, serde_json::Error> {
+    let mut bytes = 0usize;
+    let mut trimmed = false;
+    for workflow in workflows {
+        let size = serde_json::to_vec(workflow)?.len();
+        if bytes.saturating_add(size) > 2 * 1024 * 1024 {
+            workflow.inputs.clear();
+            workflow.dispatchable = false;
+            trimmed = true;
+            bytes += serde_json::to_vec(workflow)?.len();
+        } else {
+            bytes += size;
+        }
+    }
+    Ok(trimmed)
+}
+
+pub fn bound_log_projection(
+    envelope: &mut codeyard_webui::app::PageEnvelope,
+) -> Result<(), serde_json::Error> {
+    match &mut envelope.page {
+        codeyard_webui::app::Page::Actions(view::Page::Actions(model)) => {
+            if bound_workflow_inputs(&mut model.workflows)? {
+                model.workflow_warning = Some(WORKFLOW_INPUTS_WARNING.into());
+            }
+        }
+        codeyard_webui::app::Page::Actions(view::Page::DispatchRecovery {
+            workflows,
+            message,
+            ..
+        }) => {
+            if bound_workflow_inputs(workflows)? {
+                message.push(' ');
+                message.push_str(WORKFLOW_INPUTS_WARNING);
+            }
+        }
+        _ => {}
+    }
+    let Some(selected) = selected_run_mut(envelope) else {
+        return Ok(());
+    };
+    let logs = std::mem::take(&mut selected.logs);
+    // Count the actual JSON envelope, not raw log bytes: escaping can expand a line.
+    let mut bytes = serde_json::to_vec(envelope)?.len();
+    let selected = selected_run_mut(envelope).expect("selected run");
+    // Keep the newest lines that fit; the browser refuses larger page models.
+    for line in logs.into_iter().rev() {
+        let size = serde_json::to_vec(&line)?.len() + usize::from(!selected.logs.is_empty());
+        if bytes.saturating_add(size) > codeyard_webui::bootstrap::MAX_PAGE_MODEL_BYTES {
+            selected.logs_truncated = true;
+            break;
+        }
+        bytes += size;
+        selected.logs.push(line);
+    }
+    selected.logs.reverse();
+    Ok(())
+}
+
+fn selected_run_mut(
+    envelope: &mut codeyard_webui::app::PageEnvelope,
+) -> Option<&mut view_actions::SelectedRun> {
+    match &mut envelope.page {
+        codeyard_webui::app::Page::Actions(view::Page::Actions(model)) => model.selected.as_mut(),
+        _ => None,
+    }
+}

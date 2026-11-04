@@ -1,18 +1,18 @@
 //! Team REST and legacy routes use the native organization policy on both engines.
-use crate::support::{
-    database::Database, github_spec::assert_github_schema, http_client::Client,
-    organizations::applied,
-};
+use crate::support::database::Database;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::http_client::Client;
+use crate::support::organizations::applied;
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
     Router,
 };
-use codeyard::backend::api::create_router;
-use codeyard::backend::app::AppState;
-use codeyard::backend::ci::CiConfig;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
 
-use codeyard::backend::storage::ObjectStore;
+use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
@@ -71,7 +71,7 @@ async fn contract(pg: bool) {
     let eve = f.actor("eve").await;
     let charlie = f.actor("charlie").await;
     let org = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             f.pool(),
             alice,
             &codeyard_db_orgs::organizations::NewOrganization::new(
@@ -84,26 +84,14 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            f.pool(),
-            alice,
-            org.id,
-            bob,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(f.pool(), alice, org.id, bob, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            f.pool(),
-            alice,
-            org.id,
-            charlie,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(f.pool(), alice, org.id, charlie, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let router = create_router(AppState::new(
@@ -624,7 +612,7 @@ async fn contract(pg: bool) {
             .unwrap()
             .unwrap();
         assert_eq!(
-            codeyard_db_orgs::organizations::get_organization_repo_access(f.pool(), bob, &row)
+            super::get_organization_repo_access(f.pool(), bob, &row)
                 .await
                 .unwrap(),
             codeyard_db_core::models::AccessLevel::from(level)

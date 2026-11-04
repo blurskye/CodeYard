@@ -1,11 +1,15 @@
 //! Dispatch form limits and reruns retain the same workflow inputs and files.
-use crate::support::{database::Database, fake_webui_bundle as bundle, http_client::Client};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle as bundle;
+use crate::support::http_client::Client;
 use axum::http::StatusCode;
 use base64::Engine;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, repositories::lifecycle,
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::repositories::lifecycle;
+use codeyard_app::storage::ObjectStore;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, sync::Arc};
 
@@ -145,7 +149,7 @@ async fn contract(pg: bool) {
     // Per-value validation still refuses a value over the shared bound, GitHub's 65,535 characters.
     let oversized = text.replacen(
         &"x".repeat(1700),
-        &"x".repeat(codeyard::backend::ci::dispatch_inputs::MAX_VALUE_BYTES + 1),
+        &"x".repeat(codeyard_actions::workflow::dispatch_inputs::MAX_VALUE_BYTES + 1),
         1,
     );
     let refused = client

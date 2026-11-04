@@ -1,13 +1,13 @@
 //! Organization-owned fine-grained tokens: the owners' policy, approval, revocation and
 //! membership, through the REST grant endpoints and the settings page on both engines.
 use super::request;
-use crate::support::{
-    codeyard_db_orgs::organizations::applied, database::Database, http_client::Client,
-};
+use crate::support::codeyard_db_orgs::organizations::applied;
+use crate::support::database::Database;
+use crate::support::http_client::Client;
 use chrono::{Duration, Utc};
 
-use codeyard_db_orgs::organizations::NewOrganization;
-use codeyard_db_orgs::organizations::OrganizationProfile;
+use super::NewOrganization;
+use super::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
@@ -77,7 +77,7 @@ async fn contract(pg: bool) {
     let carol = f.actor("carol").await;
     let dave = f.actor("dave").await;
     let org = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             f.pool(),
             alice,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -88,22 +88,16 @@ async fn contract(pg: bool) {
     .id;
     for user in [carol, dave] {
         applied(
-            codeyard_db_orgs::organizations::add_organization_member(
-                f.pool(),
-                alice,
-                org,
-                user,
-                OrgRole::Member,
-            )
-            .await
-            .unwrap(),
+            super::add_organization_member(f.pool(), alice, org, user, OrgRole::Member)
+                .await
+                .unwrap(),
         );
     }
     let root = tempfile::tempdir().unwrap();
     let mut repos = Vec::new();
     for (name, private) in [("internal", true), ("open", false), ("secret", true)] {
         repos.push(
-            codeyard::backend::repositories::lifecycle::provision(
+            codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 RepositoryCreationOwner {
@@ -289,15 +283,9 @@ async fn contract(pg: bool) {
     // A banned owner keeps the membership row but cannot review requests or set the policy.
     let erin = f.actor("erin").await;
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            f.pool(),
-            alice,
-            org,
-            erin,
-            OrgRole::Owner,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(f.pool(), alice, org, erin, OrgRole::Owner)
+            .await
+            .unwrap(),
     );
     f.execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[erin])
         .await;
@@ -464,7 +452,7 @@ async fn contract(pg: bool) {
     )
     .await;
     applied(
-        codeyard_db_orgs::organizations::remove_organization_member(f.pool(), alice, org, carol)
+        super::remove_organization_member(f.pool(), alice, org, carol)
             .await
             .unwrap(),
     );

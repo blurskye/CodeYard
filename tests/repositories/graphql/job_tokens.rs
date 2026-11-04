@@ -1,6 +1,8 @@
 //! The GraphQL boundary must not widen the REST job-token policy.
 use super::*;
-use codeyard::backend::{ci, repositories, webhooks::payloads};
+use codeyard_app::ci;
+use codeyard_app::repositories;
+use codeyard_app::webhooks::payloads;
 use std::collections::BTreeMap;
 
 async fn contract(pg: bool) {
@@ -49,7 +51,7 @@ async fn contract(pg: bool) {
         "worker",
         "local",
         &[actor],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()

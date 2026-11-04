@@ -1,6 +1,7 @@
 use super::fixture::{Fixture, COLLISION, ORG, USER};
 
-use codeyard_webui::pages::discovery::{self as view, RepositoryCard};
+use codeyard_webui::pages::discovery as view;
+use codeyard_webui::pages::discovery::RepositoryCard;
 
 const NAMES: [&str; 4] = [
     "discovery_personal",

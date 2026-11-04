@@ -1,6 +1,7 @@
-use codeyard_support::secret_detection::{
-    patterns::Create, scan, scan_with_patterns, MAX_BLOB_BYTES,
-};
+use codeyard_support::secret_detection::patterns::Create;
+use codeyard_support::secret_detection::scan;
+use codeyard_support::secret_detection::scan_with_patterns;
+use codeyard_support::secret_detection::MAX_BLOB_BYTES;
 
 #[test]
 fn secret_scanning_rules_and_locations() {

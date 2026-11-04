@@ -1,4 +1,4 @@
-use crate::NotificationBroadcaster;
+use crate::broadcast::NotificationBroadcaster;
 use crate::NotificationEvent;
 
 use codeyard_db_repos::notifications::records::NotificationInbox;

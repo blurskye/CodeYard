@@ -1,13 +1,13 @@
 //! Real pushes record rule suites for rulesets in evaluate mode without being refused.
-use crate::support::{database::Database, git_server, github_spec::assert_github_schema};
-use codeyard::backend::{
-    db::{
-        self,
-        organizations::OrganizationOutcome,
-        rulesets::{self, Definition, Owner},
-    },
-    repositories::lifecycle,
-};
+use crate::support::database::Database;
+use crate::support::git_server;
+use crate::support::github_spec::assert_github_schema;
+use codeyard::backend::db;
+use codeyard_app::repositories::lifecycle;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_core::queries::rulesets::records::Owner;
+use codeyard_db_core::queries::rulesets::Definition;
+use codeyard_db_repos::rulesets;
 use serde_json::{json, Value};
 use std::{path::Path, process::Output};
 

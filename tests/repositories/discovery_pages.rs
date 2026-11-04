@@ -10,14 +10,13 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::{http::StatusCode, Router};
 use base64::Engine;
-use codeyard::backend::{
-    db::{self, repositories::discovery::NewForkedRepository},
-    repositories::lifecycle,
-};
-use codeyard_webui::{
-    app::Page,
-    pages::{account, discovery as view, users},
-};
+use codeyard::backend::db;
+use codeyard_api_rest::user::fine_grained::discovery as view;
+use codeyard_api_rest::user::fine_grained::users;
+use codeyard_app::repositories::lifecycle;
+use codeyard_db_repos::repositories::discovery::NewForkedRepository;
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::account;
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};

@@ -5,13 +5,12 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::{CiConfig, CiPipelineKind},
-    db,
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::ci::config::CiPipelineKind;
+use codeyard_app::storage::ObjectStore;
 use database::Database;
 use pulls::{text, Client};
 use serde_json::json;
@@ -87,7 +86,7 @@ async fn contract(pg: bool) {
     let owner = f.actor("alice").await;
     let merger = f.actor("late_merger").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -123,32 +122,31 @@ async fn contract(pg: bool) {
     let late_head = alice.save("late-policy", "late.txt", &base).await;
     let late_pull = alice.open_pull("Late policy", "late-policy", "main").await;
     let late_number = late_pull["number"].as_i64().unwrap() as i32;
-    let prepared =
-        codeyard::backend::repositories::pull_requests::merge::prepare_pull_request_merge(
-            f.pool(),
-            &state.ci_runs,
-            merger,
-            ("alice".into(), "proj".into(), late_number),
-            codeyard::backend::repositories::pull_requests::merge::MergeRequest {
-                expected_head: late_head.clone(),
-                expected_base: base.clone(),
-                expected_base_branch: None,
-                expected_target: None,
-                merge_method: Default::default(),
-                commit_title: None,
-                commit_message: None,
-                author_email: None,
-            },
-        )
-        .await
-        .unwrap();
+    let prepared = codeyard_app::repositories::pull_requests::merge::prepare_pull_request_merge(
+        f.pool(),
+        &state.ci_runs,
+        merger,
+        ("alice".into(), "proj".into(), late_number),
+        codeyard_app::repositories::pull_requests::merge::MergeRequest {
+            expected_head: late_head.clone(),
+            expected_base: base.clone(),
+            expected_base_branch: None,
+            expected_target: None,
+            merge_method: Default::default(),
+            commit_title: None,
+            commit_message: None,
+            author_email: None,
+        },
+    )
+    .await
+    .unwrap();
     let mut late_rule = rule(repository.id, owner, "main");
     late_rule.required_approving_reviews = 1;
     db::repositories::protection::upsert_branch_protection_rule(f.pool(), late_rule)
         .await
         .unwrap();
     assert!(matches!(
-        codeyard::backend::repositories::pull_requests::merge::publish_prepared_merge(
+        codeyard_app::repositories::pull_requests::merge::publish_prepared_merge(
             f.pool(),
             &state.ci_runs,
             &state.notification_broadcaster,
@@ -156,7 +154,7 @@ async fn contract(pg: bool) {
         )
         .await,
         Err(
-            codeyard::backend::repositories::pull_requests::OperationError::Conflict {
+            codeyard_app::repositories::pull_requests::OperationError::Conflict {
                 code: "branch_protection",
                 ..
             }
@@ -179,39 +177,38 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap());
-    let prepared =
-        codeyard::backend::repositories::pull_requests::merge::prepare_pull_request_merge(
-            f.pool(),
-            &state.ci_runs,
-            merger,
-            ("alice".into(), "proj".into(), late_number),
-            codeyard::backend::repositories::pull_requests::merge::MergeRequest {
-                expected_head: late_head.clone(),
-                expected_base: base.clone(),
-                expected_base_branch: None,
-                expected_target: None,
-                merge_method: Default::default(),
-                commit_title: None,
-                commit_message: None,
-                author_email: None,
-            },
-        )
-        .await
-        .unwrap();
+    let prepared = codeyard_app::repositories::pull_requests::merge::prepare_pull_request_merge(
+        f.pool(),
+        &state.ci_runs,
+        merger,
+        ("alice".into(), "proj".into(), late_number),
+        codeyard_app::repositories::pull_requests::merge::MergeRequest {
+            expected_head: late_head.clone(),
+            expected_base: base.clone(),
+            expected_base_branch: None,
+            expected_target: None,
+            merge_method: Default::default(),
+            commit_title: None,
+            commit_message: None,
+            author_email: None,
+        },
+    )
+    .await
+    .unwrap();
     f.execute(
         "UPDATE repositories SET is_archived=TRUE WHERE id=$1",
         &[repository.id],
     )
     .await;
     assert!(matches!(
-        codeyard::backend::repositories::pull_requests::merge::publish_prepared_merge(
+        codeyard_app::repositories::pull_requests::merge::publish_prepared_merge(
             f.pool(),
             &state.ci_runs,
             &state.notification_broadcaster,
             prepared,
         )
         .await,
-        Err(codeyard::backend::repositories::pull_requests::OperationError::Denied { .. })
+        Err(codeyard_app::repositories::pull_requests::OperationError::Denied { .. })
     ));
     f.execute(
         "UPDATE repositories SET is_archived=FALSE WHERE id=$1",
@@ -427,7 +424,7 @@ async fn contract(pg: bool) {
                     &format!("worker-{}", expected.id),
                     "local",
                     &[owner],
-                    &codeyard::backend::ci::CiConfig::default().platform_labels(),
+                    &codeyard_app::ci::config::CiConfig::default().platform_labels(),
                 )
                 .await
                 .unwrap()
@@ -487,7 +484,7 @@ async fn contract(pg: bool) {
                     "worker",
                     "local",
                     &[owner],
-                    &codeyard::backend::ci::CiConfig::default().platform_labels()
+                    &codeyard_app::ci::config::CiConfig::default().platform_labels()
                 )
                 .await
                 .unwrap()
@@ -504,7 +501,7 @@ async fn contract(pg: bool) {
                     "worker-2",
                     "local",
                     &[owner],
-                    &codeyard::backend::ci::CiConfig::default().platform_labels()
+                    &codeyard_app::ci::config::CiConfig::default().platform_labels()
                 )
                 .await
                 .unwrap()
@@ -608,7 +605,7 @@ async fn protection_contract(pg: bool) {
     let writer = f.actor("bob").await;
     let reader = f.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -927,7 +924,7 @@ async fn linear_history_merge_contract(pg: bool) {
     f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -1042,7 +1039,7 @@ async fn linear_history_branch_creation_contract(pg: bool) {
     f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -1172,7 +1169,7 @@ async fn runs_of_another_pull_request_do_not_satisfy_a_check(pg: bool) {
     f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -1228,7 +1225,7 @@ async fn runs_of_another_pull_request_do_not_satisfy_a_check(pg: bool) {
         "worker",
         "local",
         &[owner],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -1255,7 +1252,7 @@ async fn runs_of_another_pull_request_do_not_satisfy_a_check(pg: bool) {
         "worker",
         "local",
         &[owner],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -1289,7 +1286,7 @@ async fn pull_request_checks_show_failures_and_the_head_branch(pg: bool) {
     f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -1331,7 +1328,7 @@ async fn pull_request_checks_show_failures_and_the_head_branch(pg: bool) {
         "worker",
         "local",
         &[owner],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -1388,7 +1385,7 @@ async fn merge_method_history_contract(pg: bool) {
     f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         db::repositories::creation::RepositoryCreationOwner::personal(owner),

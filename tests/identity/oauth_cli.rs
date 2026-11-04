@@ -1,5 +1,7 @@
 //! The real gh binary talks to the real router over its supported Unix-socket transport.
-use crate::support::{database::Database, github_spec::assert_github_schema, http_client::Client};
+use crate::support::database::Database;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::http_client::Client;
 use axum::{
     body::{to_bytes, Body},
     extract::Request,

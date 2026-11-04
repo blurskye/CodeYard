@@ -1,10 +1,13 @@
 //! SSR document and safe bootstrap contracts using typed view fixtures.
-use codeyard_webui::{
-    app::{Page, PageEnvelope},
-    bootstrap::{Bootstrap, BOOTSTRAP_ID},
-    document::{self, Chrome},
-    pages::repos::{self, chrome::RepoChrome, editor::Editor},
-};
+use codeyard_api_rest::user::fine_grained::repos;
+use codeyard_webui::app::Page;
+use codeyard_webui::app::PageEnvelope;
+use codeyard_webui::bootstrap::Bootstrap;
+use codeyard_webui::bootstrap::BOOTSTRAP_ID;
+use codeyard_webui::document;
+use codeyard_webui::document::Chrome;
+use codeyard_webui::pages::repos::chrome::RepoChrome;
+use codeyard_webui::pages::repos::editor::Editor;
 
 #[test]
 fn initial_document_embeds_the_exact_safe_navigation_model() {

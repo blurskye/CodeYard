@@ -3,7 +3,8 @@ use super::templates::{put, setup};
 use crate::support::http_client::hidden_value;
 use axum::http::StatusCode;
 
-use codeyard_webui::{app::Page, pages::repos::issues};
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::repos::issues;
 use serde_json::Value;
 
 async fn milestone_models(pg: bool) {

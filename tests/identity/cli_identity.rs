@@ -159,7 +159,8 @@ fn provision(
 }
 
 async fn cli_account_contract(pool: &codeyard_db_core::DbPool, url: &str) {
-    use codeyard_db_identity::users::{accounts, transitions};
+    use codeyard_db_identity::users::accounts;
+    use codeyard_db_identity::users::transitions;
     let installation = tempfile::tempdir().unwrap();
     let refused = provision(
         installation.path(),
@@ -301,7 +302,8 @@ async fn cli_account_validation_and_local_recovery_postgres() {
 
 #[tokio::test]
 async fn local_bootstrap_rolls_back_and_serializes_with_public_setup_on_both_engines() {
-    use codeyard_db_identity::users::transitions::{self, SetupClaim};
+    use codeyard_db_identity::users::transitions;
+    use codeyard_db_identity::users::transitions::SetupClaim;
     let postgres = native::PostgresDatabase::new().await;
     let sqlite = native::NativeDatabase::new().await;
     for pool in [&postgres.pool, &sqlite.pool] {

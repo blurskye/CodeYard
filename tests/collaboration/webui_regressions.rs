@@ -3,7 +3,8 @@ use axum::http::StatusCode;
 
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_repos::assignees::AssignedItem;
-use codeyard_webui::{app::Page, pages::repos::issues};
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::repos::issues;
 use serde_json::{json, Value};
 
 async fn comment_edit_snapshots(pg: bool) {

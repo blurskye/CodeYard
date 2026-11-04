@@ -4,14 +4,12 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::native_database as native;
 
-use codeyard::backend::{
-    cluster,
-    db::{self, repositories::creation::RepositoryCreationOwner},
-    repositories::{
-        lifecycle::provision,
-        store::{repo_store, FileWrite},
-    },
-};
+use codeyard::backend::db;
+use codeyard_app::cluster;
+use codeyard_app::repositories::lifecycle::provision;
+use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_app::repositories::store::repo_store;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_git::error::ErrorKind;
 use std::path::Path;
 
@@ -101,7 +99,8 @@ async fn code_search_reads_a_repository_stored_on_another_node() {
 
 #[tokio::test]
 async fn remote_file_lists_and_commit_walks_keep_size_limits_and_deadlines() {
-    use codeyard::backend::repositories::store::{CommitFilter, RepoStore};
+    use codeyard_app::repositories::store::RepoStore;
+    use codeyard_git::CommitFilter;
     let database = native::PostgresDatabase::new().await;
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
@@ -250,11 +249,14 @@ async fn code_search_on_an_unreachable_storage_node_is_an_error_not_an_empty_rep
 
 #[tokio::test]
 async fn content_search_allows_transport_fallback_and_keeps_completed_repositories() {
-    use crate::support::{fake_webui_bundle, http_client::Client};
-    use codeyard::backend::{
-        api::create_router, app::AppState, ci::CiConfig, storage::ObjectStore,
-    };
-    use codeyard_webui::{app::Page, pages::discovery};
+    use crate::support::fake_webui_bundle;
+    use crate::support::http_client::Client;
+    use codeyard_api_rest::create_router;
+    use codeyard_api_rest::user::fine_grained::discovery;
+    use codeyard_app::app::AppState;
+    use codeyard_app::ci::config::CiConfig;
+    use codeyard_app::storage::ObjectStore;
+    use codeyard_webui::app::Page;
     use std::{sync::Arc, time::Duration};
     fake_webui_bundle::install();
     let database = native::PostgresDatabase::new().await;

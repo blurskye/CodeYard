@@ -6,7 +6,8 @@ use crate::support::database;
 use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::{db, identity::activity};
+use codeyard::backend::db;
+use codeyard::backend::identity::activity;
 use database::Database;
 use pulls::Client;
 use serde_json::Value;

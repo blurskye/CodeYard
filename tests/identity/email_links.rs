@@ -4,7 +4,8 @@
 
 use crate::support::database::Database;
 use crate::support::fake_webui_bundle;
-use crate::support::http_client::{visible_text, Client};
+use crate::support::http_client::visible_text;
+use crate::support::http_client::Client;
 use crate::support::PASSWORD_WORK as SERIAL;
 use axum::http::StatusCode;
 use chrono::{Duration, Utc};

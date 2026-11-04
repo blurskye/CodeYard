@@ -3,10 +3,11 @@ use super::{
     actions_objects::{artifact, checked, pat},
     results,
 };
-use crate::support::{database::Database, fake_webui_bundle};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
 use axum::http::StatusCode;
 
-use codeyard::backend::ci::admission::AdmissionError;
+use codeyard_db_core::ci_admission::AdmissionError;
 
 use codeyard_db_actions::ci::CiRunDeletion;
 use codeyard_model::ci::LogLine;
@@ -22,7 +23,7 @@ async fn contract(pg: bool) {
     let mut repos = Vec::new();
     for name in ["project", "other"] {
         repos.push(
-            codeyard::backend::repositories::lifecycle::provision(
+            codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -41,21 +42,21 @@ async fn contract(pg: bool) {
     let reader = pat(&f, &router, alice, "read").await;
     let (source, _) = results::run(&f, repo.id, alice, "main").await;
     let definitions=BTreeMap::from([(".github/workflows/ci.yml".to_owned(),b"on: push\njobs:\n  reader:\n    permissions: {actions: read}\n    runs-on: ubuntu-latest\n    steps: [{run: 'echo ok'}]\n  writer:\n    permissions: {actions: write}\n    runs-on: ubuntu-latest\n    steps: [{run: 'echo ok'}]\n".to_vec())]);
-    let credentials = codeyard::backend::ci::tokens::issue(f.pool(), &source, &definitions, false)
+    let credentials = codeyard_app::ci::tokens::issue(f.pool(), &source, &definitions, false)
         .await
         .unwrap();
     let read_token = &credentials.workflows[".github/workflows/ci.yml"]["reader"];
     let write_token = &credentials.workflows[".github/workflows/ci.yml"]["writer"];
     let read_pat = codeyard_db_identity::users::tokens::find_token(
         f.pool(),
-        &codeyard::backend::ci::runtime::token_hash(read_token),
+        &codeyard_support::token_hash::token_hash(read_token),
     )
     .await
     .unwrap()
     .unwrap();
     let write_pat = codeyard_db_identity::users::tokens::find_token(
         f.pool(),
-        &codeyard::backend::ci::runtime::token_hash(write_token),
+        &codeyard_support::token_hash::token_hash(write_token),
     )
     .await
     .unwrap()
@@ -92,7 +93,7 @@ async fn contract(pg: bool) {
         alice,
         &codeyard_db_core::queries::ci::CiCredential::Token {
             id: read_pat.id,
-            hash: codeyard::backend::ci::runtime::token_hash(read_token),
+            hash: codeyard_support::token_hash::token_hash(read_token),
             permission: "actions",
         },
     )
@@ -147,7 +148,7 @@ async fn contract(pg: bool) {
         alice,
         &codeyard_db_core::queries::ci::CiCredential::Token {
             id: write_pat.id,
-            hash: codeyard::backend::ci::runtime::token_hash(write_token),
+            hash: codeyard_support::token_hash::token_hash(write_token),
             permission: "actions",
         },
     )
@@ -166,10 +167,10 @@ async fn contract(pg: bool) {
     );
     let (target, runtime) = results::run(&f, repo.id, alice, "main").await;
     let target_credentials =
-        codeyard::backend::ci::tokens::issue(f.pool(), &target, &definitions, false)
+        codeyard_app::ci::tokens::issue(f.pool(), &target, &definitions, false)
             .await
             .unwrap();
-    let target_hash = codeyard::backend::ci::runtime::token_hash(
+    let target_hash = codeyard_support::token_hash::token_hash(
         &target_credentials.workflows[".github/workflows/ci.yml"]["reader"],
     );
     assert!(codeyard_db_actions::ci::append_ci_logs(

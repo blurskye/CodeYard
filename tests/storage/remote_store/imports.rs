@@ -1,6 +1,7 @@
 //! Source imports are publishers, not a way to import somebody else's server attestations.
 use super::*;
-use codeyard::backend::repositories::imports::{GitImport, ImportCredential};
+use codeyard_app::repositories::imports::GitImport;
+use codeyard_app::repositories::imports::ImportCredential;
 
 #[tokio::test]
 async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
@@ -37,7 +38,7 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
     let owner = db::users::accounts::create_user(&database.pool, "import_publisher", None)
         .await
         .unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
+    let repository = codeyard_app::repositories::lifecycle::provision(
         (&database.pool, Some(&web.context)),
         &web.context.repos_path,
         db::repositories::creation::RepositoryCreationOwner::personal(owner.id),

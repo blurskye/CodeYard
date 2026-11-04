@@ -1,17 +1,18 @@
 //! Called workflows are admitted from authorized repositories and run from immutable snapshots.
 use crate::support::database::Database;
-use codeyard::backend::{
-    app::AppState,
-    ci::{
-        admission::AdmissionError, queue::RunQueue, CiConfig, CiExecutionMode, CiPipelineKind,
-        CiRunRequest, CiWorkers,
-    },
-    crypto::SecretEncryptor,
-    db,
-    notifications::NotificationBroadcaster,
-    repositories,
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::ci::config::CiExecutionMode;
+use codeyard_app::ci::config::CiPipelineKind;
+use codeyard_app::ci::queue::RunQueue;
+use codeyard_app::ci::runs::CiRunRequest;
+use codeyard_app::ci::workers::CiWorkers;
+use codeyard_app::repositories;
+use codeyard_app::storage::ObjectStore;
+use codeyard_db_core::ci_admission::AdmissionError;
+use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_support::secrets::SecretEncryptor;
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 fn commit(path: &str, files: &[(&str, &str)]) -> String {
@@ -228,7 +229,7 @@ jobs:
             .claim(
                 &format!("reusable-{engine}"),
                 CiExecutionMode::Local,
-                &codeyard::backend::ci::CiConfig::default().platform_labels(),
+                &codeyard_app::ci::config::CiConfig::default().platform_labels(),
             )
             .await
             .unwrap()
@@ -322,7 +323,7 @@ jobs:
         .claim(
             "reusable-tag",
             CiExecutionMode::Local,
-            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .unwrap()
@@ -361,7 +362,7 @@ jobs:
         .claim(
             "reusable-denied",
             CiExecutionMode::Local,
-            &codeyard::backend::ci::CiConfig::default().platform_labels()
+            &codeyard_app::ci::config::CiConfig::default().platform_labels()
         )
         .await
         .is_err());
@@ -401,7 +402,7 @@ jobs:
             .claim(
                 "reusable-escalated",
                 CiExecutionMode::Local,
-                &codeyard::backend::ci::CiConfig::default().platform_labels(),
+                &codeyard_app::ci::config::CiConfig::default().platform_labels(),
             )
             .await
             .err()

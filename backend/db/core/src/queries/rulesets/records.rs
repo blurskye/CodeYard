@@ -155,7 +155,7 @@ impl SuiteResult {
             Self::Bypass => "bypass",
         }
     }
-    fn parse(value: &str) -> Result<Self> {
+    pub fn parse(value: &str) -> Result<Self> {
         match value {
             "pass" => Ok(Self::Pass),
             "fail" => Ok(Self::Fail),

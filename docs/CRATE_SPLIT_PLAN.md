@@ -110,9 +110,11 @@ and results stay the same. A stage can be the last one.
    and remote implementations call cluster RPC and CI, which call the concrete store
    back. These three services remain together under the move-only stop rule. A later
    cut needs the planned store interface and injection, which is more than a move.
-7. **API:** `api/http` first (the helpers `api/github` shares move there), then `api/github`
-   as one crate with its folders renamed to GitHub's categories, then `api/repos`,
-   `api/graphql` and the rest.
+7. **API.** Source extraction complete: HTTP plumbing, GitHub REST (one crate,
+   with folders named for its operation categories), repository HTTP, GraphQL and
+   the remaining routes are separate crates. Shared helpers have one direct lower
+   home. The coupled runtime is in the app library so adapters do not depend on
+   binary wiring. Builder validation is still deferred.
 8. **`app`:** `main`, wiring, ssh, cli, backups, node, storage.
 
 ## Move only: no behaviour change

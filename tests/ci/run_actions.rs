@@ -7,11 +7,11 @@ use crate::support::database::Database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client::Client;
 use axum::http::StatusCode;
-use codeyard::backend::api::create_router;
-use codeyard::backend::app::AppState;
-use codeyard::backend::ci::CiConfig;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
 
-use codeyard::backend::storage::ObjectStore;
+use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::models::AccessLevel;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -27,7 +27,7 @@ async fn contract(pg: bool) {
     let bob_id = f.actor("bob").await;
     let dave_id = f.actor("dave").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -103,7 +103,7 @@ async fn contract(pg: bool) {
         "log-worker",
         "local",
         &[alice_id, bob_id],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -190,7 +190,7 @@ async fn contract(pg: bool) {
     );
 
     // An unreadable repository and a missing one have the same run-action refusal.
-    let private = codeyard::backend::repositories::lifecycle::provision(
+    let private = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -237,7 +237,9 @@ async fn contract(pg: bool) {
         .model(&format!("/alice/proj/actions?job={job}&ref=missing"))
         .await;
     assert_eq!(status, StatusCode::OK);
-    let codeyard_webui::app::Page::Actions(codeyard_webui::pages::ci::Page::Actions(model)) = model
+    let codeyard_webui::app::Page::Actions(
+        codeyard_api_rest::user::fine_grained::ci::Page::Actions(model),
+    ) = model
     else {
         panic!("Actions model")
     };
@@ -346,7 +348,9 @@ async fn contract(pg: bool) {
     }
     let url = "/alice/proj/actions?workflow=.github%2Fworkflows%2Fci.yml&branch=main&event=workflow_dispatch&limit=1";
     let (_, page) = alice.model(url).await;
-    let codeyard_webui::app::Page::Actions(codeyard_webui::pages::ci::Page::Actions(page)) = page
+    let codeyard_webui::app::Page::Actions(
+        codeyard_api_rest::user::fine_grained::ci::Page::Actions(page),
+    ) = page
     else {
         panic!("Actions model")
     };
@@ -359,7 +363,9 @@ async fn contract(pg: bool) {
             &run.head_sha.as_deref().unwrap()[..7]
         ))
         .await;
-    let codeyard_webui::app::Page::Actions(codeyard_webui::pages::ci::Page::Actions(page)) = page
+    let codeyard_webui::app::Page::Actions(
+        codeyard_api_rest::user::fine_grained::ci::Page::Actions(page),
+    ) = page
     else {
         panic!("Actions model")
     };
@@ -367,7 +373,9 @@ async fn contract(pg: bool) {
     assert_eq!(page.runs[0].id, job);
     assert!(page.next_before.is_none());
     let (_, page) = alice.model(&format!("/alice/proj/actions?q={job}")).await;
-    let codeyard_webui::app::Page::Actions(codeyard_webui::pages::ci::Page::Actions(page)) = page
+    let codeyard_webui::app::Page::Actions(
+        codeyard_api_rest::user::fine_grained::ci::Page::Actions(page),
+    ) = page
     else {
         panic!("Actions model")
     };
@@ -399,7 +407,8 @@ async fn browser_logs(
     run: &codeyard_db_core::models::CiRun,
 ) {
     use axum::{body::Body, http::Request};
-    use codeyard_identity::tokens::{self, TokenInput};
+    use codeyard_identity::tokens;
+    use codeyard_identity::tokens::TokenInput;
     use tower::ServiceExt;
 
     let path = format!("/api/v3/repos/alice/proj/actions/runs/{}/logs", run.id);
@@ -659,7 +668,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
     let carol_id = f.actor("carol").await;
     let dave_id = f.actor("dave").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -735,7 +744,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
         worker,
         "local",
         &[alice_id, bob_id],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()

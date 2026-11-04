@@ -1,5 +1,6 @@
 //! The migration ledger refuses a database whose recorded history differs from this build.
-use crate::support::native_database::{NativeDatabase, PostgresDatabase};
+use crate::support::native_database::NativeDatabase;
+use crate::support::native_database::PostgresDatabase;
 
 use codeyard_db_core::DbPool;
 

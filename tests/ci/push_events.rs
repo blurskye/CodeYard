@@ -1,11 +1,15 @@
 //! Push admission uses the published ref and endpoint trees, regardless of the write route.
 use crate::support::database::Database;
-use codeyard::backend::{
-    ci::{runs::DispatchRequest, CiConfig, CiPipelineKind, CiRunRequest, CiRuns, RefUpdate},
-    db,
-    notifications::NotificationBroadcaster,
-    repositories::{lifecycle, store::repo_store},
-};
+use codeyard::backend::db;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::ci::config::CiPipelineKind;
+use codeyard_app::ci::push::RefUpdate;
+use codeyard_app::ci::runs::CiRunRequest;
+use codeyard_app::ci::runs::CiRuns;
+use codeyard_app::ci::runs::DispatchRequest;
+use codeyard_app::repositories::lifecycle;
+use codeyard_app::repositories::store::repo_store;
+use codeyard_notifications::broadcast::NotificationBroadcaster;
 use std::{collections::BTreeSet, sync::Arc};
 use tokio::sync::Notify;
 
@@ -134,10 +138,10 @@ async fn contract(pg: bool) {
     );
 
     // Uploading an unchanged source alongside changed documentation must not run source CI.
-    use codeyard::backend::repositories::{
-        files,
-        store::{FileWrite, UploadFile, UploadWrite},
-    };
+    use codeyard_app::repositories::files;
+    use codeyard_app::repositories::store::editor::FileWrite;
+    use codeyard_app::repositories::store::editor::UploadFile;
+    use codeyard_app::repositories::store::editor::UploadWrite;
     let uploaded = files::upload_files(
         f.pool(),
         None,
@@ -262,7 +266,7 @@ async fn contract(pg: bool) {
     assert_eq!(deleted.branch, "new");
     assert_eq!(deleted.head_sha.as_deref(), Some(new.as_str()));
 
-    let discovered = codeyard::backend::ci::list_workflows_for_ref(&store, "main")
+    let discovered = codeyard_app::ci::workflows::list_workflows_for_ref(&store, "main")
         .await
         .unwrap();
     let path = ".github/workflows/unit-test.yml";
@@ -327,23 +331,23 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .len();
-    codeyard::backend::repositories::files::upload_files(
+    codeyard_app::repositories::files::upload_files(
         f.pool(),
         None,
         &service,
         actor,
         "writer",
         repo.id,
-        codeyard::backend::repositories::store::UploadWrite {
+        codeyard_app::repositories::store::editor::UploadWrite {
             branch: "feature".into(),
             expected_revision: new.clone(),
             message: "Docs only".into(),
             files: vec![
-                codeyard::backend::repositories::store::UploadFile {
+                codeyard_app::repositories::store::editor::UploadFile {
                     path: "src.txt".into(),
                     size: 7,
                 },
-                codeyard::backend::repositories::store::UploadFile {
+                codeyard_app::repositories::store::editor::UploadFile {
                     path: "docs.txt".into(),
                     size: 7,
                 },

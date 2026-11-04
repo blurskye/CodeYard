@@ -3,10 +3,15 @@ use super::{
     actions_objects::pat,
     actions_workflows::{checked, router},
 };
-use crate::support::{database::Database, fake_webui_bundle};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
 use axum::http::StatusCode;
 
-use codeyard_actions::progress::{Conclusion, Event, JobResult, State, Update};
+use codeyard_actions::progress::Conclusion;
+use codeyard_actions::progress::Event;
+use codeyard_actions::progress::JobResult;
+use codeyard_actions::progress::State;
+use codeyard_actions::progress::Update;
 use codeyard_model::ci::LogLine;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -26,7 +31,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -37,7 +42,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let other = codeyard::backend::repositories::lifecycle::provision(
+    let other = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -72,14 +77,14 @@ async fn contract(pg: bool) {
         "jobs",
         "local",
         &[alice],
-        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        &codeyard_app::ci::config::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
     .unwrap();
     assert_eq!(dispatch["workflow_run_id"], run.id);
     let workflow = ".github/workflows/ci.yml";
-    let generation = codeyard::backend::ci::runtime::token_hash("private-runtime");
+    let generation = codeyard_support::token_hash::token_hash("private-runtime");
     codeyard_db_actions::action_objects::issue_token(
         f.pool(),
         run.id,

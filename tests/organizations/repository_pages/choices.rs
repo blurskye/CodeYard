@@ -39,11 +39,9 @@ pub async fn contracts(f: &Fixture) {
         (f.owner.id, allowed, OrgRole::Admin),
     ] {
         applied(
-            codeyard_db_orgs::organizations::add_organization_member(
-                pool, owner, org, f.admin.id, role,
-            )
-            .await
-            .unwrap(),
+            super::add_organization_member(pool, owner, org, f.admin.id, role)
+                .await
+                .unwrap(),
         );
     }
     f.database
@@ -59,7 +57,7 @@ pub async fn contracts(f: &Fixture) {
         )
         .await;
     let rows = applied(
-        codeyard_db_orgs::organizations::list_repository_creation_organizations(
+        super::list_repository_creation_organizations(
             pool,
             f.admin.id,
             OrganizationPage::new(f.org, 1).unwrap(),
@@ -133,7 +131,7 @@ pub async fn contracts(f: &Fixture) {
             )
             .await;
         assert!(matches!(
-            codeyard_db_orgs::organizations::list_repository_creation_organizations(
+            super::list_repository_creation_organizations(
                 pool,
                 f.admin.id,
                 OrganizationPage::new(0, 100).unwrap()

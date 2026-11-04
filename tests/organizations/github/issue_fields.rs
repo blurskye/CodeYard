@@ -1,13 +1,13 @@
 use super::request;
-use crate::support::{
-    codeyard_db_orgs::organizations::applied,
-    database::Database,
-    http_client::{field_value, hidden_value, Client},
-};
+use crate::support::codeyard_db_orgs::organizations::applied;
+use crate::support::database::Database;
+use crate::support::http_client::field_value;
+use crate::support::http_client::hidden_value;
+use crate::support::http_client::Client;
 use axum::http::StatusCode;
 
-use codeyard_db_orgs::organizations::NewOrganization;
-use codeyard_db_orgs::organizations::OrganizationProfile;
+use super::NewOrganization;
+use super::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::NewRepository;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
@@ -27,7 +27,7 @@ async fn contract(pg: bool) {
     let mut orgs = Vec::new();
     for name in ["acme", "other"] {
         orgs.push(applied(
-            codeyard_db_orgs::organizations::create_organization(
+            super::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -38,15 +38,9 @@ async fn contract(pg: bool) {
     }
     for (user, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
         applied(
-            codeyard_db_orgs::organizations::add_organization_member(
-                f.pool(),
-                owner,
-                orgs[0].id,
-                user,
-                role,
-            )
-            .await
-            .unwrap(),
+            super::add_organization_member(f.pool(), owner, orgs[0].id, user, role)
+                .await
+                .unwrap(),
         );
     }
     let root = tempfile::tempdir().unwrap();

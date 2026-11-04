@@ -2,8 +2,8 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database::Database;
 use codeyard_db_core::DbPool;
+use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::broadcast::MAX_SOCKETS_PER_USER;
-use codeyard_notifications::NotificationBroadcaster;
 use codeyard_notifications::NotificationEvent;
 use std::time::Duration;
 use tokio::sync::broadcast;

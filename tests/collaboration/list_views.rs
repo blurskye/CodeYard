@@ -11,7 +11,8 @@ use codeyard_db_repos::assignees::AssignedItem;
 use codeyard_db_repos::discussions::DiscussionEdit;
 
 use codeyard_db_core::models::AccessLevel;
-use codeyard_webui::{app::Page, pages::repos::issues};
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::repos::issues;
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};
@@ -49,7 +50,7 @@ async fn milestone_titles(client: &Client, sort: &str) -> Vec<String> {
 
 /// Provisions `proj` for alice, public, with bob able to read it.
 async fn provision(database: &Database, root: &std::path::Path, alice: i64, bob: i64) -> i64 {
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (database.pool(), None),
         root,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),

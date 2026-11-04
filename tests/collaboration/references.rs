@@ -9,7 +9,8 @@ use crate::support::http_client as pulls;
 use axum::http::StatusCode;
 use base64::Engine;
 
-use codeyard_webui::app::{Page, PageEnvelope};
+use codeyard_webui::app::Page;
+use codeyard_webui::app::PageEnvelope;
 use codeyard_webui::pages::repos::issues::Page as Collaboration;
 use codeyard_webui::pages::repos::page::Page as RepositoryPage;
 use database::Database;
@@ -57,7 +58,7 @@ async fn references(pg: bool) {
         ("vault", true),
         ("notes", false),
     ] {
-        codeyard::backend::repositories::lifecycle::provision(
+        codeyard_app::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

@@ -5,19 +5,20 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
 use base64::Engine;
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::{queue::RunQueue, CiConfig, CiExecutionMode, CiRuns, CiWorkers},
-    crypto::SecretEncryptor,
-    db,
-    repositories::{
-        lifecycle::provision,
-        pull_requests,
-        store::{repo_store, FileWrite},
-    },
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::ci::config::CiExecutionMode;
+use codeyard_app::ci::queue::RunQueue;
+use codeyard_app::ci::runs::CiRuns;
+use codeyard_app::ci::workers::CiWorkers;
+use codeyard_app::repositories::lifecycle::provision;
+use codeyard_app::repositories::pull_requests;
+use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_app::repositories::store::repo_store;
+use codeyard_app::storage::ObjectStore;
+use codeyard_support::secrets::SecretEncryptor;
 use database::Database;
 use pulls::{text, Client};
 use serde_json::{json, Value};
@@ -236,7 +237,7 @@ async fn contract(pg: bool) {
         "not-approved",
         "local",
         &[alice_id, bob_id],
-        &codeyard::backend::ci::CiConfig::default().platform_labels()
+        &codeyard_app::ci::config::CiConfig::default().platform_labels()
     )
     .await
     .unwrap()

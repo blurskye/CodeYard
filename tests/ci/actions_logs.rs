@@ -1,5 +1,6 @@
 //! Real ZIP/text responses and delegated log capabilities on each database.
-use crate::support::{database::Database, github_spec::assert_github_schema};
+use crate::support::database::Database;
+use crate::support::github_spec::assert_github_schema;
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, Request, StatusCode},

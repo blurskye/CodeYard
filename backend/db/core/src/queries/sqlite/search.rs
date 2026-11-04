@@ -18,3 +18,16 @@ pub fn contains(text: &str) -> String {
     }
     pattern
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::queries::sqlite::search::contains;
+
+    #[test]
+    fn search_text_is_a_literal_case_insensitive_pattern() {
+        assert_eq!(contains("café"), "(?i)café");
+        assert_eq!(contains("a.b+c"), r"(?i)a\.b\+c");
+        assert_eq!(contains("f_o%"), r"(?i)f_o%");
+        assert_eq!(contains(""), "(?i)");
+    }
+}

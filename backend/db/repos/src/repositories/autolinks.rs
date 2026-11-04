@@ -24,9 +24,9 @@ pub enum Refusal {
     Limit,
 }
 pub struct NewAutolink {
-    pub(crate) key_prefix: String,
-    pub(crate) url_template: String,
-    pub(crate) is_alphanumeric: bool,
+    pub key_prefix: String,
+    pub url_template: String,
+    pub is_alphanumeric: bool,
 }
 impl NewAutolink {
     pub fn new(

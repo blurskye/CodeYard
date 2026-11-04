@@ -1,4 +1,4 @@
-use crate::organizations::OrganizationProfile;
+use super::OrganizationProfile;
 use anyhow::Result;
 use codeyard_db_core::models::Organization;
 use codeyard_db_core::native_operation;
@@ -35,8 +35,8 @@ fn invalid(field: &'static str, message: &'static str) -> Invalid {
 
 #[derive(Clone, Debug)]
 pub struct Changes {
-    pub(crate) profile: OrganizationProfile,
-    pub(crate) billing_email: Option<Option<String>>,
+    pub profile: OrganizationProfile,
+    pub billing_email: Option<Option<String>>,
     company: Option<Option<String>>,
     email: Option<Option<String>>,
     twitter_username: Option<Option<String>>,

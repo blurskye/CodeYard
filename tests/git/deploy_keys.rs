@@ -3,7 +3,11 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::git_remote::{api, git, success, tool, Server};
+use crate::support::git_remote::api;
+use crate::support::git_remote::git;
+use crate::support::git_remote::success;
+use crate::support::git_remote::tool;
+use crate::support::git_remote::Server;
 use crate::support::native_database as native;
 use chrono::{Duration as ChronoDuration, Utc};
 
@@ -385,15 +389,14 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     .unwrap();
     let physical = root.path().join("storage/repos").join(format!(
         "{}.git",
-        codeyard::backend::cluster::rpc::repository_uuid(&project.disk_path).unwrap()
+        codeyard_app::cluster::rpc::repository::repository_uuid(&project.disk_path).unwrap()
     ));
-    let provenance = codeyard::backend::repositories::store::RepoStore::from_disk_path(
-        &physical.to_string_lossy(),
-    )
-    .branch_publication(project.id, "refs/heads/from-writer")
-    .await
-    .unwrap()
-    .unwrap();
+    let provenance =
+        codeyard_app::repositories::store::RepoStore::from_disk_path(&physical.to_string_lossy())
+            .branch_publication(project.id, "refs/heads/from-writer")
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(
         provenance.publication.actor,
         codeyard_git::PublicationActor::DeployKey(writer_id)
@@ -532,11 +535,11 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     let still_reads = git(&reader, &["fetch", "-q", "origin"], None, &read_key).await;
     assert!(still_reads.status.success());
 
-    let observed = codeyard::backend::repositories::traffic::summary(
+    let observed = codeyard_app::repositories::traffic::summary(
         &database.pool,
         Some(&owner),
         &project,
-        codeyard::backend::repositories::traffic::Kind::Clones,
+        codeyard_db_repos::repositories::traffic::Kind::Clones,
         false,
     )
     .await
@@ -555,11 +558,11 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
         )
         .await,
     );
-    let observed = codeyard::backend::repositories::traffic::summary(
+    let observed = codeyard_app::repositories::traffic::summary(
         &database.pool,
         Some(&owner),
         &project,
-        codeyard::backend::repositories::traffic::Kind::Clones,
+        codeyard_db_repos::repositories::traffic::Kind::Clones,
         false,
     )
     .await

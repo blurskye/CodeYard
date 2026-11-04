@@ -6,7 +6,10 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as requests;
 use crate::support::native_database as native;
 use crate::support::production_ci as production;
-use codeyard::backend::ci::{CiConfig, CiPipelineKind, CiRunRequest, CiRuns};
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::ci::config::CiPipelineKind;
+use codeyard_app::ci::runs::CiRunRequest;
+use codeyard_app::ci::runs::CiRuns;
 
 use std::collections::BTreeSet;
 
@@ -14,9 +17,10 @@ use std::collections::BTreeSet;
 async fn long_account_names_can_list_and_dispatch_workflows_on_both_engines() {
     use axum::http::StatusCode;
     use base64::Engine;
-    use codeyard::backend::{
-        api::create_router, app::AppState, repositories::lifecycle, storage::ObjectStore,
-    };
+    use codeyard_api_rest::create_router;
+    use codeyard_app::app::AppState;
+    use codeyard_app::repositories::lifecycle;
+    use codeyard_app::storage::ObjectStore;
     use serde_json::{json, Value};
     use std::sync::Arc;
 
@@ -145,9 +149,10 @@ async fn long_account_names_can_list_and_dispatch_workflows_on_both_engines() {
 async fn manual_runs_take_the_inputs_their_workflow_declares_on_both_engines() {
     use axum::http::StatusCode;
     use base64::Engine;
-    use codeyard::backend::{
-        api::create_router, app::AppState, repositories::lifecycle, storage::ObjectStore,
-    };
+    use codeyard_api_rest::create_router;
+    use codeyard_app::app::AppState;
+    use codeyard_app::repositories::lifecycle;
+    use codeyard_app::storage::ObjectStore;
     use serde_json::{json, Value};
     use std::sync::Arc;
 
@@ -375,9 +380,10 @@ jobs:
 async fn pull_request_base_names_that_look_like_refs_keep_their_branch_kind() {
     use axum::http::StatusCode;
     use base64::Engine;
-    use codeyard::backend::{
-        api::create_router, app::AppState, repositories::lifecycle, storage::ObjectStore,
-    };
+    use codeyard_api_rest::create_router;
+    use codeyard_app::app::AppState;
+    use codeyard_app::repositories::lifecycle;
+    use codeyard_app::storage::ObjectStore;
     use serde_json::json;
     use std::sync::Arc;
     bundle::install();
@@ -496,9 +502,9 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
         }),
         std::sync::Arc::new(tokio::sync::Notify::new()),
         None,
-        std::sync::Arc::new(codeyard_notifications::NotificationBroadcaster::new(
-            &f.pool,
-        )),
+        std::sync::Arc::new(
+            codeyard_notifications::broadcast::NotificationBroadcaster::new(&f.pool),
+        ),
     );
     let request = |branch: &str, event: &str| CiRunRequest {
         repo_id: f.repo.id,
@@ -543,7 +549,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
     let dispatched = service
         .dispatch_run(
             f.owner.id,
-            codeyard::backend::ci::runs::DispatchRequest {
+            codeyard_app::ci::runs::DispatchRequest {
                 repo_owner: f.owner.username.clone(),
                 repo_name: f.repo.name.clone(),
                 branch: "refs/heads/main".to_owned(),
@@ -566,7 +572,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
     let refused = service
         .dispatch_run(
             f.owner.id,
-            codeyard::backend::ci::runs::DispatchRequest {
+            codeyard_app::ci::runs::DispatchRequest {
                 repo_owner: f.owner.username.clone(),
                 repo_name: f.repo.name.clone(),
                 branch: "../private".to_owned(),
@@ -584,7 +590,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
         .unwrap_err();
     assert!(matches!(
         refused,
-        codeyard::backend::ci::admission::AdmissionError::InvalidRequest(_)
+        codeyard_db_core::ci_admission::AdmissionError::InvalidRequest(_)
     ));
     // What the database holds is what the run list shows.
     let stored: Vec<String> =
@@ -614,7 +620,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
     let rerun = service
         .dispatch_run(
             f.owner.id,
-            codeyard::backend::ci::runs::DispatchRequest {
+            codeyard_app::ci::runs::DispatchRequest {
                 repo_owner: f.owner.username.clone(),
                 repo_name: f.repo.name.clone(),
                 branch: "main".to_owned(),

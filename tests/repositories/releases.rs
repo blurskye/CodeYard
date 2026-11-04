@@ -6,9 +6,11 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::storage::ObjectStore;
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};
@@ -36,7 +38,7 @@ async fn setup(pg: bool) -> World {
     let carol_id = database.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
     for name in ["proj", "vault"] {
-        codeyard::backend::repositories::lifecycle::provision(
+        codeyard_app::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
             db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -115,10 +117,9 @@ async fn upload(
 }
 
 async fn release_creation_uses_the_checked_repository_id(pg: bool) {
-    use codeyard::backend::repositories::{
-        lifecycle,
-        releases::{self, ReleaseInput},
-    };
+    use codeyard_app::repositories::lifecycle;
+    use codeyard_app::repositories::releases;
+    use codeyard_app::repositories::releases::ReleaseInput;
     let mut world = setup(pg).await;
     let pool = world.database.pool();
     let original = db::repositories::records::get_repository(pool, "alice", "proj")
@@ -229,7 +230,7 @@ async fn long_release_target(pg: bool) {
             .unwrap()
             .unwrap();
     assert!(
-        !codeyard::backend::repositories::store::repo_store(&repository, None)
+        !codeyard_app::repositories::store::repo_store(&repository, None)
             .refs()
             .await
             .unwrap()
@@ -1070,7 +1071,7 @@ async fn release_validation_and_atomic_files(pg: bool) {
             StatusCode::UNPROCESSABLE_ENTITY,
         )
         .await;
-    let store = codeyard::backend::repositories::store::repo_store(&repo, None);
+    let store = codeyard_app::repositories::store::repo_store(&repo, None);
     assert!(!store
         .refs()
         .await
@@ -1305,7 +1306,7 @@ async fn repository_deletion_removes_asset_uploads(pg: bool) {
             .await
             .unwrap()
             .unwrap();
-    codeyard::backend::repositories::lifecycle::delete(
+    codeyard_app::repositories::lifecycle::delete(
         world.database.pool(),
         None,
         repository.owner_id(),

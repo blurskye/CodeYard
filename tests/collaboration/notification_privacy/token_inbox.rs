@@ -1,6 +1,7 @@
 //! Token and browser inboxes use the same native rows and transaction-scoped authority.
 use super::{db, ids, Fixture};
-use codeyard_identity::tokens::{self, TokenInput};
+use codeyard_identity::tokens;
+use codeyard_identity::tokens::TokenInput;
 use db::notifications::records::{
     NotificationCredential as Credential, NotificationFilter, NotificationInboxAction as Action,
 };

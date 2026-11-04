@@ -1,5 +1,5 @@
-use crate::backend::repositories::store::repo_store;
 use anyhow::Result;
+use codeyard_app::repositories::store::repo_store;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::DbPool;
 
@@ -19,7 +19,7 @@ fn terminal_text(value: &str) -> String {
 /// Where a repository lives. One stored on another node has no path on this machine.
 fn storage_location(
     repo: &codeyard_db_core::models::Repository,
-    context: Option<&crate::backend::cluster::NodeContext>,
+    context: Option<&codeyard_app::cluster::context::NodeContext>,
     location: &str,
 ) -> String {
     match repo.storage_node_id {
@@ -214,9 +214,9 @@ pub async fn create_repo_cmd(
         .await?
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", owner))?;
 
-    crate::backend::repositories::lifecycle::validate_description(description.unwrap_or(""))?;
-    let context = crate::backend::cluster::client_context(pool, state_dir, repos_path).await?;
-    let created = crate::backend::repositories::lifecycle::provision(
+    codeyard_app::repositories::lifecycle::validate_description(description.unwrap_or(""))?;
+    let context = codeyard_app::cluster::client_context(pool, state_dir, repos_path).await?;
+    let created = codeyard_app::repositories::lifecycle::provision(
         (pool, context.as_ref()),
         repos_path,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(user.id),
@@ -327,7 +327,7 @@ pub async fn repo_info_cmd(
     println!("ID: {}", repo.id);
     println!("Private: {}", if repo.is_private { "yes" } else { "no" });
     println!("Default branch: {}", terminal_text(&repo.default_branch));
-    let context = crate::backend::cluster::client_context(pool, state_dir, repos_path).await?;
+    let context = codeyard_app::cluster::client_context(pool, state_dir, repos_path).await?;
     let store = repo_store(&repo, context.as_ref());
     println!(
         "Disk path: {}",

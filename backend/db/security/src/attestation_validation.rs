@@ -34,7 +34,7 @@ fn valid_verification_material(material: &Value) -> bool {
 pub struct PreparedBundle {
     pub bundle: String,
     pub predicate_type: String,
-    pub(crate) subjects: Vec<String>,
+    pub subjects: Vec<String>,
 }
 impl PreparedBundle {
     /// The bundle's sha256 subject digests, lowercase and without repeats.

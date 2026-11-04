@@ -1,30 +1,30 @@
 //! Organization cache ceilings constrain existing objects and stale runtime preflights.
+use super::NewOrganization;
+use super::OrganizationProfile;
 use super::{
     actions_objects::{artifact, pat},
     results,
 };
-use crate::support::{
-    database::Database,
-    fake_webui_bundle,
-    github_spec::assert_github_schema,
-    http_client::{visible_text, Client},
-    organizations::applied,
-};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
+use crate::support::github_spec::assert_github_schema;
+use crate::support::http_client::visible_text;
+use crate::support::http_client::Client;
+use crate::support::organizations::applied;
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    ci,
-    db::{
-        self,
-        action_objects::{self as objects, NewObject},
-        actions::{CacheLimit, RepoActionsSettings},
-        organizations::{NewOrganization, OrganizationOutcome, OrganizationProfile},
-        repositories::creation::{RepositoryCreationOwner, RepositoryTarget},
-    },
-};
+use codeyard::backend::db;
+use codeyard_app::ci;
+use codeyard_db_actions::action_objects as objects;
+use codeyard_db_actions::action_objects::NewObject;
+use codeyard_db_actions::actions::RepoActionsSettings;
+use codeyard_db_core::queries::actions::CacheLimit;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_db_repos::repositories::creation::RepositoryTarget;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -101,7 +101,7 @@ async fn contract(pg: bool) {
     let mut repos = Vec::new();
     for (org, actor) in [(&organizations[0], alice), (&organizations[1], bob)] {
         repos.push(
-            codeyard::backend::repositories::lifecycle::provision(
+            codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 RepositoryCreationOwner {
@@ -117,7 +117,7 @@ async fn contract(pg: bool) {
             .unwrap(),
         );
     }
-    let personal = codeyard::backend::repositories::lifecycle::provision(
+    let personal = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner::personal(alice),

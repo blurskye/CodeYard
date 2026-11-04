@@ -5,7 +5,7 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::git_server;
 use crate::support::native_database as native;
 
-use codeyard::backend::repositories::store::MAX_REPOSITORY_REFS;
+use codeyard_git::MAX_REPOSITORY_REFS;
 use git_server::{git, success, write_token, Server};
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
@@ -31,7 +31,7 @@ impl Hosted {
         let owner = codeyard_db_identity::users::accounts::create_user(pool, "http_owner", None)
             .await
             .unwrap();
-        let repository = codeyard::backend::repositories::lifecycle::provision(
+        let repository = codeyard_app::repositories::lifecycle::provision(
             (pool, None),
             &root.path().join("repos"),
             codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),

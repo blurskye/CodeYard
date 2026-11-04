@@ -3,9 +3,9 @@
 use crate::support::database;
 use crate::support::organizations::applied;
 
-use codeyard::backend::repositories::lifecycle::provision;
-use codeyard::backend::repositories::store::repo_store;
-use codeyard::backend::repositories::store::FileWrite;
+use codeyard_app::repositories::lifecycle::provision;
+use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_app::repositories::store::repo_store;
 use codeyard_db_core::models::AccessLevel;
 use database::Database;
 
@@ -264,7 +264,7 @@ async fn contract(pg: bool) {
         .unwrap();
 
     let org = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             fixture.pool(),
             owner,
             &codeyard_db_orgs::organizations::NewOrganization::new(
@@ -277,7 +277,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
+        super::add_organization_member(
             fixture.pool(),
             owner,
             org.id,
@@ -288,7 +288,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let team = applied(
-        codeyard_db_orgs::organizations::create_organization_team(
+        super::create_organization_team(
             fixture.pool(),
             owner,
             org.id,
@@ -307,7 +307,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::add_organization_team_member(
+        super::add_organization_team_member(
             fixture.pool(),
             owner,
             org.id,
@@ -335,7 +335,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     applied(
-        codeyard_db_orgs::organizations::grant_organization_team_repository(
+        super::grant_organization_team_repository(
             fixture.pool(),
             owner,
             org.id,
@@ -370,15 +370,9 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
     applied(
-        codeyard_db_orgs::organizations::remove_organization_team_member(
-            fixture.pool(),
-            owner,
-            org.id,
-            team.id,
-            writer,
-        )
-        .await
-        .unwrap(),
+        super::remove_organization_team_member(fixture.pool(), owner, org.id, team.id, writer)
+            .await
+            .unwrap(),
     );
     assert!(org_store
         .publish_file_as(fixture.pool(), org_repo.id, writer, &team_prepared)

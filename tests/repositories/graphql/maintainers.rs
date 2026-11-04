@@ -1,7 +1,7 @@
 use super::{call, db, json, node_id, query, request};
 use axum::{http::StatusCode, Router};
 pub(super) async fn exercise(
-    state: &codeyard::backend::app::AppState,
+    state: &codeyard_app::app::AppState,
     router: &Router,
     tokens: (&str, &str),
     repo: i64,
@@ -18,7 +18,7 @@ pub(super) async fn exercise(
     .await
     .unwrap();
     // Fork provisioning is fixture setup through the same domain operation as the web form.
-    let fork = codeyard::backend::repositories::lifecycle::fork(
+    let fork = codeyard_app::repositories::lifecycle::fork(
         &state.pool,
         None,
         &state.repos_path,

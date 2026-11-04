@@ -7,12 +7,12 @@ use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::api::create_router;
-use codeyard::backend::app::AppState;
-use codeyard::backend::ci::CiConfig;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard::backend::storage::ObjectStore;
+use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
@@ -145,7 +145,7 @@ async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
     let alice_id = database.actor("alice").await;
     let bob_id = database.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    codeyard::backend::repositories::lifecycle::provision(
+    codeyard_app::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -540,7 +540,8 @@ async fn pull_request_comment_hooks(pg: bool, url: &str) {
 }
 
 async fn stale_hooks_and_binary_responses(pg: bool) {
-    use codeyard::backend::webhooks::{self, delivery};
+    use codeyard_app::webhooks;
+    use codeyard_app::webhooks::delivery;
     let (mut database, _root, _alice, _bob) = setup(pg).await;
     let pool = database.pool();
     let repo = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")
@@ -782,7 +783,7 @@ async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
         .await;
     let built = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let seen = built.clone();
-    codeyard::backend::webhooks::emit(pool, &repo, "push", vec![], move |_, _| {
+    codeyard_app::webhooks::emit(pool, &repo, "push", vec![], move |_, _| {
         seen.store(true, std::sync::atomic::Ordering::SeqCst);
         json!({"private": "new owner's issue body"})
     })
@@ -832,9 +833,10 @@ async fn pull_request_head_synchronize_hook(pg: bool, url: &str) {
 }
 
 async fn server_ref_events(pg: bool, url: &str) {
-    use codeyard::backend::repositories::store::{
-        repo_store, FileWrite, MergeMethod, MergeRequest,
-    };
+    use codeyard_app::repositories::store::editor::FileWrite;
+    use codeyard_app::repositories::store::repo_store;
+    use codeyard_app::repositories::store::types::MergeMethod;
+    use codeyard_app::repositories::store::types::MergeRequest;
     let (database, _root, alice, _) = setup(pg).await;
     let repository =
         codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
@@ -968,15 +970,14 @@ async fn server_ref_events(pg: bool, url: &str) {
 }
 
 async fn repository_creation_is_not_a_ref_event(pg: bool, url: &str) {
-    use codeyard::backend::repositories::{
-        lifecycle,
-        store::{repo_store, FileWrite},
-    };
+    use codeyard_app::repositories::lifecycle;
+    use codeyard_app::repositories::store::editor::FileWrite;
+    use codeyard_app::repositories::store::repo_store;
     let mut database = Database::new(pg).await;
     database.complete_setup().await;
     let actor = database.actor("creator").await;
     let pool = database.pool();
-    let OrganizationOutcome::Applied(org) = codeyard_db_orgs::organizations::create_organization(
+    let OrganizationOutcome::Applied(org) = super::create_organization(
         pool,
         actor,
         &codeyard_db_orgs::organizations::NewOrganization::new(
@@ -1093,7 +1094,7 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
     let outsider = database.actor("hook_outsider").await;
     let pool = database.pool();
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -1104,7 +1105,7 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
     )
     .await
     .unwrap();
-    let OrganizationOutcome::Applied(org) = codeyard_db_orgs::organizations::create_organization(
+    let OrganizationOutcome::Applied(org) = super::create_organization(
         pool,
         owner,
         &codeyard_db_orgs::organizations::NewOrganization::new(
@@ -1117,28 +1118,18 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
     .unwrap() else {
         panic!("the organization was not created");
     };
-    let OrganizationOutcome::Applied(_) = codeyard_db_orgs::organizations::add_organization_member(
-        pool,
-        owner,
-        org.id,
-        second,
-        OrgRole::Owner,
-    )
-    .await
-    .unwrap() else {
+    let OrganizationOutcome::Applied(_) =
+        super::add_organization_member(pool, owner, org.id, second, OrgRole::Owner)
+            .await
+            .unwrap()
+    else {
         panic!("the second owner was not added");
     };
     // The first owner is demoted before any write of its own runs.
     let OrganizationOutcome::Applied(_) =
-        codeyard_db_orgs::organizations::update_organization_member_role(
-            pool,
-            second,
-            org.id,
-            owner,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap()
+        super::update_organization_member_role(pool, second, org.id, owner, OrgRole::Member)
+            .await
+            .unwrap()
     else {
         panic!("the first owner was not demoted");
     };

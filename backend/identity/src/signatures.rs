@@ -43,7 +43,7 @@ fn remember<K: Eq + Hash, V>(map: &mut HashMap<K, V>, key: K, value: V) {
 }
 
 impl Signers {
-    async fn gpg_keys(&mut self, pool: &DbPool, issuer: &str) -> Result<Arc<[Arc<GpgKey>]>> {
+    pub async fn gpg_keys(&mut self, pool: &DbPool, issuer: &str) -> Result<Arc<[Arc<GpgKey>]>> {
         if let Some(keys) = self.gpg.get(issuer) {
             return Ok(keys.clone());
         }
@@ -57,7 +57,12 @@ impl Signers {
         Ok(keys)
     }
 
-    async fn primary(&mut self, pool: &DbPool, user: i64, id: i64) -> Result<Option<Arc<GpgKey>>> {
+    pub async fn primary(
+        &mut self,
+        pool: &DbPool,
+        user: i64,
+        id: i64,
+    ) -> Result<Option<Arc<GpgKey>>> {
         if let Some(key) = self.primaries.get(&(user, id)) {
             return Ok(key.clone());
         }
@@ -68,7 +73,7 @@ impl Signers {
         Ok(key)
     }
 
-    async fn ssh_key(
+    pub async fn ssh_key(
         &mut self,
         pool: &DbPool,
         fingerprint: &str,

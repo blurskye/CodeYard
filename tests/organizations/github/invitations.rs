@@ -1,14 +1,14 @@
 use super::request;
-use crate::support::{
-    codeyard_db_orgs::organizations::applied, database::Database, http_client::Client,
-};
+use crate::support::codeyard_db_orgs::organizations::applied;
+use crate::support::database::Database;
+use crate::support::http_client::Client;
 use axum::http::StatusCode;
 
-use codeyard_db_orgs::organizations::NewOrganization;
-use codeyard_db_orgs::organizations::NewTeam;
-use codeyard_db_orgs::organizations::OrganizationProfile;
-use codeyard_db_orgs::organizations::TeamPrivacy;
-use codeyard_db_orgs::organizations::TeamProfile;
+use super::NewOrganization;
+use super::NewTeam;
+use super::OrganizationProfile;
+use super::TeamPrivacy;
+use super::TeamProfile;
 
 use codeyard_db_core::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
@@ -29,7 +29,7 @@ async fn contract(pg: bool) {
     )
     .await;
     let org = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -38,7 +38,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let foreign = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("foreign", OrganizationProfile::new(None, None).unwrap())
@@ -49,15 +49,9 @@ async fn contract(pg: bool) {
     );
     for (user, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
         applied(
-            codeyard_db_orgs::organizations::add_organization_member(
-                f.pool(),
-                owner,
-                org.id,
-                user,
-                role,
-            )
-            .await
-            .unwrap(),
+            super::add_organization_member(f.pool(), owner, org.id, user, role)
+                .await
+                .unwrap(),
         );
     }
     let mut teams = Vec::new();
@@ -68,7 +62,7 @@ async fn contract(pg: bool) {
     ] {
         teams.push(
             applied(
-                codeyard_db_orgs::organizations::create_organization_team(
+                super::create_organization_team(
                     f.pool(),
                     owner,
                     org,
@@ -546,7 +540,7 @@ async fn contract(pg: bool) {
             user_id: late,
             purpose: "verify",
             email: "late@example.com",
-            token_hash: &codeyard_identity::tokens::token_hash(code),
+            token_hash: &codeyard_support::token_hash::token_hash(code),
             ttl_seconds: 3600,
             subject: "Verify your email",
             body_text: "Verification code",

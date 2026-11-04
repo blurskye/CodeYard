@@ -1,8 +1,7 @@
 use super::github::request;
-use crate::support::{
-    database::{wait_until_blocked, Database},
-    http_client::Client,
-};
+use crate::support::database::wait_until_blocked;
+use crate::support::database::Database;
+use crate::support::http_client::Client;
 
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
@@ -11,7 +10,8 @@ use codeyard_db_identity::interactions::InteractionGroup;
 use codeyard_db_identity::interactions::InteractionRefusal;
 use codeyard_db_identity::interactions::InteractionScope;
 use codeyard_db_identity::interactions::NewRestriction;
-use codeyard_identity::tokens::{self, TokenInput};
+use codeyard_identity::tokens;
+use codeyard_identity::tokens::TokenInput;
 use codeyard_support::credentials::AccountRestricted;
 use serde_json::json;
 
@@ -409,13 +409,9 @@ async fn contract(pg: bool) {
         codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
     )
     .unwrap();
-    let organization = match codeyard_db_orgs::organizations::profiles::create_organization(
-        f.pool(),
-        alice,
-        &organization,
-    )
-    .await
-    .unwrap()
+    let organization = match super::create_organization(f.pool(), alice, &organization)
+        .await
+        .unwrap()
     {
         codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization creation refused"),

@@ -431,8 +431,11 @@ async fn contract(pg: bool) {
 }
 
 async fn session_enrollment_contract(pg: bool) {
-    use codeyard_db_identity::users::{sessions, ssh_keys, transitions};
-    use codeyard_identity::keys::{self, KeyError};
+    use codeyard_db_identity::users::sessions;
+    use codeyard_db_identity::users::ssh_keys;
+    use codeyard_db_identity::users::transitions;
+    use codeyard_identity::keys;
+    use codeyard_identity::keys::KeyError;
 
     let mut f = Database::new(pg).await;
     let user = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(

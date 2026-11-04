@@ -33,7 +33,7 @@ async fn codeowners_does_not_expand_secret_teams_even_for_repository_writers() {
         )
         .await;
         let resolve = || {
-            codeyard::backend::repositories::code_owners::resolve_owners(
+            codeyard_app::repositories::code_owners::resolve_owners(
                 f.pool(),
                 &r,
                 ["@org1001/owners"],

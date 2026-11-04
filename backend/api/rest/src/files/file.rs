@@ -1,0 +1,68 @@
+use axum::extract::Path;
+use axum::extract::State;
+use axum::http::HeaderMap;
+use axum::http::StatusCode;
+use codeyard_api_http::error::ApiError;
+use codeyard_api_http::error::ApiFailure;
+use codeyard_api_http::session::extract_session_id;
+use codeyard_api_http::session::get_current_user;
+use codeyard_app::app::AppState;
+use codeyard_app::files::deletion::DeleteError;
+use std::sync::Arc;
+use uuid::Uuid;
+
+pub async fn delete_file(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(file_id): Path<String>,
+) -> Result<StatusCode, ApiFailure> {
+    let user = get_current_user(&state.pool, &headers).await?;
+    let file_uuid = Uuid::parse_str(&file_id).map_err(|_| {
+        ApiError::failure(
+            StatusCode::BAD_REQUEST,
+            "invalid_file_id",
+            "Invalid file ID format",
+        )
+    })?;
+    codeyard_app::files::deletion::delete_owned_file(
+        &state.pool,
+        &state.storage,
+        (user.id, extract_session_id(&headers).unwrap_or_default()),
+        file_uuid,
+    )
+    .await
+    .map_err(deletion_failure)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn deletion_failure(error: DeleteError) -> ApiFailure {
+    let (status, code, message) = match error {
+        DeleteError::MetadataUnavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+            "File metadata is unavailable",
+        ),
+        DeleteError::StorageUnavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "storage_unavailable",
+            "File storage is unavailable; the file was not deleted. Try again.",
+        ),
+        DeleteError::NotFound => (StatusCode::NOT_FOUND, "not_found", "File not found"),
+        DeleteError::Denied => (
+            StatusCode::FORBIDDEN,
+            "denied",
+            "File deletion is not allowed",
+        ),
+        DeleteError::ReferencedOrganizationAvatar => (
+            StatusCode::CONFLICT,
+            "file_in_use",
+            "This file is the current organization picture",
+        ),
+        DeleteError::ReferencedReleaseAsset => (
+            StatusCode::CONFLICT,
+            "file_in_use",
+            "This file is a release asset. Delete it from its release.",
+        ),
+    };
+    ApiError::failure(status, code, message)
+}

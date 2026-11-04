@@ -1,19 +1,20 @@
 use super::action_secrets::{pat, request, sealed};
-use crate::support::{
-    database::Database, fake_webui_bundle, http_client::Client, organizations::applied,
-};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
+use crate::support::http_client::Client;
+use crate::support::organizations::applied;
 use axum::http::StatusCode;
-use codeyard::backend::api::create_router;
-use codeyard::backend::app::AppState;
-use codeyard::backend::ci::CiConfig;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard_db_orgs::organizations::NewOrganization;
-use codeyard_db_orgs::organizations::OrganizationProfile;
+use super::NewOrganization;
+use super::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
-use codeyard::backend::storage::ObjectStore;
+use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -29,7 +30,7 @@ async fn contract(pg: bool) {
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[site])
         .await;
     let org = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("native_org", OrganizationProfile::new(None, None).unwrap())
@@ -39,7 +40,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let other = applied(
-        codeyard_db_orgs::organizations::create_organization(
+        super::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("other_org", OrganizationProfile::new(None, None).unwrap())
@@ -49,15 +50,9 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard_db_orgs::organizations::add_organization_member(
-            f.pool(),
-            owner,
-            org.id,
-            manager,
-            OrgRole::Admin,
-        )
-        .await
-        .unwrap(),
+        super::add_organization_member(f.pool(), owner, org.id, manager, OrgRole::Admin)
+            .await
+            .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let mut repos = Vec::new();
@@ -67,7 +62,7 @@ async fn contract(pg: bool) {
         ("foreign", other.id, true),
     ] {
         repos.push(
-            codeyard::backend::repositories::lifecycle::provision(
+            codeyard_app::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 RepositoryCreationOwner {
@@ -631,15 +626,9 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
     applied(
-        codeyard_db_orgs::organizations::update_organization_member_role(
-            f.pool(),
-            owner,
-            org.id,
-            manager,
-            OrgRole::Member,
-        )
-        .await
-        .unwrap(),
+        super::update_organization_member_role(f.pool(), owner, org.id, manager, OrgRole::Member)
+            .await
+            .unwrap(),
     );
     request(
         &router,
@@ -685,14 +674,16 @@ async fn postgres_organization_values_contract() {
 }
 
 async fn transfer_selections(pg: bool) {
-    use codeyard_db_orgs::organization_values::{self as values, Kind, Save};
+    use codeyard_db_orgs::organization_values as values;
+    use codeyard_db_orgs::organization_values::Kind;
+    use codeyard_db_orgs::organization_values::Save;
     let mut f = Database::new(pg).await;
     f.complete_setup().await;
     let owner = f.actor("transfer_owner").await;
     let mut organizations = Vec::new();
     for name in ["source", "target"] {
         organizations.push(applied(
-            codeyard_db_orgs::organizations::create_organization(
+            super::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -702,7 +693,7 @@ async fn transfer_selections(pg: bool) {
         ));
     }
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner {
@@ -754,7 +745,7 @@ async fn transfer_selections(pg: bool) {
             1
         );
     }
-    codeyard::backend::repositories::lifecycle::transfer(
+    codeyard_app::repositories::lifecycle::transfer(
         f.pool(),
         None,
         owner,
@@ -790,7 +781,7 @@ async fn transfer_selections(pg: bool) {
         .1
         .is_empty());
     }
-    codeyard::backend::repositories::lifecycle::transfer(
+    codeyard_app::repositories::lifecycle::transfer(
         f.pool(),
         None,
         owner,

@@ -1,19 +1,20 @@
 //! GitHub workflow discovery, immutable dispatch, and disabling at durable admission on both databases.
 use super::actions_objects::pat;
-use crate::support::{database::Database, fake_webui_bundle, github_spec::assert_github_schema};
+use crate::support::database::Database;
+use crate::support::fake_webui_bundle;
+use crate::support::github_spec::assert_github_schema;
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db,
-    repositories::store::{repo_store, FileWrite},
-    storage::ObjectStore,
-};
+use codeyard::backend::db;
+use codeyard_api_rest::create_router;
+use codeyard_app::app::AppState;
+use codeyard_app::ci::config::CiConfig;
+use codeyard_app::repositories::store::editor::FileWrite;
+use codeyard_app::repositories::store::repo_store;
+use codeyard_app::storage::ObjectStore;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, path::Path, sync::Arc};
 use tower::ServiceExt;
@@ -105,7 +106,7 @@ async fn contract(pg: bool) {
     let collaborator = f.actor("collaborator").await;
     let root = tempfile::tempdir().unwrap();
     let repos_root = root.path().join("repos");
-    let repo = codeyard::backend::repositories::lifecycle::provision(
+    let repo = codeyard_app::repositories::lifecycle::provision(
         (f.pool(), None),
         &repos_root,
         db::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -396,7 +397,7 @@ async fn contract(pg: bool) {
             "badge-worker",
             "local",
             &[alice],
-            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            &codeyard_app::ci::config::CiConfig::default().platform_labels(),
         )
         .await
         .unwrap()
@@ -439,7 +440,9 @@ async fn contract(pg: bool) {
     f.execute("UPDATE users SET is_admin=true WHERE id=$1", &[alice])
         .await;
     {
-        use crate::support::git_server::{self, git, success};
+        use crate::support::git_server;
+        use crate::support::git_server::git;
+        use crate::support::git_server::success;
         let server = git_server::Server::start(root.path(), &f.connection_url()).await;
         success(git(
             root.path(),
