@@ -729,12 +729,12 @@ pub struct Reply {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct GitExit {
-    pub(super) result: Result<i32, RepoError>,
-    pub(super) stderr: String,
+pub struct GitExit {
+    pub result: Result<i32, RepoError>,
+    pub stderr: String,
 }
 
-pub(crate) fn invalid(message: &str) -> RepoError {
+pub fn invalid(message: &str) -> RepoError {
     RepoError::new(ErrorKind::Invalid, message)
 }
 
@@ -743,7 +743,7 @@ pub fn unavailable() -> RepoError {
 }
 
 /// The request-body limit for an operation. All other buffered operations are bodyless.
-pub(super) fn operation_body_limit(operation: &Operation) -> usize {
+pub fn operation_body_limit(operation: &Operation) -> usize {
     match operation {
         Operation::PrepareFile { .. } | Operation::SaveFile { .. } => MAX_EDITOR_BYTES,
         Operation::WriteGitObject {

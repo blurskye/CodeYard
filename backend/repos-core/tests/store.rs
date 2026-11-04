@@ -14,7 +14,6 @@ use codeyard_repos_core::repositories::store::local::begin_ref_change;
 use codeyard_repos_core::repositories::store::local::ensure_ref_room;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::repositories::store::RepoStore;
-use codeyard_repos_core::repositories::store::*;
 use codeyard_repos_core::store_types::GitService;
 use codeyard_repos_core::store_types::GitSession;
 use codeyard_repos_core::store_types::GitStreams;

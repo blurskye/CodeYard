@@ -89,7 +89,7 @@ pub struct BlobPreviewMetadata {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct BlobMetadata {
+pub struct BlobMetadata {
     pub id: String,
     pub is_binary: bool,
     pub size: u64,
@@ -105,11 +105,11 @@ pub const MAX_COMMIT_PAGE_SIZE: usize = 100;
 pub const MAX_COMMIT_OFFSET: usize = 100_000;
 pub const MAX_CONTRIBUTOR_RESPONSE_BYTES: usize = 1024 * 1024;
 
-pub(crate) const MAX_WORKFLOW_PAYLOAD_BYTES: usize =
+pub const MAX_WORKFLOW_PAYLOAD_BYTES: usize =
     MAX_WORKFLOW_DIRECTORY_ENTRIES * MAX_CI_WORKFLOW_BYTES;
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct WorkflowPayloadEntry {
+pub struct WorkflowPayloadEntry {
     pub path: String,
     pub length: usize,
 }

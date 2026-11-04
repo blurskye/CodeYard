@@ -9637,7 +9637,6 @@ dependencies = [
  "codeyard-repos",
  "codeyard-repos-pulls",
  "codeyard-repos-rpc",
- "codeyard-ssh",
  "codeyard-storage",
  "codeyard-support",
  "codeyard-webhooks",

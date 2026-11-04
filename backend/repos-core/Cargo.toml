@@ -51,7 +51,6 @@ uuid = { workspace = true, features = ["v4"] }
 codeyard-repos-rpc.workspace = true
 codeyard-ci-engine.workspace = true
 codeyard-repos-pulls.workspace = true
-codeyard-ssh.workspace = true
 
 [lints]
 workspace = true
