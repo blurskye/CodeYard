@@ -104,9 +104,12 @@ pub async fn refusal_workflows(
         codeyard_repos_core::ci::admission::is_safe_ref(branch),
         "unsafe ref"
     );
-    let store =
-        codeyard_repos_core::repositories::store::repo_store(repository, ctx.state.cluster.as_ref());
-    let definitions = codeyard_repos_core::ci::workflows::list_workflows_for_ref(&store, branch).await?;
+    let store = codeyard_repos_core::repositories::store::repo_store(
+        repository,
+        ctx.state.cluster.as_ref(),
+    );
+    let definitions =
+        codeyard_repos_core::ci::workflows::list_workflows_for_ref(&store, branch).await?;
     let user = ctx
         .user
         .as_ref()

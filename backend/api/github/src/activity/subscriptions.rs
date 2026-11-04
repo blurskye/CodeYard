@@ -166,8 +166,7 @@ async fn collection(
     uri: Uri,
 ) -> Result<Response> {
     let viewer =
-        codeyard_identity::github_auth::authenticate(&state, &headers, username.is_none())
-            .await?;
+        codeyard_identity::github_auth::authenticate(&state, &headers, username.is_none()).await?;
     let user = match username {
         Some(name) => {
             codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, &name)

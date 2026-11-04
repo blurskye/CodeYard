@@ -57,10 +57,7 @@ async fn scope(
     headers: &HeaderMap,
     params: &Params,
     write: bool,
-) -> Result<(
-    HookOwner,
-    codeyard_identity::github_auth::Authentication,
-)> {
+) -> Result<(HookOwner, codeyard_identity::github_auth::Authentication)> {
     let (repo, actor) =
         repository(state, headers, &params["owner"], &params["repo"], write).await?;
     let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;

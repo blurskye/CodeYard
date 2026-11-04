@@ -537,10 +537,8 @@ async fn execute(
     headers: HeaderMap,
     body: std::result::Result<Json<Value>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
-    let authentication = match codeyard_identity::github_auth::authenticate(
-        &state, &headers, true,
-    )
-    .await
+    let authentication = match codeyard_identity::github_auth::authenticate(&state, &headers, true)
+        .await
     {
         Ok(Some(auth)) => auth,
         Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),

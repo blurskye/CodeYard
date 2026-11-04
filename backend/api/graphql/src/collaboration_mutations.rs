@@ -268,9 +268,11 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             };
             if remove {
                 let names: Vec<_> = users.into_iter().map(|user| user.username).collect();
-                codeyard_repos_pulls::issues::assignments::unassign(pool, &target, authority, &names)
-                    .await
-                    .map_err(|e| codeyard_api_github::issues::assignment_error(e).graphql())?;
+                codeyard_repos_pulls::issues::assignments::unassign(
+                    pool, &target, authority, &names,
+                )
+                .await
+                .map_err(|e| codeyard_api_github::issues::assignment_error(e).graphql())?;
             } else {
                 codeyard_repos_pulls::issues::assignments::assign(
                     pool,

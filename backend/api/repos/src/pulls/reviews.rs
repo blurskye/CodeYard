@@ -24,19 +24,20 @@ pub async fn create_pull_request_review(
     Json(req): Json<CreatePullRequestReviewRequest>,
 ) -> Result<(StatusCode, Json<PullRequestReviewResponse>), (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    let review = codeyard_repos_pulls::repositories::pull_requests::reviews::create_pull_request_review(
-        &state.pool,
-        state.cluster.as_ref(),
-        &state.notification_broadcaster,
-        current_actor.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
-            &codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
-        ),
-        (owner, repo, number),
-        req,
-    )
-    .await
-    .map_err(crate::pulls::operation_error)?;
+    let review =
+        codeyard_repos_pulls::repositories::pull_requests::reviews::create_pull_request_review(
+            &state.pool,
+            state.cluster.as_ref(),
+            &state.notification_broadcaster,
+            current_actor.id,
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
+            ),
+            (owner, repo, number),
+            req,
+        )
+        .await
+        .map_err(crate::pulls::operation_error)?;
 
     Ok((
         StatusCode::CREATED,

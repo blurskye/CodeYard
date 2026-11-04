@@ -125,7 +125,7 @@ pub enum RunQueue {
 }
 
 #[derive(Serialize, Deserialize)]
-pub(crate) enum Operation {
+pub enum Operation {
     Claim {
         mode: CiExecutionMode,
         platforms: Vec<String>,
@@ -171,19 +171,19 @@ pub(crate) enum Operation {
 }
 
 #[derive(Serialize, Deserialize)]
-pub(crate) struct Request {
+pub struct Request {
     pub worker: String,
     pub operation: Operation,
 }
 
 #[derive(Serialize, Deserialize)]
-pub(crate) struct Reply {
+pub struct Reply {
     pub result: std::result::Result<serde_json::Value, String>,
 }
 
 /// The reply of a core node that cannot serve CI now: it is not an active member with its
 /// own key, or it is busy. The caller then asks the next core.
-pub(crate) const CORE_UNAVAILABLE: &str = "core node unavailable";
+pub const CORE_UNAVAILABLE: &str = "core node unavailable";
 
 impl RunQueue {
     /// The service a database queue sends workflow webhooks through.
@@ -1031,11 +1031,8 @@ impl RunQueue {
                 .await?;
                 link.finish().await?;
                 let reply: Reply = serde_json::from_slice(
-                    &crate::wire::read_frame(
-                        &mut link.reader,
-                        codeyard_db_core::limits::MAX_JSON,
-                    )
-                    .await?,
+                    &crate::wire::read_frame(&mut link.reader, codeyard_db_core::limits::MAX_JSON)
+                        .await?,
                 )?;
                 Ok::<_, anyhow::Error>(reply)
             })

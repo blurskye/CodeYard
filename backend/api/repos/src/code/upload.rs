@@ -168,8 +168,10 @@ async fn target(
             &form.expected_revision,
         )
         .await;
-        form.new_branch =
-            codeyard_repos_pulls::repositories::files::free_branch_name(&user.username, &loaded.refs);
+        form.new_branch = codeyard_repos_pulls::repositories::files::free_branch_name(
+            &user.username,
+            &loaded.refs,
+        );
     }
     Ok(form)
 }
@@ -387,8 +389,8 @@ pub(crate) async fn post(
             None => branch_url(&loaded.chrome.base(), "tree", &form.branch, &form.directory),
         }),
         Err(error) => {
-            form.saved =
-                error.kind == codeyard_repos_pulls::repositories::files::WriteFailure::SavedFollowupFailed;
+            form.saved = error.kind
+                == codeyard_repos_pulls::repositories::files::WriteFailure::SavedFollowupFailed;
             refusal(&ctx, &loaded, form, write_status(&error), &error.message)
         }
     }

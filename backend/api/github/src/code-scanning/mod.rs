@@ -20,10 +20,10 @@ use axum::Router;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::urls::repo_url;
+use codeyard_repos_core::repositories::store::repo_store;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -31,7 +31,8 @@ use std::sync::Arc;
 
 pub(super) mod databases;
 
-const BODY_LIMIT: usize = codeyard_repos_pulls::code_scanning::MAX_COMPRESSED.div_ceil(3) * 4 + 64 * 1024;
+const BODY_LIMIT: usize =
+    codeyard_repos_pulls::code_scanning::MAX_COMPRESSED.div_ceil(3) * 4 + 64 * 1024;
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![

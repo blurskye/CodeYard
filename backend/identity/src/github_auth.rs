@@ -127,14 +127,14 @@ impl Authentication {
         if self.user.username != codeyard_db_core::queries::ci_tokens::BOT {
             return Ok(self.user.id);
         }
-        let token = codeyard_db_actions::ci_tokens::get(&state.pool(), self.token.id)
+        let token = codeyard_db_actions::ci_tokens::get(state.pool(), self.token.id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(required)?;
         if token.repo_id != repo {
             return Err(Error::missing());
         }
-        codeyard_db_actions::ci::get_ci_run_by_id(&state.pool(), repo, token.run_id)
+        codeyard_db_actions::ci::get_ci_run_by_id(state.pool(), repo, token.run_id)
             .await
             .map_err(Error::unavailable)?
             .and_then(|run| run.triggered_by_id)
@@ -175,7 +175,7 @@ pub async fn readable_repositories(
     scope: &str,
 ) -> Result<std::collections::HashSet<i64>> {
     if let Some(auth) = auth {
-        if codeyard_db_identity::users::tokens::token_user(&state.pool(), auth.token.id, false)
+        if codeyard_db_identity::users::tokens::token_user(state.pool(), auth.token.id, false)
             .await
             .map_err(Error::unavailable)?
             .is_none_or(|user| user.id != auth.user.id)
@@ -186,7 +186,7 @@ pub async fn readable_repositories(
     let mut readable = std::collections::HashSet::new();
     for chunk in ids.chunks(100) {
         let visible = codeyard_db_repos::repositories::access::readable_repository_ids(
-            &state.pool(),
+            state.pool(),
             auth.map(|auth| auth.user.id),
             chunk,
         )
@@ -196,14 +196,16 @@ pub async fn readable_repositories(
             readable.extend(visible);
             continue;
         };
-        for repo in
-            codeyard_db_repos::repositories::records::get_repositories_by_ids(&state.pool(), &visible)
-                .await
-                .map_err(Error::unavailable)?
+        for repo in codeyard_db_repos::repositories::records::get_repositories_by_ids(
+            state.pool(),
+            &visible,
+        )
+        .await
+        .map_err(Error::unavailable)?
         {
             if !repo.is_private {
                 if !codeyard_db_identity::fine_grained_tokens::classic_refused_repository(
-                    &state.pool(),
+                    state.pool(),
                     auth.token.id,
                     repo.id,
                 )
@@ -215,7 +217,7 @@ pub async fn readable_repositories(
                 continue;
             }
             match auth
-                .repository_scope(&state.pool(), repo.id, scope, false)
+                .repository_scope(state.pool(), repo.id, scope, false)
                 .await
             {
                 Ok(()) => {
@@ -292,7 +294,7 @@ async fn authenticate_uncached(
     state: &dyn DatabaseContext,
     headers: &HeaderMap,
 ) -> Result<Option<Authentication>> {
-    let config = codeyard_db_cluster::node_config::get_node_configuration(&state.pool())
+    let config = codeyard_db_cluster::node_config::get_node_configuration(state.pool())
         .await
         .map_err(Error::unavailable)?
         .filter(|config| config.setup_completed)
@@ -307,7 +309,7 @@ async fn authenticate_uncached(
     let presented = credential(headers);
     let token = match presented {
         Some(value) => {
-            codeyard_db_identity::users::tokens::find_token(&state.pool(), &token_hash(value))
+            codeyard_db_identity::users::tokens::find_token(state.pool(), &token_hash(value))
                 .await
                 .map_err(Error::unavailable)?
         }
@@ -316,7 +318,7 @@ async fn authenticate_uncached(
     let mut user_id = None;
     if let Some(token) = token {
         if let Some(user) =
-            codeyard_db_identity::users::tokens::token_user(&state.pool(), token.id, false)
+            codeyard_db_identity::users::tokens::token_user(state.pool(), token.id, false)
                 .await
                 .map_err(Error::unavailable)?
         {
@@ -326,7 +328,7 @@ async fn authenticate_uncached(
         user_id = Some(token.user_id);
     }
     match codeyard_db_identity::auth_admission::admit_login(
-        &state.pool(),
+        state.pool(),
         crate::client_address::client_address(headers),
         user_id,
         presented.unwrap_or("github-rest"),
@@ -352,10 +354,10 @@ pub async fn touch(state: &dyn DatabaseContext, token: &PersonalAccessToken, hea
     {
         return;
     }
-    let address = crate::client_address::client_address(headers)
-        .filter(|address| address.len() <= 64);
+    let address =
+        crate::client_address::client_address(headers).filter(|address| address.len() <= 64);
     if let Err(error) =
-        codeyard_db_identity::users::tokens::touch_token(&state.pool(), token.id, address).await
+        codeyard_db_identity::users::tokens::touch_token(state.pool(), token.id, address).await
     {
         tracing::warn!(%error, "could not record token use");
     }

@@ -985,8 +985,12 @@ mod tests {
             codeyard_cluster_core::tls::server_config(&server_key).unwrap(),
         );
         let connector = tokio_rustls::TlsConnector::from(
-            codeyard_cluster_core::tls::client_config(&client_key, server_key.public_key(), ALPN_RPC)
-                .unwrap(),
+            codeyard_cluster_core::tls::client_config(
+                &client_key,
+                server_key.public_key(),
+                ALPN_RPC,
+            )
+            .unwrap(),
         );
         let name = tokio_rustls::rustls::pki_types::ServerName::IpAddress(
             std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST).into(),

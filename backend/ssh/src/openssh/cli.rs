@@ -1,6 +1,12 @@
 use crate::openssh::Commands;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_repos::validation::canonical_key;
+use codeyard_repos::validation::parse_command;
+use codeyard_repos::validation::parse_updates;
+use codeyard_repos::validation::protocol as git_protocol;
+use codeyard_repos::validation::shell_safe_path;
+use codeyard_repos::validation::MAX_HOOK_BYTES;
 use codeyard_repos_core::repositories::git_sessions::private_files::connect as connect_private;
 use codeyard_repos_core::repositories::git_sessions::protocol::Request;
 use codeyard_repos_core::repositories::git_sessions::protocol::CHUNK;
@@ -9,12 +15,6 @@ use codeyard_repos_core::repositories::git_sessions::protocol::EXIT;
 use codeyard_repos_core::repositories::git_sessions::protocol::STDERR;
 use codeyard_repos_core::repositories::git_sessions::protocol::STDIN;
 use codeyard_repos_core::repositories::git_sessions::protocol::STDOUT;
-use codeyard_repos::validation::canonical_key;
-use codeyard_repos::validation::parse_command;
-use codeyard_repos::validation::parse_updates;
-use codeyard_repos::validation::protocol as git_protocol;
-use codeyard_repos::validation::shell_safe_path;
-use codeyard_repos::validation::MAX_HOOK_BYTES;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Read;
@@ -136,8 +136,11 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
         ),
     };
     let mut connection = connect_private(&socket).await?;
-    codeyard_repos_core::repositories::git_sessions::protocol::write_request(&mut connection, &request)
-        .await?;
+    codeyard_repos_core::repositories::git_sessions::protocol::write_request(
+        &mut connection,
+        &request,
+    )
+    .await?;
     let (mut reader, mut writer) = connection.into_split();
     let mut output = stdio(std::io::stdout().as_fd())?;
     let mut errors = stdio(std::io::stderr().as_fd())?;
@@ -280,8 +283,12 @@ async fn pump_input<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     loop {
         let count = input.read(&mut bytes).await?;
         if count == 0 {
-            codeyard_repos_core::repositories::git_sessions::protocol::write_frame(writer, EOF, &[])
-                .await?;
+            codeyard_repos_core::repositories::git_sessions::protocol::write_frame(
+                writer,
+                EOF,
+                &[],
+            )
+            .await?;
             // Do not half-close: keep the socket open until the exit frame so
             // the broker can distinguish stdin EOF from a helper disconnect.
             return Ok(());

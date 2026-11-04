@@ -2,10 +2,6 @@
 //! published releases of a repository they can read; writers also see drafts and make changes.
 //! A tag that does not exist yet is created when the release is published, so a draft never
 //! publishes its tag.
-use codeyard_repos_core::ci::runs::CiRuns;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::refs::RefError;
-use codeyard_repos_core::repositories::store::repo_store;
 use anyhow::Error;
 use codeyard_db_core::models::Release;
 use codeyard_db_core::models::ReleaseAsset;
@@ -23,6 +19,10 @@ use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::watchers::notify_watchers;
 use codeyard_notifications::watchers::WatchEvent;
 use codeyard_notifications::watchers::WatchedItem;
+use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::repositories::refs::RefError;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_storage::files::downloads::DownloadError;
 use codeyard_storage::files::uploads::UploadDeclaration;
 use codeyard_storage::files::uploads::UploadError;
@@ -640,13 +640,15 @@ pub async fn delete(
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?;
     // The deletion event still lists the assets, which are gone once the release is.
-    let assets =
-        codeyard_repos_core::webhooks::documents::release_assets(pool, &repository, owner, &deleted.release)
-            .await
-            .inspect_err(
-                |error| tracing::warn!(release_id, %error, "release assets could not be read"),
-            )
-            .ok();
+    let assets = codeyard_repos_core::webhooks::documents::release_assets(
+        pool,
+        &repository,
+        owner,
+        &deleted.release,
+    )
+    .await
+    .inspect_err(|error| tracing::warn!(release_id, %error, "release assets could not be read"))
+    .ok();
     codeyard_db_repos::releases::delete_release(pool, actor, repository.id, release_id)
         .await
         .map_err(write_error)?;
@@ -984,4 +986,6 @@ async fn notify_published(
     .await;
 }
 
-use codeyard_repos_core::repositories::releases::{ReleaseError, unavailable, validate_fields, validate_tag};
+use codeyard_repos_core::repositories::releases::{
+    unavailable, validate_fields, validate_tag, ReleaseError,
+};

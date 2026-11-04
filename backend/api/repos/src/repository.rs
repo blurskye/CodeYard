@@ -205,7 +205,8 @@ pub async fn rename_repo(
     Json(req): Json<RenameRepoRequest>,
 ) -> Result<Json<RepoResponse>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    codeyard_repos_core::repositories::lifecycle::validate_name(&req.new_name).map_err(lifecycle_error)?;
+    codeyard_repos_core::repositories::lifecycle::validate_name(&req.new_name)
+        .map_err(lifecycle_error)?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
 

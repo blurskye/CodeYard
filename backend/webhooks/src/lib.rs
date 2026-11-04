@@ -392,5 +392,5 @@ mod tests {
     }
 }
 
-pub mod issue_documents;
 pub mod comment_documents;
+pub mod issue_documents;

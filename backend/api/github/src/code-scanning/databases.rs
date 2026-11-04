@@ -233,7 +233,7 @@ pub(crate) async fn upload(
         )
     })?;
     let bytes = tokio::task::spawn_blocking(move || {
-        codeyard_support::zip_archives::open(&bytes, MAX_DATABASE_ENTRIES).map_err(|_| ())?;
+        codeyard_storage::zip_archives::open(&bytes, MAX_DATABASE_ENTRIES).map_err(|_| ())?;
         Ok::<_, ()>(bytes.to_vec())
     })
     .await

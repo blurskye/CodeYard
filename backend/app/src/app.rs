@@ -1,8 +1,8 @@
 //! Shared application state: database, storage, CI and notification services.
-use codeyard_repos_core::ci::runs::CiRuns;
 use codeyard_ci::config::CiConfig;
 use codeyard_db_core::DbPool;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_repos_core::ci::runs::CiRuns;
 use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
 use std::path::PathBuf;
@@ -105,17 +105,35 @@ impl AppState {
 }
 
 impl codeyard_repos_core::request_context::RequestContext for AppState {
-    fn cluster(&self) -> Option<&codeyard_repos_core::context::NodeContext> { self.cluster.as_ref() }
+    fn cluster(&self) -> Option<&codeyard_repos_core::context::NodeContext> {
+        self.cluster.as_ref()
+    }
 }
 
 impl codeyard_repos_pulls::services::RepositoryServices for AppState {
-    fn ci_runs(&self) -> &std::sync::Arc<codeyard_repos_core::ci::runs::CiRuns> { &self.ci_runs }
-    fn notification_broadcaster(&self) -> &std::sync::Arc<codeyard_notifications::broadcast::NotificationBroadcaster> { &self.notification_broadcaster }
-    fn git_tasks(&self) -> &std::sync::Arc<codeyard_repos_core::repositories::git_sessions::GitTasks> { &self.git_tasks }
-    fn repository_downloads(&self) -> &std::sync::Arc<tokio::sync::Semaphore> { &self.repository_downloads }
-    fn repos_path(&self) -> &std::path::PathBuf { &self.repos_path }
+    fn ci_runs(&self) -> &std::sync::Arc<codeyard_repos_core::ci::runs::CiRuns> {
+        &self.ci_runs
+    }
+    fn notification_broadcaster(
+        &self,
+    ) -> &std::sync::Arc<codeyard_notifications::broadcast::NotificationBroadcaster> {
+        &self.notification_broadcaster
+    }
+    fn git_tasks(
+        &self,
+    ) -> &std::sync::Arc<codeyard_repos_core::repositories::git_sessions::GitTasks> {
+        &self.git_tasks
+    }
+    fn repository_downloads(&self) -> &std::sync::Arc<tokio::sync::Semaphore> {
+        &self.repository_downloads
+    }
+    fn repos_path(&self) -> &std::path::PathBuf {
+        &self.repos_path
+    }
 }
 
 impl codeyard_identity::database_context::DatabaseContext for AppState {
-    fn pool(&self) -> &DbPool { &self.pool }
+    fn pool(&self) -> &DbPool {
+        &self.pool
+    }
 }

@@ -15,14 +15,14 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use codeyard_app::app::AppState;
+use codeyard_db_core::models::Repository;
+use codeyard_git::error::RepoError;
+use codeyard_git::repository::process as git_process;
 use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::GitService;
 use codeyard_repos_core::store_types::GitSession;
 use codeyard_repos_core::store_types::GitStreams;
-use codeyard_db_core::models::Repository;
-use codeyard_git::error::RepoError;
-use codeyard_git::repository::process as git_process;
 use codeyard_support::token_hash::token_hash;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -380,8 +380,8 @@ async fn rpc(
     } else {
         match actor_id {
             Some(id) => codeyard_db_repos::repositories::traffic::Identity::account(id),
-            None => codeyard_identity::client_address::client_address(&parts.headers)
-                .and_then(|address| {
+            None => codeyard_identity::client_address::client_address(&parts.headers).and_then(
+                |address| {
                     codeyard_db_repos::repositories::traffic::Identity::client(
                         address,
                         parts
@@ -390,7 +390,8 @@ async fn rpc(
                             .and_then(|header| header.to_str().ok())
                             .unwrap_or(""),
                     )
-                }),
+                },
+            ),
         }
     };
     let (output, reader) = tokio::io::duplex(git_process::CHUNK);

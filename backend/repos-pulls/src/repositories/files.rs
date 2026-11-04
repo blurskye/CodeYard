@@ -1,10 +1,5 @@
 //! Web editor and API file writes: check who may write where, then have the store
 //! commit the file and move the branch, failing if it changed since the editor loaded.
-use codeyard_repos_core::ci::push::RefUpdate;
-use codeyard_repos_core::ci::runs::CiRuns;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::CommitInfo;
@@ -19,6 +14,11 @@ use codeyard_repos::protection::History;
 use codeyard_repos::protection::Refusal;
 use codeyard_repos::protection::WriteVia;
 use codeyard_repos::protection::ANY_TIP;
+use codeyard_repos_core::ci::push::RefUpdate;
+use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use std::collections::HashMap;
 
 pub struct FileSave {

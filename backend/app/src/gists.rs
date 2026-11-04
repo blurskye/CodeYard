@@ -1,7 +1,6 @@
 //! Gists reuse repository placement, Git objects and transport. SQL admission precedes the ref
 //! publication; durable pending writes reconcile lost responses without claiming cross-store rollback.
 use crate::app::AppState;
-use codeyard_repos_core::repositories::store::repo_store;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
@@ -15,6 +14,7 @@ use codeyard_git::gist_types::GistFileChange;
 use codeyard_git::gist_types::GistSnapshot;
 use codeyard_git::gist_types::MAX_GIST_FILES;
 use codeyard_repos::gists::GistCredential;
+use codeyard_repos_core::repositories::store::repo_store;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;

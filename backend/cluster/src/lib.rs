@@ -1,7 +1,6 @@
 //! Cluster membership: node keys, pairing, and the listeners that let paired nodes reach
 //! each other, over iroh or over TCP with TLS. A plain single node never calls into this module: it
 //! starts only when cluster settings are present in the environment.
-use codeyard_repos_core::context::NodeContext;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::ensure;
@@ -22,6 +21,7 @@ use codeyard_db_core::models::ClusterNode;
 use codeyard_db_core::DbPool;
 use codeyard_model::node_roles::NodeRole;
 use codeyard_model::node_roles::NodeRoles;
+use codeyard_repos_core::context::NodeContext;
 use codeyard_support::node_identity::{load_existing, load_or_create, NodeKey};
 use iroh::Endpoint;
 use std::net::SocketAddr;
@@ -66,9 +66,7 @@ impl Cluster {
 
     /// The address this node listens on for TCP, if it does.
     pub fn tcp_addr(&self) -> Option<SocketAddr> {
-        self.tcp_listener
-            .as_ref()
-            .map(crate::tcp::Listener::addr)
+        self.tcp_listener.as_ref().map(crate::tcp::Listener::addr)
     }
 
     /// This node's key: its identity in `nodes`.
@@ -87,12 +85,8 @@ impl Cluster {
     /// [`Cluster::withdraw`]. Call it once the node's other services are set up.
     pub async fn publish(&self) -> Result<()> {
         if self.storage_path.is_some() {
-            crate::replicas::reconcile(
-                &self.pool,
-                self.context.node_id,
-                &self.context.repos_path,
-            )
-            .await?;
+            crate::replicas::reconcile(&self.pool, self.context.node_id, &self.context.repos_path)
+                .await?;
         }
         if let Some(endpoint) = self.endpoint() {
             wait_for_address(endpoint).await;
@@ -299,7 +293,9 @@ pub async fn start(
     let rpc = storage_path
         .is_some()
         .then(|| codeyard_repos_core::cluster::rpc::RpcHandler::new(context.clone()));
-    let sessions = rpc.as_ref().map(codeyard_repos_core::cluster::rpc::RpcHandler::sessions);
+    let sessions = rpc
+        .as_ref()
+        .map(codeyard_repos_core::cluster::rpc::RpcHandler::sessions);
     let ci_config = std::sync::Arc::new(codeyard_ci::config::CiConfig::from_env()?);
     let queue = codeyard_repos_core::ci::queue::RunQueue::Database {
         pool: pool.clone(),
@@ -548,9 +544,12 @@ pub async fn adopt_repositories(pool: &DbPool, node_id: i64, repos_path: &Path) 
             .await?
             .into_iter()
             .filter(|(_, disk_path)| {
-                codeyard_repos_core::cluster::rpc::repository::repository_uuid(disk_path).is_ok_and(|uuid| {
-                    codeyard_repos_core::repositories::store::primary_path(repos_path, uuid).exists()
-                })
+                codeyard_repos_core::cluster::rpc::repository::repository_uuid(disk_path).is_ok_and(
+                    |uuid| {
+                        codeyard_repos_core::repositories::store::primary_path(repos_path, uuid)
+                            .exists()
+                    },
+                )
             })
             .map(|(id, _)| id)
             .collect();

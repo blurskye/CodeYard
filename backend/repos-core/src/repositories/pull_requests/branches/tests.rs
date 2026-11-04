@@ -157,15 +157,16 @@ async fn open(forks: &Forks, head_branch: &str) -> PullRequest {
 
 /// Closes the pull request through the same conditional update the API uses.
 async fn close(forks: &Forks, pull: &PullRequest) {
-    let edit = codeyard_repos_pulls::repositories::pull_requests::mutations::UpdatePullRequestRequest {
-        expected_state: "open".to_owned(),
-        expected_updated: pull.updated_at.to_rfc3339(),
-        title: None,
-        body: None,
-        state: Some("closed".to_owned()),
-        base: None,
-        maintainer_can_modify: None,
-    };
+    let edit =
+        codeyard_repos_pulls::repositories::pull_requests::mutations::UpdatePullRequestRequest {
+            expected_state: "open".to_owned(),
+            expected_updated: pull.updated_at.to_rfc3339(),
+            title: None,
+            body: None,
+            state: Some("closed".to_owned()),
+            base: None,
+            maintainer_can_modify: None,
+        };
     codeyard_repos_pulls::repositories::pull_requests::mutations::update_pull_request(
         &forks.pool,
         &forks.ci,

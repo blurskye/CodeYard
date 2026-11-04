@@ -1,17 +1,17 @@
-use codeyard_repos_core::context::NodeContext;
 use crate::issues::comments::CommentTarget;
 use crate::issues::discussion_link;
 use crate::issues::discussion_page;
 use crate::issues::COMMENTS_PER_PAGE;
-use codeyard_repos_core::repositories::pull_requests::database_error;
-use codeyard_repos_core::repositories::pull_requests::OperationError;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
 use codeyard_notifications::create::NotificationRequest;
 use codeyard_notifications::mentions::mentions_anyone;
 use codeyard_notifications::mentions::notify_mentions;
 use codeyard_notifications::mentions::MentionSource;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::repositories::pull_requests::database_error;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_webhooks::payloads::Scope;
 use serde::Deserialize;
 use serde_json::json;
@@ -458,7 +458,8 @@ pub async fn create_pull_request_comment(
                     .into(),
         });
     }
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository)
+        .await?;
 
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
@@ -816,7 +817,8 @@ pub async fn set_comment_resolved(
             code: "not_found",
             message: "Repository not found".to_owned(),
         })?;
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository)
+        .await?;
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await

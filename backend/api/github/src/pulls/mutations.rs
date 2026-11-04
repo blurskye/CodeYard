@@ -80,12 +80,14 @@ async fn create_value(
                     .ok_or_else(|| Error::invalid("issue must be a positive discussion number"))?,
             }
         }
-        None => codeyard_repos_pulls::repositories::pull_requests::mutations::PullRequestSource::New {
-            title: input
-                .title
-                .ok_or_else(|| Error::invalid("title is required"))?,
-            body: input.body,
-        },
+        None => {
+            codeyard_repos_pulls::repositories::pull_requests::mutations::PullRequestSource::New {
+                title: input
+                    .title
+                    .ok_or_else(|| Error::invalid("title is required"))?,
+                body: input.body,
+            }
+        }
     };
     let (head_owner, branch) = input.head.split_once(':').unwrap_or((&owner, &input.head));
     let (head_owner, head_name) = match input.head_repo.as_deref() {

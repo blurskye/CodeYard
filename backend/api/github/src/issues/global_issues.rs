@@ -136,13 +136,9 @@ async fn run(
         .collect::<Vec<_>>();
     ids.sort_unstable();
     ids.dedup();
-    let readable = codeyard_identity::github_auth::readable_repositories(
-        &state,
-        Some(&auth),
-        &ids,
-        "issues",
-    )
-    .await?;
+    let readable =
+        codeyard_identity::github_auth::readable_repositories(&state, Some(&auth), &ids, "issues")
+            .await?;
     let repos =
         codeyard_db_repos::repositories::records::get_repositories_by_ids(&state.pool, &ids)
             .await

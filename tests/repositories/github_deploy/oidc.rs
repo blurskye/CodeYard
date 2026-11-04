@@ -8,9 +8,9 @@ use axum::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
-use codeyard_repos_pulls::repositories;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
+use codeyard_repos_pulls::repositories;
 use rsa::{
     pkcs1v15::{Signature, VerifyingKey},
     signature::Verifier,
@@ -71,7 +71,7 @@ async fn contract(pg: bool) {
     f.complete_setup().await;
     let actor = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
@@ -398,7 +398,7 @@ async fn organization_contract(pg: bool) {
     else {
         panic!("create organization");
     };
-    let repo = repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner {

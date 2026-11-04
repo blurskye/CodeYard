@@ -2,11 +2,11 @@
 //! This is not an automatic test target: ordinary native tests need no browser bundle.
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::lifecycle;
 use codeyard_ci::config::CiConfig;
 use codeyard_db_actions::environment_values as environments;
 use codeyard_db_actions::environment_values::Save;
 use codeyard_db_orgs::organization_values::Kind;
+use codeyard_repos_core::repositories::lifecycle;
 use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
 use std::{path::Path, sync::Arc, time::Duration};

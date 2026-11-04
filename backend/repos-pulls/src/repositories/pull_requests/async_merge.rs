@@ -1,9 +1,9 @@
 //! Durable asynchronous requests, executed by the server's bounded, shutdown-drained Git tasks.
 use crate::services::RepositoryServices;
+use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_repos_core::ci::runs::CiRuns;
 use codeyard_repos_core::repositories::pull_requests::database_error;
 use codeyard_repos_core::repositories::pull_requests::OperationError;
-use codeyard_notifications::broadcast::NotificationBroadcaster;
 use serde_json::json;
 use serde_json::Value;
 
@@ -106,22 +106,23 @@ pub async fn start(state: &dyn RepositoryServices, job: Job) -> Result<Value, Op
         });
     }
     let token_id = job.authority.token_id().ok_or_else(denied)?;
-    let actor = codeyard_db_identity::users::tokens::token_user(&state.pool(), token_id, true)
+    let actor = codeyard_db_identity::users::tokens::token_user(state.pool(), token_id, true)
         .await
         .map_err(database_error)?
         .filter(|u| u.id == job.authority.user_id)
         .ok_or_else(denied)?;
     let repo =
-        codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool(), job.repo_id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(state.pool(), job.repo_id)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
                 code: "not_found",
                 message: "Repository not found".into(),
             })?;
-    codeyard_repos_core::repositories::pull_requests::require_write(&state.pool(), &actor, &repo).await?;
+    codeyard_repos_core::repositories::pull_requests::require_write(state.pool(), &actor, &repo)
+        .await?;
     let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
-        &state.pool(),
+        state.pool(),
         job.pull_request_id,
     )
     .await
@@ -147,7 +148,7 @@ pub async fn start(state: &dyn RepositoryServices, job: Job) -> Result<Value, Op
     let details = json!({"message":"Merge request accepted","uuid":uuid,"merge_method":job.merge.merge_method.as_str(),"merge_action":job.action,"expected_head_sha":job.merge.expected_head,"bypass_rules":false});
     let request = serde_json::to_value(&job.merge).map_err(database_error)?;
     if !codeyard_db_repos::pull_requests::async_merge::insert(
-        &state.pool(),
+        state.pool(),
         codeyard_db_repos::pull_requests::async_merge::NewAsyncMerge {
             uuid: &uuid,
             repo_id: job.repo_id,
@@ -184,7 +185,7 @@ pub async fn start(state: &dyn RepositoryServices, job: Job) -> Result<Value, Op
         };
         finish_with_retry(&pool, &task_uuid, status, &details).await;
     }) {
-        codeyard_db_repos::pull_requests::async_merge::finish(&state.pool(),&uuid,"failed",&json!({"message":"The merge worker is unavailable"})).await.map_err(database_error)?;
+        codeyard_db_repos::pull_requests::async_merge::finish(state.pool(),&uuid,"failed",&json!({"message":"The merge worker is unavailable"})).await.map_err(database_error)?;
         return Err(OperationError::Unavailable{code:"merge_worker_unavailable",message:"The merge worker is unavailable".into()});
     }
     Ok(json!({"status":"pending","details":details}))

@@ -2,14 +2,14 @@
 use crate::support::database::Database;
 
 use codeyard_app::app::AppState;
-use codeyard_repos_core::ci::queue::RunQueue;
-use codeyard_repos_core::ci::runs::CiRunRequest;
-use codeyard_repos_core::ci::workers::CiWorkers;
-use codeyard_repos_pulls::repositories;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
 use codeyard_ci::config::CiPipelineKind;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_repos_core::ci::queue::RunQueue;
+use codeyard_repos_core::ci::runs::CiRunRequest;
+use codeyard_repos_core::ci::workers::CiWorkers;
+use codeyard_repos_pulls::repositories;
 use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
@@ -169,7 +169,7 @@ async fn contract(pg: bool) {
         } else {
             "native-run"
         };
-        let repo = repositories::lifecycle::provision(
+        let repo = codeyard_repos_core::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner {

@@ -22,9 +22,9 @@ async fn mergeable(
     pull: &codeyard_db_core::models::PullRequest,
     request: &RequestContext,
 ) -> Result<Option<(bool, String)>> {
+    use codeyard_git::error::ErrorKind;
     use codeyard_repos_core::store_types::MergeMethod;
     use codeyard_repos_core::store_types::MergeRequest;
-    use codeyard_git::error::ErrorKind;
     let store = repo_store(repo, request.state.cluster.as_ref());
     let base = match store
         .commit_from_primary(&format!("refs/heads/{}", pull.base_branch))

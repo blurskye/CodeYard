@@ -52,10 +52,7 @@ async fn scope(
     headers: &HeaderMap,
     params: &Params,
     write: bool,
-) -> Result<(
-    Scope,
-    codeyard_identity::github_auth::Authentication,
-)> {
+) -> Result<(Scope, codeyard_identity::github_auth::Authentication)> {
     if let Some(org) = params.get("org") {
         let auth = codeyard_identity::github_auth::authenticate(state, headers, write)
             .await?

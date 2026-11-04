@@ -1,14 +1,14 @@
 //! Associations are derived from published Git ancestry, not commit-message references.
 
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::Repository;
 use codeyard_git as git;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::CommitInfo;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use std::collections::HashMap;
 use std::time::Duration;
 

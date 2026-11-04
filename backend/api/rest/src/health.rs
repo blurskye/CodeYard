@@ -46,8 +46,7 @@ fn storage_check(root: &Path, minimum: u64) -> Result<(), &'static str> {
     probe
         .close()
         .map_err(|_| "repository storage not writable")?;
-    let free =
-        codeyard_cluster::disk_free(root).map_err(|_| "storage free space unavailable")?;
+    let free = codeyard_cluster::disk_free(root).map_err(|_| "storage free space unavailable")?;
     if u64::try_from(free).unwrap_or(0) < minimum {
         return Err("storage free space below minimum");
     }

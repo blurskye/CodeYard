@@ -245,9 +245,7 @@ pub(super) fn operation_error(error: codeyard_repos_pulls::issues::OperationErro
         OperationError::Invalid { message, .. } => Error::invalid(message),
         OperationError::Missing { .. } => Error::missing(),
         OperationError::Denied { message, .. } => Error::new(StatusCode::FORBIDDEN, message),
-        OperationError::Unauthenticated { .. } => {
-            codeyard_identity::github_auth::required()
-        }
+        OperationError::Unauthenticated { .. } => codeyard_identity::github_auth::required(),
         OperationError::Conflict { message, .. } => Error::new(StatusCode::CONFLICT, message),
         OperationError::Unavailable { .. } => Error::unavailable(()),
     }

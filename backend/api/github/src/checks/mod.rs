@@ -13,10 +13,8 @@ use axum::routing::post;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
-use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_actions::checks::Credential;
 use codeyard_db_actions::checks::Filter;
 use codeyard_db_actions::checks::Preference;
@@ -27,6 +25,8 @@ use codeyard_db_core::models::Repository;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::urls::repo_url;
+use codeyard_repos_core::api_shared::github::contents::store_error;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_webhooks::payloads;
 use serde::Deserialize;
 use serde_json::json;
@@ -421,9 +421,10 @@ async fn list(
         )
         .await
         .map_err(Error::unavailable)?;
-        let docs =
-            codeyard_repos_core::api_shared::github::checks::documents::suites(state, repo, owner, &rows)
-                .await?;
+        let docs = codeyard_repos_core::api_shared::github::checks::documents::suites(
+            state, repo, owner, &rows,
+        )
+        .await?;
         (count, "check_suites", docs)
     } else {
         let count = codeyard_db_actions::checks::run_count(&state.pool, repo.id, filter)

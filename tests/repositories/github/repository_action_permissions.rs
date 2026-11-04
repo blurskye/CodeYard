@@ -1,9 +1,9 @@
 use super::*;
-use codeyard_repos_core::ci::queue::RunQueue;
-use codeyard_repos_core::repositories::lifecycle;
 use codeyard_ci::config::CiExecutionMode;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_repos_core::ci::queue::RunQueue;
+use codeyard_repos_core::repositories::lifecycle;
 use std::collections::BTreeSet;
 
 async fn contract(pg: bool) {

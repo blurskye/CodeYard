@@ -24,17 +24,18 @@ pub async fn create_pull_request(
     Json(req): Json<CreatePullRequestRequest>,
 ) -> Result<(StatusCode, Json<PullRequestDetailResponse>), (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    let pull_request = codeyard_repos_pulls::repositories::pull_requests::mutations::create_pull_request(
-        &state.pool,
-        &state.ci_runs,
-        &state.notification_broadcaster,
-        current_actor.id,
-        owner,
-        repo,
-        req,
-    )
-    .await
-    .map_err(crate::pulls::operation_error)?;
+    let pull_request =
+        codeyard_repos_pulls::repositories::pull_requests::mutations::create_pull_request(
+            &state.pool,
+            &state.ci_runs,
+            &state.notification_broadcaster,
+            current_actor.id,
+            owner,
+            repo,
+            req,
+        )
+        .await
+        .map_err(crate::pulls::operation_error)?;
 
     Ok((
         StatusCode::CREATED,

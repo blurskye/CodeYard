@@ -236,11 +236,13 @@ pub(crate) async fn load(
             continue;
         };
         if let std::collections::hash_map::Entry::Vacant(slot) = references.entry(target.id) {
-            let refs =
-                codeyard_repos_core::repositories::store::repo_store(target, ctx.state.cluster.as_ref())
-                    .refs()
-                    .await
-                    .map_err(|_| unavailable(ctx))?;
+            let refs = codeyard_repos_core::repositories::store::repo_store(
+                target,
+                ctx.state.cluster.as_ref(),
+            )
+            .refs()
+            .await
+            .map_err(|_| unavailable(ctx))?;
             let wanted = wanted.remove(&target.id).unwrap_or_default();
             let available: HashSet<_> = refs
                 .into_keys()

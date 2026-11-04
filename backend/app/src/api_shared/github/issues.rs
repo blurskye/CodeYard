@@ -1,10 +1,14 @@
-use crate::app::AppState;
 use crate::api_shared::github::repository;
-use axum::{extract::{Path,State},http::HeaderMap,Json};
+use crate::app::AppState;
+use axum::{
+    extract::{Path, State},
+    http::HeaderMap,
+    Json,
+};
 use codeyard_model::github_error::Result;
-use serde_json::Value;
-use std::{collections::HashMap,sync::Arc};
 use codeyard_webhooks::issue_documents::{document, Reader};
+use serde_json::Value;
+use std::{collections::HashMap, sync::Arc};
 pub async fn read(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -24,4 +28,3 @@ pub async fn read(
         .await?,
     ))
 }
-

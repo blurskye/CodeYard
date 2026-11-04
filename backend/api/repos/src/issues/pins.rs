@@ -114,12 +114,13 @@ pub(crate) async fn pinned_comment(
             else {
                 return Ok(None);
             };
-            let href = codeyard_repos_pulls::repositories::pull_requests::comments::saved_comment_link(
-                &ctx.state.pool,
-                &base,
-                &comment,
-            )
-            .await;
+            let href =
+                codeyard_repos_pulls::repositories::pull_requests::comments::saved_comment_link(
+                    &ctx.state.pool,
+                    &base,
+                    &comment,
+                )
+                .await;
             (comment.body, comment.author_id, href)
         }
     };

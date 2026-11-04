@@ -2,12 +2,10 @@
 use anyhow::Context;
 use sha2::Digest;
 
-use codeyard_repos_core::ci::runs::CiRuns;
 use crate::repositories::dependencies::registry::Client;
 use crate::repositories::dependencies::worker::Pinned;
 use crate::repositories::pull_requests::mutations::create_pull_request;
 use crate::repositories::pull_requests::mutations::CreatePullRequestRequest;
-use codeyard_repos_core::repositories::store::repo_store;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_repos::repositories::dependencies as records;
@@ -20,6 +18,8 @@ use codeyard_db_repos::repositories::dependencies::Update;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_repos::editor::UploadFile;
 use codeyard_repos::editor::UploadWrite;
+use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::repositories::store::repo_store;
 use sha2::Sha256;
 
 /// The owner name of a repository, as push events and pull requests name it.
@@ -98,15 +98,15 @@ async fn open(
         .await
         {
             Ok(pull) => pull,
-            Err(codeyard_repos_core::repositories::pull_requests::OperationError::Opened { number }) => {
-                codeyard_db_repos::pull_requests::records::get_pull_request(
-                    pool,
-                    pinned.repository.id,
-                    number,
-                )
-                .await?
-                .ok_or(Refusal::Stale)?
-            }
+            Err(codeyard_repos_core::repositories::pull_requests::OperationError::Opened {
+                number,
+            }) => codeyard_db_repos::pull_requests::records::get_pull_request(
+                pool,
+                pinned.repository.id,
+                number,
+            )
+            .await?
+            .ok_or(Refusal::Stale)?,
             Err(error) => return Err(error.into()),
         }
     };

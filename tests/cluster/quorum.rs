@@ -3,28 +3,28 @@
 use super::quorum_sql::{replace_node_key, set_timeout, setup_with_refs, Fixture};
 use crate::support::native_database as native;
 use base64::Engine;
+use codeyard_ci::config::CiConfig;
 use codeyard_repos_core::ci::queue::RunQueue;
 use codeyard_repos_core::ci::runs::CiRuns;
-use codeyard_ci::config::CiConfig;
 
 use codeyard_repos_core::context::term_path;
 
-use codeyard_repos_core::context::NodeContext;
 use codeyard_cluster_core::pairing::PairingHandler;
 use codeyard_cluster_core::transport::IrohDialer;
 use codeyard_cluster_core::transport::NodeAddress;
 use codeyard_cluster_core::transport::Relay;
+use codeyard_repos_core::context::NodeContext;
 
-use codeyard_repos_core::repositories::git_sessions::receive_session;
-use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
-use codeyard_repos_core::repositories::git_sessions::ReceiveSession;
-use codeyard_repos_core::store_types::GitService;
-use codeyard_repos_core::store_types::GitSession;
-use codeyard_repos_core::store_types::GitStreams;
-use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_db_core::models::RefValue;
 use codeyard_db_core::DbPool;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_repos_core::repositories::git_sessions::receive_session;
+use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
+use codeyard_repos_core::repositories::git_sessions::ReceiveSession;
+use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_repos_core::store_types::GitService;
+use codeyard_repos_core::store_types::GitSession;
+use codeyard_repos_core::store_types::GitStreams;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::time::{timeout, Instant};
 
@@ -85,7 +85,8 @@ impl Stores {
                 .unwrap()
                 .unwrap();
         let uuid =
-            codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repository.disk_path).unwrap();
+            codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repository.disk_path)
+                .unwrap();
         let mut roots = Vec::new();
         let mut paths = Vec::new();
         let mut contexts = Vec::new();
@@ -122,7 +123,9 @@ impl Stores {
                 codeyard_cluster::tcp::Services {
                     pool: pool.clone(),
                     pairing: PairingHandler::new(pool.clone()),
-                    rpc: Some(codeyard_repos_core::cluster::rpc::RpcHandler::new(context.clone())),
+                    rpc: Some(codeyard_repos_core::cluster::rpc::RpcHandler::new(
+                        context.clone(),
+                    )),
                     events: codeyard_cluster::ci::CiHandler::new(context.clone(), queue),
                 },
             )
@@ -579,7 +582,8 @@ async fn stale_writer_is_refused(pool: &DbPool) {
         .create_branch_as(pool, f.repo, f.owner, "current", &stores.old)
         .await
         .unwrap();
-    let uuid = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path).unwrap();
+    let uuid =
+        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path).unwrap();
     for context in &stores.contexts {
         let repo = git2::Repository::open_bare(term_path(&context.repos_path, uuid, 2)).unwrap();
         assert!(repo.find_reference("refs/heads/stale").is_err());

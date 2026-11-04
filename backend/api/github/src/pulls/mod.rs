@@ -11,12 +11,12 @@ use axum::routing::get;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
-use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
+use codeyard_repos_core::api_shared::github::contents::store_error;
+use codeyard_repos_core::repositories::store::repo_store;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -119,8 +119,7 @@ pub(super) async fn document(
     pull: &codeyard_db_core::models::PullRequest,
     detail: bool,
 ) -> Result<Value> {
-    let viewer =
-        codeyard_identity::github_auth::authenticate(state, headers, false).await?;
+    let viewer = codeyard_identity::github_auth::authenticate(state, headers, false).await?;
     let author = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, pull.author_id)
         .await
         .map_err(Error::unavailable)?
@@ -207,9 +206,10 @@ pub(super) async fn document(
         requested.push(person(state, user.id).await?);
     }
     value["requested_reviewers"] = json!(requested);
-    value["auto_merge"] = codeyard_repos_core::webhooks::documents::auto_merge(&state.pool, pull.id)
-        .await
-        .map_err(Error::unavailable)?;
+    value["auto_merge"] =
+        codeyard_repos_core::webhooks::documents::auto_merge(&state.pool, pull.id)
+            .await
+            .map_err(Error::unavailable)?;
     value["requested_teams"] = json!(
         crate::pulls::team_reviewers::documents(
             state,

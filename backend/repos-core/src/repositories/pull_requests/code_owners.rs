@@ -222,7 +222,7 @@ pub async fn request_code_owner_reviews(
 /// The owners whose approval a merge still lacks: every changed file with owners needs an approval
 /// from one of them. `approvers` are the users whose approvals count for this head. Returns the
 /// owners as written, each once, in file order.
-pub(super) async fn missing_owner_approvals(
+pub async fn missing_owner_approvals(
     pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     repository: &Repository,

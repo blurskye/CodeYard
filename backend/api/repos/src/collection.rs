@@ -17,13 +17,13 @@ use codeyard_api_http::session::get_current_user;
 use codeyard_api_http::shared::repos::access::access_error;
 use codeyard_api_http::shared::repos::responses::repository_fork_counts;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::lifecycle::InitialFiles;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::OrganizationPage;
 use codeyard_db_repos::repositories::records::RepositoryFilter;
 use codeyard_db_repos::repositories::records::RepositorySort;
 use codeyard_identity::repository_access::AccessError;
 use codeyard_repos::templates::Template;
+use codeyard_repos_core::repositories::lifecycle::InitialFiles;
 use codeyard_webui::app::Page as AppPage;
 use codeyard_webui::pages::discovery as view;
 use codeyard_webui::pages::discovery::NewRepositoryForm;
@@ -669,8 +669,10 @@ async fn create_selection(
     files: InitialFiles,
     properties: &[codeyard_db_core::queries::organizations::properties::ValueInput],
     authority: &codeyard_db_core::queries::credentials::Actor,
-) -> Result<codeyard_db_core::models::Repository, codeyard_repos_core::repositories::lifecycle::StorageError>
-{
+) -> Result<
+    codeyard_db_core::models::Repository,
+    codeyard_repos_core::repositories::lifecycle::StorageError,
+> {
     let description = Some(values.description.as_str()).filter(|value| !value.is_empty());
     let source = source_name(&values.source).map_err(|(_, message)| {
         codeyard_repos_core::repositories::lifecycle::StorageError {
@@ -685,10 +687,12 @@ async fn create_selection(
             source_name,
         )
         .await
-        .map_err(|_| codeyard_repos_core::repositories::lifecycle::StorageError {
-            kind: codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Unavailable,
-            message: "Source repository is unavailable.",
-        })?
+        .map_err(
+            |_| codeyard_repos_core::repositories::lifecycle::StorageError {
+                kind: codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Unavailable,
+                message: "Source repository is unavailable.",
+            },
+        )?
         .ok_or(codeyard_repos_core::repositories::lifecycle::StorageError {
             kind: codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Denied,
             message: "Source repository is unavailable.",

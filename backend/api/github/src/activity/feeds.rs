@@ -27,8 +27,7 @@ fn origin() -> String {
     codeyard_model::http_config::link_origin()
 }
 async fn discovery(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Result<Response> {
-    let viewer =
-        codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
+    let viewer = codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let timeline = format!("{}/api/activity-feeds/public.atom", origin());
     let user = format!("{}/api/activity-feeds/users/{{user}}", origin());
     let mut value = json!({"timeline_url":timeline,"user_url":user,"_links":{"timeline":{"href":timeline,"type":"application/atom+xml"},"user":{"href":user,"type":"application/atom+xml"}}});

@@ -16,16 +16,16 @@ async fn remote_git_streams_large_packs_and_ends_on_storage_disconnect() {
 
 use chrono::{Duration as ChronoDuration, Utc};
 
+use codeyard_db_identity::users::tokens;
+use codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert;
+use codeyard_git::error::RepoError;
 use codeyard_repos_core::cluster;
-use codeyard_repos_core::wire::Operation;
-use codeyard_repos_core::wire::Request;
 use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
 use codeyard_repos_core::store_types::GitService;
 use codeyard_repos_core::store_types::GitSession;
 use codeyard_repos_core::store_types::GitStreams;
-use codeyard_db_identity::users::tokens;
-use codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert;
-use codeyard_git::error::RepoError;
+use codeyard_repos_core::wire::Operation;
+use codeyard_repos_core::wire::Request;
 use reqwest::{Client, StatusCode};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -183,7 +183,8 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
     assert_eq!(repository.storage_node_id, Some(storage.node_id));
     assert!(!Path::new(&repository.disk_path).exists());
     let uuid =
-        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repository.disk_path).unwrap();
+        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&repository.disk_path)
+            .unwrap();
     let storage_path = root
         .path()
         .join("storage/repos")
@@ -519,7 +520,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
 
     // Bypass ingress to verify storage-side role, placement and credential checks.
     let caller_disk = root.path().join("rpc-caller");
-    let caller = cluster::start(
+    let caller = codeyard_cluster::start(
         &database.pool,
         &caller_disk.join("state"),
         &caller_disk,
@@ -587,7 +588,8 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
     let error = refused_receive(
         &caller.context,
         storage.node_id,
-        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&elsewhere.disk_path).unwrap(),
+        codeyard_repos_core::cluster::rpc::repository::repository_uuid(&elsewhere.disk_path)
+            .unwrap(),
         ReceiveCredential::Token(*write_id),
         &owner.username,
     )

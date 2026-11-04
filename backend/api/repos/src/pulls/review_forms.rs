@@ -24,20 +24,20 @@ use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_app::app::AppState;
+use codeyard_db_repos::discussions::comment_revision;
+use codeyard_db_repos::pull_requests::reviews::PullRequestCommentEntry;
+use codeyard_db_repos::pull_requests::reviews::PullRequestReviewEntry;
+use codeyard_repos_core::repositories::code_owners::load_rules;
+use codeyard_repos_core::repositories::code_owners::resolve_owners;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_pulls::issues::discussion_link;
 use codeyard_repos_pulls::issues::discussion_link_at;
 use codeyard_repos_pulls::issues::discussion_page;
 use codeyard_repos_pulls::issues::MAX_REVIEW_COMMENT_OFFSET;
-use codeyard_repos_core::repositories::code_owners::load_rules;
-use codeyard_repos_core::repositories::code_owners::resolve_owners;
 use codeyard_repos_pulls::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
 use codeyard_repos_pulls::repositories::pull_requests::reviews::CreatePullRequestReviewRequest;
 use codeyard_repos_pulls::repositories::pull_requests::reviews::DismissPullRequestReviewRequest;
 use codeyard_repos_pulls::repositories::pull_requests::reviews::RequestReviewerRequest;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_db_repos::discussions::comment_revision;
-use codeyard_db_repos::pull_requests::reviews::PullRequestCommentEntry;
-use codeyard_db_repos::pull_requests::reviews::PullRequestReviewEntry;
 use codeyard_webui::pages::repos::issues as view;
 use codeyard_webui::pages::repos::issues::DetailDraft;
 use codeyard_webui::pages::repos::issues::Kind;
@@ -230,7 +230,12 @@ pub(crate) async fn page_reviews(
             review.comments.push(comment);
         }
     }
-    let page = crate::paging::number(ctx, "page", 1, 1..=codeyard_repos_pulls::issues::MAX_COMMENT_PAGE)?;
+    let page = crate::paging::number(
+        ctx,
+        "page",
+        1,
+        1..=codeyard_repos_pulls::issues::MAX_COMMENT_PAGE,
+    )?;
     let base = format!(
         "{}/{}?page={page}",
         repo.view.family_url(Kind::Pull),
@@ -1103,30 +1108,32 @@ pub(crate) async fn native_edit_conversation_comment(
         )
         .await;
     }
-    let result = codeyard_repos_pulls::repositories::pull_requests::comments::edit_pull_request_comment(
-        &ctx.state.pool,
-        &ctx.state.notification_broadcaster,
-        ctx.require_user()?.id,
-        codeyard_repos_pulls::issues::comments::CommentTarget {
-            owner,
-            repo: name,
-            number,
-            comment_id,
-        },
-        draft.comment.clone(),
-        Some(&expected_body),
-    )
-    .await
-    .map_err(operation_error);
+    let result =
+        codeyard_repos_pulls::repositories::pull_requests::comments::edit_pull_request_comment(
+            &ctx.state.pool,
+            &ctx.state.notification_broadcaster,
+            ctx.require_user()?.id,
+            codeyard_repos_pulls::issues::comments::CommentTarget {
+                owner,
+                repo: name,
+                number,
+                comment_id,
+            },
+            draft.comment.clone(),
+            Some(&expected_body),
+        )
+        .await
+        .map_err(operation_error);
     match result {
         Ok(comment) => {
             let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
-            let link = codeyard_repos_pulls::repositories::pull_requests::comments::saved_comment_link(
-                &ctx.state.pool,
-                &base,
-                &comment,
-            )
-            .await;
+            let link =
+                codeyard_repos_pulls::repositories::pull_requests::comments::saved_comment_link(
+                    &ctx.state.pool,
+                    &base,
+                    &comment,
+                )
+                .await;
             Ok(ctx.redirect(&link))
         }
         Err(failure) => {
@@ -1156,18 +1163,19 @@ pub(crate) async fn native_delete_conversation_comment(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let result = codeyard_repos_pulls::repositories::pull_requests::comments::delete_pull_request_comment(
-        &ctx.state.pool,
-        ctx.require_user()?.id,
-        codeyard_repos_pulls::issues::comments::CommentTarget {
-            owner,
-            repo: name,
-            number,
-            comment_id,
-        },
-    )
-    .await
-    .map_err(operation_error);
+    let result =
+        codeyard_repos_pulls::repositories::pull_requests::comments::delete_pull_request_comment(
+            &ctx.state.pool,
+            ctx.require_user()?.id,
+            codeyard_repos_pulls::issues::comments::CommentTarget {
+                owner,
+                repo: name,
+                number,
+                comment_id,
+            },
+        )
+        .await
+        .map_err(operation_error);
     match result {
         Ok(()) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(Kind::Pull), number))),
         Err(failure) => {

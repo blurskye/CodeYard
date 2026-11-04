@@ -1,7 +1,7 @@
 use anyhow::Result;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::DbPool;
+use codeyard_repos_core::repositories::store::repo_store;
 
 /// Keep untrusted fields on one terminal line without interpreting control bytes.
 fn terminal_text(value: &str) -> String {

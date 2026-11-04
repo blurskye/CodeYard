@@ -128,8 +128,7 @@ pub(crate) async fn enforce(
             }
             None
         } else {
-            codeyard_identity::github_auth::authenticate(&state, request.headers(), false)
-                .await?
+            codeyard_identity::github_auth::authenticate(&state, request.headers(), false).await?
         };
         if let Some(auth) = authentication {
             key = Some(if auth.is_job() {

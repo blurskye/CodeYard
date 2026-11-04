@@ -39,10 +39,9 @@ pub async fn stamp_client_address(
     if let Some(Ok(value)) = client_key(&request, &config.trusted_proxies)
         .map(|client| client.parse::<header::HeaderValue>())
     {
-        request.headers_mut().insert(
-            codeyard_identity::client_address::CLIENT_HEADER,
-            value,
-        );
+        request
+            .headers_mut()
+            .insert(codeyard_identity::client_address::CLIENT_HEADER, value);
     }
     next.run(request).await
 }

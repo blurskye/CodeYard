@@ -52,16 +52,17 @@ pub async fn delete_stack(
     Path((owner, repo, number)): Path<(String, String, i32)>,
 ) -> Result<Json<PullRequestDetailResponse>, (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    let pull_request = codeyard_repos_pulls::repositories::pull_requests::mutations::unstack_pull_request(
-        &state.pool,
-        &state.ci_runs,
-        current_actor.id,
-        owner,
-        repo,
-        number,
-    )
-    .await
-    .map_err(crate::pulls::operation_error)?;
+    let pull_request =
+        codeyard_repos_pulls::repositories::pull_requests::mutations::unstack_pull_request(
+            &state.pool,
+            &state.ci_runs,
+            current_actor.id,
+            owner,
+            repo,
+            number,
+        )
+        .await
+        .map_err(crate::pulls::operation_error)?;
     Ok(Json(detail_response(&state.pool, pull_request).await?))
 }
 
@@ -149,17 +150,18 @@ pub(crate) async fn native_unstack(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let result = codeyard_repos_pulls::repositories::pull_requests::mutations::unstack_pull_request(
-        &ctx.state.pool,
-        &ctx.state.ci_runs,
-        ctx.require_user()?.id,
-        owner,
-        name,
-        number,
-    )
-    .await
-    .map(|_| ())
-    .map_err(crate::pulls::operation_error);
+    let result =
+        codeyard_repos_pulls::repositories::pull_requests::mutations::unstack_pull_request(
+            &ctx.state.pool,
+            &ctx.state.ci_runs,
+            ctx.require_user()?.id,
+            owner,
+            name,
+            number,
+        )
+        .await
+        .map(|_| ())
+        .map_err(crate::pulls::operation_error);
     page_answer(&ctx, &repo, number, result).await
 }
 

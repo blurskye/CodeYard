@@ -4,11 +4,11 @@ use crate::support::http_client::Client;
 use crate::support::organizations::applied;
 use axum::http::StatusCode;
 
-use codeyard_repos_core::repositories::lifecycle::provision;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
+use codeyard_repos_core::repositories::lifecycle::provision;
 use serde_json::{json, Value};
 
 // status/status.go's searchQuery, including both fragments and its leading newline.

@@ -37,6 +37,6 @@ pub mod email_links;
 
 pub mod repository_access;
 
+pub mod client_address;
 pub mod database_context;
 pub mod github_auth;
-pub mod client_address;

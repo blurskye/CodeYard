@@ -1,15 +1,15 @@
 //! Push admission uses the published ref and endpoint trees, regardless of the write route.
 use crate::support::database::Database;
 
+use codeyard_ci::config::CiConfig;
+use codeyard_ci::config::CiPipelineKind;
+use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_repos_core::ci::push::RefUpdate;
 use codeyard_repos_core::ci::runs::CiRunRequest;
 use codeyard_repos_core::ci::runs::CiRuns;
 use codeyard_repos_core::ci::runs::DispatchRequest;
 use codeyard_repos_core::repositories::lifecycle;
 use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_ci::config::CiConfig;
-use codeyard_ci::config::CiPipelineKind;
-use codeyard_notifications::broadcast::NotificationBroadcaster;
 use std::{collections::BTreeSet, sync::Arc};
 use tokio::sync::Notify;
 
@@ -144,10 +144,10 @@ async fn contract(pg: bool) {
     .unwrap());
 
     // Uploading an unchanged source alongside changed documentation must not run source CI.
-    use codeyard_repos_pulls::repositories::files;
     use codeyard_repos::editor::FileWrite;
     use codeyard_repos::editor::UploadFile;
     use codeyard_repos::editor::UploadWrite;
+    use codeyard_repos_pulls::repositories::files;
     let uploaded = files::upload_files(
         f.pool(),
         None,

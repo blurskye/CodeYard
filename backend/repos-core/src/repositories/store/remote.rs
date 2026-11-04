@@ -1,15 +1,15 @@
 //! Forward repository operations to their owning storage node.
 use crate::context::NodeContext;
-use crate::wire::Failure;
-use crate::wire::Operation;
-use crate::wire::Request;
 use crate::repositories::store::local::LocalStore;
+use crate::repositories::store::RepoStore;
 use crate::store_types::BlobBytes;
 use crate::store_types::BlobMetadata;
 use crate::store_types::WorkflowPayloadEntry;
 use crate::store_types::MAX_BLOB_RESPONSE_BYTES;
 use crate::store_types::MAX_WORKFLOW_PAYLOAD_BYTES;
-use crate::repositories::store::RepoStore;
+use crate::wire::Failure;
+use crate::wire::Operation;
+use crate::wire::Request;
 use codeyard_git::error::RepoError;
 use codeyard_git::BlobContent;
 use codeyard_git::CiWorkflowSource;
@@ -64,13 +64,8 @@ impl RemoteStore {
         operation: Operation,
         body: &[u8],
     ) -> Result<(crate::wire::Reply, Vec<u8>), RepoError> {
-        self.exchange_with_actor_and_limit(
-            actor,
-            operation,
-            body,
-            crate::wire::MAX_BYTES,
-        )
-        .await
+        self.exchange_with_actor_and_limit(actor, operation, body, crate::wire::MAX_BYTES)
+            .await
     }
 
     async fn exchange_with_actor_and_limit(
@@ -80,10 +75,7 @@ impl RemoteStore {
         body: &[u8],
         response_body_limit: usize,
     ) -> Result<(crate::wire::Reply, Vec<u8>), RepoError> {
-        let context = self
-            .context
-            .as_ref()
-            .ok_or_else(crate::wire::unavailable)?;
+        let context = self.context.as_ref().ok_or_else(crate::wire::unavailable)?;
         context
             .call_with_response_limit(
                 self.node_id,
@@ -168,9 +160,7 @@ impl RemoteStore {
         match reply.result {
             Ok(_) => Ok(body),
             Err(Failure::Repository(error)) => Err(error),
-            Err(Failure::Merge(_)) => Err(crate::wire::invalid(
-                "unexpected merge failure",
-            )),
+            Err(Failure::Merge(_)) => Err(crate::wire::invalid("unexpected merge failure")),
         }
     }
 
@@ -195,9 +185,7 @@ impl RemoteStore {
         match reply.result {
             Ok(_) => Ok(body),
             Err(Failure::Repository(error)) => Err(error),
-            Err(Failure::Merge(_)) => Err(crate::wire::invalid(
-                "unexpected merge failure",
-            )),
+            Err(Failure::Merge(_)) => Err(crate::wire::invalid("unexpected merge failure")),
         }
     }
 
@@ -266,10 +254,9 @@ impl RemoteStore {
             .await?;
         match reply.result {
             Ok(value) => {
-                let mut blob: BlobContent = serde_json::from_value(value)
-                    .map_err(|_| crate::wire::unavailable())?;
-                blob.content = String::from_utf8(body)
-                    .map_err(|_| crate::wire::unavailable())?;
+                let mut blob: BlobContent =
+                    serde_json::from_value(value).map_err(|_| crate::wire::unavailable())?;
+                blob.content = String::from_utf8(body).map_err(|_| crate::wire::unavailable())?;
                 Ok(blob)
             }
             Err(Failure::Repository(error)) => Err(error),
@@ -310,8 +297,8 @@ impl RemoteStore {
             .await?;
         match reply.result {
             Ok(value) => {
-                let metadata: BlobMetadata = serde_json::from_value(value)
-                    .map_err(|_| crate::wire::unavailable())?;
+                let metadata: BlobMetadata =
+                    serde_json::from_value(value).map_err(|_| crate::wire::unavailable())?;
                 Ok(BlobBytes {
                     id: metadata.id,
                     bytes,
@@ -364,10 +351,7 @@ impl RemoteStore {
         session: crate::store_types::GitSession,
         streams: crate::store_types::GitStreams<'_>,
     ) -> anyhow::Result<std::process::ExitStatus> {
-        let context = self
-            .context
-            .as_ref()
-            .ok_or_else(crate::wire::unavailable)?;
+        let context = self.context.as_ref().ok_or_else(crate::wire::unavailable)?;
         context
             .git_session(
                 self.node_id,

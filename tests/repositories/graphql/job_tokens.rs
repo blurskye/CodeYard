@@ -1,7 +1,7 @@
 //! The GraphQL boundary must not widen the REST job-token policy.
 use super::*;
-use codeyard_repos_pulls::repositories;
 use codeyard_model::node_id;
+use codeyard_repos_pulls::repositories;
 use codeyard_webhooks::payloads;
 use std::collections::BTreeMap;
 
@@ -13,7 +13,7 @@ async fn contract(pg: bool) {
     let mut repos = Vec::new();
     for name in ["inside", "outside"] {
         repos.push(
-            repositories::lifecycle::provision(
+            codeyard_repos_core::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),

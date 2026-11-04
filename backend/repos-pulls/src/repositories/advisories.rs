@@ -1,13 +1,13 @@
 //! Temporary remediation forks reuse repository storage placement and checked fork initialization.
 
 use crate::services::RepositoryServices;
-use codeyard_repos_core::context::NodeContext;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::queries::credentials::Actor;
 use codeyard_db_repos::repositories::creation::CreationAdmission;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_model::advisories::Refusal;
+use codeyard_repos_core::context::NodeContext;
 use std::path::Path;
 
 pub async fn private_fork(
@@ -100,8 +100,10 @@ async fn private_fork_owned(
         {
             Ok(Some(deleted)) => {
                 if let Err(cleanup) =
-                    codeyard_repos_core::repositories::lifecycle::remove_deleted_repository(context, &deleted)
-                        .await
+                    codeyard_repos_core::repositories::lifecycle::remove_deleted_repository(
+                        context, &deleted,
+                    )
+                    .await
                 {
                     tracing::warn!(repo_id=fork.id,%cleanup,"Unattached private advisory fork requires cleanup");
                 }

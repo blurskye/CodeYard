@@ -9,9 +9,9 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 
-use codeyard_repos_pulls::repositories;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
+use codeyard_repos_pulls::repositories;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -72,7 +72,7 @@ async fn contract(pg: bool) {
     let bob = f.actor("bob").await;
     let eve = f.actor("eve").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -83,7 +83,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    repositories::lifecycle::provision(
+    codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),

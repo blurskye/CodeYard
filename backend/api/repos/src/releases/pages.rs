@@ -17,14 +17,14 @@ use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::refs::RefError;
-use codeyard_repos_core::repositories::releases::ReleaseError;
-use codeyard_repos_pulls::repositories::releases::ReleaseInput;
 use codeyard_db_core::models::ReleaseAsset;
 use codeyard_db_core::models::ReleaseRow;
 use codeyard_db_repos::releases::ReleaseFields;
 use codeyard_git::error::ErrorKind;
 use codeyard_identity::repository_access::AccessError;
+use codeyard_repos_core::repositories::refs::RefError;
+use codeyard_repos_core::repositories::releases::ReleaseError;
+use codeyard_repos_pulls::repositories::releases::ReleaseInput;
 use codeyard_storage::files::downloads::DownloadError;
 use codeyard_storage::files::uploads::UploadError;
 use codeyard_webui::app::Page;
@@ -715,9 +715,14 @@ pub(crate) async fn upload_asset(
     let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to upload an asset.");
     };
-    if let Err(error) =
-        codeyard_repos_pulls::repositories::releases::edit_detail(&ctx.state.pool, actor, &owner, &name, id)
-            .await
+    if let Err(error) = codeyard_repos_pulls::repositories::releases::edit_detail(
+        &ctx.state.pool,
+        actor,
+        &owner,
+        &name,
+        id,
+    )
+    .await
     {
         let (status, message) = refused(&error);
         return ctx.error(status, &message);

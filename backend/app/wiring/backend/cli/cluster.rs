@@ -423,8 +423,7 @@ async fn is_primary(pool: &DbPool, repository: i64, node: i64) -> Result<bool> {
 
 async fn report_promotion(pool: &DbPool, promotion: Promotion) -> Result<()> {
     let repository =
-        codeyard_cluster::replicas::promote::repository_name(pool, promotion.repository)
-            .await?;
+        codeyard_cluster::replicas::promote::repository_name(pool, promotion.repository).await?;
     let from = node_name(pool, promotion.from).await?;
     let to = node_name(pool, promotion.to).await?;
     if codeyard_db_cluster::cluster::writes::write_settings(pool)
@@ -460,12 +459,11 @@ async fn promote_with_recovery(
         .await?
         .and_then(|row| row.storage_node_id)
         .context("repository has no primary")?;
-    let error = match codeyard_cluster::replicas::promote::promote(pool, repository, to, force)
-        .await
-    {
-        Ok(promotions) => return Ok(promotions),
-        Err(error) => error,
-    };
+    let error =
+        match codeyard_cluster::replicas::promote::promote(pool, repository, to, force).await {
+            Ok(promotions) => return Ok(promotions),
+            Err(error) => error,
+        };
     let Some(target) = error
         .downcast_ref::<codeyard_cluster::replicas::promote::RecoveryPending>()
         .map(|pending| pending.target)
@@ -480,10 +478,8 @@ async fn promote_with_recovery(
     else {
         return Err(error);
     };
-    if !codeyard_cluster::replicas::promote::recover_family(
-        pool, repository, local.id, repos_path,
-    )
-    .await?
+    if !codeyard_cluster::replicas::promote::recover_family(pool, repository, local.id, repos_path)
+        .await?
     {
         return Err(error);
     }
@@ -574,11 +570,9 @@ async fn promote_command(
                             .await?
                             .serving
                     {
-                        let name = codeyard_cluster::replicas::promote::repository_name(
-                            pool,
-                            *repository,
-                        )
-                        .await?;
+                        let name =
+                            codeyard_cluster::replicas::promote::repository_name(pool, *repository)
+                                .await?;
                         eprintln!("{name}: {error:#}");
                         fenced += 1;
                     }
@@ -587,8 +581,7 @@ async fn promote_command(
             let failed = remaining.len() + fenced;
             for (repository, _) in remaining {
                 let name =
-                    codeyard_cluster::replicas::promote::repository_name(pool, repository)
-                        .await?;
+                    codeyard_cluster::replicas::promote::repository_name(pool, repository).await?;
                 if let Some((_, error)) = failures.iter().find(|(id, _)| *id == repository) {
                     eprintln!("{name}: {error:#}");
                 } else {

@@ -1,9 +1,9 @@
-use std::path::{Path,PathBuf};
+use anyhow::{Context, Result};
+use codeyard_git::{locks, mirror};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tokio::sync::{OwnedMutexGuard, OwnedRwLockWriteGuard};
 use uuid::Uuid;
-use anyhow::{Context,Result};
-use codeyard_git::{locks,mirror};
-use tokio::sync::{OwnedMutexGuard,OwnedRwLockWriteGuard};
 /// How long moving or retiring a directory waits for the Git sessions using it. A directory
 /// that stays busy is left for a later pass, so a long clone holds nothing else up.
 pub const MOVE_WAIT: Duration = Duration::from_millis(500);
@@ -48,4 +48,3 @@ pub async fn moving(primary: &Path, mirror: &Path) -> Moving {
         _readers: readers,
     }
 }
-

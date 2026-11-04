@@ -21,7 +21,7 @@ async fn contract(pg: bool) {
     let signing_keys = codeyard_ci::oidc::SigningKeys::new(f.pool().clone());
     let actor = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),

@@ -18,9 +18,9 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::releases::ReleaseError;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
+use codeyard_repos_core::repositories::releases::ReleaseError;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -39,7 +39,9 @@ pub(crate) fn release_error(error: ReleaseError) -> Error {
         ReleaseError::AssetNameTaken => Error::invalid("An asset with this name already exists"),
         ReleaseError::Conflict => Error::new(StatusCode::CONFLICT, "Release changed"),
         ReleaseError::TargetRequired => Error::invalid("target_commitish is required"),
-        ReleaseError::Git(error) => codeyard_repos_core::api_shared::github::contents::store_error(error),
+        ReleaseError::Git(error) => {
+            codeyard_repos_core::api_shared::github::contents::store_error(error)
+        }
         ReleaseError::Ref(error) => crate::git::refs::ref_error(error),
         ReleaseError::Upload(codeyard_storage::files::uploads::UploadError::Invalid) => {
             Error::invalid("Invalid asset upload")
@@ -58,10 +60,16 @@ pub(crate) async fn asset_document(
     release: &codeyard_db_core::models::Release,
     asset: &codeyard_db_core::models::ReleaseAsset,
 ) -> Result<Value> {
-    codeyard_repos_core::webhooks::documents::release_asset(&state.pool, owner, name, release, asset)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)
+    codeyard_repos_core::webhooks::documents::release_asset(
+        &state.pool,
+        owner,
+        name,
+        release,
+        asset,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .ok_or_else(Error::missing)
 }
 
 pub(crate) async fn document(
@@ -155,7 +163,13 @@ async fn get_one(
     let (repo, auth) = repository(&state, &headers, owner, name, false).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
     let detail = if let Some(tag) = params.get("tag") {
-        codeyard_repos_pulls::repositories::releases::detail_by_tag(&state.pool, viewer, repo.id, tag).await
+        codeyard_repos_pulls::repositories::releases::detail_by_tag(
+            &state.pool,
+            viewer,
+            repo.id,
+            tag,
+        )
+        .await
     } else {
         let id = match params.get("release_id") {
             Some(id) => id.parse().map_err(|_| Error::missing())?,
@@ -167,7 +181,8 @@ async fn get_one(
                     .id
             }
         };
-        codeyard_repos_pulls::repositories::releases::detail_by_id(&state.pool, viewer, repo.id, id).await
+        codeyard_repos_pulls::repositories::releases::detail_by_id(&state.pool, viewer, repo.id, id)
+            .await
     }
     .map_err(release_error)?;
     Ok(Json(document(&state, owner, name, &detail).await?))

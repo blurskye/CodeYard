@@ -1,7 +1,7 @@
 //! Check publishers share repository authority, but cannot overwrite another publisher's runs.
 use crate::api_shared::github::contents::store_error;
-use crate::request_context::RequestContext;
 use crate::repositories::store::repo_store;
+use crate::request_context::RequestContext;
 use axum::http::StatusCode;
 use codeyard_db_actions::checks::Suite;
 use codeyard_db_actions::checks::ACTIONS_APP_ID;
@@ -217,7 +217,7 @@ pub async fn emit(
     action: &'static str,
     doc: Value,
 ) {
-    emit_for_pool(&state.pool(), repo, actor, event, action, doc).await;
+    emit_for_pool(state.pool(), repo, actor, event, action, doc).await;
 }
 
 async fn emit_for_pool(

@@ -3,14 +3,14 @@
 //! sets its refs and HEAD to the listing. Git does the object and ref work. A bundle is
 //! not used: it leaves out the refs that point into the copy's history, so a copy that is
 //! ahead of a tag would lose the tag.
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::wire::Operation;
-use codeyard_repos_core::wire::Request;
-use crate::store_types::GitStreams;
-use codeyard_repos_core::repositories::store::RepoStore;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_repos_core::store_types::GitStreams;
+use codeyard_repos_core::wire::Operation;
+use codeyard_repos_core::wire::Request;
 use codeyard_storage::local::TEMP_PREFIX;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -120,7 +120,8 @@ async fn fetch(
     let row = codeyard_db_cluster::cluster::get_repository_by_uuid(pool, &repository.to_string())
         .await?
         .context("replica repository was deleted")?;
-    let primary_path = codeyard_repos_core::repositories::store::primary_path(&context.repos_path, repository);
+    let primary_path =
+        codeyard_repos_core::repositories::store::primary_path(&context.repos_path, repository);
     let _installation = tokio::select! {
         biased;
         _ = stop.cancelled() => anyhow::bail!("replica assignment changed"),

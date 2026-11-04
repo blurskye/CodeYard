@@ -22,8 +22,6 @@ use chrono::DateTime;
 use chrono::Utc;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::lifecycle::LifecycleFailure;
-use codeyard_repos_core::repositories::lifecycle::StorageError;
 use codeyard_db_security::advisories::Listing;
 use codeyard_db_security::advisories::Scope;
 use codeyard_db_security::advisories::Sort;
@@ -32,6 +30,8 @@ use codeyard_model::advisories::Data;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::urls::repo_url;
+use codeyard_repos_core::repositories::lifecycle::LifecycleFailure;
+use codeyard_repos_core::repositories::lifecycle::StorageError;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
@@ -218,8 +218,7 @@ async fn list(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (scope, actor) = if let Some(org) = params.get("org") {
-        let actor =
-            codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
+        let actor = codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
         let org = crate::orgs::target(&state, org).await?;
         (Scope::Organization(org.id), actor)
     } else {

@@ -10,7 +10,6 @@ thiserror.workspace = true
 url.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-zip.workspace = true
 reqwest.workspace = true
 anyhow.workspace = true
 crypto_box.workspace = true

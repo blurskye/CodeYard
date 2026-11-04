@@ -16,7 +16,6 @@ use axum::Router;
 use base64::engine::general_purpose::STANDARD;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoErrorReason;
 use codeyard_model::github_error::Error;
@@ -24,6 +23,7 @@ use codeyard_model::github_error::Result;
 use codeyard_model::urls::repo_url;
 use codeyard_repos::editor::FileWrite;
 use codeyard_repos::editor::MAX_EDITOR_BYTES;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_webhooks::payloads::git_commit as commit_json;
 use codeyard_webui::pages::repos::ref_path::encode_path as path_url;
 use serde::Deserialize;
@@ -412,14 +412,13 @@ async fn save(
             .content
             .as_deref()
             .ok_or_else(|| Error::invalid("content is required"))?;
-        codeyard_repos_pulls::repositories::files::decode_base64(content, MAX_EDITOR_BYTES).map_err(
-            |error| match error {
+        codeyard_repos_pulls::repositories::files::decode_base64(content, MAX_EDITOR_BYTES)
+            .map_err(|error| match error {
                 codeyard_repos_pulls::repositories::files::WriteFailure::TooLarge => {
                     Error::new(StatusCode::PAYLOAD_TOO_LARGE, "File exceeds 1 MiB")
                 }
                 _ => Error::invalid("Invalid base64 content"),
-            },
-        )?
+            })?
     };
     let write = FileWrite {
         branch: branch.to_owned(),

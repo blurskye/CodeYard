@@ -4,9 +4,9 @@ use crate::mutations::pull_error;
 use crate::mutations::text;
 use crate::RequestContext;
 use crate::Result;
+use codeyard_model::node_id;
 use codeyard_repos_pulls::issues::comments::CommentTarget;
 use codeyard_repos_pulls::issues::comments::CreateCommentRequest;
-use codeyard_model::node_id;
 use serde_json::json;
 use serde_json::Value;
 
@@ -42,9 +42,14 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             .await
             .map_err(pull_error)?;
         } else {
-            codeyard_repos_pulls::issues::comments::delete_issue_comment(pool, actor, &credential, target)
-                .await
-                .map_err(issue_error)?;
+            codeyard_repos_pulls::issues::comments::delete_issue_comment(
+                pool,
+                actor,
+                &credential,
+                target,
+            )
+            .await
+            .map_err(issue_error)?;
         }
     } else {
         let body = text(input, "body")?.to_owned();

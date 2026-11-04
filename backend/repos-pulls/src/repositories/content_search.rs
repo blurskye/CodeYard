@@ -1,7 +1,4 @@
 //! Live default-branch search using the bounded native Git/RPC operations. No independent index.
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
 use anyhow::Context;
 use anyhow::Result;
 use chrono::DateTime;
@@ -15,6 +12,9 @@ use codeyard_db_repos::discussion_search::Expr;
 use codeyard_git as git;
 use codeyard_git::CommitFilter;
 use codeyard_git::CommitInfo;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_storage::range::ByteRange as BlobRange;
 use std::collections::BTreeSet;
 use std::collections::HashMap;

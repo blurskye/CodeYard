@@ -23,18 +23,19 @@ pub async fn create_pull_request_comment(
     Json(req): Json<CreatePullRequestCommentRequest>,
 ) -> Result<(StatusCode, Json<PullRequestCommentResponse>), (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    let comment = codeyard_repos_pulls::repositories::pull_requests::comments::create_pull_request_comment(
-        &state.pool,
-        state.cluster.as_ref(),
-        &state.notification_broadcaster,
-        current_actor.id,
-        owner,
-        repo,
-        number,
-        req,
-    )
-    .await
-    .map_err(crate::pulls::operation_error)?;
+    let comment =
+        codeyard_repos_pulls::repositories::pull_requests::comments::create_pull_request_comment(
+            &state.pool,
+            state.cluster.as_ref(),
+            &state.notification_broadcaster,
+            current_actor.id,
+            owner,
+            repo,
+            number,
+            req,
+        )
+        .await
+        .map_err(crate::pulls::operation_error)?;
 
     Ok((
         StatusCode::CREATED,
@@ -68,17 +69,18 @@ async fn set_resolved(
     resolved: bool,
 ) -> Result<Json<PullRequestCommentResponse>, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
-    let comment = codeyard_repos_pulls::repositories::pull_requests::comments::set_comment_resolved(
-        &state.pool,
-        actor.id,
-        &owner,
-        &repo,
-        number,
-        comment_id,
-        resolved,
-    )
-    .await
-    .map_err(crate::pulls::operation_error)?;
+    let comment =
+        codeyard_repos_pulls::repositories::pull_requests::comments::set_comment_resolved(
+            &state.pool,
+            actor.id,
+            &owner,
+            &repo,
+            number,
+            comment_id,
+            resolved,
+        )
+        .await
+        .map_err(crate::pulls::operation_error)?;
     let author =
         codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, comment.author_id)
             .await

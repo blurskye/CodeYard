@@ -15,10 +15,10 @@ use chrono::NaiveDate;
 use chrono::Utc;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_actions::action_runs::RunQuery;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
+use codeyard_repos_core::repositories::store::repo_store;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -218,9 +218,9 @@ async fn document(
                             | codeyard_git::error::ErrorKind::Unavailable
                     ) => {}
                 Err(error) => {
-                    return Err(codeyard_repos_core::api_shared::github::contents::store_error(
-                        error,
-                    ))
+                    return Err(
+                        codeyard_repos_core::api_shared::github::contents::store_error(error),
+                    )
                 }
             }
             documents

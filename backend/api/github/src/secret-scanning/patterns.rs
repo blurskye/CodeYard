@@ -72,10 +72,7 @@ async fn scope(
     headers: &HeaderMap,
     params: &HashMap<String, String>,
     write: bool,
-) -> Result<(
-    Owner,
-    codeyard_identity::github_auth::Authentication,
-)> {
+) -> Result<(Owner, codeyard_identity::github_auth::Authentication)> {
     if let Some(org) = params.get("org") {
         let actor = codeyard_identity::github_auth::authenticate(state, headers, true)
             .await?

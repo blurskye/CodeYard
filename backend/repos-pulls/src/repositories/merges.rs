@@ -1,5 +1,9 @@
 //! Direct branch merges use normal ref-admission policy, not pull-request approval authority.
 
+use codeyard_git as git;
+use codeyard_git::error::ErrorKind;
+use codeyard_git::error::RepoError;
+use codeyard_git::CommitInfo;
 use codeyard_repos_core::ci::push::RefUpdate;
 use codeyard_repos_core::ci::runs::CiRuns;
 use codeyard_repos_core::context::NodeContext;
@@ -9,10 +13,6 @@ use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::BranchMergePublication;
 use codeyard_repos_core::store_types::MergeMethod;
 use codeyard_repos_core::store_types::MergeRequest;
-use codeyard_git as git;
-use codeyard_git::error::ErrorKind;
-use codeyard_git::error::RepoError;
-use codeyard_git::CommitInfo;
 
 /// Native forms pin both commit identities. REST callers without a preview use the identities
 /// resolved by this operation, and publication still compares both mutable refs atomically.
@@ -156,16 +156,17 @@ pub async fn merge_branch(
             Err(RefError::AppliedFollowupFailed) => true,
             Err(error) => return Err(error),
         };
-        let refreshed = codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
-            &pool,
-            &repository,
-            Some(&[base_name.as_str()]),
-            &ci,
-            actor,
-            codeyard_db_core::models::AccessLevel::Owner,
-        )
-        .await
-        .is_ok();
+        let refreshed =
+            codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
+                &pool,
+                &repository,
+                Some(&[base_name.as_str()]),
+                &ci,
+                actor,
+                codeyard_db_core::models::AccessLevel::Owner,
+            )
+            .await
+            .is_ok();
         ci.queue_push_runs(
             &repository,
             &owner,

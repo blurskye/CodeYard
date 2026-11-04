@@ -3,8 +3,8 @@ use super::protection::call;
 use super::request;
 use super::Router;
 use super::Value;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_identity::tokens;
+use codeyard_repos_core::repositories::store::repo_store;
 
 #[tokio::test]
 async fn sqlite_app_access_restrictions() {

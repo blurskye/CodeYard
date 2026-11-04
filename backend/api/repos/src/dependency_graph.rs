@@ -63,17 +63,18 @@ async fn respond(
     let reference = format!("refs/heads/{}", loaded.default_branch);
     if download {
         // The same typed document as the REST export, so submitted relationships survive.
-        let snapshots = match codeyard_repos_pulls::repositories::dependency_graph::pinned_snapshots(
-            &ctx.state,
-            &reader,
-            &loaded.repository,
-            &reference,
-        )
-        .await
-        {
-            Ok(snapshots) => snapshots,
-            Err(error) => return inventory_failure(&ctx, &loaded, error),
-        };
+        let snapshots =
+            match codeyard_repos_pulls::repositories::dependency_graph::pinned_snapshots(
+                &ctx.state,
+                &reader,
+                &loaded.repository,
+                &reference,
+            )
+            .await
+            {
+                Ok(snapshots) => snapshots,
+                Err(error) => return inventory_failure(&ctx, &loaded, error),
+            };
         if let Err((status, _)) = codeyard_api_http::shared::repos::access::check_repo_read_access(
             &ctx.state.pool,
             &loaded.repository,

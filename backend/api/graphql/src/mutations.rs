@@ -7,8 +7,8 @@ use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
 use async_graphql::ErrorExtensions;
-use codeyard_repos_core::store_types::MergeMethod;
 use codeyard_model::node_id;
+use codeyard_repos_core::store_types::MergeMethod;
 use serde_json::json;
 use serde_json::Value;
 
@@ -49,12 +49,16 @@ pub(super) fn pull_error(
     error: codeyard_repos_core::repositories::pull_requests::OperationError,
 ) -> Error {
     let kind = match &error {
-        codeyard_repos_core::repositories::pull_requests::OperationError::Missing { .. } => "NOT_FOUND",
-        codeyard_repos_core::repositories::pull_requests::OperationError::Denied { .. }
-        | codeyard_repos_core::repositories::pull_requests::OperationError::Unauthenticated { .. } => {
-            "FORBIDDEN"
+        codeyard_repos_core::repositories::pull_requests::OperationError::Missing { .. } => {
+            "NOT_FOUND"
         }
-        codeyard_repos_core::repositories::pull_requests::OperationError::Unavailable { .. } => "INTERNAL",
+        codeyard_repos_core::repositories::pull_requests::OperationError::Denied { .. }
+        | codeyard_repos_core::repositories::pull_requests::OperationError::Unauthenticated {
+            ..
+        } => "FORBIDDEN",
+        codeyard_repos_core::repositories::pull_requests::OperationError::Unavailable {
+            ..
+        } => "INTERNAL",
         _ => "UNPROCESSABLE",
     };
     Error::new(error.to_string()).extend_with(|_, e| e.set("type", kind))
@@ -419,24 +423,25 @@ pub(super) async fn resolve(
                 request.authorize(repo.id, "pull-requests", true).await?;
                 request.authorize(repo.id, "contents", true).await?;
                 request.require_oauth_scope("workflow")?;
-                let saved = codeyard_repos_pulls::repositories::pull_requests::revert::revert_pull_request(
-                    pool,
-                    &request.state.ci_runs,
-                    broadcaster,
-                    actor,
-                    (
-                        crate::repository::owner(&repo, request).await?,
-                        repo.name,
-                        current.number,
-                    ),
-                    codeyard_repos_pulls::repositories::pull_requests::revert::RevertRequest {
-                        title: optional_text(&input, "title"),
-                        body: optional_text(&input, "body"),
-                        is_draft: input["draft"].as_bool().unwrap_or(false),
-                    },
-                )
-                .await
-                .map_err(pull_error)?;
+                let saved =
+                    codeyard_repos_pulls::repositories::pull_requests::revert::revert_pull_request(
+                        pool,
+                        &request.state.ci_runs,
+                        broadcaster,
+                        actor,
+                        (
+                            crate::repository::owner(&repo, request).await?,
+                            repo.name,
+                            current.number,
+                        ),
+                        codeyard_repos_pulls::repositories::pull_requests::revert::RevertRequest {
+                            title: optional_text(&input, "title"),
+                            body: optional_text(&input, "body"),
+                            is_draft: input["draft"].as_bool().unwrap_or(false),
+                        },
+                    )
+                    .await
+                    .map_err(pull_error)?;
                 payload["pullRequest"] = crate::issue::pull_object(&current);
                 payload["revertPullRequest"] = crate::issue::pull_object(&saved);
                 Ok(payload)
@@ -620,14 +625,14 @@ pub(super) async fn resolve(
                 if field == "enablePullRequestAutoMerge" {
                     request.authorize(repo.id, "contents", true).await?;
                     let options =
-                        codeyard_repos_pulls::repositories::pull_requests::auto_merge::EnableRequest {
-                            expected_head: optional_text(&input, "expectedHeadOid"),
-                            token: Some(request.auth.token.id),
-                            merge_method: merge_method(&input, &current)?,
-                            commit_title: optional_text(&input, "commitHeadline"),
-                            commit_message: optional_text(&input, "commitBody"),
-                            author_email: optional_text(&input, "authorEmail"),
-                        };
+                    codeyard_repos_pulls::repositories::pull_requests::auto_merge::EnableRequest {
+                        expected_head: optional_text(&input, "expectedHeadOid"),
+                        token: Some(request.auth.token.id),
+                        merge_method: merge_method(&input, &current)?,
+                        commit_title: optional_text(&input, "commitHeadline"),
+                        commit_message: optional_text(&input, "commitBody"),
+                        author_email: optional_text(&input, "authorEmail"),
+                    };
                     codeyard_repos_pulls::repositories::pull_requests::auto_merge::enable(
                         pool, actor, &current, options,
                     )
@@ -661,14 +666,20 @@ pub(super) async fn resolve(
                         "UNSUBSCRIBED" => "participating",
                         _ => return Err(Error::new("Invalid subscription state")),
                     };
-                    codeyard_repos_pulls::repositories::engagement::set_level(pool, actor, id, level, &[])
-                        .await
-                        .map_err(|error| match error {
-                            codeyard_repos_pulls::repositories::engagement::EngagementError::Access(_) => {
-                                missing()
-                            }
-                            _ => unavailable(()),
-                        })?;
+                    codeyard_repos_pulls::repositories::engagement::set_level(
+                        pool,
+                        actor,
+                        id,
+                        level,
+                        &[],
+                    )
+                    .await
+                    .map_err(|error| match error {
+                        codeyard_repos_pulls::repositories::engagement::EngagementError::Access(
+                            _,
+                        ) => missing(),
+                        _ => unavailable(()),
+                    })?;
                 } else {
                     codeyard_repos_pulls::repositories::engagement::change(
                         pool,
@@ -680,9 +691,9 @@ pub(super) async fn resolve(
                     )
                     .await
                     .map_err(|error| match error {
-                        codeyard_repos_pulls::repositories::engagement::EngagementError::Access(_) => {
-                            missing()
-                        }
+                        codeyard_repos_pulls::repositories::engagement::EngagementError::Access(
+                            _,
+                        ) => missing(),
                         _ => unavailable(()),
                     })?;
                 }

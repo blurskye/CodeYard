@@ -178,7 +178,7 @@ static LOCAL_IDENTITIES: std::sync::LazyLock<
 > = std::sync::LazyLock::new(Default::default);
 
 /// The application, not a repository row or remote request, selects the backed-up key directory.
-pub(crate) fn register_local_identity(state_dir: &std::path::Path, repos: &std::path::Path) {
+pub fn register_local_identity(state_dir: &std::path::Path, repos: &std::path::Path) {
     let root = std::path::absolute(repos).unwrap_or_else(|_| repos.to_owned());
     LOCAL_IDENTITIES
         .write()
@@ -237,7 +237,7 @@ fn verify_with_key(
     })
 }
 
-pub(crate) async fn candidate(
+pub async fn candidate(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     repository: &Repository,

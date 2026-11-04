@@ -16,11 +16,11 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_repos_pulls::repositories::engagement::Engagement;
-use codeyard_repos_pulls::repositories::engagement::EngagementError;
 use codeyard_identity::repository_access::AccessError;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
+use codeyard_repos_pulls::repositories::engagement::Engagement;
+use codeyard_repos_pulls::repositories::engagement::EngagementError;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -132,8 +132,7 @@ async fn list_stars(
     uri: &Uri,
 ) -> Result<Response> {
     let auth =
-        codeyard_identity::github_auth::authenticate(state, headers, username.is_none())
-            .await?;
+        codeyard_identity::github_auth::authenticate(state, headers, username.is_none()).await?;
     let user = match username {
         Some(username) => {
             codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, username)

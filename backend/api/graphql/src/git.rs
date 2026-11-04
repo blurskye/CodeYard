@@ -7,9 +7,9 @@ use crate::unavailable;
 use crate::url;
 use crate::RequestContext;
 use crate::Result;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::CommitInfo;
 use codeyard_model::node_id;
+use codeyard_repos_core::repositories::store::repo_store;
 use serde_json::json;
 use serde_json::Value;
 

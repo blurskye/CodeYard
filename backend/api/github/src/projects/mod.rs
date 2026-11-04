@@ -159,8 +159,7 @@ async fn list(
     Query(page): Query<Cursor>,
     Query(query): Query<ListQuery>,
 ) -> Result<Response> {
-    let auth =
-        codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
+    let auth = codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let (owner, name) = owner(&state, &params, false).await?;
     let (after, before, limit) = page.window()?;
     let query = query.q.as_deref().unwrap_or("");

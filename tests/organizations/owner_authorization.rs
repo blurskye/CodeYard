@@ -65,8 +65,8 @@ fn token() -> String {
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_git::error::RepoError;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_storage::ObjectStore;
 use tower::ServiceExt;
 
@@ -1131,7 +1131,8 @@ async fn valid_ref_without_workflow_directory_has_empty_actions_not_outage() {
         )
         .unwrap();
     let store = RepoStore::from_disk_path(directory.path().to_str().unwrap());
-    let workflows = codeyard_repos_core::ci::workflows::list_workflows_for_ref(&store, "main").await;
+    let workflows =
+        codeyard_repos_core::ci::workflows::list_workflows_for_ref(&store, "main").await;
     let kind = workflows
         .as_ref()
         .err()

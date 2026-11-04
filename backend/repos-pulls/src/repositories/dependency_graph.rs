@@ -1,12 +1,12 @@
 //! Dependency inventories pin Git before reading either file and never execute package managers.
 use crate::services::RepositoryServices;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::models::Repository;
 use codeyard_db_security::dependency_graph::Reader;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_model::repositories::Package;
 use codeyard_repos::dependencies::npm::Lockfile;
+use codeyard_repos_core::repositories::store::repo_store;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 
@@ -130,7 +130,7 @@ async fn snapshot_values(
 ) -> Result<Vec<serde_json::Value>, RepoError> {
     let branch = reference.starts_with("refs/heads/").then_some(reference);
     codeyard_db_security::dependency_graph::snapshots(
-        &state.pool(),
+        state.pool(),
         reader,
         repo.id,
         branch,
@@ -151,7 +151,7 @@ pub(crate) async fn native_inventory(
     repo: &Repository,
     reference: &str,
 ) -> Result<(String, Vec<Package>), RepoError> {
-    codeyard_db_security::dependency_graph::check_read(&state.pool(), reader, repo.id)
+    codeyard_db_security::dependency_graph::check_read(state.pool(), reader, repo.id)
         .await
         .map_err(graph_error)?;
     let store = repo_store(repo, state.cluster());
@@ -186,7 +186,7 @@ pub(crate) async fn native_inventory_at(
     // Codeyard's own earlier scan of this commit is not a submission, so it covers nothing. A
     // manifest is named by its source location, as `dependency_graph::packages` reads it.
     let covered: HashSet<String> = codeyard_db_security::dependency_graph::snapshots(
-        &state.pool(),
+        state.pool(),
         reader,
         repo.id,
         branch,
@@ -268,7 +268,7 @@ pub(crate) async fn native_inventory_at(
             }
         }
     }
-    codeyard_db_security::dependency_graph::check_read(&state.pool(), reader, repo.id)
+    codeyard_db_security::dependency_graph::check_read(state.pool(), reader, repo.id)
         .await
         .map_err(graph_error)?;
     Ok((sha, packages.into_values().collect()))
@@ -336,7 +336,7 @@ pub async fn inventory(
             "Dependency inventory exceeds its limit",
         ));
     }
-    codeyard_db_security::dependency_graph::check_read(&state.pool(), reader, repo.id)
+    codeyard_db_security::dependency_graph::check_read(state.pool(), reader, repo.id)
         .await
         .map_err(graph_error)?;
     Ok((sha, packages.into_values().collect()))
@@ -415,7 +415,7 @@ pub async fn pinned_snapshots(
         Err(error) => return Err(error),
     };
     let mut snapshots = codeyard_db_security::dependency_graph::snapshots(
-        &state.pool(),
+        state.pool(),
         reader,
         repo.id,
         Some(reference),

@@ -14,16 +14,16 @@ use axum::routing::get;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
-use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_repos_pulls::repositories::commit_comments::CommentDetails;
-use codeyard_repos_pulls::repositories::commit_comments::CommentError;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::models::Repository;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::urls::repo_url;
+use codeyard_repos_core::api_shared::github::contents::store_error;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_pulls::repositories::commit_comments::CommentDetails;
+use codeyard_repos_pulls::repositories::commit_comments::CommentError;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -179,9 +179,15 @@ async fn item(
     }
     let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     if method == Method::DELETE {
-        codeyard_repos_pulls::repositories::commit_comments::delete(&state.pool, actor, repo.id, id, None)
-            .await
-            .map_err(operation_error)?;
+        codeyard_repos_pulls::repositories::commit_comments::delete(
+            &state.pool,
+            actor,
+            repo.id,
+            id,
+            None,
+        )
+        .await
+        .map_err(operation_error)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
     let Json(input) = Json::<Update>::from_request(request, &state)

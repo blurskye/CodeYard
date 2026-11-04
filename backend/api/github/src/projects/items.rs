@@ -93,8 +93,7 @@ async fn item_document(
                     .ok_or_else(Error::missing)?;
             if let Some(id) = item.issue_id {
                 let auth =
-                    codeyard_identity::github_auth::authenticate(state, headers, false)
-                        .await?;
+                    codeyard_identity::github_auth::authenticate(state, headers, false).await?;
                 codeyard_webhooks::issue_documents::document(
                     &state.pool,
                     codeyard_webhooks::issue_documents::Reader::Request(state, auth.as_ref()),

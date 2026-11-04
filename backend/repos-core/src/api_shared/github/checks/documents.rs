@@ -6,8 +6,8 @@ use crate::api_shared::github::checks::pull_value;
 use crate::api_shared::github::checks::suite_value;
 use crate::api_shared::github::checks::SuiteDocuments;
 use crate::api_shared::github::contents::store_error;
-use crate::request_context::RequestContext;
 use crate::repositories::store::repo_store;
+use crate::request_context::RequestContext;
 use codeyard_db_actions::checks;
 use codeyard_db_actions::checks::Suite;
 use codeyard_db_core::models::Repository;
@@ -87,7 +87,7 @@ pub async fn suites(
 ) -> Result<Vec<Value>> {
     suite_page(
         Some(state),
-        &state.pool(),
+        state.pool(),
         repo,
         owner,
         rows,

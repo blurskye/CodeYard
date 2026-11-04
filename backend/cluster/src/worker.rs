@@ -1,17 +1,20 @@
 //! Core addresses and the dialing-only context for a worker with no database.
-use codeyard_repos_core::context::NodeContext;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_cluster_core::settings::Settings;
 use codeyard_cluster_core::transport::NodeAddress;
 use codeyard_cluster_core::worker::{resolve, CorePeer};
+use codeyard_repos_core::context::NodeContext;
 use codeyard_support::node_identity::load_or_create;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::RwLock;
 
-pub fn save_core(state_dir: &Path, ticket: &codeyard_cluster_core::pairing::JoinTicket) -> Result<()> {
+pub fn save_core(
+    state_dir: &Path,
+    ticket: &codeyard_cluster_core::pairing::JoinTicket,
+) -> Result<()> {
     codeyard_support::fs::private_dir(state_dir)?;
     let peer = CorePeer {
         public_key: ticket.node.to_string(),
@@ -124,7 +127,10 @@ pub async fn worker_context(
     Ok((
         NodeContext {
             pool: None,
-            iroh: codeyard_cluster_core::transport::IrohDialer::new(settings.relay.clone(), key.clone()),
+            iroh: codeyard_cluster_core::transport::IrohDialer::new(
+                settings.relay.clone(),
+                key.clone(),
+            ),
             key,
             node_id: 0,
             repos_path: state_dir.to_owned(),

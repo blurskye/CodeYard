@@ -29,8 +29,7 @@ async fn search_issues(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let auth =
-        codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
+    let auth = codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
     let query = Search::parse(q.get("q").map_or("", String::as_str))
         .map_err(Error::invalid)?

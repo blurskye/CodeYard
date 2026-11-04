@@ -13,8 +13,8 @@ use codeyard_api_http::shared::repos::chrome::date;
 use codeyard_api_http::shared::repos::chrome::store_error;
 use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::error::ErrorKind;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_webui::pages::repos as view;
 use std::sync::Arc;
 

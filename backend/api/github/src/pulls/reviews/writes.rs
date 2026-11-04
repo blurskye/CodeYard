@@ -24,10 +24,14 @@ use std::sync::Arc;
 
 fn failure(error: codeyard_repos_core::repositories::pull_requests::OperationError) -> Error {
     match error {
-        codeyard_repos_core::repositories::pull_requests::OperationError::Invalid { message, .. }
-        | codeyard_repos_core::repositories::pull_requests::OperationError::Conflict { message, .. } => {
-            Error::invalid_simple(message)
+        codeyard_repos_core::repositories::pull_requests::OperationError::Invalid {
+            message,
+            ..
         }
+        | codeyard_repos_core::repositories::pull_requests::OperationError::Conflict {
+            message,
+            ..
+        } => Error::invalid_simple(message),
         other => crate::pulls::mutations::operation_error(other),
     }
 }

@@ -52,8 +52,7 @@ async fn read(
     Path((owner, name, number, review_id)): Path<(String, String, i32, i64)>,
 ) -> Result<Json<Value>> {
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
-    let viewer =
-        codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
+    let viewer = codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let review = codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(
         &state.pool,
         review_id,
@@ -79,8 +78,7 @@ async fn list(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
-    let viewer =
-        codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
+    let viewer = codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let (offset, limit) = page.window()?;
     let rows = codeyard_db_repos::pull_requests::reviews::list_visible_pull_request_reviews(
         &state.pool,
@@ -164,8 +162,7 @@ async fn requested(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
-    let viewer =
-        codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
+    let viewer = codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let teams = crate::pulls::team_reviewers::documents(
         &state,
         repo.id,

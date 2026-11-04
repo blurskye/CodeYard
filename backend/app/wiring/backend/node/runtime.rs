@@ -502,17 +502,21 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     // Every web node sends queued email; each claims its own messages.
     let (stop_secret_scanning, secret_scanning_stop) = tokio::sync::watch::channel(false);
     let secret_scanning = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(codeyard_repos_pulls::repositories::secret_scanning::jobs::run(
-            Arc::new(state.clone()),
-            secret_scanning_stop,
-        ))
+        tokio::spawn(
+            codeyard_repos_pulls::repositories::secret_scanning::jobs::run(
+                Arc::new(state.clone()),
+                secret_scanning_stop,
+            ),
+        )
     });
     let (stop_auto_merge, auto_merge_stop) = tokio::sync::watch::channel(false);
     let auto_merge = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(codeyard_repos_pulls::repositories::pull_requests::auto_merge::run(
-            Arc::new(state.clone()),
-            auto_merge_stop,
-        ))
+        tokio::spawn(
+            codeyard_repos_pulls::repositories::pull_requests::auto_merge::run(
+                Arc::new(state.clone()),
+                auto_merge_stop,
+            ),
+        )
     });
     let (stop_email, email_stop) = tokio::sync::watch::channel(false);
     let email = config.roles.contains(NodeRole::Web).then(|| {

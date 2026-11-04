@@ -66,7 +66,7 @@ pub async fn scan(
     };
     let snapshot = crate::repositories::dependency_graph::snapshot(sha, reference, packages);
     codeyard_db_security::vulnerabilities::save_snapshot(
-        &state.pool(),
+        state.pool(),
         repo.id,
         generation,
         &snapshot,
@@ -74,8 +74,8 @@ pub async fn scan(
     .await
 }
 async fn sync(state: &dyn RepositoryServices) -> Result<()> {
-    let settings = codeyard_db_security::vulnerabilities::settings(&state.pool()).await?;
-    synchronize(&state.pool(), &settings).await
+    let settings = codeyard_db_security::vulnerabilities::settings(state.pool()).await?;
+    synchronize(state.pool(), &settings).await
 }
 /// Downloads each enabled ecosystem's `all.zip` from the OSV mirror and stores its records.
 pub async fn synchronize(
@@ -109,7 +109,7 @@ pub async fn synchronize(
                 bytes.extend_from_slice(&chunk);
             }
             let records = tokio::task::spawn_blocking(move || -> Result<Vec<PreparedAdvisory>> {
-                let mut archive = codeyard_support::zip_archives::open(bytes, 1_000_000)?;
+                let mut archive = codeyard_storage::zip_archives::open(bytes, 1_000_000)?;
                 let mut records = Vec::new();
                 let mut expanded = 0u64;
                 for i in 0..archive.len() {
@@ -173,30 +173,33 @@ pub async fn synchronize(
     );
     Ok(())
 }
-pub async fn run(state: Arc<impl RepositoryServices + 'static>, mut stop: tokio::sync::watch::Receiver<bool>) {
+pub async fn run(
+    state: Arc<impl RepositoryServices + 'static>,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+) {
     let mut discovered = false;
     let mut interval = tokio::time::interval(Duration::from_secs(30));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {_ = stop.changed()=>break,_=interval.tick()=>{}}
         let work = async {
-            if codeyard_db_security::vulnerabilities::claim_sync(&state.pool()).await? {
+            if codeyard_db_security::vulnerabilities::claim_sync(state.pool()).await? {
                 if let Err(error) = sync(&state).await {
                     tracing::warn!(%error,"OSV synchronization failed");
                 }
             }
             if !discovered {
-                codeyard_db_security::vulnerabilities::queue_changed(&state.pool()).await?;
+                codeyard_db_security::vulnerabilities::queue_changed(state.pool()).await?;
                 discovered = true;
             }
             for _ in 0..20 {
                 let Some((repo, generation)) =
-                    codeyard_db_security::vulnerabilities::claim(&state.pool()).await?
+                    codeyard_db_security::vulnerabilities::claim(state.pool()).await?
                 else {
                     break;
                 };
                 if let Some(repo) = codeyard_db_repos::repositories::records::get_repository_by_id(
-                    &state.pool(),
+                    state.pool(),
                     repo,
                 )
                 .await?

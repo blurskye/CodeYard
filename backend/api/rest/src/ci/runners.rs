@@ -539,9 +539,11 @@ async fn mutate(
         }
         "registration-token" | "jit" => {
             native::authorize_scope(pool, actor, scope).await?;
-            let ticket =
-                codeyard_repos_core::ci::runner_credentials::ticket(pool, ctx.state.cluster.as_ref())
-                    .await?;
+            let ticket = codeyard_repos_core::ci::runner_credentials::ticket(
+                pool,
+                ctx.state.cluster.as_ref(),
+            )
+            .await?;
             let expires = chrono::Utc::now() + chrono::Duration::hours(1);
             let jit = field(form, "action") == "jit";
             let work_folder = field(form, "work_folder");

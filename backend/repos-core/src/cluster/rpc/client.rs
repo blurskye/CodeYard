@@ -1,3 +1,4 @@
+use crate::cluster::rpc::RpcHandler;
 use crate::context::NodeContext;
 use crate::wire::invalid;
 use crate::wire::operation_body_limit;
@@ -10,7 +11,6 @@ use crate::wire::Reply;
 use crate::wire::Request;
 use crate::wire::MAX_BYTES;
 use crate::wire::TIMEOUT;
-use crate::cluster::rpc::RpcHandler;
 use anyhow::Result;
 use codeyard_cluster_core::link::Link;
 use codeyard_cluster_core::transport::NodeAddress;
@@ -39,7 +39,8 @@ impl NodeContext {
         let limits = crate::cluster::rpc::git_session::WriteLimits::load(pool).await?;
         let id = Uuid::new_v4().to_string();
         let write =
-            codeyard_cluster_core::writes::begin(pool, repo, self.node_id, term, &id, changes).await?;
+            codeyard_cluster_core::writes::begin(pool, repo, self.node_id, term, &id, changes)
+                .await?;
         let prepared = self
             .prepare_push_write(repository, path, write.record())
             .await;
@@ -54,7 +55,8 @@ impl NodeContext {
         } else {
             false
         };
-        let decided = codeyard_cluster_core::writes::decide(pool, &write, votes && authorized).await?;
+        let decided =
+            codeyard_cluster_core::writes::decide(pool, &write, votes && authorized).await?;
         if decided.decision != "commit" {
             if self
                 .abort_push_write(repository, path, &decided)

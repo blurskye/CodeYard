@@ -808,10 +808,10 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
     use axum::http::StatusCode;
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
-    use codeyard_repos_core::cluster;
-    use codeyard_repos_core::repositories::store::repo_store;
     use codeyard_ci::config::CiConfig;
     use codeyard_repos::editor::FileWrite;
+    use codeyard_repos_core::cluster;
+    use codeyard_repos_core::repositories::store::repo_store;
     use codeyard_storage::ObjectStore;
     use serde_json::Value;
     use std::sync::Arc;
@@ -831,14 +831,15 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
             ("fork-web", "web", root.path()),
             ("fork-storage", "storage", storage_root.path()),
         ] {
-            let settings = codeyard_cluster_core::settings::Settings::from_lookup(&|key| match key {
-                "IROH_BIND" => Some("127.0.0.1:0".into()),
-                "NODE_NAME" => Some(name.into()),
-                _ => None,
-            })
-            .unwrap()
-            .unwrap();
-            let node = cluster::start(
+            let settings =
+                codeyard_cluster_core::settings::Settings::from_lookup(&|key| match key {
+                    "IROH_BIND" => Some("127.0.0.1:0".into()),
+                    "NODE_NAME" => Some(name.into()),
+                    _ => None,
+                })
+                .unwrap()
+                .unwrap();
+            let node = codeyard_cluster::start(
                 database.pool(),
                 &disk.join("state"),
                 disk,

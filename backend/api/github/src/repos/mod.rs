@@ -16,14 +16,14 @@ use axum::routing::put;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
-use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::models::Repository;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::urls::repo_url;
+use codeyard_repos_core::api_shared::github::contents::store_error;
+use codeyard_repos_core::repositories::store::repo_store;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -303,7 +303,8 @@ async fn update(
         ));
     }
     if let Some(name) = input.name.as_deref() {
-        codeyard_repos_core::repositories::lifecycle::validate_name(name).map_err(lifecycle_error)?;
+        codeyard_repos_core::repositories::lifecycle::validate_name(name)
+            .map_err(lifecycle_error)?;
     }
     if value.get("description").is_some() {
         codeyard_repos_core::repositories::lifecycle::validate_description(
@@ -541,8 +542,7 @@ async fn list(
     use codeyard_db_repos::repositories::github::RepositoryListQuery;
     let authenticated = uri.path() == "/api/v3/user/repos";
     let auth =
-        codeyard_identity::github_auth::authenticate(&state, &headers, authenticated)
-            .await?;
+        codeyard_identity::github_auth::authenticate(&state, &headers, authenticated).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
     let params = params.map(|Path(params)| params).unwrap_or_default();
     let public = uri.path() == "/api/v3/repositories";
@@ -702,10 +702,9 @@ async fn list(
             .iter()
             .filter_map(|value| value["id"].as_i64())
             .collect();
-        let readable = codeyard_identity::github_auth::readable_repositories(
-            &state, None, &ids, "metadata",
-        )
-        .await?;
+        let readable =
+            codeyard_identity::github_auth::readable_repositories(&state, None, &ids, "metadata")
+                .await?;
         values.retain(|value| {
             value["id"]
                 .as_i64()

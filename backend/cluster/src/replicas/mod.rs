@@ -3,7 +3,6 @@
 //! longer needs. It also takes over the fork families of a primary that has gone offline,
 //! when it holds a copy with every write of each member. A node acts only on its own
 //! primaries and its own copies, so the nodes coordinate through the database alone.
-use codeyard_repos_core::context::NodeContext;
 use crate::replicas::promote::take_over;
 use crate::replicas::promote::Silent;
 use crate::replicas::promote::TAKE_OVER_AFTER;
@@ -16,6 +15,7 @@ use codeyard_git::error::RepoError;
 use codeyard_git::locks;
 use codeyard_git::maintenance;
 use codeyard_git::mirror;
+use codeyard_repos_core::context::NodeContext;
 use codeyard_storage::local::remove_stale_temporaries;
 use codeyard_storage::local::STALE_AFTER;
 use std::collections::HashMap;
@@ -405,7 +405,9 @@ pub(crate) async fn reconcile(pool: &DbPool, node: i64, repos: &Path) -> Result<
         if row.applied_version < 0 {
             continue;
         }
-        let Ok(uuid) = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path) else {
+        let Ok(uuid) =
+            codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path)
+        else {
             continue;
         };
         let usable = match connected(&copy_path(repos, uuid)).await {
@@ -452,7 +454,9 @@ async fn locate(
         Ok(_) => {}
     }
     for primary in primaries {
-        let Ok(uuid) = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&primary.disk_path) else {
+        let Ok(uuid) =
+            codeyard_repos_core::cluster::rpc::repository::repository_uuid(&primary.disk_path)
+        else {
             continue;
         };
         if copying.is_running(uuid) {
@@ -474,7 +478,9 @@ async fn locate(
         }
     }
     for row in held.iter().filter(|row| row.primary_node_id != Some(node)) {
-        let Ok(uuid) = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path) else {
+        let Ok(uuid) =
+            codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path)
+        else {
             continue;
         };
         if copying.is_running(uuid) {
@@ -647,8 +653,10 @@ impl Copying {
             .filter(|row| {
                 row.primary_node_id.is_some_and(|primary| primary != node)
                     && row.applied_version < row.write_version
-                    && codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path)
-                        .is_ok_and(|uuid| !self.is_running(uuid))
+                    && codeyard_repos_core::cluster::rpc::repository::repository_uuid(
+                        &row.disk_path,
+                    )
+                    .is_ok_and(|uuid| !self.is_running(uuid))
             })
             .cloned()
             .collect();
@@ -663,7 +671,9 @@ impl Copying {
             if retry.waiting(row.repository_id) {
                 continue;
             }
-            let Ok(uuid) = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path) else {
+            let Ok(uuid) =
+                codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path)
+            else {
                 continue;
             };
             if self.is_running(uuid) {
@@ -835,21 +845,22 @@ async fn keep_directories(context: &NodeContext) -> Result<HashSet<Uuid>> {
     // Copies first. A promotion to this node removes its copy row and makes it primary in one
     // transaction, so the later primary list shows the repository if the copy list did not.
     for row in codeyard_db_cluster::cluster::list_held_replicas(pool, node).await? {
-        keep.insert(codeyard_repos_core::cluster::rpc::repository::repository_uuid(
-            &row.disk_path,
-        )?);
+        keep.insert(
+            codeyard_repos_core::cluster::rpc::repository::repository_uuid(&row.disk_path)?,
+        );
     }
     for (_, disk_path) in codeyard_db_cluster::cluster::list_primary_paths(pool, node).await? {
-        keep.insert(codeyard_repos_core::cluster::rpc::repository::repository_uuid(
-            &disk_path,
-        )?);
+        keep.insert(codeyard_repos_core::cluster::rpc::repository::repository_uuid(&disk_path)?);
     }
     for (_, disk_path) in codeyard_db_cluster::cluster::list_unplaced_repositories(pool).await? {
-        if let Ok(uuid) = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&disk_path) {
+        if let Ok(uuid) = codeyard_repos_core::cluster::rpc::repository::repository_uuid(&disk_path)
+        {
             keep.insert(uuid);
         }
     }
     Ok(keep)
 }
 
-use codeyard_repos_core::cluster::replicas::{MOVE_WAIT,MIRRORS,QUARANTINES,copy_path,connected,moving};
+use codeyard_repos_core::cluster::replicas::{
+    connected, copy_path, moving, MIRRORS, MOVE_WAIT, QUARANTINES,
+};

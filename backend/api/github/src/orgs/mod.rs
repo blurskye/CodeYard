@@ -143,10 +143,7 @@ async fn owner_actor(
     state: &AppState,
     headers: &HeaderMap,
     name: &str,
-) -> Result<(
-    Organization,
-    codeyard_identity::github_auth::Authentication,
-)> {
+) -> Result<(Organization, codeyard_identity::github_auth::Authentication)> {
     let actor = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
         .ok_or_else(codeyard_identity::github_auth::required)?;
@@ -174,8 +171,7 @@ async fn get_org(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<Value>> {
-    let actor =
-        codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
+    let actor = codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
     let org = target(&state, &name).await?;
     if let Some(actor) = actor {
         if let OrganizationOutcome::Applied(owned) =

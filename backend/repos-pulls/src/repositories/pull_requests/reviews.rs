@@ -1,13 +1,13 @@
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::pull_requests::database_error;
-use codeyard_repos_core::repositories::pull_requests::OperationError;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::error::ErrorKind;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
 use codeyard_notifications::create::NotificationRequest;
 use codeyard_notifications::mentions::notify_mentions;
 use codeyard_notifications::mentions::MentionSource;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::repositories::pull_requests::database_error;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_webhooks::payloads::Scope;
 use serde::Deserialize;
 use serde_json::json;
@@ -284,7 +284,8 @@ async fn create_review(
 
     // As on GitHub, anyone who can read the repository may review; only writers' approvals
     // count toward the merge rules (see `eligible_reviews`).
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository)
+        .await?;
 
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
@@ -592,9 +593,11 @@ pub async fn dismiss_pull_request_review(
             message: "Repository not found".to_owned(),
         })?;
 
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &actor, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_read(pool, &actor, &repository)
+        .await?;
 
-    codeyard_repos_core::repositories::pull_requests::require_admin(pool, &actor, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_admin(pool, &actor, &repository)
+        .await?;
     if repository.owner_kind == "user" && !actor.is_admin && !repository.is_personal_owner(actor.id)
     {
         return Err(OperationError::Missing {
@@ -696,7 +699,8 @@ pub async fn request_reviewer_bound(
 
     check_repository_binding(expected_repository, repository.id)?;
     let requester = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
-    codeyard_repos_core::repositories::pull_requests::require_write(pool, &requester, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_write(pool, &requester, &repository)
+        .await?;
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
@@ -862,7 +866,8 @@ pub async fn remove_requested_reviewer_bound(
 
     check_repository_binding(expected_repository, repository.id)?;
     let actor = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
-    codeyard_repos_core::repositories::pull_requests::require_write(pool, &actor, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_write(pool, &actor, &repository)
+        .await?;
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await

@@ -24,16 +24,17 @@ pub async fn update_pull_request(
     let current_actor = get_current_user(&state.pool, &headers).await?;
     let repository =
         crate::access::readable_repository(&state.pool, &owner, &repo, &headers).await?;
-    let pull_request = codeyard_repos_pulls::repositories::pull_requests::mutations::update_pull_request(
-        &state.pool,
-        &state.ci_runs,
-        &state.notification_broadcaster,
-        current_actor.id,
-        (repository.id, number),
-        req,
-    )
-    .await
-    .map_err(crate::pulls::operation_error)?;
+    let pull_request =
+        codeyard_repos_pulls::repositories::pull_requests::mutations::update_pull_request(
+            &state.pool,
+            &state.ci_runs,
+            &state.notification_broadcaster,
+            current_actor.id,
+            (repository.id, number),
+            req,
+        )
+        .await
+        .map_err(crate::pulls::operation_error)?;
     Ok(Json(detail_response(&state.pool, pull_request).await?))
 }
 

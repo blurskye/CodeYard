@@ -23,8 +23,7 @@ impl LoginSessionRequest {
             invalid_initiator,
             fresh: generate_session_id(),
             user_agent: extract_user_agent(headers),
-            client: codeyard_identity::client_address::client_address(headers)
-                .map(str::to_owned),
+            client: codeyard_identity::client_address::client_address(headers).map(str::to_owned),
         }
     }
 

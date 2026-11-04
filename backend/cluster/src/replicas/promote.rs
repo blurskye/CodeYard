@@ -289,7 +289,10 @@ pub async fn recover_family(
     for (member, _, _) in family {
         let view = journal::recovery_view(pool, member).await?;
         if !view.serving && view.voters.iter().any(|voter| voter.node_id == node) {
-            codeyard_repos_core::repositories::store::RepoStore::recover_term(pool, member, node, repos).await?;
+            codeyard_repos_core::repositories::store::RepoStore::recover_term(
+                pool, member, node, repos,
+            )
+            .await?;
         }
         terms.push((member, view.term));
     }

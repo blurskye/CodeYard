@@ -1,9 +1,9 @@
-use codeyard_identity::database_context::DatabaseContext;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
 use codeyard_db_repos::assignees::AssignedItem;
+use codeyard_identity::database_context::DatabaseContext;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use serde_json::json;
@@ -26,7 +26,7 @@ pub enum Reader<'a> {
 }
 
 /// The REST issue document that webhook payloads send. `None` when the item is gone.
-pub(crate) async fn webhook_document(
+pub async fn webhook_document(
     pool: &codeyard_db_core::DbPool,
     repo: &codeyard_db_core::models::Repository,
     owner: &str,
@@ -289,12 +289,7 @@ pub async fn documents_page(
         let (mut value, author, milestone, closed_by, labels, comments, reactions) = if pull {
             let pull = &pulls[&id];
             (
-                crate::payloads::pull_request_issue(
-                    pull,
-                    &person(pull.author_id)?,
-                    repo,
-                    owner,
-                ),
+                crate::payloads::pull_request_issue(pull, &person(pull.author_id)?, repo, owner),
                 pull.author_id,
                 pull.milestone_id,
                 pull.closed_by_id,
@@ -305,12 +300,7 @@ pub async fn documents_page(
         } else {
             let issue = &issues[&id];
             (
-                crate::payloads::issue_json(
-                    issue,
-                    &person(issue.author_id)?,
-                    repo,
-                    owner,
-                ),
+                crate::payloads::issue_json(issue, &person(issue.author_id)?, repo, owner),
                 issue.author_id,
                 issue.milestone_id,
                 issue.closed_by_id,
@@ -356,8 +346,7 @@ pub async fn documents_page(
             .filter(|count| count.subject_id == id)
             .cloned()
             .collect();
-        value["reactions"] =
-            crate::payloads::reaction_rollup(&format!("{url}/reactions"), &counts);
+        value["reactions"] = crate::payloads::reaction_rollup(&format!("{url}/reactions"), &counts);
         if !pull {
             value["type"] = types
                 .get(&id)
@@ -379,8 +368,7 @@ pub async fn documents_page(
             Some(pin) => {
                 let comment_id =
                     codeyard_model::webhook_ids::conversation_comment_id(pin.comment_id, pull);
-                let comment =
-                    crate::comment_documents::find(pool, repo.id, comment_id).await?;
+                let comment = crate::comment_documents::find(pool, repo.id, comment_id).await?;
                 crate::comment_documents::document(pool, repo, owner, &comment).await?
             }
             None => Value::Null,

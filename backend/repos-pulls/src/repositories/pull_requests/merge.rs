@@ -1,11 +1,3 @@
-use codeyard_repos_core::ci::push::RefUpdate;
-use codeyard_repos_core::ci::runs::CiRuns;
-use codeyard_repos_core::repositories::pull_requests::database_error;
-use codeyard_repos_core::repositories::pull_requests::OperationError;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::store_types::allowed_merge_methods;
-use codeyard_repos_core::store_types::MergeMethod;
-use codeyard_repos_core::store_types::MergeRequest as StoreMerge;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::validate_merge_revision;
@@ -17,6 +9,14 @@ use codeyard_repos::protection::BranchWrite;
 use codeyard_repos::protection::History;
 use codeyard_repos::protection::Refusal;
 use codeyard_repos::protection::WriteVia;
+use codeyard_repos_core::ci::push::RefUpdate;
+use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::repositories::pull_requests::database_error;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::store_types::allowed_merge_methods;
+use codeyard_repos_core::store_types::MergeMethod;
+use codeyard_repos_core::store_types::MergeRequest as StoreMerge;
 use codeyard_webhooks::payloads::Scope;
 use codeyard_webui::pages::repos::issues::MERGE_COMMIT_REFUSED;
 use serde::Deserialize;
@@ -1095,10 +1095,15 @@ async fn prepare_pull_request_merge_checked(
         return Err(stale_revision());
     }
     let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
-    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repository).await?;
-    codeyard_repos_core::repositories::access::check_publication_actor(pool, &authority, &repository)
-        .await
-        .map_err(|error| publish_failure(error.into(), request.merge_method))?;
+    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repository)
+        .await?;
+    codeyard_repos_core::repositories::access::check_publication_actor(
+        pool,
+        &authority,
+        &repository,
+    )
+    .await
+    .map_err(|error| publish_failure(error.into(), request.merge_method))?;
 
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
@@ -1419,7 +1424,8 @@ async fn publish_prepared_merge_owned(
         return Err(method_not_allowed(merge.method));
     }
     let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
-    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repository)
+        .await?;
     let current =
         codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
             .await
@@ -1552,15 +1558,16 @@ async fn publish_prepared_merge_owned(
         user.id,
     )
     .await;
-    if let Err(error) = codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
-        pool,
-        &repository,
-        Some(&[&merge.base_branch]),
-        ci,
-        user.id,
-        codeyard_db_core::models::AccessLevel::Owner,
-    )
-    .await
+    if let Err(error) =
+        codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
+            pool,
+            &repository,
+            Some(&[&merge.base_branch]),
+            ci,
+            user.id,
+            codeyard_db_core::models::AccessLevel::Owner,
+        )
+        .await
     {
         tracing::warn!(repo_id = repository.id, %error, "could not refresh pull requests after merge");
     }
@@ -1749,8 +1756,8 @@ pub async fn merge_pull_request_checked(
     expected: Option<(i64, i64)>,
 ) -> Result<MergeResponse, OperationError> {
     let prepared = prepare_pull_request_merge_checked(
-        &state.pool(),
-        &state.ci_runs(),
+        state.pool(),
+        state.ci_runs(),
         actor.into(),
         repository,
         request,

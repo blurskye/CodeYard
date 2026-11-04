@@ -1,8 +1,8 @@
 //! Branch creation uses the normal ref publication checks before recording the link.
-use crate::services::RepositoryServices;
 use crate::issues::OperationError;
-use codeyard_repos_core::repositories::store::repo_store;
+use crate::services::RepositoryServices;
 use codeyard_git::error::ErrorKind;
+use codeyard_repos_core::repositories::store::repo_store;
 
 pub fn default_name(issue: &codeyard_db_core::models::Issue) -> String {
     let title = issue
@@ -42,7 +42,7 @@ pub async fn create(
 ) -> Result<codeyard_db_repos::issues::management::LinkedBranch, OperationError> {
     let authority = actor.into();
     codeyard_identity::repository_access::check_write(
-        &state.pool(),
+        state.pool(),
         issue.repo_id,
         authority.user_id,
     )
@@ -52,7 +52,7 @@ pub async fn create(
         message: "Write access is required".into(),
     })?;
     let owner =
-        codeyard_db_repos::repositories::records::repository_owner_name(&state.pool(), target.id)
+        codeyard_db_repos::repositories::records::repository_owner_name(state.pool(), target.id)
             .await
             .map_err(crate::issues::database_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -60,9 +60,9 @@ pub async fn create(
                 message: "Repository not found".into(),
             })?;
     let created = codeyard_repos_core::repositories::refs::create_branch(
-        &state.pool(),
+        state.pool(),
         state.cluster(),
-        &state.ci_runs(),
+        state.ci_runs(),
         authority.clone(),
         &owner,
         target.id,
@@ -117,10 +117,12 @@ pub async fn create(
             }
             ErrorKind::Unavailable => return Err(unconfirmed()),
         },
-        Err(codeyard_repos_core::repositories::refs::RefError::Unavailable) => return Err(unconfirmed()),
+        Err(codeyard_repos_core::repositories::refs::RefError::Unavailable) => {
+            return Err(unconfirmed())
+        }
     }
     codeyard_db_repos::issues::management::link_branch(
-        &state.pool(),
+        state.pool(),
         authority,
         issue.repo_id,
         issue.id,

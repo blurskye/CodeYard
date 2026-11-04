@@ -7,10 +7,10 @@ use axum::{
     Router,
 };
 
-use codeyard_repos_core::repositories::lifecycle;
-use codeyard_repos_pulls::repositories::pull_requests::async_merge;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
+use codeyard_repos_core::repositories::lifecycle;
+use codeyard_repos_pulls::repositories::pull_requests::async_merge;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 

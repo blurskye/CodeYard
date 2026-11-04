@@ -18,18 +18,20 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_repos_pulls::issues::comments::CommentTarget;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::DiffFileInfo;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_pulls::issues::comments::CommentTarget;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-fn operation_error(error: codeyard_repos_core::repositories::pull_requests::OperationError) -> Error {
+fn operation_error(
+    error: codeyard_repos_core::repositories::pull_requests::OperationError,
+) -> Error {
     crate::pulls::mutations::operation_error(error)
 }
 
@@ -157,7 +159,9 @@ pub(super) async fn prepare(
     pull: &codeyard_db_core::models::PullRequest,
     input: Create,
     pending: bool,
-) -> Result<codeyard_repos_pulls::repositories::pull_requests::comments::CreatePullRequestCommentRequest> {
+) -> Result<
+    codeyard_repos_pulls::repositories::pull_requests::comments::CreatePullRequestCommentRequest,
+> {
     prepare_with_diff(state, headers, repo, pull, input, pending, None).await
 }
 
@@ -169,7 +173,9 @@ pub(super) async fn prepare_with_diff(
     input: Create,
     pending: bool,
     cached: Option<&codeyard_git::DiffInfo>,
-) -> Result<codeyard_repos_pulls::repositories::pull_requests::comments::CreatePullRequestCommentRequest> {
+) -> Result<
+    codeyard_repos_pulls::repositories::pull_requests::comments::CreatePullRequestCommentRequest,
+> {
     let mut line = input.line;
     let mut side = input.side;
     if let Some(parent) = input.in_reply_to {
@@ -285,18 +291,19 @@ async fn create(
     let input =
         serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?;
     let request = prepare(&state, &headers, &repo, &pull, input, false).await?;
-    let comment = codeyard_repos_pulls::repositories::pull_requests::comments::create_pull_request_comment(
-        &state.pool,
-        state.cluster.as_ref(),
-        &state.notification_broadcaster,
-        actor.id,
-        owner.clone(),
-        name,
-        number,
-        request,
-    )
-    .await
-    .map_err(operation_error)?;
+    let comment =
+        codeyard_repos_pulls::repositories::pull_requests::comments::create_pull_request_comment(
+            &state.pool,
+            state.cluster.as_ref(),
+            &state.notification_broadcaster,
+            actor.id,
+            owner.clone(),
+            name,
+            number,
+            request,
+        )
+        .await
+        .map_err(operation_error)?;
     Ok((
         StatusCode::CREATED,
         Json(document(&state, &owner, &repo, &pull, &comment).await?),
@@ -349,21 +356,22 @@ async fn update(
     let (pull, _) = visible(&state, &headers, &repo, id).await?;
     let input: Body =
         serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?;
-    let comment = codeyard_repos_pulls::repositories::pull_requests::comments::edit_pull_request_comment(
-        &state.pool,
-        &state.notification_broadcaster,
-        actor.id,
-        CommentTarget {
-            owner: owner.clone(),
-            repo: name,
-            number: pull.number,
-            comment_id: id,
-        },
-        input.body,
-        None,
-    )
-    .await
-    .map_err(operation_error)?;
+    let comment =
+        codeyard_repos_pulls::repositories::pull_requests::comments::edit_pull_request_comment(
+            &state.pool,
+            &state.notification_broadcaster,
+            actor.id,
+            CommentTarget {
+                owner: owner.clone(),
+                repo: name,
+                number: pull.number,
+                comment_id: id,
+            },
+            input.body,
+            None,
+        )
+        .await
+        .map_err(operation_error)?;
     Ok(Json(
         document(&state, &owner, &repo, &pull, &comment).await?,
     ))

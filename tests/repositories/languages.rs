@@ -15,8 +15,8 @@ use axum::{
     Router,
 };
 
-use codeyard_repos_core::repositories::lifecycle;
 use codeyard_db_identity::users::transitions::SetupClaim;
+use codeyard_repos_core::repositories::lifecycle;
 use serde_json::{json, Value};
 use std::{path::Path, time::Duration};
 use tower::ServiceExt;
@@ -233,9 +233,11 @@ async fn first_language_reader_retries_when_the_default_changes_during_publicati
     let store = codeyard_repos_core::repositories::store::repo_store(&record, None);
     let repository_id = record.id;
     let task = tokio::spawn(async move {
-        codeyard_repos_core::repositories::languages::compute_and_store(&pool, &store, &record, "main")
-            .await
-            .unwrap()
+        codeyard_repos_core::repositories::languages::compute_and_store(
+            &pool, &store, &record, "main",
+        )
+        .await
+        .unwrap()
     });
     // Move the default only once the reader holds the publication lease, which it takes after
     // computing `main` and before writing it. A reader that started late would otherwise see the

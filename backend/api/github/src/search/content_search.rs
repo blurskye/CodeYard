@@ -10,12 +10,12 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
+use codeyard_model::github_error::Error;
+use codeyard_model::github_error::Result;
 use codeyard_repos_pulls::repositories::content_search::Entry;
 use codeyard_repos_pulls::repositories::content_search::KindOfSearch;
 use codeyard_repos_pulls::repositories::content_search::Query as SearchQuery;
 use codeyard_repos_pulls::repositories::content_search::Sort;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -33,8 +33,7 @@ async fn content(
     } else {
         KindOfSearch::Commits
     };
-    let authentication =
-        codeyard_identity::github_auth::identity(&state, &headers, false).await?;
+    let authentication = codeyard_identity::github_auth::identity(&state, &headers, false).await?;
     let viewer = authentication.as_ref().map(|a| a.user.id);
     if kind == KindOfSearch::Code && viewer.is_none() {
         return Err(codeyard_identity::github_auth::required());

@@ -80,10 +80,7 @@ async fn scope(
     headers: &HeaderMap,
     params: &Params,
     write: bool,
-) -> Result<(
-    codeyard_identity::github_auth::Authentication,
-    Option<i64>,
-)> {
+) -> Result<(codeyard_identity::github_auth::Authentication, Option<i64>)> {
     let actor = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
         .ok_or_else(codeyard_identity::github_auth::required)?;

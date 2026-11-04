@@ -69,7 +69,7 @@ async fn contract(pg: bool) {
     let mut repos = Vec::new();
     for name in ["project", "other"] {
         repos.push(
-            repositories::lifecycle::provision(
+            codeyard_repos_core::repositories::lifecycle::provision(
                 (f.pool(), None),
                 &repos_root,
                 codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),

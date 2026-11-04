@@ -7,7 +7,6 @@
 //! The one exception is [`RepoStore::local_path_for_spawning_git`], used by the
 //! host OpenSSH gateway.
 use crate::context::NodeContext;
-use crate::wire::Operation;
 use crate::store_types::AsyncMergePublication;
 use crate::store_types::BlobBytes;
 use crate::store_types::BranchMergePublication;
@@ -24,6 +23,7 @@ use crate::store_types::UpstreamMerge;
 use crate::store_types::MAX_ARCHIVE_RESPONSE_BYTES;
 use crate::store_types::MAX_COMMIT_OFFSET;
 use crate::store_types::MAX_COMMIT_PAGE_SIZE;
+use crate::wire::Operation;
 use codeyard_db_core::models::Repository;
 use codeyard_git as git;
 use codeyard_git::error::invalid_ref;
@@ -64,7 +64,7 @@ use std::time::Instant;
 pub mod local;
 mod remote;
 
-pub(crate) fn primary_path(root: &Path, uuid: uuid::Uuid) -> std::path::PathBuf {
+pub fn primary_path(root: &Path, uuid: uuid::Uuid) -> std::path::PathBuf {
     root.join(format!("{uuid}.git"))
 }
 
@@ -96,7 +96,7 @@ pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore
 }
 
 impl RepoStore {
-    pub(crate) async fn recover_term(
+    pub async fn recover_term(
         pool: &codeyard_db_core::DbPool,
         repository: i64,
         node: i64,
@@ -1794,9 +1794,7 @@ impl RepoStore {
                     .call_as(
                         actor.user_id,
                         Operation::TransferRepository {
-                            new_owner: crate::wire::PublicationText::retain(
-                                new_owner, actor,
-                            ),
+                            new_owner: crate::wire::PublicationText::retain(new_owner, actor),
                         },
                         b"",
                     )
@@ -1905,9 +1903,7 @@ impl RepoStore {
                     .call_as(
                         actor.user_id,
                         Operation::PatchRepository {
-                            default_branch: crate::wire::PublicationText::retain(
-                                name, actor,
-                            ),
+                            default_branch: crate::wire::PublicationText::retain(name, actor),
                             changes,
                         },
                         b"",
@@ -2442,9 +2438,7 @@ impl RepoStore {
                             base: base.into(),
                             result: result.into(),
                             method,
-                            token: crate::wire::PublicationCredential::retain(
-                                authority,
-                            ),
+                            token: crate::wire::PublicationCredential::retain(authority),
                             policy,
                         },
                         b"",
@@ -2507,9 +2501,7 @@ impl RepoStore {
                             base_branch: base_branch.into(),
                             base: base.into(),
                             result: result.into(),
-                            token: crate::wire::PublicationCredential::retain(
-                                authority,
-                            ),
+                            token: crate::wire::PublicationCredential::retain(authority),
                             policy,
                         },
                         b"",
@@ -2653,9 +2645,7 @@ impl RepoStore {
     pub async fn head_target(&self) -> Result<Option<String>, RepoError> {
         match &self.0 {
             Backend::Local(local) => local.head_target().await,
-            Backend::Remote(_) => Err(crate::wire::invalid(
-                "HEAD is read on the owning node",
-            )),
+            Backend::Remote(_) => Err(crate::wire::invalid("HEAD is read on the owning node")),
         }
     }
 
@@ -2668,10 +2658,9 @@ impl RepoStore {
     ) -> anyhow::Result<std::process::ExitStatus> {
         match &self.0 {
             Backend::Local(local) => local.replica_pack(targets, have, streams).await,
-            Backend::Remote(_) => Err(crate::wire::invalid(
-                "replica packs come from the primary",
-            )
-            .into()),
+            Backend::Remote(_) => {
+                Err(crate::wire::invalid("replica packs come from the primary").into())
+            }
         }
     }
 
@@ -2679,9 +2668,7 @@ impl RepoStore {
     pub async fn index_pack(&self, pack: &Path, strict: bool) -> Result<(), RepoError> {
         match &self.0 {
             Backend::Local(local) => local.index_pack(pack, strict).await,
-            Backend::Remote(_) => Err(crate::wire::invalid(
-                "replica copies live on this node",
-            )),
+            Backend::Remote(_) => Err(crate::wire::invalid("replica copies live on this node")),
         }
     }
 
@@ -2689,9 +2676,7 @@ impl RepoStore {
     pub async fn set_refs(&self, refs: &HashMap<String, String>) -> Result<(), RepoError> {
         match &self.0 {
             Backend::Local(local) => local.set_refs(refs).await,
-            Backend::Remote(_) => Err(crate::wire::invalid(
-                "replica copies live on this node",
-            )),
+            Backend::Remote(_) => Err(crate::wire::invalid("replica copies live on this node")),
         }
     }
 
@@ -2699,9 +2684,7 @@ impl RepoStore {
     pub async fn set_head_target(&self, target: &str) -> Result<(), RepoError> {
         match &self.0 {
             Backend::Local(local) => local.set_head_target(target).await,
-            Backend::Remote(_) => Err(crate::wire::invalid(
-                "replica copies live on this node",
-            )),
+            Backend::Remote(_) => Err(crate::wire::invalid("replica copies live on this node")),
         }
     }
 

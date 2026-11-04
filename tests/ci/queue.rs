@@ -1226,12 +1226,12 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
 }
 
 async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &Database) {
-    use codeyard_repos_core::ci::queue::RunQueue;
-    use codeyard_repos_core::ci::runs::CiRuns;
     use codeyard_ci::config::CiConfig;
     use codeyard_notifications::broadcast::NotificationBroadcaster;
     use codeyard_notifications::current_event;
     use codeyard_notifications::NotificationEvent;
+    use codeyard_repos_core::ci::queue::RunQueue;
+    use codeyard_repos_core::ci::runs::CiRuns;
     use std::sync::Arc;
     let w = world(db, "live").await;
     let broadcaster = Arc::new(NotificationBroadcaster::new(db.pool()));
@@ -2514,11 +2514,11 @@ macro_rules! on_both_engines {
 }
 
 async fn stale_failures_are_broadcast_after_commit(db: &Database) {
-    use codeyard_repos_core::ci::queue::RunQueue;
-    use codeyard_repos_core::ci::workers::CiWorkers;
     use codeyard_ci::config::CiConfig;
     use codeyard_notifications::broadcast::NotificationBroadcaster;
     use codeyard_notifications::NotificationEvent;
+    use codeyard_repos_core::ci::queue::RunQueue;
+    use codeyard_repos_core::ci::workers::CiWorkers;
     use std::sync::Arc;
     let w = world(db, "stale_live").await;
     let run = db.enqueue(w.repo, w.owner, false, &[]).await;

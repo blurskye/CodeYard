@@ -1,10 +1,7 @@
 //! Leased proposals consume the inventory and alerts maintained by the vulnerability worker.
 use anyhow::Context;
 
-use codeyard_repos_core::ci::runs::CiRuns;
 use crate::repositories::dependencies::registry::Client;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
@@ -13,6 +10,9 @@ use codeyard_db_repos::repositories::dependencies::Job;
 use codeyard_db_repos::repositories::dependencies::Refusal;
 use codeyard_git::error::ErrorKind;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_storage::range::ByteRange as BlobRange;
 use std::time::Duration;
 
@@ -69,8 +69,11 @@ async fn process(
         return Err(Unsupported("No default commit exists yet").into());
     }
     let stored = store.info().await?.default_branch;
-    let branch =
-        codeyard_repos_core::repositories::reads::default_branch(&refs, &stored, &repository.default_branch);
+    let branch = codeyard_repos_core::repositories::reads::default_branch(
+        &refs,
+        &stored,
+        &repository.default_branch,
+    );
     let sha = refs
         .get(&format!("refs/heads/{branch}"))
         .context("The default branch is missing")?

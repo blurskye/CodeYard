@@ -2,7 +2,6 @@
 //! peer's key against membership, and passes the one request on the connection to the
 //! same protocol code that the iroh router serves.
 use crate::ci::CiHandler;
-use codeyard_repos_core::cluster::rpc::RpcHandler;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_cluster_core::link::Link;
@@ -11,6 +10,7 @@ use codeyard_cluster_core::transport::active_member;
 use codeyard_cluster_core::transport::ALPN_PAIR;
 use codeyard_cluster_core::transport::ALPN_RPC;
 use codeyard_db_core::DbPool;
+use codeyard_repos_core::cluster::rpc::RpcHandler;
 use codeyard_support::node_identity::NodeKey;
 use iroh::PublicKey;
 use std::net::SocketAddr;

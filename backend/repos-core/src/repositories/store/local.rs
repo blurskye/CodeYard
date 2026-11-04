@@ -578,8 +578,7 @@ pub(crate) async fn begin_coordinated_ref_change(
             .write_quorum
             .is_some()
     {
-        crate::context::check_term_directory(pool, &repository, node_id.flatten(), path)
-            .await?;
+        crate::context::check_term_directory(pool, &repository, node_id.flatten(), path).await?;
         return Ok(count_ref_change(path).await);
     }
     begin_ref_change(pool, repo_id, path, node_id).await
@@ -666,8 +665,8 @@ pub(super) async fn recover_term(
     );
     let _lock = git::locks::lock(&target).await;
     let _readers = git::locks::exclusive(&target).await;
-    let view =
-        codeyard_cluster_core::writes::recover(pool, repository, view.primary_id, view.term).await?;
+    let view = codeyard_cluster_core::writes::recover(pool, repository, view.primary_id, view.term)
+        .await?;
     let target_store = LocalStore::new(target.to_str().context("invalid term path")?, None);
     if !tokio::fs::try_exists(&target).await? {
         let previous = term_path(root, uuid, view.term - 1);
@@ -4638,13 +4637,8 @@ impl LocalStore {
                 codeyard_db_cluster::cluster::get_repository_by_uuid(&pool, &uuid.to_string())
                     .await?
                     .ok_or_else(|| anyhow::anyhow!("repository unavailable"))?;
-            crate::context::check_term_directory(
-                &pool,
-                &repo,
-                self.node_id.flatten(),
-                &path,
-            )
-            .await?;
+            crate::context::check_term_directory(&pool, &repo, self.node_id.flatten(), &path)
+                .await?;
             let result = crate::repositories::git_sessions::receive_session(
                 pool.clone(),
                 ci,

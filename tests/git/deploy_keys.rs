@@ -391,12 +391,13 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
         "{}.git",
         codeyard_repos_core::cluster::rpc::repository::repository_uuid(&project.disk_path).unwrap()
     ));
-    let provenance =
-        codeyard_repos_core::repositories::store::RepoStore::from_disk_path(&physical.to_string_lossy())
-            .branch_publication(project.id, "refs/heads/from-writer")
-            .await
-            .unwrap()
-            .unwrap();
+    let provenance = codeyard_repos_core::repositories::store::RepoStore::from_disk_path(
+        &physical.to_string_lossy(),
+    )
+    .branch_publication(project.id, "refs/heads/from-writer")
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(
         provenance.publication.actor,
         codeyard_git::PublicationActor::DeployKey(writer_id)

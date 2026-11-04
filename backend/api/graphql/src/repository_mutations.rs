@@ -104,7 +104,8 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         .map_err(settings)?;
     let description = input.get("description").map(|v| v.as_str().unwrap_or(""));
     if let Some(value) = description {
-        codeyard_repos_core::repositories::lifecycle::validate_description(value).map_err(provision)?;
+        codeyard_repos_core::repositories::lifecycle::validate_description(value)
+            .map_err(provision)?;
     }
     if let Some(name) = input["name"].as_str() {
         codeyard_repos_core::repositories::lifecycle::validate_name(name).map_err(provision)?;

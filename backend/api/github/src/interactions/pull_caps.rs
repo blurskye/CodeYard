@@ -82,10 +82,7 @@ async fn actor_scope(
     headers: &HeaderMap,
     scope: ScopeName,
     write: bool,
-) -> Result<(
-    codeyard_identity::github_auth::Authentication,
-    PullCapScope,
-)> {
+) -> Result<(codeyard_identity::github_auth::Authentication, PullCapScope)> {
     let actor = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
         .ok_or_else(codeyard_identity::github_auth::required)?;

@@ -91,7 +91,7 @@ pub async fn queue_pull_request_ci(
 }
 
 /// The exact webhook document is also the workflow's event document.
-pub(crate) async fn queue_pull_request_event_ci(
+pub async fn queue_pull_request_event_ci(
     pool: &DbPool,
     ci: &CiRuns,
     repository: &Repository,

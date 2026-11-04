@@ -1,14 +1,14 @@
 //! Community standards are derived from real files at a pinned default-branch commit.
 
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
 use chrono::DateTime;
 use chrono::Utc;
 use codeyard_db_core::models::Repository;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::TreeEntry;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_storage::range::ByteRange as BlobRange;
 
 #[derive(Clone)]

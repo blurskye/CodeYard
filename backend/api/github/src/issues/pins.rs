@@ -39,8 +39,7 @@ async fn change(
     let (repo, auth) = repository(state, headers, &p["owner"], &p["repo"], true).await?;
     let actor = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let id = p["comment_id"].parse().map_err(|_| Error::missing())?;
-    let comment =
-        codeyard_webhooks::comment_documents::find(&state.pool, repo.id, id).await?;
+    let comment = codeyard_webhooks::comment_documents::find(&state.pool, repo.id, id).await?;
     codeyard_db_repos::pins::set_pin(
         &state.pool,
         actor.user.id,
@@ -61,13 +60,8 @@ async fn pin(
 ) -> Result<Json<Value>> {
     let (repo, comment) = change(&state, &headers, &p, true).await?;
     Ok(Json(
-        codeyard_webhooks::comment_documents::document(
-            &state.pool,
-            &repo,
-            &p["owner"],
-            &comment,
-        )
-        .await?,
+        codeyard_webhooks::comment_documents::document(&state.pool, &repo, &p["owner"], &comment)
+            .await?,
     ))
 }
 async fn unpin(

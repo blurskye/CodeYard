@@ -206,7 +206,9 @@ pub(crate) async fn native_detail(
                     .query
                     .get("page")
                     .and_then(|page| page.parse::<usize>().ok())
-                    .filter(|page| (2..=codeyard_repos_pulls::issues::MAX_COMMENT_PAGE).contains(page));
+                    .filter(|page| {
+                        (2..=codeyard_repos_pulls::issues::MAX_COMMENT_PAGE).contains(page)
+                    });
                 let suffix = match (comment, page) {
                     (Some(id), _) => format!("?comment={id}#comment-{id}"),
                     (None, Some(page)) => format!("?page={page}"),
@@ -309,12 +311,13 @@ pub(crate) async fn native_detail(
                 .filter(|comment| comment.pull_request_id == pull.id)
                 .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Comment not found."))?;
             let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
-            let location = codeyard_repos_pulls::repositories::pull_requests::comments::saved_comment_link(
-                &ctx.state.pool,
-                &base,
-                &comment,
-            )
-            .await;
+            let location =
+                codeyard_repos_pulls::repositories::pull_requests::comments::saved_comment_link(
+                    &ctx.state.pool,
+                    &base,
+                    &comment,
+                )
+                .await;
             return Ok(ctx.redirect(&location));
         }
         // A review link names the review the same way.

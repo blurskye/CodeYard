@@ -39,12 +39,12 @@ pub async fn request_reviewer(
     Ok((
         status,
         Json(match result.target {
-            codeyard_repos_pulls::repositories::pull_requests::reviews::ReviewerTarget::User(user) => {
-                RequestedReviewer::User(RequestedReviewerResponse::new(user))
-            }
-            codeyard_repos_pulls::repositories::pull_requests::reviews::ReviewerTarget::Team(team) => {
-                RequestedReviewer::Team(team)
-            }
+            codeyard_repos_pulls::repositories::pull_requests::reviews::ReviewerTarget::User(
+                user,
+            ) => RequestedReviewer::User(RequestedReviewerResponse::new(user)),
+            codeyard_repos_pulls::repositories::pull_requests::reviews::ReviewerTarget::Team(
+                team,
+            ) => RequestedReviewer::Team(team),
         }),
     ))
 }

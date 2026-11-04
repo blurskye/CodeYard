@@ -176,10 +176,7 @@ pub async fn documents(
             .get(&item_key(comment.item))
             .filter(|pin| pin.comment_id == comment.id)
             .map_or(Value::Null, |pin| {
-                crate::payloads::comment_pin(
-                    pin,
-                    pin.pinned_by.and_then(|id| users.get(&id)),
-                )
+                crate::payloads::comment_pin(pin, pin.pinned_by.and_then(|id| users.get(&id)))
             });
         values.push(value);
     }

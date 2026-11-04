@@ -1,9 +1,9 @@
 //! Git-derived proof preparation happens outside database transactions. Only the database
 //! decides whether a contribution may commit, using the live policy and the proof's source version.
 use crate::services::RepositoryServices;
-use codeyard_repos_core::repositories::store::repo_store;
 use anyhow::Result;
 use codeyard_git::CommitFilter;
+use codeyard_repos_core::repositories::store::repo_store;
 use std::time::Instant;
 
 static PROOF_WORK: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
@@ -13,27 +13,29 @@ pub async fn prepare(
     actor: &codeyard_db_core::models::User,
     repository: &codeyard_db_core::models::Repository,
 ) -> Result<()> {
-    if !codeyard_db_identity::interactions::proof_required(&state.pool(), actor.id, repository.id)
+    if !codeyard_db_identity::interactions::proof_required(state.pool(), actor.id, repository.id)
         .await?
     {
         return Ok(());
     }
-    if !codeyard_identity::repository_access::can_read(&state.pool(), Some(actor), repository).await?
-        || codeyard_identity::repository_access::user_access(&state.pool(), actor, repository)
+    if !codeyard_identity::repository_access::can_read(state.pool(), Some(actor), repository)
+        .await?
+        || codeyard_identity::repository_access::user_access(state.pool(), actor, repository)
             .await?
             .can_write()
     {
         return Ok(());
     }
-    let source = codeyard_db_identity::interactions::source(&state.pool(), repository.id)
+    let source = codeyard_db_identity::interactions::source(state.pool(), repository.id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("Repository changed"))?;
     anyhow::ensure!(
         repository.storage_node_id == source.storage_node_id,
         "Repository placement changed"
     );
-    let emails = codeyard_db_identity::interactions::verified_emails(&state.pool(), actor.id).await?;
-    if codeyard_db_identity::interactions::proof_current(&state.pool(), actor.id, &source, &emails)
+    let emails =
+        codeyard_db_identity::interactions::verified_emails(state.pool(), actor.id).await?;
+    if codeyard_db_identity::interactions::proof_current(state.pool(), actor.id, &source, &emails)
         .await?
         .is_some()
     {
@@ -61,7 +63,7 @@ pub async fn prepare(
     };
     anyhow::ensure!(
         codeyard_db_identity::interactions::save_proof(
-            &state.pool(),
+            state.pool(),
             actor.id,
             &source,
             &emails,

@@ -1,13 +1,13 @@
 //! Release notes derived from a pinned Git range and the repository's real merged pull requests.
 use super::*;
+use codeyard_git::error::ErrorKind;
+use codeyard_model::http_config::link_origin;
 use codeyard_repos_core::context::NodeContext;
 use codeyard_repos_core::repositories::releases::unavailable;
 use codeyard_repos_core::repositories::releases::validate_fields;
 use codeyard_repos_core::repositories::releases::validate_tag;
 use codeyard_repos_core::repositories::releases::ReleaseError;
 use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_git::error::ErrorKind;
-use codeyard_model::http_config::link_origin;
 use codeyard_storage::range::ByteRange as BlobRange;
 use serde::Deserialize;
 use std::fmt::Write;

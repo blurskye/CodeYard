@@ -2,13 +2,13 @@
 //! background check then merges it through the ordinary merge path, as that writer, so
 //! reviews, checks and branch protection apply exactly as they do to a merge button.
 use crate::services::RepositoryServices;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_repos::pull_requests::auto_merge::AutoMerge;
+use codeyard_db_repos::pull_requests::auto_merge::AutoMergeRequest;
 use codeyard_repos_core::repositories::pull_requests::actor;
 use codeyard_repos_core::repositories::pull_requests::require_write;
 use codeyard_repos_core::repositories::pull_requests::OperationError;
 use codeyard_repos_core::store_types::MergeMethod;
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_repos::pull_requests::auto_merge::AutoMerge;
-use codeyard_db_repos::pull_requests::auto_merge::AutoMergeRequest;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -114,7 +114,7 @@ async fn run_due_until_stop(
     state: &dyn RepositoryServices,
     stop: Option<&tokio::sync::watch::Receiver<bool>>,
 ) -> anyhow::Result<()> {
-    let pool = &state.pool();
+    let pool = state.pool();
     let mut after = 0;
     loop {
         let page = codeyard_db_repos::pull_requests::auto_merge::pending_auto_merges(
@@ -204,7 +204,7 @@ async fn run_due_until_stop(
             };
             let prepared = crate::repositories::pull_requests::merge::prepare_pull_request_merge(
                 pool,
-                &state.ci_runs(),
+                state.ci_runs(),
                 authority,
                 (owner, repository.name, pull.number),
                 crate::repositories::pull_requests::merge::MergeRequest {
@@ -224,8 +224,8 @@ async fn run_due_until_stop(
                     prepared.bind_auto_merge(entry.pull_request_id, &generation);
                     crate::repositories::pull_requests::merge::publish_prepared_merge(
                         pool,
-                        &state.ci_runs(),
-                        &state.notification_broadcaster(),
+                        state.ci_runs(),
+                        state.notification_broadcaster(),
                         prepared,
                     )
                     .await
@@ -254,7 +254,10 @@ async fn run_due_until_stop(
 }
 
 /// A check is never cut short: a merge in progress finishes before the loop stops.
-pub async fn run(state: Arc<impl RepositoryServices + 'static>, mut stop: tokio::sync::watch::Receiver<bool>) {
+pub async fn run(
+    state: Arc<impl RepositoryServices + 'static>,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+) {
     while !*stop.borrow() {
         if let Err(error) = run_due_until_stop(&state, Some(&stop)).await {
             tracing::warn!(%error, "auto-merge check failed");

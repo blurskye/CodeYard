@@ -13,10 +13,8 @@ use axum::routing::get;
 use axum::routing::post;
 use axum::routing::MethodRouter;
 use axum::Json;
-use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::objects::ObjectWrite;
 use codeyard_git::objects::Signature;
 use codeyard_git::objects::TagObject;
@@ -26,6 +24,8 @@ use codeyard_git::objects::MAX_BLOB_WRITE_BYTES;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::urls::repo_url;
+use codeyard_repos_core::api_shared::github::contents::store_error;
+use codeyard_repos_core::repositories::store::repo_store;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -142,15 +142,16 @@ async fn create_blob(
     .map_err(|error| Error::new(error.status(), "Invalid blob request"))?;
     let bytes = match input.encoding.as_deref().unwrap_or("utf-8") {
         "utf-8" => input.content.into_bytes(),
-        "base64" => {
-            codeyard_repos_pulls::repositories::files::decode_base64(&input.content, MAX_BLOB_WRITE_BYTES)
-                .map_err(|error| match error {
-                codeyard_repos_pulls::repositories::files::WriteFailure::TooLarge => {
-                    Error::invalid("Blobs must not exceed 100 MiB")
-                }
-                _ => Error::invalid("Invalid base64 content"),
-            })?
-        }
+        "base64" => codeyard_repos_pulls::repositories::files::decode_base64(
+            &input.content,
+            MAX_BLOB_WRITE_BYTES,
+        )
+        .map_err(|error| match error {
+            codeyard_repos_pulls::repositories::files::WriteFailure::TooLarge => {
+                Error::invalid("Blobs must not exceed 100 MiB")
+            }
+            _ => Error::invalid("Invalid base64 content"),
+        })?,
         _ => return Err(Error::invalid("encoding must be utf-8 or base64")),
     };
     if bytes.len() > MAX_BLOB_WRITE_BYTES {

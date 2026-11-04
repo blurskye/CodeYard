@@ -6,16 +6,16 @@ use axum::http::StatusCode;
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::ci::queue::RunQueue;
-use codeyard_repos_core::ci::runs::CiRunRequest;
-use codeyard_repos_core::ci::workers::CiWorkers;
-use codeyard_repos_pulls::repositories;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
 use codeyard_ci::config::CiPipelineKind;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_repos::editor::FileWrite;
+use codeyard_repos_core::ci::queue::RunQueue;
+use codeyard_repos_core::ci::runs::CiRunRequest;
+use codeyard_repos_core::ci::workers::CiWorkers;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_pulls::repositories;
 use codeyard_storage::ObjectStore;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
@@ -91,7 +91,7 @@ async fn contract(pg: bool) {
         None,
     );
     let api = create_router(state.clone());
-    let repo = repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -380,7 +380,7 @@ async fn partial(
     (reader, writer): (&str, &str),
     root: &std::path::Path,
 ) {
-    let repo = repositories::lifecycle::provision(
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),

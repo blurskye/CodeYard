@@ -25,8 +25,7 @@ async fn allowed(state: &AppState, headers: &HeaderMap) -> bool {
     }) {
         return true;
     }
-    let Ok(Some(auth)) =
-        codeyard_identity::github_auth::authenticate(state, headers, true).await
+    let Ok(Some(auth)) = codeyard_identity::github_auth::authenticate(state, headers, true).await
     else {
         return false;
     };

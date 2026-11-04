@@ -130,7 +130,7 @@ pub(super) fn xml(bytes: &[u8]) -> Result<Xml> {
 
 pub(super) fn nuspec(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut archive =
-        codeyard_support::zip_archives::open(bytes, 20_000).map_err(|_| Error::invalid())?;
+        codeyard_storage::zip_archives::open(bytes, 20_000).map_err(|_| Error::invalid())?;
     let mut result = None;
     for index in 0..archive.len() {
         let entry = archive.by_index(index).map_err(|_| Error::invalid())?;

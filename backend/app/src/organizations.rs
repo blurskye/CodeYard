@@ -55,8 +55,11 @@ pub async fn delete(
                 Applied(deleted) => deleted,
                 other => return Ok(other.map(|_| ())),
             };
-        codeyard_repos_core::repositories::lifecycle::remove_deleted_repository(state.cluster.as_ref(), &deleted)
-            .await?;
+        codeyard_repos_core::repositories::lifecycle::remove_deleted_repository(
+            state.cluster.as_ref(),
+            &deleted,
+        )
+        .await?;
     }
     codeyard_db_orgs::organizations::deletion::delete_organization(&state.pool, actor, org).await
 }

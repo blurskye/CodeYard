@@ -1,8 +1,3 @@
-use codeyard_repos_core::ci::runs::CiRuns;
-use codeyard_repos_core::repositories::pull_requests::database_error;
-use codeyard_repos_core::repositories::pull_requests::workflows::queue_pull_request_ci;
-use codeyard_repos_core::repositories::pull_requests::OperationError;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
@@ -13,6 +8,11 @@ use codeyard_notifications::mentions::MentionSource;
 use codeyard_notifications::watchers::notify_watchers;
 use codeyard_notifications::watchers::WatchEvent;
 use codeyard_notifications::watchers::WatchedItem;
+use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::repositories::pull_requests::database_error;
+use codeyard_repos_core::repositories::pull_requests::workflows::queue_pull_request_ci;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
+use codeyard_repos_core::repositories::store::repo_store;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -187,7 +187,8 @@ pub async fn create_pull_request(
             message: "Repository not found".to_owned(),
         })?;
 
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository)
+        .await?;
     let mut converted_retry = None;
     let (source_issue, title, body) = match req.source {
         PullRequestSource::Issue { issue } => {
@@ -257,7 +258,8 @@ pub async fn create_pull_request(
             }
         }
     })?;
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &head_repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &head_repository)
+        .await?;
     validate_maintainer_edit(
         user.id,
         repository.id,
@@ -312,9 +314,12 @@ pub async fn create_pull_request(
             || existing.head_branch != req.head_branch
             || existing.base_branch != req.base_branch
         {
-            return Err(codeyard_repos_core::repositories::pull_requests::write_error(
-                codeyard_db_repos::pull_requests::records::IssueConversionRefusal::Missing.into(),
-            ));
+            return Err(
+                codeyard_repos_core::repositories::pull_requests::write_error(
+                    codeyard_db_repos::pull_requests::records::IssueConversionRefusal::Missing
+                        .into(),
+                ),
+            );
         }
         repair_open_pull(
             pool,
@@ -406,7 +411,11 @@ pub async fn create_pull_request(
                 .downcast::<codeyard_db_repos::pull_requests::records::DuplicateOpenPullRequest>(
             ) {
                 Ok(duplicate) => duplicate.number,
-                Err(error) => return Err(codeyard_repos_core::repositories::pull_requests::write_error(error)),
+                Err(error) => {
+                    return Err(
+                        codeyard_repos_core::repositories::pull_requests::write_error(error),
+                    )
+                }
             };
             let existing = codeyard_db_repos::pull_requests::records::get_pull_request(
                 pool,
@@ -601,7 +610,8 @@ pub async fn update_pull_request(
     let repo = repository.name.clone();
 
     let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository)
+        .await?;
     let existing =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
@@ -978,7 +988,8 @@ async fn stack_change_target(
             message: "Repository not found".to_owned(),
         })?;
     let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
-    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repository)
+        .await?;
     let existing =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
@@ -1074,7 +1085,8 @@ pub async fn unstack_named_stack(
                 code: "not_found",
                 message: "Repository not found".into(),
             })?;
-    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repository)
+        .await?;
     let rows = codeyard_db_repos::pull_requests::records::unstack_named_stack(
         pool,
         user.id,
@@ -1135,7 +1147,8 @@ pub async fn join_stack_batch(
                 code: "not_found",
                 message: "Repository not found".into(),
             })?;
-    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repository)
+        .await?;
     let result = codeyard_db_repos::pull_requests::records::join_pull_request_stack_batch(
         pool,
         user.id,
@@ -1316,7 +1329,8 @@ pub async fn set_pull_request_draft(
             code: "not_found",
             message: "Repository not found".to_owned(),
         })?;
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository)
+        .await?;
     let existing =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
@@ -1393,15 +1407,16 @@ pub async fn set_pull_request_draft(
     // a new pull request does. The pull request is ready already, so a retry would be refused:
     // the event and its workflows go out even when the catch-up fails, and the failure is
     // reported after them.
-    let refreshed = codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_request(
-        pool,
-        &repository,
-        ci,
-        user.id,
-        pull_request.id,
-        Some(codeyard_db_core::models::AccessLevel::Owner),
-    )
-    .await;
+    let refreshed =
+        codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_request(
+            pool,
+            &repository,
+            ci,
+            user.id,
+            pull_request.id,
+            Some(codeyard_db_core::models::AccessLevel::Owner),
+        )
+        .await;
     if let Err(error) = &refreshed {
         tracing::warn!(pull_request_id = pull_request.id, %error, "ready pull request revisions were not refreshed");
     }

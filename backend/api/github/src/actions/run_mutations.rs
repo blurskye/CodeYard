@@ -25,8 +25,7 @@ async fn cancel(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Response> {
     let (repo, authentication) = repository(&state, &headers, &owner, &name, true).await?;
-    let authentication =
-        authentication.ok_or_else(codeyard_identity::github_auth::required)?;
+    let authentication = authentication.ok_or_else(codeyard_identity::github_auth::required)?;
     let run = run(&state, repo.id, id).await?;
     // Both engines use bounded process-group termination, rather than leaving always() jobs running.
     if !state
@@ -56,8 +55,7 @@ async fn remove(
     kind: CiRunDeletion,
 ) -> Result<StatusCode> {
     let (repo, authentication) = repository(state, headers, owner, name, true).await?;
-    let authentication =
-        authentication.ok_or_else(codeyard_identity::github_auth::required)?;
+    let authentication = authentication.ok_or_else(codeyard_identity::github_auth::required)?;
     if !codeyard_db_actions::ci::delete_ci_run_data(
         &state.pool,
         authentication.database_actor(),

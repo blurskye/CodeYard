@@ -1,12 +1,12 @@
 //! Every repository operation, with whether a worker may read it while claimed.
-use codeyard_repos_core::wire::Operation;
+use codeyard_repos::editor::FileWrite;
 use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
 use codeyard_repos_core::store_types::GitService;
 use codeyard_repos_core::store_types::GitSession;
 use codeyard_repos_core::store_types::MergeMethod;
 use codeyard_repos_core::store_types::MergeRequest;
 use codeyard_repos_core::store_types::RestackMove;
-use codeyard_repos::editor::FileWrite;
+use codeyard_repos_core::wire::Operation;
 use codeyard_storage::range::ByteRange as BlobRange;
 use uuid::Uuid;
 

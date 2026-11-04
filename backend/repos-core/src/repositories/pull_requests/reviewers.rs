@@ -1,6 +1,6 @@
 use crate::context::NodeContext;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_notifications::create::{create_and_broadcast_notification,NotificationRequest};
+use codeyard_notifications::create::{create_and_broadcast_notification, NotificationRequest};
 use serde_json::json;
 /// Sends the `pull_request` event for a review request to `target`, or its removal.
 pub async fn emit_reviewer_event(
@@ -69,4 +69,3 @@ pub async fn notify_review_request(
         .await;
     }
 }
-

@@ -1,18 +1,18 @@
 use crate::cluster::replicas::copy_path;
 use crate::cluster::replicas::moving;
 use crate::cluster::replicas::MOVE_WAIT;
+use crate::cluster::rpc::RpcHandler;
+use crate::repositories::store::RepoStore;
+use crate::store_types::BlobMetadata;
+use crate::store_types::GitService;
+use crate::store_types::WorkflowPayloadEntry;
+use crate::store_types::MAX_WORKFLOW_PAYLOAD_BYTES;
 use crate::wire::invalid;
 use crate::wire::unavailable;
 use crate::wire::Failure;
 use crate::wire::Operation;
 use crate::wire::Request;
 use crate::wire::MAX_BYTES;
-use crate::cluster::rpc::RpcHandler;
-use crate::store_types::BlobMetadata;
-use crate::store_types::GitService;
-use crate::store_types::WorkflowPayloadEntry;
-use crate::store_types::MAX_WORKFLOW_PAYLOAD_BYTES;
-use crate::repositories::store::RepoStore;
 use anyhow::Result;
 use codeyard_git::error::RepoError;
 use codeyard_git::MAX_CI_WORKFLOW_BYTES;
@@ -216,10 +216,7 @@ pub(super) struct ReadAdmission {
 }
 
 /// Blob bytes go in the raw reply body; the JSON value carries only their metadata.
-fn blob_reply(
-    blob: crate::store_types::BlobBytes,
-    output: &mut Vec<u8>,
-) -> Result<Value, Failure> {
+fn blob_reply(blob: crate::store_types::BlobBytes, output: &mut Vec<u8>) -> Result<Value, Failure> {
     *output = blob.bytes;
     serde_json::to_value(BlobMetadata {
         id: blob.id,
@@ -517,8 +514,7 @@ impl RpcHandler {
                     .authorize(
                         pool,
                         &repo,
-                        session.service
-                            == crate::store_types::GitService::ReceivePack,
+                        session.service == crate::store_types::GitService::ReceivePack,
                     )
                     .await
                     .map_err(|_| {
@@ -612,11 +608,8 @@ impl RpcHandler {
         {
             return Err(unavailable());
         }
-        let path = crate::context::term_path(
-            &self.context.repos_path,
-            request.repository,
-            write.term,
-        );
+        let path =
+            crate::context::term_path(&self.context.repos_path, request.repository, write.term);
         crate::context::literal_directory(&self.context.repos_path, &path).await?;
         Ok((store_at(&path, self.context.node_id)?, Some(repo.id)))
     }
@@ -1401,9 +1394,10 @@ impl RpcHandler {
                 &email
             )),
             Operation::Merge { request } => {
-                let result = store.prepare_merge(&request).await.map_err(|_| {
-                    Failure::Merge(crate::store_types::MergeFailure::CannotMerge)
-                })?;
+                let result = store
+                    .prepare_merge(&request)
+                    .await
+                    .map_err(|_| Failure::Merge(crate::store_types::MergeFailure::CannotMerge))?;
                 let repo_id = repo_id.ok_or_else(|| invalid("repository unavailable"))?;
                 let repository =
                     codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo_id)

@@ -20,13 +20,13 @@ use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::dependencies::DependencyError;
 use codeyard_db_repos::repositories::dependencies as records;
 use codeyard_db_repos::repositories::dependencies::AlertState;
 use codeyard_db_repos::repositories::dependencies::Feature;
 use codeyard_db_repos::repositories::dependencies::Refusal;
 use codeyard_git::error::ErrorKind;
 use codeyard_identity::repository_access::AccessError;
+use codeyard_repos_core::repositories::dependencies::DependencyError;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::repos::dependencies::Alert;
 use codeyard_webui::pages::repos::dependencies::Draft;
@@ -159,26 +159,34 @@ async fn model(ctx: &PageContext, loaded: Loaded, error: Option<String>, draft: 
     }
     let pool = &ctx.state.pool;
     let repo = loaded.repository.id;
-    let alerts =
-        match codeyard_repos_core::repositories::dependencies::status(pool, actor, repo, Feature::Alerts)
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                let (s, m) = domain_failure(e);
-                return ctx.error(s, &m);
-            }
-        };
-    let updates =
-        match codeyard_repos_core::repositories::dependencies::status(pool, actor, repo, Feature::Updates)
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                let (s, m) = domain_failure(e);
-                return ctx.error(s, &m);
-            }
-        };
+    let alerts = match codeyard_repos_core::repositories::dependencies::status(
+        pool,
+        actor,
+        repo,
+        Feature::Alerts,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            let (s, m) = domain_failure(e);
+            return ctx.error(s, &m);
+        }
+    };
+    let updates = match codeyard_repos_core::repositories::dependencies::status(
+        pool,
+        actor,
+        repo,
+        Feature::Updates,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            let (s, m) = domain_failure(e);
+            return ctx.error(s, &m);
+        }
+    };
     let data = match records::page_snapshot(pool, ctx.database_actor(actor), repo).await {
         Ok(v) => v,
         Err(e) => {

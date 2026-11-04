@@ -5,22 +5,22 @@ use crate::support::http_client as pulls;
 use crate::support::native_database as native;
 use crate::support::rpc_operations;
 
-use codeyard_repos_core::ci::queue::RunQueue;
-use codeyard_repos_core::ci::workers::CiWorkers;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
+use codeyard_repos_core::ci::queue::RunQueue;
+use codeyard_repos_core::ci::workers::CiWorkers;
 
 use codeyard_repos_core::context::NodeContext;
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard_repos_core::store_types::GitService;
-use codeyard_repos_core::store_types::GitSession;
-use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_git::error::ErrorKind;
 use codeyard_model::ci::LogLine;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::current_event;
 use codeyard_notifications::NotificationEvent;
+use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_repos_core::store_types::GitService;
+use codeyard_repos_core::store_types::GitSession;
 use iroh::protocol::ProtocolHandler;
 use serde_json::json;
 use std::{
@@ -252,9 +252,12 @@ async fn client(key: &codeyard_support::node_identity::NodeKey) -> NodeContext {
         iroh: codeyard_cluster_core::transport::IrohDialer::with_endpoint(
             codeyard_cluster_core::transport::Relay::Off,
             key.clone(),
-            codeyard_cluster_core::transport::bind_client(&codeyard_cluster_core::transport::Relay::Off, key)
-                .await
-                .unwrap(),
+            codeyard_cluster_core::transport::bind_client(
+                &codeyard_cluster_core::transport::Relay::Off,
+                key,
+            )
+            .await
+            .unwrap(),
         ),
         key: key.clone(),
         node_id: 0,
@@ -329,12 +332,9 @@ async fn stream_request(
     .unwrap();
     send.finish().unwrap();
     serde_json::from_slice(
-        &codeyard_repos_core::wire::read_frame(
-            &mut recv,
-            codeyard_db_core::limits::MAX_JSON,
-        )
-        .await
-        .unwrap(),
+        &codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+            .await
+            .unwrap(),
     )
     .unwrap()
 }
@@ -376,21 +376,17 @@ async fn repository_refused_with_claim(
         send.finish().unwrap();
     }
     let reply: codeyard_repos_core::wire::Reply = serde_json::from_slice(
-        &codeyard_repos_core::wire::read_frame(
-            &mut recv,
-            codeyard_db_core::limits::MAX_JSON,
-        )
-        .await
-        .unwrap(),
+        &codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+            .await
+            .unwrap(),
     )
     .unwrap();
-    assert!(codeyard_repos_core::wire::read_frame(
-        &mut recv,
-        codeyard_repos_core::wire::MAX_BYTES
-    )
-    .await
-    .unwrap()
-    .is_empty());
+    assert!(
+        codeyard_repos_core::wire::read_frame(&mut recv, codeyard_repos_core::wire::MAX_BYTES)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     match reply.result {
         Err(codeyard_repos_core::wire::Failure::Repository(error)) => {
             assert_eq!(error.kind, ErrorKind::Invalid);
@@ -4565,12 +4561,9 @@ async fn a_claim_frame_that_arrives_after_its_worker_is_revoked_is_refused() {
     send.write_all(&frame).await.unwrap();
     send.finish().unwrap();
     let reply: serde_json::Value = serde_json::from_slice(
-        &codeyard_repos_core::wire::read_frame(
-            &mut recv,
-            codeyard_db_core::limits::MAX_JSON,
-        )
-        .await
-        .unwrap(),
+        &codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+            .await
+            .unwrap(),
     )
     .unwrap();
     assert_eq!(reply["result"]["Err"], "not an active runner", "{reply}");
@@ -4722,12 +4715,9 @@ async fn a_busy_core_refuses_a_request_at_once_when_all_slots_are_taken() {
         send.write_all(&body).await.unwrap();
         send.finish().unwrap();
         let reply: serde_json::Value = serde_json::from_slice(
-            &codeyard_repos_core::wire::read_frame(
-                &mut recv,
-                codeyard_db_core::limits::MAX_JSON,
-            )
-            .await
-            .unwrap(),
+            &codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+                .await
+                .unwrap(),
         )
         .unwrap();
         assert!(reply["result"].get("Ok").is_some(), "{reply}");
@@ -5056,12 +5046,10 @@ impl ProtocolHandler for LogReplyProxy {
         connection: iroh::endpoint::Connection,
     ) -> Result<(), iroh::protocol::AcceptError> {
         let (mut send, mut recv) = connection.accept_bi().await.unwrap();
-        let header = codeyard_repos_core::wire::read_frame(
-            &mut recv,
-            codeyard_db_core::limits::MAX_JSON,
-        )
-        .await
-        .unwrap();
+        let header =
+            codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+                .await
+                .unwrap();
         let request: serde_json::Value = serde_json::from_slice(&header).unwrap();
         let logs = request["operation"].get("Logs").is_some();
         if (logs && self.stall)
@@ -5074,7 +5062,10 @@ impl ProtocolHandler for LogReplyProxy {
         }
         let upstream = self
             .upstream
-            .connect(self.peer.clone(), codeyard_cluster_core::transport::ALPN_EVENTS)
+            .connect(
+                self.peer.clone(),
+                codeyard_cluster_core::transport::ALPN_EVENTS,
+            )
             .await
             .unwrap();
         let (mut writer, mut reader) = upstream.open_bi().await.unwrap();
@@ -5086,12 +5077,10 @@ impl ProtocolHandler for LogReplyProxy {
         .await
         .unwrap();
         writer.finish().unwrap();
-        let reply = codeyard_repos_core::wire::read_frame(
-            &mut reader,
-            codeyard_db_core::limits::MAX_JSON,
-        )
-        .await
-        .unwrap();
+        let reply =
+            codeyard_repos_core::wire::read_frame(&mut reader, codeyard_db_core::limits::MAX_JSON)
+                .await
+                .unwrap();
         if logs {
             let _ = self.logs.send(());
             connection.close(0u32.into(), b"lost log reply");

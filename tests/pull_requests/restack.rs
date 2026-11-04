@@ -12,11 +12,11 @@ use axum::http::StatusCode;
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_repos_pulls::repositories::pull_requests::restack;
+use codeyard_ci::config::CiConfig;
 use codeyard_repos_core::repositories::pull_requests::OperationError;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::RestackMove;
-use codeyard_ci::config::CiConfig;
+use codeyard_repos_pulls::repositories::pull_requests::restack;
 use codeyard_storage::ObjectStore;
 use database::Database;
 use pulls::Client;

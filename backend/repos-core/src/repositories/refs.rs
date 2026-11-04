@@ -47,7 +47,7 @@ async fn writable(
     Ok((repository, user))
 }
 
-pub(super) fn publication_error(error: RepoError) -> RefError {
+pub fn publication_error(error: RepoError) -> RefError {
     if error.is_applied_followup_failed() {
         RefError::AppliedFollowupFailed
     } else if error.is_protected_branch() {

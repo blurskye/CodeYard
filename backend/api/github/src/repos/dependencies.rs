@@ -11,13 +11,13 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::dependencies::DependencyError;
-use codeyard_repos_core::repositories::dependencies::Status;
 use codeyard_db_repos::repositories::dependencies::Feature;
 use codeyard_git::error::ErrorKind;
 use codeyard_identity::repository_access::AccessError;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
+use codeyard_repos_core::repositories::dependencies::DependencyError;
+use codeyard_repos_core::repositories::dependencies::Status;
 use std::sync::Arc;
 
 fn failure(error: DependencyError) -> Error {
@@ -47,9 +47,14 @@ async fn status(
 ) -> Result<Status> {
     let (repo, actor) = repository(state, headers, owner, name, false).await?;
     let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
-    codeyard_repos_core::repositories::dependencies::status(&state.pool, actor.user.id, repo.id, feature)
-        .await
-        .map_err(failure)
+    codeyard_repos_core::repositories::dependencies::status(
+        &state.pool,
+        actor.user.id,
+        repo.id,
+        feature,
+    )
+    .await
+    .map_err(failure)
 }
 async fn change(
     state: &AppState,
