@@ -37,5 +37,3 @@ mod tests {
     }
 }
 
-pub mod code_owners;
-pub mod refs;
