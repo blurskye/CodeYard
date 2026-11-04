@@ -60,14 +60,14 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
     let tokens = &issued.workflows[".github/workflows/ci.yml"];
-    let router = create_router(AppState::new(
+    let router = create_router(super::patient(AppState::new(
         f.pool().clone(),
         root.path().to_owned(),
         Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
         None,
         CiConfig::default(),
         None,
-    ));
+    )));
     let own_id = payloads::repository(&repos[0], "job-owner")["node_id"].clone();
     let other_id = payloads::repository(&repos[1], "job-owner")["node_id"].clone();
     for (index, repo) in repos.iter().enumerate() {

@@ -22,14 +22,14 @@ async fn projects_contract(pg: bool) {
     let alice = f.actor("project-gql-alice").await;
     let bob = f.actor("project-gql-bob").await;
     let root = tempfile::tempdir().unwrap();
-    let router = create_router(AppState::new(
+    let router = create_router(super::patient(AppState::new(
         f.pool().clone(),
         root.path().to_owned(),
         Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
         None,
         CiConfig::default(),
         None,
-    ));
+    )));
     let mut credentials = Vec::new();
     for (actor, scope) in [(alice, "write"), (alice, "read"), (bob, "write")] {
         let session = Client::login(&router, f.pool(), actor).await;

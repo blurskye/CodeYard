@@ -21,14 +21,14 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
+    let router = create_router(super::patient(AppState::new(
         f.pool().clone(),
         root.path().to_owned(),
         Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
         None,
         CiConfig::default(),
         None,
-    ));
+    )));
     let session = Client::login(&router, f.pool(), alice).await;
     let token = tokens::create(
         f.pool(),
