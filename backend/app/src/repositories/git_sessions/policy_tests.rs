@@ -1,5 +1,4 @@
 //! Push permission checks in the receive hooks, on a throwaway SQLite database.
-//! Push permission checks in the receive hooks, on a throwaway SQLite database.
 use fixture::before_authorize;
 use fixture::hold_next_hook;
 

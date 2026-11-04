@@ -821,7 +821,7 @@ t_push() {
     cd "$work"
     git_as alice init -q -b main
     printf '# proj\n\nHello from the end-to-end check.\n' >README.md
-    printf 'fn main() {}\n' >src/main.rs
+    printf 'fn main() {}\n' >backend/app/wiring/main.rs
     head -c 2097152 /dev/urandom >blob.bin
     put blob_sha "$(sha256sum blob.bin | cut -d' ' -f1)"
     git_as alice add -A

@@ -1,6 +1,4 @@
 //! CI settings from environment variables.
-//! CI settings from environment variables.
-//! CI settings from environment variables.
 use anyhow::bail;
 use anyhow::ensure;
 use anyhow::Result;

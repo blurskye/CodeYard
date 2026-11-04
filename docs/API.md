@@ -1,7 +1,7 @@
 # Codeyard HTTP API
 
 This is a short reference for the JSON API. The router is the authority:
-`src/backend/api/mod.rs` composes resource routers under `api/{auth,user,users,
+`backend/api/rest/src/mod.rs` composes resource routers under `api/{auth,user,users,
 admin,repos,files,ci,notifications,discovery}`. Each resource registers its JSON,
 HTML and native-form paths; Git HTTP, health and assets have separate adapters. Routes that are not described here exist too; see [Other routes](#other-routes).
 Server-rendered HTML pages are not part of this API.

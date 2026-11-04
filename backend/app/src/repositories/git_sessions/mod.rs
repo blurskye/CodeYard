@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use tokio::task::JoinSet;
 
 #[cfg(target_os = "linux")]
-mod broker;
+pub mod broker;
 #[cfg(target_os = "linux")]
 mod hooks;
 #[cfg(target_os = "linux")]

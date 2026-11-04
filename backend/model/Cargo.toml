@@ -66,6 +66,7 @@ workspace = true
 
 [dependencies.uuid]
 workspace = true
+features = ["v4"]
 
 [dependencies.axum]
 workspace = true

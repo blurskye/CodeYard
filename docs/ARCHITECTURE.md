@@ -12,82 +12,29 @@ nodes, and the cluster's current limits.
 ## 1. Code map (today)
 
 ```
-src/main.rs                 CLI entrypoint: serve, init, user/key/repo/cluster admin, ssh helper
-src/lib.rs                  remaining backend (native only)
-backend/support/            pure helpers shared by server and browser
-
-backend/git/src/            git itself: libgit2 reads and hardened `git` commands
-                            on a repository directory. Only repositories/store
-                            calls the path-taking functions.
-  repository/process.rs     running git: clean env, no hooks, limits, timeouts
-  repository/checked.rs     merge commits, repo init/fork, CI checkouts
-  repository/replay.rs      rebase: replays commits one by one onto a branch
-  repository/locks.rs       per-repo write lock (in-process)
-  ci.rs                     commit and workflow-file reads for CI admission
-
-src/backend/
-  app.rs                    AppState: pool, repos path, object store, CI, broadcasters
-  cli/                      command-line arguments and the admin commands
-  node/                     `serve`: role selection, listeners, shutdown
-  cluster/                  node keys, pairing, the iroh and TCP listeners (see section 2)
-  api/                      all HTTP: JSON, HTML/model reads, native forms, sockets
-    mod.rs                    composes resource routers, layers and server
-    http/                     shared pieces: context.rs and render.rs (PageContext, SSR,
-                              PageEnvelope, error responses), session.rs, csrf.rs,
-                              origin.rs (origin/redirect policy), middleware.rs,
-                              static_files.rs
-    repos/                    repo resources, contents, commits, issues/ and pulls/
-    auth/ user/ users/         authentication, settings and public profiles
-    organizations/ admin/     native tenant forms and site administration
-    ci/ notifications/ files/ Actions, inbox/socket and upload/download adapters
-    git_http.rs               smart-HTTP clone/fetch/push, Git-only personal tokens
-  ssh/                      git over SSH: built-in server (russh) or host OpenSSH
-    openssh/                  sshd integration: key lookup, broker socket, receive hooks
-  repositories/             repository domain: create storage, write access,
-                            editor saves (files.rs checks, store does the commit)
-    lifecycle.rs refs.rs      create/fork/delete and ref mutation ordering
-    reads.rs engagement.rs    shared reads and star/watch operations
-    pull_requests/            lifecycle, comments, reviews, workflows, protected merge;
-                              branches.rs refreshes open PR revisions after branch moves
-    git_sessions/             shared broker, receive hooks, protocol, validation and
-                              private files for HTTP, built-in SSH and host OpenSSH
-    store/                    RepoStore: the one interface to a repository's Git data
-      mod.rs                    RepoStore, repo_store(&repo, context), request/result types
-      local.rs                  git/ on this machine's disk, including CI checkouts
-      remote.rs                 repository calls to the owning storage node over iroh
-      editor.rs                 single-file commits for the web editor and file API
-  ci/                       Actions admission (permissions, exact workflow blobs),
-                            runs.rs (CiRuns control), workers.rs (CiWorkers lifetime),
-                            queue.rs, workflow parser, worker (`act`)
-  files/                    uploads: reserve, upload, confirm, download, delete
-  storage/                  object store for uploads: local directory or S3
-  issues/                   HTTP-free issue mutation/comment composition
-  dashboard/                the signed-in user's own issues and pull requests
-  webhooks/                 repository and organization webhooks and their background sends
-  notifications/            creation, original-session inbox, authorized delivery;
-                            broadcast.rs owns fan-out and explicit start/shutdown
-  identity/                 auth, keys, tokens, profiles, follows and OAuth operations;
-                            avatars.rs replaces user/org pictures via uploads
-  crypto/                   secret encryption (repository Actions secrets)
-  db/                       database operations. Each is a named function with a
-                            PostgreSQL and a SQLite implementation; the
-                            `native_operation!` macro dispatches on the pool.
-    repositories/ users/     qualified facades, mirrored by both native engines
-    organizations/            profiles, membership, teams, access and recovery
-    labels.rs following.rs    no combined metadata/social operation buckets
-    notifications/            records/inbox/delivery and bounded event cursor polling
-                              on both PostgreSQL and SQLite
-
-webui/src/                  Dioxus views shared by SSR and the browser
-  pages/                      feature view modules (no data access, no policy),
-                              including separate actions/ and notifications.rs
-  components/ navigation/    shell/theme/copy/forms; scoped model loading/navigation
-  hydration.rs bootstrap.rs   browser entry and hydration
-
-schema/                     SQL applied by db/{postgres,sqlite}/migrations.rs
-  postgres/, sqlite/          0001.schema.sql, the baseline of each engine;
-                              the ledger records each migration's checksum
+Cargo.toml                         workspace and codeyard binary package
+backend/app/wiring/                main, binary wiring, CLI and node startup
+backend/app/src/                   app state, repositories/store, CI, cluster,
+                                  SSH, storage, backups and domain composition
+backend/identity/src/              login, accounts, sessions, tokens and keys
+backend/notifications/src/         notifications, broadcast hints and email
+backend/db/core/                   pools, migrations, records and shared transactions
+backend/db/{identity,orgs,repos,actions,security,cluster}/
+                                  domain queries, with both native engines
+backend/model/                    shared types, validation and policy
+backend/support/                  pure helpers and native support
+backend/git/                      Git reads and hardened child processes
+backend/ci/runner/                native Actions runner
+backend/api/{http,github,repos,graphql,rest}/
+                                  HTTP plumbing and resource adapters
+backend/api/github-graphql/        generated GraphQL schema types
+webui/                            SSR-first views, assets and browser hydration
+schema/{postgres,sqlite}/          baseline schemas
 ```
+
+The repository, CI and cluster runtime still share a concrete `RepoStore`; their
+remaining service split needs the interface described in the crate split plan.
+API crates depend on the app library, and binary wiring composes them from above.
 
 ### Request flows
 
@@ -581,7 +528,7 @@ membership and offers approval and revocation; invites are made with the CLI.
 ### One repository interface: `RepoStore`
 
 Callers ask for `repo_store(&repo, node_context)`
-(`src/backend/repositories/store/`). Node context holds this node's endpoint,
+(`backend/app/src/repositories/store/`). Node context holds this node's endpoint,
 identity, optional database pool, learned peer addresses and repository root;
 it is passed explicitly so several
 nodes can run in one process. Plain single-node callers pass None. Only
@@ -677,7 +624,7 @@ non-storage nodes leave it NULL.
 ### Code map additions
 
 ```
-src/backend/cluster/
+backend/app/src/cluster/
   mod.rs          startup: load identity, register/refresh membership, heartbeat
   identity.rs     node keys: load, generate, keygen command
   pairing.rs      invites, join tokens, declarative allowlist, approval, revoke
@@ -693,12 +640,12 @@ src/backend/cluster/
   placement.rs    choosing the storage node for a new repository
   replicas/       the sync loop (mod.rs), the copy plan (plan.rs), one copy's
                   transfer (transfer.rs), promotion and take-over (promote.rs)
-src/backend/repositories/store/
+backend/app/src/repositories/store/
   mod.rs          RepoStore and repo_store(&repo, context)
   local.rs        current git code behind the interface, including the copy's
                   pack, index and ref operations
   remote.rs       RPC client implementation
-src/backend/db/cluster.rs (+ postgres/, sqlite/)  queries for the node tables
+backend/db/core/src/queries/cluster.rs (+ postgres/, sqlite/)  queries for the node tables
 ```
 
 ### Tests

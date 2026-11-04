@@ -1,7 +1,5 @@
 //! One request stream between two nodes, whichever transport carried it. Protocol code
 //! reads and writes a `Link`; the transport modules open and accept them.
-//! One request stream between two nodes, whichever transport carried it. Protocol code
-//! reads and writes a `Link`; the transport modules open and accept them.
 use iroh::endpoint::Connection;
 use iroh::PublicKey;
 use std::fmt;

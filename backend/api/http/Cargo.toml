@@ -41,9 +41,11 @@ uuid.workspace = true
 workspace = true
 
 [dev-dependencies]
-codeyard-api-rest.workspace = true
 codeyard-api-repos.workspace = true
 
 [dev-dependencies.tokio]
 workspace = true
 features = ["test-util"]
+
+[dev-dependencies.codeyard-test-support]
+workspace = true

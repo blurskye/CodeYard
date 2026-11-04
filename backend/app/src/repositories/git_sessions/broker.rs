@@ -37,9 +37,9 @@ use tokio::time::timeout;
 use tokio::time::Duration;
 
 const MAX_HEADERS: usize = 32;
-const MAX_CONTROLS: usize = 64;
+pub const MAX_CONTROLS: usize = 64;
 
-pub(super) struct Gateway {
+pub struct Gateway {
     pub(super) socket: PathBuf,
     pub(super) repos_root: PathBuf,
     pub(super) executable: PathBuf,
@@ -99,7 +99,7 @@ impl Drop for ActiveOperation {
     }
 }
 
-pub(super) async fn run(
+pub async fn run(
     socket: PathBuf,
     repos_root: PathBuf,
     pool: DbPool,
@@ -242,7 +242,7 @@ fn refusal_message(error: &anyhow::Error) -> Option<Vec<u8>> {
 /// Accepts connections until `stop` is set. After that only hook requests are served, so a
 /// push that is already running can finish. Other requests are refused. The listener closes
 /// when no connection is left. The caller bounds that wait.
-async fn listen(
+pub async fn listen(
     gateway: Arc<Gateway>,
     listener: UnixListener,
     mut stop: tokio::sync::watch::Receiver<bool>,
@@ -1268,10 +1268,7 @@ async fn framed_output<R: AsyncRead + Unpin, E: AsyncRead + Unpin, W: AsyncWrite
 // remains a private unit-test module, never an application DB access path.
 #[cfg(test)]
 #[path = "policy_tests.rs"]
-pub(super) mod policy_tests;
+pub mod policy_tests;
 #[cfg(test)]
 #[path = "quorum_tests.rs"]
 mod quorum_tests;
-#[cfg(test)]
-#[path = "broker_tests.rs"]
-mod tests;

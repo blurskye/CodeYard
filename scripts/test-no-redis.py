@@ -19,7 +19,7 @@ class SelectedDatabaseSessions(unittest.TestCase):
             for path in (ROOT / directory).rglob('*.rs'):
                 with self.subTest(path=str(path.relative_to(ROOT))):
                     self.assertIsNone(forbidden.search(path.read_text()))
-        self.assertFalse((ROOT / 'src/backend/cache').exists())
+        self.assertFalse((ROOT / 'backend/app/src/cache').exists())
 
     def test_packaging_keeps_state_dir_and_never_injects_an_empty_master_key(self):
         text = (ROOT / 'compose.yaml').read_text()

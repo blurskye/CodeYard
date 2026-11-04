@@ -24,7 +24,7 @@ sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 url.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 
 [lints]
 workspace = true

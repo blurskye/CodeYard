@@ -1,8 +1,4 @@
 //! Fields exported by gh's repository JSON selection.
-//! Fields exported by gh's repository JSON selection.
-//! Fields exported by gh's repository JSON selection.
-//! Fields exported by gh's repository JSON selection.
-//! Fields exported by gh's repository JSON selection.
 use crate::bindings::fields;
 use crate::bindings::Object;
 use crate::bindings::Option;

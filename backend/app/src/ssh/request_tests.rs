@@ -1,5 +1,4 @@
 //! Real SSH request/reply and protocol negotiation regressions.
-//! Real SSH request/reply and protocol negotiation regressions.
 use crate::ssh::rate_limit::RateLimiter;
 use crate::ssh::server::SshServer;
 use russh::client;

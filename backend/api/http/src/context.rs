@@ -416,7 +416,7 @@ mod tests {
     #[tokio::test]
     async fn forms_require_a_preexisting_verified_session_and_preserve_cookie() {
         let mut ctx = PageContext {
-            state: Arc::new(codeyard_api_rest::tests::closed_state().await),
+            state: Arc::new(codeyard_test_support::closed_state().await),
             headers: HeaderMap::new(),
             user: None,
             session_id: None,
@@ -459,7 +459,7 @@ mod tests {
     #[tokio::test]
     async fn theme_form_needs_no_token_only_without_a_session() {
         let mut ctx = PageContext {
-            state: Arc::new(codeyard_api_rest::tests::closed_state().await),
+            state: Arc::new(codeyard_test_support::closed_state().await),
             headers: HeaderMap::new(),
             user: None,
             session_id: None,
@@ -512,7 +512,7 @@ mod tests {
             HeaderValue::from_static(codeyard_webui::bootstrap::MODEL_CONTENT_TYPE),
         );
         let ctx = PageContext {
-            state: Arc::new(codeyard_api_rest::tests::closed_state().await),
+            state: Arc::new(codeyard_test_support::closed_state().await),
             headers,
             user: Some(user),
             session_id: None,

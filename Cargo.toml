@@ -7,9 +7,12 @@ homepage = "https://codeyard.run"
 repository = "https://github.com/blurskye/CodeYard"
 license = "LGPL-3.0-or-later"
 
+[lib]
+path = "backend/app/wiring/lib.rs"
+
 [[bin]]
 name = "codeyard"
-path = "src/main.rs"
+path = "backend/app/wiring/main.rs"
 
 [features]
 web = ["codeyard-webui/web"]
@@ -140,7 +143,7 @@ debug = false
 
 [workspace]
 resolver = "2"
-members = ["backend/api/rest", "backend/api/graphql", "backend/api/repos", "backend/api/github", "backend/api/http", "backend/app", "backend/notifications", "backend/identity", "backend/api/github-graphql", "backend/ci/runner", "backend/db/actions", "backend/db/cluster", "backend/db/core", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/model", "backend/support", "webui"]
+members = ["backend/test-support", "backend/api/rest", "backend/api/graphql", "backend/api/repos", "backend/api/github", "backend/api/http", "backend/app", "backend/notifications", "backend/identity", "backend/api/github-graphql", "backend/ci/runner", "backend/db/actions", "backend/db/cluster", "backend/db/core", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/model", "backend/support", "webui"]
 default-members = [".", "backend/api/github-graphql", "backend/ci/runner", "backend/db/actions", "backend/db/cluster", "backend/db/core", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/model", "backend/support", "webui"]
 
 [workspace.package]
@@ -154,6 +157,7 @@ undocumented_unsafe_blocks = "deny"
 allow_attributes_without_reason = "deny"
 
 [workspace.dependencies]
+codeyard-test-support = { path = "backend/test-support" }
 codeyard-api-rest = { path = "backend/api/rest" }
 codeyard-api-graphql = { path = "backend/api/graphql" }
 codeyard-api-repos = { path = "backend/api/repos" }

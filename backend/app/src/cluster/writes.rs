@@ -1,7 +1,5 @@
 //! Two fixed voters, both required. Git preparation and publication belong to the stores;
 //! only their durable votes and applied versions can complete a write here.
-//! Two fixed voters, both required. Git preparation and publication belong to the stores;
-//! only their durable votes and applied versions can complete a write here.
 
 use anyhow::ensure;
 

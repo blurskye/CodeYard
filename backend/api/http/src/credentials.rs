@@ -1,5 +1,4 @@
 //! Bounded Authorization header decoding; each adapter owns the meaning of the credential.
-//! Bounded Authorization header decoding; each adapter owns the meaning of the credential.
 use axum::http::header;
 use axum::http::HeaderMap;
 use base64::engine::general_purpose::STANDARD;

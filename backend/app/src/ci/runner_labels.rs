@@ -1,6 +1,4 @@
 //! `runs-on` labels of a workflow, and which job features each mode supports.
-//! `runs-on` labels of a workflow, and which job features each mode supports.
-//! `runs-on` labels of a workflow, and which job features each mode supports.
 use anyhow::bail;
 use anyhow::ensure;
 use anyhow::Result;

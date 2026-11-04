@@ -1,5 +1,4 @@
 //! Same-origin submission and local redirect policy shared by HTTP adapters.
-//! Same-origin submission and local redirect policy shared by HTTP adapters.
 use axum::http::header;
 use axum::http::HeaderMap;
 

@@ -2,8 +2,8 @@
 
 Workflows in `.github/workflows/` run with `codeyard-actions` (the default) or `act` on nodes that have the
 `runner` role. Runs, jobs and logs are stored in the selected database
-(PostgreSQL or SQLite). Code: `src/backend/ci/` (admission, configuration, queue and
-worker), `src/backend/api/ci/` (JSON and Actions page/native-form adapters).
+(PostgreSQL or SQLite). Code: `backend/app/src/ci/` (admission, configuration, queue and
+worker), `backend/api/rest/src/ci/` (JSON and Actions page/native-form adapters).
 `api/ci/mod.rs` and `jobs/mod.rs` register their routes. `CiRuns` owns admission and
 control; separate runtime-owned `CiWorkers` owns execution/stale-sweep tasks.
 

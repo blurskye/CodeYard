@@ -61,11 +61,10 @@ tokio-util.workspace = true
 toml.workspace = true
 tracing.workspace = true
 url.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 zip.workspace = true
 
 [dev-dependencies]
-codeyard-api-rest.workspace = true
 
 [lints]
 workspace = true

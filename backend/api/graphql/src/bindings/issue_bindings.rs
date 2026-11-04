@@ -1,9 +1,4 @@
 //! Bindings for issue management and relationship mutations.
-//! Bindings for issue management and relationship mutations.
-//! Bindings for issue management and relationship mutations.
-//! Bindings for issue management and relationship mutations.
-//! Bindings for issue management and relationship mutations.
-//! Bindings for issue management and relationship mutations.
 use crate::bindings::connection;
 use crate::bindings::fields;
 use crate::bindings::issue_payload;

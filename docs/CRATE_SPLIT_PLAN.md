@@ -35,7 +35,8 @@ backend/
     repos/                     web and Git HTTP for repositories
     (rest)                     the remaining routes
   app/                         the `codeyard` binary: wiring, ssh, cli, backups, storage
-tests/                         unchanged; they use the crates' public items
+backend/test-support/          dev-only shared fixtures
+tests/                         same tests; imports use the crates' public items
 ```
 
 ## What the code looks like now (measured on `fix/merged-1029`)
@@ -115,7 +116,10 @@ and results stay the same. A stage can be the last one.
    the remaining routes are separate crates. Shared helpers have one direct lower
    home. The coupled runtime is in the app library so adapters do not depend on
    binary wiring. Builder validation is still deferred.
-8. **`app`:** `main`, wiring, ssh, cli, backups, node, storage.
+8. **`app`.** Source layout complete. `backend/app/src` is the app library;
+   `backend/app/wiring` contains the existing binary package's entry points, CLI
+   and node startup. SSH, backups and storage live in the app library. The source
+   stages are committed before workspace, Clippy and WASM checks begin.
 
 ## Move only: no behaviour change
 

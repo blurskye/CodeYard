@@ -1,11 +1,5 @@
 //! Router-level tests: the composed app's health, asset, error and form
 //! redirect behaviour, checked through `create_router` without a database.
-//! Router-level tests: the composed app's health, asset, error and form
-//! redirect behaviour, checked through `create_router` without a database.
-//! Router-level tests: the composed app's health, asset, error and form
-//! redirect behaviour, checked through `create_router` without a database.
-//! Router-level tests: the composed app's health, asset, error and form
-//! redirect behaviour, checked through `create_router` without a database.
 use crate::cancel_on_shutdown;
 use crate::create_router;
 use crate::run_web_listener;
@@ -14,28 +8,6 @@ use axum::body::Body;
 use axum::http::StatusCode;
 use codeyard_app::app::AppState;
 use std::path::PathBuf;
-
-pub async fn closed_state() -> AppState {
-    // A closed lazy pool can't reach any server or change any data.
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .connect_lazy("postgresql://fixture:fixture@127.0.0.1:1/ssr_fixture")
-        .unwrap();
-    pool.close().await;
-    let object_root = tempfile::tempdir().unwrap();
-    let storage = Arc::new(
-        codeyard_app::storage::ObjectStore::open(object_root.path(), None)
-            .await
-            .unwrap(),
-    );
-    AppState::new(
-        codeyard_db_core::DbPool::from(pool),
-        PathBuf::from("/unused-ssr-fixture"),
-        storage,
-        None,
-        codeyard_app::ci::config::CiConfig::default(),
-        None,
-    )
-}
 
 #[tokio::test(start_paused = true)]
 async fn shutdown_cancels_unfinished_http_handlers_after_the_drain_grace() {
@@ -599,3 +571,5 @@ async fn a_get_at_a_form_url_goes_to_the_page_the_form_belongs_to() {
         assert_eq!(response.headers()[header::LOCATION], location, "{uri}");
     }
 }
+
+use codeyard_test_support::closed_state;

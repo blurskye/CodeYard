@@ -183,26 +183,26 @@ def prepend(path, imports):
 
 
 def types():
-    destination = Path("src/backend/model")
+    destination = Path("backend/app/src/model")
     destination.mkdir()
-    ci = extract(Path("src/backend/ci/queue.rs"), "#[derive(Debug, Clone, Default, Serialize, Deserialize)]\npub struct LogLine", "/// Replaces each control byte")
-    ci += extract(Path("src/backend/ci/tokens.rs"), "/// Reusable calls multiply job identities", "pub(crate) async fn issue_selected")
-    ci += extract(Path("src/backend/ci/logs.rs"), "/// Lines one run may store", "const TRUNCATED_LINE")
+    ci = extract(Path("backend/app/src/ci/queue.rs"), "#[derive(Debug, Clone, Default, Serialize, Deserialize)]\npub struct LogLine", "/// Replaces each control byte")
+    ci += extract(Path("backend/app/src/ci/tokens.rs"), "/// Reusable calls multiply job identities", "pub(crate) async fn issue_selected")
+    ci += extract(Path("backend/app/src/ci/logs.rs"), "/// Lines one run may store", "const TRUNCATED_LINE")
     (destination / "ci.rs").write_text("use serde::{Deserialize, Serialize};\n\n" + ci.replace("pub(crate) const MAX_EXPANDED_JOBS", "pub const MAX_EXPANDED_JOBS"))
-    identity = extract(Path("src/backend/identity/oauth_apps.rs"), "pub const CLI_CLIENT", "const CLI_SECRET")
-    identity += extract(Path("src/backend/db/users/ssh_keys.rs"), "#[derive(Debug, thiserror::Error, PartialEq, Eq)]", "#[derive(Debug, sqlx::FromRow)]")
+    identity = extract(Path("backend/identity/src/oauth_apps.rs"), "pub const CLI_CLIENT", "const CLI_SECRET")
+    identity += extract(Path("backend/db/core/src/queries/users/ssh_keys.rs"), "#[derive(Debug, thiserror::Error, PartialEq, Eq)]", "#[derive(Debug, sqlx::FromRow)]")
     (destination / "identity.rs").write_text(identity)
-    repositories = extract(Path("src/backend/repositories/dependency_graph.rs"), "#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]", "fn unavailable")
-    repositories += extract(Path("src/backend/repositories/deploy_keys.rs"), "#[derive(Debug, thiserror::Error)]", "/// Keeps a typed key refusal")
-    repositories += extract(Path("src/backend/repositories/code_owners.rs"), "pub(crate) const MAX_REVIEWERS", "/// One line")
+    repositories = extract(Path("backend/app/src/repositories/dependency_graph.rs"), "#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]", "fn unavailable")
+    repositories += extract(Path("backend/app/src/repositories/deploy_keys.rs"), "#[derive(Debug, thiserror::Error)]", "/// Keeps a typed key refusal")
+    repositories += extract(Path("backend/app/src/repositories/code_owners.rs"), "pub(crate) const MAX_REVIEWERS", "/// One line")
     (destination / "repositories.rs").write_text("use super::identity::SshKeyWriteRefusal;\nuse serde::{Deserialize, Serialize};\n\n" + repositories.replace("pub(crate) const MAX_REVIEWERS", "pub const MAX_REVIEWERS"))
-    path = Path("src/backend/repositories/dependency_graph.rs")
+    path = Path("backend/app/src/repositories/dependency_graph.rs")
     path.write_text(path.read_text().replace("use serde::{Deserialize, Serialize};\n", ""))
-    ecosystems = extract(Path("src/backend/vulnerabilities/mod.rs"), "pub const ECOSYSTEMS", "pub fn ecosystem")
-    ecosystems += extract(Path("src/backend/vulnerabilities/mod.rs"), "pub(crate) const MAX_AFFECTED_PACKAGES", "/// The validated catalogue")
+    ecosystems = extract(Path("backend/app/src/vulnerabilities/mod.rs"), "pub const ECOSYSTEMS", "pub fn ecosystem")
+    ecosystems += extract(Path("backend/app/src/vulnerabilities/mod.rs"), "pub(crate) const MAX_AFFECTED_PACKAGES", "/// The validated catalogue")
     (destination / "vulnerabilities.rs").write_text(ecosystems.replace("pub(crate) const", "pub const"))
     (destination / "mod.rs").write_text("pub mod ci;\npub mod identity;\npub mod repositories;\npub mod vulnerabilities;\n")
-    path = Path("src/backend/mod.rs")
+    path = Path("backend/app/src/mod.rs")
     text = path.read_text()
     path.write_text(text.replace("pub mod db;", "pub mod db;\npub mod model;"))
     names = {
@@ -219,7 +219,7 @@ def types():
         "vulnerabilities::MAX_AFFECTED_PACKAGES": "vulnerabilities::MAX_AFFECTED_PACKAGES",
     }
     rewrite([("crate::backend::" + old, "crate::backend::model::" + new) for old, new in names.items()])
-    path = Path("src/backend/ci/worker.rs")
+    path = Path("backend/app/src/ci/worker.rs")
     path.write_text(path.read_text().replace("super::super::logs::MAX_RUN_LOG_LINES", "crate::backend::model::ci::MAX_RUN_LOG_LINES"))
     for path, imports in {
         "ci/queue.rs": "use crate::backend::model::ci::LogLine;",
@@ -236,9 +236,9 @@ def types():
 
 
 def crypto():
-    helpers = extract(Path("src/backend/crypto/mod.rs"), "/// 32 random bytes", "pub struct SecretEncryptor")
+    helpers = extract(Path("backend/support/src/secrets/mod.rs"), "/// 32 random bytes", "pub struct SecretEncryptor")
     Path("backend/support/src/crypto.rs").write_text("//! Random tokens and keyed hashes shared by native server code.\nuse rand::RngCore;\n\n" + helpers)
-    path = Path("backend/support/src/lib.rs")
+    path = Path("backend/support/backend/app/wiring/lib.rs")
     path.write_text(path.read_text() + '\n#[cfg(not(target_arch = "wasm32"))]\npub mod crypto;\n')
     rewrite([("crate::backend::crypto::" + name, "codeyard_support::crypto::" + name) for name in ("random_hex", "is_hex_token", "hmac_sha256")])
 
@@ -246,9 +246,9 @@ def crypto():
 def model():
     destination = Path("backend/model/src")
     destination.parent.mkdir()
-    Path("src/backend/model").rename(destination)
+    Path("backend/app/src/model").rename(destination)
     (destination / "mod.rs").rename(destination / "lib.rs")
-    path = Path("src/backend/mod.rs")
+    path = Path("backend/app/src/mod.rs")
     path.write_text(path.read_text().replace("pub mod model;\n", ""))
     rewrite([("crate::backend::model", "codeyard_model")])
 
@@ -256,7 +256,7 @@ def model():
 def core():
     destination = Path("backend/db/core/src")
     destination.mkdir(parents=True)
-    old = Path("src/backend/db")
+    old = Path("backend/app/src/db")
     for name in ("connection.rs", "migrations.rs", "models"):
         (old / name).rename(destination / name)
     for engine in ("postgres", "sqlite"):

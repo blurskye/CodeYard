@@ -270,7 +270,7 @@ any serving node.
 
 The tests include installer fixtures in `scripts/test-install-openssh.py`,
 real read-only sshd/visudo parser checks in `scripts/test-openssh-config.py`, and
-private broker/Git tests under `src/backend/repositories/git_sessions/broker_tests.rs`. The real
+private broker/Git tests under `backend/app/src/repositories/git_sessions/broker_tests.rs`. The real
 loopback sshd test uses generated host/client keys, the actual key helper's
 restricted authorized line, a private PostgreSQL schema and a random loopback
 port. It changes no host SSH configuration or accounts. Because the test account may

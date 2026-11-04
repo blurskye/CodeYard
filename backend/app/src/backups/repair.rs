@@ -5,13 +5,6 @@
 //! backup sits in `deleted/`. Verify finds these and, with `--repair`, brings the database and
 //! the pull request refs back in line with Git. Problems it cannot repair, such as a commit the
 //! database names that Git lacks, are listed and make the command fail.
-//! `codeyard repo verify [--repair]` and `codeyard repo rebuild`.
-//!
-//! The database may be older than Git, never newer. After a restore, Git can hold pushes and
-//! pull request updates the database does not know about, and a repository deleted after the
-//! backup sits in `deleted/`. Verify finds these and, with `--repair`, brings the database and
-//! the pull request refs back in line with Git. Problems it cannot repair, such as a commit the
-//! database names that Git lacks, are listed and make the command fail.
 
 use anyhow::ensure;
 

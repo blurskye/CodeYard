@@ -1,9 +1,6 @@
 //! Single-file commits for the web editor and the file API: write the blob and
 //! trees, create the commit, then move the branch only if it still points where the
 //! editor started.
-//! Single-file commits for the web editor and the file API: write the blob and
-//! trees, create the commit, then move the branch only if it still points where the
-//! editor started.
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::objects::Signature;

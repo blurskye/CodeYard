@@ -1,13 +1,4 @@
 //! Release notes derived from a pinned Git range and the repository's real merged pull requests.
-//! Release notes derived from a pinned Git range and the repository's real merged pull requests.
-//! Release notes derived from a pinned Git range and the repository's real merged pull requests.
-//! Release notes derived from a pinned Git range and the repository's real merged pull requests.
-//! Release notes derived from a pinned Git range and the repository's real merged pull requests.
-//! Release notes derived from a pinned Git range and the repository's real merged pull requests.
-//! Release notes derived from a pinned Git range and the repository's real merged pull requests.
-//! Release notes derived from a pinned Git range and the repository's real merged pull requests.
-//! Release notes derived from a pinned Git range and the repository's real merged pull requests.
-//! Release notes derived from a pinned Git range and the repository's real merged pull requests.
 use crate::cluster::context::NodeContext;
 use crate::repositories::releases::notes::generate_notes;
 use crate::repositories::releases::notes::NotesInput;

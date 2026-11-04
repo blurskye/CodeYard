@@ -1,13 +1,4 @@
 //! Project bindings kept separate from the shared GraphQL lane.
-//! Project bindings kept separate from the shared GraphQL lane.
-//! Project bindings kept separate from the shared GraphQL lane.
-//! Project bindings kept separate from the shared GraphQL lane.
-//! Project bindings kept separate from the shared GraphQL lane.
-//! Project bindings kept separate from the shared GraphQL lane.
-//! Project bindings kept separate from the shared GraphQL lane.
-//! Project bindings kept separate from the shared GraphQL lane.
-//! Project bindings kept separate from the shared GraphQL lane.
-//! Project bindings kept separate from the shared GraphQL lane.
 use crate::bindings::abstract_types;
 use crate::bindings::connection;
 use crate::bindings::enums;

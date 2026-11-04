@@ -1,5 +1,4 @@
 //! NuGet compatibility classification, including metadata whose normalized version lost build data.
-//! NuGet compatibility classification, including metadata whose normalized version lost build data.
 use anyhow::ensure;
 use anyhow::Result;
 use quick_xml::events::Event;

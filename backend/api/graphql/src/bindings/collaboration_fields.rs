@@ -1,10 +1,4 @@
 //! Issue/PR collaboration fields used by api/query_builder.go in cli/cli.
-//! Issue/PR collaboration fields used by api/query_builder.go in cli/cli.
-//! Issue/PR collaboration fields used by api/query_builder.go in cli/cli.
-//! Issue/PR collaboration fields used by api/query_builder.go in cli/cli.
-//! Issue/PR collaboration fields used by api/query_builder.go in cli/cli.
-//! Issue/PR collaboration fields used by api/query_builder.go in cli/cli.
-//! Issue/PR collaboration fields used by api/query_builder.go in cli/cli.
 use crate::bindings::connection;
 use crate::bindings::fields;
 use crate::bindings::issue_fields;

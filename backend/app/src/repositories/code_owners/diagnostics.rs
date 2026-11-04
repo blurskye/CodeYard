@@ -1,16 +1,4 @@
 //! Diagnostics use the same tokenizer, pattern rules and live owner resolution as review gates.
-//! Diagnostics use the same tokenizer, pattern rules and live owner resolution as review gates.
-//! Diagnostics use the same tokenizer, pattern rules and live owner resolution as review gates.
-//! Diagnostics use the same tokenizer, pattern rules and live owner resolution as review gates.
-//! Diagnostics use the same tokenizer, pattern rules and live owner resolution as review gates.
-//! Diagnostics use the same tokenizer, pattern rules and live owner resolution as review gates.
-//! Diagnostics use the same tokenizer, pattern rules and live owner resolution as review gates.
-//! Diagnostics use the same tokenizer, pattern rules and live owner resolution as review gates.
-//! Diagnostics use the same tokenizer, pattern rules and live owner resolution as review gates.
-//! Diagnostics use the same tokenizer, pattern rules and live owner resolution as review gates.
-//! Diagnostics use the same tokenizer, pattern rules and live owner resolution as review gates.
-//! Diagnostics use the same tokenizer, pattern rules and live owner resolution as review gates.
-//! Diagnostics use the same tokenizer, pattern rules and live owner resolution as review gates.
 use crate::cluster::context::NodeContext;
 use crate::repositories::code_owners::diagnostics::diagnose;
 use crate::repositories::code_owners::diagnostics::load_diagnostics;

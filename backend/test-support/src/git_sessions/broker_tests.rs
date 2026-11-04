@@ -1,11 +1,9 @@
 //! Gateway tests on throwaway databases and real Git repositories.
 //! GITSERV_TEST_OPENSSH_HELPER must point at the built codeyard binary.
-//! Gateway tests on throwaway databases and real Git repositories.
-//! GITSERV_TEST_OPENSSH_HELPER must point at the built codeyard binary.
-use crate::ci::queue::RunQueue;
-use crate::ci::runs::CiRuns;
-use crate::ci::workers::CiWorkers;
-use crate::repositories::git_sessions::ReceiveCredential;
+use codeyard_app::ci::queue::RunQueue;
+use codeyard_app::ci::runs::CiRuns;
+use codeyard_app::ci::workers::CiWorkers;
+use codeyard_app::repositories::git_sessions::ReceiveCredential;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use std::process::Output;
@@ -143,7 +141,7 @@ impl Broker {
     async fn new_with_ci(
         pool: DbPool,
         git_user: String,
-        config: Option<crate::ci::config::CiConfig>,
+        config: Option<codeyard_app::ci::config::CiConfig>,
     ) -> Self {
         let uid = private_files::effective_uid();
         let helper = PathBuf::from(
@@ -554,7 +552,7 @@ async fn host_openssh_deploy_keys_clone_push_and_keep_repository_scope() {
         .await;
         assert!(!outside.status.success());
     }
-    let observed = crate::repositories::traffic::summary(
+    let observed = codeyard_app::repositories::traffic::summary(
         &database.pool,
         Some(&owner),
         &repo,
@@ -587,7 +585,7 @@ async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
     let broker = Broker::new_with_ci(
         database.pool.clone(),
         "git".to_owned(),
-        Some(crate::ci::config::CiConfig {
+        Some(codeyard_app::ci::config::CiConfig {
             trusted_actor_ids: [reader.id].into(),
             ..Default::default()
         }),
@@ -1309,7 +1307,7 @@ async fn stop_finishes_a_push_after_its_helper_disconnects() {
 
 struct PushFixture {
     directory: TempDir,
-    state: crate::app::AppState,
+    state: codeyard_app::app::AppState,
     repo: Repository,
     token: String,
     oid: git2::Oid,
@@ -1374,16 +1372,16 @@ impl PushFixture {
         let mut pack = git2::Buf::new();
         builder.write_buf(&mut pack).unwrap();
         let storage = Arc::new(
-            crate::storage::ObjectStore::open(directory.path(), None)
+            codeyard_app::storage::ObjectStore::open(directory.path(), None)
                 .await
                 .unwrap(),
         );
-        let state = crate::app::AppState::new(
+        let state = codeyard_app::app::AppState::new(
             pool,
             directory.path().to_owned(),
             storage,
             None,
-            crate::ci::config::CiConfig::default(),
+            codeyard_app::ci::config::CiConfig::default(),
             None,
         );
         Self {
@@ -1420,9 +1418,13 @@ impl PushFixture {
         let state = self.state.clone();
         let mut server = if ssh {
             Some(
-                crate::ssh::server::SshServer::new(state.pool.clone(), None, state.ci_runs.clone())
-                    .await
-                    .unwrap(),
+                codeyard_app::ssh::server::SshServer::new(
+                    state.pool.clone(),
+                    None,
+                    state.ci_runs.clone(),
+                )
+                .await
+                .unwrap(),
             )
         } else {
             None
@@ -2051,3 +2053,53 @@ async fn pushes_move_the_open_pull_requests_that_use_the_branch() {
     broker.no_hooks_left().await;
     broker.stop().await;
 }
+
+use codeyard_app::repositories::git_sessions::broker::MAX_CONTROLS;
+
+use codeyard_app::repositories::git_sessions::broker::Gateway;
+
+use codeyard_app::repositories::git_sessions::broker::run;
+
+use codeyard_app::repositories::git_sessions::broker::listen;
+
+use codeyard_app::repositories::git_sessions::broker::policy_tests;
+
+use codeyard_app::ci::runs::CiRuns;
+
+use codeyard_app::repositories::git_sessions::protocol::Request;
+
+use codeyard_app::repositories::git_sessions::protocol::EOF;
+
+use codeyard_app::repositories::git_sessions::protocol::STDERR;
+
+use codeyard_app::repositories::git_sessions::protocol::STDIN;
+
+use codeyard_app::repositories::git_sessions::protocol::STDOUT;
+
+use codeyard_app::repositories::git_sessions::validation::RefUpdate;
+
+use codeyard_app::repositories::git_sessions::ReceiveCredential;
+
+use anyhow::Result;
+
+use codeyard_db_core::models::Repository;
+
+use codeyard_db_core::DbPool;
+
+use std::collections::HashMap;
+
+use std::path::Path;
+
+use std::path::PathBuf;
+
+use std::sync::Arc;
+
+use std::sync::Mutex;
+
+use tempfile::TempDir;
+
+use tokio::sync::Semaphore;
+
+use tokio::time::timeout;
+
+use tokio::time::Duration;

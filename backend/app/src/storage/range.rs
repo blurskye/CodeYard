@@ -1,5 +1,4 @@
 //! Byte ranges shared by repository and object readers, independent of HTTP headers.
-//! Byte ranges shared by repository and object readers, independent of HTTP headers.
 use serde::Deserialize;
 use serde::Serialize;
 

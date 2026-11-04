@@ -5,20 +5,6 @@
 //! A fork is stored on the same node as its source, because pull requests between them need
 //! both there. So a promotion moves the whole fork family that shares the repository's
 //! primary, or nothing at all.
-//! Promotion. Quorum repositories change terms and reconstruct canonical refs before
-//! serving again. Silence only starts that recovery attempt. Legacy asynchronous copies
-//! retain their version-based promotion and explicit forced-loss behavior.
-//!
-//! A fork is stored on the same node as its source, because pull requests between them need
-//! both there. So a promotion moves the whole fork family that shares the repository's
-//! primary, or nothing at all.
-//! Promotion. Quorum repositories change terms and reconstruct canonical refs before
-//! serving again. Silence only starts that recovery attempt. Legacy asynchronous copies
-//! retain their version-based promotion and explicit forced-loss behavior.
-//!
-//! A fork is stored on the same node as its source, because pull requests between them need
-//! both there. So a promotion moves the whole fork family that shares the repository's
-//! primary, or nothing at all.
 
 use anyhow::bail;
 

@@ -1,18 +1,6 @@
 //! Bounded streaming observation of initial Git object transfers, not advertisements/fetches.
 //! Only bounded packet prefixes are inspected; no protocol data is persisted.
 //! Both HTTP and SSH use this observer.
-//! Bounded streaming observation of initial Git object transfers, not advertisements/fetches.
-//! Only bounded packet prefixes are inspected; no protocol data is persisted.
-//! Both HTTP and SSH use this observer.
-//! Bounded streaming observation of initial Git object transfers, not advertisements/fetches.
-//! Only bounded packet prefixes are inspected; no protocol data is persisted.
-//! Both HTTP and SSH use this observer.
-//! Bounded streaming observation of initial Git object transfers, not advertisements/fetches.
-//! Only bounded packet prefixes are inspected; no protocol data is persisted.
-//! Both HTTP and SSH use this observer.
-//! Bounded streaming observation of initial Git object transfers, not advertisements/fetches.
-//! Only bounded packet prefixes are inspected; no protocol data is persisted.
-//! Both HTTP and SSH use this observer.
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;

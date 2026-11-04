@@ -1,7 +1,5 @@
 //! Push protection refuses a publication that adds a secret, unless the actor holds an unused
 //! bypass for that exact secret. Receive hooks and file saves both run it on the commits they add.
-//! Push protection refuses a publication that adds a secret, unless the actor holds an unused
-//! bypass for that exact secret. Receive hooks and file saves both run it on the commits they add.
 
 use codeyard_git::error::ErrorKind;
 

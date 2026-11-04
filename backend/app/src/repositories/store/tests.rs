@@ -1,17 +1,4 @@
 //! The store against real bare repositories in temporary directories.
-//! The store against real bare repositories in temporary directories.
-//! The store against real bare repositories in temporary directories.
-//! The store against real bare repositories in temporary directories.
-//! The store against real bare repositories in temporary directories.
-//! The store against real bare repositories in temporary directories.
-//! The store against real bare repositories in temporary directories.
-//! The store against real bare repositories in temporary directories.
-//! The store against real bare repositories in temporary directories.
-//! The store against real bare repositories in temporary directories.
-//! The store against real bare repositories in temporary directories.
-//! The store against real bare repositories in temporary directories.
-//! The store against real bare repositories in temporary directories.
-//! The store against real bare repositories in temporary directories.
 use crate::repositories::store::editor::FileWrite;
 use crate::repositories::store::local::begin_ref_change;
 use crate::repositories::store::local::ensure_ref_room;

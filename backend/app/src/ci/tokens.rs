@@ -1,5 +1,4 @@
 //! Workflow permissions are replaced, not merged, at each explicit permissions block.
-//! Workflow permissions are replaced, not merged, at each explicit permissions block.
 
 use anyhow::ensure;
 

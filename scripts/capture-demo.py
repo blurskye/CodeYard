@@ -132,14 +132,14 @@ class Forge:
         head = self.commit("hello-codeyard", [
             ("README.md", "# hello-codeyard\n\nA tiny Rust service, built and tested by Codeyard Actions.\n\n"
                           "```sh\ncargo run\n```\n"),
-            ("src/main.rs", 'fn main() {\n    println!("Hello from Codeyard!");\n}\n'),
+            ("backend/app/wiring/main.rs", 'fn main() {\n    println!("Hello from Codeyard!");\n}\n'),
             ("Cargo.toml", '[package]\nname = "hello-codeyard"\nversion = "0.1.0"\nedition = "2021"\n'),
             (".github/workflows/ci.yml", WORKFLOW),
         ], "Add the service and its CI workflow")
         repo = "/api/repos/alice/hello-codeyard"
         self.api("POST", repo + "/tags", {"name": "v0.1.0", "sha": head, "message": "First release"})
         self.api("POST", repo + "/branches", {"name": "greeting", "sha": head})
-        self.commit("hello-codeyard", [("src/main.rs", 'fn main() {\n    println!("Hello, friendly Codeyard!");\n}\n')],
+        self.commit("hello-codeyard", [("backend/app/wiring/main.rs", 'fn main() {\n    println!("Hello, friendly Codeyard!");\n}\n')],
                     "Make the greeting friendlier", "greeting", head, update=True)
         self.api("POST", repo + "/issues", {"title": "Document the configuration",
                                             "body": "List every environment variable the service reads."}, "201")

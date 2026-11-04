@@ -1,10 +1,4 @@
 //! Embedded native assets + contained dx-generated runtime files. Never a SPA fallback.
-//! Embedded native assets + contained dx-generated runtime files. Never a SPA fallback.
-//! Embedded native assets + contained dx-generated runtime files. Never a SPA fallback.
-//! Embedded native assets + contained dx-generated runtime files. Never a SPA fallback.
-//! Embedded native assets + contained dx-generated runtime files. Never a SPA fallback.
-//! Embedded native assets + contained dx-generated runtime files. Never a SPA fallback.
-//! Embedded native assets + contained dx-generated runtime files. Never a SPA fallback.
 use axum::body::Body;
 use axum::http::header;
 use axum::http::HeaderMap;

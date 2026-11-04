@@ -2,18 +2,6 @@
 //! unless `WEBHOOKS_ALLOW_PRIVATE=true`. The addresses are resolved once per attempt and the
 //! request is pinned to them, so a name cannot change to a private address between the check
 //! and the connection.
-//! Where a webhook may send. Private, loopback, link-local and metadata addresses are refused
-//! unless `WEBHOOKS_ALLOW_PRIVATE=true`. The addresses are resolved once per attempt and the
-//! request is pinned to them, so a name cannot change to a private address between the check
-//! and the connection.
-//! Where a webhook may send. Private, loopback, link-local and metadata addresses are refused
-//! unless `WEBHOOKS_ALLOW_PRIVATE=true`. The addresses are resolved once per attempt and the
-//! request is pinned to them, so a name cannot change to a private address between the check
-//! and the connection.
-//! Where a webhook may send. Private, loopback, link-local and metadata addresses are refused
-//! unless `WEBHOOKS_ALLOW_PRIVATE=true`. The addresses are resolved once per attempt and the
-//! request is pinned to them, so a name cannot change to a private address between the check
-//! and the connection.
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;

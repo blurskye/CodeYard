@@ -38,7 +38,7 @@ tokio-util.workspace = true
 tracing.workspace = true
 unicode-normalization.workspace = true
 url.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 
 [lints]
 workspace = true

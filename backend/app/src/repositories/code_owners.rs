@@ -1,7 +1,5 @@
 //! CODEOWNERS: which owners a path has at a commit, and which of them may review it.
 //! Parsing and matching are pure. Resolving owners reads users and teams.
-//! CODEOWNERS: which owners a path has at a commit, and which of them may review it.
-//! Parsing and matching are pure. Resolving owners reads users and teams.
 use crate::cluster::context::NodeContext;
 use crate::repositories::store::repo_store;
 use crate::storage::range::ByteRange;
