@@ -93,7 +93,8 @@ and results stay the same. A stage can be the last one.
    `crates/codeyard-github-graphql` to `backend/api/github-graphql`. Update paths in
    scripts, `Containerfile`, docs and `AGENTS.md`.
 2. **`webui`.** Check also `--target wasm32-unknown-unknown` with the `web` feature.
-3. **`support` and `git`.** Cut git's four `repositories` references.
+3. **`support` and `git`.** Moved to `backend/support/` and `backend/git/`; server
+   dependencies cut. Integration build and tests are pending.
 4. **`model` and `db/core`.** Lift the identity, ci and vulnerability types that `db`
    imports. `native_operation!` moves to `db/core` and uses `$crate` paths.
 5. **`db` domains**, lowest first: identity, orgs, repos (with pull requests and issues),

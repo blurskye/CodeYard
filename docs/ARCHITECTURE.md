@@ -16,6 +16,15 @@ src/main.rs                 CLI entrypoint: serve, init, user/key/repo/cluster a
 src/lib.rs                  remaining backend (native only)
 backend/support/            pure helpers shared by server and browser
 
+backend/git/src/            git itself: libgit2 reads and hardened `git` commands
+                            on a repository directory. Only repositories/store
+                            calls the path-taking functions.
+  repository/process.rs     running git: clean env, no hooks, limits, timeouts
+  repository/checked.rs     merge commits, repo init/fork, CI checkouts
+  repository/replay.rs      rebase: replays commits one by one onto a branch
+  repository/locks.rs       per-repo write lock (in-process)
+  ci.rs                     commit and workflow-file reads for CI admission
+
 src/backend/
   app.rs                    AppState: pool, repos path, object store, CI, broadcasters
   cli/                      command-line arguments and the admin commands
@@ -34,14 +43,6 @@ src/backend/
     git_http.rs               smart-HTTP clone/fetch/push, Git-only personal tokens
   ssh/                      git over SSH: built-in server (russh) or host OpenSSH
     openssh/                  sshd integration: key lookup, broker socket, receive hooks
-  git/                      git itself: libgit2 reads and hardened `git` commands
-                            on a repository directory. Only repositories/store
-                            calls the path-taking functions.
-    repository/process.rs     running git: clean env, no hooks, limits, timeouts
-    repository/checked.rs     merge commits, repo init/fork, CI checkouts
-    repository/replay.rs      rebase: replays commits one by one onto a branch
-    repository/locks.rs       per-repo write lock (in-process)
-    ci.rs                     commit and workflow-file reads for CI admission
   repositories/             repository domain: create storage, write access,
                             editor saves (files.rs checks, store does the commit)
     lifecycle.rs refs.rs      create/fork/delete and ref mutation ordering
@@ -108,7 +109,7 @@ schema/                     SQL applied by db/{postgres,sqlite}/migrations.rs
   `dismiss_stale_reviews` is off), change requests that still block, required statuses,
   resolved conversations, up-to-date) → `RepoStore::merge`: lock → build the merge
   commit for the merge method (`prepare_merge`: a merge commit, a squash commit, or each
-  commit replayed by `git/repository/replay.rs`; the last two use `merge-tree --write-tree`,
+  commit replayed by `backend/git/src/repository/replay.rs`; the last two use `merge-tree --write-tree`,
   which needs Git 2.40 or later, and the runtime image has Git 2.47) → `publish_merge` (moves base only if head and base are
   unchanged) → `mark_pull_requests_merged` → catch up the other open pull requests,
   whose base just moved. `merge_blockers` lists every protection refusal; the merge refuses
@@ -817,7 +818,7 @@ Stage 0 needs no cells or router. It closes every gap where acknowledged data ca
 | Store | Decision | RPO | RTO |
 |---|---|---|---|
 | Git refs and objects, cluster | acknowledge after a quorum of copies hold the change (below) | 0 while a majority of voting copies survive | take-over after 1 minute |
-| Git, one machine | `core.fsync=all`, `core.fsyncMethod=batch` on every Git process (`git/repository/process.rs`); `codeyard backup` | 0 on a crash; the last backup on disk loss | restore time |
+| Git, one machine | `core.fsync=all`, `core.fsyncMethod=batch` on every Git process (`backend/git/src/repository/process.rs`); `codeyard backup` | 0 on a crash; the last backup on disk loss | restore time |
 | Derived Git data: pack indexes, bitmaps, commit-graphs, the language and contributor tables | not backed up or replicated; `codeyard repo rebuild` makes it again | none | slower pages meanwhile |
 | PostgreSQL | Patroni with `synchronous_mode_strict` and a synchronous standby in another zone; WAL archive and daily base backups with pgBackRest or WAL-G; 14 days of point-in-time recovery | 0 on node or zone loss; under a minute on cluster loss | about 30 s failover; about 2 h to restore 4 TB |
 | SQLite | already WAL with `synchronous=FULL`; `codeyard backup` copies it online with `VACUUM INTO`; Litestream optional | 0 on a crash; the last backup on disk loss | minutes |
