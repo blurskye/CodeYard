@@ -14,3 +14,5 @@ pub mod webhooks;
 pub mod wire;
 pub mod workflow_schedule;
 pub mod workflows;
+
+pub mod objects;

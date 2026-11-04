@@ -23,6 +23,7 @@ use tokio::sync::Semaphore;
 use tokio_util::task::task_tracker::TrackedFuture;
 use tokio_util::task::TaskTracker;
 mod git_session;
+mod objects;
 pub mod repository;
 
 /// Answers a request with a refusal and ends the stream. A peer that does not read cannot
@@ -96,6 +97,7 @@ impl SessionGate {
 pub struct RpcHandler {
     context: NodeContext,
     slots: Arc<Semaphore>,
+    object_slots: Arc<Semaphore>,
     session_headers: Arc<Semaphore>,
     headers: Arc<Mutex<HashMap<iroh::PublicKey, Arc<Semaphore>>>>,
     sessions: SessionGate,
@@ -106,6 +108,7 @@ impl RpcHandler {
         Self {
             context,
             slots: Arc::new(Semaphore::new(16)),
+            object_slots: Arc::new(Semaphore::new(2)),
             session_headers: Arc::new(Semaphore::new(16)),
             headers: Default::default(),
             sessions: SessionGate::default(),
@@ -176,6 +179,11 @@ impl RpcHandler {
             return session.await;
         }
         drop(header_slot);
+        let _object_slot = if request.operation.is_object() {
+            Some(self.object_slots.clone().try_acquire_owned()?)
+        } else {
+            None
+        };
         let body_limit = codeyard_repos_core::wire::operation_body_limit(&request.operation);
         tokio::time::timeout_at(deadline, async {
             if body_limit > 0 {

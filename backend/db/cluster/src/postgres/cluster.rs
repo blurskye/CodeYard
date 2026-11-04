@@ -672,8 +672,8 @@ pub async fn list_primary_repositories(
 }
 
 pub async fn pending_replica_bytes(pool: &PgPool) -> Result<Vec<(i64, i64)>> {
-    Ok(sqlx::query_as("SELECT rr.node_id, (SUM(GREATEST(r.size_bytes,1))*$1)::BIGINT FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.applied_version < 0 AND rr.synced_at IS NULL GROUP BY rr.node_id")
-        .bind(crate::cluster::REPLICA_STAGING_FACTOR).fetch_all(pool).await?)
+    let mut conn = pool.acquire().await?;
+    crate::postgres::objects::pending(&mut conn).await
 }
 
 pub async fn assign_replica_family(
@@ -718,8 +718,7 @@ pub async fn assign_replica_family(
             && node.state == "active"
             && node.roles.iter().any(|role| role == "storage")
     });
-    let reservations: Vec<(i64, i64)> = sqlx::query_as("SELECT rr.node_id,(SUM(GREATEST(r.size_bytes,1))*$1)::BIGINT FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.applied_version<0 AND rr.synced_at IS NULL GROUP BY rr.node_id")
-        .bind(crate::cluster::REPLICA_STAGING_FACTOR).fetch_all(&mut *tx).await?;
+    let reservations = crate::postgres::objects::pending(&mut tx).await?;
     let rows: Vec<PrimaryReplicaRow> = sqlx::query_as("SELECT r.id,r.disk_path,rr.node_id,rr.applied_version,r.size_bytes,rr.synced_at IS NOT NULL FROM repositories r LEFT JOIN repository_replicas rr ON rr.repository_id=r.id WHERE r.id=ANY($1) ORDER BY r.id,rr.node_id")
         .bind(&ids).fetch_all(&mut *tx).await?;
     for (repository, change) in

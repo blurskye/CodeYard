@@ -50,6 +50,25 @@ pub struct StagedUpload {
     target: PathBuf,
 }
 impl StagedUpload {
+    pub(crate) async fn bytes(&self, length: i64) -> Result<Vec<u8>, StorageError> {
+        if !(0..=MAX_OBJECT_BYTES).contains(&length) {
+            return Err(StorageError::Invalid);
+        }
+        let path = self
+            .temporary
+            .0
+            .as_ref()
+            .ok_or(StorageError::Unavailable)?
+            .path();
+        let file = tokio::fs::File::open(path).await?;
+        let mut bytes = Vec::with_capacity((length as usize).min(64 * 1024));
+        file.take(length as u64 + 1).read_to_end(&mut bytes).await?;
+        if bytes.len() != length as usize {
+            return Err(StorageError::Rejected);
+        }
+        Ok(bytes)
+    }
+
     pub async fn publish(mut self) -> Result<(), StorageError> {
         let target = self.target.clone();
         let guard = self.temporary.1.clone();
@@ -180,19 +199,33 @@ impl LocalStore {
     }
 
     pub async fn delete(&self, key: &str) -> Result<(), StorageError> {
+        self.delete_guarded(key, ()).await
+    }
+
+    /// Blocking filesystem work retains its owner even when the request is cancelled.
+    pub async fn delete_guarded<G: Send + 'static>(
+        &self,
+        key: &str,
+        guard: G,
+    ) -> Result<(), StorageError> {
         let path = self.path(key)?;
-        match tokio::fs::remove_file(&path).await {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
-            _ => {}
-        }
-        // An idempotent retry must also persist a previous unlink before its job is removed.
-        let parent = path.parent().ok_or(StorageError::Invalid)?;
-        match sync_directory(parent).await {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                sync_directory(&self.root).await?;
+        let root = self.root.clone();
+        tokio::task::spawn_blocking(move || {
+            let _guard = guard;
+            match std::fs::remove_file(&path) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+                _ => {}
             }
-            result => result?,
-        }
+            let parent = path.parent().ok_or(std::io::ErrorKind::InvalidInput)?;
+            match std::fs::File::open(parent).and_then(|dir| dir.sync_all()) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    std::fs::File::open(root)?.sync_all()
+                }
+                result => result,
+            }
+        })
+        .await
+        .map_err(|_| StorageError::Unavailable)??;
         Ok(())
     }
 

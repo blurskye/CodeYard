@@ -53,9 +53,7 @@ pub async fn plan(pool: &SqlitePool, node: i64) -> Result<Option<Move>> {
     let candidates: Vec<i64> = sqlx::query_scalar("SELECT r.id FROM repositories r WHERE r.storage_node_id=$1 AND NOT EXISTS(SELECT 1 FROM node_drain_repositories d WHERE d.repository_id=r.id) ORDER BY r.size_bytes,COALESCE((SELECT MAX(created_at) FROM repository_pushes WHERE repo_id=r.id),r.created_at),r.id LIMIT 128")
         .bind(node).fetch_all(&mut *tx).await?;
     let limit = crate::drain::repository_limit()?;
-    let pending: Vec<(i64,i64)> = sqlx::query_as("SELECT rr.node_id,CAST(SUM(MAX(r.size_bytes,1))*2 AS BIGINT) FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.applied_version<0 AND rr.synced_at IS NULL GROUP BY rr.node_id LIMIT 1001")
-        .fetch_all(&mut *tx).await?;
-    ensure!(pending.len() <= 1000, "rebalance node limit exceeded");
+    let pending = crate::sqlite::objects::pending(&mut tx).await?;
     for repository in candidates {
         let family = crate::sqlite::cluster::FORK_FAMILY;
         let rows: Vec<Repository> = sqlx::query_as(&format!("WITH family AS ({family}) SELECT r.id,r.forked_from_id AS parent,r.storage_node_id AS primary_id,r.write_version AS version,r.size_bytes AS size FROM repositories r JOIN family f ON f.id=r.id ORDER BY r.id LIMIT $2"))

@@ -70,9 +70,8 @@ pub async fn change(
             copies.len() as i64 <= limit.saturating_mul(1000),
             "drain copy limit exceeded"
         );
-        let pending: Vec<(i64,i64)> = sqlx::query_as("SELECT rr.node_id,CAST(SUM(GREATEST(r.size_bytes,1))*2 AS BIGINT) FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.applied_version<0 AND rr.synced_at IS NULL GROUP BY rr.node_id LIMIT 1001")
-            .fetch_all(&mut *tx).await?;
-        ensure!(pending.len() <= 1000, "drain node limit exceeded");
+        let objects = crate::postgres::objects::prepare_drain(&mut tx, node.id, &nodes).await?;
+        let pending = crate::postgres::objects::pending(&mut tx).await?;
         let quorum: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM node_configuration WHERE write_quorum IS NOT NULL)",
         )
@@ -93,7 +92,7 @@ pub async fn change(
                 .bind(repo).bind(target).execute(&mut *tx).await?;
         }
         sqlx::query("UPDATE nodes SET state='draining',drain_started_at=clock_timestamp(),drain_total=$2,drain_completed=0,drain_error=NULL WHERE id=$1")
-            .bind(node.id).bind(repos.len() as i64).execute(&mut *tx).await?;
+            .bind(node.id).bind((repos.len() as i64).checked_add(objects).ok_or_else(||anyhow::anyhow!("drain count overflow"))?).execute(&mut *tx).await?;
     }
     if let Some(actor) = authority {
         let credential = actor.credential().ok_or(Refusal::Denied)?;
@@ -172,7 +171,7 @@ pub async fn complete_repository(pool: &PgPool, node: i64, repo: i64) -> Result<
 pub async fn finish(pool: &PgPool, node: i64) -> Result<bool> {
     // Claims require state=active in their own transaction. A draining runner keeps
     // heartbeating existing work; its existing maximum job deadline cancels overruns.
-    Ok(sqlx::query("UPDATE nodes SET state='drained',drain_completed=drain_total,drain_error=NULL WHERE id=$1 AND state='draining' AND NOT EXISTS(SELECT 1 FROM node_drain_repositories WHERE node_id=$1) AND NOT EXISTS(SELECT 1 FROM repositories WHERE storage_node_id=$1) AND NOT EXISTS(SELECT 1 FROM repository_voters WHERE node_id=$1) AND NOT EXISTS(SELECT 1 FROM repository_replicas WHERE node_id=$1) AND NOT EXISTS(SELECT 1 FROM ci_runs c WHERE c.status='running' AND c.worker LIKE nodes.public_key||'/%')")
+    Ok(sqlx::query("UPDATE nodes SET state='drained',drain_completed=drain_total,drain_error=NULL WHERE id=$1 AND state='draining' AND NOT EXISTS(SELECT 1 FROM node_drain_repositories WHERE node_id=$1) AND NOT EXISTS(SELECT 1 FROM repositories WHERE storage_node_id=$1) AND NOT EXISTS(SELECT 1 FROM repository_voters WHERE node_id=$1) AND NOT EXISTS(SELECT 1 FROM repository_replicas WHERE node_id=$1) AND NOT EXISTS(SELECT 1 FROM storage_object_copies WHERE node_id=$1) AND NOT EXISTS(SELECT 1 FROM ci_runs c WHERE c.status='running' AND c.worker LIKE nodes.public_key||'/%')")
         .bind(node).execute(pool).await?.rows_affected() == 1)
 }
 

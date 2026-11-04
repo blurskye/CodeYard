@@ -12,6 +12,7 @@ use tokio::sync::OwnedSemaphorePermit;
 use tokio::sync::Semaphore;
 pub mod files;
 pub mod local;
+pub mod nodes;
 pub mod range;
 pub mod s3;
 
@@ -65,6 +66,7 @@ pub enum Download {
 enum Backend {
     Local(crate::local::LocalStore),
     S3(crate::s3::S3Store),
+    Nodes(crate::local::LocalStore, Arc<dyn nodes::NodeStore>),
 }
 
 pub struct ObjectStore {
@@ -90,6 +92,16 @@ impl ObjectStore {
             downloads: Arc::new(Semaphore::new(DOWNLOAD_SLOTS)),
             file_locks: Default::default(),
         })
+    }
+
+    /// Local files are only a staging/cache area; acknowledged objects live on storage nodes.
+    pub async fn on_nodes(state_dir: &Path, remote: Arc<dyn nodes::NodeStore>) -> Result<Self> {
+        let mut store = Self::open(state_dir, None).await?;
+        let Backend::Local(local) = store.backend else {
+            unreachable!()
+        };
+        store.backend = Backend::Nodes(local, remote);
+        Ok(store)
     }
 
     pub fn state_directory(&self) -> &Path {
@@ -120,13 +132,14 @@ impl ObjectStore {
         match self.backend {
             Backend::Local(_) => "local",
             Backend::S3(_) => "s3",
+            Backend::Nodes(_, _) => "nodes",
         }
     }
 
     /// The bucket for the admin page. Local files have no location to show.
     pub fn location(&self) -> Option<String> {
         match &self.backend {
-            Backend::Local(_) => None,
+            Backend::Local(_) | Backend::Nodes(_, _) => None,
             Backend::S3(store) => Some(store.bucket().to_owned()),
         }
     }
@@ -162,7 +175,7 @@ impl ObjectStore {
         expires_in: Duration,
     ) -> Result<UploadTarget, StorageError> {
         match &self.backend {
-            Backend::Local(_) => Ok(UploadTarget {
+            Backend::Local(_) | Backend::Nodes(_, _) => Ok(UploadTarget {
                 url: local_url,
                 headers: BTreeMap::from([
                     ("content-type".into(), upload.content_type.into()),
@@ -198,6 +211,13 @@ impl ObjectStore {
     ) -> Result<crate::local::StagedUpload, StorageError> {
         match &self.backend {
             Backend::Local(store) => store.stage(upload, reader, io).await,
+            Backend::Nodes(store, remote) => {
+                let staged = store.stage(upload, reader, io).await?;
+                remote
+                    .put(upload.into(), staged.bytes(upload.bytes).await?)
+                    .await?;
+                Ok(staged)
+            }
             Backend::S3(_) => Err(StorageError::Rejected),
         }
     }
@@ -214,6 +234,12 @@ impl ObjectStore {
     ) -> Result<(), StorageError> {
         match &self.backend {
             Backend::Local(store) => store.put(upload, bytes.as_slice(), io).await,
+            Backend::Nodes(store, remote) => {
+                // Reuse the local signature/checksum validator before crossing the node boundary.
+                let staged = store.stage(upload, bytes.as_slice(), io).await?;
+                remote.put(upload.into(), bytes).await?;
+                staged.publish().await
+            }
             Backend::S3(store) => store
                 .put_object(upload, bytes, io)
                 .await
@@ -225,6 +251,7 @@ impl ObjectStore {
     pub async fn verify(&self, upload: &Upload<'_>) -> Result<(), StorageError> {
         match &self.backend {
             Backend::Local(store) => store.verify(upload).await,
+            Backend::Nodes(_, remote) => remote.verify(upload.into()).await,
             Backend::S3(store) => store.verify(upload).await,
         }
     }
@@ -237,6 +264,15 @@ impl ObjectStore {
         inline_image: Option<&str>,
     ) -> Result<Download, StorageError> {
         match &self.backend {
+            Backend::Nodes(store, remote) => {
+                let (declaration, bytes) = remote.get(key, 0, None).await?;
+                let io = Arc::new(self.try_acquire_io()?);
+                store
+                    .put(&declaration.upload(), bytes.as_slice(), io)
+                    .await?;
+                let (file, bytes) = store.open_file(key).await?;
+                Ok(Download::Stream { file, bytes })
+            }
             Backend::Local(store) => {
                 let (file, bytes) = store.open_file(key).await?;
                 Ok(Download::Stream { file, bytes })
@@ -256,6 +292,13 @@ impl ObjectStore {
             return Err(StorageError::Invalid);
         }
         match &self.backend {
+            Backend::Nodes(_, remote) => {
+                let (declaration, bytes) = remote.get(key, 0, None).await?;
+                if declaration.bytes != length as i64 || bytes.len() != length {
+                    return Err(StorageError::Rejected);
+                }
+                Ok(bytes)
+            }
             Backend::S3(store) => store
                 .read_object(key, length)
                 .await
@@ -288,6 +331,10 @@ impl ObjectStore {
             return Err(StorageError::Invalid);
         }
         match &self.backend {
+            Backend::Nodes(_, remote) => {
+                let (_, bytes) = remote.get(key, offset, Some(length)).await?;
+                Ok(Box::new(std::io::Cursor::new(bytes)))
+            }
             Backend::Local(store) => {
                 let (mut file, size) = store.open_file(key).await?;
                 if offset + length > size {
@@ -314,6 +361,10 @@ impl ObjectStore {
             return Err(StorageError::Invalid);
         }
         match &self.backend {
+            Backend::Nodes(_, remote) => remote
+                .get(key, offset, Some(length as u64))
+                .await
+                .map(|(_, bytes)| bytes),
             Backend::Local(store) => {
                 use tokio::io::{AsyncReadExt, AsyncSeekExt};
                 let (mut file, _) = store.open_file(key).await?;
@@ -335,6 +386,10 @@ impl ObjectStore {
         let _io = self.try_acquire_io()?;
         match &self.backend {
             Backend::Local(store) => store.delete(key).await,
+            Backend::Nodes(store, remote) => {
+                remote.delete(key).await?;
+                store.delete(key).await
+            }
             Backend::S3(store) => store
                 .delete(key)
                 .await
@@ -346,7 +401,7 @@ impl ObjectStore {
     /// files on this server.
     pub async fn remove_stale_staging(&self) -> std::io::Result<usize> {
         match &self.backend {
-            Backend::Local(store) => store.remove_stale_staging().await,
+            Backend::Local(store) | Backend::Nodes(store, _) => store.remove_stale_staging().await,
             Backend::S3(_) => Ok(0),
         }
     }

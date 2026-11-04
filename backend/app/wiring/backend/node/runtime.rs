@@ -91,7 +91,16 @@ async fn prepare_application(
     if let Some(config) = s3.as_ref().filter(|_| serves_web) {
         config.validate_browser_cookie_scope_from_env()?;
     }
-    let storage = Arc::new(ObjectStore::open(state_dir, s3).await?);
+    let storage = Arc::new(match (s3, cluster.as_ref()) {
+        (None, Some(context)) => {
+            ObjectStore::on_nodes(
+                state_dir,
+                codeyard_repos_core::objects::Store::new(context.clone()),
+            )
+            .await?
+        }
+        (s3, _) => ObjectStore::open(state_dir, s3).await?,
+    });
     // Only web nodes take uploads, so an object storage outage does not keep a Git-only
     // node from starting.
     if serves_web {
@@ -334,10 +343,6 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         anyhow::bail!(codeyard_model::node_roles::SINGLE_NODE_ROLES);
     }
     let s3 = S3Config::optional_from_env()?;
-    anyhow::ensure!(
-        !clustered || s3.is_some(),
-        "cluster mode needs a shared object store; configure the S3_* settings instead of node-local file storage"
-    );
     let repos_path = if config.roles.contains(NodeRole::Storage) {
         prepare_repository_root(&config.repos_path)?
     } else {

@@ -37,6 +37,7 @@ async fn show(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
         database: database_name(&ctx.state.pool).into(),
         object_storage: match ctx.state.storage.kind() {
             "s3" => "S3-compatible bucket",
+            "nodes" => "Two storage-node copies",
             _ => "Local directory",
         }
         .into(),

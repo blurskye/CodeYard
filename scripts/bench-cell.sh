@@ -22,6 +22,7 @@ import urllib.parse as u
 
 root = pathlib.Path(os.environ['BENCH_ROOT'])
 binary = pathlib.Path(os.environ.get('BENCH_BINARY', root / 'target/release/codeyard')).resolve()
+actions = pathlib.Path(os.environ.get('CODEYARD_ACTIONS_BIN', binary.with_name('codeyard-actions'))).resolve()
 upstream = os.environ.get('GITSERV_TEST_DATABASE_URL', '')
 duration = int(os.environ.get('BENCH_SECONDS', '30'))
 if not upstream.startswith(('postgres://', 'postgresql://')):
@@ -30,6 +31,8 @@ if not 10 <= duration <= 300:
     raise SystemExit('BENCH_SECONDS must be between 10 and 300')
 if not binary.is_file() or not os.access(binary, os.X_OK):
     raise SystemExit('BENCH_BINARY must name an already built codeyard binary')
+if not actions.is_file() or not os.access(actions, os.X_OK):
+    raise SystemExit('CODEYARD_ACTIONS_BIN must name an already built native runner')
 for tool in ('curl', 'git', 'createdb', 'dropdb', 'timeout'):
     if not shutil.which(tool):
         raise SystemExit(f'Missing tool: {tool}')
@@ -108,11 +111,15 @@ try:
     base = f'http://127.0.0.1:{http_port}'
     env = {key: os.environ[key] for key in ('PATH', 'LANG', 'TZ') if key in os.environ}
     env.update(DATABASE_URL=url, GITSERV_STATE_DIR=str(work / 'state'), REPOS_PATH=str(work / 'repos'),
-               HOME=str(work), HOST_KEY_PATH=str(work / 'host_key'), GITSERV_NODE_ROLES='server',
+               HOME=str(work), HOST_KEY_PATH=str(work / 'host_key'), GITSERV_NODE_ROLES='server,runner',
                HTTP_ADDR=f'127.0.0.1:{http_port}', SSH_ADDR=f'127.0.0.1:{ssh_port}', SSH_MODE='builtin',
                PUBLIC_URL=base, PUBLIC_HTTP_CLONE_BASE=base, COOKIE_SECURE='false',
                SECRETS_MASTER_KEY=secrets.token_hex(32), RUST_LOG='warn',
+               CI_EXECUTION_MODE='local', CI_ACTIONS_BINARY=str(actions),
+               CI_MAX_ACTIVE_RUNS='4', CI_RUN_TIMEOUT_SECONDS='120',
                WEBUI_DIST=str(pathlib.Path(os.environ.get('WEBUI_DIST', root / 'dist/webui')).resolve()))
+    if os.environ.get('CI_PROCESS_CGROUP_ROOT'):
+        env['CI_PROCESS_CGROUP_ROOT'] = os.environ['CI_PROCESS_CGROUP_ROOT']
     with (work / 'server.log').open('wb') as log:
         server = subprocess.Popen([str(binary), 'serve'], cwd=work, env=env, stdout=log, stderr=log)
     for attempt in range(120):
@@ -145,10 +152,11 @@ try:
     curl_config.write_text(f'header = "Authorization: Bearer {token}"\n')
     curl_config.chmod(0o600)
 
-    def rest(path, data):
+    def rest(path, data=None):
+        payload = ['--data-binary', json.dumps(data)] if data is not None else []
         result = command(['curl', '-q', '--noproxy', '*', '--config', curl_config, '-fsS',
                           '--max-time', '30', '--max-filesize', '1048576',
-                          '-H', 'Content-Type: application/json', '--data-binary', json.dumps(data),
+                          '-H', 'Content-Type: application/json', *payload,
                           base + '/api/v3' + path], stdout=subprocess.PIPE)
         return json.loads(result.stdout)
 
@@ -171,6 +179,9 @@ try:
                 stderr=subprocess.DEVNULL)
     git('-C', source, 'init', '-q', '-b', 'main')
     (source / 'payload.bin').write_bytes(os.urandom(1024 * 1024))
+    workflow = source / '.github/workflows/ci.yml'
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text('name: Cell benchmark\non: [push]\njobs:\n  measure:\n    runs-on: ubuntu-latest\n    steps:\n      - run: printf \"benchmark job\\n\"\n')
     git('-C', source, 'add', '.')
     git('-C', source, 'commit', '-qm', 'Initial payload')
     remote = base + '/bench-org-0/bench.git'
@@ -184,7 +195,7 @@ try:
             for kind, path in [('api', f'/api/v3/repos/{org}/bench/issues?per_page=10'),
                                ('page', f'/{org}/bench/issues')]:
                 config.write(f'url = "{base}{path}"\noutput = "/dev/null"\n')
-    samples = {'push': [], 'clone': [], 'api': [], 'page': []}
+    samples = {'push': [], 'clone': [], 'api': [], 'page': [], 'invitation': [], 'ci': []}
     clone_bytes = 0
     started = time.monotonic()
     deadline = started + duration
@@ -218,9 +229,23 @@ try:
         if not stop.is_set():
             raise RuntimeError('Reader sample limit reached before workload finished')
 
-    print(f'Measuring for at least {duration}s with 500 concurrent reader slots.', flush=True)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+    def invitations():
+        barrier = threading.Barrier(50, timeout=30)
+        def invite(index):
+            barrier.wait()
+            before = time.monotonic()
+            reply = rest(f'/orgs/bench-org-{index}/invitations',
+                         dict(email=f'invite-{index}@example.test', role='direct_member'))
+            if not isinstance(reply.get('id'), int):
+                raise RuntimeError('Invitation was not persisted')
+            return time.monotonic() - before
+        with concurrent.futures.ThreadPoolExecutor(max_workers=50) as inviting:
+            return list(inviting.map(invite, range(50)))
+
+    print(f'Measuring for at least {duration}s with 500 concurrent reader slots, CI and 50 simultaneous invitations.', flush=True)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         future = executor.submit(readers)
+        invites = executor.submit(invitations)
         try:
             for index in range(1000):
                 if future.done():
@@ -245,6 +270,34 @@ try:
         finally:
             stop.set()
         future.result()
+        samples['invitation'].extend(invites.result())
+    # An enqueued run is not a completed CI sample. Require every measured push to finish.
+    ci_deadline = time.monotonic() + 300
+    for attempt in range(300):
+        runs = []
+        for page in range(1, 12):
+            batch = rest(f'/repos/bench-org-0/bench/actions/runs?per_page=100&page={page}')['workflow_runs']
+            runs.extend(batch)
+            if len(batch) < 100:
+                break
+        expected = len(samples['push']) + 1
+        if len(runs) < expected:
+            if time.monotonic() >= ci_deadline:
+                raise RuntimeError('CI admission did not create every expected run')
+        elif all(run['status'] == 'completed' for run in runs):
+            from datetime import datetime
+            if any(run['conclusion'] != 'success' for run in runs):
+                raise RuntimeError('A benchmark CI job failed')
+            for run in runs:
+                begin = datetime.fromisoformat(run['created_at'].replace('Z', '+00:00'))
+                end = datetime.fromisoformat(run['updated_at'].replace('Z', '+00:00'))
+                samples['ci'].append((end - begin).total_seconds())
+            break
+        if time.monotonic() >= ci_deadline:
+            raise RuntimeError('Benchmark CI jobs did not finish')
+        threading.Event().wait(1)
+    else:
+        raise RuntimeError('CI sample limit reached')
     elapsed = time.monotonic() - started
     print(f'Client host: {os.uname().nodename}; CPUs: {os.cpu_count()}; duration: {elapsed:.2f}s')
     print('PostgreSQL hardware is external; record its CPU, RAM, disk and network with these results.')

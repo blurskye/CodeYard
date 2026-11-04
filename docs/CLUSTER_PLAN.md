@@ -38,7 +38,8 @@ Current acceptance status (runtime checks are still pending):
 - 7: lease leader, policy settings, pause and dry run written; checks pending.
 - 8: mover and bandwidth limit written; checks pending.
 - 9: pool configuration and owned PostgreSQL crash checks written; Helm, pool and load runs pending.
-- 10–12: not completed; existing production controls still need the cluster acceptance checks.
+- 10–11: not completed.
+- 12: cross-node REST account/IP counter acceptance written; organization SSO and remaining abuse/audit acceptance are missing.
 
 ## A. Checks on what exists
 

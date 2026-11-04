@@ -131,6 +131,17 @@ impl FilePathQuery {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Operation {
+    ObjectPut {
+        declaration: codeyard_storage::nodes::Declaration,
+    },
+    ObjectGet {
+        key: String,
+        offset: u64,
+        length: Option<u64>,
+    },
+    ObjectDelete {
+        key: String,
+    },
     Initialize {
         source: Option<Uuid>,
         default_branch: String,
@@ -583,6 +594,12 @@ pub enum Operation {
 }
 
 impl Operation {
+    pub fn is_object(&self) -> bool {
+        matches!(
+            self,
+            Self::ObjectPut { .. } | Self::ObjectGet { .. } | Self::ObjectDelete { .. }
+        )
+    }
     /// Whether a copy may answer this operation while the primary cannot be reached. These
     /// are the reads that pages, the API and Git clients make on one repository. Writes,
     /// receive-pack, replica transfers and repository setup are never read-only. CI admission
@@ -632,6 +649,7 @@ impl Operation {
             | Self::GistHistory { .. } => true,
             Self::AdvertiseRefs { service } => *service == GitService::UploadPack,
             Self::GitSession(session) => session.service == GitService::UploadPack,
+            Self::ObjectPut { .. } | Self::ObjectGet { .. } | Self::ObjectDelete { .. } => false,
             Self::Exists
             | Self::SizeBytes
             | Self::WorkflowFiles { .. }
@@ -745,6 +763,10 @@ pub fn unavailable() -> RepoError {
 /// The request-body limit for an operation. All other buffered operations are bodyless.
 pub fn operation_body_limit(operation: &Operation) -> usize {
     match operation {
+        Operation::ObjectPut { declaration } => declaration
+            .bytes
+            .clamp(0, codeyard_support::object_limits::MAX_OBJECT_BYTES)
+            as usize,
         Operation::PrepareFile { .. } | Operation::SaveFile { .. } => MAX_EDITOR_BYTES,
         Operation::WriteGitObject {
             input: codeyard_git::objects::ObjectWrite::Blob,

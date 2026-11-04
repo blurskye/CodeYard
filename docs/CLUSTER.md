@@ -509,15 +509,19 @@ failure. The new crash and session-pool checks await execution.
 ## One-cell benchmark
 
 Run `GITSERV_TEST_DATABASE_URL=postgres://... bash scripts/bench-cell.sh` with an already
-built `target/release/codeyard`, its web bundle, Python 3, curl, Git and PostgreSQL client
-tools. The database role needs `CREATEDB`. `BENCH_BINARY` and `WEBUI_DIST` override artifact
+built `target/release/codeyard`, `codeyard-actions`, its web bundle, Python 3, curl, Git
+and PostgreSQL client tools. Local CI needs the delegated cgroup described in
+[CI_LOCAL_RUNNER.md](CI_LOCAL_RUNNER.md); `CI_PROCESS_CGROUP_ROOT` selects it. The database role needs `CREATEDB`. `BENCH_BINARY` and `WEBUI_DIST` override artifact
 paths; `BENCH_SECONDS` sets the measurement duration (10–300, default 30).
 
-The script starts one disposable server without CI workers, creates 50 organizations via
-the native form (there is no REST creation endpoint), and creates public repositories and
-issues through REST. It runs 500 concurrent anonymous reader slots against issue pages
-and REST issue lists alongside 1 MiB clones and small pushes. It prints p50/p95/p99
-latencies, operation rates and clone object throughput, not wire throughput. These are
+The script starts one disposable server with four local CI slots, creates 50 organizations
+via the native form (there is no REST creation endpoint), and creates public repositories
+and issues through REST. During Git and reader traffic all 50 organizations issue an
+invitation at once. It runs 500 concurrent anonymous reader slots against issue pages
+and REST issue lists alongside 1 MiB clones and small pushes, each scheduling a CI job.
+Every job must finish successfully; missing or queued runs fail the benchmark.
+It prints p50/p95/p99 latencies, operation rates and clone object throughput, not wire throughput.
+CI latency includes admission and queue time. `CODEYARD_ACTIONS_BIN` overrides the runner path. These are
 client slots, not 500 new accounts. Record the server and PostgreSQL CPU, RAM, disk and
 network alongside results; this is a small workload, not a proven cell capacity.
 It drops its database and removes temporary files on exit. `BENCH_KEEP=1` retains private

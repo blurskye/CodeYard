@@ -28,18 +28,22 @@ pub async fn add(
         "invalid node role"
     );
     ensure!((1..=1000).contains(&count), "invalid node count");
-    let command = std::env::var("NODE_PROVISION_COMMAND")
-        .ok()
-        .filter(|command| !command.is_empty());
+    let command = match std::env::var("NODE_PROVISION_COMMAND") {
+        Ok(command) => (!command.is_empty()).then_some(command),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(error) => return Err(error).context("invalid provisioning command"),
+    };
     ensure!(
         command
             .as_ref()
             .is_none_or(|command| command.len() <= 16_384 && !command.contains('\0')),
         "invalid provisioning command"
     );
-    let seconds: u64 = std::env::var("NODE_PROVISION_TIMEOUT_SECONDS")
-        .map(|value| value.parse())
-        .unwrap_or(Ok(300))?;
+    let seconds: u64 = match std::env::var("NODE_PROVISION_TIMEOUT_SECONDS") {
+        Ok(value) => value.parse().context("invalid provisioning timeout")?,
+        Err(std::env::VarError::NotPresent) => 300,
+        Err(error) => return Err(error).context("invalid provisioning timeout"),
+    };
     ensure!(
         (1..=3600).contains(&seconds),
         "invalid provisioning timeout"

@@ -109,7 +109,7 @@ async fn capability(
     store: &ObjectStore,
     file: &File,
 ) -> Result<(String, DownloadCapability), DownloadError> {
-    if store.kind() == "local" {
+    if store.kind() != "s3" {
         return Ok((
             format!("/api/files/{}/content", file.id),
             DownloadCapability::AuthorizedApplicationGet,

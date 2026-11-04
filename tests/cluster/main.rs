@@ -5,6 +5,7 @@ mod monitoring;
 mod monitoring_bounds;
 mod notification_cluster;
 mod pairing;
+mod production_controls;
 mod quorum;
 mod quorum_sql;
 mod replicas;

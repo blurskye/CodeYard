@@ -136,7 +136,7 @@ pub async fn remove_expired_uploads(pool: &DbPool, store: &ObjectStore) -> anyho
         tokio::time::timeout_at(deadline, deletions.next()).await
     {
         remaining.remove(&key);
-        let recorded = if deleted && store.kind() == "local" {
+        let recorded = if deleted && store.kind() != "s3" {
             codeyard_db_repos::files::finish_object_deletion(pool, &key)
                 .await
                 .map(|_| ())

@@ -138,6 +138,11 @@ pub fn authorize_operation(
         Operation::PublishRestack { .. } => ("PublishRestack", false),
         Operation::AdvertiseRefs { .. } => ("AdvertiseRefs", false),
         Operation::GitSession(session) => ("GitSession", session.service == GitService::UploadPack),
+        Operation::ObjectPut { .. }
+        | Operation::ObjectGet { .. }
+        | Operation::ObjectDelete { .. } => {
+            return Err(invalid("object RPC requires object admission"))
+        }
         Operation::ReplicaPack { .. } => ("ReplicaPack", false),
         Operation::PrepareWrite { .. } => ("PrepareWrite", false),
         Operation::ApplyWrite { .. } => ("ApplyWrite", false),
@@ -675,6 +680,10 @@ impl RpcHandler {
         request: &Request,
         caller: iroh::PublicKey,
     ) -> Result<(), RepoError> {
+        if request.operation.is_object() {
+            self.object_admission(request, caller).await?;
+            return Ok(());
+        }
         let (_, repo_id) = self.authorize_request(request, caller).await?;
         if !matches!(
             &request.operation,
@@ -753,6 +762,12 @@ impl RpcHandler {
         body: Vec<u8>,
         caller: iroh::PublicKey,
     ) -> Result<(Value, Vec<u8>), Failure> {
+        if request.operation.is_object() {
+            return self
+                .execute_object(request, body, caller)
+                .await
+                .map_err(Into::into);
+        }
         let received = std::time::Instant::now();
         // Gist reads own the same lock internally because primary reads may reconcile
         // a pending gist write. Replica reads never perform that reconciliation.
@@ -1619,6 +1634,11 @@ impl RpcHandler {
                     .map_err(|_| unavailable())?
                     .map_err(RepoError::from)?;
                 Value::Null
+            }
+            Operation::ObjectPut { .. }
+            | Operation::ObjectGet { .. }
+            | Operation::ObjectDelete { .. } => {
+                return Err(invalid("object RPC requires object admission").into())
             }
             Operation::ReplicaPack { .. } | Operation::WritePack { .. } => {
                 return Err(invalid("replica pack requires streaming").into())

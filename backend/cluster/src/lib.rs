@@ -560,6 +560,9 @@ async fn heartbeat(
             scaling.spawn(async move { crate::scaling::step(&context).await });
         }
         match tokio::time::timeout(Duration::from_secs(10), async {
+            if storage_path.is_some() {
+                codeyard_repos_core::objects::maintain(&context).await?;
+            }
             drain::step(&context).await?;
             events.maintain_drains().await?;
             if storage_path.is_some() {

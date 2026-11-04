@@ -33,7 +33,7 @@ pub(super) async fn node(db: &Database, name: &str, free: i64) -> i64 {
     node.id
 }
 
-async fn token(db: &Database, user: i64) -> String {
+pub(super) async fn token(db: &Database, user: i64) -> String {
     let value = format!("cy_pat_{}", crate::support::native_database::token());
     let session = crate::support::native_database::token();
     codeyard_db_identity::users::sessions::create_session(

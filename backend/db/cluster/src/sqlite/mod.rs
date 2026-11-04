@@ -11,3 +11,5 @@ pub mod drain;
 pub mod scaling;
 
 pub mod rebalance;
+
+pub mod objects;

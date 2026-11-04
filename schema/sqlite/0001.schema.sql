@@ -923,6 +923,24 @@ CREATE TABLE node_drain_repositories (
     PRIMARY KEY(node_id,repository_id,target_node_id)
 );
 
+-- Uploaded bytes use two storage-node disks when S3 is not configured.
+CREATE TABLE storage_objects (
+    object_key TEXT PRIMARY KEY CHECK(length(object_key) BETWEEN 1 AND 200),
+    digest TEXT NOT NULL CHECK(length(digest)=64),
+    bytes BIGINT NOT NULL CHECK(bytes BETWEEN 0 AND 104857600),
+    content_type TEXT NOT NULL CHECK(length(content_type) BETWEEN 1 AND 200),
+    confirmed INTEGER NOT NULL DEFAULT 0 CHECK(confirmed IN (-1,0,1)),
+    deleted_at TEXT
+);
+CREATE INDEX storage_objects_deleted ON storage_objects(deleted_at);
+CREATE TABLE storage_object_copies (
+    object_key TEXT NOT NULL REFERENCES storage_objects(object_key) ON DELETE CASCADE,
+    node_id BIGINT NOT NULL REFERENCES nodes(id),
+    ready INTEGER NOT NULL DEFAULT 0 CHECK(ready IN (-1,0,1)),
+    PRIMARY KEY(object_key,node_id)
+);
+CREATE INDEX storage_object_copies_node ON storage_object_copies(node_id,ready,object_key);
+
 CREATE TABLE repository_moves (
     repository_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
     source_node_id BIGINT NOT NULL REFERENCES nodes(id),
