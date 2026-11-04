@@ -84,6 +84,11 @@ browser sessions and repository-scoped tokens do not grant access. Scrapes have 
   age (zero for an empty queue). Alert when age exceeds 120 seconds.
 - `codeyard_database_pool_size`: open connections in this process, including idle ones.
   `codeyard_database_pool_waiters` is `NaN`: SQLx does not expose its acquisition queue.
+- `codeyard_quorum_failures_total`: refused or aborted quorum attempts in this process.
+  Alert on any increase.
+- `codeyard_drain_repositories_total{node_id,state}` and
+  `codeyard_drain_repositories_completed{node_id,state}`: reserved and completed drain
+  work. Alert on stalled progress.
 - `codeyard_nodes{state}`: counts of pending, active and revoked memberships, not
   heartbeat health. Alert on unexpected membership changes and scrape failures.
 
@@ -192,6 +197,28 @@ with the roles you allowed.
 Manage nodes with `codeyard cluster list`, `approve <name>`, `revoke <name>`, `invites` and
 `cancel-invite <id>`, or on the **Administration → Cluster nodes** page. A revoked node is
 refused on its next request.
+
+## Drain a node
+
+Use **Administration → Cluster nodes → Drain**, `POST /api/admin/nodes/:name/drain`
+with a site administrator's write token, or `codeyard cluster drain NAME`. Cancel with
+`DELETE` on that endpoint, the page's **Cancel drain**, or `cluster drain NAME --cancel`.
+All three use the same operation. Actions are audited, including operator commands.
+
+Admission reserves complete fork families on active storage nodes, leaving 15% of each
+reported disk capacity free. A 409 response includes `missing_bytes` and changes nothing.
+Draining nodes receive no new repositories or CI claims. Web readiness becomes 503 and
+new web and SSH requests ask the client to retry elsewhere. Existing storage operations
+continue until copy-then-promote fences the family. An unavailable copy leaves the node
+`draining`; the page shows progress and the repository waiting for a replacement.
+Storage with write quorum needs two active replacement voters. An offline node uses
+`cluster promote --all-from` instead.
+
+Each node resumes its drain during heartbeats. Core nodes also finish idle runner drains;
+running jobs retain their normal timeout, and the drain cancels remaining jobs after
+`CI_RUN_TIMEOUT_SECONDS`. `CLUSTER_DRAIN_MAX_REPOSITORIES` bounds a preflight (default
+10,000, maximum 1,000,000); node lists support at most 1,000 nodes. The new drain paths
+and metrics await builder and runtime verification.
 
 ## Storage nodes
 

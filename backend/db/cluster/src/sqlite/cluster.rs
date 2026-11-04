@@ -601,13 +601,21 @@ pub async fn assign_replica_family(
     if members.is_empty() || members.iter().any(|row| row.1 != Some(primary)) {
         return Ok(ids);
     }
+    let draining: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM node_drain_repositories w JOIN repositories r ON r.id=w.repository_id WHERE r.storage_node_id=$1)")
+        .bind(primary).fetch_one(&mut *tx).await?;
+    if draining {
+        return Ok(ids);
+    }
     let mut storage: Vec<ClusterNode> = sqlx::query_as(&format!(
         "SELECT *,{NOW} AS observed_at FROM nodes ORDER BY id"
     ))
     .fetch_all(&mut *tx)
     .await?;
-    storage
-        .retain(|node| node.status == "active" && node.roles.iter().any(|role| role == "storage"));
+    storage.retain(|node| {
+        node.status == "active"
+            && node.state == "active"
+            && node.roles.iter().any(|role| role == "storage")
+    });
     let reservations: Vec<(i64, i64)> = sqlx::query_as("SELECT rr.node_id,CASE WHEN SUM(MAX(r.size_bytes,1))<=9223372036854775807/?1 THEN SUM(MAX(r.size_bytes,1))*?1 END FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.applied_version<0 AND rr.synced_at IS NULL GROUP BY rr.node_id")
         .bind(crate::cluster::REPLICA_STAGING_FACTOR).fetch_all(&mut *tx).await?;
     let rows: Vec<PrimaryReplicaRow> = sqlx::query_as(&format!("WITH family AS ({FORK_FAMILY}) SELECT r.id,r.disk_path,rr.node_id,rr.applied_version,r.size_bytes,rr.synced_at IS NOT NULL FROM repositories r JOIN family f ON f.id=r.id LEFT JOIN repository_replicas rr ON rr.repository_id=r.id ORDER BY r.id,rr.node_id"))
@@ -807,7 +815,7 @@ pub async fn promote_repository(
     }
     // A repository moved to a node that is down would have no primary to serve it.
     let target = node_at_db_time(&mut tx, to).await?;
-    if !target.is_some_and(|node| node.is_serving_storage()) {
+    if !target.is_some_and(|node| node.state == "active" && node.is_serving_storage()) {
         return Ok(PromoteOutcome::TargetOffline);
     }
     move_primary(&mut tx, repo_id, from, to, applied_version).await?;
@@ -862,7 +870,7 @@ async fn promote_family(
     }
     // The taker must be reporting in too, or the family would move onto a node that is down.
     let target = node_at_db_time(&mut tx, to).await?;
-    if !target.is_some_and(|node| node.is_serving_storage()) {
+    if !target.is_some_and(|node| node.state == "active" && node.is_serving_storage()) {
         return Ok(FamilyOutcome::Refused);
     }
     for &(member, _, write_version) in &members {

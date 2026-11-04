@@ -15,6 +15,12 @@ use tokio::time::timeout;
 use tokio::time::timeout_at;
 use tokio::time::Instant;
 
+static QUORUM_FAILURES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn quorum_failures() -> u64 {
+    QUORUM_FAILURES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
 const VOTE_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -62,6 +68,21 @@ impl PreparedWrite {
 }
 
 pub async fn begin(
+    pool: &DbPool,
+    repo: i64,
+    primary: i64,
+    term: i64,
+    id: &str,
+    changes: &[RefChange],
+) -> Result<PreparedWrite> {
+    let result = begin_write(pool, repo, primary, term, id, changes).await;
+    if result.is_err() {
+        QUORUM_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    result
+}
+
+async fn begin_write(
     pool: &DbPool,
     repo: i64,
     primary: i64,
@@ -202,6 +223,9 @@ pub async fn decide(pool: &DbPool, write: &PreparedWrite, commit: bool) -> Resul
     )
     .await;
     if let Ok(Ok(record)) = result {
+        if record.decision == "abort" {
+            QUORUM_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         return Ok(record);
     }
     let record = timeout(
@@ -212,6 +236,9 @@ pub async fn decide(pool: &DbPool, write: &PreparedWrite, commit: bool) -> Resul
     .map_err(|_| OutcomeUnknown)?
     .map_err(|_| OutcomeUnknown)?
     .ok_or(OutcomeUnknown)?;
+    if record.decision == "abort" {
+        QUORUM_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
     ensure!(record.decision != "pending", OutcomeUnknown);
     Ok(record)
 }

@@ -4345,3 +4345,52 @@ async fn a_not_found_from_the_primary_does_not_fail_over() {
     copy.shutdown().await;
     primary.shutdown().await;
 }
+
+#[tokio::test]
+async fn draining_storage_waits_for_copy_then_promotes_without_losing_git_data() {
+    let database = native::PostgresDatabase::new().await;
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
+    let repo = create_repository(&database.pool, &primary, "draining").await;
+    let commit = repo
+        .save("main", "README.md", "unborn", b"drain survives\n")
+        .await;
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
+    codeyard_cluster::drain::change(&database.pool, None, "store-a", false)
+        .await
+        .unwrap();
+    codeyard_cluster::drain::step(&primary.context)
+        .await
+        .unwrap();
+    assert_eq!(
+        primary_of(&database.pool, repo.id()).await,
+        primary.context.node_id
+    );
+    assert!(primary_path(&primary, uuid).exists());
+    pass(&copy).await;
+    codeyard_cluster::drain::step(&primary.context)
+        .await
+        .unwrap();
+    pass(&copy).await;
+    assert_eq!(
+        primary_of(&database.pool, repo.id()).await,
+        copy.context.node_id
+    );
+    let current =
+        codeyard_db_cluster::cluster::get_node_by_id(&database.pool, primary.context.node_id)
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(current.state, "drained");
+    assert_eq!(current.drain_completed, current.drain_total);
+    let current = RepoStore::from_disk_path(primary_path(&copy, uuid).to_str().unwrap());
+    assert_eq!(current.refs().await.unwrap()["refs/heads/main"], commit);
+    codeyard_cluster::drain::change(&database.pool, None, "store-a", true)
+        .await
+        .unwrap();
+    copy.shutdown().await;
+    primary.shutdown().await;
+}

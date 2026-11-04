@@ -52,3 +52,13 @@ pub async fn node_counts(pool: &PgPool) -> Result<Vec<NodeCount>> {
             .await?,
     )
 }
+
+pub async fn drains(pool: &PgPool) -> Result<Vec<crate::metrics::Drain>> {
+    let rows: Vec<crate::metrics::Drain> = sqlx::query_as("SELECT id AS node_id,state,drain_total AS total,drain_completed AS completed FROM nodes WHERE state<>'active' ORDER BY id LIMIT $1")
+        .bind((MAX_STORAGE_NODES+1) as i64).fetch_all(pool).await?;
+    ensure!(
+        rows.len() <= MAX_STORAGE_NODES,
+        "too many draining nodes for metrics"
+    );
+    Ok(rows)
+}

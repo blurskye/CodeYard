@@ -902,12 +902,25 @@ CREATE TABLE nodes (
     name TEXT NOT NULL UNIQUE CHECK (length(name) BETWEEN 1 AND 63 AND name GLOB '[a-z0-9]*' AND name NOT GLOB '*[^a-z0-9._-]*'),
     roles TEXT NOT NULL CHECK (json_valid(roles) AND json_type(roles)='array' AND json_array_length(roles)>0),
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'revoked')),
+    state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','draining','drained')),
+    disk_total BIGINT CHECK (disk_total IS NULL OR disk_total >= 0),
+    drain_started_at TEXT,
+    drain_total BIGINT NOT NULL DEFAULT 0 CHECK (drain_total >= 0),
+    drain_completed BIGINT NOT NULL DEFAULT 0 CHECK (drain_completed >= 0),
+    drain_error TEXT,
     addr_hint TEXT,
     version TEXT,
     disk_free INTEGER CHECK (disk_free IS NULL OR (typeof(disk_free)='integer' AND disk_free>=0)),
     last_seen TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     runner_managed BOOLEAN NOT NULL DEFAULT false
+);
+
+CREATE TABLE node_drain_repositories (
+    node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    target_node_id BIGINT NOT NULL REFERENCES nodes(id),
+    PRIMARY KEY(node_id,repository_id,target_node_id)
 );
 
 CREATE TABLE join_tokens (

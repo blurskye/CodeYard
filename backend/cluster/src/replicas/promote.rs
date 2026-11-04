@@ -67,7 +67,7 @@ pub async fn promote(
         ensure!(!force, "--force is not allowed with write quorum");
         return tokio::time::timeout(
             Duration::from_secs(10),
-            promote_quorum(pool, repository, to),
+            promote_quorum(pool, repository, to, None),
         )
         .await?;
     }
@@ -183,6 +183,7 @@ async fn promote_quorum(
     pool: &DbPool,
     repository: i64,
     target: Option<i64>,
+    replacement: Option<&[i64]>,
 ) -> Result<Vec<Promotion>> {
     use codeyard_db_cluster::cluster::writes as journal;
     let family = journal::write_family(pool, repository).await?;
@@ -194,13 +195,27 @@ async fn promote_quorum(
         voters.len() == 2,
         "promotion requires the same two fixed voters"
     );
-    let mut nodes = Vec::with_capacity(2);
-    for voter in &voters {
-        nodes.push(
-            codeyard_db_cluster::cluster::get_node_by_id(pool, *voter)
-                .await?
-                .context("voting node is missing")?,
+    let original = voters.clone();
+    if let Some(replacement) = replacement {
+        ensure!(
+            replacement.len() == voters.len(),
+            "replacement must preserve voter count"
         );
+        voters = replacement.to_vec();
+        voters.sort_unstable();
+        voters.dedup();
+        ensure!(
+            voters.len() == original.len(),
+            "duplicate replacement voter"
+        );
+    }
+    let mut nodes = Vec::with_capacity(voters.len());
+    for voter in &voters {
+        let node = codeyard_db_cluster::cluster::get_node_by_id(pool, *voter)
+            .await?
+            .context("voting node is missing")?;
+        ensure!(node.state == "active", "replacement voter is draining");
+        nodes.push(node);
     }
     let to = match target {
         Some(target) => target,
@@ -227,21 +242,31 @@ async fn promote_quorum(
         let mut membership: Vec<_> = view.voters.iter().map(|voter| voter.node_id).collect();
         membership.sort_unstable();
         ensure!(
-            view.primary_id == from && view.serving == first.serving && membership == voters,
+            view.primary_id == from && view.serving == first.serving && membership == original,
             "fork family terms changed"
         );
-        if first.serving && from != to {
-            ensure!(
-                view.voters.iter().any(|voter| voter.node_id == to
-                    && voter.term == view.term
-                    && voter.applied_version == view.committed_version),
-                "voting copy has not applied canonical refs"
-            );
+        if first.serving {
+            for voter in &voters {
+                if *voter == from {
+                    continue;
+                }
+                let current = view.voters.iter().any(|copy| {
+                    copy.node_id == *voter
+                        && copy.term == view.term
+                        && copy.applied_version == view.committed_version
+                });
+                ensure!(
+                    current
+                        || codeyard_db_cluster::cluster::replica_is_current(pool, *member, *voter)
+                            .await?,
+                    "replacement copy has not applied canonical refs"
+                );
+            }
         }
         terms.push((*member, view.term));
     }
     if first.serving {
-        if from == to {
+        if from == to && voters == original {
             return Ok(Vec::new());
         }
         ensure!(
@@ -273,6 +298,20 @@ async fn promote_quorum(
             lost_writes: 0,
         })
         .collect())
+}
+
+/// Copy-then-promote and drain share the same fenced family switch.
+pub async fn promote_to_voters(
+    pool: &DbPool,
+    repository: i64,
+    target: i64,
+    voters: &[i64],
+) -> Result<Vec<Promotion>> {
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        promote_quorum(pool, repository, Some(target), Some(voters)),
+    )
+    .await?
 }
 
 /// Each voter reconstructs only its own directories. Enabling still requires both
@@ -379,7 +418,18 @@ pub async fn take_over(
             continue;
         }
         if quorum {
-            match promote_quorum(pool, row.repository_id, Some(node)).await {
+            let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, row.repository_id)
+                .await?;
+            // Two voters cannot complete reconstruction while one is offline. Keep the
+            // last serving term available for read fallback until a voter can be replaced.
+            if !view
+                .voters
+                .iter()
+                .all(|voter| is_reporting_storage(&nodes, voter.node_id))
+            {
+                continue;
+            }
+            match promote_quorum(pool, row.repository_id, Some(node), None).await {
                 Ok(promotions) => {
                     taken.extend(promotions.into_iter().map(|promotion| promotion.repository))
                 }
@@ -530,7 +580,10 @@ fn copy_problem(applied: Option<i64>, write_version: i64, force: bool) -> Option
 
 fn is_storage(nodes: &[ClusterNode], id: i64) -> bool {
     nodes.iter().any(|node| {
-        node.id == id && node.status == "active" && node.roles.iter().any(|role| role == "storage")
+        node.id == id
+            && node.status == "active"
+            && node.state == "active"
+            && node.roles.iter().any(|role| role == "storage")
     })
 }
 
@@ -539,5 +592,5 @@ fn is_storage(nodes: &[ClusterNode], id: i64) -> bool {
 fn is_reporting_storage(nodes: &[ClusterNode], id: i64) -> bool {
     nodes
         .iter()
-        .any(|node| node.id == id && node.is_serving_storage())
+        .any(|node| node.id == id && node.state == "active" && node.is_serving_storage())
 }

@@ -328,6 +328,25 @@ impl CiHandler {
 
     /// Opens claim admission once the node is published. A claim assigns runs to repositories
     /// placed on this node, and this node's address must be recorded before it can hand them out.
+    pub(crate) async fn maintain_drains(&self) -> Result<()> {
+        let pool = self.context.database()?;
+        let maximum = i64::from(codeyard_ci::config::CiConfig::from_env()?.run_timeout_seconds);
+        for (id, worker) in codeyard_db_cluster::drain::expired_runs(pool, maximum).await? {
+            self.queue
+                .finish(
+                    &worker,
+                    id,
+                    "cancelled",
+                    Some("Node drain exceeded the maximum job time"),
+                )
+                .await?;
+        }
+        for node in codeyard_db_cluster::drain::draining_nodes(pool).await? {
+            codeyard_db_cluster::drain::finish(pool, node).await?;
+        }
+        Ok(())
+    }
+
     pub(super) fn start_claiming(&self) {
         self.accepting_claims.store(true, Ordering::Release);
     }

@@ -509,6 +509,17 @@ impl russh::server::Handler for GitSshHandler {
         data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        if let Some(context) = &self.ci_service.cluster {
+            let node = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                codeyard_db_cluster::cluster::get_node_by_id(&self.pool, context.node_id),
+            )
+            .await;
+            if !matches!(node, Ok(Ok(Some(node))) if node.status == "active" && node.state == "active")
+            {
+                return Err(anyhow::anyhow!("Node is draining; retry on another node"));
+            }
+        }
         let command = String::from_utf8_lossy(data).trim().to_owned();
 
         if self.user.is_none() && self.deploy_key.is_none() {

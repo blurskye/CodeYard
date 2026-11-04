@@ -274,9 +274,16 @@ so a push can be lost if its primary is lost first. Read-only requests fall back
 copy when the primary cannot be reached. A node that holds a current copy of every member
 of a fork family takes the family over once its primary has been offline for a minute; a
 family with a behind or missing copy waits for `codeyard cluster promote --force`.
-Non-goals today: synchronous multi-node writes, read distribution, geo-routing. Section 3
-plans them, starting with stage 0; its single-node part (backups) is built, quorum writes
-are not.
+The experimental write quorum uses two storage voters and PostgreSQL decisions, with
+canonical refs and fenced term directories. Empty initialization and repository copies
+use that coordinator too. Read distribution and geo-routing remain future work.
+Cluster startup requires shared S3 storage for files. Single node remains supported.
+
+Node membership (`pending`, `active`, `revoked`) is separate from allocation state
+(`active`, `draining`, `drained`). Drain admission reserves complete fork families and
+15% free space in one transaction; the existing copier and promoter advance the work.
+The panel, REST and CLI use `cluster::drain::change`. These new initialization and drain
+paths await builder verification; [Cluster readiness](CLUSTER_PLAN.md) tracks acceptance.
 
 ### Roles and shared state
 

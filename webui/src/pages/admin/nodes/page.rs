@@ -15,6 +15,10 @@ pub struct Node {
     pub roles: String,
     /// `pending`, `active` or `revoked`.
     pub status: String,
+    pub state: String,
+    pub drain_total: i64,
+    pub drain_completed: i64,
+    pub drain_error: Option<String>,
     /// Active, but it has stopped reporting in.
     pub offline: bool,
     pub version: String,
@@ -73,7 +77,7 @@ pub fn render(page: Page) -> Element {
                 } else {
                     div { class: "identity-table-wrap", table { class: "identity-table",
                         thead { tr {
-                            th { "Node" } th { "Roles" } th { "Status" } th { "Version" } th { "Last seen" } th { class: "identity-num", "Free disk" }
+                            th { "Node" } th { "Roles" } th { "Status" } th { "Drain" } th { "Version" } th { "Last seen" } th { class: "identity-num", "Free disk" }
                             th { class: "identity-table-action", "Action" }
                         } }
                         tbody { for node in &page.nodes { tr {
@@ -84,10 +88,25 @@ pub fn render(page: Page) -> Element {
                                     if node.offline { "Offline" } else { "{node.status}" }
                                 }
                             }
+                            td {
+                                "{node.state}"
+                                if node.state != "active" {
+                                    p { "{node.drain_completed} / {node.drain_total} repositories" }
+                                    if let Some(error) = &node.drain_error { p { "{error}" } }
+                                }
+                            }
                             td { class: "identity-muted", "{node.version}" }
                             td { class: "identity-muted", "{node.last_seen}" }
                             td { class: "identity-num", "{node.disk_free}" }
                             td { class: "identity-table-action",
+                                if node.status == "active" && !node.offline {
+                                    form { method: "post", action: format!("/admin/nodes/{}/{}", node.name, if node.state == "active" { "drain" } else { "cancel-drain" }),
+                                        {crate::pages::fields::csrf(&page.csrf_token)}
+                                        button { r#type: "submit", class: "btn btn-sm",
+                                            if node.state == "active" { "Drain" } else { "Cancel drain" }
+                                        }
+                                    }
+                                }
                                 form { method: "post", action: format!("/admin/nodes/{}/{}", node.name, if node.status == "active" { "revoke" } else { "approve" }),
                                     {crate::pages::fields::csrf(&page.csrf_token)}
                                     if node.status == "active" {
@@ -131,6 +150,10 @@ mod tests {
             name: name.into(),
             roles: "storage".into(),
             status: status.into(),
+            state: "active".into(),
+            drain_total: 0,
+            drain_completed: 0,
+            drain_error: None,
             offline,
             version: "0.1.1".into(),
             last_seen: "never".into(),
@@ -161,6 +184,29 @@ mod tests {
         // The model is what the browser hydrates from.
         let json = serde_json::to_string(&page).unwrap();
         assert_eq!(serde_json::from_str::<Page>(&json).unwrap(), page);
+    }
+
+    #[test]
+    fn drain_progress_and_cancel_are_native_forms() {
+        let mut draining = node("store-1", "active", false);
+        draining.state = "draining".into();
+        draining.drain_total = 7;
+        draining.drain_completed = 3;
+        draining.drain_error =
+            Some("Repository 4 is waiting for a current replacement copy.".into());
+        let html = dioxus_ssr::render_element(render(Page {
+            csrf_token: "drain-csrf".into(),
+            nodes: vec![draining],
+            next_after: None,
+            has_previous: false,
+            message: None,
+            cluster_enabled: true,
+        }));
+        assert!(html.contains("/admin/nodes/store-1/cancel-drain"));
+        assert!(html.contains("Cancel drain"));
+        assert!(html.contains("3 / 7 repositories"));
+        assert!(html.contains("method=\"post\""));
+        assert!(html.contains("drain-csrf"));
     }
 
     #[test]

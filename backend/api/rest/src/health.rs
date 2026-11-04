@@ -53,8 +53,44 @@ fn storage_check(root: &Path, minimum: u64) -> Result<(), &'static str> {
     Ok(())
 }
 
+pub(crate) async fn accepting(state: &AppState) -> bool {
+    let Some(context) = &state.cluster else {
+        return true;
+    };
+    matches!(tokio::time::timeout(Duration::from_secs(2), codeyard_db_cluster::cluster::get_node_by_id(&state.pool, context.node_id)).await,
+        Ok(Ok(Some(node))) if node.state == "active" && node.status == "active")
+}
+
+pub(crate) async fn admission(
+    State(state): State<Arc<AppState>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = request.uri().path();
+    if path == "/health"
+        || path == "/ready"
+        || path == "/metrics"
+        || path == "/admin/nodes"
+        || path.starts_with("/admin/nodes/")
+        || path.starts_with("/api/admin/nodes/")
+        || accepting(&state).await
+    {
+        next.run(request).await
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(axum::http::header::RETRY_AFTER, "15")],
+            Json(serde_json::json!({"message":"Node is draining; retry on another node."})),
+        )
+            .into_response()
+    }
+}
+
 async fn ready(State(state): State<Arc<AppState>>) -> (StatusCode, Json<serde_json::Value>) {
-    let failure = if !matches!(
+    let failure = if !accepting(&state).await {
+        Some("node is draining or unavailable")
+    } else if !matches!(
         tokio::time::timeout(Duration::from_secs(2), state.pool.ping()).await,
         Ok(Ok(()))
     ) {

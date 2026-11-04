@@ -100,6 +100,28 @@ async fn collect(state: &AppState) -> anyhow::Result<String> {
         gauge(&mut body, name);
         writeln!(body, "codeyard_{name} {value}")?;
     }
+    let drains = codeyard_db_cluster::metrics::drains(&state.pool).await?;
+    for name in ["drain_repositories_total", "drain_repositories_completed"] {
+        gauge(&mut body, name);
+        for node in &drains {
+            let value = if name == "drain_repositories_total" {
+                node.total
+            } else {
+                node.completed
+            };
+            writeln!(
+                body,
+                "codeyard_{name}{{node_id=\"{}\",state=\"{}\"}} {value}",
+                node.node_id, node.state
+            )?;
+        }
+    }
+    writeln!(body, "# TYPE codeyard_quorum_failures_total counter")?;
+    writeln!(
+        body,
+        "codeyard_quorum_failures_total {}",
+        codeyard_cluster_core::writes::quorum_failures()
+    )?;
     // SQLx exposes size and idle connections, but not its acquisition queue.
     gauge(&mut body, "database_pool_waiters");
     writeln!(body, "codeyard_database_pool_waiters NaN")?;

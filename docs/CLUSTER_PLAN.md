@@ -7,8 +7,8 @@ every open question. [Architecture](ARCHITECTURE.md#3-scaling-out-cells-behind-a
 keeps the longer plan for cells; this file comes first and does not repeat it.
 
 Items 1–3 have implementation and tests; quorum initialization and copy are being
-completed. Metrics and readiness probes also exist. Node drain, provisioning and the
-remaining operations work are not complete. Acceptance checks still need builder runs.
+completed. Metrics and readiness probes also exist. Node drain and its additional metrics are written and await verification.
+Provisioning and the remaining operations work are not complete. Acceptance checks still need builder runs.
 Cluster mode stays hidden behind
 `CODEYARD_EXPERIMENTAL_CLUSTER=1` until part A passes and part B items 1 to 6 are done.
 
@@ -24,7 +24,7 @@ The experimental write path uses two storage voters, PostgreSQL decisions and a 
 journal. Cluster startup requires shared S3 storage for files. Repository initialization
 and copy now use the same quorum path; builder verification is pending.
 
-Not complete: PostgreSQL failover acceptance, cluster-aware backup, node drain,
+Not complete: drain acceptance, PostgreSQL failover acceptance, cluster-aware backup,
 provisioning, automatic scaling, rebalancing, rolling upgrades and measured load limits.
 
 ## A. Checks on what exists

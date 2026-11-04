@@ -632,7 +632,7 @@ async fn claim_queued_run(
             // Held until this claim commits, so a revocation waits for the claim or
             // lands before it.
             let active = sqlx::query_scalar::<_, i64>(
-                "SELECT id FROM nodes WHERE public_key = $1 AND status = 'active'
+                "SELECT id FROM nodes WHERE public_key = $1 AND status = 'active' AND state='active'
                  AND 'runner' = ANY(roles) FOR SHARE",
             )
             .bind(node_key)

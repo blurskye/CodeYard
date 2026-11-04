@@ -32,6 +32,7 @@ use tokio_util::task::AbortOnDropHandle;
 use tracing::info;
 use tracing::warn;
 pub mod ci;
+pub mod drain;
 pub mod replicas;
 pub mod tcp;
 pub mod worker;
@@ -101,6 +102,8 @@ impl Cluster {
         self.events.start_claiming();
         let heartbeat = tokio::spawn(heartbeat(
             self.pool.clone(),
+            self.context.clone(),
+            self.events.clone(),
             self.public_key(),
             self.endpoint().cloned(),
             self.tcp_advertised.clone(),
@@ -437,6 +440,10 @@ pub async fn wait_for_address(endpoint: &Endpoint) {
 
 /// Free space, in bytes, on the filesystem that holds `path`.
 pub fn disk_free(path: &Path) -> Result<i64> {
+    Ok(disk_capacity(path)?.0)
+}
+
+fn disk_capacity(path: &Path) -> Result<(i64, i64)> {
     use std::os::unix::ffi::OsStrExt;
     let path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
     // statvfs reads the filesystem containing the repository root.
@@ -447,9 +454,10 @@ pub fn disk_free(path: &Path) -> Result<i64> {
     }
     // SAFETY: statvfs succeeded, so it filled `stats`.
     let stats = unsafe { stats.assume_init() };
-    Ok(i64::try_from(
-        stats.f_bavail.saturating_mul(stats.f_frsize),
-    )?)
+    Ok((
+        i64::try_from(stats.f_bavail.saturating_mul(stats.f_frsize))?,
+        i64::try_from(stats.f_blocks.saturating_mul(stats.f_frsize))?,
+    ))
 }
 
 /// Records a sign of life and the addresses this node can be reached at. Returns
@@ -479,7 +487,7 @@ pub async fn report_alive(
                 Duration::from_secs(3),
                 tokio::task::spawn_blocking(move || {
                     let _permit = permit;
-                    disk_free(&path)
+                    disk_capacity(&path)
                 }),
             )
             .await
@@ -488,6 +496,13 @@ pub async fn report_alive(
     } else {
         None
     };
+    if let Some((_, total)) = free {
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            codeyard_db_cluster::drain::record_capacity(pool, &key.to_string(), total),
+        )
+        .await??;
+    }
     tokio::time::timeout(
         Duration::from_secs(5),
         codeyard_db_cluster::cluster::record_node_heartbeat(
@@ -495,7 +510,7 @@ pub async fn report_alive(
             &key.to_string(),
             VERSION,
             &hint,
-            free,
+            free.map(|(available, _)| available),
         ),
     )
     .await
@@ -514,6 +529,8 @@ fn address_hint(endpoint: Option<&Endpoint>, tcp: &[SocketAddr]) -> NodeAddress 
 
 async fn heartbeat(
     pool: DbPool,
+    context: NodeContext,
+    events: crate::ci::CiHandler,
     key: iroh::PublicKey,
     endpoint: Option<Endpoint>,
     tcp: Vec<SocketAddr>,
@@ -529,6 +546,16 @@ async fn heartbeat(
         let hint = address_hint(endpoint.as_ref(), &tcp);
         if let Err(error) = report_alive(&pool, key, hint, storage_path.as_deref()).await {
             warn!(%error, "could not record this node's heartbeat");
+        }
+        match tokio::time::timeout(Duration::from_secs(10), async {
+            drain::step(&context).await?;
+            events.maintain_drains().await
+        })
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => warn!(%error, "node drain pass failed"),
+            Err(error) => warn!(%error, "node drain pass timed out"),
         }
     }
 }

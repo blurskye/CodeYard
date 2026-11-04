@@ -1207,6 +1207,12 @@ CREATE TABLE IF NOT EXISTS nodes (
     roles TEXT[] NOT NULL CHECK (cardinality(roles) > 0 AND roles <@ ARRAY['web', 'ssh', 'storage', 'runner']),
     status VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending, active, revoked
     -- JSON with the addresses the node last reported.
+    state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','draining','drained')),
+    disk_total BIGINT CHECK (disk_total IS NULL OR disk_total >= 0),
+    drain_started_at TIMESTAMPTZ,
+    drain_total BIGINT NOT NULL DEFAULT 0 CHECK (drain_total >= 0),
+    drain_completed BIGINT NOT NULL DEFAULT 0 CHECK (drain_completed >= 0),
+    drain_error TEXT,
     addr_hint TEXT,
     version TEXT,
     disk_free BIGINT CHECK (disk_free IS NULL OR disk_free >= 0),
@@ -1219,6 +1225,13 @@ CREATE TABLE IF NOT EXISTS nodes (
 ALTER TABLE repositories ADD CONSTRAINT repositories_storage_node_id_fkey FOREIGN KEY (storage_node_id) REFERENCES nodes(id);
 
 -- Only a hash of each invite secret is stored.
+CREATE TABLE node_drain_repositories (
+    node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    target_node_id BIGINT NOT NULL REFERENCES nodes(id),
+    PRIMARY KEY(node_id,repository_id,target_node_id)
+);
+
 CREATE TABLE IF NOT EXISTS join_tokens (
     id BIGSERIAL PRIMARY KEY,
     token_hash TEXT NOT NULL UNIQUE CHECK (token_hash ~ '^[0-9a-f]{64}$'),

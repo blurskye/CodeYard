@@ -673,7 +673,7 @@ pub(super) async fn recover_term(
         let source = if tokio::fs::try_exists(&previous).await? {
             crate::context::literal_directory(root, &previous).await?;
             previous
-        } else if view.term == 1 {
+        } else {
             let primary = crate::repositories::store::primary_path(root, uuid);
             let mirror = crate::cluster::replicas::copy_path(root, uuid);
             if tokio::fs::try_exists(&primary).await? {
@@ -681,8 +681,6 @@ pub(super) async fn recover_term(
             } else {
                 mirror
             }
-        } else {
-            anyhow::bail!("previous term objects are unavailable; repository remains fenced");
         };
         let parent = target.parent().context("invalid term path")?;
         tokio::fs::create_dir_all(parent).await?;

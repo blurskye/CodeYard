@@ -32,3 +32,13 @@ native_operation!(crate::postgres::metrics::ci_queue, crate::sqlite::metrics::ci
     fn ci_queue(pool: &DbPool) -> Result<CiQueue>);
 native_operation!(crate::postgres::metrics::node_counts, crate::sqlite::metrics::node_counts,
     fn node_counts(pool: &DbPool) -> Result<Vec<NodeCount>>);
+
+#[derive(Debug, FromRow)]
+pub struct Drain {
+    pub node_id: i64,
+    pub state: String,
+    pub total: i64,
+    pub completed: i64,
+}
+native_operation!(crate::postgres::metrics::drains, crate::sqlite::metrics::drains,
+    fn drains(pool: &DbPool) -> Result<Vec<Drain>>);

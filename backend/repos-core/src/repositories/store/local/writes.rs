@@ -372,9 +372,14 @@ impl LocalStore {
                 .await
                 .map_err(RepoError::from)?;
         }
-        super::recover_term(pool, repository, context.node_id, &context.repos_path)
-            .await
-            .map_err(RepoError::from)?;
+        Box::pin(super::recover_term(
+            pool,
+            repository,
+            context.node_id,
+            &context.repos_path,
+        ))
+        .await
+        .map_err(RepoError::from)?;
         if let Some(other) = other {
             let (reply, _) = Box::pin(context.call(
                 other,

@@ -94,6 +94,12 @@ pub enum Command {
     Approve { name: String },
     /// Stop a node from connecting
     Revoke { name: String },
+    /// Stop new work and move storage to current copies; --cancel returns to active
+    Drain {
+        name: String,
+        #[arg(long)]
+        cancel: bool,
+    },
     /// Take over the repositories that have no storage node yet. Run this once, on the
     /// node that holds their directories, when a single machine joins a cluster.
     Adopt,
@@ -293,6 +299,14 @@ pub async fn run(
             }
             _ => bail!("no node is named '{name}'; `codeyard cluster list` shows the names"),
         },
+        Command::Drain { name, cancel } => {
+            let node = codeyard_cluster::drain::change(pool, None, name, *cancel).await?;
+            println!(
+                "{}: {} ({}/{} repositories)",
+                node.name, node.state, node.drain_completed, node.drain_total
+            );
+            Ok(())
+        }
         Command::Adopt => {
             ensure!(
                 codeyard_db_cluster::cluster::cluster_enabled(pool).await?,

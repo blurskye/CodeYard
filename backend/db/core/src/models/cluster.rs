@@ -15,6 +15,17 @@ pub struct ClusterNode {
     pub roles: Vec<String>,
     /// `pending`, `active` or `revoked`.
     pub status: String,
+    /// Allocation and drain state, independent of membership revocation.
+    #[serde(default = "active_state")]
+    pub state: String,
+    #[serde(default)]
+    pub disk_total: Option<i64>,
+    #[serde(default)]
+    pub drain_total: i64,
+    #[serde(default)]
+    pub drain_completed: i64,
+    #[serde(default)]
+    pub drain_error: Option<String>,
     /// JSON with the addresses the node last reported.
     pub addr_hint: Option<String>,
     pub version: Option<String>,
@@ -26,12 +37,16 @@ pub struct ClusterNode {
     pub created_at: DateTime<Utc>,
 }
 
+fn active_state() -> String {
+    "active".into()
+}
+
 impl ClusterNode {
     /// Eligible allocation targets, most reported free bytes first, then oldest id.
     pub fn ranked_storage(nodes: &[Self]) -> Vec<&Self> {
         let mut nodes: Vec<_> = nodes
             .iter()
-            .filter(|node| node.is_serving_storage())
+            .filter(|node| node.state == "active" && node.is_serving_storage())
             .collect();
         nodes.sort_by_key(|node| {
             (

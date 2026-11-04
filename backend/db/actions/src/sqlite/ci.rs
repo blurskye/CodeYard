@@ -562,7 +562,7 @@ async fn runner_node_active(
         return Ok(true);
     };
     Ok(sqlx::query_scalar::<_, i64>(
-        "SELECT id FROM nodes WHERE public_key = ?1 AND status = 'active'
+        "SELECT id FROM nodes WHERE public_key = ?1 AND status = 'active' AND state='active'
          AND EXISTS (SELECT 1 FROM json_each(nodes.roles) WHERE value = 'runner')",
     )
     .bind(node_key)

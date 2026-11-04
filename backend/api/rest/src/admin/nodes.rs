@@ -24,6 +24,12 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/admin/nodes", get(show))
         .route("/admin/nodes/:name/approve", post(approve))
         .route("/admin/nodes/:name/revoke", post(revoke))
+        .route("/admin/nodes/:name/drain", post(drain))
+        .route("/admin/nodes/:name/cancel-drain", post(cancel_drain))
+        .route(
+            "/api/admin/nodes/:name/drain",
+            post(api_drain).delete(api_cancel_drain),
+        )
 }
 
 async fn show(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> Response {
@@ -89,6 +95,10 @@ async fn render(ctx: &PageContext, status: StatusCode, message: Option<String>) 
                 disk_free: node.disk_free.map(format_bytes).unwrap_or_default(),
                 name: node.name,
                 status: node.status,
+                state: node.state,
+                drain_total: node.drain_total,
+                drain_completed: node.drain_completed,
+                drain_error: node.drain_error,
             })
             .collect(),
         message,
@@ -167,6 +177,138 @@ async fn change(
                 Some("Node membership could not be updated. Refresh before retrying.".to_owned()),
             )
             .await
+        }
+    }
+}
+
+async fn drain(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Path(name): Path<String>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    change_drain(state, headers, uri, name, form, false).await
+}
+
+async fn cancel_drain(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Path(name): Path<String>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    change_drain(state, headers, uri, name, form, true).await
+}
+
+fn drain_error(error: &anyhow::Error) -> (StatusCode, String, Option<i64>) {
+    use codeyard_db_cluster::drain::Refusal;
+    match error.downcast_ref::<Refusal>() {
+        Some(Refusal::Denied) => (StatusCode::FORBIDDEN, error.to_string(), None),
+        Some(Refusal::Invalid) => (StatusCode::UNPROCESSABLE_ENTITY, error.to_string(), None),
+        Some(Refusal::Missing) => (StatusCode::NOT_FOUND, error.to_string(), None),
+        Some(Refusal::Offline) => (StatusCode::CONFLICT, error.to_string(), None),
+        Some(Refusal::Capacity { missing_bytes }) => (
+            StatusCode::CONFLICT,
+            error.to_string(),
+            Some(*missing_bytes),
+        ),
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Node drain is unavailable. Try again.".into(),
+            None,
+        ),
+    }
+}
+
+async fn change_drain(
+    state: Arc<AppState>,
+    headers: HeaderMap,
+    uri: Uri,
+    name: String,
+    form: HashMap<String, String>,
+    cancel: bool,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    if let Err(response) = mutation_guard(&ctx, &form, true) {
+        return response;
+    }
+    let user = ctx.user.as_ref().expect("mutation guard checked account");
+    let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let actor = (user.id, session).into();
+    match codeyard_cluster::drain::change(&ctx.state.pool, Some(&actor), &name, cancel).await {
+        Ok(_) => ctx.redirect("/admin/nodes"),
+        Err(error) => {
+            let (status, message, _) = drain_error(&error);
+            render(&ctx, status, Some(message)).await
+        }
+    }
+}
+
+async fn api_drain(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+) -> Response {
+    api_change_drain(state, headers, name, false).await
+}
+
+async fn api_cancel_drain(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+) -> Response {
+    api_change_drain(state, headers, name, true).await
+}
+
+async fn api_change_drain(
+    state: Arc<AppState>,
+    headers: HeaderMap,
+    name: String,
+    cancel: bool,
+) -> Response {
+    use axum::response::IntoResponse;
+    let auth =
+        match codeyard_identity::github_auth::authenticate(state.as_ref(), &headers, true).await {
+            Ok(Some(auth)) => auth,
+            _ => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    axum::Json(serde_json::json!({"message":"Requires authentication"})),
+                )
+                    .into_response()
+            }
+        };
+    if !auth.user.is_admin
+        || !matches!(
+            codeyard_identity::github_apps::authority(&state.pool, auth.token.id).await,
+            Ok(None)
+        )
+        || !matches!(
+            codeyard_db_identity::oauth_apps::token(&state.pool, auth.token.id).await,
+            Ok(None)
+        )
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            axum::Json(serde_json::json!({"message":"Administrator access is required."})),
+        )
+            .into_response();
+    }
+    match codeyard_cluster::drain::change(&state.pool, Some(&auth.database_actor()), &name, cancel)
+        .await
+    {
+        Ok(node) => (StatusCode::ACCEPTED, axum::Json(node)).into_response(),
+        Err(error) => {
+            let (status, message, missing) = drain_error(&error);
+            let mut body = serde_json::json!({"message":message});
+            if let Some(bytes) = missing {
+                body["missing_bytes"] = bytes.into();
+            }
+            (status, axum::Json(body)).into_response()
         }
     }
 }

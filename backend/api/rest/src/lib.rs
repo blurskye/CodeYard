@@ -124,6 +124,10 @@ pub fn create_router(state: AppState) -> Router {
             state.clone(),
             crate::packages::maven::route,
         ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::health::admission,
+        ))
         .with_state(state.clone())
         // Sees every response, including errors. It reads the state, so it sits inside the Extension layer.
         .layer(axum::middleware::from_fn(
