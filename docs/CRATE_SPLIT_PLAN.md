@@ -100,12 +100,11 @@ and results stay the same. A stage can be the last one.
    configuration/texts and URL helpers now live in `model`. Native CI record/log
    helpers live in `db/core`; encryption, SSH selection, node identity and custom
    secret scanning live in `support`. Database domains no longer call server helpers.
-   Source moves are complete; native library targets check. Full workspace
-   validation is blocked in stage 8.
+   Source moves are complete; all workspace targets check.
 5. **`db` domains.** Source extraction complete: `identity`, `orgs`, `repos`
    (including pulls and issues), `actions`, `security` and `cluster` each own both
    engines. Shared transaction helpers and their records live under `db/core/src/queries`.
-   Native library targets check. Full workspace validation is blocked in stage 8.
+   All workspace targets check.
 6. **Services (partial).** `identity` and `notifications` are extracted. Repository
    authority, identity mail links and delivery helpers have one lower owner.
    `RepoStore` is a concrete enum-backed type, not the trait assumed above; its local
@@ -116,14 +115,14 @@ and results stay the same. A stage can be the last one.
    with folders named for its operation categories), repository HTTP, GraphQL and
    the remaining routes are separate crates. Shared helpers have one direct lower
    home. The coupled runtime is in the app library so adapters do not depend on
-   binary wiring. Native library targets check. Full workspace validation is blocked in stage 8.
+   binary wiring. All workspace targets check.
 8. **`app`.** Source layout complete. `backend/app/src` is the app library;
    `backend/app/wiring` contains the existing binary package's entry points, CLI
    and node startup. SSH, backups and storage live in the app library. The source
    stages are committed before workspace, Clippy and WASM checks begin. Broker
    tests now live in `backend/app/tests/git_broker.rs` and link the app library
    with REST through one `AppState`. Hook barriers have one shared owner.
-   Workspace, Clippy and WASM validation is pending.
+   All workspace targets check. Clippy and WASM validation is pending.
 
 ## Move only: no behaviour change
 
